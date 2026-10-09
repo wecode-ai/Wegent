@@ -210,7 +210,6 @@ def schedule_multimodal_indexing_or_none(
         )
 
     document.index_status = DocumentIndexStatus.PENDING_CONVERSION
-    document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
 
     task_kwargs = build_multimodal_conversion_kwargs(

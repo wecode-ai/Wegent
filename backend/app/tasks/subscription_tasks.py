@@ -1276,9 +1276,6 @@ def _recover_stale_pending_executions(db: Session) -> int:
                     execution.error_message = (
                         "Subscription was deleted while execution was pending"
                     )
-                    execution.updated_at = datetime.now(timezone.utc).replace(
-                        tzinfo=None
-                    )
                     db.commit()
                     logger.warning(
                         f"[subscription_tasks] Cancelled orphaned PENDING execution {execution.id}: "
@@ -1289,7 +1286,6 @@ def _recover_stale_pending_executions(db: Session) -> int:
                 # Mark as RUNNING before dispatch to prevent duplicate recovery
                 execution.status = BackgroundExecutionStatus.RUNNING.value
                 execution.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                execution.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.commit()
 
                 # Re-dispatch the execution
@@ -1438,7 +1434,6 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                     f"(stuck in RUNNING state, threshold: {threshold_hours}h)"
                 )
                 execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                execution.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 cleaned += 1
 
                 logger.warning(

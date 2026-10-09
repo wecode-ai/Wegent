@@ -276,13 +276,11 @@ class WorkQueueService:
                             **q.json,
                             "spec": {**q.json.get("spec", {}), "isDefault": False},
                         }
-                        q.updated_at = datetime.now()
 
                 spec = dict(existing_inbox.json.get("spec", {}))
                 spec["visibility"] = QueueVisibility.PUBLIC.value
                 spec["isDefault"] = True
                 existing_inbox.json = {**existing_inbox.json, "spec": spec}
-                existing_inbox.updated_at = datetime.now()
                 db.commit()
                 logger.info(
                     f"Updated existing inbox to public default: id={existing_inbox.id}, user_id={user_id}"
@@ -296,7 +294,6 @@ class WorkQueueService:
                         **q.json,
                         "spec": {**q.json.get("spec", {}), "isDefault": False},
                     }
-                    q.updated_at = datetime.now()
 
             # Create new inbox directly in the same session
             spec = {
@@ -594,7 +591,6 @@ class WorkQueueService:
 
             # Replace the entire json object so SQLAlchemy detects the mutation
             queue.json = {**queue.json, "spec": spec}
-            queue.updated_at = datetime.now()
             db.commit()
             db.refresh(queue)
 
@@ -619,7 +615,6 @@ class WorkQueueService:
                 raise NotFoundException(f"Work queue not found")
 
             queue.is_active = False
-            queue.updated_at = datetime.now()
             db.commit()
 
             logger.info(f"Deleted work queue: id={queue_id}, user_id={user_id}")
@@ -645,7 +640,6 @@ class WorkQueueService:
                         **q.json,
                         "spec": {**q.json.get("spec", {}), "isDefault": False},
                     }
-                    q.updated_at = datetime.now()
 
             # Set the specified queue as default
             queue = (
@@ -664,7 +658,6 @@ class WorkQueueService:
             spec = dict(queue.json.get("spec", {}))
             spec["isDefault"] = True
             queue.json = {**queue.json, "spec": spec}
-            queue.updated_at = datetime.now()
             db.commit()
             db.refresh(queue)
 
@@ -696,7 +689,6 @@ class WorkQueueService:
 
             spec["inviteCode"] = self._generate_invite_code()
             queue.json = {**queue.json, "spec": spec}
-            queue.updated_at = datetime.now()
             db.commit()
             db.refresh(queue)
 
@@ -860,7 +852,6 @@ class WorkQueueService:
                 spec = dict(existing_inbox.json.get("spec", {}))
                 spec["visibility"] = QueueVisibility.PUBLIC.value
                 existing_inbox.json = {**existing_inbox.json, "spec": spec}
-                existing_inbox.updated_at = datetime.now()
                 db.commit()
                 db.refresh(existing_inbox)
                 logger.info(
@@ -1150,7 +1141,6 @@ class QueueMessageService:
                 raise NotFoundException("Queue message not found")
 
             message.status = status
-            message.updated_at = datetime.now()
             if status == QueueMessageStatus.PROCESSED:
                 message.processed_at = datetime.now()
 
@@ -1177,7 +1167,6 @@ class QueueMessageService:
                 raise NotFoundException("Queue message not found")
 
             message.priority = priority
-            message.updated_at = datetime.now()
             db.commit()
             db.refresh(message)
 
@@ -1199,7 +1188,6 @@ class QueueMessageService:
                 raise NotFoundException("Queue message not found")
 
             message.status = QueueMessageStatus.ARCHIVED
-            message.updated_at = datetime.now()
             db.commit()
 
             logger.info(f"Archived queue message: id={message_id}, user_id={user_id}")
@@ -1251,10 +1239,8 @@ class QueueMessageService:
             failed_ids = [mid for mid in message_ids if mid not in found_ids]
 
             # Update all found messages
-            now = datetime.now()
             for message in messages:
                 message.status = status
-                message.updated_at = now
                 if status == QueueMessageStatus.PROCESSED:
                     message.processed_at = now
 
@@ -1293,10 +1279,8 @@ class QueueMessageService:
             failed_ids = [mid for mid in message_ids if mid not in found_ids]
 
             # Archive all found messages
-            now = datetime.now()
             for message in messages:
                 message.status = QueueMessageStatus.ARCHIVED
-                message.updated_at = now
 
             db.commit()
 

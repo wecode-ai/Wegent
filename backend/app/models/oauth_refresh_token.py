@@ -97,8 +97,7 @@ class OAuthRefreshToken(Base):
     created_at = Column(
         DateTime,
         nullable=False,
-        default=func.now(),
-        server_default=text("CURRENT_TIMESTAMP"),
+        server_default=func.now(),
         comment="Creation time",
     )
 

@@ -77,14 +77,9 @@ class ProjectChatMessage(Base):
     status = Column(
         String(16), nullable=False, default="completed", server_default="completed"
     )
-    created_at = Column(
-        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
-    )
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(
-        DateTime,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=func.now(),
+        DateTime, nullable=False, server_default=func.now(), server_onupdate=func.now()
     )
     deleted_at = Column(
         DateTime,

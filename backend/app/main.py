@@ -636,6 +636,12 @@ def create_app():
     docs_url = f"{settings.API_PREFIX}/docs" if enable_docs else None
     redoc_url = f"{settings.API_PREFIX}/redoc" if enable_docs else None
 
+    # Naive datetimes in HTTP responses carry the +08:00 offset of the MySQL
+    # session basis; see app.core.response_timezone.
+    from app.core.response_timezone import patch_response_timezone
+
+    patch_response_timezone()
+
     app = FastAPI(
         title=settings.PROJECT_NAME,
         description="Task Management Backend System API",

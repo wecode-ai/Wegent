@@ -469,7 +469,6 @@ class DeviceService:
                 device_json["spec"]["bindShell"] = "claudecode"
             device_kind.json = device_json
             flag_modified(device_kind, "json")
-            device_kind.updated_at = datetime.now()
             device_kind.is_active = True
             db.add(device_kind)
             logger.info(f"Updated device CRD: user_id={user_id}, device_id={device_id}")
@@ -699,7 +698,6 @@ class DeviceService:
         set_device_display_name(device_json, alias)
         device_kind.json = device_json
         flag_modified(device_kind, "json")
-        device_kind.updated_at = datetime.now()
         db.commit()
 
         logger.info(

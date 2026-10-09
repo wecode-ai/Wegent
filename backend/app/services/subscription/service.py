@@ -776,7 +776,6 @@ class SubscriptionService:
         crd_json = subscription_crd.model_dump(mode="json")
         crd_json["_internal"] = internal
         subscription.json = crd_json
-        subscription.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         flag_modified(subscription, "json")
 
         db.commit()
@@ -812,7 +811,6 @@ class SubscriptionService:
         internal = subscription.json.get("_internal", {})
         internal["enabled"] = False
         subscription.json["_internal"] = internal
-        subscription.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         flag_modified(subscription, "json")
 
         db.commit()
@@ -864,7 +862,6 @@ class SubscriptionService:
         crd_json = subscription_crd.model_dump(mode="json")
         crd_json["_internal"] = internal
         subscription.json = crd_json
-        subscription.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         flag_modified(subscription, "json")
 
         db.commit()

@@ -176,7 +176,6 @@ class KindBaseService(ABC):
 
             # Update resource
             db_resource.json = resource_data
-            db_resource.updated_at = utc_now_naive()
 
             db.commit()
             db.refresh(db_resource)
@@ -214,7 +213,6 @@ class KindBaseService(ABC):
                 raise NotFoundException(f"{self.kind} '{name}' not found")
 
             db_resource.is_active = False
-            db_resource.updated_at = utc_now_naive()
 
             # Perform pre-delete side effects
             self._pre_delete_side_effects(db, user_id, db_resource)

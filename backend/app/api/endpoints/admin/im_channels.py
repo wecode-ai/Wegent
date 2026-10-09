@@ -274,8 +274,6 @@ async def create_im_channel(
         namespace=channel_data.namespace,
         json=messager_json,
         is_active=True,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
     )
 
     db.add(new_channel)
@@ -368,7 +366,6 @@ async def update_im_channel(
 
     current_json["spec"] = spec
     channel.json = current_json
-    channel.updated_at = datetime.now()
     # Mark JSON field as modified for SQLAlchemy to detect the change
     from sqlalchemy.orm.attributes import flag_modified
 
@@ -449,7 +446,6 @@ async def delete_im_channel(
     channel_name = channel.name
     # Soft delete
     channel.is_active = False
-    channel.updated_at = datetime.now()
     db.commit()
 
     logger.info(
@@ -493,7 +489,6 @@ async def toggle_im_channel(
     spec["isEnabled"] = not was_enabled
     current_json["spec"] = spec
     channel.json = current_json
-    channel.updated_at = datetime.now()
     # Mark JSON field as modified for SQLAlchemy to detect the change
     flag_modified(channel, "json")
 

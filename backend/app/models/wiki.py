@@ -55,8 +55,8 @@ class WikiProject(WikiBase):
         comment="Code wiki knowledge base built from this repository; 0 = legacy",
     )
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), server_onupdate=func.now())
 
     __table_args__ = (
         # The pair rather than the URL alone. It is what settles two requests racing
@@ -127,8 +127,8 @@ class WikiGeneration(WikiBase):
         index=True,
     )
     ext = Column(JSON, nullable=False, default=dict, comment="Extension fields")
-    created_at = Column(DateTime, default=func.now(), index=True)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, index=True, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), server_onupdate=func.now())
     completed_at = Column(DateTime, nullable=False, default="1970-01-01 00:00:00")
 
     __table_args__ = (
@@ -159,8 +159,8 @@ class WikiContent(WikiBase):
     content = Column(Text, nullable=False)
     parent_id = Column(Integer, nullable=False, default=0)
     ext = Column(JSON, nullable=False, default=dict, comment="Content extension data")
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), server_onupdate=func.now())
 
     __table_args__ = (
         {

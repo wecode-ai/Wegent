@@ -517,7 +517,6 @@ class SubscriptionFollowService:
             existing.responded_at = (
                 now  # Reset to current time (will be updated when user responds)
             )
-            existing.updated_at = now
             db.commit()
         else:
             # Create invitation with default config
@@ -611,7 +610,6 @@ class SubscriptionFollowService:
                 subscription_id=subscription_id,
                 namespace_id=namespace_id,
                 shared_by_user_id=owner_user_id,
-                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
             db.add(share)
 
@@ -1013,7 +1011,6 @@ class SubscriptionFollowService:
 
         follow.invitation_status = InvitationStatus.ACCEPTED.value
         follow.responded_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        follow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
 
         logger.info(
@@ -1062,7 +1059,6 @@ class SubscriptionFollowService:
 
         follow.invitation_status = InvitationStatus.REJECTED.value
         follow.responded_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        follow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
 
         logger.info(

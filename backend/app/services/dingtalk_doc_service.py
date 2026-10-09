@@ -397,7 +397,6 @@ class DingTalkDocService:
         for existing in existing_active:
             if existing.dingtalk_node_id not in dingtalk_node_ids:
                 existing.is_active = False
-                existing.updated_at = sync_time
                 deleted += 1
 
         # Collect all non-empty node IDs for a single batch lookup (avoids N+1 queries)
@@ -485,7 +484,6 @@ class DingTalkDocService:
 
                 if changed:
                     existing.last_synced_at = sync_time
-                    existing.updated_at = sync_time
                     updated += 1
                 else:
                     existing.last_synced_at = sync_time

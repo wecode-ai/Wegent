@@ -19,9 +19,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from pydantic import ValidationError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.timezone import db_now
 from app.models.knowledge import DocumentIndexStatus, DocumentStatus, KnowledgeDocument
 from app.schemas.knowledge import DocumentProcessingError, DocumentProcessingStage
 from app.services.knowledge.external_refresh_snapshot import (
@@ -69,23 +71,26 @@ ACTIVE_INDEX_STATUSES = {
 }
 
 
-def _utcnow() -> datetime:
-    """Return a timezone-naive UTC timestamp for DB comparisons."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
 def _get_active_index_stale_reason(
     document: KnowledgeDocument,
+    *,
+    now: datetime,
 ) -> Optional[str]:
-    """Return a stale reason when an active indexing state is expired."""
+    """Return a stale reason when an active indexing state is expired.
+
+    ``now`` must be on the same basis as database-generated timestamps;
+    callers compute it with app.db.timezone.db_now(db).
+    """
     return _get_active_index_stale_reason_for(
-        document.index_status, document.updated_at
+        document.index_status, document.updated_at, now=now
     )
 
 
 def _get_active_index_stale_reason_for(
     index_status: DocumentIndexStatus,
     updated_at: Optional[datetime],
+    *,
+    now: datetime,
 ) -> Optional[str]:
     """Return a stale reason based on raw status and timestamp values.
 
@@ -95,7 +100,7 @@ def _get_active_index_stale_reason_for(
     if updated_at is None:
         return None
 
-    age_seconds = (_utcnow() - updated_at).total_seconds()
+    age_seconds = (now - updated_at).total_seconds()
     if (
         index_status == DocumentIndexStatus.QUEUED
         and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS
@@ -216,7 +221,7 @@ def _prepare_document_index_enqueue(
         )
 
     if current_status in ACTIVE_INDEX_STATUSES and not replace_active:
-        stale_reason = _get_active_index_stale_reason(document)
+        stale_reason = _get_active_index_stale_reason(document, now=db_now(db))
         if stale_reason is None:
             db.rollback()
             _record_transition(
@@ -609,7 +614,6 @@ def mark_document_index_succeeded(
     if chunk_storage_enabled:
         document.chunks = chunks
     _finalize_external_source_on_success(document)
-    document.updated_at = _utcnow()
 
     db.commit()
     if cleanup_attachment_ids:
@@ -665,7 +669,6 @@ def _persist_attempt_failure(
     """Store the attempt's failure for the user and return what was stored."""
     persisted_error = _normalize_processing_error(candidate, generation)
     document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
-    document.updated_at = _utcnow()
     return persisted_error
 
 
@@ -771,7 +774,9 @@ def mark_document_index_failed(
         # The restored snapshot already carries the previous body's outcome;
         # this attempt only reports what it learned about the source.
         persisted_error = _normalize_processing_error(candidate, generation)
-        document.updated_at = _utcnow()
+        # Pure touch: refresh updated_at without changing other columns.
+        # ON UPDATE CURRENT_TIMESTAMP only fires when another column changes.
+        document.updated_at = func.now()
     else:
         persisted_error = _persist_attempt_failure(document, generation, candidate)
         if has_active_sync_index:
@@ -983,7 +988,6 @@ def mark_document_conversion_started(
         )
 
     document.index_status = DocumentIndexStatus.CONVERTING
-    document.updated_at = _utcnow()
     db.commit()
     _record_transition(
         "knowledge.conversion.start.accepted",
@@ -1023,7 +1027,10 @@ def mark_document_conversion_succeeded(
     """
     update_payload = {
         KnowledgeDocument.index_status: DocumentIndexStatus.QUEUED,
-        KnowledgeDocument.updated_at: _utcnow(),
+        # Bulk updates bypass ORM events; on MySQL ON UPDATE CURRENT_TIMESTAMP
+        # maintains updated_at, but SQLite has no such mechanism, so set it
+        # explicitly (db_now keeps the dialect's naive basis).
+        KnowledgeDocument.updated_at: db_now(db),
     }
     # No longer update file_extension / name / file_size.
     # These fields keep their original file values so users can download the source document.

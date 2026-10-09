@@ -19,6 +19,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    func,
 )
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
@@ -83,16 +84,16 @@ class TaskResource(Base):
     created_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.now,
         index=True,
         comment="Creation time",
+        server_default=func.now(),
     )
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.now,
-        onupdate=datetime.now,
         comment="Update time",
+        server_default=func.now(),
+        server_onupdate=func.now(),
     )
     project_id = Column(
         Integer,

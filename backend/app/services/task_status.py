@@ -8,6 +8,10 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any, Optional
 
+from sqlalchemy import func
+
+from app.db.timezone import db_now_iso
+
 
 def mark_task_pending_payload(task_json: dict[str, Any] | None) -> dict[str, Any]:
     """Return task CRD JSON with PENDING status."""
@@ -24,7 +28,7 @@ def mark_task_failed_payload(
     task_json: dict[str, Any] | None, error_message: str
 ) -> dict[str, Any]:
     """Return task CRD JSON with FAILED status."""
-    now = datetime.now().isoformat()
+    now = db_now_iso()
     return _with_status(
         task_json,
         status_value="FAILED",
@@ -37,7 +41,7 @@ def mark_task_failed_payload(
 
 def mark_task_completed_payload(task_json: dict[str, Any] | None) -> dict[str, Any]:
     """Return task CRD JSON with COMPLETED status."""
-    now = datetime.now().isoformat()
+    now = db_now_iso()
     return _with_status(
         task_json,
         status_value="COMPLETED",
@@ -94,7 +98,7 @@ def _with_status(
 ) -> dict[str, Any]:
     payload = deepcopy(task_json or {})
     status = payload.setdefault("status", {})
-    now = updated_at or datetime.now().isoformat()
+    now = updated_at or db_now_iso()
     status["status"] = status_value
     if progress is not None:
         status["progress"] = progress
@@ -120,4 +124,7 @@ def _assign_task_json(task: Any, payload: dict[str, Any]) -> None:
     if hasattr(task, "json"):
         task.json = payload
     if hasattr(task, "updated_at"):
-        task.updated_at = datetime.now()
+        # Pure touch: only refresh updated_at without changing other fields.
+        # MySQL ON UPDATE CURRENT_TIMESTAMP does not fire when no other column
+        # changes, so keep an explicit func.now() (still computed by the DB).
+        task.updated_at = func.now()

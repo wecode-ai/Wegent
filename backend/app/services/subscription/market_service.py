@@ -527,8 +527,6 @@ class SubscriptionMarketService:
             invitation_status=InvitationStatus.ACCEPTED.value,
             invited_at=datetime.now(timezone.utc).replace(tzinfo=None),
             responded_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
             config=rental_notification_config.model_dump_json(),
         )
         db.add(rental_follow)

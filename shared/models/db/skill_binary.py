@@ -8,7 +8,7 @@ Binary storage model for Skill and plugin ZIP packages.
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, func
 from sqlalchemy.dialects.mysql import MEDIUMBLOB
 
 from .base import Base
@@ -30,7 +30,7 @@ class SkillBinary(Base):
     file_hash = Column(String(64), nullable=False)  # SHA256 hash
     type = Column(String(32), nullable=False, default="")  # Empty value means Skill
     file_name = Column(String(255), nullable=False, default="")
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, server_default=func.now())
 
     __table_args__ = (
         {

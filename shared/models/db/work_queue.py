@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import JSON, Column, DateTime
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import Index, Integer, String, Text
+from sqlalchemy import Index, Integer, String, Text, func
 
 from .base import Base
 from .enums import QueueMessagePriority, QueueMessageStatus
@@ -83,8 +83,10 @@ class QueueMessage(Base):
         default=0,
         comment="Subscription Kind.id used for processing (0 = none)",
     )
-    created_at = Column(DateTime, nullable=False, default=utc_now, index=True)
-    updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)
+    created_at = Column(DateTime, nullable=False, index=True, server_default=func.now())
+    updated_at = Column(
+        DateTime, nullable=False, server_default=func.now(), server_onupdate=func.now()
+    )
     processed_at = Column(
         DateTime, nullable=False, default=utc_now, comment="Processing completion time"
     )

@@ -56,7 +56,7 @@ class WeworkNotification(Base):
     created_at = Column(
         DateTime,
         nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
+        server_default=func.now(),
         comment="Creation time in UTC",
     )
     is_read = Column(

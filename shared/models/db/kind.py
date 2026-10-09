@@ -8,7 +8,7 @@ Kubernetes-style CRD models for cloud-native agent management.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String, func
 
 from .base import Base
 
@@ -29,11 +29,11 @@ class Kind(Base):
     namespace = Column(String(100), nullable=False, default="default")
     json = Column(JSON, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=utc_now_naive)
+    created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(
         DateTime,
-        default=utc_now_naive,
-        onupdate=utc_now_naive,
+        server_default=func.now(),
+        server_onupdate=func.now(),
     )
 
     __table_args__ = (

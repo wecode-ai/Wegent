@@ -37,8 +37,8 @@ class Namespace(Base):
     level = Column(String(20), nullable=True, index=True, default="group")
     # Is group active
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), server_onupdate=func.now())
 
     # Relationships
     # Note: Namespace members are now stored in resource_members table

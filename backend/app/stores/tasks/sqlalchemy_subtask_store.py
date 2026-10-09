@@ -1182,14 +1182,12 @@ class SqlAlchemySubtaskStore:
         completed_at: Optional[datetime] = None,
     ) -> Subtask:
         subtask.status = status
-        subtask.updated_at = datetime.now()
         if completed_at is not None:
             subtask.completed_at = completed_at
         return subtask
 
     def update_result(self, db: Session, *, subtask: Subtask, result: Any) -> Subtask:
         subtask.result = result
-        subtask.updated_at = datetime.now()
         flag_modified(subtask, "result")
         return subtask
 
@@ -1197,7 +1195,6 @@ class SqlAlchemySubtaskStore:
         self, db: Session, *, subtask: Subtask, error_message: str
     ) -> Subtask:
         subtask.error_message = error_message
-        subtask.updated_at = datetime.now()
         return subtask
 
     def update_executor_info(
@@ -1210,20 +1207,17 @@ class SqlAlchemySubtaskStore:
     ) -> Subtask:
         subtask.executor_namespace = executor_namespace
         subtask.executor_name = executor_name
-        subtask.updated_at = datetime.now()
         return subtask
 
     def update_progress(
         self, db: Session, *, subtask: Subtask, progress: int
     ) -> Subtask:
         subtask.progress = progress
-        subtask.updated_at = datetime.now()
         return subtask
 
     def update_fields(self, db: Session, *, subtask: Subtask, **fields: Any) -> Subtask:
         for field, value in fields.items():
             setattr(subtask, field, value)
-        subtask.updated_at = datetime.now()
         if "result" in fields:
             flag_modified(subtask, "result")
         return subtask

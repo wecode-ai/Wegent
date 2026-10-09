@@ -4,7 +4,7 @@
 
 """Tests for knowledge indexing state machine helpers."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,8 +21,8 @@ from app.models.knowledge import (
 from app.models.user import User
 from app.schemas.knowledge import DocumentProcessingStage
 from app.services.knowledge.index_state_machine import (
-    _utcnow,
     begin_external_import_attempt,
+    mark_document_conversion_succeeded,
     mark_document_index_failed,
     mark_document_index_started,
     mark_document_index_succeeded,
@@ -30,6 +30,11 @@ from app.services.knowledge.index_state_machine import (
     prepare_external_refresh_enqueue,
 )
 from app.services.knowledge.processing_errors import build_processing_error
+
+
+def _utcnow() -> datetime:
+    """Test fixture basis: naive UTC, matching SQLite CURRENT_TIMESTAMP."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _create_knowledge_base(test_db: Session, test_user: User) -> Kind:
@@ -85,6 +90,7 @@ def _create_document(
 def test_prepare_document_index_enqueue_schedules_new_generation(
     test_db: Session, test_user: User
 ):
+
     knowledge_base = _create_knowledge_base(test_db, test_user)
     document = _create_document(test_db, test_user, knowledge_base)
     previous_updated_at = _utcnow() - timedelta(seconds=5)
@@ -918,3 +924,34 @@ def test_external_refresh_enqueue_recovers_abandoned_snapshot_before_retry(
         222,
         retry_orphan_cleanup=True,
     )
+
+
+def test_mark_document_conversion_succeeded_advances_updated_at(
+    test_db: Session, test_user: User
+):
+    """The bulk QUEUED transition must advance updated_at on every dialect.
+
+    Bulk updates bypass ORM events, and SQLite has no ON UPDATE semantics, so
+    the state machine sets updated_at explicitly via db_now().
+    """
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.CONVERTING,
+        index_generation=1,
+    )
+    previous_updated_at = _utcnow() - timedelta(seconds=5)
+    test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
+        {KnowledgeDocument.updated_at: previous_updated_at},
+        synchronize_session=False,
+    )
+    test_db.commit()
+
+    updated = mark_document_conversion_succeeded(test_db, document.id, 1)
+
+    assert updated is True
+    test_db.refresh(document)
+    assert document.index_status == DocumentIndexStatus.QUEUED
+    assert document.updated_at > previous_updated_at

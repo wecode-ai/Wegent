@@ -18,6 +18,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    func,
 )
 
 from app.db.base import Base
@@ -87,9 +88,9 @@ class BackgroundExecution(Base):
     # completed_at is set when execution finishes (COMPLETED/FAILED/CANCELLED state), default to created_at
     started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, index=True, server_default=func.now())
     updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, nullable=False, server_default=func.now(), server_onupdate=func.now()
     )
 
     __table_args__ = (

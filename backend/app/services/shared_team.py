@@ -219,7 +219,6 @@ class SharedTeamService:
             rejected.status = MemberStatus.APPROVED
             rejected.invited_by_user_id = original_user_id
             rejected.role = ResourceRole.Maintainer.value
-            rejected.updated_at = datetime.now()
             db.commit()
             db.refresh(rejected)
             # Return as SharedTeamInDB format for backwards compatibility
@@ -334,7 +333,6 @@ class SharedTeamService:
             )
 
         resource_member.status = MemberStatus.REJECTED
-        resource_member.updated_at = datetime.now()
         db.commit()
 
         return True
@@ -390,7 +388,6 @@ class SharedTeamService:
             team_crd.metadata.labels["share_status"] = "1"
 
             team.json = team_crd.model_dump(mode="json")
-            team.updated_at = datetime.now()
             flag_modified(team, "json")
 
             db.commit()

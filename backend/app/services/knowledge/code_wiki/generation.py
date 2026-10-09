@@ -26,6 +26,7 @@ from typing import Callable, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
+from app.db.timezone import db_now
 from app.models.kind import Kind
 from app.models.user import User
 from app.models.wiki import (
@@ -62,7 +63,7 @@ from app.services.knowledge.code_wiki.run_mode import (
     decide_run_mode,
 )
 from app.services.knowledge.code_wiki.version_store import (
-    _as_naive_utc,
+    _as_db_naive,
     apply_retention,
     page_path_of,
     reclaim_stale_generations,
@@ -573,7 +574,7 @@ def current_run_state(
 
     reported = reader_status(latest)
     if reported == "running":
-        moment = _as_naive_utc(now or datetime.now(timezone.utc))
+        moment = db_now(db) if now is None else _as_db_naive(db, now)
         touched = latest.updated_at or latest.created_at
         stale = bool(touched and (moment - touched) > stale_after(latest))
         return RunState(

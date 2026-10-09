@@ -119,8 +119,6 @@ class TaskMemberService:
         # Sync to physical column for optimized queries
         task.is_group_chat = True
 
-        task.updated_at = datetime.utcnow()
-
         if commit:
             db.commit()
         else:
@@ -261,7 +259,6 @@ class TaskMemberService:
             existing.status = MemberStatus.APPROVED
             existing.invited_by_user_id = invited_by
             existing.requested_at = datetime.utcnow()
-            existing.updated_at = datetime.utcnow()
             existing.role = (
                 ResourceRole.Maintainer.value
             )  # Group chat members get maintainer role
@@ -334,7 +331,6 @@ class TaskMemberService:
         member.status = MemberStatus.REJECTED
         member.reviewed_by_user_id = removed_by
         member.reviewed_at = datetime.utcnow()
-        member.updated_at = datetime.utcnow()
         db.commit()
 
         return True

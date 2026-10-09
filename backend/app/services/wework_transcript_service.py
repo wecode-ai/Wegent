@@ -152,7 +152,6 @@ def acquire_lease(
     transcript.writer_lease_expires_at = now + timedelta(seconds=request.ttl_seconds)
     if request.title is not None:
         transcript.title = request.title
-    transcript.updated_at = now
     db.commit()
     db.refresh(transcript)
     return transcript
@@ -176,7 +175,6 @@ def renew_lease(
     transcript.writer_lease_expires_at = utcnow() + timedelta(
         seconds=request.ttl_seconds
     )
-    transcript.updated_at = utcnow()
     db.commit()
     db.refresh(transcript)
     return transcript
@@ -197,7 +195,6 @@ def release_lease(
     )
     _require_lease(transcript, request.client_id, request.fencing_token)
     transcript.writer_lease_expires_at = EPOCH_TIME
-    transcript.updated_at = utcnow()
     db.commit()
     db.refresh(transcript)
     return transcript
@@ -287,7 +284,6 @@ def upload_segment(
     transcript.archived_at = EPOCH_TIME
     if request.title is not None:
         transcript.title = request.title
-    transcript.updated_at = utcnow()
     try:
         db.commit()
     except SQLAlchemyError:
@@ -416,7 +412,6 @@ def archive_transcript(
     transcript.state = "archived"
     transcript.archived_at = utcnow()
     transcript.writer_lease_expires_at = EPOCH_TIME
-    transcript.updated_at = utcnow()
     db.commit()
     db.refresh(transcript)
     return transcript

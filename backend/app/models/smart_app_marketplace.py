@@ -177,15 +177,12 @@ class SmartApp(Base):
     created_at = Column(
         _DATETIME,
         nullable=False,
-        default=datetime.now,
         server_default=_AuditTimestampDefault(),
         comment="Creation time",
     )
     updated_at = Column(
         _DATETIME,
         nullable=False,
-        default=datetime.now,
-        onupdate=datetime.now,
         server_default=_AuditTimestampDefault(on_update=True),
         comment="Last update time",
     )
@@ -299,7 +296,6 @@ class SmartAppRelease(Base):
     created_at = Column(
         _DATETIME,
         nullable=False,
-        default=datetime.now,
         server_default=_AuditTimestampDefault(),
         comment="Creation time",
     )
@@ -401,15 +397,12 @@ class SmartAppSubmission(Base):
     created_at = Column(
         _DATETIME,
         nullable=False,
-        default=datetime.now,
         server_default=_AuditTimestampDefault(),
         comment="Creation time",
     )
     updated_at = Column(
         _DATETIME,
         nullable=False,
-        default=datetime.now,
-        onupdate=datetime.now,
         server_default=_AuditTimestampDefault(on_update=True),
         comment="Last update time",
     )

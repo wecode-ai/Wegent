@@ -21,6 +21,7 @@ from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
 from app.db.session import SessionLocal
+from app.db.timezone import db_now
 from app.schemas.knowledge import DocumentProcessingError, DocumentProcessingStage
 from app.services.knowledge.processing_errors import (
     build_processing_error,
@@ -687,7 +688,9 @@ def scan_stale_index_tasks():
 
         marked_count = 0
         for doc_id, generation, index_status, updated_at in active_docs:
-            stale_reason = _get_active_index_stale_reason_for(index_status, updated_at)
+            stale_reason = _get_active_index_stale_reason_for(
+                index_status, updated_at, now=db_now(db)
+            )
             if stale_reason is not None:
                 finalized = mark_document_index_failed(
                     db=db,

@@ -350,7 +350,6 @@ class PipelineStageService:
             task_crd.status.progress = 100
             task_crd.status.updatedAt = datetime.now()
             task.json = task_crd.model_dump(mode="json", exclude_none=True)
-            task.updated_at = datetime.now()
             task.completed_at = datetime.now()
             flag_modified(task, "json")
             db.commit()
@@ -418,7 +417,6 @@ class PipelineStageService:
         task_crd.status.updatedAt = datetime.now()
         task_crd.spec.currentStage = next_stage  # Track current pipeline stage
         task.json = task_crd.model_dump(mode="json", exclude_none=True)
-        task.updated_at = datetime.now()
         flag_modified(task, "json")
         db.commit()
 
@@ -548,7 +546,6 @@ class PipelineStageService:
         task_crd.status.updatedAt = datetime.now()
         task_crd.spec.currentStage = next_stage
         task.json = task_crd.model_dump(mode="json", exclude_none=True)
-        task.updated_at = datetime.now()
         flag_modified(task, "json")
         db.commit()
 

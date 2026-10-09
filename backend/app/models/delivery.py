@@ -136,9 +136,9 @@ class LoopNode(Base):
     manifest_object_key = Column(String(1024), nullable=True)
     metadata_json = Column("metadata", JSON, nullable=True)
     version = Column(Integer, nullable=False, default=1, server_default="1")
-    created_at = Column(DateTime, nullable=False, default=func.now())
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(
-        DateTime, nullable=False, default=func.now(), onupdate=func.now()
+        DateTime, nullable=False, server_default=func.now(), server_onupdate=func.now()
     )
     completed_at = Column(DateTime, nullable=True)
     delivered_at = Column(DateTime, nullable=True)

@@ -31,6 +31,7 @@ from typing import Optional, Sequence
 from sqlalchemy import func, insert, literal, select
 from sqlalchemy.orm import Session
 
+from app.db.timezone import database_datetime_timezone, db_now
 from app.models.wiki import WikiContent, WikiGeneration, WikiGenerationStatus
 from app.services.knowledge.code_wiki.page_path import (
     collation_key,
@@ -68,23 +69,16 @@ FAILURE_CODE_EXT_KEY = "failureCode"
 WORKER_ABANDONED_CODE = "worker_abandoned"
 
 
-def _utcnow() -> datetime:
-    """Return a timezone-naive UTC timestamp, matching the wiki tables."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _as_naive_utc(value: Optional[datetime]) -> datetime:
-    """Normalize a caller-supplied instant to the naive UTC the wiki tables store.
+def _as_db_naive(db: Session, value: datetime) -> datetime:
+    """Normalize a caller-supplied instant to the session's naive basis.
 
     An aware value is converted before its offset is dropped. Dropping it outright
-    would shift the instant by that offset, and both callers compare the result
-    against stored timestamps to decide what to reclaim or delete.
+    would shift the instant by that offset, and the result is compared against
+    stored timestamps to decide what to reclaim or delete.
     """
-    if value is None:
-        return _utcnow()
     if value.tzinfo is None:
         return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.astimezone(database_datetime_timezone(db)).replace(tzinfo=None)
 
 
 def stale_after(
@@ -151,7 +145,6 @@ def seed_from_published(
     if existing:
         return SeedOutcome(0, skipped_reason="generation already holds pages")
 
-    now = _utcnow()
     # parent_id is deliberately not carried over: it refers to row ids inside the
     # source generation, so copying it would point every seeded page at a row in a
     # different version. Hierarchy comes from the page path, which is copied intact.
@@ -162,8 +155,8 @@ def seed_from_published(
         WikiContent.content,
         literal(0),
         WikiContent.ext,
-        literal(now),
-        literal(now),
+        func.now(),
+        func.now(),
     ).where(WikiContent.generation_id == published_generation_id)
 
     db.execute(
@@ -256,7 +249,7 @@ def reclaim_stale_generations(
         return ()
 
     reclaimed: list[int] = []
-    moment = _as_naive_utc(now)
+    moment = db_now(db) if now is None else _as_db_naive(db, now)
     for generation in stale:
         deadline = stale_after(generation, default_hours=stale_after_hours)
         if generation.updated_at >= moment - deadline:
@@ -305,7 +298,7 @@ def apply_retention(
     Returns:
         Ids of the generations that were deleted.
     """
-    reference = _as_naive_utc(now)
+    reference = db_now(db) if now is None else _as_db_naive(db, now)
     doomed: list[int] = []
 
     successful = (

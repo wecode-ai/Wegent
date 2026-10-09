@@ -113,7 +113,6 @@ def reset_subtask_for_retry(
         progress=0,
         error_message="",
         result=None,
-        updated_at=datetime.now(),
     )
 
     # Also reset Task status to PENDING so executor_manager can fetch it

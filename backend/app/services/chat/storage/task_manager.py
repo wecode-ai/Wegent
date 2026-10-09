@@ -644,7 +644,6 @@ def update_task_timestamp(db: Session, task: TaskResource) -> None:
         db: Database session
         task: Task resource to update
     """
-    task.updated_at = datetime.now()
     # Also update the JSON status.updatedAt for consistency
     task_crd = Task.model_validate(task.json)
     if task_crd.status:

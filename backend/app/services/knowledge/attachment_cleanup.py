@@ -14,6 +14,7 @@ from sqlalchemy import Integer, cast, exists
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.db.timezone import db_now
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.services.knowledge.external_refresh_snapshot import (
@@ -62,7 +63,7 @@ def cleanup_orphaned_knowledge_attachments(
     now: datetime | None = None,
 ) -> AttachmentOrphanCleanupReport:
     """Delete aged, explicitly Wiki-owned attachments with no document link."""
-    current_time = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    current_time = now or db_now(db)
     cutoff = current_time - timedelta(hours=max(1, retention_hours))
     converted_expression = cast(
         KnowledgeDocument.source_config["converted_attachment_id"].as_string(),

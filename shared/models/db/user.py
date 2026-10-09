@@ -27,8 +27,8 @@ class User(Base):
     auth_source = Column(String(20), nullable=False, default="unknown")
     # User preferences (e.g., send_key: "enter" or "cmd_enter")
     preferences = Column(String(4096), nullable=False, default="{}")
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), server_onupdate=func.now())
 
     # Note: Relationships like shared_tasks are not included here
     # as they would create circular dependencies with Backend-specific models.

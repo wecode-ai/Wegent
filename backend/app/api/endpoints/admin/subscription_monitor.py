@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_admin_user
+from app.db.timezone import db_now
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.models.user import User
@@ -37,7 +38,7 @@ async def get_subscription_monitor_stats(
     Returns execution counts and rates for the specified time window.
     """
     # Calculate time threshold
-    time_threshold = datetime.utcnow() - timedelta(hours=hours)
+    time_threshold = db_now(db) - timedelta(hours=hours)
 
     # Base query for executions in the time window
     base_query = db.query(BackgroundExecution).filter(
@@ -137,7 +138,7 @@ async def get_subscription_monitor_errors(
     Only includes executions with terminal error states (FAILED, CANCELLED).
     """
     # Calculate time threshold
-    time_threshold = datetime.utcnow() - timedelta(hours=hours)
+    time_threshold = db_now(db) - timedelta(hours=hours)
 
     # Base query
     query = db.query(BackgroundExecution).filter(

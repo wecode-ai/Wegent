@@ -110,7 +110,6 @@ class KnowledgeArtifactRepository:
                 self.db.rollback()
                 return None
             record.title = title
-            record.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             self.db.commit()
             self.db.refresh(record)
             return self._to_schema(record)
@@ -151,7 +150,6 @@ class KnowledgeArtifactRepository:
             record.content = ""
             record.error_message = ""
             record.attempt += 1
-            record.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             self.db.commit()
             self.db.refresh(record)
             return self._to_schema(record), True
