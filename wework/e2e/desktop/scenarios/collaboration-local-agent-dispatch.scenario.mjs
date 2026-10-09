@@ -187,7 +187,7 @@ async function renameIssueWhileRunning(control, timeoutMs) {
     timeoutMs,
   })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'), {
-    value: RENAMED_ISSUE,
+    text: RENAMED_ISSUE,
     timeoutMs,
   })
 }
