@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
-import { StartupTelemetryLifecycle } from './startup-telemetry'
+import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './startup-telemetry'
 
 describe('startup telemetry lifecycle', () => {
   test('publishes one correlated successful startup', () => {
@@ -47,5 +47,26 @@ describe('startup telemetry lifecycle', () => {
       duration_ms: 125,
       failure_stage: 'desktop_runtime',
     })
+  })
+
+  test('publishes success only after both the renderer and desktop runtime are ready', () => {
+    const publish = vi.fn()
+    const lifecycle = new StartupTelemetryLifecycle({
+      id: 'startup-3',
+      now: () => 100,
+      publish,
+    })
+    const successGate = new StartupTelemetrySuccessGate(lifecycle)
+
+    lifecycle.start()
+
+    expect(successGate.markRendererReady()).toBe(false)
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(successGate.markRuntimeReady()).toBe(true)
+    expect(publish).toHaveBeenLastCalledWith('startup.succeeded', {
+      startup_id: 'startup-3',
+      duration_ms: 0,
+    })
+    expect(successGate.markRendererReady()).toBe(false)
   })
 })

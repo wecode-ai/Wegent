@@ -44,3 +44,24 @@ export class StartupTelemetryLifecycle {
     return true
   }
 }
+
+export class StartupTelemetrySuccessGate {
+  private rendererReady = false
+  private runtimeReady = false
+
+  constructor(private readonly lifecycle: StartupTelemetryLifecycle) {}
+
+  markRendererReady(): boolean {
+    this.rendererReady = true
+    return this.settleIfReady()
+  }
+
+  markRuntimeReady(): boolean {
+    this.runtimeReady = true
+    return this.settleIfReady()
+  }
+
+  private settleIfReady(): boolean {
+    return this.rendererReady && this.runtimeReady ? this.lifecycle.succeed() : false
+  }
+}

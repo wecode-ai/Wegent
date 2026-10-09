@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
     | ((event: { type: string; payload: Record<string, unknown> }) => void)
     | null,
   publish: vi.fn(),
+  preferences: {
+    loaded: true,
+    preferences: { telemetryConsentAsked: true, telemetryEnabled: true },
+  },
   telemetryEnabled: true,
 }))
 
@@ -57,6 +61,10 @@ vi.mock('@/features/auth/useAuth', () => ({
   useAuth: () => mocks.auth,
 }))
 
+vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
+  useAppPreferencesState: () => mocks.preferences,
+}))
+
 vi.mock('@/features/dsh-runtime/dshExtensions', () => ({
   getDshTelemetrySinks: () => [],
   subscribeDshTelemetrySinks: () => () => {},
@@ -70,6 +78,8 @@ describe('TelemetryAgent', () => {
     mocks.flushInternalSinks.mockReset()
     mocks.hostEventHandler = null
     mocks.publish.mockReset()
+    mocks.preferences.loaded = true
+    mocks.preferences.preferences = { telemetryConsentAsked: true, telemetryEnabled: true }
     mocks.telemetryEnabled = true
     window.history.replaceState({}, '', '/sites?app_type=smart_app')
   })
@@ -125,6 +135,7 @@ describe('TelemetryAgent', () => {
   })
 
   test('publishes the current route after public telemetry is enabled', async () => {
+    mocks.preferences.preferences = { telemetryConsentAsked: false, telemetryEnabled: false }
     mocks.telemetryEnabled = false
     const view = render(<TelemetryAgent />)
 
@@ -139,6 +150,7 @@ describe('TelemetryAgent', () => {
     })
     expect(mocks.publish).not.toHaveBeenCalled()
 
+    mocks.preferences.preferences = { telemetryConsentAsked: true, telemetryEnabled: true }
     mocks.telemetryEnabled = true
     view.rerender(<TelemetryAgent />)
 
@@ -148,6 +160,35 @@ describe('TelemetryAgent', () => {
         name: 'app_startup_attempted',
         properties: { startup_id: '13c4ae86-1066-46f5-a3db-4c92e806564a' },
       })
+    )
+  })
+
+  test('discards startup events collected before an explicit telemetry refusal', async () => {
+    mocks.preferences.preferences = { telemetryConsentAsked: false, telemetryEnabled: false }
+    mocks.telemetryEnabled = false
+    const view = render(<TelemetryAgent />)
+
+    act(() => {
+      mocks.hostEventHandler?.({
+        type: 'startup.attempted',
+        payload: { startup_id: '13c4ae86-1066-46f5-a3db-4c92e806564a' },
+      })
+    })
+
+    mocks.preferences.preferences = { telemetryConsentAsked: true, telemetryEnabled: false }
+    view.rerender(<TelemetryAgent />)
+
+    mocks.preferences.preferences = { telemetryConsentAsked: true, telemetryEnabled: true }
+    mocks.telemetryEnabled = true
+    view.rerender(<TelemetryAgent />)
+
+    await waitFor(() =>
+      expect(mocks.publish).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'smart_app_marketplace_opened' })
+      )
+    )
+    expect(mocks.publish).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'app_startup_attempted' })
     )
   })
 

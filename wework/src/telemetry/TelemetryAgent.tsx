@@ -12,6 +12,7 @@ import {
   subscribeDshTelemetrySinks,
 } from '@/features/dsh-runtime/dshExtensions'
 import { resolveRunningHarnessAppInstallation } from '@/features/harness-apps/harnessAppTabs'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { trackEvent, useTelemetryEnabled } from './client'
 import { getTelemetryConfig } from './config'
 import { createTelemetryDispatcher } from './dispatcher'
@@ -170,14 +171,21 @@ function desktopStartupEvent(event: DesktopHostEvent): DesktopStartupAnalyticsEv
 
 export function TelemetryAgent() {
   const { isLoading, user } = useAuth()
+  const appPreferences = useAppPreferencesState()
   const { pathname, search } = useTelemetryLocation()
   const routes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
   const feature = routes.find(route => route.path === pathname)?.telemetryFeature
   const distribution = getTelemetryConfig().distribution
   const publicTelemetryEnabled = useTelemetryEnabled()
+  const publicTelemetryExplicitlyDisabled =
+    distribution === 'public' &&
+    appPreferences?.loaded === true &&
+    appPreferences.preferences.telemetryConsentAsked === true &&
+    appPreferences.preferences.telemetryEnabled !== true
   const electronRuntime = isElectronRuntime()
   const lastRouteKeyRef = useRef<string | null>(null)
   const pendingDesktopStartupEventsRef = useRef<DesktopStartupAnalyticsEvent[]>([])
+  const publicTelemetryExplicitlyDisabledRef = useRef(publicTelemetryExplicitlyDisabled)
   const publicTelemetryEnabledRef = useRef(publicTelemetryEnabled)
   const seenDesktopStartupEventsRef = useRef(new Set<string>())
   const dispatcher = useMemo(
@@ -192,7 +200,11 @@ export function TelemetryAgent() {
 
   useEffect(() => {
     publicTelemetryEnabledRef.current = publicTelemetryEnabled
-  }, [publicTelemetryEnabled])
+    publicTelemetryExplicitlyDisabledRef.current = publicTelemetryExplicitlyDisabled
+    if (publicTelemetryExplicitlyDisabled) {
+      pendingDesktopStartupEventsRef.current = []
+    }
+  }, [publicTelemetryEnabled, publicTelemetryExplicitlyDisabled])
 
   useEffect(
     () =>
@@ -233,9 +245,12 @@ export function TelemetryAgent() {
         const eventKey = `${event.name}:${event.properties.startup_id}`
         if (seenDesktopStartupEventsRef.current.has(eventKey)) return
         seenDesktopStartupEventsRef.current.add(eventKey)
-        if (distribution === 'public' && !publicTelemetryEnabledRef.current) {
-          pendingDesktopStartupEventsRef.current.push(event)
-          return
+        if (distribution === 'public') {
+          if (publicTelemetryExplicitlyDisabledRef.current) return
+          if (!publicTelemetryEnabledRef.current) {
+            pendingDesktopStartupEventsRef.current.push(event)
+            return
+          }
         }
         dispatcher.publish(fact(event, userContext(distribution, user)))
       },

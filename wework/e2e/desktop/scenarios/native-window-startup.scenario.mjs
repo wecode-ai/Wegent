@@ -150,6 +150,7 @@ export async function createDesktopScenario({ resultDir }) {
       // Consent is already saved by common bootstrap. Restart without clicking or focusing
       // anything so the assertion exercises startup autofocus itself.
       assert.ok(restartDesktopApp, 'The startup focus scenario requires the desktop restart hook')
+      const telemetryRequestCountBeforeRestart = control.telemetryRequestCount()
       await restartDesktopApp()
       await waitForClosedStartupSplash(control)
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]')
@@ -163,11 +164,17 @@ export async function createDesktopScenario({ resultDir }) {
         `${JSON.stringify(focusSnapshot, null, 2)}\n`
       )
 
-      await control.awaitTelemetryEvent('app_startup_attempted')
-      await control.awaitTelemetryEvent('app_startup_succeeded')
-      const startupEvents = control.telemetryRequests.flatMap(request =>
-        telemetryEvents(request.payload)
+      await control.awaitTelemetryEventAfter(
+        'app_startup_attempted',
+        telemetryRequestCountBeforeRestart
       )
+      await control.awaitTelemetryEventAfter(
+        'app_startup_succeeded',
+        telemetryRequestCountBeforeRestart
+      )
+      const startupEvents = control.telemetryRequests
+        .slice(telemetryRequestCountBeforeRestart)
+        .flatMap(request => telemetryEvents(request.payload))
       const attempted = startupEvents.find(event => event.event === 'app_startup_attempted')
       const succeeded = startupEvents.find(
         event =>
