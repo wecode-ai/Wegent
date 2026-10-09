@@ -558,8 +558,12 @@ def _resolve_allowed_model_names(
     allowed_models = raw_agent_config.get("allowed_models")
     if not allowed_models:
         for bound_model_name in _bound_model_names(bot_crd, raw_agent_config):
+            # Only inspect the bound model's metadata here; the user is not
+            # executing with it, so the public-model user whitelist must not
+            # apply. Otherwise overriding away from a whitelist-restricted
+            # bound model would still fail with that model's whitelist error.
             _, bound_model_spec = _find_model_with_namespace(
-                db, bound_model_name, user_id
+                db, bound_model_name, user_id, enforce_public_whitelist=False
             )
             if not bound_model_spec:
                 continue
@@ -786,7 +790,10 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
 
 
 def _find_model_with_namespace(
-    db: Session, model_name: str, user_id: int
+    db: Session,
+    model_name: str,
+    user_id: int,
+    enforce_public_whitelist: bool = True,
 ) -> tuple[Optional[Kind], Optional[Dict[str, Any]]]:
     """
     Find model by name and return both the Kind object and spec.
@@ -801,6 +808,9 @@ def _find_model_with_namespace(
         db: Database session
         model_name: Model name to find
         user_id: User ID for private model lookup
+        enforce_public_whitelist: When False, skip the public model user
+            whitelist check. Only used by callers that read a model's metadata
+            (e.g. an agent's bound model) without executing with it.
 
     Returns:
         Tuple of (Kind object, Model spec dictionary) or (None, None) if not found
@@ -881,7 +891,7 @@ def _find_model_with_namespace(
     if public_model and public_model.json:
         # Enforce the public model user whitelist: only listed users may use it.
         user = db.query(User).filter(User.id == user_id).first()
-        if not is_public_model_allowed_for_user(
+        if enforce_public_whitelist and not is_public_model_allowed_for_user(
             public_model.json, user.user_name if user else None
         ):
             raise ValueError(f"Model '{model_name}' is restricted to whitelisted users")

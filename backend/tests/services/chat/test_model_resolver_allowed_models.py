@@ -426,7 +426,9 @@ class TestAllowedModelNamesForBot:
             allowed_names = allowed_model_names_for_bot(db, bot, 1)
 
         assert allowed_names == {"gpt-4o"}
-        mock_find.assert_called_once_with(db, "pointer-model", 1)
+        mock_find.assert_called_once_with(
+            db, "pointer-model", 1, enforce_public_whitelist=False
+        )
 
     def test_prefers_bind_model_whitelist_over_model_ref(self):
         """The bound model of the bot wins over the legacy modelRef reference."""
@@ -434,7 +436,7 @@ class TestAllowedModelNamesForBot:
         bot = _make_bot({"bind_model": "bind-model"})
         bot.json["spec"]["modelRef"] = {"name": "legacy-model", "namespace": "default"}
 
-        def _fake_find(_db, model_name, _user_id):
+        def _fake_find(_db, model_name, _user_id, **_kwargs):
             if model_name == "bind-model":
                 return MagicMock(), {
                     "modelConfig": {"allowed_models": [{"name": "bind-model"}]}
@@ -450,7 +452,9 @@ class TestAllowedModelNamesForBot:
             allowed_names = allowed_model_names_for_bot(db, bot, 1)
 
         assert allowed_names == {"bind-model"}
-        mock_find.assert_called_once_with(db, "bind-model", 1)
+        mock_find.assert_called_once_with(
+            db, "bind-model", 1, enforce_public_whitelist=False
+        )
 
     def test_malformed_entries_return_empty_set(self):
         """Malformed whitelist entries keep the restriction but allow nothing."""
@@ -502,3 +506,60 @@ class TestAllowedModelNamesForTeam:
         team.json = None
 
         assert allowed_model_names_for_team(MagicMock(), team, 1) is None
+
+
+class TestBoundModelPublicWhitelist:
+    """Regression tests: overriding away from a whitelist-restricted bound model.
+
+    Reading the bound model's metadata to discover its allowed_models must not
+    enforce the public-model user whitelist, otherwise a user who switches to
+    another model still fails with the restricted bound model's error.
+    """
+
+    RESTRICTED_MODEL = "wecode-claude-sonnet-4-6(overseas)"
+    OVERRIDE_MODEL = "gpt-5.5"
+
+    def _fake_find_model_with_namespace(
+        self, db, model_name, user_id, enforce_public_whitelist=True
+    ):
+        if model_name == self.RESTRICTED_MODEL and enforce_public_whitelist:
+            raise ValueError(
+                f"Model '{self.RESTRICTED_MODEL}' is restricted to whitelisted users"
+            )
+        return MagicMock(), {"modelConfig": {}}
+
+    def _make_bot_with_restricted_model_ref(self) -> MagicMock:
+        bot = _make_bot({})
+        bot.json["spec"]["modelRef"] = {
+            "name": self.RESTRICTED_MODEL,
+            "namespace": "default",
+        }
+        return bot
+
+    def test_force_override_ignores_bound_model_public_whitelist(self):
+        """Force-overriding to another model must not raise the bound model's error."""
+        bot = self._make_bot_with_restricted_model_ref()
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            side_effect=self._fake_find_model_with_namespace,
+        ):
+            _, _, model_name, _ = _resolve_model_for_bot(
+                db=MagicMock(),
+                bot=bot,
+                user_id=1,
+                override_model_name=self.OVERRIDE_MODEL,
+                force_override=True,
+            )
+
+        assert model_name == self.OVERRIDE_MODEL
+
+    def test_allowed_model_names_for_bot_ignores_bound_model_public_whitelist(self):
+        """Restriction aggregation must not raise the bound model's whitelist error."""
+        bot = self._make_bot_with_restricted_model_ref()
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            side_effect=self._fake_find_model_with_namespace,
+        ):
+            assert allowed_model_names_for_bot(MagicMock(), bot, 1) is None
