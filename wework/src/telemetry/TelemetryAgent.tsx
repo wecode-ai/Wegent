@@ -4,15 +4,19 @@ import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { subscribeBusinessEvents } from './businessEvents'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { stripAppBasePath } from '@/config/runtime'
+import { subscribeDesktopHostEvents, type DesktopHostEvent } from '@/api/dsh/desktopHost'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useAuth } from '@/features/auth/useAuth'
 import {
   getDshTelemetrySinks,
   subscribeDshTelemetrySinks,
 } from '@/features/dsh-runtime/dshExtensions'
 import { resolveRunningHarnessAppInstallation } from '@/features/harness-apps/harnessAppTabs'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { trackEvent, useTelemetryEnabled } from './client'
 import { getTelemetryConfig } from './config'
 import { createTelemetryDispatcher } from './dispatcher'
+import type { AnalyticsEvent, AnalyticsEventName } from './events'
 import type {
   DomainTelemetryEvent,
   WeworkTelemetryContext,
@@ -27,6 +31,13 @@ interface LocationState {
   readonly pathname: string
   readonly search: string
 }
+
+type DesktopStartupAnalyticsEvent = Extract<
+  AnalyticsEvent,
+  {
+    name: Extract<AnalyticsEventName, `app_startup_${string}`>
+  }
+>
 
 function currentLocation(): LocationState {
   return {
@@ -119,14 +130,64 @@ function operationEvent(result: OperationResult): DomainTelemetryEvent {
   ) as DomainTelemetryEvent
 }
 
+function desktopStartupEvent(event: DesktopHostEvent): DesktopStartupAnalyticsEvent | null {
+  const startupId = event.payload.startup_id
+  if (typeof startupId !== 'string') return null
+  if (event.type === 'startup.attempted') {
+    return {
+      name: 'app_startup_attempted',
+      properties: { startup_id: startupId },
+    }
+  }
+
+  const durationMs = event.payload.duration_ms
+  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return null
+  if (event.type === 'startup.succeeded') {
+    return {
+      name: 'app_startup_succeeded',
+      properties: { duration_ms: durationMs, startup_id: startupId },
+    }
+  }
+  if (event.type !== 'startup.failed') return null
+  const failureStage = event.payload.failure_stage
+  if (
+    failureStage !== 'core_plugin' &&
+    failureStage !== 'desktop_runtime' &&
+    failureStage !== 'renderer_initialize' &&
+    failureStage !== 'renderer_load' &&
+    failureStage !== 'unknown'
+  ) {
+    return null
+  }
+  return {
+    name: 'app_startup_failed',
+    properties: {
+      duration_ms: durationMs,
+      failure_stage: failureStage,
+      startup_id: startupId,
+    },
+  }
+}
+
 export function TelemetryAgent() {
   const { isLoading, user } = useAuth()
+  const appPreferences = useAppPreferencesState()
   const { pathname, search } = useTelemetryLocation()
   const routes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
   const feature = routes.find(route => route.path === pathname)?.telemetryFeature
   const distribution = getTelemetryConfig().distribution
   const publicTelemetryEnabled = useTelemetryEnabled()
+  const publicTelemetryExplicitlyDisabled =
+    distribution === 'public' &&
+    appPreferences?.loaded === true &&
+    appPreferences.preferences.telemetryConsentAsked === true &&
+    appPreferences.preferences.telemetryEnabled !== true
+  const electronRuntime = isElectronRuntime()
   const lastRouteKeyRef = useRef<string | null>(null)
+  const pendingDesktopStartupEventsRef = useRef<DesktopStartupAnalyticsEvent[]>([])
+  const publicTelemetryExplicitlyDisabledRef = useRef(publicTelemetryExplicitlyDisabled)
+  const publicTelemetryEnabledRef = useRef(publicTelemetryEnabled)
+  const seenDesktopStartupEventsRef = useRef(new Set<string>())
   const dispatcher = useMemo(
     () =>
       createTelemetryDispatcher({
@@ -136,6 +197,14 @@ export function TelemetryAgent() {
       }),
     [distribution]
   )
+
+  useEffect(() => {
+    publicTelemetryEnabledRef.current = publicTelemetryEnabled
+    publicTelemetryExplicitlyDisabledRef.current = publicTelemetryExplicitlyDisabled
+    if (publicTelemetryExplicitlyDisabled) {
+      pendingDesktopStartupEventsRef.current = []
+    }
+  }, [publicTelemetryEnabled, publicTelemetryExplicitlyDisabled])
 
   useEffect(
     () =>
@@ -166,6 +235,35 @@ export function TelemetryAgent() {
       }),
     [dispatcher, distribution, user]
   )
+
+  useEffect(() => {
+    if (!electronRuntime) return
+    return subscribeDesktopHostEvents(
+      hostEvent => {
+        const event = desktopStartupEvent(hostEvent)
+        if (!event) return
+        const eventKey = `${event.name}:${event.properties.startup_id}`
+        if (seenDesktopStartupEventsRef.current.has(eventKey)) return
+        seenDesktopStartupEventsRef.current.add(eventKey)
+        if (distribution === 'public') {
+          if (publicTelemetryExplicitlyDisabledRef.current) return
+          if (!publicTelemetryEnabledRef.current) {
+            pendingDesktopStartupEventsRef.current.push(event)
+            return
+          }
+        }
+        dispatcher.publish(fact(event, userContext(distribution, user)))
+      },
+      { replay: hostEvent => desktopStartupEvent(hostEvent) !== null }
+    )
+  }, [dispatcher, distribution, electronRuntime, user])
+
+  useEffect(() => {
+    if (distribution !== 'public' || !publicTelemetryEnabled) return
+    const pending = pendingDesktopStartupEventsRef.current
+    pendingDesktopStartupEventsRef.current = []
+    for (const event of pending) dispatcher.publish(fact(event))
+  }, [dispatcher, distribution, publicTelemetryEnabled])
 
   useEffect(() => {
     if (isLoading) return
