@@ -12,6 +12,10 @@ import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 const collaborationAppMocks = vi.hoisted(() => ({
   useController: vi.fn(),
+  stateSetters: [] as Array<{
+    initialValue: unknown;
+    setter: ReturnType<typeof vi.fn>;
+  }>,
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -23,12 +27,18 @@ vi.mock("react", async (importOriginal) => {
     useEffect: vi.fn(),
     useMemo: <T,>(factory: () => T) => factory(),
     useRef: <T,>(initialValue: T) => ({ current: initialValue }),
-    useState: <T,>(initialValue: T | (() => T)) => [
-      typeof initialValue === "function"
-        ? (initialValue as () => T)()
-        : initialValue,
-      vi.fn(),
-    ],
+    useState: <T,>(initialValue: T | (() => T)) => {
+      const resolvedValue =
+        typeof initialValue === "function"
+          ? (initialValue as () => T)()
+          : initialValue;
+      const setter = vi.fn();
+      collaborationAppMocks.stateSetters.push({
+        initialValue: resolvedValue,
+        setter,
+      });
+      return [resolvedValue, setter];
+    },
   };
 });
 
@@ -208,6 +218,7 @@ function createWorkspaceHomeHost(): WorkspaceProjectsHomeHost {
 describe("CollaborationApp API boundary", () => {
   beforeEach(() => {
     collaborationAppMocks.useController.mockReset();
+    collaborationAppMocks.stateSetters.length = 0;
     collaborationAppMocks.useController.mockReturnValue({
       state: {
         projects: [],
@@ -800,6 +811,98 @@ describe("CollaborationApp API boundary", () => {
     expect(renderIssueDetail).toHaveBeenCalledWith(
       expect.objectContaining({ onDelete: expect.any(Function) }),
     );
+  });
+
+  it("ignores a stale archive page after the archive drawer reopens", async () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: "issue-1",
+      view: "board",
+    };
+    const project = createProject(1);
+    const controller = controllerWithProject(project);
+    const issue = {
+      id: "issue-1",
+      cloud_project_id: project.id,
+      sequence_number: 1,
+      parent_id: null,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: "Issue",
+      description: "",
+      status: "completed",
+      priority: "none",
+      due_at: null,
+      tags: [],
+      sort_order: 0,
+      can_edit: true,
+      version: 1,
+      created_at: "2026-09-14T00:00:00Z",
+      updated_at: "2026-09-14T00:00:00Z",
+      completed_at: null,
+    } satisfies CollaborationIssue;
+    collaborationAppMocks.useController.mockReturnValue({
+      ...controller,
+      state: {
+        ...controller.state,
+        issues: [issue],
+        selectedIssue: issue,
+      },
+    });
+    let resolveFirst:
+      | ((value: { items: CollaborationIssue[]; nextCursor: null }) => void)
+      | undefined;
+    let resolveSecond:
+      | ((value: { items: CollaborationIssue[]; nextCursor: null }) => void)
+      | undefined;
+    const first = new Promise<{
+      items: CollaborationIssue[];
+      nextCursor: null;
+    }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<{
+      items: CollaborationIssue[];
+      nextCursor: null;
+    }>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const api = createApi();
+    api.issues = {
+      ...api.issues,
+      listArchived: vi
+        .fn()
+        .mockReturnValueOnce(first)
+        .mockReturnValueOnce(second),
+    };
+
+    const app = CollaborationApp({
+      api,
+      host,
+      issueArchiveEnabled: true,
+    });
+    const shell = findByType(app, CollaborationProjectViewShell);
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+    const archivedIssuesSetter = collaborationAppMocks.stateSetters.find(
+      ({ initialValue }) => Array.isArray(initialValue),
+    )?.setter;
+
+    expect(board?.props.onOpenArchive).toEqual(expect.any(Function));
+    board?.props.onOpenArchive();
+    board?.props.onOpenArchive();
+    expect(api.issues.listArchived).toHaveBeenCalledTimes(2);
+    expect(archivedIssuesSetter).toHaveBeenCalledTimes(2);
+    resolveSecond?.({ items: [], nextCursor: null });
+    await vi.waitFor(() => {
+      expect(archivedIssuesSetter).toHaveBeenCalledTimes(3);
+    });
+    resolveFirst?.({ items: [], nextCursor: null });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(api.issues.listArchived).toHaveBeenCalledTimes(2);
+    expect(archivedIssuesSetter).toHaveBeenCalledTimes(3);
   });
 
   it("keeps detail deletion unavailable for a read-only Issue", () => {

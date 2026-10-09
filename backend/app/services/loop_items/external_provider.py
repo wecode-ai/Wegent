@@ -896,14 +896,29 @@ class ExternalLoopItemProvider:
             )
         subtree_ids = self._subtree_ids(responses, item_id)
         reopened: list[dict[str, object]] = []
-        for current_id in subtree_ids:
-            issue = responses[current_id][0]
-            updated = self._update_issue(
-                project,
-                self._number(issue),
-                {"state": self._open_state(project)},
-            )
-            reopened.append(self._response(db, project, updated, access, user_id))
+        opened: list[int] = []
+        try:
+            for current_id in subtree_ids:
+                number = self._number(responses[current_id][0])
+                updated = self._update_issue(
+                    project,
+                    number,
+                    {"state": self._open_state(project)},
+                )
+                opened.append(number)
+                reopened.append(self._response(db, project, updated, access, user_id))
+        except Exception:
+            for number in reversed(opened):
+                try:
+                    self._update_issue(project, number, {"state": "closed"})
+                except Exception:
+                    logger.exception(
+                        "Failed to compensate external Issue restore "
+                        "project=%s issue=%s",
+                        project.id,
+                        number,
+                    )
+            raise
         self._invalidate_issue_page_cache(project.id)
         return reopened
 

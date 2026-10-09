@@ -2226,9 +2226,19 @@ impl LocalTaskStore {
     }
 
     pub fn archive_task(&self, project_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
-        let parent_id = self.get_task(project_id, task_id)?.parent_id;
-        let connection = self.connection()?;
-        let incomplete_count: i64 = connection.query_row(
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let parent_id: Option<String> = transaction
+            .query_row(
+                "SELECT parent_id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at IS NULL",
+                params![task_id, project_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let incomplete_count: i64 = transaction.query_row(
             "WITH RECURSIVE task_tree(id) AS (
                  SELECT id FROM loop_items
                  WHERE id = ?1 AND resource_type = 'task'
@@ -2250,7 +2260,7 @@ impl LocalTaskStore {
             ));
         }
         let archived_at = now();
-        let updated = connection.execute(
+        let updated = transaction.execute(
             "WITH RECURSIVE task_tree(id) AS (
                  SELECT id FROM loop_items
                  WHERE id = ?1 AND resource_type = 'task'
@@ -2270,8 +2280,9 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::TaskNotFound);
         }
         if let Some(parent_id) = parent_id.as_deref() {
-            refresh_runtime_projection_additional_context(&connection, parent_id)?;
+            refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -2326,10 +2337,11 @@ impl LocalTaskStore {
         task_id: &str,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
         self.get_project(project_id)?;
-        let connection = self.connection()?;
-        let archived_at: String = connection
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (archived_at, parent_id): (String, Option<String>) = transaction
             .query_row(
-                "SELECT item.deleted_at
+                "SELECT item.deleted_at, item.parent_id
                  FROM loop_items item
                  LEFT JOIN loop_items parent ON parent.id = item.parent_id
                  WHERE item.id = ?1 AND item.resource_type = 'task'
@@ -2339,12 +2351,12 @@ impl LocalTaskStore {
                        OR parent.deleted_at IS NULL OR parent.deleted_at != item.deleted_at
                    )",
                 params![task_id, project_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?
             .ok_or(TaskRuntimeError::TaskNotFound)?;
         let restored_ids = {
-            let mut statement = connection.prepare(
+            let mut statement = transaction.prepare(
                 "WITH RECURSIVE task_tree(id) AS (
                      SELECT id FROM loop_items
                      WHERE id = ?1 AND resource_type = 'task'
@@ -2364,7 +2376,7 @@ impl LocalTaskStore {
                 .collect::<Result<HashSet<_>, _>>()?;
             restored_ids
         };
-        connection.execute(
+        let updated = transaction.execute(
             "WITH RECURSIVE task_tree(id) AS (
                  SELECT id FROM loop_items
                  WHERE id = ?1 AND resource_type = 'task'
@@ -2380,6 +2392,13 @@ impl LocalTaskStore {
              WHERE id IN (SELECT id FROM task_tree)",
             params![task_id, project_id, archived_at, now()],
         )?;
+        if updated == 0 {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        if let Some(parent_id) = parent_id.as_deref() {
+            refresh_runtime_projection_additional_context(&transaction, parent_id)?;
+        }
+        transaction.commit()?;
         drop(connection);
         self.list_tasks(project_id).map(|items| {
             items
@@ -9406,6 +9425,24 @@ mod tests {
                 .unwrap()
                 .metadata["has_additional_context"],
             json!(false)
+        );
+
+        let restored = store
+            .restore_task(DEFAULT_WORK_ITEM_PROJECT_ID, &child.id)
+            .unwrap();
+        assert_eq!(
+            restored
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![child.id.as_str()]
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &parent_id)
+                .unwrap()
+                .metadata["has_additional_context"],
+            json!(true)
         );
     }
 

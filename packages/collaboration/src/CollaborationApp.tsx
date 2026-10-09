@@ -4,7 +4,7 @@ import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
 // SPDX-License-Identifier: Apache-2.0
 
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   collaborationMessages,
@@ -166,6 +166,7 @@ export function CollaborationApp({
   const [archiveDrawerError, setArchiveDrawerError] = useState<string | null>(
     null,
   );
+  const archiveLoadGeneration = useRef(0);
   const [restoringIssueId, setRestoringIssueId] = useState<string | null>(null);
   const { state, commands } = useCollaborationWorkspaceController({
     api,
@@ -249,11 +250,13 @@ export function CollaborationApp({
   }, [host.location.projectSettingsSection, host.location.view, project?.id]);
 
   useEffect(() => {
+    archiveLoadGeneration.current += 1;
     setArchiveIssueTargets(null);
     setArchiveIssueError(null);
     setArchiveDrawerOpen(false);
     setArchivedIssues([]);
     setArchiveNextCursor(null);
+    setArchiveDrawerLoading(false);
     setArchiveDrawerError(null);
   }, [project?.id]);
 
@@ -318,7 +321,8 @@ export function CollaborationApp({
     setArchiveIssueBusy(false);
   };
   const loadArchivedIssues = async (cursor: string | null = null) => {
-    if (!project || archiveDrawerLoading) return;
+    if (!project || (cursor && archiveDrawerLoading)) return;
+    const generation = ++archiveLoadGeneration.current;
     setArchiveDrawerLoading(true);
     setArchiveDrawerError(null);
     try {
@@ -326,18 +330,22 @@ export function CollaborationApp({
         cursor,
         limit: 50,
       });
+      if (generation !== archiveLoadGeneration.current) return;
       setArchivedIssues((current) =>
         cursor ? [...current, ...page.items] : page.items,
       );
       setArchiveNextCursor(page.nextCursor);
     } catch (error) {
+      if (generation !== archiveLoadGeneration.current) return;
       setArchiveDrawerError(
         error instanceof Error
           ? error.message
           : translate("todo.archive_box_load_failed", "加载归档任务失败"),
       );
     } finally {
-      setArchiveDrawerLoading(false);
+      if (generation === archiveLoadGeneration.current) {
+        setArchiveDrawerLoading(false);
+      }
     }
   };
   const openArchiveDrawer = () => {
@@ -345,6 +353,11 @@ export function CollaborationApp({
     setArchivedIssues([]);
     setArchiveNextCursor(null);
     void loadArchivedIssues();
+  };
+  const closeArchiveDrawer = () => {
+    archiveLoadGeneration.current += 1;
+    setArchiveDrawerOpen(false);
+    setArchiveDrawerLoading(false);
   };
   const restoreArchivedIssue = async (issue: CollaborationIssue) => {
     if (!project || restoringIssueId) return;
@@ -1130,7 +1143,7 @@ export function CollaborationApp({
               items={archivedIssues}
               loading={archiveDrawerLoading}
               nextCursor={archiveNextCursor}
-              onClose={() => setArchiveDrawerOpen(false)}
+              onClose={closeArchiveDrawer}
               onLoadMore={() => void loadArchivedIssues(archiveNextCursor)}
               onRestore={(issue) => void restoreArchivedIssue(issue)}
               translate={translate}

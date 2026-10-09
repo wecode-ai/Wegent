@@ -38,7 +38,7 @@ These actions record status history and project activity and notify the relevant
 Project boards and tables can archive Issues whose status is **Completed**. Incomplete Issues do not expose the archive action and cannot be included in a batch archive.
 
 - Single archive: open a completed Issue's action menu and select **Archive**.
-- Batch archive: select one or more completed Issues in the table, then select **Archive**.
+- Batch archive: select **Archive completed issues** in the board's **Completed** column header.
 - Browse and restore: open the project's **Archived Issues** drawer to page through archived records and restore them individually. A restored Issue returns to the active list in its original project.
 
 Archiving a parent Issue also archives its child Issues so the active task tree cannot retain orphaned children. Restoring that parent from the archive restores the full subtree. Restoring a child that was archived independently restores only that Issue. Native cloud projects, local projects, and GitHub/GitLab-backed projects share the same interaction. For external projects, archive and restore close and reopen the external Issue respectively.
