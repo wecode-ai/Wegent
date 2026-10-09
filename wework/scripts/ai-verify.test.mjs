@@ -30,6 +30,8 @@ describe('AI_VERIFY_ACTIONS', () => {
       'capture-workspace': 'captureWorkspaceWindow',
       snapshot: 'snapshot',
       debug: 'getWorkbenchDebugSnapshot',
+      'conversation-diagnostics': 'getConversationDiagnosticsSnapshot',
+      'conversation-frame-probe': 'setConversationFrameProbeEnabled',
       'active-element': 'getActiveElementTestId',
       'activate-task-notification': 'activateRuntimeTaskCompletionNotification',
       click: 'click',
@@ -279,6 +281,30 @@ describe('validateStartOptions', () => {
     expect(() => validateStartOptions({ packaged: 'yes' })).toThrow(
       '--packaged must be "true" or "false"'
     )
+  })
+
+  test('accepts an explicitly selected shared executor home', () => {
+    expect(() =>
+      validateStartOptions({
+        'executor-home': join(tmpdir(), 'wework-shared-home'),
+        'codex-home-initialization': 'false',
+      })
+    ).not.toThrow()
+  })
+
+  test.each(['', '   ', 'relative/executor-home'])('rejects invalid executor home %s', path => {
+    expect(() => validateStartOptions({ 'executor-home': path })).toThrow(
+      '--executor-home must be a nonempty absolute path'
+    )
+  })
+
+  test('keeps first-run Codex migration restricted to an isolated executor home', () => {
+    expect(() =>
+      validateStartOptions({
+        'executor-home': join(tmpdir(), 'wework-shared-home'),
+        'codex-home-initialization': 'true',
+      })
+    ).toThrow('--executor-home cannot be combined with --codex-home-initialization true')
   })
 })
 

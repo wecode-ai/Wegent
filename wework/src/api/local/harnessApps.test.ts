@@ -3,11 +3,16 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { harnessAppsApi, type HarnessAppExport } from './harnessApps'
 
 const mocks = vi.hoisted(() => ({
+  businessTrack: vi.fn(),
   desktopInvoke: vi.fn(),
 }))
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: (...args: unknown[]) => mocks.desktopInvoke(...args),
+}))
+
+vi.mock('@/telemetry/businessEvents', () => ({
+  trackBusinessEvent: (...args: unknown[]) => mocks.businessTrack(...args),
 }))
 
 const exported: HarnessAppExport = {
@@ -30,6 +35,7 @@ const exported: HarnessAppExport = {
 
 describe('harnessAppsApi', () => {
   beforeEach(() => {
+    mocks.businessTrack.mockReset()
     mocks.desktopInvoke.mockReset()
   })
 
@@ -41,9 +47,27 @@ describe('harnessAppsApi', () => {
       mocks.desktopInvoke.mockResolvedValueOnce(failed).mockResolvedValueOnce({ state: 'running' })
       await expect(harnessAppsApi.start('private-app', null)).resolves.toBe(failed)
       await harnessAppsApi.start('private-app', null)
+      const firstStartupId = mocks.businessTrack.mock.calls[0]?.[1]?.startup_id
+      const secondStartupId = mocks.businessTrack.mock.calls[1]?.[1]?.startup_id
+      expect(firstStartupId).toMatch(/^[0-9a-f-]{36}$/)
+      expect(secondStartupId).toMatch(/^[0-9a-f-]{36}$/)
+      expect(firstStartupId).not.toBe(secondStartupId)
+      expect(mocks.businessTrack.mock.calls).toEqual([
+        ['smart_app_start_attempted', { startup_id: firstStartupId }],
+        ['smart_app_start_attempted', { startup_id: secondStartupId }],
+      ])
       expect(results).toEqual([
-        { key: 'smart_app.start', outcome: 'failed', failureStage: 'confirm' },
-        { key: 'smart_app.start', outcome: 'succeeded' },
+        {
+          key: 'smart_app.start',
+          outcome: 'failed',
+          failureStage: 'confirm',
+          properties: { startup_id: firstStartupId },
+        },
+        {
+          key: 'smart_app.start',
+          outcome: 'succeeded',
+          properties: { startup_id: secondStartupId },
+        },
       ])
     } finally {
       stop()

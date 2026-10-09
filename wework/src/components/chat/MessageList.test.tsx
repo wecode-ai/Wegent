@@ -1277,6 +1277,9 @@ describe('MessageList', () => {
       chunks.every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
     ).toBe(true)
 
+    // Intersection callbacks recheck the current chunk geometry before rendering.
+    vi.spyOn(chunks.at(-1)!, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 100, 736, 360))
+
     act(() => {
       intersectionCallbacks.at(-1)?.(
         [{ isIntersecting: true } as IntersectionObserverEntry],
