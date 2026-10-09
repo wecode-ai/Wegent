@@ -219,8 +219,7 @@ async function ensureReplyComposer(control, activityId, timeoutMs) {
       await control.command('waitFor', composer, { visible: true, timeoutMs })
       return composer
     }
-    if (Number(await control.command('getElementCount', replyToggle)) > 0) {
-      await control.command('click', replyToggle, { visible: true })
+    if ((await control.command('clickIfPresent', replyToggle)) === 'clicked') {
       await control.command('waitFor', composer, { visible: true, timeoutMs })
       return composer
     }
