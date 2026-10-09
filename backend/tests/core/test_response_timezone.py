@@ -44,3 +44,17 @@ def test_nested_naive_datetime_carries_session_offset():
 def test_aware_datetime_is_left_untouched():
     body = _make_client().get("/aware").json()
     assert body["ts"] == "2026-10-09T07:00:00+00:00"
+
+
+def test_suffix_matches_database_dialect():
+    from app.core.config import settings
+    from app.core.response_timezone import _resolve_suffix
+
+    original = settings.DATABASE_URL
+    try:
+        settings.DATABASE_URL = "sqlite:///test.db"
+        assert _resolve_suffix() == "+00:00"
+        settings.DATABASE_URL = "mysql+pymysql://u:p@localhost/db"
+        assert _resolve_suffix() == "+08:00"
+    finally:
+        settings.DATABASE_URL = original

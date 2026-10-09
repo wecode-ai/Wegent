@@ -23,9 +23,22 @@ from typing import Any
 
 import fastapi.routing
 
+from app.core.config import settings
 from app.db.timezone import MYSQL_SESSION_TIMEZONE_OFFSET
 
-_DATETIME_SUFFIX = f"{MYSQL_SESSION_TIMEZONE_OFFSET}"
+
+def _resolve_suffix() -> str:
+    """Pick the offset matching the configured database's naive basis.
+
+    MySQL sessions are pinned to +08:00; SQLite CURRENT_TIMESTAMP is always
+    UTC. Labeling SQLite values +08:00 would shift their instant by 8 hours.
+    """
+    if settings.DATABASE_URL.startswith("sqlite"):
+        return "+00:00"
+    return MYSQL_SESSION_TIMEZONE_OFFSET
+
+
+_DATETIME_SUFFIX = _resolve_suffix()
 
 
 def _encode_datetime(value: datetime) -> str:
