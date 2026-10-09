@@ -638,30 +638,32 @@ export function IssueChatMessage({
         hideTime={hideTime}
         metadata={
           isAgent && showInlineExecutionStatus ? (
-            <>
-              {isManager ? (
-                <span
-                  className="text-xs text-text-muted"
-                  data-testid={`cloud-task-activity-role-${message.messageId}`}
-                >
-                  {t("activity.task_activity_manager_role")}
-                </span>
-              ) : null}
-              <ExecutionStatusBadge
-                translate={t}
-                testId={executionTestId}
-                aliasTestId={executionAliasTestId}
-                messageId={message.messageId}
-                status={runStatus}
-                onOpenExecution={openExecution}
-                onStopExecution={onStopExecution}
-                stopping={stopping}
-              />
-            </>
+            isManager ? (
+              <span
+                className="text-xs text-text-muted"
+                data-testid={`cloud-task-activity-role-${message.messageId}`}
+              >
+                {t("activity.task_activity_manager_role")}
+              </span>
+            ) : null
           ) : isSubagent ? (
             <span className="text-xs text-text-muted">
               {t("activity.task_activity_subagent_execution")}
             </span>
+          ) : null
+        }
+        trailing={
+          isAgent && showInlineExecutionStatus ? (
+            <ExecutionStatusBadge
+              translate={t}
+              testId={executionTestId}
+              aliasTestId={executionAliasTestId}
+              messageId={message.messageId}
+              status={runStatus}
+              onOpenExecution={openExecution}
+              onStopExecution={onStopExecution}
+              stopping={stopping}
+            />
           ) : null
         }
         data-testid={
