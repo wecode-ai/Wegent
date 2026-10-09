@@ -427,14 +427,14 @@ export function StandaloneFolderProjectDialog({
     [devices, fixedDeviceId, mode]
   )
   const [retainedRemoteDeviceOptions, setRetainedRemoteDeviceOptions] = useState<DeviceInfo[]>(
-    currentRemoteDeviceOptions
+    open ? currentRemoteDeviceOptions : []
   )
   useEffect(() => {
-    if (!open || currentRemoteDeviceOptions.length === 0) return
+    if (open && currentRemoteDeviceOptions.length === 0) return
     let cancelled = false
     queueMicrotask(() => {
       if (!cancelled) {
-        setRetainedRemoteDeviceOptions(currentRemoteDeviceOptions)
+        setRetainedRemoteDeviceOptions(open ? currentRemoteDeviceOptions : [])
       }
     })
     return () => {
