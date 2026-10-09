@@ -10,7 +10,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { basename, dirname, extname, join, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
@@ -37,6 +37,8 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'capture-workspace': 'captureWorkspaceWindow',
   snapshot: 'snapshot',
   debug: 'getWorkbenchDebugSnapshot',
+  'conversation-diagnostics': 'getConversationDiagnosticsSnapshot',
+  'conversation-frame-probe': 'setConversationFrameProbeEnabled',
   'active-element': 'getActiveElementTestId',
   'activate-task-notification': 'activateRuntimeTaskCompletionNotification',
   click: 'click',
@@ -95,6 +97,8 @@ const SELECTOR_OPTIONAL_COMMANDS = new Set([
   'capture-workspace',
   'snapshot',
   'debug',
+  'conversation-diagnostics',
+  'conversation-frame-probe',
   'active-element',
   'activate-task-notification',
   'click-at',
@@ -133,6 +137,7 @@ function usage() {
 Options:
   --codex-home-initialization true
                             Seed and verify isolated first-run Codex migration
+  --executor-home PATH      Use an explicitly selected existing executor home
   --packaged true           Launch the packaged app instead of Electron source mode
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
@@ -190,12 +195,26 @@ export function resolveOptionalBoolean(value, optionName) {
 }
 
 export function validateStartOptions(options) {
-  const allowedOptions = new Set(['codex-home-initialization', 'packaged', 'timeout'])
+  const allowedOptions = new Set([
+    'codex-home-initialization',
+    'executor-home',
+    'packaged',
+    'timeout',
+  ])
   const unexpectedOption = Object.keys(options).find(option => !allowedOptions.has(option))
   if (unexpectedOption) {
     throw new Error(`Unexpected option for start: --${unexpectedOption}`)
   }
   resolveOptionalBoolean(options.packaged, 'packaged')
+  if (options['executor-home'] !== undefined) {
+    const executorHome = options['executor-home'].trim()
+    if (!executorHome || !isAbsolute(executorHome)) {
+      throw new Error('--executor-home must be a nonempty absolute path')
+    }
+    if (options['codex-home-initialization'] === 'true') {
+      throw new Error('--executor-home cannot be combined with --codex-home-initialization true')
+    }
+  }
 }
 
 function json(response, status, value) {
@@ -563,7 +582,7 @@ async function runServer(sessionPath, token) {
   process.once('SIGTERM', () => void shutdown(143))
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
   const log = join(session.directory, 'app.log')
-  const executorHome = join(session.directory, 'executor-home')
+  const executorHome = session.executorHomeOverride ?? join(session.directory, 'executor-home')
   const codexHome = join(executorHome, 'codex')
   const nativeCodexHome = session.verifyCodexHomeInitialization
     ? join(session.directory, 'native-codex')
@@ -671,6 +690,7 @@ async function main() {
           token,
           status: 'starting',
           launchMode: packaged ? 'packaged' : 'source',
+          executorHomeOverride: options['executor-home']?.trim(),
           verifyCodexHomeInitialization: options['codex-home-initialization'] === 'true',
         },
         null,

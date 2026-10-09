@@ -1122,17 +1122,39 @@ export function createDesktopScenario({
     )
     await waitForBottom(control, 'The terminal-burst long-code conversation', uiTimeoutMs)
     const rapidScrollSamples = JSON.parse(
-      await control.command('sampleRapidScrollContent', SCROLLER_SELECTOR, {
+      await control.command('sampleRapidMarkdownWindowing', SCROLLER_SELECTOR, {
         value: JSON.stringify({
-          contentSelector: '[data-markdown-window-chunk] > *',
+          contentSelector: '[data-markdown-window-chunk]',
+          framesPerRatio: 4,
           ratios: [0.75, 0.5, 0.25],
         }),
       })
     )
+    await writeFile(
+      join(resultDir, 'streaming-text-rapid-markdown-windowing.json'),
+      JSON.stringify(rapidScrollSamples, null, 2) + '\n',
+      'utf8'
+    )
+    assert.equal(rapidScrollSamples.frameCount, 12, 'Rapid Markdown scrolling missed frame samples')
+    assert.ok(
+      rapidScrollSamples.initial.placeholderChunkCount > 0,
+      'The completed transcript eagerly mounted every distant Markdown chunk'
+    )
     assert.equal(
-      rapidScrollSamples.every(sample => sample.hasVisibleContent),
+      rapidScrollSamples.samples.every(sample => sample.visiblePlaceholderCount === 0),
+      true,
+      `Rapid scrolling painted a Markdown placeholder before rich rendering: ${JSON.stringify(rapidScrollSamples)}`
+    )
+    assert.equal(
+      rapidScrollSamples.samples.every(
+        sample => sample.visibleRichChunkCount > 0 && sample.hasVisibleText
+      ),
       true,
       `Rapid scrolling exposed an empty Markdown viewport: ${JSON.stringify(rapidScrollSamples)}`
+    )
+    assert.ok(
+      rapidScrollSamples.maxVisibleChunkHeightDelta <= 1,
+      `Completed Markdown changed height between visible frames: ${JSON.stringify(rapidScrollSamples)}`
     )
     await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
   }
