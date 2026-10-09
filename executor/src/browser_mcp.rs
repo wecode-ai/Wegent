@@ -22,10 +22,11 @@ mod tools;
 
 use bridge_identity::{current_bridge_identity, BridgeIdentity};
 use payload::{
-    action_target_payload, collect_warnings, combined_action_payload, combined_inspect_payload,
-    evaluate_action_violation, evaluate_expression, inspect_payload, normalize_wait_result,
-    number_arg, optional_bool_arg, optional_number_arg, optional_string_arg, optional_u64_arg,
-    string_arg, wait_options, wait_payload, WaitConditionOptions,
+    action_target_payload, clear_data_payload, collect_warnings, combined_action_payload,
+    combined_inspect_payload, evaluate_action_violation, evaluate_expression, inspect_payload,
+    normalize_wait_result, number_arg, optional_bool_arg, optional_number_arg, optional_string_arg,
+    optional_u64_arg, string_arg, upload_file_payload, wait_options, wait_payload,
+    WaitConditionOptions,
 };
 use result_text::{text_result, text_result_with_options};
 
@@ -335,6 +336,8 @@ async fn execute_tool(
         }),
         "browser_select_option" => action_target_payload("select", arguments),
         "browser_set_checked" => action_target_payload("setChecked", arguments),
+        "browser_upload_file" => upload_file_payload(arguments),
+        "browser_clear_data" => clear_data_payload(arguments),
         _ => return text_result(format!("Unknown tool: {name}"), true),
     };
 
@@ -542,25 +545,40 @@ async fn call_bridge(
         Err(error) if error.refresh_identity => {
             let refreshed = current_bridge_identity();
             if refreshed == identity {
-                return Err(error.message);
-            }
-            if !bridge_payload_is_read_only(&payload) {
+                if error.retry_same_identity {
+                    log_request(
+                        sequence,
+                        "bridge_connect_retry",
+                        "tools/call",
+                        Some(tool),
+                        started,
+                        None,
+                    );
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    send_bridge_request(client, &identity, &payload)
+                        .await
+                        .map_err(|retry_error| retry_error.message)?
+                } else {
+                    return Err(error.message);
+                }
+            } else if !bridge_payload_is_read_only(&payload) {
                 return Err(format!(
                     "{} The browser bridge changed during this action, so it was not replayed automatically; inspect the current page before retrying.",
                     error.message
                 ));
+            } else {
+                log_request(
+                    sequence,
+                    "bridge_identity_refreshed",
+                    "tools/call",
+                    Some(tool),
+                    started,
+                    None,
+                );
+                send_bridge_request(client, &refreshed, &payload)
+                    .await
+                    .map_err(|retry_error| retry_error.message)?
             }
-            log_request(
-                sequence,
-                "bridge_identity_refreshed",
-                "tools/call",
-                Some(tool),
-                started,
-                None,
-            );
-            send_bridge_request(client, &refreshed, &payload)
-                .await
-                .map_err(|retry_error| retry_error.message)?
         }
         Err(error) => return Err(error.message),
     };
@@ -603,6 +621,10 @@ async fn call_bridge(
 struct BridgeRequestError {
     message: String,
     refresh_identity: bool,
+    /// True when the request never reached the bridge (connect error), so
+    /// replaying it against the same bridge identity cannot double-apply an
+    /// action.
+    retry_same_identity: bool,
 }
 
 async fn send_bridge_request(
@@ -621,10 +643,11 @@ async fn send_bridge_request(
     }
     let response = request.send().await.map_err(|error| BridgeRequestError {
         message: format!(
-            "Embedded browser bridge is unavailable at {}: {error}",
+            "Embedded browser bridge is unavailable at {}: {error}. The Wework built-in browser panel may be closed or restarting; ask the user to open the browser panel, then retry.",
             identity.base_url
         ),
         refresh_identity: true,
+        retry_same_identity: error.is_connect(),
     })?;
     if !response.status().is_success() {
         let status = response.status();
@@ -632,6 +655,7 @@ async fn send_bridge_request(
             message: format!("Embedded browser bridge returned HTTP {status}"),
             refresh_identity: status == reqwest::StatusCode::UNAUTHORIZED
                 || status == reqwest::StatusCode::FORBIDDEN,
+            retry_same_identity: false,
         });
     }
     Ok(response)
@@ -782,6 +806,8 @@ fn bridge_value_is_error(tool: &str, value: &Value) -> bool {
                 | "browser_scroll"
                 | "browser_select_option"
                 | "browser_set_checked"
+                | "browser_upload_file"
+                | "browser_clear_data"
         )
 }
 
