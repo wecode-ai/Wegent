@@ -81,6 +81,10 @@ export function mapWorkspaceTaskBindingDto(
       (row.modelSelection as ModelSelectionConfig | null | undefined) ??
       (row.model_selection as ModelSelectionConfig | null | undefined) ??
       null,
+    executionContext:
+      (row.executionContext as WorkspaceTaskBinding["executionContext"]) ??
+      (row.execution_context as WorkspaceTaskBinding["executionContext"]) ??
+      null,
     ...(bindingType === "system" || bindingType === "user"
       ? { bindingType }
       : {}),

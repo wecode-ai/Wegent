@@ -397,6 +397,12 @@ pub struct RuntimeTaskAddress {
         skip_serializing_if = "Option::is_none"
     )]
     pub model_selection: Option<Value>,
+    #[serde(
+        default,
+        alias = "executionContext",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub execution_context: Option<Value>,
     #[serde(default, alias = "workflowNodeId")]
     pub workflow_node_id: Option<String>,
 }
@@ -413,6 +419,8 @@ pub struct TaskBinding {
     pub backend_task_id: Option<i64>,
     #[serde(rename = "modelSelection", skip_serializing_if = "Option::is_none")]
     pub model_selection: Option<Value>,
+    #[serde(rename = "executionContext", skip_serializing_if = "Option::is_none")]
+    pub execution_context: Option<Value>,
     pub workflow_node_id: Option<String>,
     #[serde(default)]
     pub workflow_stage_input: Option<Value>,
@@ -541,6 +549,19 @@ pub struct LoopItem {
     pub execution_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArchivedLoopItem {
+    #[serde(flatten)]
+    pub item: LoopItem,
+    pub archived_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArchivedLoopItemPage {
+    pub items: Vec<ArchivedLoopItem>,
+    pub next_cursor: Option<String>,
 }
 
 pub fn default_status() -> String {

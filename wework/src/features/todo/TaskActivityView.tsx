@@ -1,14 +1,12 @@
 import { IssueManagerEvent } from './IssueManagerEvent'
 import { issueActivityRole } from './issueActivityRole'
-import {
-  useActivityExecutionBinding,
-  useActivityExecutionDisplayStatus,
-} from './useActivityExecutionStatus'
+import { useActivityExecutionBinding } from './useActivityExecutionStatus'
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
 import {
   dispatchTaskCardReply,
   commentAgentMentions,
+  cardSessionAddress,
   cardSessionActive as sharedCardSessionActive,
   type TaskReplyCard,
   type TaskCardDispatchResult,
@@ -23,8 +21,6 @@ import {
   groupIssueActivityThreads,
   createCollaborationTranslator,
   formatIssueTimestamp,
-  executionDisplayStatus,
-  isExecutionActive,
   IssueStatusHistoryList,
   type SharedIssueStatusHistoryEntry,
 } from '@wegent/collaboration'
@@ -124,46 +120,62 @@ interface ActivityExecutionDetail {
 type TaskCardQueuedReply = RuntimePaneQueuedMessage
 const EMPTY_STATUS_HISTORY: SharedIssueStatusHistoryEntry[] = []
 
+function boundCardSessionAddress(
+  card: TaskReplyCard,
+  taskBindings: LoopItemTaskBinding[]
+): RuntimeTaskAddress | null {
+  const address = cardSessionAddress(card)
+  if (!address) return null
+  const binding = taskBindings.find(
+    candidate => candidate.device_id === address.deviceId && candidate.task_id === address.taskId
+  )
+  if (!binding) return address
+  const context = binding.executionContext
+  return {
+    ...address,
+    ...(context?.runtime ? { runtime: context.runtime as RuntimeTaskAddress['runtime'] } : {}),
+    ...(context?.threadId ? { threadId: context.threadId } : {}),
+    ...(context?.workspacePath ? { workspacePath: context.workspacePath } : {}),
+    ...(context?.workspaceKind ? { workspaceKind: context.workspaceKind } : {}),
+    ...(context?.worktreeId ? { worktreeId: context.worktreeId } : {}),
+    ...(binding.modelSelection
+      ? {
+          runtimeHandle: {
+            ...address.runtimeHandle,
+            modelSelection: binding.modelSelection,
+          },
+        }
+      : {}),
+  }
+}
+
 function TimelineReply({
   rootId,
   createdAt,
   replyLabel,
-  executionMessage,
-  executionTurnId,
-  fallbackExecutionStatus,
-  sessionBusy,
   active,
   onReply,
 }: {
   rootId: string
   createdAt: string
   replyLabel: string
-  executionMessage?: ProjectChatMessage
-  executionTurnId?: string
-  fallbackExecutionStatus?: string | null
-  sessionBusy: boolean
   active: boolean
   onReply: () => void
 }) {
-  const { status } = useActivityExecutionDisplayStatus(executionMessage, executionTurnId)
-  const displayStatus = executionDisplayStatus(status ?? fallbackExecutionStatus)
-  const blocked = sessionBusy || isExecutionActive(displayStatus)
   return (
     <div className="task-detail-thread-actions">
       <time dateTime={createdAt} className="text-xs text-text-muted">
         {formatIssueTimestamp(createdAt)}
       </time>
-      {!blocked ? (
-        <button
-          type="button"
-          data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
-          aria-expanded={active}
-          aria-controls="issue-reply-composer"
-          onClick={onReply}
-        >
-          {replyLabel}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
+        aria-expanded={active}
+        aria-controls="issue-reply-composer"
+        onClick={onReply}
+      >
+        {replyLabel}
+      </button>
     </div>
   )
 }
@@ -748,6 +760,7 @@ export function TaskActivityView({
         agent: assignedAgent,
         selfManagedExecution,
         card,
+        sessionAddress: boundCardSessionAddress(card, taskBindings),
         reply,
         messages,
         executionProject: null,
@@ -1143,7 +1156,6 @@ export function TaskActivityView({
               const executions = [card.root, ...card.replies].filter(
                 message => message.sender.type === 'agent'
               )
-              const latestExecution = executions.at(-1)
               return (
                 <IssueActivityThread
                   key={rootId}
@@ -1172,20 +1184,6 @@ export function TaskActivityView({
                           rootId={rootId}
                           createdAt={card.root.createdAt}
                           replyLabel={t('workbench.task_activity_reply_action')}
-                          executionMessage={latestExecution}
-                          executionTurnId={
-                            latestExecution
-                              ? executionBinding.getTurnId(latestExecution)
-                              : undefined
-                          }
-                          fallbackExecutionStatus={
-                            latestExecution
-                              ? resolveMessageRunStatus(task.ai_state, latestExecution)
-                              : task.ai_state?.project_chat_message_id === rootId
-                                ? task.ai_state.status
-                                : null
-                          }
-                          sessionBusy={cardSessionActive(card)}
                           active={replyTarget?.root.messageId === rootId}
                           onReply={() => setReplyTarget(card)}
                         />

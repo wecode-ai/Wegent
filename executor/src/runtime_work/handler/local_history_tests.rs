@@ -1,6 +1,35 @@
 use super::*;
 
 #[tokio::test]
+async fn transcript_transport_is_opt_in_and_keeps_legacy_responses() {
+    use base64::Engine;
+    let (handler, root) = isolated_runtime_work_handler("transcript-protocol");
+    fs::create_dir_all(&root).unwrap();
+    let legacy = handler
+        .transcript(json!({"taskId":"pending-task"}))
+        .await
+        .unwrap();
+    assert!(legacy["messages"].is_array());
+    assert!(legacy.get("transcriptProtocolVersion").is_none());
+    let modern = handler
+        .transcript(json!({"taskId":"pending-task", "transcriptProtocolVersion":2}))
+        .await
+        .unwrap();
+    assert_eq!(modern["transcriptProtocolVersion"], 2);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(modern["transfer"]["payload"].as_str().unwrap())
+        .unwrap();
+    let packed: Value =
+        serde_json::from_reader(flate2::read::GzDecoder::new(bytes.as_slice())).unwrap();
+    assert_eq!(packed["transcript"], legacy);
+    assert!(handler
+        .transcript(json!({"taskId":"pending-task", "transcriptProtocolVersion":99}))
+        .await
+        .is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn cancelling_idle_claude_preserves_its_original_outcome_and_time() {
     let (handler, root) = isolated_runtime_work_handler("claude-idle-stop");
     let mut task = RuntimeTaskLink::new_pending_with_runtime(

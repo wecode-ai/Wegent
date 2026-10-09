@@ -800,6 +800,7 @@ describe('AiChatModal', () => {
 
   it('opens a focused bound task as a split detail and persistent conversation', async () => {
     const onOpenRuntimeTask = vi.fn()
+    const onClose = vi.fn()
     const address = { deviceId: 'local-device', taskId: 'runtime-1' }
 
     render(
@@ -810,7 +811,7 @@ describe('AiChatModal', () => {
         taskTitle="实现云端交付"
         initialAddress={address}
         open
-        onClose={vi.fn()}
+        onClose={onClose}
         onOpenRuntimeTask={onOpenRuntimeTask}
       />
     )
@@ -826,8 +827,36 @@ describe('AiChatModal', () => {
     await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
     expect(onOpenRuntimeTask).toHaveBeenCalledWith({
       ...address,
+      issueExecution: { projectId: String(project.id), issueId: task.id },
       projectSession: { projectId: String(project.id), issueId: task.id },
     })
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('marks a local bound task as an Issue execution without cloud session routing', async () => {
+    const onOpenRuntimeTask = vi.fn()
+    const onClose = vi.fn()
+    const address = { deviceId: 'local-device', taskId: 'runtime-1' }
+
+    render(
+      <AiChatModal
+        project={{ ...project, project_store: 'local' }}
+        localProjects={localProjects}
+        task={task}
+        taskTitle="实现本地交付"
+        initialAddress={address}
+        open
+        onClose={onClose}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
+      ...address,
+      issueExecution: { projectId: String(project.id), issueId: task.id },
+    })
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it('uses a bound task address received after the composer was mounted', () => {

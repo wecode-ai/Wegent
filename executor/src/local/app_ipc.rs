@@ -2216,6 +2216,36 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
+        "todos.archived.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let offset = params
+                .get("cursor")
+                .and_then(Value::as_str)
+                .unwrap_or("0")
+                .parse::<usize>()
+                .map_err(|_| AppIpcError::new("bad_request", "invalid archive cursor"))?;
+            let limit = params
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(50)
+                .clamp(1, 100) as usize;
+            serialize_task_value(
+                runtime
+                    .list_archived_tasks(project_id, offset, limit)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.restore" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .restore_task(project_id, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "todos.comment" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;

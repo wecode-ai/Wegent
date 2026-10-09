@@ -1267,6 +1267,7 @@ class TaskRequestBuilder:
             Secondary model configuration dictionary or None if not configured
         """
         from app.services.chat.config.model_resolver import (
+            PublicModelAccessDeniedError,
             _extract_model_config,
             _find_model_with_namespace,
             _process_model_config_placeholders,
@@ -1285,9 +1286,21 @@ class TaskRequestBuilder:
         model_name = secondary_model_ref.name
 
         # Find the secondary model
-        model_kind, model_spec = _find_model_with_namespace(
-            self.db, model_name, user_id
-        )
+        try:
+            model_kind, model_spec = _find_model_with_namespace(
+                self.db, model_name, user_id
+            )
+        except PublicModelAccessDeniedError:
+            # The bot's secondary model became whitelist-restricted after it was
+            # configured. For this user it is unusable, so report it exactly like
+            # a model that no longer exists and skip the auxiliary config.
+            logger.warning(
+                "[TaskRequestBuilder] Secondary model '%s' is restricted to "
+                "whitelisted users for user_id=%s; treating it as not found",
+                model_name,
+                user_id,
+            )
+            return None
 
         if not model_spec:
             logger.warning(

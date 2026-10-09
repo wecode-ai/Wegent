@@ -26,8 +26,20 @@ import {
   WeworkSharedProject,
 } from './WeworkCollaborationPlatform'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
+import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 
 const renderedProjectApis = vi.hoisted(() => new Map<string, SharedWorkspaceApi>())
+const renderedProjectControls = vi.hoisted(
+  () =>
+    new Map<
+      string,
+      {
+        onCreateTask?: (project: unknown, issue: unknown) => Promise<void> | void
+        onProjectChange?: (project: unknown) => void
+        renderIssueDetail?: (context: unknown) => unknown
+      }
+    >()
+)
 
 vi.mock('@wegent/collaboration', async importOriginal => {
   const actual = await importOriginal<typeof import('@wegent/collaboration')>()
@@ -36,16 +48,31 @@ vi.mock('@wegent/collaboration', async importOriginal => {
     CollaborationApp: ({
       api,
       host,
+      initialProject,
+      onCreateTask,
+      onProjectChange,
       refreshProjectRequestKey = 0,
+      renderIssueDetail,
     }: {
       api: SharedWorkspaceApi
       host: {
         location: { projectId: string | null }
         manageResource?(kind: 'agents' | 'environments', resourceId?: string): void
       }
+      initialProject?: { id: string }
+      onCreateTask?: (project: unknown, issue: unknown) => Promise<void> | void
+      onProjectChange?: (project: unknown) => void
       refreshProjectRequestKey?: number
+      renderIssueDetail?: (context: unknown) => unknown
     }) => {
       if (host.location.projectId) renderedProjectApis.set(host.location.projectId, api)
+      if (initialProject) {
+        renderedProjectControls.set(String(initialProject.id), {
+          onCreateTask,
+          onProjectChange,
+          renderIssueDetail,
+        })
+      }
       const renderCount = useRef(0)
       const [projectIds, setProjectIds] = useState('')
       const [resourceNames, setResourceNames] = useState('')
@@ -353,6 +380,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
 
 afterEach(() => {
   vi.useRealTimers()
+  renderedProjectControls.clear()
   renderedProjectApis.clear()
 })
 
@@ -452,6 +480,26 @@ function deferred<T>() {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('does not reject task creation when the Issue start update fails', async () => {
+    const issues = {
+      get: vi.fn().mockResolvedValue({
+        id: 'ISSUE-1',
+        status: 'pending',
+        tags: [],
+        version: 4,
+      }),
+      update: vi.fn().mockRejectedValue(new Error('没有权限更新 Issue')),
+    }
+
+    await expect(updateIssueWhenPersonalTaskStarts(issues, 'ISSUE-1')).resolves.toBe(
+      '没有权限更新 Issue'
+    )
+    expect(issues.update).toHaveBeenCalledWith('ISSUE-1', {
+      status: 'in_progress',
+      version: 4,
+    })
+  })
+
   it('keeps the cloud project choice available before cloud login', () => {
     render(
       createElement(WeworkCollaborationPlatform, {
@@ -1369,6 +1417,96 @@ describe('Wework collaboration workspace API', () => {
           options: { reasoning: 'high' },
         },
       },
+    })
+  })
+
+  it('uses a project environment saved after the shared project first rendered', async () => {
+    const project = {
+      id: 'local-environment-project',
+      name: 'Local environment project',
+      project_store: 'local',
+    }
+    render(
+      createElement(WeworkSharedProject, {
+        api: {
+          projects: {
+            list: vi.fn().mockResolvedValue([project]),
+          },
+          issues: {},
+        } as unknown as SharedWorkspaceApi,
+        localProjects: [],
+        locale: 'zh-CN',
+        location: {
+          platformView: 'project',
+          workspaceId: 'wework-local-workspace',
+          workspaceView: 'projects',
+          projectId: project.id,
+          projectView: 'board',
+          issueId: 'ISSUE-ENV',
+        },
+        project: project as never,
+        runtimePort: {
+          bindTask: vi.fn(),
+          unbindTask: vi.fn(),
+        },
+        services: {} as never,
+        setLocation: vi.fn(),
+        userId: 1,
+        workspace: {
+          id: 'wework-local-workspace',
+          name: 'Local workspace',
+        } as never,
+      })
+    )
+    const updatedProject = {
+      ...project,
+      execution_environment: {
+        workspace_policy: 'project',
+        repositories: [],
+        setup_steps: [],
+        devices: {
+          'prepared-device': {
+            status: 'ready',
+            workspace_path: '/workspace/prepared-project',
+          },
+        },
+      },
+    }
+    const controls = renderedProjectControls.get(project.id)
+    const issue = {
+      id: 'ISSUE-ENV',
+      title: 'Use the prepared environment',
+      sequence_number: 1,
+    }
+
+    expect(controls?.onProjectChange).toBeTypeOf('function')
+    expect(controls?.onCreateTask).toBeTypeOf('function')
+    expect(controls?.renderIssueDetail).toBeTypeOf('function')
+    act(() => controls?.onProjectChange?.(updatedProject))
+    await act(async () => {
+      await controls?.onCreateTask?.(updatedProject, issue)
+    })
+    const detail = renderedProjectControls.get(project.id)?.renderIssueDetail?.({
+      api: { issues: {} },
+      issue,
+      allIssues: [issue],
+      assignments: [],
+      taskBindings: [],
+      onChange: vi.fn(),
+      onClose: vi.fn(),
+      onCreateTask: vi.fn(),
+      onDelete: vi.fn(),
+    }) as {
+      props: {
+        conversation: {
+          props: { initialTaskRequest?: unknown }
+        } | null
+      }
+    }
+
+    expect(detail.props.conversation?.props.initialTaskRequest).toMatchObject({
+      deviceId: 'prepared-device',
+      workspacePath: '/workspace/prepared-project',
     })
   })
 
@@ -3131,6 +3269,54 @@ describe('Wework collaboration workspace API', () => {
     )
     expect(localDeliveryApi.getBoardSnapshot).toHaveBeenCalledWith('local-project')
     expect(getCloudBoardSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('routes local archived Issue reads and restores to the local project API', async () => {
+    const localIssue = {
+      id: 'local-issue',
+      cloud_project_id: 'local-project',
+    }
+    const listArchivedLoopItems = vi.fn().mockResolvedValue({
+      items: [localIssue],
+      next_cursor: null,
+    })
+    const restoreLoopItem = vi.fn().mockResolvedValue({ items: [localIssue] })
+    const localDeliveryApi = {
+      ...createLocalDeliveryApi(),
+      getLoopItem: vi.fn().mockResolvedValue(localIssue),
+      listArchivedLoopItems,
+      restoreLoopItem,
+    } as unknown as LocalProjectSpaceApi
+    const listCloudArchived = vi.fn()
+    const restoreCloudIssue = vi.fn()
+    const cloudApi = {
+      workspaces: {},
+      projects: {},
+      issues: {
+        listArchived: listCloudArchived,
+        restore: restoreCloudIssue,
+      },
+    } as unknown as SharedWorkspaceApi
+    const api = createWeworkPlatformApi(
+      cloudApi,
+      localDeliveryApi,
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await expect(api?.issues.listArchived('local-project')).resolves.toEqual({
+      items: [expect.objectContaining({ id: 'local-issue' })],
+      nextCursor: null,
+    })
+    await expect(api?.issues.restore('local-issue')).resolves.toEqual([
+      expect.objectContaining({ id: 'local-issue' }),
+    ])
+    expect(listArchivedLoopItems).toHaveBeenCalledWith('local-project', undefined)
+    expect(restoreLoopItem).toHaveBeenCalledWith('local-issue')
+    expect(listCloudArchived).not.toHaveBeenCalled()
+    expect(restoreCloudIssue).not.toHaveBeenCalled()
   })
 
   it('uses display names from the local Agent catalog for every board refresh', async () => {

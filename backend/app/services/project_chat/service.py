@@ -1317,6 +1317,7 @@ class ProjectChatService:
                 status_value="cancelled",
                 error=error or content,
             )
+            self._advance_task_to_review(db, row)
             return
         if not row.content and isinstance(content, str) and content:
             row.content = content
@@ -1329,6 +1330,7 @@ class ProjectChatService:
             status_value="failed",
             error=error or content,
         )
+        self._advance_task_to_review(db, row)
 
     @staticmethod
     def _project_chat_terminal_status(
@@ -1638,6 +1640,25 @@ class ProjectChatService:
         )
         previous_state = task_metadata.get(TASK_AI_STATE_KEY)
         previous_state = previous_state if isinstance(previous_state, dict) else {}
+        previous_run_id = previous_state.get("run_id")
+        previous_status = previous_state.get("status")
+        if (
+            status_value in PROJECT_CHAT_TERMINAL_RUN_STATUSES
+            and isinstance(previous_run_id, str)
+            and previous_run_id
+            and previous_run_id != run_id
+            and previous_status not in PROJECT_CHAT_TERMINAL_RUN_STATUSES
+        ):
+            logger.info(
+                "[ProjectChat] Ignored stale terminal task AI state: "
+                "project_id=%s task_id=%s message_id=%s run_id=%s current_run_id=%s",
+                row.project_id,
+                row.task_id,
+                row.message_id,
+                run_id,
+                previous_run_id,
+            )
+            return
         next_state = {
             **previous_state,
             "run_id": run_id,
@@ -1672,7 +1693,6 @@ class ProjectChatService:
                 and task.status
                 not in {
                     "in_progress",
-                    "in_review",
                     "completed",
                 }
             ):
@@ -1780,8 +1800,7 @@ class ProjectChatService:
         row.status = status_value
         row.message_type = "text"
         row.metadata_json = {**metadata, "run_status": status_value}
-        if status_value == "completed":
-            self._advance_task_to_review(db, row)
+        self._advance_task_to_review(db, row)
         logger.warning(
             "[ProjectChat] Reconciled streaming AI message from loop_item AI state: "
             "project_id=%s task_id=%s message_id=%s run_status=%s",
@@ -1801,7 +1820,7 @@ class ProjectChatService:
 
     @staticmethod
     def _advance_task_to_review(db: Session, row: ProjectChatMessage) -> None:
-        """Move the work item to human review when its assigned AI finishes."""
+        """Move an Issue assigned to this project agent into human review."""
 
         if not row.task_id:
             return
@@ -1817,24 +1836,29 @@ class ProjectChatService:
             or not loop_datetime_value_is_unset(task.deleted_at)
         ):
             return
-        if row.agent_id:
-            if task.assignee_agent_id != row.agent_id:
-                return
-        else:
-            # AI managers are audit-only comments. Only an assigned project
-            # robot can complete work and advance the task to review.
+        if not row.agent_id or task.assignee_agent_id != row.agent_id:
             return
         task_metadata = (
             dict(task.metadata_json) if isinstance(task.metadata_json, dict) else {}
         )
+        current_ai_state = task_metadata.get(TASK_AI_STATE_KEY)
+        current_ai_state = (
+            current_ai_state if isinstance(current_ai_state, dict) else {}
+        )
+        current_message_id = current_ai_state.get("project_chat_message_id")
+        if (
+            isinstance(current_message_id, str)
+            and current_message_id
+            and current_message_id != row.message_id
+            and current_ai_state.get("status") not in PROJECT_CHAT_TERMINAL_RUN_STATUSES
+        ):
+            return
         if (
             task_metadata.get("external_index") is True
             or task_metadata.get("external_shadow") is True
             or task_metadata.get("dispatch_child") is True
             or isinstance(task_metadata.get("workflow_plan"), dict)
         ):
-            # External providers and dispatch/workflow tasks own their status
-            # transitions outside Runtime chat projection.
             return
         project = db.get(CloudProject, task.cloud_project_id)
         if project is not None:
@@ -1873,14 +1897,14 @@ class ProjectChatService:
                 ProjectChatMessage.project_id == request.project_id,
                 _task_id_filter(ProjectChatMessage.task_id, request.task_id),
                 ProjectChatMessage.sender_type == "agent",
-                ProjectChatMessage.status == "streaming",
+                ProjectChatMessage.status.in_(("pending", "streaming")),
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .first()
         )
         if row is None:
             raise HTTPException(
-                status.HTTP_404_NOT_FOUND, "Streaming AI response not found"
+                status.HTTP_404_NOT_FOUND, "Active AI response not found"
             )
         trigger = (
             db.query(ProjectChatMessage)
@@ -1908,6 +1932,7 @@ class ProjectChatService:
             status_value="failed",
             error=request.error,
         )
+        self._advance_task_to_review(db, row)
         self._commit(db)
         db.refresh(row)
         return self.to_view(row)

@@ -289,6 +289,14 @@ jobs:
           backend-rs-image: ${{ needs.changes.outputs.backend_rs_image }}
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Inspect shared Wework desktop E2E archive
+        run: |
+          archive=.ci-artifacts/wework-core-e2e-build.tar.zst
+          echo "[wework-core-e2e-build] source bytes=$(wc -c < "$archive")"
+          sha256sum "$archive"
+          zstd --version
+          zstd -t "$archive"
+
       - name: Upload Wework desktop Core E2E build
         uses: actions/upload-artifact@v4
         with:

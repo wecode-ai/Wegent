@@ -6,12 +6,13 @@ use serde_json::Value;
 
 use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
-    issue_provider::IssueProvider, store::task_provider, BinaryInput, ChatAgent, ChatAgentCreate,
-    ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
-    IssueComment, LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
-    LocalRuntimeCommentStart, LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor,
-    ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate,
-    TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
+    issue_provider::IssueProvider, store::task_provider, ArchivedLoopItemPage, BinaryInput,
+    ChatAgent, ChatAgentCreate, ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate,
+    DeliveryDetail, DeliveryFinalize, IssueComment, LocalComment, LocalCommentCreate,
+    LocalExecution, LocalExecutionClaim, LocalRuntimeCommentStart, LocalTaskStore, LoopItem,
+    ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress,
+    TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError,
+    TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -532,6 +533,37 @@ impl TaskRuntime {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.archive_task(project_id, task_id),
+            provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?}"
+            ))),
+        }
+    }
+
+    pub async fn list_archived_tasks(
+        &self,
+        project_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ArchivedLoopItemPage, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Local => self
+                .local_store
+                .list_archived_tasks(project_id, offset, limit),
+            provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?}"
+            ))),
+        }
+    }
+
+    pub async fn restore_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Local => self.local_store.restore_task(project_id, task_id),
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
@@ -2055,6 +2087,7 @@ esac
                     task_title: Some("AI Table task".to_owned()),
                     backend_task_id: None,
                     model_selection: None,
+                    execution_context: None,
                     workflow_node_id: None,
                 },
             )

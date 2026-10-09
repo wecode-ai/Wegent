@@ -570,7 +570,7 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   [[ "$desktop_build_section" != *'restore-wework-core-e2e-build-oci.sh'* ]] ||
   [[ "$desktop_build_section" != *'uses: ./.github/actions/build-wework-core-e2e'* ]] ||
   [[ "$desktop_build_section" != *'uses: actions/upload-artifact@v4'* ]] ||
-  grep -Fq 'cargo build' "$desktop_build_action" ||
+  ! grep -Fq 'BUILD_RUNTIMES_FROM_SOURCE:' "$desktop_build_action" ||
   ! grep -Fq 'restore-oci-runtime-binary.sh' "$desktop_build_action" ||
   ! grep -Fq 'ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml' "$desktop_build_action" ||
   ! grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA="$EXECUTOR_HEAD_SHA"' "$desktop_build_action" ||
@@ -595,6 +595,8 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
     "$script_dir/archive-wework-core-e2e-build.sh"; then
   fail "Wework desktop builds must reuse content-addressed artifacts and shared Rust runtimes"
 fi
+
+bash "$script_dir/test-wework-core-e2e-runtimes.sh"
 
 bash "$script_dir/test-build-macos-e2e-runtimes.sh"
 bash "$script_dir/test-macos-e2e-runtime-oci.sh"

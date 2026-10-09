@@ -386,8 +386,8 @@ export function createDesktopScenario({
       )
       await waitForValue(
         () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
-        value => value.status === 'in_review',
-        '直接人工交付没有把原 Issue 更新为待确认',
+        value => value.status === 'in_progress',
+        '个人 Runtime Task 启动后原 Issue 没有保持进行中',
         modelResponseTimeoutMs
       )
       assert.equal(

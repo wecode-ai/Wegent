@@ -40,7 +40,6 @@ from app.services.delivery.storage import (
     delivery_storage,
 )
 from app.services.loop_item_events import publish_loop_item_changed
-from app.services.loop_item_status_history import write_status_change
 from app.services.loop_item_unread import advance_content_revision
 from app.services.project_change_request_bindings import (
     project_change_request_binding_service,
@@ -373,44 +372,11 @@ class DeliveryService:
                 direct_human_delivery = (
                     binding_metadata.get("dispatch_round_id") == DIRECT_HUMAN_ROUND_ID
                 )
-                previous_status = item.status
                 item.current_delivery_id = delivery.id
-                if direct_human_delivery and previous_status != "in_review":
-                    project = db.get(CloudProject, item.cloud_project_id)
-                    if project is None:
-                        raise HTTPException(
-                            status.HTTP_404_NOT_FOUND,
-                            "Delivery project not found",
-                        )
-                    metadata = dict(item.metadata_json or {})
-                    write_status_change(
-                        metadata,
-                        project=project,
-                        from_status=previous_status,
-                        to_status="in_review",
-                        trigger="human_delivery",
-                        by_user_id=user_id,
-                    )
-                    item.metadata_json = metadata
-                    item.status = "in_review"
-                    item.completed_at = None
                 item.metadata_json = advance_content_revision(
                     item.metadata_json, actor_user_id=user_id
                 )
                 item.version += 1
-                if direct_human_delivery and previous_status != "in_review":
-                    from app.services.workspace_cleanup_intents import (
-                        sync_issue_status,
-                    )
-
-                    sync_issue_status(
-                        db,
-                        item=item,
-                        previous_status=previous_status,
-                        next_status="in_review",
-                        next_version=item.version,
-                        completed_at=None,
-                    )
                 db.commit()
                 db.refresh(delivery)
                 publish_loop_item_changed(
@@ -424,42 +390,11 @@ class DeliveryService:
                     actor_user_id=user_id,
                 )
                 return delivery
-            previous_status = item.status
-            if previous_status != "completed":
-                project = db.get(CloudProject, item.cloud_project_id)
-                if project is not None:
-                    metadata = (
-                        dict(item.metadata_json)
-                        if isinstance(item.metadata_json, dict)
-                        else {}
-                    )
-                    write_status_change(
-                        metadata,
-                        project=project,
-                        from_status=item.status,
-                        to_status="completed",
-                        trigger="delivery",
-                        by_user_id=user_id,
-                    )
-                    item.metadata_json = metadata
-            item.status = "completed"
             item.current_delivery_id = delivery.id
-            item.completed_at = now
             item.metadata_json = advance_content_revision(
                 item.metadata_json, actor_user_id=user_id
             )
             item.version += 1
-            if previous_status != "completed":
-                from app.services.workspace_cleanup_intents import sync_issue_status
-
-                sync_issue_status(
-                    db,
-                    item=item,
-                    previous_status=previous_status,
-                    next_status="completed",
-                    next_version=item.version,
-                    completed_at=now,
-                )
             db.commit()
             db.refresh(delivery)
             publish_loop_item_changed(

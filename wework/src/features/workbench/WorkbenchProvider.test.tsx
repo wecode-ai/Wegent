@@ -4716,6 +4716,52 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('cloud-work-error')).toHaveTextContent('')
   })
 
+  test('preserves cloud devices during a local refresh until the cloud response removes them', async () => {
+    const devicesRefresh = deferred<DeviceInfo[]>()
+    const listCloudDevices = vi
+      .fn()
+      .mockResolvedValueOnce([
+        createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+      ])
+      .mockImplementation(() => devicesRefresh.promise)
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+      } as WorkbenchServices['deviceApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: listCloudDevices,
+        listRuntimeWork: vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
+      },
+    })
+
+    renderWorkbench(
+      <>
+        <CloudWorkStatusProbe />
+        <BootstrapProbe />
+      </>,
+      services
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('available')
+    )
+    expect(screen.getByTestId('device-ids')).toHaveTextContent('remote-device')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh devices' }))
+    await waitFor(() => expect(listCloudDevices).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('device-ids')).toHaveTextContent('remote-device')
+
+    await act(async () => {
+      devicesRefresh.resolve([])
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-devices-check')).toHaveTextContent('empty')
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('device-ids')).not.toHaveTextContent('remote-device')
+    )
+  })
+
   test('publishes cloud devices before a slow runtime-work refresh completes', async () => {
     const runtimeWork = deferred<RuntimeWorkListResponse>()
     let runtimeWorkResolved = false
@@ -6966,7 +7012,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: undefined,
         taskId: request.taskId,
         runtime: 'claude_code',
-        limit: 50,
+        limit: 5,
         runtimeHandle: {
           cloudProjectId: '841738010351776815',
         },
@@ -12163,7 +12209,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       taskId: 'runtime-restored',
       workspacePath: '/workspace/project-alpha',
-      limit: 50,
+      limit: 5,
     })
   })
 
@@ -12361,7 +12407,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
       taskId: 'codex-hidden',
-      limit: 50,
+      limit: 5,
     })
   })
 
@@ -12424,7 +12470,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       workspacePath: '/workspace/project-alpha',
       taskId: 'runtime-a',
-      limit: 50,
+      limit: 5,
       beforeCursor: 'opaque-older-page',
     })
     expect(screen.getByTestId('runtime-transcript-has-more')).toHaveTextContent('done')
@@ -12485,7 +12531,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       workspacePath: '/workspace/project-alpha',
       taskId: 'runtime-a',
-      limit: 50,
+      limit: 5,
     })
   })
 
@@ -12981,7 +13027,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       runtime: 'codex',
       threadId: 'thread-a',
       workspacePath: '/workspace/project-alpha',
-      limit: 50,
+      limit: 5,
     })
     await waitFor(() =>
       expect(screen.getByTestId('hydrated-runtime-messages')).toHaveTextContent(
@@ -15223,7 +15269,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       taskId: 'runtime-a',
       workspacePath: '/workspace/project-alpha',
-      limit: 50,
+      limit: 5,
     })
     expect(screen.queryByText('后台任务已完成')).not.toBeInTheDocument()
     expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
@@ -15330,7 +15376,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       taskId: 'runtime-a',
       workspacePath: '/workspace/project-alpha',
-      limit: 50,
+      limit: 5,
       refresh: true,
     })
     await waitFor(() =>
@@ -19378,7 +19424,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         deviceId: 'runtime-device',
         workspacePath: '/workspace/runtime-device',
         taskId: 'runtime-skill-task',
-        limit: 50,
+        limit: 5,
       })
     )
 

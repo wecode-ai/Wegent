@@ -15,6 +15,7 @@ from shared.models import (
     RemoteDropKnowledgeIndexRequest,
     RemoteListChunksRequest,
     RemotePurgeKnowledgeIndexRequest,
+    RemoteTestConnectionRequest,
     RuntimeRetrieverConfig,
 )
 
@@ -77,6 +78,39 @@ class TestAdminExecutor:
             doc_ref="doc_123",
             user_id=7,
         )
+
+    @pytest.mark.asyncio
+    async def test_delete_document_index_normalizes_an_empty_store_result(
+        self, admin_executor, mock_retriever_config
+    ) -> None:
+        """A repeated delete reports zero removals instead of an empty result."""
+        request = RemoteDeleteDocumentIndexRequest(
+            knowledge_base_id=1,
+            user_id=42,
+            document_ref="doc_123",
+        )
+
+        mock_storage_backend = MagicMock()
+        mock_storage_backend.delete_document.return_value = {"status": "deleted"}
+
+        with patch(
+            "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
+            return_value=mock_storage_backend,
+        ):
+            admin_executor._config_loader.resolve_admin_config.return_value = (
+                AdminResolvedConfig(
+                    index_owner_user_id=7, retriever_config=mock_retriever_config
+                )
+            )
+
+            result = await admin_executor.delete_document_index(request)
+
+        assert result == {
+            "status": "deleted",
+            "knowledge_id": "1",
+            "doc_ref": "doc_123",
+            "deleted_chunks": 0,
+        }
 
     @pytest.mark.asyncio
     async def test_purge_knowledge_index_success(
@@ -251,3 +285,60 @@ class TestAdminExecutor:
         mock_storage_backend.get_all_chunks.assert_called_once()
         call_kwargs = mock_storage_backend.get_all_chunks.call_args.kwargs
         assert call_kwargs["metadata_condition"] == {"doc_ref": "doc_123"}
+
+    @pytest.mark.asyncio
+    async def test_test_connection_builds_backend_from_request(
+        self, admin_executor
+    ) -> None:
+        """The runtime builds the backend from the caller-supplied config."""
+        request = RemoteTestConnectionRequest(
+            storage_type="qdrant",
+            url="http://localhost:6333",
+            username="alice",
+            password="secret",
+            api_key="api-token",
+        )
+
+        mock_storage_backend = MagicMock()
+        mock_storage_backend.test_connection.return_value = True
+
+        with patch(
+            "knowledge_runtime.services.admin_executor.create_storage_backend_from_config",
+            return_value=mock_storage_backend,
+        ) as mock_create:
+            result = await admin_executor.test_connection(request)
+
+        assert result.success is True
+        assert result.message == "Connection successful"
+        mock_create.assert_called_once_with(
+            storage_type="qdrant",
+            url="http://localhost:6333",
+            username="alice",
+            password="secret",
+            api_key="api-token",
+            index_strategy={"mode": "per_dataset"},
+            ext={},
+        )
+        mock_storage_backend.test_connection.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_test_connection_reports_unreachable_storage(
+        self, admin_executor
+    ) -> None:
+        """An unreachable storage backend yields success=false, not an error."""
+        request = RemoteTestConnectionRequest(
+            storage_type="qdrant",
+            url="http://localhost:6333",
+        )
+
+        mock_storage_backend = MagicMock()
+        mock_storage_backend.test_connection.return_value = False
+
+        with patch(
+            "knowledge_runtime.services.admin_executor.create_storage_backend_from_config",
+            return_value=mock_storage_backend,
+        ):
+            result = await admin_executor.test_connection(request)
+
+        assert result.success is False
+        assert result.message == "Connection failed"

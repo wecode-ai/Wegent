@@ -168,6 +168,10 @@ export interface SharedIssueDetailExtensions {
     onClose(): void;
   }): ReactNode;
   renderCreateOptions?(context: { saving: boolean }): ReactNode;
+  renderPersonalTaskAction?(context: {
+    item: SharedEditorIssue;
+    onCreateTask(): void;
+  }): ReactNode;
 }
 
 type TodoEditorPort = SharedIssueDetailPort;
@@ -585,11 +589,9 @@ export type TodoEditorProps = {
   /** Device display names keyed by the device ID stored in task bindings. */
   deviceNamesById?: Readonly<Record<string, string>>;
   headerActions?: ReactNode;
-  /**
-   * Delete this Issue. Rendered inside the header overflow menu so the
-   * destructive action stays away from the primary edit and save controls.
-   */
+  /** Render the host-provided destructive or lifecycle action in the menu. */
   onDelete?: () => void;
+  deleteLabel?: string;
   selectedTaskId?: string | null;
   onCreateTask?: () => void;
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void;
@@ -831,8 +833,16 @@ export function TodoEditor(props: TodoEditorProps) {
     attachments.forEach((attachment) => merged.set(attachment.id, attachment));
     return Array.from(merged.values());
   }, [attachments, description]);
-  const effectiveTasks =
-    tasks.length > 0 ? tasks : (props.initialTaskBindings ?? tasks);
+  const effectiveTasks = useMemo(() => {
+    if (!props.initialTaskBindings) return tasks;
+    const initialTaskIds = new Set(
+      props.initialTaskBindings.map((task) => String(task.id)),
+    );
+    return [
+      ...props.initialTaskBindings,
+      ...tasks.filter((task) => !initialTaskIds.has(String(task.id))),
+    ];
+  }, [props.initialTaskBindings, tasks]);
   const refreshTaskBindings = useCallback(async () => {
     if (editItemId == null) return;
     const requestId = ++taskBindingsRequestIdRef.current;
@@ -2603,7 +2613,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     onClick={props.onDelete}
                     type="button"
                   >
-                    {t("todo.delete_issue", "删除任务")}
+                    {props.deleteLabel ?? t("todo.delete_issue", "删除任务")}
                   </button>
                 ) : null}
               </div>
@@ -3192,6 +3202,13 @@ export function TodoEditor(props: TodoEditorProps) {
                       </button>
                     ) : null}
                   </section>
+
+                  {props.onCreateTask
+                    ? extensions?.renderPersonalTaskAction?.({
+                        item,
+                        onCreateTask: props.onCreateTask,
+                      })
+                    : null}
 
                   <ExecutionConfigurationNotice
                     key={item.id}

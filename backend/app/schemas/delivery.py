@@ -302,6 +302,19 @@ class LoopItemListResponse(BaseModel):
     items: list[LoopItemResponse]
 
 
+class ArchivedLoopItemResponse(LoopItemResponse):
+    archived_at: datetime
+
+
+class ArchivedLoopItemPageResponse(BaseModel):
+    items: list[ArchivedLoopItemResponse]
+    next_cursor: str | None = None
+
+
+class LoopItemRestoreResponse(BaseModel):
+    items: list[LoopItemResponse]
+
+
 class LoopItemCommentCreate(BaseModel):
     body: str = Field(min_length=1)
 
@@ -406,6 +419,10 @@ class LoopItemTaskBind(BaseModel):
         default=None,
         alias="modelSelection",
     )
+    execution_context: dict[str, Any] | None = Field(
+        default=None,
+        alias="executionContext",
+    )
     workflow_node_id: str | None = Field(
         default=None,
         alias="workflowNodeId",
@@ -453,6 +470,10 @@ class LoopItemTaskBindingResponse(BaseModel):
     model_selection: RuntimeModelSelection | None = Field(
         default=None,
         alias="modelSelection",
+    )
+    execution_context: dict[str, Any] | None = Field(
+        default=None,
+        alias="executionContext",
     )
     workflow_node_id: str | None = None
     human_assignment_id: str | None = None

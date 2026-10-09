@@ -23,6 +23,7 @@ from pydantic import (
 from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.schemas.quick_launch import QuickPhraseMixin
 from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
+from shared.utils.model_category import resolve_model_category
 
 
 # API Format Enum for OpenAI-compatible models
@@ -59,25 +60,6 @@ class ModelCategoryType(str, Enum):
     RERANK = "rerank"
     VIDEO = "video"
     IMAGE = "image"
-
-
-def resolve_model_category(spec: Optional[Mapping[str, Any]]) -> str:
-    """Return the normalized category of a Model spec.
-
-    The CRD keeps the category at ``spec.modelType``; older payloads nest it in
-    ``spec.modelConfig.modelType``. Enum members are unwrapped and unknown
-    categories are returned lower-cased so callers can still report them.
-    """
-    model_type: Any = None
-    if isinstance(spec, Mapping):
-        model_type = spec.get("modelType")
-        if model_type is None:
-            model_config = spec.get("modelConfig") or {}
-            if isinstance(model_config, Mapping):
-                model_type = model_config.get("modelType")
-
-    model_type = getattr(model_type, "value", model_type)
-    return str(model_type or ModelCategoryType.LLM.value).strip().lower()
 
 
 # Type-specific configurations

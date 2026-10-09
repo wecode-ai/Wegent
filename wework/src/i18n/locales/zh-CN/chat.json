@@ -1,4 +1,8 @@
 {
+  "history": {
+    "load_failed": "会话历史加载失败",
+    "retry": "重试"
+  },
   "table": {
     "expand": "展开表格",
     "close": "收起表格",

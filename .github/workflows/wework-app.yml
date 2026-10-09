@@ -362,6 +362,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
           WEWORK_E2E_PARALLEL_SCOPE: core
+          WEWORK_E2E_REQUIRE_COMPRESSED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
         run: |
           pnpm --filter wework e2e:desktop -- \

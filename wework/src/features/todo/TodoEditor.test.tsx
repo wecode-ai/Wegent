@@ -241,6 +241,80 @@ describe('TodoEditor external item sync', () => {
     expect(onCreateTask).not.toHaveBeenCalled()
   })
 
+  it('shows a private task action for an Issue assigned to the current user', async () => {
+    const onCreateTask = vi.fn()
+    const assignedToCurrentUser = {
+      ...baseItem,
+      can_view_detail: true,
+      can_edit: false,
+      assignee_user_id: 1,
+      assignee_agent_id: null,
+      project_store: 'backend' as const,
+    }
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={assignedToCurrentUser}
+        project={{ ...project, project_store: 'backend' }}
+        allItems={[assignedToCurrentUser]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
+      '让 AI 帮我处理'
+    )
+    expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
+      '创建一个仅自己可见的任务，并在当前电脑上运行'
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(onCreateTask).toHaveBeenCalledOnce()
+  })
+
+  it('uses the Issue assignee when older active assignment records still exist', () => {
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={{
+          ...baseItem,
+          assignee_user_id: 1,
+          assignee_agent_id: null,
+          project_store: 'backend',
+        }}
+        project={{ ...project, project_store: 'backend' }}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={vi.fn()}
+        currentAssignment={{
+          id: 'assignment-agent',
+          issue_id: baseItem.id,
+          target_type: 'agent',
+          target_id: 'agent-1',
+          target_name: 'Agent',
+          body: null,
+          comment_id: null,
+          created_by_user_id: 2,
+          created_by_user_name: 'Manager',
+          status: 'active',
+          created_at: '2026-10-08T10:00:00Z',
+          updated_at: '2026-10-08T10:00:00Z',
+        }}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-personal-task-action')).toBeInTheDocument()
+  })
+
   it('does not add a default-assistant execution entry to the Issue drawer', async () => {
     const onCreateTask = vi.fn()
 
@@ -439,6 +513,63 @@ describe('TodoEditor external item sync', () => {
     await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
     expect(screen.getByTestId('cloud-todo-open-task-conversation-8')).toHaveTextContent(
       '看板已加载的任务'
+    )
+  })
+
+  it('uses refreshed board binding context instead of the stale detail copy', async () => {
+    const never = new Promise<never>(() => undefined)
+    const onOpenTaskConversation = vi.fn()
+    const pendingBindingsApi = {
+      listDeliveries: vi.fn(() => never),
+      listTaskBindings: vi.fn(() => never),
+      listLoopItemAttachments: vi.fn(() => never),
+      listLoopItemCollaborators: vi.fn(() => never),
+      listCloudProjectMembers: vi.fn(() => never),
+    } as never
+    const initialBinding = {
+      id: 8,
+      device_id: 'local-device',
+      task_id: 'board-task',
+      task_title: '看板任务',
+    }
+    const renderEditor = (executionContext?: { workspacePath: string; workspaceKind: string }) => (
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={pendingBindingsApi}
+        initialTaskBindings={[
+          {
+            ...initialBinding,
+            executionContext,
+          },
+        ]}
+        onOpenTaskConversation={onOpenTaskConversation}
+        currentUserId={1}
+      />
+    )
+    const view = render(renderEditor())
+
+    view.rerender(
+      renderEditor({
+        workspacePath: '/tmp/issue-worktree',
+        workspaceKind: 'worktree',
+      })
+    )
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
+    await userEvent.click(screen.getByTestId('cloud-todo-open-task-conversation-8'))
+
+    expect(onOpenTaskConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionContext: {
+          workspacePath: '/tmp/issue-worktree',
+          workspaceKind: 'worktree',
+        },
+      })
     )
   })
 

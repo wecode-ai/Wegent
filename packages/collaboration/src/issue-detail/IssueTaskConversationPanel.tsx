@@ -95,7 +95,7 @@ export function IssueTaskConversationPanel({
                   onClick={() => void onOpenTask()}
                   className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
                 >
-                  {t("workbench.open_full_task", "打开完整任务")}
+                  {t("workbench.open_full_task", "查看执行")}
                   <ArrowUpRight className="h-3.5 w-3.5" />
                 </button>
               ) : null}
