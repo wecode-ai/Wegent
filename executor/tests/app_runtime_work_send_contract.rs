@@ -2881,6 +2881,23 @@ async fn runtime_tasks_send_queues_running_local_task_only_when_requested() {
         .await
         .expect("create should be accepted");
     wait_until_task_running(&handler, "local-task-1").await;
+    let running_task = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {"runtime": "codex"}
+        }))
+        .await
+        .expect("running task should remain listed");
+    let running_execution_request = running_task["workspaces"]
+        .as_array()
+        .and_then(|workspaces| {
+            workspaces
+                .iter()
+                .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+                .find(|task| task["taskId"] == "local-task-1")
+        })
+        .map(|task| task["runtimeHandle"]["executionRequest"].clone())
+        .expect("running task should retain its execution request");
 
     let rejected = handler
         .handle_runtime_rpc(json!({
@@ -2922,6 +2939,27 @@ async fn runtime_tasks_send_queues_running_local_task_only_when_requested() {
     assert_eq!(queued["accepted"], true);
     assert_eq!(queued["status"], "queued");
     assert_eq!(queued["queuePosition"], 1);
+    let queued_task = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {"runtime": "codex"}
+        }))
+        .await
+        .expect("queued task should remain listed");
+    let queued_execution_request = queued_task["workspaces"]
+        .as_array()
+        .and_then(|workspaces| {
+            workspaces
+                .iter()
+                .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+                .find(|task| task["taskId"] == "local-task-1")
+        })
+        .map(|task| task["runtimeHandle"]["executionRequest"].clone())
+        .expect("queued task should retain its active execution request");
+    assert_eq!(
+        queued_execution_request, running_execution_request,
+        "queueing a follow-up must not replace the active turn context before it starts"
+    );
 
     let cancelled = handler
         .handle_runtime_rpc(json!({

@@ -439,24 +439,23 @@ impl RuntimeWorkRpcHandler {
                 AutomationRunStatus::Cancelled => ("cancelled", error_text.as_str()),
                 _ => ("streaming", ""),
             };
+            if let Some(execution) = store.execution_by_runtime_task_id(local_task_id)? {
+                let execution_id = execution.id;
+                match status {
+                    AutomationRunStatus::Succeeded | AutomationRunStatus::NeedsAttention => {
+                        store.complete_execution(execution_id, Some(&result_text))?;
+                    }
+                    AutomationRunStatus::Failed => {
+                        store.fail_execution(execution_id, &error_text, false)?;
+                    }
+                    AutomationRunStatus::Cancelled => {
+                        store.cancel_execution_observed(execution_id, Some(&error_text))?;
+                    }
+                    _ => {}
+                }
+            }
             if comment_status != "streaming" {
                 store.finish_runtime_comment(local_task_id, comment_status, comment_content)?;
-            }
-            let Some(execution) = store.execution_by_runtime_task_id(local_task_id)? else {
-                return Ok(());
-            };
-            let execution_id = execution.id;
-            match status {
-                AutomationRunStatus::Succeeded | AutomationRunStatus::NeedsAttention => {
-                    store.complete_execution(execution_id, Some(&result_text))?;
-                }
-                AutomationRunStatus::Failed => {
-                    store.fail_execution(execution_id, &error_text, false)?;
-                }
-                AutomationRunStatus::Cancelled => {
-                    store.cancel_execution_observed(execution_id, Some(&error_text))?;
-                }
-                _ => {}
             }
             Ok::<_, crate::task_runtime::TaskRuntimeError>(())
         })();

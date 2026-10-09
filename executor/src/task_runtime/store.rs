@@ -1970,7 +1970,21 @@ impl LocalTaskStore {
                  SET status = 'in_review',
                      metadata = json_set(metadata, '$.is_unread', json('true')),
                      version = version + 1, updated_at = ?1
-                 WHERE id = ?2 AND status != 'completed'",
+                 WHERE id = ?2 AND status != 'completed'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM loop_item_comments pending_comment
+                       WHERE pending_comment.task_id=?2
+                         AND pending_comment.deleted_at IS NULL
+                         AND pending_comment.status IN ('pending','streaming')
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM loop_item_executions active_execution
+                       WHERE active_execution.loop_item_id=?2
+                         AND active_execution.status IN (
+                             'queued','pending_approval','claimed','running',
+                             'cancel_requested'
+                         )
+                   )",
                 params![timestamp, current.loop_item_id],
             )?;
         }
@@ -5541,6 +5555,14 @@ mod tests {
             .update_agent_comment_for_execution(execution.id, "completed", "搞定")
             .unwrap()
             .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_item_executions SET status='completed' WHERE id=?1",
+                params![execution.id],
+            )
+            .unwrap();
         assert_eq!(updated.status, "completed");
         assert_eq!(updated.content, "搞定");
         let task = store.get_task(&project.id, &task.id).unwrap();
@@ -5692,6 +5714,81 @@ mod tests {
                 .status
                 .as_deref(),
             Some("in_progress")
+        );
+    }
+
+    #[test]
+    fn runtime_comment_keeps_issue_in_progress_while_followup_is_pending() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Continue work".to_owned(),
+                    description: String::new(),
+                    status: "in_progress".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        for runtime_task_id in ["runtime-1", "runtime-2"] {
+            let comment = store
+                .create_comment(&LocalCommentCreate {
+                    project_id: project.id.clone(),
+                    task_id: task.id.clone(),
+                    client_message_id: None,
+                    sender_type: "agent".to_owned(),
+                    sender_id: "agent-1".to_owned(),
+                    sender_name: "Agent".to_owned(),
+                    content: String::new(),
+                    metadata: json!({
+                        "runtime_address": {
+                            "deviceId": "local-device",
+                            "taskId": runtime_task_id,
+                        },
+                    }),
+                    reply_to_message_id: None,
+                })
+                .unwrap();
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE loop_item_comments SET status='streaming' WHERE message_id=?1",
+                    params![comment.message_id],
+                )
+                .unwrap();
+        }
+
+        store
+            .finish_runtime_comment("runtime-1", "completed", "First result")
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+
+        store
+            .finish_runtime_comment("runtime-2", "completed", "Follow-up result")
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
         );
     }
 

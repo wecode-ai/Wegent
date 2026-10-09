@@ -819,6 +819,7 @@ impl RuntimeWorkRpcHandler {
                 local_task_id: local_task_id.clone(),
                 runtime: "codex".to_owned(),
                 request,
+                send_payload: None,
                 direct_thread_id: None,
                 fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
                 fork_thread_path: side_source.and_then(|source| source.thread_path),
@@ -1183,16 +1184,6 @@ impl RuntimeWorkRpcHandler {
         ));
         log_executor_event("runtime work send prepared", &fields);
 
-        self.mark_task_running_for_send(
-            &local_task_id,
-            &thread_id,
-            &workspace_path,
-            &request,
-            &payload,
-        );
-        self.store.update_task(&local_task_id, |link| {
-            store_runtime_execution_request(&mut link.runtime_handle, &request);
-        });
         if let Some(turn_id) = retry_source_turn_id(&payload) {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
         }
@@ -1205,6 +1196,7 @@ impl RuntimeWorkRpcHandler {
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
+            send_payload: Some(payload),
             direct_thread_id,
             fork_thread_id: None,
             fork_thread_path: None,
@@ -1457,6 +1449,7 @@ impl RuntimeWorkRpcHandler {
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
+            send_payload: None,
             direct_thread_id: None,
             fork_thread_id: None,
             fork_thread_path: None,

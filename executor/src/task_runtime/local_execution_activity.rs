@@ -349,7 +349,21 @@ impl LocalTaskStore {
                         "UPDATE loop_items
                          SET status='in_review', completed_at=NULL,
                              version=version+1, updated_at=?1
-                         WHERE id=?2 AND resource_type='task' AND status='in_progress'",
+                         WHERE id=?2 AND resource_type='task' AND status='in_progress'
+                           AND NOT EXISTS (
+                               SELECT 1 FROM loop_item_comments pending_comment
+                               WHERE pending_comment.task_id=?2
+                                 AND pending_comment.deleted_at IS NULL
+                                 AND pending_comment.status IN ('pending','streaming')
+                           )
+                           AND NOT EXISTS (
+                               SELECT 1 FROM loop_item_executions active_execution
+                               WHERE active_execution.loop_item_id=?2
+                                 AND active_execution.status IN (
+                                     'queued','pending_approval','claimed','running',
+                                     'cancel_requested'
+                                 )
+                           )",
                         params![now(), task_id],
                     )?;
                 }

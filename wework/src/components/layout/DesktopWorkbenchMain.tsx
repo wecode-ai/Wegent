@@ -4673,10 +4673,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       supervisor={supervisorFeatureAvailable ? supervisor : null}
       onConfigureSupervisor={
-        supervisorFeatureAvailable && supervisor ? openSupervisorDialog : undefined
+        !issueExecutionReadOnly && supervisorFeatureAvailable && supervisor
+          ? openSupervisorDialog
+          : undefined
       }
       onRunSupervisorNow={
-        supervisorFeatureAvailable && supervisor ? runTaskSupervisorNow : undefined
+        !issueExecutionReadOnly && supervisorFeatureAvailable && supervisor
+          ? runTaskSupervisorNow
+          : undefined
       }
       rightPanelOpen={displayedRightPanelOpen}
       rightPanelExpanded={displayedRightPanelExpanded}
@@ -4757,6 +4761,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !isDesktop &&
     (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
   const canForkCurrentRuntimeTask = Boolean(
+    !issueExecutionReadOnly &&
     experimentalFeaturesEnabled &&
     currentRuntimeTask &&
     currentRuntimeUsesCodex &&
@@ -4775,7 +4780,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       </button>
     </Tooltip>
   ) : undefined
-  const canContinueInIm = Boolean(currentRuntimeTask)
+  const canContinueInIm = Boolean(currentRuntimeTask && !issueExecutionReadOnly)
   const continueInImButton = canContinueInIm ? (
     <Tooltip label={t('workbench.continue_im_title')} side="bottom" align="end">
       <button
@@ -5993,14 +5998,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }}
         />
         <TaskSupervisorControl
-          open={supervisorDialogOpen}
+          open={supervisorDialogOpen && !issueExecutionReadOnly}
           supervisor={supervisor}
           initialConfig={pendingSupervisorConfig}
           defaultModelSelection={appPreferences?.preferences.supervisorModelSelection ?? null}
           defaultIntervalSeconds={appPreferences?.preferences.supervisorIntervalSeconds ?? 30}
           defaultInstructions={appPreferences?.preferences.supervisorPrinciples ?? ''}
           models={projectChat.models}
-          onOpenChange={open => setSupervisorDialogTaskKey(open ? supervisorDialogScopeKey : null)}
+          onOpenChange={open =>
+            setSupervisorDialogTaskKey(
+              open && !issueExecutionReadOnly ? supervisorDialogScopeKey : null
+            )
+          }
           onSet={setTaskSupervisor}
           onClear={clearTaskSupervisor}
           onRunNow={currentRuntimeTask ? runTaskSupervisorNow : undefined}

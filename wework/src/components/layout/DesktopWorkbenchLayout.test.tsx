@@ -3436,6 +3436,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(await screen.findByTestId('project-execution-reply-in-issue')).toBeInTheDocument()
     expect(screen.queryByTestId('chat-message-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
   })
 
   test('shows the existing local task data in the board presentation', async () => {

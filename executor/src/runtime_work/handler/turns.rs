@@ -471,6 +471,7 @@ impl RuntimeWorkRpcHandler {
             local_task_id: local_task_id.to_owned(),
             runtime: "codex".to_owned(),
             request: request.clone(),
+            send_payload: None,
             direct_thread_id: None,
             fork_thread_id: None,
             fork_thread_path: None,
@@ -1006,6 +1007,29 @@ impl RuntimeWorkRpcHandler {
         mut turn: SpawnTurnRequest,
         restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
+        if let Some(payload) = turn.send_payload.as_ref() {
+            let thread_id = turn
+                .resume_thread_id
+                .as_deref()
+                .or(turn.direct_thread_id.as_deref())
+                .or(turn.fork_thread_id.as_deref())
+                .unwrap_or_default();
+            let workspace_path = turn
+                .request
+                .project_workspace_path
+                .as_deref()
+                .unwrap_or_default();
+            self.mark_task_running_for_send(
+                &turn.local_task_id,
+                thread_id,
+                workspace_path,
+                &turn.request,
+                payload,
+            );
+            self.store.update_task(&turn.local_task_id, |link| {
+                store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
+            });
+        }
         turn.request.extra.remove(RESTORED_TURN_MARKER);
         let restore_startup = restore_permit.map(RestoreStartupGate::new);
         turn.request.extra.insert(
@@ -1026,6 +1050,7 @@ impl RuntimeWorkRpcHandler {
             local_task_id,
             runtime: _,
             request,
+            send_payload: _,
             direct_thread_id,
             fork_thread_id,
             fork_thread_path,
@@ -1815,6 +1840,7 @@ mod tests {
             local_task_id: local_task_id.to_owned(),
             runtime: "codex".to_owned(),
             request: ExecutionRequest::default(),
+            send_payload: None,
             direct_thread_id: None,
             fork_thread_id: None,
             fork_thread_path: None,
@@ -1890,6 +1916,41 @@ mod tests {
         );
         assert_eq!(scheduler.active_tasks, 2);
         assert!(scheduler.queued_turns.is_empty());
+    }
+
+    #[test]
+    fn scheduler_serializes_turns_for_the_same_task() {
+        let mut scheduler = RuntimeTurnScheduler::new(2, VecDeque::new());
+
+        assert!(scheduler.enqueue(scheduled_turn("task-1")).is_some());
+        assert!(scheduler.enqueue(scheduled_turn("task-1")).is_none());
+        assert_eq!(scheduler.queued_turns.len(), 1);
+        assert_eq!(scheduler.active_tasks, 1);
+
+        let started = scheduler.finish("task-1");
+
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].local_task_id, "task-1");
+        assert_eq!(scheduler.active_tasks, 1);
+        assert!(scheduler.queued_turns.is_empty());
+    }
+
+    #[test]
+    fn scheduler_skips_queued_turns_for_tasks_that_are_still_active() {
+        let mut scheduler = RuntimeTurnScheduler::new(2, VecDeque::new());
+        assert!(scheduler.enqueue(scheduled_turn("task-1")).is_some());
+        assert!(scheduler.enqueue(scheduled_turn("task-2")).is_some());
+        scheduler.enqueue_queued(scheduled_turn("task-1"));
+        scheduler.enqueue_queued(scheduled_turn("task-3"));
+
+        let started = scheduler.finish("task-2");
+
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].local_task_id, "task-3");
+        assert_eq!(scheduler.queued_turns.len(), 1);
+        assert_eq!(scheduler.queued_turns[0].local_task_id, "task-1");
+        assert!(scheduler.active_task_ids.contains("task-1"));
+        assert!(scheduler.active_task_ids.contains("task-3"));
     }
 
     #[test]
