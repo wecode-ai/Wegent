@@ -5,6 +5,7 @@
 """HTTP responses must carry the +08:00 offset for naive datetimes."""
 
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -15,6 +16,11 @@ from app.core.response_timezone import patch_response_timezone
 
 class _Doc(BaseModel):
     name: str
+    created_at: datetime
+
+
+class _Priced(BaseModel):
+    amount: Decimal
     created_at: datetime
 
 
@@ -38,6 +44,12 @@ def _make_client() -> TestClient:
     def model():
         return _Doc(name="x", created_at=datetime(2026, 10, 9, 15, 7, 46))
 
+    @app.get("/priced", response_model=_Priced)
+    def priced():
+        return _Priced(
+            amount=Decimal("19.99"), created_at=datetime(2026, 10, 9, 15, 7, 46)
+        )
+
     return TestClient(app)
 
 
@@ -58,6 +70,13 @@ def test_aware_datetime_is_left_untouched():
 
 def test_response_model_datetime_carries_session_offset():
     body = _make_client().get("/model").json()
+    assert body["created_at"] == "2026-10-09T15:07:46+08:00"
+
+
+def test_response_model_decimal_keeps_pydantic_json_format():
+    body = _make_client().get("/priced").json()
+    # pydantic JSON mode renders Decimal as a string to preserve precision.
+    assert body["amount"] == "19.99"
     assert body["created_at"] == "2026-10-09T15:07:46+08:00"
 
 

@@ -19,6 +19,7 @@ response boundary only:
 """
 
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import fastapi.routing
@@ -73,6 +74,11 @@ def _python_mode_serialize(self, value: Any, **kwargs: Any) -> Any:
 def _tz_aware_jsonable_encoder(obj: Any, *args: Any, **kwargs: Any) -> Any:
     custom_encoder = dict(kwargs.pop("custom_encoder", None) or {})
     custom_encoder.setdefault(datetime, _encode_datetime)
+    # Python-mode serialization (see _python_mode_serialize) keeps Decimal
+    # objects alive; jsonable_encoder would turn them into int/float while
+    # pydantic's JSON mode emits strings. Match the pydantic behavior so
+    # non-datetime fields keep their response format and precision.
+    custom_encoder.setdefault(Decimal, str)
     return _original_jsonable_encoder(
         obj, *args, custom_encoder=custom_encoder, **kwargs
     )
