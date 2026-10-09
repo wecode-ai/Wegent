@@ -208,6 +208,7 @@ import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnviro
 import {
   shouldPrepareWorkItemTask,
   workItemComposerReference,
+  workItemStartedUpdate,
   workItemTaskInput,
 } from './workItemTaskInput'
 import {
@@ -3961,28 +3962,15 @@ export function CloudTodoWorkspace({
           : await localApi!.getLoopItem(selectedItem.id)
       const associatedTags =
         isMyTasksBoard && localProject ? associateLoopItemTags(latest, localProject) : latest.tags
-      const associationChanged =
-        associatedTags.length !== latest.tags.length ||
-        associatedTags.some((tag, index) => tag !== latest.tags[index])
-      const updated =
-        latest.status === 'inbox' || associationChanged
-          ? selectedItemProject.location === 'cloud'
-            ? await cloudWorkspace.commands
-                .updateIssue(latest.id, {
-                  version: latest.version,
-                  ...(latest.status === 'inbox' ? { status: 'pending' } : {}),
-                  ...(associationChanged ? { tags: associatedTags } : {}),
-                })
-                .then(updated => {
-                  if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
-                  return toCloudLoopItem(updated)
-                })
-            : await localApi!.updateLoopItem(latest.id, {
-                version: latest.version,
-                ...(latest.status === 'inbox' ? { status: 'pending' } : {}),
-                ...(associationChanged ? { tags: associatedTags } : {}),
-              })
-          : latest
+      const startUpdate = workItemStartedUpdate(latest, associatedTags)
+      const updated = startUpdate
+        ? selectedItemProject.location === 'cloud'
+          ? await cloudWorkspace.commands.updateIssue(latest.id, startUpdate).then(updated => {
+              if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
+              return toCloudLoopItem(updated)
+            })
+          : await localApi!.updateLoopItem(latest.id, startUpdate)
+        : latest
       const locatedUpdated = {
         ...updated,
         project_store: selectedItem.project_store,

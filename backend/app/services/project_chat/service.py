@@ -1302,7 +1302,6 @@ class ProjectChatService:
                 agent=None,
                 status_value="completed",
             )
-            self._advance_task_to_review(db, row)
             return
         if status_value == "cancelled":
             if not row.content and isinstance(content, str) and content:
@@ -1780,8 +1779,6 @@ class ProjectChatService:
         row.status = status_value
         row.message_type = "text"
         row.metadata_json = {**metadata, "run_status": status_value}
-        if status_value == "completed":
-            self._advance_task_to_review(db, row)
         logger.warning(
             "[ProjectChat] Reconciled streaming AI message from loop_item AI state: "
             "project_id=%s task_id=%s message_id=%s run_status=%s",
@@ -1798,59 +1795,6 @@ class ProjectChatService:
             db.connection(),
             "completed_at",
         )
-
-    @staticmethod
-    def _advance_task_to_review(db: Session, row: ProjectChatMessage) -> None:
-        """Move the work item to human review when its assigned AI finishes."""
-
-        if not row.task_id:
-            return
-        message_metadata = (
-            row.metadata_json if isinstance(row.metadata_json, dict) else {}
-        )
-        if message_metadata.get("dispatch_role") in {"manager", "member"}:
-            return
-        task = db.get(LoopItem, row.task_id)
-        if (
-            task is None
-            or task.status in {"completed", "in_review"}
-            or not loop_datetime_value_is_unset(task.deleted_at)
-        ):
-            return
-        if row.agent_id:
-            if task.assignee_agent_id != row.agent_id:
-                return
-        else:
-            # AI managers are audit-only comments. Only an assigned project
-            # robot can complete work and advance the task to review.
-            return
-        task_metadata = (
-            dict(task.metadata_json) if isinstance(task.metadata_json, dict) else {}
-        )
-        if (
-            task_metadata.get("external_index") is True
-            or task_metadata.get("external_shadow") is True
-            or task_metadata.get("dispatch_child") is True
-            or isinstance(task_metadata.get("workflow_plan"), dict)
-        ):
-            # External providers and dispatch/workflow tasks own their status
-            # transitions outside Runtime chat projection.
-            return
-        project = db.get(CloudProject, task.cloud_project_id)
-        if project is not None:
-            write_status_change(
-                task_metadata,
-                project=project,
-                from_status=task.status,
-                to_status="in_review",
-                trigger="ai_completed",
-                by_user_id=None,
-            )
-        task.metadata_json = task_metadata
-        task.status = "in_review"
-        task.completed_at = ProjectChatService._loop_unset_datetime(db)
-        task.sort_order = 0
-        task.version += 1
 
     def fail_agent_response(
         self,

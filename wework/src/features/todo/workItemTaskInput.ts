@@ -6,13 +6,30 @@ export function workItemComposerReference(
 ): string {
   const projectKey = project.project_key?.trim()
   const issueKey = projectKey ? `${projectKey}-${item.sequence_number}` : `#${item.sequence_number}`
-  const title = item.title.replace(/[\[\]\n]/g, ' ').trim()
+  const title = item.title.replace(/[[\]\n]/g, ' ').trim()
   const label = title ? `${issueKey} · ${title}` : issueKey
   return `[$${label}](wework-issue://${encodeURIComponent(String(project.id))}/${encodeURIComponent(item.id)})`
 }
 
 export function workItemTaskInput(item: Pick<CloudLoopItem, 'title' | 'description'>): string {
   return item.title.trim() || item.description?.trim() || ''
+}
+
+export function workItemStartedUpdate(
+  item: Pick<CloudLoopItem, 'status' | 'tags' | 'version'>,
+  associatedTags: string[]
+): { version: number; status?: 'in_progress'; tags?: string[] } | null {
+  const shouldStartIssue = item.status === 'inbox' || item.status === 'pending'
+  const currentTags = item.tags ?? []
+  const associationChanged =
+    associatedTags.length !== currentTags.length ||
+    associatedTags.some((tag, index) => tag !== currentTags[index])
+  if (!shouldStartIssue && !associationChanged) return null
+  return {
+    version: item.version,
+    ...(shouldStartIssue ? { status: 'in_progress' as const } : {}),
+    ...(associationChanged ? { tags: associatedTags } : {}),
+  }
 }
 
 export function shouldPrepareWorkItemTask(

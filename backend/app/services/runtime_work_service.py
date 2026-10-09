@@ -4246,6 +4246,7 @@ def _build_direct_wework_runtime_execution_request(
 ) -> ExecutionRequest:
     """Build a direct Wework execution without resolving a Wegent Team."""
 
+    from app.mcp_server.server import get_mcp_wework_space_config
     from app.services.auth import create_skill_identity_token, create_task_token
 
     user = _get_user(db, user_id)
@@ -4259,6 +4260,30 @@ def _build_direct_wework_runtime_execution_request(
     model_config = dict(request.runtime_model_config or runtime_model_config or {})
     first_bot = request.bot[0] if request.bot else {}
     origin = request.origin if isinstance(request.origin, dict) else {}
+    auth_token = create_task_token(
+        task_id=0,
+        subtask_id=0,
+        user_id=user.id,
+        user_name=user.user_name,
+        dispatch_id=str(origin.get("dispatchId") or origin.get("dispatch_id") or "")
+        or None,
+        dispatch_role=str(
+            origin.get("dispatchRole") or origin.get("dispatch_role") or ""
+        )
+        or None,
+        manager_agent_id=str(
+            origin.get("managerAgentId") or origin.get("manager_agent_id") or ""
+        )
+        or None,
+    )
+    mcp_servers: list[dict[str, Any]] = []
+    if _should_include_wework_space_mcp(request):
+        managed_mcp_config = get_mcp_wework_space_config(
+            settings.WEGENT_BACKEND_PUBLIC_URL.rstrip("/"), auth_token
+        )
+        mcp_servers = [
+            {"name": name, **config} for name, config in managed_mcp_config.items()
+        ]
     execution_request = ExecutionRequest(
         task_id=task_id,
         subtask_id=f"{task_id}-assistant",
@@ -4293,24 +4318,10 @@ def _build_direct_wework_runtime_execution_request(
         collaboration_model="single",
         mode="code",
         task_mode="code",
+        mcp_servers=mcp_servers,
         preload_skills=list(request.additional_skills),
         attachments=[],
-        auth_token=create_task_token(
-            task_id=0,
-            subtask_id=0,
-            user_id=user.id,
-            user_name=user.user_name,
-            dispatch_id=str(origin.get("dispatchId") or origin.get("dispatch_id") or "")
-            or None,
-            dispatch_role=str(
-                origin.get("dispatchRole") or origin.get("dispatch_role") or ""
-            )
-            or None,
-            manager_agent_id=str(
-                origin.get("managerAgentId") or origin.get("manager_agent_id") or ""
-            )
-            or None,
-        ),
+        auth_token=auth_token,
         skill_identity_token=create_skill_identity_token(
             user_id=user.id,
             user_name=user.user_name,
@@ -4334,6 +4345,20 @@ def _build_direct_wework_runtime_execution_request(
             _runtime_execution_payload(request),
         )
     return execution_request
+
+
+def _should_include_wework_space_mcp(request: RuntimeTaskCreateRequest) -> bool:
+    """Expose project-space tools only to user-directed project-space tasks."""
+
+    origin = request.origin if isinstance(request.origin, dict) else {}
+    if origin.get("type") == "project_automation":
+        return False
+    context = request.additional_context or {}
+    return bool(
+        context.get("projectSpaceIssue")
+        or context.get("projectSpaceChat")
+        or "cloud://projects" in request.message
+    )
 
 
 def _apply_runtime_create_request(

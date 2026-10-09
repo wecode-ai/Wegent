@@ -5527,6 +5527,52 @@ def test_build_runtime_execution_request_resolves_crd_model_id(
     )
 
 
+def test_build_runtime_execution_request_exposes_project_space_tools_for_issue(
+    test_db,
+    test_user,
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    request = RuntimeTaskCreateRequest(
+        runtime="codex",
+        message="处理当前 Issue",
+        deviceId="device-1",
+        workspacePath="/repo/Wegent",
+        cloudProjectId="project-1",
+        origin={
+            "type": "board_task",
+            "cloudProjectId": "project-1",
+            "loopItemId": "ISSUE-1",
+        },
+        additionalContext={
+            "projectSpaceIssue": {
+                "kind": "application",
+                "value": "Current project project-1 and Issue ISSUE-1.",
+            }
+        },
+    )
+
+    execution_request = runtime_work_service._build_runtime_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        request=request,
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="device-1",
+            workspace_path="/repo/Wegent",
+            project=None,
+            workspace_source="local_path",
+        ),
+    )
+
+    assert len(execution_request.mcp_servers) == 1
+    server = execution_request.mcp_servers[0]
+    assert server["name"] == "wegent-wework-space"
+    assert server["type"] == "streamable-http"
+    assert server["url"].endswith("/mcp/wework-space/sse")
+    assert server["headers"]["Authorization"].startswith("Bearer ")
+
+
 def test_message_with_application_context_keeps_user_message_and_ignores_untrusted() -> (
     None
 ):

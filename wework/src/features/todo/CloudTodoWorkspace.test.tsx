@@ -23,7 +23,11 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskCreateRequest, RuntimeTranscriptResponse, User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
-import { workItemComposerReference, workItemTaskInput } from './workItemTaskInput'
+import {
+  workItemComposerReference,
+  workItemStartedUpdate,
+  workItemTaskInput,
+} from './workItemTaskInput'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
 import {
   createWeworkSharedWorkspaceApi,
@@ -384,6 +388,21 @@ describe('workItemTaskInput', () => {
     expect(workItemTaskInput({ title: '  ', description: 'Use the shared workspace' })).toBe(
       'Use the shared workspace'
     )
+  })
+
+  it('marks a pending Issue in progress when its personal task starts', () => {
+    expect(workItemStartedUpdate({ status: 'pending', tags: [], version: 3 } as never, [])).toEqual(
+      {
+        version: 3,
+        status: 'in_progress',
+      }
+    )
+  })
+
+  it('does not advance a reviewed Issue when a personal task reports completion', () => {
+    expect(
+      workItemStartedUpdate({ status: 'in_review', tags: [], version: 4 } as never, [])
+    ).toBeNull()
   })
 })
 

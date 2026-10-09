@@ -29,7 +29,6 @@ const HUMAN_WORKFLOW_STEP = '需求确认'
 const AGENT_ASSIGNMENT_COMMENT = '请处理实现步骤'
 const AGENT_WORKFLOW_STEP = '实现'
 const AGENT_NAME = '协作核心 Codex'
-const TASK_PROMPT = '检查当前 Issue 并开始执行'
 const TERMINAL_STATUS_ISSUE_TITLE = '验证终态任务不再显示执行中'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
@@ -617,8 +616,17 @@ export function createDesktopScenario({
         const taskComposer = scoped(
           '[data-testid="work-item-new-task-chat-panel"] [data-testid="chat-message-input"]'
         )
-        await control.command('fill', taskComposer, { value: TASK_PROMPT })
         await control.command('press', taskComposer, { key: 'Enter' })
+        await control.command(
+          'waitFor',
+          scoped(
+            '[data-testid="work-item-new-task-chat-panel"] [data-testid^="sent-issue-token-"]'
+          ),
+          {
+            text: ISSUE_TITLE,
+            timeoutMs: uiTimeoutMs,
+          }
+        )
         const taskBindings = await waitForApiValue(
           async () =>
             (await request(`/api/v1/loop-items/${issue.id}/tasks`)).filter(
@@ -640,11 +648,16 @@ export function createDesktopScenario({
           binding.taskId ?? binding.task_id,
           'The Task binding has no runtime task identity'
         )
-        const issueAfterPersonalTask = await request(`/api/v1/loop-items/${issue.id}`)
+        const issueAfterPersonalTask = await waitForApiValue(
+          () => request(`/api/v1/loop-items/${issue.id}`),
+          value => value?.status === 'in_progress',
+          'Starting the private local Task did not mark the shared Issue in progress',
+          uiTimeoutMs
+        )
         assert.equal(
           issueAfterPersonalTask.status,
-          'pending',
-          'The private personal Task unexpectedly changed the shared Issue status'
+          'in_progress',
+          'Starting the private local Task did not preserve the shared Issue running state'
         )
         assert.equal(
           issueAfterPersonalTask.assignee_user_id,

@@ -650,7 +650,7 @@ function encodeLocalMarkdownLinks(content: string): string {
       }
       const target = classifyMarkdownLink(href);
       const internal =
-        /^(?:skill|plugin|app|cloud|wework-conversation|wegent-sites-project|wegent|folder|file):\/\//.test(
+        /^(?:skill|plugin|app|cloud|wework-(?:conversation|issue|member|agent|group)|wegent-sites-project|wegent|folder|file):\/\//.test(
           href,
         );
       if (target.kind !== "file" && !internal) return match;
