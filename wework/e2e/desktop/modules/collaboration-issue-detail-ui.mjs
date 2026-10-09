@@ -35,7 +35,7 @@ export async function verifyIssueDetailPropertyUi(control, scope, timeoutMs) {
 export async function verifyNewDiscussionComposerUi(control, scope, timeoutMs) {
   const placeholder = scope('[data-testid="task-comment-form"] .composer-prosemirror-placeholder')
   await control.command('waitFor', placeholder, {
-    text: '发起新讨论（将创建新的执行任务）',
+    text: '发起新讨论…',
     timeoutMs,
   })
 }
