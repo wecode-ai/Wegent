@@ -133,6 +133,8 @@ def _task_binding_metadata(
     values: LoopItemTaskBind, *, include_workflow_node: bool = True
 ) -> dict[str, object]:
     metadata: dict[str, object] = {}
+    if values.wegent_team_id is not None:
+        metadata["wegent_team_id"] = values.wegent_team_id
     if include_workflow_node and values.workflow_node_id:
         metadata["workflow_node_id"] = values.workflow_node_id
     if values.model_selection:
@@ -2460,6 +2462,13 @@ class LoopItemService:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, action=IssueAction.EXECUTE)
         self._validate_backend_task(db, values.backend_task_id, user_id)
+        logger.info(
+            "[LoopItem] Bind runtime session: item=%s runtime_task=%s team=%s model_selected=%s",
+            item_id,
+            values.task_id,
+            values.wegent_team_id,
+            values.model_selection is not None,
+        )
         active = (
             db.query(LoopItemTaskBinding)
             .filter(

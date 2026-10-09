@@ -5,9 +5,13 @@ import {
   assistantMessage,
   codexRequestKind,
   createSse,
+  customToolCall,
   readRequestBody,
+  requestAdvertisesProgrammaticExec,
+  requestContainsToolOutput,
   responseCompleted,
   responseCreated,
+  selectProgrammaticExec,
 } from '../modules/response-protocol.mjs'
 import {
   REMOTE_DOCKER_DEVICE_ID,
@@ -30,6 +34,10 @@ const AGENT = `远程执行智能体-${process.pid}`
 const ISSUE = `远程执行闭环-${process.pid}`
 const MARKER = `REMOTE_AGENT_DISPATCH_${process.pid}`
 const COMPLETION = `${MARKER}_COMPLETED_BY_REMOTE_EXECUTOR`
+const CONTINUATION = `${MARKER}_CONTINUE_MANUAL_SESSION`
+const CONTINUATION_RESULT = `${MARKER}_MANUAL_CONTINUATION_COMPLETE`
+const MANUAL_READ_CALL = `${MARKER}_MANUAL_READ_ISSUE`
+const MANUAL_READ_OK = `${MARKER}_BOARD_READ_OK`
 const ENVIRONMENT_MARKER = `${MARKER}_ENVIRONMENT_READY`
 const ENVIRONMENT_PREFIX = 'collaboration-project-execution-environment'
 const MANAGEMENT_TOOLS = [
@@ -220,6 +228,49 @@ async function createAndAssignIssue(control, request, projectId, agent, timeoutM
   return issue
 }
 
+async function createAutoTaggedIssue(control, request, projectId, agent, timeoutMs) {
+  const rule = await request(`/api/v1/cloud-projects/${projectId}/automations`, {
+    method: 'POST',
+    body: JSON.stringify({
+      name: `${MARKER}_AUTO_TAG`,
+      prompt: 'Complete the bound Issue with the configured agent model.',
+      trigger_type: 'event',
+      event_type: 'task.tag_added',
+      event_config: { executionTarget: 'existing_issue', tags: ['auto'] },
+      target_kind: 'agent',
+      target_id: String(agent.id),
+    }),
+  })
+  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  const title = `${ISSUE}-auto`
+  await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
+  await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
+    value: `${MARKER}。添加 auto 标签后由配置的智能体完成并提交待确认。`,
+  })
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
+    timeoutMs,
+  })
+  const issue = await waitForValue(
+    async () => (await request(`/api/v1/cloud-projects/${projectId}/loop-items`)).items,
+    items => items.find(item => item.title === title),
+    'The auto-tagged Issue was not persisted',
+    timeoutMs
+  )
+  await control.command('click', scoped('[data-testid="cloud-todo-more-properties"]'))
+  await control.command('fill', '[data-testid="cloud-todo-detail-tag-input"]', { value: 'auto' })
+  await control.command('press', '[data-testid="cloud-todo-detail-tag-input"]', { key: 'Enter' })
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await control.command('waitFor', '[data-testid="cloud-todo-more-properties-popover"]', {
+    visible: false,
+    timeoutMs,
+  })
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
+    timeoutMs,
+  })
+  return { issue, rule }
+}
+
 function directExecution(execution, issueId) {
   return String(execution.loopItemId ?? execution.loop_item_id) === String(issueId)
 }
@@ -234,6 +285,76 @@ function findRuntimeTask(runtimeWork, taskId) {
     ...(runtimeWork.chats ?? []),
   ]
   return workspaces.flatMap(workspace => workspace.tasks ?? []).find(task => task.taskId === taskId)
+}
+
+async function activityIds(control) {
+  const snapshot = JSON.parse(
+    await control.command('snapshot', scoped('[data-testid="cloud-task-activity-list"]'))
+  )
+  const prefix = 'cloud-task-activity-execution-badge-'
+  return snapshot.testIds.filter(id => id.startsWith(prefix)).map(id => id.slice(prefix.length))
+}
+
+async function verifyManualSessionReply(control, request, issueId, timeoutMs, captureScreenshot) {
+  const previousIds = await activityIds(control)
+  const previousBindings = await request(`/api/v1/loop-items/${issueId}/tasks`)
+  await control.command(
+    'clickWhenEnabled',
+    scoped(`[data-testid="cloud-task-activity-rerun-${issueId}"]`)
+  )
+  const rootId = await waitForValue(
+    () => activityIds(control),
+    ids => ids.find(id => !previousIds.includes(id)),
+    'Manual execution did not create an agent activity',
+    timeoutMs
+  )
+  await control.command('waitFor', scoped(`[data-testid="task-activity-content-${rootId}"]`), {
+    text: COMPLETION,
+    timeoutMs,
+  })
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="cloud-task-activity-execution-badge-${rootId}"]`),
+    { text: '已完成', timeoutMs }
+  )
+  const bindings = await request(`/api/v1/loop-items/${issueId}/tasks`)
+  const manualBinding = bindings.find(
+    binding => !previousBindings.some(previous => previous.task_id === binding.task_id)
+  )
+  assert.ok(manualBinding?.task_id, 'Manual execution did not persist its TaskBinding')
+
+  const beforeReply = await activityIds(control)
+  await control.command(
+    'click',
+    scoped(`[data-testid="cloud-task-activity-reply-toggle-${rootId}"]`)
+  )
+  const composer = scoped('[data-testid="issue-reply-composer"]')
+  await control.command('fill', `${composer} [data-testid="cloud-task-activity-composer"]`, {
+    value: CONTINUATION,
+  })
+  await control.command('clickWhenEnabled', `${composer} [data-testid="send-message-button"]`)
+  const replyId = await waitForValue(
+    () => activityIds(control),
+    ids => ids.find(id => !beforeReply.includes(id)),
+    'The manual session reply did not create an agent response',
+    timeoutMs
+  )
+  const content = scoped(`[data-testid="task-activity-content-${replyId}"]`)
+  await control.command('waitFor', content, { text: CONTINUATION_RESULT, timeoutMs })
+  assert.equal((await control.command('getText', content)).trim(), CONTINUATION_RESULT)
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="cloud-task-activity-execution-badge-${replyId}"]`),
+    { text: '已完成', timeoutMs }
+  )
+  const afterReply = await request(`/api/v1/loop-items/${issueId}/tasks`)
+  assert.deepEqual(
+    afterReply.map(binding => [binding.device_id, binding.task_id]).sort(),
+    bindings.map(binding => [binding.device_id, binding.task_id]).sort(),
+    'The reply created a new task instead of continuing the bound session'
+  )
+  await control.command('scrollIntoView', content)
+  await captureScreenshot(control, 'remote-agent-dispatch-04-manual-reply-completed.png', CONTENT)
 }
 
 async function verifyConfiguredExecutionEnvironment(
@@ -476,12 +597,46 @@ export function createDesktopScenario({
         return true
       }
       modelRequests += 1
+      assert.equal(body.model, MODEL_LABEL, 'The executor did not use the assigned Team model')
       assert.equal(
         serialized.includes('You are the manager for one project Issue.'),
         false,
         'Direct agent dispatch incorrectly entered the collaboration manager path'
       )
       const toolNames = advertisedToolNames(body)
+      if (requestAdvertisesProgrammaticExec(body)) {
+        if (!requestContainsToolOutput(body, MANUAL_READ_CALL)) {
+          const selection = selectProgrammaticExec(
+            body,
+            [
+              `const toolsForSpace = ALL_TOOLS.filter(tool => tool.name.includes('wework_space'))`,
+              `for (const name of ${JSON.stringify(MANAGEMENT_TOOLS)}) {`,
+              `  if (toolsForSpace.some(tool => tool.name.endsWith(name))) throw new Error('Executor exposed management tool: ' + name)`,
+              `}`,
+              `const read = toolsForSpace.find(tool => tool.name.endsWith('get_board_item'))`,
+              `if (!read) throw new Error('Executor cannot read its bound Issue')`,
+              `const result = await tools[read.name](${JSON.stringify({ space_id: project.id, item_id: issue.id })})`,
+              `if (result.isError || !JSON.stringify(result).includes(${JSON.stringify(issue.id)})) throw new Error('Bound Issue read failed')`,
+              `text(${JSON.stringify(MANUAL_READ_OK)})`,
+            ].join('\n')
+          )
+          const event = customToolCall(MANUAL_READ_CALL, selection.name, selection.input)
+          event.item.namespace = 'functions'
+          writeEvents(response, responseId, [event])
+          return true
+        }
+        const output = body.input.find(
+          item => item.type === 'custom_tool_call_output' && item.call_id === MANUAL_READ_CALL
+        )?.output
+        assert.ok(
+          JSON.stringify(output)?.includes(MANUAL_READ_OK),
+          `The real bound Issue read did not succeed: ${JSON.stringify(output)}`
+        )
+        writeEvents(response, responseId, [
+          assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
+        ])
+        return true
+      }
       for (const toolName of MANAGEMENT_TOOLS) {
         assert.equal(
           toolNames.some(name => name.endsWith(toolName)),
@@ -499,7 +654,9 @@ export function createDesktopScenario({
       )
       resolveModelStarted()
       await modelRelease
-      writeEvents(response, responseId, [assistantMessage(COMPLETION)])
+      writeEvents(response, responseId, [
+        assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
+      ])
       return true
     },
 
@@ -625,6 +782,45 @@ export function createDesktopScenario({
         'Direct assignment entered a manager/group execution path'
       )
       assert.equal(modelRequests, 1, 'Direct agent assignment invoked the model more than once')
+      const tagged = await createAutoTaggedIssue(control, request, project.id, agent, uiTimeoutMs)
+      issue = tagged.issue
+      const autoExecution = await waitForValue(
+        async () => {
+          const result = await request(
+            `/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`
+          )
+          return result.items.find(candidate => directExecution(candidate, issue.id)) ?? null
+        },
+        candidate => candidate?.status === 'completed' || candidate?.status === 'succeeded',
+        'Adding auto did not complete the assigned agent execution',
+        modelResponseTimeoutMs
+      )
+      assert.equal(runtimeDeviceId(autoExecution), REMOTE_DOCKER_DEVICE_ID)
+      assert.equal(String(autoExecution.agentId), String(agent.id))
+      assert.ok(autoExecution.runtimeTaskId, 'Auto processing did not bind a real runtime task')
+      await waitForValue(
+        () => request(`/api/v1/loop-items/${issue.id}`),
+        item => item?.status === 'in_review',
+        'Auto processing did not synchronize the Issue to in_review',
+        modelResponseTimeoutMs
+      )
+      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+        text: COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(modelRequests, 2, 'The auto tag did not invoke the agent model exactly once')
+      await captureScreenshot(control, 'remote-agent-dispatch-03-auto-tag-in-review.png', CONTENT)
+      await request(`/api/v1/cloud-projects/${project.id}/automations/${tagged.rule.id}`, {
+        method: 'DELETE',
+      })
+      await verifyManualSessionReply(
+        control,
+        request,
+        issue.id,
+        modelResponseTimeoutMs,
+        captureScreenshot
+      )
+      assert.equal(modelRequests, 5, 'Manual execution and its reply did not use the Team model')
       await verifyConfiguredExecutionEnvironment(
         control,
         request,
@@ -640,7 +836,7 @@ export function createDesktopScenario({
         uiTimeoutMs,
         captureScreenshot
       )
-      assert.equal(modelRequests, 1, 'Managing a default human automation invoked the model')
+      assert.equal(modelRequests, 5, 'Managing a default human automation invoked the model')
     },
 
     diagnostics() {

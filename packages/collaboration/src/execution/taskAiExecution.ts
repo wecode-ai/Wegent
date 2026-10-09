@@ -29,7 +29,8 @@ export interface CommentRuntimeCreateOptions<ExecutionProject> {
   project?: ExecutionProject | null
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
   executionModel?: Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'>
-  modelSelection?: Required<ModelSelectionConfig>
+  modelSelection?: Required<ModelSelectionConfig> | null
+  wegentTeamId?: number
   collaborationMode?: 'default' | 'plan'
   cloudProjectId?: string
   origin?: RuntimeTaskOrigin
@@ -59,7 +60,9 @@ export interface CommentExecutionServices<Task extends CommentExecutionTask> {
     unbindTask(taskId: string, address: RuntimeTaskAddress): Promise<void>
     getLoopItem(taskId: string): Promise<Task>
   }
-  chatStream?: { subscribe(handlers: ChatStreamHandlers): (() => void) | Promise<() => void> }
+  chatStream?: {
+    subscribe(handlers: ChatStreamHandlers): (() => void) | Promise<() => void>
+  }
 }
 export interface StartTaskAiRunInput<ExecutionProject, Task extends CommentExecutionTask> {
   client: ProjectChatClient
@@ -67,7 +70,12 @@ export interface StartTaskAiRunInput<ExecutionProject, Task extends CommentExecu
   runtime: TaskAiRuntimeBridge<ExecutionProject>
   project: ProjectSpaceContext
   task: Task
-  agent: { id: string; name: string; systemPrompt?: string }
+  agent: {
+    id: string
+    name: string
+    systemPrompt?: string
+    wegentTeamId?: number | null
+  }
   executionProject?: ExecutionProject | null
   prompt: string
   trigger?: ProjectChatMessage
@@ -379,12 +387,14 @@ export async function startTaskAiRun<ExecutionProject, Task extends CommentExecu
       id: trigger?.messageId,
     }),
     project: executionProject ?? null,
+    ...(agent.wegentTeamId ? { wegentTeamId: agent.wegentTeamId } : {}),
     ...(executionModel ? { executionModel } : {}),
-    ...(modelSelection ? { modelSelection } : {}),
+    ...(modelSelection ? { modelSelection } : agent.wegentTeamId ? { modelSelection: null } : {}),
     collaborationMode: 'default',
     cloudProjectId: String(project.id),
     origin: {
       type: 'board_comment',
+      dispatchRole: 'executor',
       cloudProjectId: String(project.id),
       loopItemId: String(task.id),
       projectStore: project.project_store,
@@ -412,7 +422,10 @@ export async function startTaskAiRun<ExecutionProject, Task extends CommentExecu
         throw new Error('项目空间任务绑定服务不可用')
       }
       await deliveryApi.bindTask(task.id, nextAddress, task.title)
-      const projectRef = { projectId: project.id, projectStore: project.project_store }
+      const projectRef = {
+        projectId: project.id,
+        projectStore: project.project_store,
+      }
       onBindingChange?.({
         task: nextAddress,
         project: projectRef,

@@ -246,6 +246,7 @@ async def _continue_runtime(
     intent = intent.model_copy(
         update={
             "message": trigger.content,
+            "new_session": False,
             "device_id": execution.runtime_device_id,
             "attachment_ids": [],
             "attachments": attachments,

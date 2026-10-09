@@ -1370,7 +1370,6 @@ async def create_runtime_task(
     )
     return await _dispatch_compiled_runtime_task(
         user_id=user_id,
-        request=request,
         compiled=compiled,
     )
 
@@ -1378,7 +1377,6 @@ async def create_runtime_task(
 async def _dispatch_compiled_runtime_task(
     *,
     user_id: int,
-    request: RuntimeTaskCreateRequest,
     compiled: CompiledRuntimeTaskCreate,
 ) -> RuntimeTaskCreateResponse:
     """Dispatch one already compiled runtime task."""
@@ -1398,7 +1396,7 @@ async def _dispatch_compiled_runtime_task(
         ) from exc
     response = _runtime_create_response(
         result,
-        request.runtime,
+        compiled.payload["runtime"],
         compiled.target.device_id,
         compiled.target.workspace_path,
         compiled.target.workspace_source,
@@ -1488,8 +1486,15 @@ def _runtime_task_create_payload(
 ) -> dict[str, Any]:
     """Compile one validated create request into the Executor wire payload."""
 
+    runtime = request.runtime
+    bots = getattr(execution_request, "bot", [])
+    if request.wegent_team_id is not None and bots:
+        runtime = {
+            "Codex": "codex",
+            "ClaudeCode": "claude_code",
+        }.get(bots[0].get("shell_type"), runtime)
     payload: dict[str, Any] = {
-        "runtime": request.runtime,
+        "runtime": runtime,
         "message": request.message,
         "title": _runtime_task_title(request),
         "executionRequest": _runtime_execution_request_payload(execution_request),
@@ -1551,7 +1556,7 @@ def _runtime_task_create_payload(
         payload["initialSupervisor"] = _materialize_initial_supervisor(
             db=db,
             user_id=user_id,
-            runtime=request.runtime,
+            runtime=runtime,
             supervisor=request.initial_supervisor,
         )
     if request.side_source:

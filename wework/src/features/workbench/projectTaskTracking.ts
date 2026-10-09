@@ -63,9 +63,11 @@ export function toWorkspaceRuntimeTaskAddress(
   task: RuntimeTaskAddress
 ): WorkspaceRuntimeTaskAddress {
   const modelSelection = modelSelectionFromRuntimeHandle(task.runtimeHandle)
+  const team = task.runtimeHandle?.wegentTeam as { id?: number } | undefined
   return {
     deviceId: task.deviceId,
     taskId: task.taskId,
+    ...(team?.id ? { wegentTeamId: team.id } : {}),
     ...(modelSelection ? { modelSelection: { ...modelSelection } } : {}),
   }
 }

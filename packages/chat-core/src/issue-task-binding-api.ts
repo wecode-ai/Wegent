@@ -22,12 +22,14 @@ export function createIssueTaskBindingApi(client: BindingHttpClient) {
     ): Promise<void> {
       const modelSelection =
         task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
+      const team = task.runtimeHandle?.wegentTeam as { id?: number } | undefined
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, {
         ...task,
         ...(taskTitle ? { taskTitle } : {}),
         ...(workflowNodeId ? { workflowNodeId } : {}),
         ...(dispatch ?? {}),
         ...(modelSelection ? { modelSelection } : {}),
+        ...(team?.id ? { wegentTeamId: team.id } : {}),
       })
     },
     unbindTask(itemId: string, task: RuntimeTaskAddress): Promise<void> {

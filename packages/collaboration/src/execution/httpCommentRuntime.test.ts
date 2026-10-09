@@ -83,6 +83,47 @@ function setup() {
 }
 
 describe('shared comment execution using the real HTTP adapter', () => {
+  it('forwards the assigned Team and explicitly inherits its model configuration', async () => {
+    const { input, post } = setup()
+    expect(
+      await startTaskAiRun({
+        ...input,
+        agent: { ...input.agent, wegentTeamId: 42 },
+        selectedModel: null,
+      })
+    ).toBe(true)
+    expect(post).toHaveBeenCalledWith(
+      '/runtime-work/create',
+      expect.objectContaining({
+        schemaVersion: 3,
+        wegentTeamId: 42,
+        modelSelection: null,
+      })
+    )
+    expect(input.services.deliveryApi.bindTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ runtimeHandle: { wegentTeam: { id: 42 } } }),
+      task.title
+    )
+  })
+
+  it('uses the compiled Team runtime returned by the executor', async () => {
+    const { input, post } = setup()
+    post.mockImplementationOnce(async (_path, request) => ({
+      accepted: true,
+      ...(request as { deviceId: string; taskId: string }),
+      workspacePath: '/project',
+      runtime: 'claude_code',
+    }))
+
+    const address = await input.runtime.createProjectRuntimeTask('Run the assigned Team', {
+      wegentTeamId: 42,
+      modelSelection: null,
+    })
+
+    expect(address).toMatchObject({ runtime: 'claude_code' })
+  })
+
   it('creates a new bound session after the durable activity and event subscription exist', async () => {
     const { input, post, order } = setup()
     expect(await startTaskAiRun(input)).toBe(true)

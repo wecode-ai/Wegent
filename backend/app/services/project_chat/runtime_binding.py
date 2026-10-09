@@ -47,13 +47,15 @@ def resolve_bound_comment_session(
     if binding is None or not binding.task_user_id or not target.agent_id:
         raise HTTPException(409, "The comment has no valid execution binding")
     selection = binding.model_selection or {}
+    team_id = (binding.metadata_json or {}).get("wegent_team_id")
     return BoundCommentSession(
         executor_owner_user_id=binding.task_user_id,
         runtime_device_id=binding.device_id,
         runtime_task_id=binding.task_id,
         agent_id=target.agent_id,
         runtime_request={
-            "schemaVersion": 2,
+            "schemaVersion": 3 if team_id is not None else 2,
+            **({"wegentTeamId": team_id} if team_id is not None else {}),
             "runtime": "codex",
             "deviceId": binding.device_id,
             "taskId": binding.task_id,
@@ -62,6 +64,12 @@ def resolve_bound_comment_session(
             "modelType": selection.get("modelType"),
             "modelOptions": selection.get("options") or {},
             "cloudProjectId": request.project_id,
+            "origin": {
+                "type": "board_comment",
+                "dispatchRole": "executor",
+                "cloudProjectId": request.project_id,
+                "loopItemId": request.task_id,
+            },
             "standaloneChatWorkspace": True,
         },
     )

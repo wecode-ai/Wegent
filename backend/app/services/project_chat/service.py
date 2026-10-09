@@ -43,6 +43,11 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBindingView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.identity import (
+    device_identity_ids,
+    record_id_from_route,
+    resolve_owned_device_alias,
+)
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.ghost_capabilities import (
     load_ghost_chain,
@@ -947,6 +952,7 @@ class ProjectChatService:
             "run_id": run_id,
             "run_status": "running",
             "auto_retry": request.auto_retry,
+            "started_by_user_id": user_id,
         }
         if request.model is not None:
             metadata["model"] = request.model
@@ -1034,8 +1040,43 @@ class ProjectChatService:
         runtime_task_id: str,
         event_name: str,
         payload: dict,
+        owner_user_id: int | None = None,
     ) -> tuple[ProjectChatMessageView, str] | None:
-        row = self._streaming_activity_for_runtime(db, device_id, runtime_task_id)
+        identities = [device_id]
+        if owner_user_id is not None and record_id_from_route(device_id):
+            device = resolve_owned_device_alias(
+                db, user_id=owner_user_id, device_id=device_id
+            )
+            if device is None:
+                return None
+            # App events use the record route while local TaskBindings use the
+            # installation's appDeviceId. Both identify this owned Runtime.
+            identities = device_identity_ids(device)
+        data = payload.get("data")
+        data = data if isinstance(data, dict) else {}
+        if event_name == "response.completed":
+            from app.services.project_chat.execution_snapshot import (
+                completed_activity_for_turn,
+            )
+
+            completed = completed_activity_for_turn(
+                db,
+                device_ids=identities,
+                task_id=runtime_task_id,
+                turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+            )
+            if completed is not None:
+                # History reports outcomes without text. A delayed final event
+                # must still save its full content without replaying workflow.
+                content = self._project_chat_final_text(data, payload)
+                if content is not None:
+                    completed.content = content
+                self._commit(db)
+                db.refresh(completed)
+                return self.to_view(completed, db=db), "snapshot"
+        row = self._streaming_activity_for_runtime(
+            db, device_id, runtime_task_id, device_ids=identities
+        )
         if row is None:
             row = self._open_activity_from_execution(
                 db,
@@ -1054,8 +1095,6 @@ class ProjectChatService:
                 runtime_task_id,
             )
             return None
-        data = payload.get("data")
-        data = data if isinstance(data, dict) else {}
         subagent_result = self._handle_subagent_runtime_event(
             db, parent=row, event_name=event_name, data=data
         )
@@ -1192,13 +1231,17 @@ class ProjectChatService:
         db: Session,
         runtime_device_id: str,
         runtime_task_id: str,
+        *,
+        device_ids: list[str] | None = None,
     ) -> ProjectChatMessage | None:
         """Return the open streaming AI message for one runtime task."""
 
         return (
             db.query(ProjectChatMessage)
             .filter(
-                ProjectChatMessage.runtime_device_id == runtime_device_id,
+                ProjectChatMessage.runtime_device_id.in_(
+                    device_ids or [runtime_device_id]
+                ),
                 ProjectChatMessage.runtime_task_id == runtime_task_id,
                 ProjectChatMessage.sender_type == "agent",
                 ProjectChatMessage.status.in_(["pending", "streaming"]),
@@ -1893,7 +1936,11 @@ class ProjectChatService:
             )
             .first()
         )
-        if trigger is None:
+        started_by_user = (
+            not row.trigger_message_id
+            and (row.metadata_json or {}).get("started_by_user_id") == user_id
+        )
+        if trigger is None and not started_by_user:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN, "Only the sender can fail this AI response"
             )

@@ -403,6 +403,7 @@ class LoopItemTaskBind(BaseModel):
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)
     task_title: str | None = Field(default=None, alias="taskTitle", max_length=255)
     backend_task_id: int | None = Field(default=None, alias="backendTaskId")
+    wegent_team_id: int | None = Field(default=None, alias="wegentTeamId", gt=0)
     model_selection: RuntimeModelSelection | None = Field(
         default=None,
         alias="modelSelection",

@@ -364,6 +364,39 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'Creating a project-owned Agent did not persist',
           uiTimeoutMs
         )
+        assert.ok(projectAgent.wegentTeamId, 'The project Agent must retain its Team binding')
+        const devices = await request('/api/devices/online')
+        const localDevice = devices.items.find(device => device.device_type === 'app')
+        assert.ok(localDevice?.device_id, 'The real desktop executor must be registered')
+        const compiled = await request('/api/runtime-work/materialize', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemaVersion: 3,
+            wegentTeamId: projectAgent.wegentTeamId,
+            deviceId: localDevice.device_id,
+            workspacePath: `/tmp/wework-project-agent-${process.pid}`,
+            runtime: 'claude_code',
+            message: 'Compile the assigned Agent without overriding its model',
+            modelSelection: null,
+          }),
+        })
+        assert.equal(
+          compiled.payload.runtime,
+          'codex',
+          'The workbench default replaced the Team Shell'
+        )
+        assert.equal(compiled.payload.executionRequest.team_id, projectAgent.wegentTeamId)
+        assert.equal(compiled.payload.executionRequest.bot[0].shell_type, 'Codex')
+        assert.equal(compiled.payload.schemaVersion, 2)
+        assert.equal(
+          'modelConfig' in compiled.payload,
+          false,
+          'HTTP serialization added a forbidden modelConfig field to the Executor payload'
+        )
+        assert.ok(
+          compiled.payload.executionRequest.model_config.model_id,
+          'The assigned Team model was lost during local task materialization'
+        )
         await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
           visible: false,
           timeoutMs: uiTimeoutMs,

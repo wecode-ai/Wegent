@@ -1425,6 +1425,50 @@ def test_alive_execution_keeps_task_ai_state_running(
     assert message.status == "streaming"
 
 
+@pytest.mark.parametrize("event_owner", ["owner", "other_user"])
+def test_app_record_terminal_event_matches_owned_local_device_alias(
+    test_db: Session, test_user: User, event_owner: str
+) -> None:
+    project = create_project(test_db, test_user)
+    task, message = _running_ai_task(test_db, test_user, project)
+    device = Kind(
+        user_id=test_user.id,
+        kind="Device",
+        name="app-installation",
+        namespace="default",
+        is_active=True,
+        json={
+            "spec": {
+                "deviceType": "app",
+                "deviceId": "app-installation",
+                "appDeviceId": "device-1",
+            }
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id=f"app-record-{device.id}",
+        runtime_task_id=message.runtime_task_id,
+        event_name="response.completed",
+        payload={"data": {"value": "MODEL_INHERITANCE_OK"}},
+        owner_user_id=test_user.id if event_owner == "owner" else test_user.id + 100,
+    )
+
+    test_db.refresh(message)
+    test_db.refresh(task)
+    if event_owner == "other_user":
+        assert projected is None
+        assert message.status == "streaming"
+    else:
+        assert projected is not None
+        assert message.status == "completed"
+        assert message.content == "MODEL_INHERITANCE_OK"
+        assert task.metadata_json["ai_state"]["status"] == "completed"
+
+
 def test_runtime_activity_key_unique_index_blocks_duplicate_activity(
     test_db: Session, test_user: User
 ) -> None:
@@ -1929,6 +1973,58 @@ def test_task_agent_failure_updates_task_ai_state(
     assert failed.metadata["run_status"] == "failed"
     assert ai_state["status"] == "failed"
     assert ai_state["last_error"] == "Runtime failed"
+
+
+def test_task_agent_failure_without_comment_authorizes_only_run_initiator(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    member = _make_member(test_db, project, "other-run-initiator", BaseRole.Developer)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Run assigned task without a comment",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=task.id,
+            agentId="12",
+            runtimeDeviceId="device-1",
+            runtimeTaskId="runtime-task-1",
+        ),
+    )
+    failure = ProjectChatAgentFailure(
+        projectId=project.id,
+        taskId=task.id,
+        messageId=response.message_id,
+        error="Runtime failed",
+    )
+
+    assert response.trigger_message_id is None
+    assert response.metadata["started_by_user_id"] == test_user.id
+    with pytest.raises(HTTPException) as denied:
+        project_chat_service.fail_agent_response(
+            test_db, user_id=member.id, request=failure
+        )
+    assert denied.value.status_code == 403
+    failed = project_chat_service.fail_agent_response(
+        test_db, user_id=test_user.id, request=failure
+    )
+
+    test_db.refresh(task)
+    assert failed.status == "failed"
+    assert failed.metadata["run_status"] == "failed"
+    assert task.metadata_json["ai_state"]["status"] == "failed"
+    assert task.metadata_json["ai_state"]["last_error"] == "Runtime failed"
 
 
 def test_auto_retry_failure_increments_budget_but_manual_rerun_does_not(

@@ -9,6 +9,30 @@ import {
 } from './projectTaskTracking'
 
 describe('projectTaskTrackingApi', () => {
+  test('preserves the assigned Team through the cloud runtime binding port', async () => {
+    const bindTask = vi.fn().mockResolvedValue(undefined)
+    const api = createCloudProjectTaskRuntimeApi({
+      bindTask,
+    } as unknown as WeworkWorkspaceRuntimePort)
+    await api.bindTask(
+      'ISSUE-1',
+      {
+        deviceId: 'local-device',
+        taskId: 'runtime-team',
+        runtimeHandle: { wegentTeam: { id: 1880 } },
+      },
+      'Team task'
+    )
+    expect(bindTask).toHaveBeenCalledWith(
+      'ISSUE-1',
+      {
+        deviceId: 'local-device',
+        taskId: 'runtime-team',
+        wegentTeamId: 1880,
+      },
+      'Team task'
+    )
+  })
   test('maps the runtime model identity into the shared task binding and tracking contract', async () => {
     const bindTask = vi.fn().mockResolvedValue(undefined)
     const trackProjectTask = vi.fn().mockResolvedValue({ issue: {} })
