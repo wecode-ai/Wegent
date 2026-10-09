@@ -866,7 +866,24 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         )
         if (action === 'cancel') {
           await control.command('click', '[data-testid="connector-auth-cancel"]')
-          assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), ghDraft)
+          const pluginChipSelector = '[data-testid="composer-plugin-chip-github"]'
+          await control.command('waitFor', pluginChipSelector)
+          // getValue returns display text; verify the serialized reference separately.
+          assert.equal(
+            await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
+            'GitHub List my repositories'
+          )
+          assert.equal(
+            await control.command('getAttribute', pluginChipSelector, {
+              value: 'data-composer-skill-reference',
+            }),
+            '[$GitHub](plugin://github@openai-curated-remote)'
+          )
+          const cancelledGh = JSON.parse(await control.command('snapshot', 'body'))
+          assert.ok(
+            !cancelledGh.testIds.includes('github-cli-auth'),
+            'gh authorization card remained open after cancellation'
+          )
         }
         await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ordinaryPrompt })
         await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
