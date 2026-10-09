@@ -417,16 +417,7 @@ export function StandaloneFolderProjectDialog({
   const [gitError, setGitError] = useState<string | null>(null)
   const nativePickerStartedRef = useRef(false)
   const gitParentDefaultDeviceIdRef = useRef<string | null>(null)
-  const selectableDevices = useMemo(() => {
-    if (!fixedDeviceId) return getUsableStandaloneDevices(devices, mode)
-    const fixedDevice = devices.find(device => device.device_id === fixedDeviceId)
-    if (!fixedDevice) return []
-    const usable = isRemoteProjectDevice(fixedDevice)
-      ? canUseForRemoteProjectCreation(fixedDevice)
-      : canUseForProjectCreation(fixedDevice)
-    return usable ? [fixedDevice] : []
-  }, [devices, fixedDeviceId, mode])
-  const remoteDeviceOptions = useMemo(
+  const currentRemoteDeviceOptions = useMemo(
     () =>
       mode === 'remote' && !fixedDeviceId
         ? getStandaloneDeviceOptions(devices, mode).sort((left, right) =>
@@ -435,14 +426,55 @@ export function StandaloneFolderProjectDialog({
         : [],
     [devices, fixedDeviceId, mode]
   )
+  const [retainedRemoteDeviceOptions, setRetainedRemoteDeviceOptions] = useState<DeviceInfo[]>(
+    currentRemoteDeviceOptions
+  )
+  useEffect(() => {
+    if (!open || currentRemoteDeviceOptions.length === 0) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setRetainedRemoteDeviceOptions(currentRemoteDeviceOptions)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [currentRemoteDeviceOptions, open])
+  const remoteDeviceOptions = useMemo(
+    () =>
+      mode === 'remote' && !fixedDeviceId
+        ? currentRemoteDeviceOptions.length > 0
+          ? currentRemoteDeviceOptions
+          : retainedRemoteDeviceOptions
+        : [],
+    [currentRemoteDeviceOptions, fixedDeviceId, mode, retainedRemoteDeviceOptions]
+  )
+  const selectableDevices = useMemo(() => {
+    if (!fixedDeviceId) {
+      if (mode === 'remote') {
+        return remoteDeviceOptions.filter(canUseForRemoteProjectCreation)
+      }
+      return getUsableStandaloneDevices(devices, mode)
+    }
+    const fixedDevice = devices.find(device => device.device_id === fixedDeviceId)
+    if (!fixedDevice) return []
+    const usable = isRemoteProjectDevice(fixedDevice)
+      ? canUseForRemoteProjectCreation(fixedDevice)
+      : canUseForProjectCreation(fixedDevice)
+    return usable ? [fixedDevice] : []
+  }, [devices, fixedDeviceId, mode, remoteDeviceOptions])
   const cloudDeviceOptions = remoteDeviceOptions.filter(isCloudDevice)
   const remoteDockerDeviceOptions = remoteDeviceOptions.filter(isRemoteDevice)
   const defaultDevice = useMemo(
     () =>
       fixedDeviceId
         ? (selectableDevices.find(device => device.device_id === fixedDeviceId) ?? null)
-        : getPreferredStandaloneWorkspaceDevice(devices, preferredDeviceId, mode),
-    [devices, fixedDeviceId, mode, preferredDeviceId, selectableDevices]
+        : (selectableDevices.find(device => device.device_id === preferredDeviceId) ??
+          selectableDevices.find(device => device.is_default) ??
+          selectableDevices[0] ??
+          null),
+    [fixedDeviceId, preferredDeviceId, selectableDevices]
   )
   const [activeDeviceId, setActiveDeviceId] = useState(
     defaultDevice?.device_id ?? selectableDevices[0]?.device_id ?? ''
