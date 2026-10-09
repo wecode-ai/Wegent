@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCloudRuntimeIpcClient } from "./runtime-ipc";
 import { createSocketClient } from "./socket";
@@ -80,6 +81,58 @@ describe("createCloudRuntimeIpcClient", () => {
     ).resolves.toEqual({
       success: true,
     });
+  });
+
+  it("assembles transcript chunks through the owning cloud device", async () => {
+    const content = Array.from({ length: 18_000 }, (_, index) =>
+      createHash("sha256").update(String(index)).digest("hex"),
+    ).join("");
+    const expected = { success: true, messages: [{ content }], turns: [] };
+    const bytes = gzipSync(
+      JSON.stringify({ transcript: expected, strings: [], references: [] }),
+    );
+    const snapshotId = createHash("sha256").update(bytes).digest("hex");
+    const chunkSize = 360 * 1024;
+    expect(bytes.length).toBeGreaterThan(chunkSize);
+    socket.emit.mockImplementation((_event, request, acknowledge) => {
+      expect(request.device_id).toBe("cloud-device");
+      expect(request.params.taskId).toBe("task-1");
+      expect(request.params.transcriptProtocolVersion).toBe(2);
+      const offset = request.params.transcriptTransfer?.offset ?? 0;
+      if (offset)
+        expect(request.params.transcriptTransfer.snapshotId).toBe(snapshotId);
+      const end = Math.min(offset + chunkSize, bytes.length);
+      acknowledge({
+        ok: true,
+        result: {
+          success: true,
+          transcriptProtocolVersion: 2,
+          transfer: {
+            snapshotId,
+            offset,
+            totalBytes: bytes.length,
+            encoding: "gzip+base64+json",
+            nextOffset: end < bytes.length ? end : null,
+            payload: bytes.subarray(offset, end).toString("base64"),
+          },
+        },
+      });
+    });
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+    await expect(
+      client.request(
+        "runtime.tasks.transcript",
+        { taskId: "task-1" },
+        "cloud-device",
+      ),
+    ).resolves.toEqual(expected);
+    expect(socket.emit).toHaveBeenCalledTimes(
+      Math.ceil(bytes.length / chunkSize),
+    );
   });
 
   it("keeps one request id when the cloud socket connection fails", async () => {

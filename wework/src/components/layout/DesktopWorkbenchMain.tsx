@@ -5123,6 +5123,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     messages={paneMessages}
                     turns={paneSession.turns}
                     loading={paneSession.transcriptLoading}
+                    transcriptError={paneSession.transcriptError}
+                    onRetryTranscript={paneSession.reloadRuntimeTranscript}
                     isWaitingForAssistant={
                       !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
                     }
