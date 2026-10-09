@@ -811,6 +811,36 @@ def test_assign_to_member_records_chain(test_db: Session, test_user: User) -> No
     assert _active_execution(test_db, updated) is None
 
 
+@pytest.mark.parametrize("initial_status", ["in_progress", "in_review", "completed"])
+def test_assign_to_member_preserves_issue_status(
+    test_db: Session,
+    test_user: User,
+    initial_status: str,
+) -> None:
+    project = _make_project(test_db, test_user)
+    member = _make_member(test_db, project, "status-owner", BaseRole.Developer)
+    item = _make_item(test_db, project, test_user)
+    item.status = initial_status
+    item.completed_at = datetime(2026, 10, 1) if initial_status == "completed" else None
+    test_db.commit()
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="user",
+            assignee_id=str(member.id),
+        ),
+    )
+
+    assert updated.status == initial_status
+    if initial_status == "completed":
+        assert updated.completed_at == datetime(2026, 10, 1)
+
+
 def test_assign_to_other_member_sends_notification(
     test_db: Session, test_user: User
 ) -> None:
@@ -1191,6 +1221,8 @@ def test_queue_listing_is_a_projection_of_assigned_tasks(
         assignee_id=str(member.id),
     )
     assert [item.id for item in member_queue] == [completed_item.id]
+    test_db.refresh(completed_item)
+    assert completed_item.status == "completed"
 
 
 def test_my_work_uses_latest_execution_truth_instead_of_task_binding(

@@ -749,11 +749,17 @@ class DesktopE2EServer {
   }
 
   async awaitTelemetryEvent(eventName, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+    return this.awaitTelemetryEventAfter(eventName, 0, timeoutMs)
+  }
+
+  async awaitTelemetryEventAfter(eventName, requestCount, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
     const startedAt = Date.now()
     while (Date.now() - startedAt < timeoutMs) {
-      const request = this.telemetryRequests.find(candidate =>
-        telemetryEvents(candidate.payload).some(event => event.event === eventName)
-      )
+      const request = this.telemetryRequests
+        .slice(requestCount)
+        .find(candidate =>
+          telemetryEvents(candidate.payload).some(event => event.event === eventName)
+        )
       if (request) return request
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }

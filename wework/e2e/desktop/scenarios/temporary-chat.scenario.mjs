@@ -225,6 +225,44 @@ async function createLocalProject(control, workspacePath, timeoutMs) {
     text: 'temporary-chat',
     timeoutMs,
   })
+  await verifyProjectMenuAttachment(control, timeoutMs)
+}
+
+async function assertProjectMenuAttached(control) {
+  const triggerSelector = `${ACTIVE_SURFACE} [data-testid="project-work-button"]`
+  const triggers = JSON.parse(await control.command('getElementMetrics', triggerSelector))
+  const menus = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="project-work-menu"]')
+  )
+  assert.equal(triggers.length, 1, 'The project menu must have one active trigger')
+  assert.equal(menus.length, 1, 'The project chooser must have one visible surface')
+  const gap = triggers[0].top - menus[0].bottom
+  assert.ok(
+    Math.abs(gap - 8) <= 1,
+    `The project chooser detached from the composer: ${JSON.stringify({ trigger: triggers[0], menu: menus[0], gap })}`
+  )
+  return menus[0].height
+}
+
+async function verifyProjectMenuAttachment(control, timeoutMs) {
+  const triggerSelector = `${ACTIVE_SURFACE} [data-testid="project-work-button"]`
+  await control.command('click', triggerSelector)
+  await control.command('waitFor', '[data-testid="project-work-menu"]', {
+    visible: true,
+    stableMs: 300,
+    timeoutMs,
+  })
+  const initialHeight = await assertProjectMenuAttached(control)
+  await control.command('fill', '[data-testid="project-search-input"]', {
+    value: '__WEWORK_E2E_NO_MATCHING_PROJECT__',
+  })
+  await control.command('waitFor', '[data-testid="project-search-empty"]', {
+    visible: true,
+    timeoutMs,
+  })
+  const filteredHeight = await assertProjectMenuAttached(control)
+  assert.ok(filteredHeight < initialHeight, 'Filtering projects did not shrink the chooser')
+  await control.command('click', triggerSelector)
 }
 
 async function waitForNewTaskRow(control, knownRows, timeoutMs) {

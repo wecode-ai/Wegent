@@ -1,6 +1,9 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { RuntimeSendRequest } from '@/types/api'
-import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
+import {
+  projectSpaceChatRuntimeContext,
+  projectSpaceIssueRuntimeContext,
+} from './projectProviderConfig'
 
 export function buildWorkItemRuntimeContext(
   project: CloudProject,
@@ -19,7 +22,9 @@ export function buildWorkItemRuntimeContext(
         }
       : {}),
     additionalContext: {
-      ...projectSpaceChatRuntimeContext(project, task),
+      ...(task
+        ? projectSpaceIssueRuntimeContext(project, task)
+        : projectSpaceChatRuntimeContext(project)),
       ...(task
         ? {
             issueEnvironment: {

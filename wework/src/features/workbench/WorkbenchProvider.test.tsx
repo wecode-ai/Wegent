@@ -4571,6 +4571,52 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('cloud-work-error')).toHaveTextContent('')
   })
 
+  test('preserves cloud devices during a local refresh until the cloud response removes them', async () => {
+    const devicesRefresh = deferred<DeviceInfo[]>()
+    const listCloudDevices = vi
+      .fn()
+      .mockResolvedValueOnce([
+        createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+      ])
+      .mockImplementation(() => devicesRefresh.promise)
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+      } as WorkbenchServices['deviceApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: listCloudDevices,
+        listRuntimeWork: vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
+      },
+    })
+
+    renderWorkbench(
+      <>
+        <CloudWorkStatusProbe />
+        <BootstrapProbe />
+      </>,
+      services
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('available')
+    )
+    expect(screen.getByTestId('device-ids')).toHaveTextContent('remote-device')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh devices' }))
+    await waitFor(() => expect(listCloudDevices).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('device-ids')).toHaveTextContent('remote-device')
+
+    await act(async () => {
+      devicesRefresh.resolve([])
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-devices-check')).toHaveTextContent('empty')
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('device-ids')).not.toHaveTextContent('remote-device')
+    )
+  })
+
   test('publishes cloud devices before a slow runtime-work refresh completes', async () => {
     const runtimeWork = deferred<RuntimeWorkListResponse>()
     let runtimeWorkResolved = false

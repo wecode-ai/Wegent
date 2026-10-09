@@ -36,6 +36,7 @@ import {
 import { dispatchWorkspaceTabsClosed } from '@/features/workspace-tabs/workspaceTabs'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
+import { StandaloneFolderProjectDialog } from '@/components/projects/StandaloneProjectDialogs'
 import {
   archiveLocalHarnessSession,
   closeLocalTerminal,
@@ -56,7 +57,12 @@ import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAp
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import { navigateTo } from '@/lib/navigation'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
-import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
   RuntimePaneTranscript,
@@ -5813,6 +5819,84 @@ describe('DesktopWorkbenchLayout', () => {
     expect(select).not.toHaveTextContent('Local Device')
     expect(screen.getByTestId('standalone-remote-device-option-cloud-device')).toBeEnabled()
     expect(screen.getByTestId('standalone-remote-device-option-remote-device')).toBeEnabled()
+  })
+
+  test('remote project device picker remains stable while a device refresh is temporarily empty', async () => {
+    const cloudDevice = {
+      id: 2,
+      device_id: 'cloud-device',
+      name: 'Cloud Device',
+      status: 'online',
+      is_default: true,
+      device_type: 'cloud',
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+      runtime_transfer_host: '10.201.3.200',
+    }
+    const view = render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [cloudDevice],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('cloud-device')
+    )
+
+    view.rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [],
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('cloud-device')
+    expect(screen.getByTestId('standalone-remote-device-option-cloud-device')).toBeEnabled()
+    expect(screen.queryByTestId('standalone-folder-no-device')).not.toBeInTheDocument()
+  })
+
+  test('remote project device picker discards retained devices after the dialog closes', async () => {
+    const cloudDevice: DeviceInfo = {
+      id: 2,
+      device_id: 'cloud-device',
+      name: 'Cloud Device',
+      status: 'online',
+      is_default: true,
+      device_type: 'cloud',
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const dialog = (open: boolean, devices: DeviceInfo[]) => (
+      <StandaloneFolderProjectDialog
+        open={open}
+        mode="remote"
+        devices={devices}
+        onClose={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/ubuntu')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn().mockResolvedValue(undefined)}
+      />
+    )
+    const view = render(dialog(true, [cloudDevice]))
+
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('cloud-device')
+
+    view.rerender(dialog(false, []))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    view.rerender(dialog(true, []))
+
+    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
   })
 
   test('remote project dialog shows a version-mismatched Docker device as disabled', async () => {
