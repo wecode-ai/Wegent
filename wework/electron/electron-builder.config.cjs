@@ -27,7 +27,7 @@ module.exports = {
   protocols: [{ name: 'Wework', schemes: ['wework'] }],
   productName: identity.productName,
   executableName: identity.executableName,
-  compression: onlineUpdateBuild ? 'store' : 'normal',
+  compression: 'normal',
   beforePack: macosAppIcon.prepare,
   extraMetadata: {
     name: identity.packageName,
