@@ -38,6 +38,10 @@ The existing cleanup archives the fixture project without touching user projects
 
 Run: `pnpm --filter wework e2e:desktop --segment collaboration-shared-core`.
 
+Linux and macOS desktop build fingerprints must include `packages/collaboration`
+so shared UI changes cannot reuse stale artifacts. Cache script tests cover both
+adding and modifying shared-package files.
+
 This plan must prove more than “both hosts appear to work”:
 
 1. Wegent Web and Wework mount the same collaboration root component exported by

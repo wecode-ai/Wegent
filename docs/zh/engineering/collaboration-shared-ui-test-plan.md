@@ -35,6 +35,9 @@ sidebar_position: 25
 
 运行命令：`pnpm --filter wework e2e:desktop --segment collaboration-shared-core`。
 
+Linux 和 macOS 桌面构建缓存指纹必须包含 `packages/collaboration`，否则共享 UI
+改动可能复用旧产物。缓存脚本测试覆盖新增和修改共享包文件时的缓存失效。
+
 本计划用于证明以下结论，而不只是证明两个宿主“看起来都能用”：
 
 1. Wegent Web 与 Wework 挂载的是 `@wegent/collaboration` 导出的同一个协作 UI 根组件。
