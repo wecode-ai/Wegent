@@ -752,13 +752,16 @@ export function WeworkSharedProject({
           setTaskComposer({
             issue,
             conversationKey: `${issue.id}:${existing.deviceId}:${existing.taskId}`,
-            address: workspaceExecutionAddress(existing, runtimeWork, issue.id),
+            address: collaborationTaskAddress(existing, runtimeWork),
           })
           projectHost.navigate({ ...projectHost.location, issueId: issue.id })
           return
         }
         if (!onOpenRuntimeTask) throw new Error('当前工作台无法打开个人任务')
-        await onOpenRuntimeTask(workspaceExecutionAddress(existing, runtimeWork, issue.id))
+        await onOpenRuntimeTask({
+          deviceId: existing.deviceId,
+          taskId: existing.taskId,
+        })
         return
       }
       if (acceptedDispatchTaskActions.current.has(action.idempotencyKey)) return

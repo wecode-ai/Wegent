@@ -114,7 +114,12 @@ export function mergeRuntimeTaskAddresses(
   base: RuntimeTaskAddress | null | undefined,
   override: RuntimeTaskAddress
 ): RuntimeTaskAddress {
-  if (!base || base.deviceId !== override.deviceId || base.taskId !== override.taskId) {
+  if (
+    !base ||
+    !base.projectSession ||
+    base.deviceId !== override.deviceId ||
+    base.taskId !== override.taskId
+  ) {
     return override
   }
   const runtimeHandle = mergeRuntimeTaskHandles(base.runtimeHandle, override.runtimeHandle)

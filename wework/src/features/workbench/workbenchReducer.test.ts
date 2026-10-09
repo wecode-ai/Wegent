@@ -731,6 +731,35 @@ describe('workbenchReducer', () => {
     })
   })
 
+  test('replaces an ordinary task address when the same task is opened explicitly', () => {
+    const opened = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+          runtime: 'claude_code',
+          workspacePath: '/workspace/project',
+        },
+      },
+      {
+        type: 'runtime_task_opened',
+        address: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+          workspacePath: '/workspace/project',
+        },
+        project: null,
+      }
+    )
+
+    expect(opened.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      workspacePath: '/workspace/project',
+    })
+  })
+
   test('reconciles an accepted task address without depending on work-list projection', () => {
     const state = {
       ...initialWorkbenchState,

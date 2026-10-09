@@ -2436,28 +2436,9 @@ export function CloudTodoWorkspace({
         await onOpenRuntimeTask({
           deviceId: existing.deviceId,
           taskId: existing.taskId,
-          ...(existing.executionContext?.runtime
-            ? { runtime: existing.executionContext.runtime }
-            : {}),
-          ...(existing.executionContext?.threadId
-            ? { threadId: existing.executionContext.threadId }
-            : {}),
-          ...(existing.executionContext?.workspacePath
-            ? { workspacePath: existing.executionContext.workspacePath }
-            : {}),
-          ...(existing.executionContext?.workspaceKind
-            ? { workspaceKind: existing.executionContext.workspaceKind }
-            : {}),
-          ...(existing.executionContext?.worktreeId
-            ? { worktreeId: existing.executionContext.worktreeId }
-            : {}),
           ...(existing.modelSelection
             ? { runtimeHandle: { modelSelection: existing.modelSelection } }
             : {}),
-          projectSession: {
-            projectId: String(action.projectId),
-            issueId: String(action.itemId),
-          },
         })
         return
       }

@@ -178,14 +178,6 @@ export function useWorkbenchRuntimeTasks({
             throw new Error('Runtime transcript response is missing canonical turns')
           }
 
-          const workspacePath = transcript.workspacePath?.trim()
-          if (workspacePath || transcript.runtime) {
-            reconcileCurrentRuntimeTaskAddress(address, {
-              ...address,
-              ...(workspacePath ? { workspacePath } : {}),
-              ...(transcript.runtime ? { runtime: transcript.runtime } : {}),
-            })
-          }
           return projectRuntimePaneTranscript(transcript)
         })
         .finally(() => {
@@ -196,7 +188,7 @@ export function useWorkbenchRuntimeTasks({
       runtimeTranscriptRequests.set(transcriptKey, request)
       return request
     },
-    [executorClient, reconcileCurrentRuntimeTaskAddress]
+    [executorClient]
   )
 
   const subscribeRuntimeTaskStream = useCallback(
