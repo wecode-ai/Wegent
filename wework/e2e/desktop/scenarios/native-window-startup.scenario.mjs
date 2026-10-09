@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { telemetryEvents } from '../modules/response-protocol.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
@@ -149,6 +150,7 @@ export async function createDesktopScenario({ resultDir }) {
       // Consent is already saved by common bootstrap. Restart without clicking or focusing
       // anything so the assertion exercises startup autofocus itself.
       assert.ok(restartDesktopApp, 'The startup focus scenario requires the desktop restart hook')
+      const telemetryRequestCountBeforeRestart = control.telemetryRequestCount()
       await restartDesktopApp()
       await waitForClosedStartupSplash(control)
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]')
@@ -160,6 +162,34 @@ export async function createDesktopScenario({ resultDir }) {
       await writeFile(
         join(resultDir, 'startup-composer-focus.json'),
         `${JSON.stringify(focusSnapshot, null, 2)}\n`
+      )
+
+      await control.awaitTelemetryEventAfter(
+        'app_startup_attempted',
+        telemetryRequestCountBeforeRestart
+      )
+      await control.awaitTelemetryEventAfter(
+        'app_startup_succeeded',
+        telemetryRequestCountBeforeRestart
+      )
+      const startupEvents = control.telemetryRequests
+        .slice(telemetryRequestCountBeforeRestart)
+        .flatMap(request => telemetryEvents(request.payload))
+      const attempted = startupEvents.find(event => event.event === 'app_startup_attempted')
+      const succeeded = startupEvents.find(
+        event =>
+          event.event === 'app_startup_succeeded' &&
+          event.properties?.startup_id === attempted?.properties?.startup_id
+      )
+      assert.match(
+        attempted?.properties?.startup_id ?? '',
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+        'The desktop startup attempt did not include a UUID correlation ID'
+      )
+      assert.ok(succeeded, 'The successful desktop startup did not close its correlated attempt')
+      assert.ok(
+        Number.isFinite(succeeded.properties?.duration_ms) && succeeded.properties.duration_ms >= 0,
+        'The successful desktop startup did not include a valid duration'
       )
     },
 
