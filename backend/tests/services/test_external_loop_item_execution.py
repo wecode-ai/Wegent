@@ -509,6 +509,9 @@ def test_completed_external_issue_stays_open_and_archive_closes_it(
     monkeypatch.setattr(
         external_loop_item_provider, "_get_issue", lambda _project, _number: issue
     )
+    monkeypatch.setattr(
+        external_loop_item_provider, "_list_issues", lambda _project: [issue]
+    )
 
     def update_issue(_project, _number, payload):
         writes.append(dict(payload))

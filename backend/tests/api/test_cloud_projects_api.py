@@ -1314,7 +1314,7 @@ def test_backend_routes_cloud_github_issues_without_exposing_token(
         "state": "open",
         "labels": [
             {"name": "wegent:creator:1:admin"},
-            {"name": "wegent:status:in_progress"},
+            {"name": "wegent:status:completed"},
             {"name": "bug"},
         ],
         "created_at": "2026-07-28T00:00:00Z",
@@ -1359,12 +1359,12 @@ def test_backend_routes_cloud_github_issues_without_exposing_token(
     paged = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/loop-item-pages",
         headers=_auth(test_token),
-        params={"status": "in_progress", "limit": 25},
+        params={"status": "completed", "limit": 25},
     )
     created = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Backend issue", "status": "in_progress", "tags": ["bug"]},
+        json={"title": "Backend issue", "status": "completed", "tags": ["bug"]},
     )
     archived = test_client.delete(
         "/api/v1/loop-items/CLOUDGH-7",
@@ -1379,7 +1379,7 @@ def test_backend_routes_cloud_github_issues_without_exposing_token(
     assert any(
         isinstance(params, dict)
         and params.get("state") == "open"
-        and params.get("labels") == "wegent:status:in_progress"
+        and params.get("labels") == "wegent:status:completed"
         for params in provider_params
     )
     assert created.status_code == 201
