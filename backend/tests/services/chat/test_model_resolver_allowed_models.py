@@ -18,9 +18,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.chat.config.model_resolver import (
+    PublicModelAccessDeniedError,
     _resolve_model_for_bot,
     allowed_model_names_for_bot,
     allowed_model_names_for_team,
+    get_model_config_for_bot,
 )
 from app.services.readers import kindReader
 
@@ -563,3 +565,75 @@ class TestBoundModelPublicWhitelist:
             side_effect=self._fake_find_model_with_namespace,
         ):
             assert allowed_model_names_for_bot(MagicMock(), bot, 1) is None
+
+
+class TestBoundModelRestrictedTreatedAsNotFound:
+    """A bot-bound model that later gains a public whitelist is reported as missing.
+
+    The bot owner picked the model before it was restricted; for users outside
+    the whitelist the model is unusable, so the error must read exactly like
+    "model not found" instead of exposing the whitelist wording.
+    """
+
+    RESTRICTED_MODEL = "wecode-claude-sonnet-4-6(overseas)"
+
+    def _deny_find(self, db, model_name, user_id, enforce_public_whitelist=True):
+        raise PublicModelAccessDeniedError(
+            f"Model '{model_name}' is restricted to whitelisted users"
+        )
+
+    def _make_bot_with_restricted_model_ref(self) -> MagicMock:
+        bot = _make_bot({})
+        bot.json["spec"]["modelRef"] = {
+            "name": self.RESTRICTED_MODEL,
+            "namespace": "default",
+        }
+        return bot
+
+    def test_bot_bound_restricted_model_resolves_as_not_found(self):
+        """Resolving the bot's bound model must not raise the whitelist error."""
+        bot = self._make_bot_with_restricted_model_ref()
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            side_effect=self._deny_find,
+        ):
+            model_kind, model_spec, model_name, _ = _resolve_model_for_bot(
+                db=MagicMock(), bot=bot, user_id=1
+            )
+
+        assert model_kind is None
+        assert model_spec is None
+        assert model_name == self.RESTRICTED_MODEL
+
+    def test_bot_bound_restricted_model_raises_not_found_for_chat_shell(self):
+        """The flat config path must report the same message as a missing model."""
+        bot = self._make_bot_with_restricted_model_ref()
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            side_effect=self._deny_find,
+        ):
+            with pytest.raises(ValueError) as exc_info:
+                get_model_config_for_bot(db=MagicMock(), bot=bot, user_id=1)
+
+        assert str(exc_info.value) == f"Model {self.RESTRICTED_MODEL} not found"
+
+    def test_user_selected_restricted_model_keeps_whitelist_error(self):
+        """A model the user explicitly picked still reports the whitelist reason."""
+        bot = _make_bot({})
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            side_effect=self._deny_find,
+        ):
+            with pytest.raises(PublicModelAccessDeniedError) as exc_info:
+                _resolve_model_for_bot(
+                    db=MagicMock(),
+                    bot=bot,
+                    user_id=1,
+                    override_model_name=self.RESTRICTED_MODEL,
+                    force_override=True,
+                )
+
+        assert "restricted to whitelisted users" in str(exc_info.value)
