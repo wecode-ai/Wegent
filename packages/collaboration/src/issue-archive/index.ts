@@ -2,4 +2,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export * from "./IssueDeleteDialog";
+export * from "./IssueArchiveDialog";
+export * from "./IssueArchiveDrawer";

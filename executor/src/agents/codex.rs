@@ -685,7 +685,7 @@ impl CodexAppServerClient {
         request: &ExecutionRequest,
     ) -> Result<Value, String> {
         let request = request.clone();
-        let launch_config = build_codex_launch_config_for_fork(&request, thread_id)?;
+        let launch_config = prepare_codex_fork_launch_config(&request, thread_id).await?;
         let mut params = thread_fork_params(thread_id, thread_path, &request, &launch_config);
         params["lastTurnId"] = Value::String(last_turn_id.to_owned());
         let response = self
@@ -3468,6 +3468,14 @@ fn build_codex_launch_config_for_fork(
     // A fork owns its route even when the source is running or was opened after a restart.
     let route_scope = format!("fork:{source_thread_id}:{}", uuid::Uuid::new_v4());
     build_codex_launch_config_with_route_scope(request, &route_scope)
+}
+
+async fn prepare_codex_fork_launch_config(
+    request: &ExecutionRequest,
+    source_thread_id: &str,
+) -> Result<CodexLaunchConfig, String> {
+    ensure_codex_mcp_endpoints().await?;
+    build_codex_launch_config_for_fork(request, source_thread_id)
 }
 
 fn build_codex_launch_config_with_route_scope(

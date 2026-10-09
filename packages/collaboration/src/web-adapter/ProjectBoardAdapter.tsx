@@ -98,6 +98,8 @@ interface ProjectBoardAdapterProps {
   statuses: CollaborationStatus[];
   taskBindings: WorkspaceTaskBinding[];
   onCreateIssue(): void;
+  onArchiveCompleted?(issues: CollaborationIssue[]): void;
+  onOpenArchive?(): void;
   onOpenBoardSettings?(): void;
   onGroupByChange(groupBy: ProjectBoardGroupBy): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
@@ -137,6 +139,8 @@ export function ProjectBoardAdapter({
   labels,
   members,
   onCreateIssue,
+  onArchiveCompleted,
+  onOpenArchive,
   onMarkRead,
   onDeleteIssue,
   onOpenBoardSettings,
@@ -349,19 +353,61 @@ export function ProjectBoardAdapter({
           />
         )}
         renderBoardSettingsAction={
-          onOpenBoardSettings
+          onOpenBoardSettings || onOpenArchive
             ? () => (
-                <button
-                  type="button"
-                  className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-                  data-testid="collaboration-board-settings"
-                  onClick={onOpenBoardSettings}
-                >
-                  看板设置
-                </button>
+                <>
+                  {onOpenArchive ? (
+                    <button
+                      type="button"
+                      className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                      data-testid={collaborationTestIds.issueArchiveOpen}
+                      onClick={onOpenArchive}
+                    >
+                      {translate("todo.archive_box", "已归档")}
+                    </button>
+                  ) : null}
+                  {onOpenBoardSettings ? (
+                    <button
+                      type="button"
+                      className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                      data-testid="collaboration-board-settings"
+                      onClick={onOpenBoardSettings}
+                    >
+                      看板设置
+                    </button>
+                  ) : null}
+                </>
               )
             : undefined
         }
+        renderColumnHeaderActions={(column, columnItems, state) => {
+          if (
+            state.groupBy !== "status" ||
+            column.status !== "completed" ||
+            !onArchiveCompleted
+          ) {
+            return null;
+          }
+          const editableCompletedItems = columnItems.filter((issue) =>
+            canEditCollaborationIssue(issue),
+          );
+          const selectedIds = new Set(
+            editableCompletedItems.map((issue) => issue.id),
+          );
+          const archiveRoots = editableCompletedItems.filter(
+            (issue) => !issue.parent_id || !selectedIds.has(issue.parent_id),
+          );
+          return archiveRoots.length > 0 ? (
+            <button
+              type="button"
+              className="flex h-6 items-center rounded-md px-2 text-xs text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 group-hover:opacity-100"
+              data-testid={collaborationTestIds.issueArchiveCompleted}
+              onClick={() => onArchiveCompleted(archiveRoots)}
+            >
+              {translate("todo.archive_completed_tasks", "归档已完成任务")}
+            </button>
+          ) : null;
+        }}
         renderItem={(issue, column) => {
           const issueDisplay = {
             showAssignee: display.show_assignee,
@@ -377,10 +423,12 @@ export function ProjectBoardAdapter({
             display: issueDisplay,
             onMarkRead: onMarkRead ? () => onMarkRead(issue) : undefined,
             onArchive:
-              onDeleteIssue && canEditCollaborationIssue(issue)
+              onDeleteIssue &&
+              issue.status === "completed" &&
+              canEditCollaborationIssue(issue)
                 ? () => onDeleteIssue(issue)
                 : undefined,
-            archiveLabel: translate("todo.delete_issue", "删除任务"),
+            archiveLabel: translate("todo.archive_issue", "归档任务"),
             articleTestId: collaborationTestIds.issue(issue.id),
             dragEnabled: canEditCollaborationIssue(issue),
             onOpen: () => onOpen(issue),
