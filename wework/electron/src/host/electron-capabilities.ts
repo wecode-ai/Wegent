@@ -834,8 +834,8 @@ export function createElectronCapabilityRouter(
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
   registerPluginDevelopmentCapabilities(router, desktopServices)
-  router.register('runtime.restartCoreDsh', () => {
-    e2eHost.scheduleCoreDshRestart()
+  router.register('runtime.restartCoreDsh', (_params, context) => {
+    context.deferUntilResponseSent(e2eHost.scheduleCoreDshRestart)
     return { scheduled: true }
   })
   router.register('shell.openExternal', async params => {

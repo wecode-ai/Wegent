@@ -11,6 +11,26 @@ function parseBackendTimestamp(value: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+export function issueExecutionElapsedMinutes(
+  timestamps: Iterable<string | null | undefined>,
+  nowMs = Date.now(),
+): number | null {
+  let startedAtMs: number | null = null;
+
+  for (const timestamp of timestamps) {
+    if (!timestamp) continue;
+    const timestampMs = parseBackendTimestamp(timestamp)?.getTime();
+    if (timestampMs === undefined) continue;
+    if (startedAtMs === null || timestampMs < startedAtMs) {
+      startedAtMs = timestampMs;
+    }
+  }
+
+  return startedAtMs === null
+    ? null
+    : Math.max(1, Math.floor((nowMs - startedAtMs) / 60_000));
+}
+
 export function formatIssueTimestamp(value: string, timeZone?: string): string {
   const date = parseBackendTimestamp(value);
   if (!date) return "--";
