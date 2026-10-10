@@ -26,6 +26,7 @@ import {
 } from '@/api/wegentUsage'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import { useLocalCodexSubscriptionEnabled } from '@/features/app-preferences/useLocalCodexSubscriptionEnabled'
 import {
   calculateAppUpdateDownloadPercent,
   formatAppUpdateVersion,
@@ -74,6 +75,7 @@ export function DesktopSettingsMenu({
   const { t } = useTranslation('common')
   const shouldShowLogout = showLogout ?? !isLocalFirstAppRuntime()
   const cloudConnection = useOptionalCloudConnection()
+  const { enabled: codexSubscriptionEnabled } = useLocalCodexSubscriptionEnabled()
   const [isCodexUsageExpanded, setIsCodexUsageExpanded] = useState(false)
   const [isWegentUsageExpanded, setIsWegentUsageExpanded] = useState(false)
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
@@ -315,22 +317,24 @@ export function DesktopSettingsMenu({
         onClick={onOpenAbout}
       />
       <div className="mx-2 my-1 border-t border-border/70" />
-      <SettingsMenuItem
-        testId="usage-menu-button"
-        icon={<Gauge className="h-4 w-4 shrink-0 text-text-secondary" />}
-        label={t('workbench.remaining_usage', 'Codex 剩余额度')}
-        onClick={handleCodexUsageClick}
-        ariaExpanded={isCodexUsageExpanded}
-        ariaControls="codex-remaining-usage-panel"
-        trailing={
-          <ChevronDown
-            className={`h-4 w-4 shrink-0 text-text-secondary transition-transform ${
-              isCodexUsageExpanded ? 'rotate-180' : ''
-            }`}
-          />
-        }
-      />
-      {isCodexUsageExpanded ? (
+      {codexSubscriptionEnabled ? (
+        <SettingsMenuItem
+          testId="usage-menu-button"
+          icon={<Gauge className="h-4 w-4 shrink-0 text-text-secondary" />}
+          label={t('workbench.remaining_usage', 'Codex 剩余额度')}
+          onClick={handleCodexUsageClick}
+          ariaExpanded={isCodexUsageExpanded}
+          ariaControls="codex-remaining-usage-panel"
+          trailing={
+            <ChevronDown
+              className={`h-4 w-4 shrink-0 text-text-secondary transition-transform ${
+                isCodexUsageExpanded ? 'rotate-180' : ''
+              }`}
+            />
+          }
+        />
+      ) : null}
+      {codexSubscriptionEnabled && isCodexUsageExpanded ? (
         <div
           id="codex-remaining-usage-panel"
           data-testid="usage-detail-panel"

@@ -296,13 +296,19 @@ export function GeneralSettingsPage() {
       description: t('workbench.general_settings_tray_running_description'),
       icon: Activity,
     },
-    {
-      preferenceKey: 'trayUsageEnabled',
-      testId: 'general-tray-usage-toggle',
-      label: t('workbench.general_settings_tray_usage'),
-      description: t('workbench.general_settings_tray_usage_description'),
-      icon: Gauge,
-    },
+    // The Codex quota is meaningless while the local Codex subscription is off:
+    // the tray has no rate limits to read, so the toggle is hidden entirely.
+    ...(preferences.localCodexSubscriptionEnabled
+      ? [
+          {
+            preferenceKey: 'trayUsageEnabled',
+            testId: 'general-tray-usage-toggle',
+            label: t('workbench.general_settings_tray_usage'),
+            description: t('workbench.general_settings_tray_usage_description'),
+            icon: Gauge,
+          } satisfies TrayDisplayOption,
+        ]
+      : []),
     {
       preferenceKey: 'trayWegentUsageEnabled',
       testId: 'general-tray-wegent-usage-toggle',
