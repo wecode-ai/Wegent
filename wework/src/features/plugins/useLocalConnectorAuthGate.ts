@@ -66,8 +66,10 @@ export function useLocalConnectorAuthGate(options: {
   onResumeSend: (input: string) => Promise<void> | void
   onRetryMessage: (message: WorkbenchMessage) => Promise<boolean> | boolean
   onError?: (message: string) => void
+  active?: boolean
 }) {
   const { t } = useTranslation('common')
+  const active = options.active ?? true
   const [pending, setPending] = useState<PendingConnectorAuth | null>(null)
   const handledResumeKeysRef = useRef<Set<string>>(new Set())
   const pendingRef = useRef(pending)
@@ -97,8 +99,20 @@ export function useLocalConnectorAuthGate(options: {
     return loadLocalConnectorAuthPlugins(pluginNames ?? [])
   }, [])
 
+  useEffect(() => {
+    if (active) return
+    preflightVersionRef.current += 1
+    const current = pendingRef.current
+    if (!current) return
+    if (current.mode === 'resume' && current.retryMessage) {
+      handledResumeKeysRef.current.delete(current.retryMessage.id)
+    }
+    updatePending(null)
+  }, [active, updatePending])
+
   const gateBeforeSend = useCallback(
     async (input: string): Promise<'send' | 'blocked'> => {
+      if (!active) return 'blocked'
       if (!messageNeedsConnectorPreflight(input) && !hasGithubCliMention(input)) {
         updatePending(null)
         return 'send'
@@ -150,11 +164,11 @@ export function useLocalConnectorAuthGate(options: {
         return 'blocked'
       }
     },
-    [refreshPlugins, t, updatePending]
+    [active, refreshPlugins, t, updatePending]
   )
 
   useEffect(() => {
-    if (pending) return
+    if (!active || pending) return
     const candidate = latestConnectorAuthMessage(options.messages)
     if (!candidate) return
     const key = candidate.message.id
@@ -240,7 +254,7 @@ export function useLocalConnectorAuthGate(options: {
     return () => {
       cancelled = true
     }
-  }, [options.messages, pending, refreshPlugins, t, updatePending])
+  }, [active, options.messages, pending, refreshPlugins, t, updatePending])
 
   const clearPending = useCallback(() => updatePending(null), [updatePending])
 

@@ -366,8 +366,7 @@ jobs:
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
         run: |
           pnpm --filter wework e2e:desktop -- \
-            --parallel-segments release-package-startup,component-update,app-update-differential
-          pnpm --filter wework e2e:desktop -- --segment app-update-baseline
+            --parallel-segments release-package-startup,component-update,app-update-full
 
       - name: Prune formal release verification diagnostics
         if: failure() && matrix.platform == 'macos' && matrix.arch == 'arm64'

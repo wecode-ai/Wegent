@@ -18,14 +18,8 @@ export function formatAppUpdateProgress(
       completed: progress?.completedComponents ?? 0,
       total: progress?.totalComponents ?? 0,
     })
-  } else if (phase === 'verifying') {
-    message = t('workbench.app_update_verifying', { defaultValue: '正在验证更新' })
   } else if (phase === 'ready') {
     message = t('workbench.app_update_ready', { defaultValue: '更新已就绪，可以重启安装' })
-  } else if (progress?.reason === 'differential-failed') {
-    message = t('workbench.app_update_full_after_failure', {
-      defaultValue: '增量更新校验失败，正在下载完整更新',
-    })
   } else {
     const percent = progress
       ? calculateAppUpdateDownloadPercent(progress.downloadedBytes, progress.totalBytes)

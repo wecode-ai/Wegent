@@ -119,14 +119,9 @@ assert_checkpoint_runtime_failure_rejected() {
 
 assert_checkpoint_runtime_failure_rejected
 
-if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-update-differential' \
+if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-update-full' \
   "$wework_app_workflow"; then
-  printf 'The formal release workflow must invoke app-update-differential\n' >&2
-  exit 1
-fi
-if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-update-baseline' \
-  "$wework_app_workflow"; then
-  printf 'The formal release workflow must invoke app-update-baseline\n' >&2
+  printf 'The formal release workflow must invoke app-update-full\n' >&2
   exit 1
 fi
 

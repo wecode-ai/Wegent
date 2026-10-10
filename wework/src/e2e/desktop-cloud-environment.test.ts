@@ -1,14 +1,10 @@
 import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
+import { RealCloudEnvironment } from '../../e2e/desktop/modules/cloud-environment.mjs'
 
 test('remote executor owns its logs and Homes independently of the desktop host', async () => {
-  const moduleUrl = pathToFileURL(
-    resolve(import.meta.dirname, '../../e2e/desktop/modules/cloud-environment.mjs')
-  ).href
-  const { RealCloudEnvironment } = await import(/* @vite-ignore */ moduleUrl)
   const inheritedHomes = [
     'WEGENT_WORKBENCH_HOME',
     'WEGENT_CAPABILITIES_HOME',
@@ -67,14 +63,8 @@ interface CloudEnvironment {
 }
 
 test('backend restart requires fresh registration before accepting cached online status', async () => {
-  const moduleUrl = pathToFileURL(
-    resolve(import.meta.dirname, '../../e2e/desktop/modules/cloud-environment.mjs')
-  ).href
-  const { RealCloudEnvironment } = (await import(/* @vite-ignore */ moduleUrl)) as {
-    RealCloudEnvironment: new (options: Record<string, unknown>) => CloudEnvironment
-  }
   const directory = await mkdtemp(join(tmpdir(), 'wework-cloud-restart-'))
-  const environment = new RealCloudEnvironment({})
+  const environment = new RealCloudEnvironment({}) as unknown as CloudEnvironment
   environment.backend = null
   environment.backendEnv = { TERMINAL_PROTOCOL_V2_ENABLED: 'true' }
   environment.backendLogPath = join(directory, 'backend.log')
@@ -111,10 +101,6 @@ test('backend restart requires fresh registration before accepting cached online
 })
 
 test('a completed cloud turn remains an active conversation and must settle the task wait', async () => {
-  const moduleUrl = pathToFileURL(
-    resolve(import.meta.dirname, '../../e2e/desktop/modules/cloud-environment.mjs')
-  ).href
-  const { RealCloudEnvironment } = await import(/* @vite-ignore */ moduleUrl)
   const environment = new RealCloudEnvironment({})
   const address = { taskId: 'cloud-task', workspacePath: '/workspace' }
   environment.runtimeTask = vi

@@ -92,16 +92,10 @@ version. A channel that has not published an Electron release may omit its YAML
 manifest; the client treats that state as no available update rather than a
 network failure. Other update-check failures remain visible.
 
-Formal macOS and Windows releases must include the `.blockmap` matching each ZIP
-and NSIS installer. On macOS, Wework atomically stores every successful full or
-differential download as a verified baseline containing the ZIP, blockmap,
-version, architecture, URL, and SHA-512. Later updates use only this local
-baseline and never guess the previous blockmap URL from the new artifact name.
-A first update or an incomplete or invalid baseline downloads the full package
-and establishes a new baseline. A failed differential verification performs
-only one full-download recovery. The release workflow must fail when any
-required blockmap is missing. Differential plans, cumulative transferred bytes,
-and fallback reasons are written to `app-update.log`.
+Wework disables `electron-updater` differential downloads and old ZIP caching.
+macOS and Windows clients download only the compressed full Host update,
+avoiding low-reuse Range request bursts, duplicate traffic, and extra disk
+usage. Component updates still reuse unchanged components by content hash.
 
 The release workflow emits only Electron YAML update manifests and component
 manifests. macOS and Windows use Electron's ZIP and NSIS update paths. Linux
@@ -258,9 +252,8 @@ downloads, and repeated checks for the same version and channel share that
 task, and a check cannot clear an active download. Missing components download
 with at most three workers; Wework writes the `pending` set only after every
 archive passes size, archive-hash, and extracted-content verification. Progress
-covers component downloads, host download, verification, and installation
-readiness, and includes bytes transferred before a failed differential attempt.
-The local Squirrel.Mac handoff of the cached ZIP is not counted as network
+covers component downloads, host download, and installation readiness. The
+local Squirrel.Mac handoff of the downloaded ZIP is not counted as network
 traffic.
 
 When one component download encounters an explicitly transient transport
