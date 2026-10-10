@@ -13,18 +13,21 @@ function endActiveEditingSession(): void {
   if (activeElement instanceof HTMLElement) activeElement.blur()
 }
 
-export async function openWorkspaceTabWindow(tab: WorkspaceTab): Promise<boolean> {
+export async function openWorkspaceTabWindow(
+  tab: WorkspaceTab,
+  options: { label?: string; transferState?: boolean } = {}
+): Promise<boolean> {
   const route = toBrowserPath(workspaceTabRoute(tab))
-  const label = `workspace-${tab.id}-${Date.now()}`
+  const label = options.label ?? `workspace-${tab.id}-${Date.now()}`
   endActiveEditingSession()
   persistWorkspaceTabs(label, [tab], tab.id)
-  stageWorkspaceTabTransfer(tab.id)
+  if (options.transferState !== false) stageWorkspaceTabTransfer(tab.id)
   try {
     await invokeDesktopHost('window.openWorkspace', { label, route, title: tab.title })
     return true
   } catch (error) {
     localStorage.removeItem(workspaceTabsStorageKey(label))
-    clearStagedWorkspaceTabTransfer(tab.id)
+    if (options.transferState !== false) clearStagedWorkspaceTabTransfer(tab.id)
     throw error
   }
 }
