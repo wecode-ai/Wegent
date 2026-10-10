@@ -69,6 +69,9 @@ const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 // The desktop stop budget is five seconds; a runtime that can exit on its own
 // must beat it, otherwise the app force-kills the tree and the window hangs.
 const RUNTIME_SELF_EXIT_TIMEOUT_MS = 4_000
+// Quitting during startup tears down an in-flight runtime and its child
+// processes, so allow longer than the shared step budget for the process exit.
+const STARTUP_QUIT_TIMEOUT_MS = 20_000
 
 async function waitForProcessExit(processId, message) {
   const startedAt = Date.now()
@@ -949,6 +952,92 @@ async function verifyBackgroundTaskWindowLifecycle({
       value: JSON.stringify({ closeToTrayEnabled: true }),
     })
   }
+
+  // Regression: quitting while the startup splash is still on screen must exit the
+  // app. The splash refuses native window closes until the workbench reports
+  // readiness, and that guard used to cancel app.quit() and strand the app on the
+  // splash with its runtime already torn down.
+  setPhase('quit-during-startup-splash')
+  const startupQuitApp = await restartDesktopApp()
+  const startupSplash = JSON.parse(await control.command('getStartupSplashSnapshot', 'body'))
+  assert.notEqual(
+    startupSplash.state,
+    'closed',
+    'The startup splash had already closed before the quit-during-startup request'
+  )
+  if (process.platform === 'darwin') {
+    requestMacosApplicationQuit(startupQuitApp.pid)
+  } else {
+    const tray = JSON.parse(await control.command('getTraySnapshot', 'body'))
+    assert.ok(
+      tray.menu.some(item => item.id === 'quit'),
+      'The Electron Tray did not expose Quit during startup'
+    )
+    // Quitting tears the desktop host bridge down while this request is still in
+    // flight, so the renderer does not always deliver a command result. The
+    // process exit below is what proves the Tray Quit action was processed.
+    void control
+      .command('activateTray', 'body', {
+        value: JSON.stringify({ type: 'menu-item', menuItemId: 'quit' }),
+      })
+      .catch(() => undefined)
+  }
+  const startupQuitExitMs = await waitForProcessExitWithin(
+    startupQuitApp.pid,
+    STARTUP_QUIT_TIMEOUT_MS,
+    'Wework stayed on the startup splash after the quit request during startup'
+  )
+  await writeFile(
+    join(resultDir, 'quit-during-startup.json'),
+    `${JSON.stringify(
+      {
+        appProcessId: startupQuitApp.pid,
+        platform: process.platform,
+        startupSplash,
+        appExitMs: startupQuitExitMs,
+      },
+      null,
+      2
+    )}\n`
+  )
+
+  // Regression: while the splash is up it is the only visible window, so its
+  // native close button must quit the app too. Refusing the close without
+  // acting on it left the user staring at a window that ignored them. The
+  // harness holds the splash on screen, because it otherwise closes as soon as
+  // the workbench reports readiness, before the controller can command it.
+  setPhase('close-during-startup-splash')
+  const startupCloseApp = await restartDesktopApp({
+    appEnvironmentOverrides: { WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '60000' },
+  })
+  const closeSplash = JSON.parse(await control.command('getStartupSplashSnapshot', 'body'))
+  assert.notEqual(
+    closeSplash.state,
+    'closed',
+    'The startup splash had already closed before the close-during-startup request'
+  )
+  await control.command('requestStartupSplashClose', 'body')
+  const startupCloseExitMs = await waitForProcessExitWithin(
+    startupCloseApp.pid,
+    STARTUP_QUIT_TIMEOUT_MS,
+    'Wework ignored its startup splash close button and kept running'
+  )
+  await writeFile(
+    join(resultDir, 'close-during-startup.json'),
+    `${JSON.stringify(
+      {
+        appProcessId: startupCloseApp.pid,
+        platform: process.platform,
+        startupSplash: closeSplash,
+        appExitMs: startupCloseExitMs,
+      },
+      null,
+      2
+    )}\n`
+  )
+  await restartDesktopApp({
+    appEnvironmentOverrides: { WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '' },
+  })
   return taskRowTestId
 }
 
