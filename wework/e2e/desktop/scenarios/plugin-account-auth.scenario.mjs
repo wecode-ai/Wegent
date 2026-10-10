@@ -39,6 +39,8 @@ const prompt = 'Verify the cloud plugin account authentication business command'
 const qrPrompt = 'Verify the managed plugin conversation QR login'
 const ordinaryPrompt = 'Verify ordinary chat while plugin login is pending'
 const ghResumePrompt = 'Verify GitHub CLI Markdown authorization guidance'
+const TRANSIENT_API_RETRY_ATTEMPTS = 50
+const TRANSIENT_API_RETRY_DELAY_MS = 100
 
 async function waitForValue(read, accept, timeoutMs, message) {
   const deadline = Date.now() + timeoutMs
@@ -407,11 +409,16 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
   )
 
   async function api(path, method = 'GET', body) {
-    const response = await fetch(`${cloud.backendUrl}/api${path}`, {
-      method,
-      headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    })
+    let response
+    for (let attempt = 1; attempt <= TRANSIENT_API_RETRY_ATTEMPTS; attempt += 1) {
+      response = await fetch(`${cloud.backendUrl}/api${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+      if (response.ok || ![502, 503, 504].includes(response.status)) break
+      await new Promise(resolve => setTimeout(resolve, TRANSIENT_API_RETRY_DELAY_MS))
+    }
     assert.ok(response.ok, `Account fixture API failed: ${method} ${path}, HTTP ${response.status}`)
     return response.json()
   }

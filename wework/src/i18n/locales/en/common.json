@@ -843,6 +843,8 @@
     "ask_selection_in_sidebar": "Ask in sidebar",
     "workspace_tab_new": "Open new tab",
     "workspace_tab_fixed": "Fixed tab",
+    "workspace_tab_pin": "Pin tab",
+    "workspace_tab_unpin": "Unpin tab",
     "workspace_tabs": "Workspace tabs",
     "workspace_tab_task": "Task",
     "workspace_tab_board": "Collaboration (Beta)",

@@ -842,6 +842,8 @@
     "ask_selection_in_sidebar": "在侧边栏中提问",
     "workspace_tab_new": "打开新标签页",
     "workspace_tab_fixed": "固定标签页",
+    "workspace_tab_pin": "固定标签页",
+    "workspace_tab_unpin": "取消固定标签页",
     "workspace_tabs": "工作区标签页",
     "workspace_tab_task": "任务",
     "workspace_tab_board": "协作 (Beta)",
