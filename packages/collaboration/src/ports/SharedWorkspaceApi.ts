@@ -923,6 +923,7 @@ export interface WorkspaceRuntimeTaskAddress {
   deviceId: string;
   taskId: string;
   backendTaskId?: number | null;
+  wegentTeamId?: number | null;
   modelSelection?: ModelSelectionConfig | null;
 }
 

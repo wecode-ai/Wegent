@@ -346,6 +346,8 @@ export interface RequestUserInputPayload {
   message?: string;
   approvalKind?: string;
   approval_kind?: string;
+  /** `async` marks a Codex question answered by the next user message. */
+  delivery?: string;
   command?: string;
   cwd?: string;
   reason?: string;

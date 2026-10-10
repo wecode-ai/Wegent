@@ -78,6 +78,35 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('retains the archive label and outside-click dismissal in the properties menu', async () => {
+    const user = userEvent.setup()
+    const onArchive = vi.fn()
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onDelete={onArchive}
+        deleteLabel="归档任务"
+        api={api}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-more-properties'))
+    expect(screen.getByTestId('cloud-todo-detail-delete')).toHaveTextContent('归档任务')
+    await user.click(document.body)
+    expect(screen.queryByTestId('cloud-todo-more-properties-popover')).not.toBeInTheDocument()
+    expect(onArchive).not.toHaveBeenCalled()
+
+    await user.click(screen.getByTestId('cloud-todo-more-properties'))
+    await user.click(screen.getByTestId('cloud-todo-detail-delete'))
+    expect(onArchive).toHaveBeenCalledOnce()
+  })
+
   it('keeps compact Issue properties unlabeled and explains the current status in a tooltip', async () => {
     const user = userEvent.setup()
     render(

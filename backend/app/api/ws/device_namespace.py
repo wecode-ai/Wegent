@@ -977,6 +977,7 @@ def _project_chat_runtime_event_sync(
             runtime_task_id=runtime_task_id,
             event_name=event_name,
             payload=payload,
+            owner_user_id=user_id,
         )
         if projected is None:
             return {

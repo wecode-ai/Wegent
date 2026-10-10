@@ -3,6 +3,7 @@ import { issueActivityRole } from './issueActivityRole'
 import { useActivityExecutionBinding } from './useActivityExecutionStatus'
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
+import { useFocusedComment } from './useFocusedComment'
 import {
   dispatchTaskCardReply,
   commentAgentMentions,
@@ -20,6 +21,7 @@ import {
   IssueActivityThread,
   groupIssueActivityThreads,
   createCollaborationTranslator,
+  compareIssueTimestamps,
   formatIssueTimestamp,
   IssueStatusHistoryList,
   type SharedIssueStatusHistoryEntry,
@@ -181,9 +183,6 @@ function TimelineReply({
     </div>
   )
 }
-
-/** How long a comment keeps the "you were sent here" highlight. */
-const COMMENT_FLASH_MS = 2000
 
 function isVersionConflict(cause: unknown): boolean {
   if (!cause || typeof cause !== 'object') return false
@@ -434,27 +433,13 @@ export function TaskActivityView({
       cardTestIdPrefix: 'cloud-task-activity-card-',
     })
 
-  // A notification can point at one comment. Land on it once, flash it, and
-  // then leave the list under the reader's control.
-  const [flashedCommentId, setFlashedCommentId] = useState<string | null>(null)
-  const revealedCommentRequestRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!focusedCommentId) return
-    const requestKey = focusedCommentRequestKey ?? focusedCommentId
-    if (revealedCommentRequestRef.current === requestKey) return
-    const target = Array.from(
-      listRef.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []
-    ).find(node => node.dataset.messageId === focusedCommentId)
-    if (!target) return
-    revealedCommentRequestRef.current = requestKey
-    target.scrollIntoView?.({ block: 'center' })
-    setFlashedCommentId(focusedCommentId)
-  }, [focusedCommentId, focusedCommentRequestKey, listRef, threadMessages])
-  useEffect(() => {
-    if (!flashedCommentId) return
-    const timer = window.setTimeout(() => setFlashedCommentId(null), COMMENT_FLASH_MS)
-    return () => window.clearTimeout(timer)
-  }, [flashedCommentId])
+  // Land once per notification, then leave scrolling under the reader's control.
+  const flashedCommentId = useFocusedComment(
+    listRef,
+    threadMessages,
+    focusedCommentId,
+    focusedCommentRequestKey
+  )
 
   useEffect(() => {
     const agentApi = projectChatAgentApi ?? services.projectChatAgentApi
@@ -599,7 +584,7 @@ export function TaskActivityView({
       })),
       ...comments,
     ].sort((left, right) => {
-      const delta = Date.parse(left.at) - Date.parse(right.at)
+      const delta = compareIssueTimestamps(left.at, right.at)
       if (delta) return delta
       const order = { created: 0, status: 1, comment: 2 }
       return order[left.kind] - order[right.kind] || left.index - right.index

@@ -157,6 +157,97 @@ async def test_runtime_rpc_service_applies_account_proxy_to_remote_model_configs
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("device_type", ["REMOTE", "CLOUD"])
+async def test_runtime_rpc_service_reaches_backend_model_gateway_directly(
+    monkeypatch, device_type
+):
+    from app.schemas.device import DeviceType
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route(device_type=DeviceType[device_type])),
+    )
+    monkeypatch.setattr(
+        module, "_load_remote_runtime_proxy_url", lambda _user_id: "http://proxy:7890"
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+    payload = {
+        "executionRequest": {
+            "model_config": {
+                "base_url": "http://localhost:8000/api/runtime-work/llm-responses-proxy",
+                "default_headers": {"X-Wegent-Model-Type": "public"},
+                "proxy": {"url": "http://client-proxy:7890"},
+                "proxy_url": "http://client-proxy:7890",
+                "runtime_config": {"codex": {"configured": True}},
+            }
+        },
+        "initialSupervisor": {
+            "modelConfig": {"base_url": "https://provider.example/v1"}
+        },
+    }
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create",
+        payload=payload,
+    )
+
+    emitted = sio_call.await_args.args[1]["payload"]
+    gateway = emitted["executionRequest"]["model_config"]
+    assert "proxy" not in gateway
+    assert "proxy_url" not in gateway
+    assert gateway["runtime_config"]["codex"] == {
+        "configured": True,
+        "use_proxy": False,
+        "proxy_configured": False,
+    }
+    assert emitted["initialSupervisor"]["modelConfig"]["proxy"] == {
+        "url": "http://proxy:7890"
+    }
+    assert payload["executionRequest"]["model_config"]["proxy"] == {
+        "url": "http://client-proxy:7890"
+    }
+
+
+@pytest.mark.parametrize(
+    ("model_config", "expected"),
+    [
+        (
+            {
+                "baseUrl": "https://backend/api/runtime-work/llm-responses-proxy/",
+                "default_headers": {"x-wegent-model-type": "user"},
+            },
+            True,
+        ),
+        ({"base_url": "https://provider/v1"}, False),
+        (
+            {
+                "base_url": "https://provider/v1",
+                "default_headers": {"X-Wegent-Model-Type": "public"},
+            },
+            False,
+        ),
+        ({"base_url": "https://backend/api/runtime-work/llm-responses-proxy"}, False),
+        (
+            {
+                "base_url": "http://[invalid",
+                "default_headers": {"X-Wegent-Model-Type": "public"},
+            },
+            False,
+        ),
+    ],
+)
+def test_backend_model_gateway_identification(model_config, expected):
+    from app.services.device.runtime_rpc_service import _uses_backend_model_gateway
+
+    assert _uses_backend_model_gateway(model_config) is expected
+
+
+@pytest.mark.asyncio
 async def test_runtime_rpc_service_removes_client_proxy_without_account_proxy(
     monkeypatch,
 ):

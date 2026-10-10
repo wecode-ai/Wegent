@@ -326,7 +326,7 @@ describe("CollaborationApp API boundary", () => {
     expect(refreshedSettings?.props.project.version).toBe(2);
   });
 
-  it("blocks Issue creation and opens environment settings before initialization", async () => {
+  it("allows Issue creation without redirecting before environment initialization", async () => {
     const host = createHost(false, "home");
     host.location = {
       projectId: "project-1",
@@ -353,19 +353,11 @@ describe("CollaborationApp API boundary", () => {
     expect(createButton).toBeDefined();
     await createButton?.props.onClick();
 
-    expect(host.notify).toHaveBeenCalledWith(
-      "请先完成项目执行环境初始化，再创建 Issue。",
-      "error",
-    );
-    expect(host.navigate).toHaveBeenCalledWith({
-      projectId: "project-1",
-      issueId: null,
-      view: "manage",
-      projectSettingsSection: "environments",
-    });
+    expect(host.notify).not.toHaveBeenCalled();
+    expect(host.navigate).not.toHaveBeenCalled();
   });
 
-  it("rechecks a newly initialized environment before blocking Issue creation", async () => {
+  it("does not require an environment refresh before creating an Issue", async () => {
     const host = createHost(false, "home");
     host.location = {
       projectId: "project-1",
@@ -422,9 +414,8 @@ describe("CollaborationApp API boundary", () => {
     );
     await createButton?.props.onClick();
 
-    expect(api.projects.listExecutionEnvironments).toHaveBeenCalledWith(
-      "project-1",
-    );
+    expect(api.projects.get).not.toHaveBeenCalled();
+    expect(api.projects.listExecutionEnvironments).not.toHaveBeenCalled();
     expect(host.notify).not.toHaveBeenCalled();
     expect(host.navigate).not.toHaveBeenCalled();
   });

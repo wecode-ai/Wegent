@@ -13,8 +13,14 @@ import {
   responseCreated,
   selectMcpTool,
 } from '../modules/response-protocol.mjs'
-import { REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
 import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
+  REMOTE_DOCKER_DEVICE_ID,
+  selectE2EModel,
+} from '../modules/shared.mjs'
+import {
+  inCollaborationSidebar,
   initializeFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
@@ -25,8 +31,12 @@ const MODEL_LABEL = 'gpt-6-astra'
 const WORKSPACE = `直接分人空间-${process.pid}`
 const PROJECT = `直接分人项目-${process.pid}`
 const ISSUE = `人工验收项目周报-${process.pid}`
+const MANUAL_ISSUE = `人工复核项目周报-${process.pid}`
 const MARKER = `DIRECT_HUMAN_DISPATCH_${process.pid}`
 const COMPLETION = `${MARKER}_DELIVERED`
+const MANUAL_RESULT = `${MARKER}：已人工核对周报。`
+const REVISED_RESULT = `${MANUAL_RESULT} 已补充验收证据。`
+const RETURN_REASON = '请补充验收证据'
 const CALLS = {
   createSearch: `${MARKER}-create-search`,
   create: `${MARKER}-create`,
@@ -36,6 +46,14 @@ const CALLS = {
 
 function scoped(selector) {
   return `${CONTENT} ${selector}`
+}
+
+async function setExecutionDetailsExpanded(control, expanded) {
+  const toggle = scoped('[data-testid="cloud-todo-toggle-tasks"]')
+  await control.command('scrollIntoView', toggle)
+  const current = await control.command('getAttribute', toggle, { value: 'aria-expanded' })
+  if (current !== String(expanded)) await control.command('click', toggle, { visible: true })
+  await control.command('waitFor', `${toggle}[aria-expanded="${expanded}"]`, { visible: true })
 }
 
 function writeEvents(response, responseId, events) {
@@ -126,6 +144,55 @@ async function waitForValue(load, predicate, message, timeoutMs) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
+async function verifyCanonicalDeviceCatalog(control, request, timeoutMs) {
+  const resources = await waitForValue(
+    () => request('/api/v1/resources'),
+    value =>
+      value.execution_environments.some(
+        device => device.device_key.startsWith('app-record-') && device.status === 'online'
+      ),
+    'The desktop Runtime did not register its canonical device resource',
+    timeoutMs
+  )
+  await control.command(
+    'click',
+    inCollaborationSidebar('[data-testid="collaboration-primary-devices"]')
+  )
+  for (const device of resources.execution_environments) {
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-devices-row-${device.id}"]`),
+      {
+        timeoutMs,
+      }
+    )
+  }
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('[data-testid^="collaboration-devices-row-"]')
+      )
+    ),
+    resources.execution_environments.length,
+    'The device page must show each registered resource once without a second local placeholder'
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('[data-testid^="collaboration-devices-row-device:"]')
+      )
+    ),
+    0,
+    'The registered local Runtime was duplicated by a Local Executor placeholder'
+  )
+  await control.command(
+    'click',
+    inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
+  )
+}
+
 async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-workspace-create"]'))
   await control.command('fill', scoped('[data-testid="collaboration-workspace-name-input"]'), {
@@ -165,15 +232,18 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
   return project
 }
 
-async function createIssue(control, projectId, request, owner, uiTimeoutMs) {
+async function createIssue(control, projectId, request, owner, uiTimeoutMs, title = ISSUE) {
   await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
     timeoutMs: uiTimeoutMs,
   })
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
   await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
-  await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: ISSUE })
+  await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
-    value: `${MARKER}。通过个人 Runtime Task 整理项目周报并提交 Delivery。`,
+    value:
+      title === ISSUE
+        ? `${MARKER}。处理人可请 AI 起草周报，检查后亲自提交处理结果。`
+        : `${MARKER}。处理人亲自核对周报并提交处理结果。`,
   })
   await control.command('click', scoped('[data-testid="cloud-todo-create-assignee"]'))
   await control.command(
@@ -185,10 +255,220 @@ async function createIssue(control, projectId, request, owner, uiTimeoutMs) {
   })
   return waitForValue(
     async () => (await request(`/api/v1/cloud-projects/${projectId}/loop-items`)).items,
-    items => items.find(item => item.title === ISSUE),
+    items => items.find(item => item.title === title),
     '端上创建 Issue 未持久化',
     uiTimeoutMs
   )
+}
+
+async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
+  const tag = `验收标签-${process.pid}`
+  const temporaryTag = `临时标签-${process.pid}`
+  const trigger = scoped('[data-testid="cloud-todo-more-properties"]')
+  const popover = '[data-testid="cloud-todo-more-properties-popover"]'
+  const input = `${popover} [data-testid="cloud-todo-detail-tag-input"]`
+  const chip = `${popover} [data-testid="cloud-todo-detail-tag-tag-${tag}"]`
+  const assertDismissed = async () => {
+    await waitForValue(
+      () => control.command('getElementCount', popover),
+      value => Number(value) === 0,
+      'More properties did not dismiss',
+      uiTimeoutMs
+    )
+    assert.equal(
+      await control.command('getAttribute', trigger, { value: 'aria-expanded' }),
+      'false'
+    )
+    assert.equal(
+      Number(
+        await control.command('getElementCount', scoped('[data-testid="cloud-todo-detail-title"]'))
+      ),
+      1
+    )
+  }
+  await control.command('click', trigger)
+  assert.equal(
+    await control.command('getComputedStyleValue', input, { value: 'opacity' }),
+    '1',
+    'Issue tag text and caret must not be hidden by a transparent input overlay'
+  )
+  await control.command('fill', input, { value: tag })
+  assert.equal(await control.command('getValue', input), tag)
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await assertDismissed()
+  await control.command('click', trigger)
+  await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('fill', input, { value: tag })
+  await control.command('press', input, { key: 'Enter' })
+  assert.equal(Number(await control.command('getElementCount', chip)), 1)
+  await control.command('fill', input, { value: temporaryTag })
+  await control.command('press', input, { key: 'Enter' })
+  await control.command(
+    'click',
+    `${popover} [data-testid="cloud-todo-detail-tag-tag-remove-${temporaryTag}"]`
+  )
+  await control.command('press', input, { key: 'Escape' })
+  await assertDismissed()
+  await control.command('click', trigger)
+  await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-save"]'))
+  await assertDismissed()
+  const updated = await waitForValue(
+    () => request(`/api/v1/loop-items/${issue.id}`),
+    value => value.tags?.length === 1 && value.tags[0] === tag,
+    'Issue tags were not persisted after adding, deduplicating and removing tags',
+    uiTimeoutMs
+  )
+  await control.command('click', trigger)
+  await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await assertDismissed()
+  return updated
+}
+
+async function verifyManualReviewCycle(control, request, projectId, owner, uiTimeoutMs, capture) {
+  await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+  const manualIssue = await createIssue(
+    control,
+    projectId,
+    request,
+    owner,
+    uiTimeoutMs,
+    MANUAL_ISSUE
+  )
+  const notification = await waitForValue(
+    () => request('/api/v1/wework-notifications?category=collaboration'),
+    value =>
+      value.items?.find(
+        item =>
+          item.kind === 'issue_dispatch_assignment' &&
+          item.payload?.itemId === manualIssue.id &&
+          item.payload?.action === 'open_issue'
+      ),
+    '纯人工 Issue 没有创建协作通知',
+    uiTimeoutMs
+  )
+  await control.command('click', '[data-testid="wework-notifications-button"]')
+  await control.command('click', '[data-testid="wework-notifications-refresh"]')
+  await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
+  await control.command('click', `[data-testid="wework-notification-${notification.id}"]`)
+  await control.command('clickElementWithText', '[data-testid="human-issue-start"]', {
+    text: '接手处理',
+    timeoutMs: uiTimeoutMs,
+    visible: true,
+  })
+  const resultSelector = scoped('[data-testid="human-issue-result"]')
+  await control.command('waitFor', resultSelector, { timeoutMs: uiTimeoutMs, visible: true })
+  assert.equal(Number(await control.command('getElementCount', '[data-testid="ai-chat-modal"]')), 0)
+  await control.command('fill', resultSelector, { value: MANUAL_RESULT })
+  await control.command('click', '[data-testid="human-issue-submit"]', { visible: true })
+  await control.command('click', '[data-testid="human-issue-work-cancel"]', { visible: true })
+  assert.equal((await request(`/api/v1/loop-items/${manualIssue.id}`)).status, 'in_progress')
+  assert.equal(await control.command('getValue', resultSelector), MANUAL_RESULT)
+  await control.command('click', '[data-testid="human-issue-submit"]', { visible: true })
+  await control.command('click', '[data-testid="human-issue-work-confirm"]', { visible: true })
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${manualIssue.id}`),
+    value => value.status === 'in_review' && value.human_work?.state === 'submitted',
+    '纯人工结果没有进入待确认',
+    uiTimeoutMs
+  )
+  await control.command('waitFor', '[data-testid="human-issue-request-changes"]', {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', '[data-testid="human-issue-request-changes"]', {
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="human-issue-work-dialog"]', {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="human-issue-work-confirm"]', {
+      value: 'disabled',
+    }),
+    ''
+  )
+  await control.command('fill', '[data-testid="human-issue-return-reason-input"]', {
+    value: RETURN_REASON,
+  })
+  await control.command('click', '[data-testid="human-issue-work-confirm"]', { visible: true })
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${manualIssue.id}`),
+    value =>
+      value.status === 'in_progress' &&
+      value.human_work?.state === 'changes_requested' &&
+      value.human_work?.return_reason === RETURN_REASON,
+    '验收退回没有恢复到人工处理中',
+    uiTimeoutMs
+  )
+  await control.command('waitFor', '[data-testid="human-issue-return-reason"]', {
+    text: RETURN_REASON,
+    timeoutMs: uiTimeoutMs,
+  })
+  assert.equal(await control.command('getValue', resultSelector), MANUAL_RESULT)
+  await capture('assignment-06-manual-changes-requested.png', CONTENT)
+  await control.command('fill', resultSelector, { value: REVISED_RESULT })
+  await control.command('click', '[data-testid="human-issue-submit"]', { visible: true })
+  await control.command('click', '[data-testid="human-issue-work-confirm"]', { visible: true })
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${manualIssue.id}`),
+    value =>
+      value.status === 'in_review' &&
+      value.human_work?.state === 'submitted' &&
+      value.human_work?.result === REVISED_RESULT,
+    '修改后的纯人工结果没有重新提交',
+    uiTimeoutMs
+  )
+  await control.command('waitFor', '[data-testid="human-issue-accept"]', {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', '[data-testid="human-issue-accept"]', { visible: true })
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${manualIssue.id}`),
+    value => value.status === 'completed' && value.human_work?.state === 'accepted',
+    '退回重提后的人工 Issue 未完成验收',
+    uiTimeoutMs
+  )
+  assert.deepEqual(await request(`/api/v1/loop-items/${manualIssue.id}/tasks`), [])
+  await capture('assignment-07-manual-resubmitted-accepted.png', CONTENT)
+
+  // Establish a new assignment without changing the completed Issue's status.
+  const acceptedIssue = await request(`/api/v1/loop-items/${manualIssue.id}`)
+  const unassigned = await request(`/api/v1/loop-items/${manualIssue.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ version: acceptedIssue.version, assignee_user_id: null }),
+  })
+  assert.equal(unassigned.status, 'completed')
+  const reassigned = await request(
+    `/api/v1/cloud-projects/${projectId}/loop-items/${manualIssue.id}/assign`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        version: unassigned.version,
+        assignee_type: 'user',
+        assignee_id: String(owner.id),
+      }),
+    }
+  )
+  assert.equal(reassigned.status, 'completed')
+  assert.equal(reassigned.human_work?.state, 'none')
+  assert.equal(reassigned.human_work?.can_start, true)
+  await control.command('waitFor', '[data-testid="human-issue-start"]', {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', '[data-testid="human-issue-start"]', { visible: true })
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${manualIssue.id}`),
+    value => value.status === 'in_progress',
+    '重新指派后的显式接手没有进入进行中',
+    uiTimeoutMs
+  )
+  assert.deepEqual(await request(`/api/v1/loop-items/${manualIssue.id}/tasks`), [])
+  await capture('assignment-08-reassigned-human-work-started.png', CONTENT)
 }
 
 export function createDesktopScenario({
@@ -217,6 +497,11 @@ export function createDesktopScenario({
       backendUrl = cloud.backendUrl
       ownerToken = cloud.authToken
       owner = await ownerRequest('/api/users/me')
+      // A provider proxy must never intercept device-to-backend model traffic.
+      await ownerRequest('/api/users/me/proxy-config', {
+        method: 'PUT',
+        body: JSON.stringify({ proxy_url: 'http://127.0.0.1:1' }),
+      })
     },
 
     setCloudEnvironment(environment) {
@@ -303,8 +588,15 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await selectCollaborationDomain(control, CONTENT, 'cloud')
+      await verifyCanonicalDeviceCatalog(control, ownerRequest, uiTimeoutMs)
 
       project = await createWorkspaceAndProject(control, ownerRequest, uiTimeoutMs)
+      assert.equal(Object.keys(project.execution_environment?.devices ?? {}).length, 0)
+      issue = await createIssue(control, project.id, ownerRequest, owner, uiTimeoutMs)
+      assert.equal(String(issue.assignee_user_id), String(owner.id))
+      issue = await verifyIssueTags(control, ownerRequest, issue, uiTimeoutMs)
+      await captureScreenshot(control, 'assignment-00-created-without-environment.png', CONTENT)
+      await control.command('click', '[data-testid="cloud-todo-detail-close"]')
       const remoteDevice = await cloudEnvironment.waitForDeviceType(
         REMOTE_DOCKER_DEVICE_ID,
         'remote'
@@ -316,8 +608,6 @@ export function createDesktopScenario({
         modelResponseTimeoutMs,
         remoteDevice.id
       )
-      issue = await createIssue(control, project.id, ownerRequest, owner, uiTimeoutMs)
-      assert.equal(String(issue.assignee_user_id), String(owner.id))
       notification = await waitForValue(
         () => ownerRequest('/api/v1/wework-notifications?category=collaboration'),
         value =>
@@ -325,7 +615,7 @@ export function createDesktopScenario({
             item =>
               item.kind === 'issue_dispatch_assignment' &&
               item.payload?.itemId === issue.id &&
-              item.payload?.action === 'create_personal_task'
+              item.payload?.action === 'open_issue'
           ),
         '直接分人通知没有写入 Wework 协作收件箱',
         uiTimeoutMs
@@ -348,20 +638,42 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
-      await control.command('waitFor', '[data-testid="issue-dispatch-notification-create-task"]', {
+      const notificationRow = `[data-testid="wework-notification-${notification.id}"]`
+      await control.command('waitFor', notificationRow, {
         text: ISSUE,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="issue-dispatch-notification-create-task"]')
-      await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
+      await control.command('click', notificationRow)
+      await control.command('clickElementWithText', '[data-testid="human-issue-start"]', {
+        text: '接手处理',
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
-      const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
+      await control.command('waitFor', '[data-testid="human-issue-result"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await captureScreenshot(control, 'assignment-02-human-work-started.png', CONTENT)
+      await control.command('clickElementWithText', '[data-testid="human-issue-ai-assist"]', {
+        text: 'AI 辅助',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      const taskPanel = '[data-testid="work-item-new-task-chat-panel"]'
       const composer = `${taskPanel} [data-testid="chat-message-input"]`
-      await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs, visible: true })
       assert.match(await control.command('getValue', composer), new RegExp(MARKER))
+      await captureScreenshot(control, 'assignment-03-ai-panel-open.png', CONTENT)
+      await control.command('waitFor', `${taskPanel} [data-testid="model-selector-button"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await selectE2EModel(control, MODEL, MODEL_LABEL, taskPanel)
-      await captureScreenshot(control, 'assignment-02-personal-runtime-task.png', CONTENT)
+      await captureScreenshot(control, 'assignment-03-optional-ai-draft.png', CONTENT)
       await control.command('press', composer, { key: 'Enter' })
 
       const binding = await waitForValue(
@@ -374,11 +686,16 @@ export function createDesktopScenario({
         modelResponseTimeoutMs
       )
       runtimeTaskId = binding.task_id
+      assert.equal(
+        binding.device_id,
+        remoteDevice.device_id,
+        'AI assistance must use the prepared remote environment, not Local Executor'
+      )
       assert.equal(binding.assignment_id, notification.payload.assignmentId)
       assert.equal(binding.task_title, ISSUE)
       await control.command(
         'waitFor',
-        scoped('[data-testid="ai-chat-modal"] [data-testid="message-assistant"]'),
+        '[data-testid="ai-chat-modal"] [data-testid="message-assistant"]',
         {
           text: COMPLETION,
           timeoutMs: modelResponseTimeoutMs,
@@ -386,8 +703,9 @@ export function createDesktopScenario({
       )
       await waitForValue(
         () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
-        value => value.status === 'in_progress',
-        '个人 Runtime Task 启动后原 Issue 没有保持进行中',
+        value =>
+          value.status === 'in_progress' && value.human_work?.ai_draft_delivery_id === delivery.id,
+        'AI 草稿不应替处理人提交原 Issue',
         modelResponseTimeoutMs
       )
       assert.equal(
@@ -410,31 +728,94 @@ export function createDesktopScenario({
         1,
         '同一人工 assignment 创建了重复 Task binding'
       )
-      await captureScreenshot(control, 'assignment-03-delivery-updated-origin-issue.png', CONTENT)
+      await captureScreenshot(control, 'assignment-04-ai-draft-attached-to-issue.png', CONTENT)
 
-      await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
+      await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
+      assert.equal(binding.modelSelection?.modelName, MODEL)
+      // Change the new-chat default without sending, then reopen the bound remote
+      // task through the Issue drawer. Its model must come from the binding.
+      await control.command('click', '[data-testid="cloud-todo-create-task"]', { visible: true })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, taskPanel)
+      await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
+      await setExecutionDetailsExpanded(control, true)
+      const boundTask = scoped(`[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`)
+      await control.command('waitFor', boundTask)
+      await control.command('scrollIntoView', boundTask)
+      await control.command('waitFor', boundTask, { visible: true })
+      await control.command('click', boundTask, { visible: true })
+      const boundModelSelector =
+        '[data-testid="work-item-task-chat-panel"] [data-testid="model-selector-button"]'
+      await control.command('waitFor', boundModelSelector, {
+        text: MODEL_LABEL,
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      assert.equal(
+        (await control.command('getText', boundModelSelector, { visible: true })).includes(
+          DEFAULT_MODEL_LABEL
+        ),
+        false,
+        'The bound remote task inherited the unrelated new-chat default'
+      )
+      await captureScreenshot(control, 'assignment-04-bound-task-model-preserved.png', CONTENT)
+      await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
+      await setExecutionDetailsExpanded(control, false)
+      await control.command('scrollIntoView', scoped('[data-testid="human-issue-use-ai-draft"]'))
+      await control.command('waitFor', '[data-testid="human-issue-use-ai-draft"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid="human-issue-use-ai-draft"]', { visible: true })
+      await waitForValue(
+        () => control.command('getValue', scoped('[data-testid="human-issue-result"]')),
+        value => value.includes(MARKER),
+        'AI 草稿没有填入处理结果',
+        uiTimeoutMs
+      )
+      await control.command('click', '[data-testid="human-issue-submit"]', { visible: true })
+      await control.command('click', '[data-testid="human-issue-work-confirm"]', { visible: true })
+      await waitForValue(
+        () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
+        value => value.status === 'in_review' && value.human_work?.state === 'submitted',
+        '处理人没有亲自提交结果进入待确认',
+        uiTimeoutMs
+      )
+      await control.command('waitFor', '[data-testid="human-issue-accept"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid="human-issue-accept"]', { visible: true })
+      await waitForValue(
+        () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
+        value => value.status === 'completed' && value.human_work?.state === 'accepted',
+        '验收通过没有完成原 Issue',
+        uiTimeoutMs
+      )
+      await captureScreenshot(control, 'assignment-05-human-accepted.png', CONTENT)
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
-      await control.command('click', '[data-testid="issue-dispatch-notification-create-task"]')
-      await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', scoped('[data-testid="work-item-task-chat-panel"]'), {
+      await control.command('click', notificationRow)
+      await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            scoped('[data-testid="work-item-new-task-chat-panel"]')
-          )
-        ),
+        Number(await control.command('getElementCount', '[data-testid="ai-chat-modal"]')),
         0,
-        '重复点击通知错误打开了新建 Runtime Task'
+        '重复点击通知错误打开了 AI 任务'
       )
       const bindingsAfterReopen = await ownerRequest(`/api/v1/loop-items/${issue.id}/tasks`)
       assert.equal(bindingsAfterReopen.length, bindingsAfterDelivery.length)
+      const modelRequestsBeforeManualWork = modelRequestCount
+      await verifyManualReviewCycle(
+        control,
+        ownerRequest,
+        project.id,
+        owner,
+        uiTimeoutMs,
+        filename => captureScreenshot(control, filename, CONTENT)
+      )
+      assert.equal(modelRequestCount, modelRequestsBeforeManualWork, '纯人工分支触发了 AI 模型请求')
     },
 
     diagnostics() {

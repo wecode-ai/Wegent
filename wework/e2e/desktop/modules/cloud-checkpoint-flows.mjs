@@ -710,6 +710,7 @@ async function verifyCloudCheckpoint({
         composerSelector,
         control,
         newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+        readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
         screenshotPrefix: 'cloud-model-routing',
         setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
         workspacePath,

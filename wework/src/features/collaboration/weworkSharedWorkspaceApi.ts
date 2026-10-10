@@ -185,14 +185,19 @@ function toIssue(issue: CloudLoopItem): CollaborationIssue {
   }
 }
 
-function toRuntimeTaskAddress(task: WorkspaceRuntimeTaskAddress): RuntimeTaskAddress {
+export function toRuntimeTaskAddress(task: WorkspaceRuntimeTaskAddress): RuntimeTaskAddress {
   return {
     deviceId: task.deviceId,
     taskId: task.taskId,
     ...(task.backendTaskId == null ? {} : { backendTaskId: task.backendTaskId }),
-    ...(task.modelSelection == null
+    ...(task.modelSelection == null && task.wegentTeamId == null
       ? {}
-      : { runtimeHandle: { modelSelection: task.modelSelection } }),
+      : {
+          runtimeHandle: {
+            ...(task.modelSelection == null ? {} : { modelSelection: task.modelSelection }),
+            ...(task.wegentTeamId == null ? {} : { wegentTeam: { id: task.wegentTeamId } }),
+          },
+        }),
   } as RuntimeTaskAddress
 }
 

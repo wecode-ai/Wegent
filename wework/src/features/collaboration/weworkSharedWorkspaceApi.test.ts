@@ -1186,6 +1186,7 @@ describe('createWeworkWorkspaceRuntimePort', () => {
       taskId: 'task-1',
       backendTaskId: 9,
       modelSelection: { model: 'gpt-5' },
+      wegentTeamId: 1880,
     }
     const deliveryTask = {
       deviceId: 'device-1',
@@ -1193,6 +1194,7 @@ describe('createWeworkWorkspaceRuntimePort', () => {
       backendTaskId: 9,
       runtimeHandle: {
         modelSelection: { model: 'gpt-5' },
+        wegentTeam: { id: 1880 },
       },
     }
 

@@ -220,6 +220,17 @@ import {
   REQUEST_USER_INPUT_COMPLETION_TEXT,
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
   RETRY_COMPLETION_TEXT,
   RETRY_CONTINUATION_PROMPT,
   RETRY_FAILURE_TEXT,
@@ -360,6 +371,28 @@ function toolOutputText(request, callId) {
     return null
   }
   return findOutput(request.input ?? [])
+}
+
+/** Text of the user-authored turns codex forwarded to the model, in order. */
+function inputUserMessageTexts(request) {
+  const texts = []
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    if (value.type === 'message' && value.role === 'user') {
+      const content = Array.isArray(value.content) ? value.content : [value.content]
+      for (const part of content) {
+        const text = typeof part === 'string' ? part : part?.text
+        if (typeof text === 'string' && text.trim()) texts.push(text)
+      }
+    }
+    Object.values(value).forEach(visit)
+  }
+  visit(request.input)
+  return texts
 }
 
 function pluginWorkspacePublishCommand(body) {
@@ -523,6 +556,9 @@ class DesktopE2EServer {
     })
     this.requestUserInputResponseWritten = new Promise(resolvePromise => {
       this.resolveRequestUserInputResponseWritten = resolvePromise
+    })
+    this.asyncRequestUserInputKeepsRunningRelease = new Promise(resolvePromise => {
+      this.releaseAsyncRequestUserInputKeepsRunning = resolvePromise
     })
     this.taskPlanCompletionRelease = new Promise(resolvePromise => {
       this.releaseTaskPlanCompletion = resolvePromise
@@ -818,6 +854,7 @@ class DesktopE2EServer {
         'fork_provider_follow_up',
         'task_plan',
         'request_user_input',
+        'request_user_input_async',
         'mcp_elicitation',
         'window_lifecycle',
         'background_completion_restore',
@@ -973,6 +1010,10 @@ class DesktopE2EServer {
   releaseRequestUserInputResponse() {
     this.releaseRequestUserInput()
     return this.guard(this.requestUserInputResponseWritten)
+  }
+
+  releaseAsyncRequestUserInputHold() {
+    this.releaseAsyncRequestUserInputKeepsRunning()
   }
 
   releaseTaskPlanResponse() {
@@ -3750,6 +3791,75 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'request_user_input_async') {
+      this.recordScenarioRequest('request_user_input_async', modelRequest)
+      const serializedBody = JSON.stringify(body)
+      // Two variants share this scenario: a question answered after the turn
+      // settles, and one answered while the model is still working.
+      const keepsRunning = serializedBody.includes(REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT)
+      const questionText = keepsRunning
+        ? REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION
+        : REQUEST_USER_INPUT_ASYNC_QUESTION
+      const callId = keepsRunning
+        ? REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID
+        : REQUEST_USER_INPUT_ASYNC_CALL_ID
+      const toolOutput = toolOutputText(body, callId)
+      if (toolOutput !== null) {
+        // The non-blocking tool acknowledges immediately and never carries the
+        // answer, so the chosen option must arrive as the next user message.
+        assert.deepEqual(
+          JSON.parse(toolOutput),
+          { accepted: true },
+          'The async request-user-input tool must acknowledge without an answer'
+        )
+        if (keepsRunning) {
+          // Keep the turn running until the test has answered the live question,
+          // then let the model finish with its completion message.
+          await this.asyncRequestUserInputKeepsRunningRelease
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT),
+            responseCompleted(responseId),
+          ])
+          return
+        }
+        const answered = inputUserMessageTexts(body).some(text =>
+          text.includes(REQUEST_USER_INPUT_ASYNC_ANSWER)
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(
+            answered
+              ? REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT
+              : REQUEST_USER_INPUT_ASYNC_WAITING_TEXT
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.ok(
+        keepsRunning || serializedBody.includes(REQUEST_USER_INPUT_ASYNC_PROMPT),
+        'The real Codex request did not contain the async request-user-input prompt'
+      )
+      const tool = selectTool(body, 'request_user_input_async', {
+        questions: [
+          {
+            title: questionText,
+            options: [
+              'Minimal',
+              keepsRunning ? REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER : REQUEST_USER_INPUT_ASYNC_ANSWER,
+            ],
+          },
+        ],
+      })
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(callId, tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
       const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
@@ -5891,4 +6001,4 @@ class DesktopE2EServer {
   }
 }
 
-export { DesktopE2EServer }
+export { DesktopE2EServer, inputUserMessageTexts }

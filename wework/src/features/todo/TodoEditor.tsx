@@ -31,6 +31,7 @@ import { AITableTaskFields } from './AITableTaskFields'
 import { TaskActivityView } from './TaskActivityView'
 import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
+import { HumanIssueWorkPanel } from './HumanIssueWorkPanel'
 import { CloudFilePreviewDialog } from './CloudFilePreviewDialog'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
@@ -68,6 +69,14 @@ type TodoEditorApiProps =
     }
 
 export type TodoEditorProps = TodoEditorApiProps & {
+  humanWorkApi?: Pick<
+    DeliveryApi,
+    | 'getLoopItem'
+    | 'getDelivery'
+    | 'startHumanIssueWork'
+    | 'submitHumanIssueWork'
+    | 'reviewHumanIssueWork'
+  >
   aitableApi?: AITableApi
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   teamApi?: WorkbenchServices['teamApi']
@@ -100,6 +109,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   selectedTaskId?: string | null
   /** Delete this Issue; rendered in the header overflow menu in edit mode. */
   onDelete?: () => void
+  deleteLabel?: string
   onCreateTask?: () => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
@@ -153,6 +163,7 @@ export function TodoEditor(props: TodoEditorProps) {
       },
     }
   }, [props.api, props.projectChatAgentApi, props.sharedApi])
+  const humanWorkApi = props.humanWorkApi ?? props.api
   const port = useMemo(
     () =>
       createSharedIssueDetailPort(workspaceApi, async (blob, filename) => {
@@ -167,6 +178,16 @@ export function TodoEditor(props: TodoEditorProps) {
 
   const extensions: SharedIssueDetailExtensions = {
     normalizeDescription: normalizeTaskDescription,
+    renderHumanWork: context =>
+      humanWorkApi && props.mode === 'edit' && context.item.human_work ? (
+        <HumanIssueWorkPanel
+          key={`${context.item.id}:${context.item.human_work.result}`}
+          item={context.item as CloudLoopItem}
+          api={humanWorkApi}
+          onUpdated={item => context.onItemChange(item as SharedEditorIssue)}
+          onAiAssist={context.onCreateTask}
+        />
+      ) : null,
     isExecutionActive: item => isLoopItemExecutionActive(item as CloudLoopItem),
     openAttachment: async (id, filename, contentType, sizeBytes) => {
       setPreviewAttachment({ id, filename, contentType, sizeBytes })
@@ -337,6 +358,7 @@ export function TodoEditor(props: TodoEditorProps) {
         project={props.project as SharedEditorProject | undefined}
         onUpdated={item => props.onUpdated(item as CloudLoopItem)}
         onDelete={props.onDelete}
+        deleteLabel={props.deleteLabel}
         onAddChild={props.onAddChild}
         onOpenChildTask={
           props.onOpenChildTask ? item => props.onOpenChildTask?.(item as CloudLoopItem) : undefined

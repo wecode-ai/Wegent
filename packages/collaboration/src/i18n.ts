@@ -627,6 +627,10 @@ const sharedMessages: Record<
     "todo.execution_tasks": "执行任务",
     "todo.linked_tasks": "关联任务",
     "todo.execution_duration": "执行时长",
+    "todo.not_started": "未开始",
+    "todo.elapsed_minutes": "{{count}} 分钟",
+    "todo.elapsed_hours": "{{count}} 小时",
+    "todo.elapsed_days": "{{count}} 天",
     "todo.issue_status_help":
       "状态：{{value}}。表示 Issue 当前所处的处理阶段。",
     "todo.assignee_help": "负责人：{{value}}。负责推进并跟进这个 Issue。",
@@ -1068,6 +1072,10 @@ const sharedMessages: Record<
     "todo.execution_tasks": "Execution tasks",
     "todo.linked_tasks": "Linked tasks",
     "todo.execution_duration": "Execution duration",
+    "todo.not_started": "Not started",
+    "todo.elapsed_minutes": "{{count}} min",
+    "todo.elapsed_hours": "{{count}} h",
+    "todo.elapsed_days": "{{count}} d",
     "todo.issue_status_help":
       "Status: {{value}}. Shows the issue's current workflow stage.",
     "todo.assignee_help":

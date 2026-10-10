@@ -277,6 +277,7 @@ import {
 } from './shared.mjs'
 
 import {
+  verifyAsyncRequestUserInput,
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
   verifyForkProviderModelPreservation,
@@ -2183,6 +2184,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (shouldRunDesktopCheckpoint('priority-filter')) {
       phase = 'priority-filter'
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      phase = 'request-user-input-async'
+      await verifyAsyncRequestUserInput({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
       phase = 'runtime-task-order-unread'
       await verifyRuntimeTaskOrderAndUnreadVisibility({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
@@ -4426,6 +4433,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           matrixCase: control.matrixCase ? matrixCaseId(control.matrixCase) : null,
           matrixStage: control.matrixState?.stage ?? null,
           matrixRequestCount: control.matrixState?.requests.length ?? 0,
+          matrixExecutionDiagnostics: control.matrixState?.executionDiagnostics ?? null,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,
