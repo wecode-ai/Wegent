@@ -169,6 +169,63 @@ describe('managed Wiki conversation authorization', () => {
     ).toHaveLength(2)
   })
 
+  test('runs resume authorization only in the active workbench pane', async () => {
+    mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+      if (method === 'executor.plugins.store.list') return { plugins: [] }
+      if (method === 'codex.app_server_request') {
+        if (params.method === 'plugin/installed') {
+          return { marketplaces: [{ name: 'wegent', path: marketplacePath, plugins: [summary] }] }
+        }
+        if (params.method === 'plugin/read') {
+          return { plugin: { summary, skills: [], hooks: [], connectors: [] } }
+        }
+      }
+      if (method === 'executor.plugins.manifest.read') {
+        return {
+          connectors: [{ slug: 'weibo-wiki', authPolicy: 'on_install', localAuth }],
+        }
+      }
+      if (method === 'runtime.local_connector_auth.health') return { status: 'need_login' }
+      throw new Error(`Unexpected executor method: ${method}`)
+    })
+    const options = {
+      messages: [userMessage, authMessage],
+      onResumeSend: vi.fn(),
+      onRetryMessage: vi.fn(),
+    }
+    const { result, rerender } = renderHook(
+      ({ active }) => useLocalConnectorAuthGate({ ...options, active }),
+      { initialProps: { active: false } }
+    )
+
+    await act(async () => undefined)
+    expect(result.current.pending).toBeNull()
+    expect(
+      mocks.requestLocalExecutor.mock.calls.filter(
+        ([method]) => method === 'runtime.local_connector_auth.health'
+      )
+    ).toHaveLength(0)
+
+    rerender({ active: true })
+    await waitFor(() => expect(result.current.pending?.mode).toBe('resume'))
+    expect(
+      mocks.requestLocalExecutor.mock.calls.filter(
+        ([method]) => method === 'runtime.local_connector_auth.health'
+      )
+    ).toHaveLength(1)
+
+    rerender({ active: false })
+    await waitFor(() => expect(result.current.pending).toBeNull())
+
+    rerender({ active: true })
+    await waitFor(() => expect(result.current.pending?.mode).toBe('resume'))
+    expect(
+      mocks.requestLocalExecutor.mock.calls.filter(
+        ([method]) => method === 'runtime.local_connector_auth.health'
+      )
+    ).toHaveLength(2)
+  })
+
   test.each(['transport', 'health-result', 'manifest'])(
     'does not show login or send a plugin draft when connection detection fails: %s',
     async failure => {

@@ -1450,6 +1450,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
 
   const connectorAuthGate = useLocalConnectorAuthGate({
+    active: paneActive && paneVisible && workbenchVisible,
     onError: message => paneSession.setError(message),
     messages: paneSession.messages,
     onResumeSend: async input => {
