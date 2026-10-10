@@ -1657,6 +1657,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             MarketplaceResource.kind_id == team_id
         ).delete()
 
+        # Clean up orphaned member Bots (and their exclusive Ghosts) so they
+        # do not keep capability bindings (modelRef/shellRef) alive after the
+        # Team is gone.
+        from app.services.kind_impl import TeamKindService
+
+        TeamKindService()._pre_delete_side_effects(db, user_id, team)
+
         db.delete(team)
         db.commit()
 

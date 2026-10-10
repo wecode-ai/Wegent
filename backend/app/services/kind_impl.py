@@ -339,6 +339,7 @@ class TeamKindService(KindBaseService):
         safe fallback.
         """
         members = ((db_resource.json or {}).get("spec") or {}).get("members") or []
+        candidates: set[tuple[str, str]] = set()
         for member in members:
             bot_ref = member.get("botRef", {}) if isinstance(member, dict) else {}
             bot_name = bot_ref.get("name")
@@ -347,60 +348,109 @@ class TeamKindService(KindBaseService):
             bot_namespace = bot_ref.get("namespace") or "default"
             if bot_namespace != db_resource.namespace:
                 continue
-            self._delete_orphaned_bot(
-                db,
-                team=db_resource,
-                bot_name=bot_name,
-                bot_namespace=bot_namespace,
-            )
+            candidates.add((bot_name, bot_namespace))
 
-    def _delete_orphaned_bot(
-        self,
-        db: Session,
-        *,
-        team: Kind,
-        bot_name: str,
-        bot_namespace: str,
-    ) -> None:
-        """Delete a member Bot when it is exclusive to the deleted Team."""
-        bot = (
+        if not candidates:
+            return
+
+        bots = (
             db.query(Kind)
             .filter(
                 Kind.kind == "Bot",
-                Kind.namespace == bot_namespace,
-                Kind.name == bot_name,
+                Kind.namespace == db_resource.namespace,
+                Kind.name.in_([name for name, _ in candidates]),
+                Kind.is_active == True,
+            )
+            .all()
+        )
+        if not bots:
+            return
+
+        referenced = self._find_bots_referenced_by_other_teams(
+            db, exclude_team_id=db_resource.id
+        )
+        for bot in bots:
+            if bot.user_id != db_resource.user_id:
+                continue
+            if (bot.name, bot.namespace) in referenced:
+                continue
+            self._delete_orphaned_bot_ghost(db, team=db_resource, bot=bot)
+            db.delete(bot)
+            logger.info(
+                "Deleted orphaned Bot '%s' in namespace '%s' while deleting Team '%s' "
+                "(team_id=%s, bot_id=%s)",
+                bot.name,
+                bot.namespace,
+                db_resource.name,
+                db_resource.id,
+                bot.id,
+            )
+
+    def _delete_orphaned_bot_ghost(self, db: Session, *, team: Kind, bot: Kind) -> None:
+        """Delete the Bot's Ghost when it is exclusive to the deleted Bot.
+
+        The Ghost is only removed when it belongs to the Team owner and no
+        other active Bot references it.
+        """
+        ghost_ref = ((bot.json or {}).get("spec") or {}).get("ghostRef") or {}
+        ghost_name = ghost_ref.get("name")
+        if not ghost_name:
+            return
+        ghost_namespace = ghost_ref.get("namespace") or "default"
+
+        ghost = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Ghost",
+                Kind.namespace == ghost_namespace,
+                Kind.name == ghost_name,
                 Kind.is_active == True,
             )
             .first()
         )
-        if bot is None or bot.user_id != team.user_id:
+        if ghost is None or ghost.user_id != team.user_id:
             return
-        if self._is_bot_referenced_by_other_teams(
-            db, bot_name=bot_name, bot_namespace=bot_namespace, exclude_team_id=team.id
-        ):
-            return
-        db.delete(bot)
+
+        other_bots = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Bot",
+                Kind.is_active == True,
+                Kind.id != bot.id,
+            )
+            .yield_per(100)
+        )
+        for other in other_bots:
+            other_ref = ((other.json or {}).get("spec") or {}).get("ghostRef") or {}
+            if (
+                other_ref.get("name") == ghost_name
+                and (other_ref.get("namespace") or "default") == ghost_namespace
+            ):
+                return
+
+        db.delete(ghost)
         logger.info(
-            "Deleted orphaned Bot '%s' in namespace '%s' while deleting Team '%s' "
-            "(team_id=%s, bot_id=%s)",
-            bot_name,
-            bot_namespace,
-            team.name,
-            team.id,
+            "Deleted orphaned Ghost '%s' in namespace '%s' while deleting Bot '%s' "
+            "(ghost_id=%s, bot_id=%s)",
+            ghost_name,
+            ghost_namespace,
+            bot.name,
+            ghost.id,
             bot.id,
         )
 
     @staticmethod
-    def _is_bot_referenced_by_other_teams(
-        db: Session, *, bot_name: str, bot_namespace: str, exclude_team_id: int
-    ) -> bool:
-        """Check whether any other active Team references the Bot.
+    def _find_bots_referenced_by_other_teams(
+        db: Session, *, exclude_team_id: int
+    ) -> set[tuple[str, str]]:
+        """Collect (name, namespace) of Bots referenced by other active Teams.
 
         The scan cannot be narrowed by ``Kind.namespace``: a Team in any
         namespace may reference this Bot through an explicit cross-namespace
         ``botRef``. Results are streamed to keep memory bounded on large
         installations.
         """
+        referenced: set[tuple[str, str]] = set()
         other_teams = (
             db.query(Kind)
             .filter(
@@ -414,12 +464,10 @@ class TeamKindService(KindBaseService):
             members = ((other.json or {}).get("spec") or {}).get("members") or []
             for member in members:
                 bot_ref = member.get("botRef", {}) if isinstance(member, dict) else {}
-                if (
-                    bot_ref.get("name") == bot_name
-                    and (bot_ref.get("namespace") or "default") == bot_namespace
-                ):
-                    return True
-        return False
+                bot_name = bot_ref.get("name")
+                if bot_name:
+                    referenced.add((bot_name, bot_ref.get("namespace") or "default"))
+        return referenced
 
     def _validate_references(
         self, db: Session, user_id: int, resource: Dict[str, Any]

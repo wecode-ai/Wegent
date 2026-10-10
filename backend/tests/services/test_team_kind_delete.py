@@ -222,3 +222,88 @@ def test_delete_resource_removes_orphaned_bot(test_db, monkeypatch):
         .count()
     )
     assert active_teams == 0
+
+
+def test_delete_team_removes_orphaned_ghost(test_db):
+    """An exclusive Ghost referenced by the deleted Bot is removed too."""
+    # Arrange
+    team = _add_team(test_db, name="agent-a", bot_refs=[{"name": "bot-a"}])
+    _add_kind(
+        test_db,
+        kind="Bot",
+        name="bot-a",
+        spec={"ghostRef": {"name": "ghost-a"}},
+    )
+    _add_kind(test_db, kind="Ghost", name="ghost-a")
+    service = TeamKindService()
+
+    # Act
+    service._pre_delete_side_effects(test_db, team.user_id, team)
+    test_db.commit()
+
+    # Assert
+    remaining = {
+        (kind.kind, kind.name)
+        for kind in test_db.query(Kind).filter(Kind.is_active == True)
+    }
+    assert ("Bot", "bot-a") not in remaining
+    assert ("Ghost", "ghost-a") not in remaining
+
+
+def test_delete_team_keeps_ghost_referenced_by_other_bot(test_db):
+    """A Ghost referenced by another active Bot is kept."""
+    # Arrange
+    team = _add_team(test_db, name="agent-a", bot_refs=[{"name": "bot-a"}])
+    _add_kind(
+        test_db,
+        kind="Bot",
+        name="bot-a",
+        spec={"ghostRef": {"name": "ghost-shared"}},
+    )
+    _add_kind(
+        test_db,
+        kind="Bot",
+        name="bot-b",
+        spec={"ghostRef": {"name": "ghost-shared"}},
+    )
+    _add_kind(test_db, kind="Ghost", name="ghost-shared")
+    service = TeamKindService()
+
+    # Act
+    service._pre_delete_side_effects(test_db, team.user_id, team)
+    test_db.commit()
+
+    # Assert: bot-a is gone, its shared Ghost survives for bot-b
+    remaining = {
+        (kind.kind, kind.name)
+        for kind in test_db.query(Kind).filter(Kind.is_active == True)
+    }
+    assert ("Bot", "bot-a") not in remaining
+    assert ("Ghost", "ghost-shared") in remaining
+
+
+def test_delete_with_user_removes_orphaned_bot(test_db):
+    """The /api/teams adapter delete path also cleans up orphaned Bots."""
+    from app.services.adapters.team_kinds import team_kinds_service
+
+    # Arrange
+    team = _add_team(test_db, name="agent-a", bot_refs=[{"name": "bot-a"}])
+    _add_kind(test_db, kind="Bot", name="bot-a")
+
+    # Act
+    team_kinds_service.delete_with_user(
+        db=test_db,
+        team_id=team.id,
+        user_id=team.user_id,
+        force=True,
+        confirm_name="agent-a",
+    )
+
+    # Assert
+    assert "bot-a" not in _bot_names(test_db)
+    remaining_teams = (
+        test_db.query(Kind)
+        .filter(Kind.kind == "Team", Kind.name == "agent-a", Kind.is_active == True)
+        .count()
+    )
+    assert remaining_teams == 0
