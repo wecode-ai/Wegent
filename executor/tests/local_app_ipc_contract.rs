@@ -324,7 +324,7 @@ async fn app_ipc_lists_store_reads_manifest_and_saves_plugin_example() {
     )
     .unwrap();
     fs::write(
-        capabilities.join("manifest.json"),
+        capabilities.join("manifest-v2.json"),
         r#"{"plugins":{"example@wegent":{"name":"example","marketplace":"wegent","store_path":"store/plugins/example@wegent"}}}"#,
     )
     .unwrap();

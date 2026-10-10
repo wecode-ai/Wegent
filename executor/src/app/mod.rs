@@ -135,6 +135,9 @@ pub async fn run_with_shell_environment(
         return Ok(());
     }
 
+    crate::config::paths::migrate_default_home()
+        .map_err(|error| AppError::Server(format!("Executor Home migration failed: {error}")))?;
+
     if args.upgrade {
         let config = load_device_config(args.config_path.as_deref())?;
         return run_upgrade(config.update, args.yes).await;
@@ -148,6 +151,8 @@ pub async fn run_with_shell_environment(
     let config = load_device_config(args.config_path.as_deref())?;
     init_executor_logging(&config);
     let plan = startup_plan_for_config(&config)?;
+    crate::local::capabilities::initialize_default_manifest()
+        .map_err(|error| AppError::Server(error.to_string()))?;
     if plan
         .local_sidecar
         .as_ref()

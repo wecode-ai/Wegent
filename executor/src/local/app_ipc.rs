@@ -191,7 +191,8 @@ if configured_home:
     codex_home = Path(configured_home)
 else:
     executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
-    base = Path(executor_home) if executor_home else Path.home() / ".wegent-executor"
+    workbench = os.environ.get("WEGENT_WORKBENCH_HOME", "").strip()
+    base = Path(executor_home).expanduser() if executor_home else (Path(workbench) if workbench else Path.home() / ".wegent/workbench") / "executor"
     codex_home = base / "codex"
 target = codex_home / "auth.json"
 result = {
@@ -3202,12 +3203,8 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         "pwd" => Some(command_definition("pwd", &["pwd"], None)),
         "home_dir" => Some(command_definition("printenv HOME", &["printenv", "HOME"], None)),
         "project_workspace_root" => Some(command_definition(
-            "sh -c 'printf %s \"${WEGENT_EXECUTOR_PROJECTS_DIR:-${WECODE_HOME:-$HOME/.wecode}/wegent-executor/workspace/projects}\"'",
-            &[
-                "sh",
-                "-c",
-                "printf %s \"${WEGENT_EXECUTOR_PROJECTS_DIR:-${WECODE_HOME:-$HOME/.wecode}/wegent-executor/workspace/projects}\"",
-            ],
+            "project_workspace_root",
+            &[],
             None,
         )),
         "ls_dirs" => Some(command_definition(
@@ -3379,7 +3376,7 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &[
                 "sh",
                 "-lc",
-                "exec \"$HOME/.wegent-executor/bin/cdp-relay-server\" --restart",
+                "exec \"${WEGENT_EXECUTOR_HOME:-${WEGENT_WORKBENCH_HOME:-$HOME/.wegent/workbench}/executor}/bin/cdp-relay-server\" --restart",
             ],
             None,
         )),
@@ -3388,7 +3385,7 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &[
                 "sh",
                 "-lc",
-                "payload=${1:?browser tool payload is required}; exec \"$HOME/.wegent-executor/bin/browser-tool\" \"$payload\"",
+                "payload=${1:?browser tool payload is required}; exec \"${WEGENT_EXECUTOR_HOME:-${WEGENT_WORKBENCH_HOME:-$HOME/.wegent/workbench}/executor}/bin/browser-tool\" \"$payload\"",
                 "--",
             ],
             Some(PostProcessor::Json),

@@ -310,10 +310,7 @@ fn resolve_plugin_root_candidates(
         ));
     }
 
-    let executor_home = resolve_executor_home(
-        env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
-        dirs::home_dir(),
-    )?;
+    let executor_home = crate::config::paths::executor_home();
     let codex_homes = ["CODEX_HOME", "WEGENT_CODEX_HOME"]
         .into_iter()
         .filter_map(env::var_os)
@@ -366,12 +363,13 @@ fn installed_plugin_root_candidates(
     Ok(candidates)
 }
 
+#[cfg(test)]
 fn resolve_executor_home(
     configured_executor_home: Option<PathBuf>,
     platform_home: Option<PathBuf>,
 ) -> Result<PathBuf, AppIpcError> {
     configured_executor_home
-        .or_else(|| platform_home.map(|home| home.join(".wegent-executor")))
+        .or_else(|| platform_home.map(|home| home.join(".wegent/workbench/executor")))
         .ok_or_else(|| AppIpcError::new("internal_error", "Home directory is not available"))
 }
 

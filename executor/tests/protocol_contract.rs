@@ -48,6 +48,7 @@ fn openai_request_conversion_preserves_executor_metadata_and_messages() {
             "task_id": 123,
             "subtask_id": 456,
             "team_namespace": "default",
+            "team_owner": {"kind":"user","id":7,"name":"resource-owner"},
             "bot": [{"name": "coder", "shell_type": "ClaudeCode"}],
             "kb_tool_access_mode": null,
             "knowledge_base_scopes": [
@@ -72,6 +73,10 @@ fn openai_request_conversion_preserves_executor_metadata_and_messages() {
 
     assert_eq!(execution.task_id, "123");
     assert_eq!(execution.subtask_id, "456");
+    assert_eq!(
+        execution.extra["team_owner"],
+        json!({"kind":"user","id":7,"name":"resource-owner"})
+    );
     assert_eq!(execution.system_prompt, "system prompt");
     assert_eq!(execution.prompt, json!("second user message"));
     assert_eq!(

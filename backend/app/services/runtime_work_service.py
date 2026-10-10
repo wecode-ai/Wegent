@@ -3833,11 +3833,12 @@ def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
         if address.workspace_path
         else None
     )
+    team_id = _runtime_address_team_id(address)
     return RuntimeTaskAddress(
         deviceId=address.device_id,
         workspacePath=workspace_path,
         localTaskId=address.local_task_id.strip(),
-        runtimeHandle=address.runtime_handle,
+        runtimeHandle={"wegentTeam": {"id": team_id}} if team_id is not None else None,
     )
 
 
@@ -4254,7 +4255,8 @@ def _build_direct_wework_runtime_execution_request(
     from app.services.auth import create_skill_identity_token, create_task_token
 
     user = _get_user(db, user_id)
-    task_id = request.local_task_id or str(_runtime_execution_ids()[0])
+    generated_task_id, subtask_id = _runtime_execution_ids()
+    task_id = request.local_task_id or str(generated_task_id)
     title = _runtime_task_title(request)
     runtime_model_config, _, _ = _runtime_model_override(
         db,
@@ -4282,7 +4284,7 @@ def _build_direct_wework_runtime_execution_request(
     )
     execution_request = ExecutionRequest(
         task_id=task_id,
-        subtask_id=f"{task_id}-assistant",
+        subtask_id=subtask_id,
         team_id=0,
         team_name="Wework",
         team_namespace="default",
@@ -4351,7 +4353,6 @@ def _apply_runtime_create_request(
 
     if request.local_task_id:
         execution_request.task_id = request.local_task_id
-        execution_request.subtask_id = f"{request.local_task_id}-assistant"
     if request.bot:
         execution_request.bot = request.bot
         first_bot = request.bot[0] if request.bot else {}

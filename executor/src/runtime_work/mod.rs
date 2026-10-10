@@ -24,11 +24,13 @@ mod runtime_handle_messages;
 mod store;
 mod task_create_contract;
 mod transcript;
+pub(crate) use transcript::codex_file_change_content;
 mod transcript_page;
 mod transcript_transport;
 mod util;
 mod worktrees;
 
+pub use codex_global_state::run_project_state_query;
 pub(crate) use collaboration_projects::sync_local_collaboration_projects;
 pub(crate) use events::CodexNotificationEventMapper;
 pub use handler::RuntimeWorkRpcHandler;

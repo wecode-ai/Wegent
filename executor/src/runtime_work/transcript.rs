@@ -1249,6 +1249,8 @@ use image_generation::{insert_image_generation_render_payload, ImageGenerationRe
 #[path = "transcript/file_change_projection.rs"]
 mod file_change_projection;
 
+pub(crate) use file_change_projection::codex_file_change_content;
+
 #[cfg(test)]
 use file_change_projection::diff_stats;
 use file_change_projection::{

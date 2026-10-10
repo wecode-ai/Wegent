@@ -33,7 +33,7 @@ export async function accountPlugin(cloud, slug) {
 export async function materializedPlugin(home, installedId) {
   let manifest
   try {
-    manifest = JSON.parse(await readFile(resolve(home, 'capabilities/manifest.json'), 'utf8'))
+    manifest = JSON.parse(await readFile(resolve(home, 'capabilities/manifest-v2.json'), 'utf8'))
   } catch (error) {
     if (error.code === 'ENOENT') return null
     throw error

@@ -591,6 +591,8 @@ describe('shared IssueDetail', () => {
     expect(screen.queryByTestId('collaboration-assignment-workflow-step')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
+    // Let the editor's animation-frame focus finish before opening another control.
+    await waitFor(() => expect(screen.getByTestId('cloud-todo-detail-description')).toHaveFocus())
     fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
       target: { value: '新描述' },
     })

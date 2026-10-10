@@ -39,17 +39,17 @@ use crate::{
     agents::{AgentCommandPlanner, AgentProcessEngine},
     callback::CallbackSink,
     envd::archive::{
-        create_runtime_archive, restore_runtime_archive, ArchiveError, ArchiveMode, ArchiveOptions,
+        create_runtime_archive_with_roots, restore_runtime_archive_with_roots, ArchiveError,
+        ArchiveMode, ArchiveOptions,
     },
+    envd::archive_sessions::SessionArchiveRoots,
     heartbeat::{RuntimeHeartbeatActivationError, RuntimeHeartbeatController},
     local::session::terminal_metrics_snapshot,
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
     process_environment,
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
     runner::BackgroundTaskRunner,
-    workspace_paths::{
-        display_workspace_path, resolve_logical_path, task_workspace_dir, workspace_root,
-    },
+    workspace_paths::{display_workspace_path, task_workspace_dir, workspace_root},
 };
 
 pub use config::{ServerConfig, ServerConfigError};
@@ -173,6 +173,7 @@ where
         )
         .route("/files", get(download_envd_file).post(upload_envd_file))
         .route("/api/archive", post(archive_workspace))
+        .route("/api/runtime/prepare", post(prepare_runtime_workspace))
         .route("/api/restore", post(restore_workspace))
         .with_state(state)
 }
@@ -839,35 +840,98 @@ async fn upload_envd_file(
 async fn archive_workspace(
     Json(request): Json<ArchiveRequest>,
 ) -> Result<Json<ArchiveResponse>, HttpError> {
+    let started = std::time::Instant::now();
     let mode = parse_archive_mode(&request.runtime_type)?;
-    let archive = create_runtime_archive(ArchiveOptions {
-        mode,
-        task_id: request.task_id.to_string(),
-        workspace_path: task_workspace_dir(&request.task_id.to_string()),
-        home_path: runtime_home_path(mode),
-        max_size_bytes: u64::from(request.max_size_mb) * 1024 * 1024,
+    let roots =
+        SessionArchiveRoots::from_env().map_err(|error| archive_error_to_http(error.into()))?;
+    log_archive_roots("archive", request.task_id, mode, &roots);
+    let repository = crate::workspace_paths::task_repository::read(&request.task_id.to_string())
+        .map_err(repository_binding_error)?;
+    let repository_path = repository.as_ref().map(|binding| binding.path());
+    let lease = match repository_path.as_deref() {
+        Some(path) => Some(
+            crate::agents::git_workspace::acquire_archive_lease(path)
+                .await
+                .map_err(repository_binding_error)?,
+        ),
+        None => None,
+    };
+    let archive = tokio::task::spawn_blocking(move || {
+        log_executor_event(
+            "archive worker started",
+            &[
+                ("task_id", request.task_id.to_string()),
+                ("elapsed_ms", started.elapsed().as_millis().to_string()),
+            ],
+        );
+        // Keep the checkout locked until collection finishes, even if the request is cancelled.
+        let _lease = lease;
+        create_runtime_archive_with_roots(
+            ArchiveOptions {
+                mode,
+                task_id: request.task_id.to_string(),
+                workspace_path: task_workspace_dir(&request.task_id.to_string()),
+                home_path: runtime_home_path(mode),
+                max_size_bytes: u64::from(request.max_size_mb) * 1024 * 1024,
+            },
+            repository
+                .as_ref()
+                .zip(repository_path.as_ref())
+                .filter(|(binding, path)| {
+                    **path != task_workspace_dir(&request.task_id.to_string()).join(&binding.name)
+                })
+                .map(|(binding, path)| (path.as_path(), binding.name.as_str())),
+            &roots,
+        )
     })
+    .await
+    .map_err(|error| archive_error_to_http(std::io::Error::other(error).into()))?
     .map_err(archive_error_to_http)?;
 
     let size_bytes = archive.bytes.len() as u64;
     let session_file_included = archive.session_file_included;
     let git_included = archive.git_included;
+    log_executor_event(
+        "archive collected",
+        &[
+            ("task_id", request.task_id.to_string()),
+            ("bytes", size_bytes.to_string()),
+            ("session_file_included", session_file_included.to_string()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+        ],
+    );
 
-    reqwest::Client::new()
+    let upload_started = std::time::Instant::now();
+    log_executor_event(
+        "archive upload started",
+        &[("task_id", request.task_id.to_string())],
+    );
+    let upload = reqwest::Client::new()
         .put(&request.upload_url)
         .header(header::CONTENT_TYPE.as_str(), "application/gzip")
         .body(archive.bytes)
         .send()
         .await
-        .map_err(|error| HttpError {
-            status: StatusCode::BAD_GATEWAY,
-            detail: format!("failed to upload archive: {error}"),
-        })?
-        .error_for_status()
-        .map_err(|error| HttpError {
-            status: StatusCode::BAD_GATEWAY,
-            detail: format!("archive upload failed: {error}"),
-        })?;
+        .and_then(reqwest::Response::error_for_status);
+    log_executor_event(
+        "archive upload finished",
+        &[
+            ("task_id", request.task_id.to_string()),
+            (
+                "elapsed_ms",
+                upload_started.elapsed().as_millis().to_string(),
+            ),
+            (
+                "total_elapsed_ms",
+                started.elapsed().as_millis().to_string(),
+            ),
+            ("success", upload.is_ok().to_string()),
+        ],
+    );
+    upload.map_err(|error| HttpError {
+        status: StatusCode::BAD_GATEWAY,
+        detail: format!("archive upload failed: {}", error.without_url()),
+    })?;
 
     Ok(Json(ArchiveResponse {
         task_id: request.task_id,
@@ -877,10 +941,54 @@ async fn archive_workspace(
     }))
 }
 
+#[derive(Deserialize)]
+struct PrepareRuntimeRequest {
+    task_id: i64,
+}
+
+async fn prepare_runtime_workspace(
+    Json(request): Json<PrepareRuntimeRequest>,
+) -> Result<Json<Value>, HttpError> {
+    // SandboxManager is the caller; regular executors initialize when tasks start.
+    let mode = ArchiveMode::Sandbox;
+    let roots =
+        SessionArchiveRoots::from_env().map_err(|error| archive_error_to_http(error.into()))?;
+    let workspace = task_workspace_dir(&request.task_id.to_string());
+    let home = runtime_home_path(mode);
+    prepare_runtime_directories(&workspace, &home, &roots)
+        .map_err(|error| archive_error_to_http(error.into()))?;
+    log_archive_roots("prepare", request.task_id, mode, &roots);
+    Ok(Json(
+        json!({"workspace_path": workspace, "home_path": home, "executor_home": roots.executor, "workbench_home": roots.workbench}),
+    ))
+}
+
+fn prepare_runtime_directories(
+    workspace: &Path,
+    home: &Path,
+    roots: &SessionArchiveRoots,
+) -> std::io::Result<()> {
+    for path in [workspace, home, &roots.executor, &roots.workbench] {
+        std::fs::create_dir_all(path)?;
+    }
+    Ok(())
+}
+
 async fn restore_workspace(
     Json(request): Json<RestoreRequest>,
 ) -> Result<Json<RestoreResponse>, HttpError> {
     let mode = parse_archive_mode(&request.runtime_type)?;
+    let roots =
+        SessionArchiveRoots::from_env().map_err(|error| archive_error_to_http(error.into()))?;
+    log_archive_roots("restore", request.task_id, mode, &roots);
+    if crate::workspace_paths::task_repository::read(&request.task_id.to_string())
+        .map_err(repository_binding_error)?
+        .is_some()
+    {
+        return Err(repository_binding_error(
+            "Cannot restore over a bound shared checkout; restore into an isolated runtime".into(),
+        ));
+    }
     let bytes = reqwest::Client::new()
         .get(&request.download_url)
         .send()
@@ -901,14 +1009,28 @@ async fn restore_workspace(
             detail: format!("failed to read archive response: {error}"),
         })?;
 
-    let result = restore_runtime_archive(
-        &bytes,
-        mode,
-        &request.task_id.to_string(),
-        &task_workspace_dir(&request.task_id.to_string()),
-        &runtime_home_path(mode),
-    )
+    let result = tokio::task::spawn_blocking(move || {
+        restore_runtime_archive_with_roots(
+            &bytes,
+            mode,
+            &request.task_id.to_string(),
+            &task_workspace_dir(&request.task_id.to_string()),
+            &runtime_home_path(mode),
+            &roots,
+        )
+    })
+    .await
+    .map_err(|error| archive_error_to_http(std::io::Error::other(error).into()))?
     .map_err(archive_error_to_http)?;
+
+    log_executor_event(
+        "archive restored",
+        &[
+            ("task_id", request.task_id.to_string()),
+            ("session_restored", result.session_restored.to_string()),
+            ("git_restored", result.git_restored.to_string()),
+        ],
+    );
 
     Ok(Json(RestoreResponse {
         success: result.success,
@@ -1333,6 +1455,13 @@ fn workspace_entry(entry: fs::DirEntry) -> Option<WorkspaceEntry> {
     })
 }
 
+fn repository_binding_error(detail: String) -> HttpError {
+    HttpError {
+        status: StatusCode::CONFLICT,
+        detail,
+    }
+}
+
 fn resolve_workspace_path(raw_path: &str) -> Result<PathBuf, HttpError> {
     let workspace_root = workspace_root();
     let path = raw_path.trim();
@@ -1340,7 +1469,8 @@ fn resolve_workspace_path(raw_path: &str) -> Result<PathBuf, HttpError> {
         return Ok(workspace_root);
     }
 
-    let resolved = resolve_logical_path(path);
+    let resolved = crate::workspace_paths::task_repository::resolve_api_path(path)
+        .map_err(repository_binding_error)?;
     let candidate = if resolved.is_absolute() {
         resolved
     } else {
@@ -1417,7 +1547,8 @@ fn resolve_envd_filesystem_path(raw_path: &str) -> Result<PathBuf, HttpError> {
     } else if let Some(rest) = raw_path.strip_prefix("~/") {
         home_path().join(rest)
     } else {
-        resolve_logical_path(raw_path)
+        crate::workspace_paths::task_repository::resolve_api_path(raw_path)
+            .map_err(repository_binding_error)?
     };
     if path.is_absolute() {
         return Ok(path);
@@ -1602,6 +1733,7 @@ fn parse_archive_mode(value: &str) -> Result<ArchiveMode, HttpError> {
 }
 
 fn archive_error_to_http(error: ArchiveError) -> HttpError {
+    log_executor_event("archive operation failed", &[("error", error.to_string())]);
     let status = match error {
         ArchiveError::MissingWorkspace(_) | ArchiveError::EmptyArchiveRoots { .. } => {
             StatusCode::NOT_FOUND
@@ -1613,6 +1745,30 @@ fn archive_error_to_http(error: ArchiveError) -> HttpError {
         status,
         detail: error.to_string(),
     }
+}
+
+fn log_archive_roots(
+    operation: &str,
+    task_id: i64,
+    mode: ArchiveMode,
+    roots: &SessionArchiveRoots,
+) {
+    log_executor_event(
+        "archive paths resolved",
+        &[
+            ("operation", operation.to_owned()),
+            ("task_id", task_id.to_string()),
+            ("home", runtime_home_path(mode).display().to_string()),
+            (
+                "workspace",
+                task_workspace_dir(&task_id.to_string())
+                    .display()
+                    .to_string(),
+            ),
+            ("executor_home", roots.executor.display().to_string()),
+            ("workbench_home", roots.workbench.display().to_string()),
+        ],
+    );
 }
 
 #[derive(Debug, Default)]
@@ -2000,6 +2156,31 @@ impl IntoResponse for HttpError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn sandbox_home_remains_the_user_workspace() {
+        // Only resolve the container path; never create it on the test host.
+        assert_eq!(
+            runtime_home_path(ArchiveMode::Sandbox),
+            PathBuf::from("/home/user")
+        );
+    }
+
+    #[test]
+    fn sandbox_prepare_creates_directories_and_preserves_existing_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("sandbox-home");
+        let workspace = temp.path().join("workspace/task");
+        let roots = SessionArchiveRoots::for_home(&temp.path().join("runtime-home"));
+        prepare_runtime_directories(&workspace, &home, &roots).unwrap();
+        for path in [&home, &workspace, &roots.executor, &roots.workbench] {
+            assert!(path.is_dir());
+        }
+        let marker = home.join("task-output.txt");
+        fs::write(&marker, "preserved").unwrap();
+        prepare_runtime_directories(&workspace, &home, &roots).unwrap();
+        assert_eq!(fs::read_to_string(marker).unwrap(), "preserved");
+    }
 
     #[cfg(unix)]
     #[tokio::test]

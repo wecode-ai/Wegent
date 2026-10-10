@@ -27,7 +27,7 @@ DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_LOCALE = "en_US.UTF-8"
 
 # Mount path
-WORKSPACE_MOUNT_PATH = "/workspace"
+WORKSPACE_MOUNT_PATH = "/root/.wegent/workspace"
 
 # Task progress status
 DEFAULT_PROGRESS_RUNNING = 30

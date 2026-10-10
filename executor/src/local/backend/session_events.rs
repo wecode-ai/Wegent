@@ -56,12 +56,7 @@ fn configured_session_handler(
 }
 
 fn default_workspace_root() -> PathBuf {
-    env::var("LOCAL_WORKSPACE_ROOT")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".wegent-executor").join("workspace"))
+    crate::workspace_paths::local_workspace_root()
 }
 
 pub(super) fn session_start_request(
@@ -162,8 +157,4 @@ fn env_bool(name: &str, default: bool) -> bool {
             )
         })
         .unwrap_or(default)
-}
-
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }

@@ -54,6 +54,17 @@ pub(super) fn merge_claude_mcp_servers(
     Ok(servers)
 }
 
+pub(super) fn extract_claude_mcp_templates(
+    request: &ExecutionRequest,
+    global_mcps: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    convert_mcp_servers_to_dict(&Value::Array(collect_mcp_servers_for_claude(
+        request,
+        primary_bot(request),
+        global_mcps,
+    )))
+}
+
 pub fn extract_claude_options(
     request: &ExecutionRequest,
     global_mcps: &BTreeMap<String, Value>,

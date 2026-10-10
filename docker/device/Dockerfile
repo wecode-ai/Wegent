@@ -130,7 +130,7 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
 
 # Install the agent CLIs from the selected npm registry.
 RUN npm install -g --registry "$NPM_REGISTRY" \
-      @anthropic-ai/claude-code@2.1.277 @openai/codex@0.142.5 \
+      @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
     && npm cache clean --force
 
 # Install the GitHub (gh) and GitLab (glab) CLIs used by git hosting features.
@@ -239,17 +239,18 @@ RUN set -e; \
     || { echo "$executor_type" >&2; echo "Built executor binary does not match DEVICE_IMAGE_PLATFORM=$DEVICE_IMAGE_PLATFORM" >&2; exit 1; } \
     && mkdir -p \
         /home/wegent/.wecode/wegent-executor/bin \
-        /home/wegent/.wecode/wegent-executor/workspace \
+        /home/wegent/.wegent/workspace \
     && cp /app/executor /home/wegent/.wecode/wegent-executor/bin/wegent-executor \
     && chmod 0755 /app/executor /home/wegent/.wecode/wegent-executor/bin/wegent-executor \
     && ln -sf /home/wegent/.wecode/wegent-executor/bin/wegent-executor /usr/local/bin/wegent-executor \
     && test "$(/app/executor --version)" = "${APP_VERSION}" \
     && chown -R wegent:wegent /app /home/wegent
 
-ENV PATH="/home/wegent/.wecode/wegent-executor/bin:/home/wegent/.wecode/bin:/home/wegent/.local/bin:${PATH}"
+ENV PATH="/home/wegent/.wegent/workbench/executor/bin:/home/wegent/.wecode/wegent-executor/bin:/home/wegent/.wecode/bin:/home/wegent/.local/bin:${PATH}"
 ENV WEGENT_BACKEND_URL=http://localhost:8000
-ENV WEGENT_EXECUTOR_HOME=/home/wegent/.wecode/wegent-executor
-ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wecode/wegent-executor/workspace
+ENV WEGENT_EXECUTOR_HOME=/home/wegent/.wegent/workbench/executor
+ENV WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true
+ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wegent/workspace
 ENV WEGENT_WORKSPACE_ROOTS=/home/wegent
 ENV DEVICE_SESSION_GATEWAY_HOST=0.0.0.0
 ENV DEVICE_SESSION_GATEWAY_PORT=17888
@@ -264,7 +265,9 @@ export WEGENT_BACKEND_URL="${WEGENT_BACKEND_URL:-http://localhost:8000}"
 export DEVICE_SESSION_GATEWAY_HOST="${DEVICE_SESSION_GATEWAY_HOST:-0.0.0.0}"
 export DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 export DEVICE_CODE_SERVER_PORT="${DEVICE_CODE_SERVER_PORT:-18080}"
-EXPECTED_EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"
+EXPECTED_EXECUTOR_HOME="/home/wegent/.wegent/workbench/executor"
+LEGACY_EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"
+EXPECTED_DATA_ROOT="/home/wegent/.wegent"
 
 normalize_enabled_flag() {
     local name="$1"
@@ -288,26 +291,50 @@ if [[ "$WEGENT_EXECUTOR_HOME" != /* ]]; then
     echo "WEGENT_EXECUTOR_HOME must be an absolute path" >&2
     exit 1
 fi
+# Use the same override precedence as the Executor workspace resolver.
+LOCAL_WORKSPACE_ROOT="${WORKSPACE_ROOT:-${WEGENT_WORKSPACE_ROOT:-${LOCAL_WORKSPACE_ROOT}}}"
+export LOCAL_WORKSPACE_ROOT
 if [[ "$LOCAL_WORKSPACE_ROOT" != /* ]]; then
     echo "LOCAL_WORKSPACE_ROOT must be an absolute path" >&2
     exit 1
 fi
-WEGENT_EXECUTOR_HOME="$(realpath -m -- "$WEGENT_EXECUTOR_HOME")"
+WEGENT_EXECUTOR_HOME="$(realpath -ms -- "$WEGENT_EXECUTOR_HOME")"
 LOCAL_WORKSPACE_ROOT="$(realpath -m -- "$LOCAL_WORKSPACE_ROOT")"
-if [ "$WEGENT_EXECUTOR_HOME" != "$EXPECTED_EXECUTOR_HOME" ]; then
+if [ "$WEGENT_EXECUTOR_HOME" != "$EXPECTED_EXECUTOR_HOME" ] && [ "$WEGENT_EXECUTOR_HOME" != "$LEGACY_EXECUTOR_HOME" ]; then
     echo "WEGENT_EXECUTOR_HOME must remain at the stable mount path $EXPECTED_EXECUTOR_HOME" >&2
     exit 1
 fi
 case "$LOCAL_WORKSPACE_ROOT/" in
-    "$WEGENT_EXECUTOR_HOME/"*) ;;
+    "$EXPECTED_DATA_ROOT/workspace/"* | "$WEGENT_EXECUTOR_HOME/workspace/"*) ;;
     *)
-        echo "LOCAL_WORKSPACE_ROOT must be inside WEGENT_EXECUTOR_HOME" >&2
+        echo "LOCAL_WORKSPACE_ROOT must be inside a persisted workspace" >&2
         exit 1
         ;;
 esac
+# Repository overrides must not bypass the persistent workspace boundary.
+if [ -n "${WEGENT_EXECUTOR_PROJECTS_DIR:-}" ]; then
+    if [[ "$WEGENT_EXECUTOR_PROJECTS_DIR" != /* ]]; then
+        echo "WEGENT_EXECUTOR_PROJECTS_DIR must be an absolute path" >&2
+        exit 1
+    fi
+    case "$(realpath -m -- "$WEGENT_EXECUTOR_PROJECTS_DIR")/" in
+        "$EXPECTED_DATA_ROOT/workspace/"* | "$WEGENT_EXECUTOR_HOME/workspace/"*) ;;
+        *) echo "WEGENT_EXECUTOR_PROJECTS_DIR must be inside a persisted workspace" >&2; exit 1 ;;
+    esac
+fi
 DEVICE_LOG_DIR="$WEGENT_EXECUTOR_HOME/logs"
-case "${WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED:-false}" in
+case "${WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED-true}" in
     true)
+        storage_roots=("$EXPECTED_DATA_ROOT")
+        if [ "$WEGENT_EXECUTOR_HOME" = "$LEGACY_EXECUTOR_HOME" ]; then
+            storage_roots+=("$LEGACY_EXECUTOR_HOME")
+        fi
+        for storage_root in "${storage_roots[@]}"; do
+            if ! mountpoint -q "$storage_root"; then
+                echo "Verified Worktree persistence requires a volume at $storage_root" >&2
+                exit 1
+            fi
+        done
         if [ -z "${WEGENT_EXECUTOR_HOME_ID:-}" ]; then
             echo "Verified Worktree persistence requires WEGENT_EXECUTOR_HOME_ID" >&2
             exit 1
@@ -320,9 +347,33 @@ case "${WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED:-false}" in
         ;;
 esac
 
+# Reuse the existing device volume through a canonical path. Never copy its
+# installation identity into a second writable home during an image upgrade.
+if [ "$WEGENT_EXECUTOR_HOME" = "$EXPECTED_EXECUTOR_HOME" ] && [ -L "$EXPECTED_EXECUTOR_HOME" ]; then
+    if ! mountpoint -q "$LEGACY_EXECUTOR_HOME" || [ "$(realpath -m -- "$EXPECTED_EXECUTOR_HOME")" != "$LEGACY_EXECUTOR_HOME" ]; then
+        echo "Unified Executor Home requires its original legacy volume; refusing to reset identity" >&2
+        exit 1
+    fi
+fi
+if [ "$WEGENT_EXECUTOR_HOME" = "$EXPECTED_EXECUTOR_HOME" ] && mountpoint -q "$LEGACY_EXECUTOR_HOME"; then
+    if [ -L "$EXPECTED_EXECUTOR_HOME" ]; then
+        if [ "$(realpath -m -- "$EXPECTED_EXECUTOR_HOME")" != "$LEGACY_EXECUTOR_HOME" ]; then
+            echo "Unified Executor Home points to a different volume" >&2
+            exit 1
+        fi
+    elif [ -e "$EXPECTED_EXECUTOR_HOME" ]; then
+        echo "Both legacy and unified Executor Homes exist; refusing to merge identities" >&2
+        exit 1
+    else
+        mkdir -p "$(dirname "$EXPECTED_EXECUTOR_HOME")"
+        ln -s "$LEGACY_EXECUTOR_HOME" "$EXPECTED_EXECUTOR_HOME"
+    fi
+fi
+
 # A named volume mounted at WEGENT_EXECUTOR_HOME may contain an older binary.
 # Refresh only the binary from the current image and preserve the remaining data.
 mkdir -p \
+    "$EXPECTED_DATA_ROOT" \
     "$WEGENT_EXECUTOR_HOME/bin" \
     "$WEGENT_EXECUTOR_HOME/runtime-work" \
     "$WEGENT_EXECUTOR_HOME/capabilities" \
@@ -341,19 +392,26 @@ if ! flock -n 9; then
     exit 1
 fi
 
+exec 8>"$EXPECTED_DATA_ROOT/.writer.lock"
+if ! flock -n 8; then
+    echo "Another Executor is already using the Wegent data volume" >&2
+    exit 1
+fi
+
 # A deployment may pin the volume identity to its logical device ID. Reusing a
 # volume belonging to another device is rejected before the Executor starts.
 if [ -n "${WEGENT_EXECUTOR_HOME_ID:-}" ]; then
-    _home_id_file="$WEGENT_EXECUTOR_HOME/.executor-home-id"
-    if [ -f "$_home_id_file" ]; then
-        _persisted_home_id="$(cat "$_home_id_file")"
-        if [ "$_persisted_home_id" != "$WEGENT_EXECUTOR_HOME_ID" ]; then
-            echo "Executor Home identity does not match WEGENT_EXECUTOR_HOME_ID" >&2
-            exit 1
+    for _home_id_file in "$WEGENT_EXECUTOR_HOME/.executor-home-id" "$EXPECTED_DATA_ROOT/.executor-home-id"; do
+        if [ -f "$_home_id_file" ]; then
+            _persisted_home_id="$(cat "$_home_id_file")"
+            if [ "$_persisted_home_id" != "$WEGENT_EXECUTOR_HOME_ID" ]; then
+                echo "Executor Home identity does not match WEGENT_EXECUTOR_HOME_ID" >&2
+                exit 1
+            fi
+        else
+            printf '%s' "$WEGENT_EXECUTOR_HOME_ID" >"$_home_id_file"
         fi
-    else
-        printf '%s' "$WEGENT_EXECUTOR_HOME_ID" >"$_home_id_file"
-    fi
+    done
 fi
 
 _write_probe="$WEGENT_EXECUTOR_HOME/.write-probe.$$"

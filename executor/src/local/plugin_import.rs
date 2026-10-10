@@ -2165,8 +2165,17 @@ fn plugin_source_from_manifest(
 }
 
 fn prepare_personal_marketplace_root(path: &Path) -> Result<PathBuf, String> {
-    let executor_home = required_executor_home()?;
-    prepare_personal_marketplace_root_for_executor_home(path, &executor_home)
+    prepare_personal_marketplace_root_for_capabilities(path, &capabilities_root()?)
+}
+
+fn capabilities_root() -> Result<PathBuf, String> {
+    if env::var_os("WEGENT_CAPABILITIES_HOME").is_none() {
+        reject_symlink(&required_executor_home()?, "executor home")?;
+    }
+    super::capabilities::default_manifest_path()
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "Invalid capabilities root".to_owned())
 }
 
 fn prepare_local_marketplace_root(path: &Path) -> Result<PathBuf, String> {
@@ -2188,32 +2197,43 @@ fn prepare_local_marketplace_root(path: &Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))
 }
 
+#[cfg(test)]
 fn prepare_personal_marketplace_root_for_executor_home(
     path: &Path,
     executor_home: &Path,
 ) -> Result<PathBuf, String> {
-    let expected = executor_home
-        .join("capabilities")
-        .join("bundled-marketplaces")
-        .join(PERSONAL_MARKETPLACE_ID);
+    create_directory_without_symlink(executor_home, "executor home")?;
+    prepare_personal_marketplace_root_for_capabilities(path, &executor_home.join("capabilities"))
+}
+
+fn prepare_personal_marketplace_root_for_capabilities(
+    path: &Path,
+    capabilities_root: &Path,
+) -> Result<PathBuf, String> {
+    let expected = validated_personal_marketplace_path_for_capabilities("", capabilities_root)?;
     if path != expected {
         return Err(format!(
             "Personal marketplace path must be {}",
             expected.display()
         ));
     }
-    create_directory_without_symlink(executor_home, "executor home")?;
-    let mut parent = executor_home
+    create_directory_without_symlink(capabilities_root, "executor capabilities")?;
+    let mut parent = capabilities_root
         .canonicalize()
-        .map_err(|error| format!("Failed to resolve executor home: {error}"))?;
+        .map_err(|error| format!("Failed to resolve executor capabilities: {error}"))?;
     for (name, label) in [
-        ("capabilities", "executor capabilities"),
         ("bundled-marketplaces", "bundled marketplace directory"),
         (PERSONAL_MARKETPLACE_ID, "personal marketplace"),
     ] {
         parent = prepare_direct_child_directory(&parent, name, label)?;
     }
     Ok(parent)
+}
+
+fn personal_marketplace_path(capabilities_root: &Path) -> PathBuf {
+    capabilities_root
+        .join("bundled-marketplaces")
+        .join(PERSONAL_MARKETPLACE_ID)
 }
 
 fn resolve_existing_marketplace_root(path: &Path) -> Result<PathBuf, String> {
@@ -2450,24 +2470,30 @@ fn cleanup_stale_personal_package_artifacts(artifact_root: &Path) {
 }
 
 fn validated_personal_marketplace_path(path: &str) -> Result<PathBuf, String> {
-    let executor_home = required_executor_home()?;
-    validated_personal_marketplace_path_for_executor_home(path, &executor_home)
+    validated_personal_marketplace_path_for_capabilities(path, &capabilities_root()?)
 }
 
+#[cfg(test)]
 fn validated_personal_marketplace_path_for_executor_home(
     path: &str,
     executor_home: &Path,
 ) -> Result<PathBuf, String> {
-    if executor_home
-        .components()
-        .any(|component| matches!(component, Component::ParentDir))
+    reject_symlink(executor_home, "executor home")?;
+    validated_personal_marketplace_path_for_capabilities(path, &executor_home.join("capabilities"))
+}
+
+fn validated_personal_marketplace_path_for_capabilities(
+    path: &str,
+    capabilities_root: &Path,
+) -> Result<PathBuf, String> {
+    if !capabilities_root.is_absolute()
+        || capabilities_root
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
     {
-        return Err("Executor home may not contain parent traversal".to_owned());
+        return Err("Capabilities root must be absolute without parent traversal".to_owned());
     }
-    let expected = executor_home
-        .join("capabilities")
-        .join("bundled-marketplaces")
-        .join(PERSONAL_MARKETPLACE_ID);
+    let expected = personal_marketplace_path(capabilities_root);
     let requested = match path.trim() {
         "" => expected.clone(),
         value => PathBuf::from(value),
@@ -2484,9 +2510,9 @@ fn validated_personal_marketplace_path_for_executor_home(
     }
     let canonical_expected = expected.canonicalize().ok();
     if requested != expected
-        && canonical_expected
-            .as_ref()
-            .map_or(true, |canonical| requested != *canonical)
+        && canonical_expected.as_ref().map_or(true, |canonical| {
+            requested.canonicalize().ok().as_ref() != Some(canonical)
+        })
     {
         return Err(format!(
             "Personal marketplace path must be {}",
@@ -2494,10 +2520,9 @@ fn validated_personal_marketplace_path_for_executor_home(
         ));
     }
     for (candidate, label) in [
-        (executor_home.to_path_buf(), "executor home"),
-        (executor_home.join("capabilities"), "executor capabilities"),
+        (capabilities_root.to_path_buf(), "executor capabilities"),
         (
-            executor_home.join("capabilities/bundled-marketplaces"),
+            capabilities_root.join("bundled-marketplaces"),
             "bundled marketplace directory",
         ),
         (expected.clone(), "personal marketplace"),
@@ -2780,10 +2805,7 @@ fn plugin_cloud_link_registry_path(marketplace_root: &Path) -> PathBuf {
         .and_then(Path::file_name)
         .and_then(|name| name.to_str())
         == Some("bundled-marketplaces")
-        && capabilities
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            == Some("capabilities")
+        && capabilities.is_some()
     {
         let marketplace_name = marketplace_root
             .file_name()
@@ -3400,6 +3422,97 @@ mod tests {
         assert!(archive.by_name("README.md").is_ok());
         remove_personal_package_artifact(&artifacts, &package.cleanup_token).unwrap();
         assert!(!Path::new(&package.path).exists());
+    }
+
+    #[test]
+    fn relocated_capabilities_support_personal_plugin_install_and_delete() {
+        let temp = TempDir::new().unwrap();
+        let capabilities = temp
+            .path()
+            .join("workbench/wework/test/custom-capabilities");
+        let source = temp.path().join("source");
+        write_personal_plugin(&source, "example-plugin");
+        let expected = personal_marketplace_path(&capabilities);
+        let validated =
+            validated_personal_marketplace_path_for_capabilities("", &capabilities).unwrap();
+        assert_eq!(validated, expected);
+        let destination =
+            prepare_personal_marketplace_root_for_capabilities(&validated, &capabilities).unwrap();
+        ensure_personal_plugin_at(&source, &destination, "example-plugin").unwrap();
+        assert_eq!(
+            list_personal_plugins_at(&destination)
+                .unwrap()
+                .plugins
+                .len(),
+            1
+        );
+        assert_eq!(
+            plugin_cloud_link_registry_path(&destination),
+            capabilities
+                .canonicalize()
+                .unwrap()
+                .join("plugin-state/wework-personal-cloud-links.json")
+        );
+        delete_personal_plugin(DeletePersonalPluginRequest {
+            marketplace_path: destination.display().to_string(),
+            plugin_name: "example-plugin".into(),
+        })
+        .unwrap();
+        assert!(list_personal_plugins_at(&destination)
+            .unwrap()
+            .plugins
+            .is_empty());
+        assert!(source.join("plugins/example-plugin/README.md").is_file());
+        assert!(!temp.path().join("capabilities").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relocated_marketplace_accepts_legacy_bridge_but_rejects_symlinked_managed_children() {
+        use std::os::unix::fs::symlink;
+        let temp = TempDir::new().unwrap();
+        let capabilities = temp.path().join("workbench/wework/test/capabilities");
+        let expected = personal_marketplace_path(&capabilities);
+        prepare_personal_marketplace_root_for_capabilities(&expected, &capabilities).unwrap();
+        let legacy = temp.path().join("legacy-capabilities");
+        symlink(&capabilities, &legacy).unwrap();
+        let requested = personal_marketplace_path(&legacy);
+        assert_eq!(
+            validated_personal_marketplace_path_for_capabilities(
+                requested.to_str().unwrap(),
+                &capabilities
+            )
+            .unwrap(),
+            expected
+        );
+
+        let outside = temp.path().join("outside");
+        fs::rename(&expected, &outside).unwrap();
+        symlink(&outside, &expected).unwrap();
+        assert!(validated_personal_marketplace_path_for_capabilities("", &capabilities).is_err());
+        assert!(
+            prepare_personal_marketplace_root_for_capabilities(&expected, &capabilities).is_err()
+        );
+    }
+
+    #[test]
+    fn relocated_marketplace_rejects_traversal_and_other_roots() {
+        let temp = TempDir::new().unwrap();
+        let capabilities = temp.path().join("capabilities");
+        assert!(
+            validated_personal_marketplace_path_for_capabilities("", Path::new("relative"))
+                .is_err()
+        );
+        assert!(validated_personal_marketplace_path_for_capabilities(
+            "",
+            &capabilities.join("../other")
+        )
+        .is_err());
+        assert!(validated_personal_marketplace_path_for_capabilities(
+            temp.path().join("other").to_str().unwrap(),
+            &capabilities
+        )
+        .is_err());
     }
 
     #[test]

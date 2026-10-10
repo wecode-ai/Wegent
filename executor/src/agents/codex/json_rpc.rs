@@ -17,7 +17,7 @@ use super::{
     codex_approval_result, codex_error_message, codex_notification_has_initial_progress,
     codex_turn_startup_timeout_seconds, debug_stdout::CodexStdout,
     is_codex_approval_request_method, is_mcp_tool_call_approval_request, json_rpc_request_id,
-    log_codex_raw_turn_message, mcp_tool_call_request_user_input_response, message_params,
+    mcp_tool_call_request_user_input_response, message_params,
     receive_mcp_server_elicitation_response, request_user_input_result, response_id,
     response_result, CodexNotificationSender, CodexRequestUserInputReceiver, CodexRunState,
 };
@@ -128,7 +128,6 @@ impl JsonRpcConnection {
             } else {
                 self.read_message().await?
             };
-            log_codex_raw_turn_message(&message);
             if response_id(&message) == Some(turn_request_id) {
                 response_result(message)?;
                 saw_turn_response = true;

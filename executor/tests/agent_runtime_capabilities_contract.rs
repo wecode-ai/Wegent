@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    ffi::{OsStr, OsString},
     fs,
     future::ready,
     io::{Cursor, Write},
@@ -15,6 +16,7 @@ use std::{
 use std::os::unix::fs::PermissionsExt;
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -30,6 +32,26 @@ use wegent_executor::{
 #[derive(Clone, Default)]
 struct RecordingSink {
     events: Arc<StdMutex<Vec<EventEnvelope>>>,
+}
+
+fn authenticated_bot_request(mut request: ExecutionRequest) -> ExecutionRequest {
+    request.backend_url.get_or_insert_with(|| {
+        std::env::var("TASK_API_DOMAIN")
+            .or_else(|_| std::env::var("WEGENT_BACKEND_URL"))
+            .unwrap_or_else(|_| "https://backend.example".to_owned())
+    });
+    request.extra.insert("user_id".to_owned(), json!(7));
+    request.user_name = Some("user7".to_owned());
+    request.team_namespace = Some("default".to_owned());
+    request.extra.insert("team_id".to_owned(), json!(12));
+    request.extra.insert(
+        "team_owner".to_owned(),
+        json!({"kind":"user","id":7,"name":"user7"}),
+    );
+    request
+        .extra
+        .insert("team_name".to_owned(), json!("design"));
+    request
 }
 
 impl RecordingSink {
@@ -48,14 +70,318 @@ impl EventSink for RecordingSink {
 }
 
 #[tokio::test]
+async fn claude_agent_home_preserves_spaces_in_environment_and_config_paths() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let workbench = root.path().join("workbench with spaces");
+    let _workbench = EnvGuard::set("WEGENT_WORKBENCH_HOME", &workbench);
+    let log = root.path().join("args.json");
+    let native = write_fake_claude_with_prelude(
+        &log,
+        r#"
+test -f "$CLAUDE_CONFIG_DIR/settings.json" || exit 80
+printf '%s' "$CLAUDE_CONFIG_DIR" > "$CLAUDE_CONFIG_DIR/observed-home"
+"#,
+    );
+    let engine =
+        AgentProcessEngine::new(AgentCommandPlanner::new(native.to_str().unwrap(), "codex"));
+    let mut request = authenticated_bot_request(ExecutionRequest {
+        task_id: "spaces".to_owned(),
+        new_session: true,
+        bot: json!([{"id":7,"shell_type":"ClaudeCode"}]),
+        project_workspace_path: Some(root.path().display().to_string()),
+        ..Default::default()
+    });
+    request.extra["team_owner"] = json!({"kind":"group","id":8,"name":"design team"});
+    request.team_namespace = Some("design  space".to_owned());
+    request.extra["team_name"] = json!("agent name");
+    assert!(matches!(
+        engine.run(request).await,
+        ExecutionOutcome::Completed { .. }
+    ));
+    let home = workbench.join("agents/user7/design  space/agent name");
+    assert_eq!(
+        fs::read_to_string(home.join("observed-home")).unwrap(),
+        home.to_str().unwrap()
+    );
+    assert!(home.join("runtime/tasks/spaces.json").is_file());
+}
+
+#[tokio::test]
+async fn isolated_bot_missing_claude_session_preserves_marker_without_retry_in_both_modes() {
+    use wegent_executor::process::{CommandSpec, StreamProcessEngine};
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _executor = EnvGuard::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    for streaming in [false, true] {
+        let task = if streaming {
+            "missing-streamed"
+        } else {
+            "missing-silent"
+        };
+        let marker = root
+            .path()
+            .join("sessions")
+            .join(task)
+            .join(".claude_session_id_7");
+        fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        fs::write(&marker, "keep-existing-session").unwrap();
+        let calls = root.path().join(format!("{task}.calls"));
+        let spec = CommandSpec::new("sh")
+            .arg("-c")
+            .arg(
+                r#"
+printf 'called\n' >> "$CALL_LOG"
+printf 'No conversation found with session ID: keep-existing-session\n' >&2
+exit 1
+"#,
+            )
+            .env("CALL_LOG", calls.display().to_string())
+            .arg("--resume")
+            .arg("keep-existing-session");
+        let engine = StreamProcessEngine::new(spec, 30);
+        let request = ExecutionRequest {
+            task_id: task.to_owned(),
+            subtask_id: "next".to_owned(),
+            bot: json!([{"id":7,"shell_type":"ClaudeCode"}]),
+            ..Default::default()
+        };
+        let outcome = if streaming {
+            engine
+                .run_with_events(
+                    authenticated_bot_request(request),
+                    RecordingSink::default(),
+                    ResponsesEventBuilder::new(task, "next", "claude"),
+                )
+                .await
+        } else {
+            engine.run(authenticated_bot_request(request)).await
+        };
+        let ExecutionOutcome::Failed { message } = outcome else {
+            panic!("missing session must fail");
+        };
+        assert!(message.contains("no new conversation"));
+        assert_eq!(
+            fs::read_to_string(&marker).unwrap(),
+            "keep-existing-session"
+        );
+        assert_eq!(fs::read_to_string(calls).unwrap(), "called\n");
+    }
+}
+
+#[tokio::test]
+async fn existing_bot_claude_session_is_imported_and_resumed_in_selected_home() {
+    verify_existing_claude_session_import(0).await;
+}
+
+#[tokio::test]
+async fn restored_default_claude_home_resumes_without_managed_home_override() {
+    verify_existing_claude_session_import(1).await;
+}
+
+#[tokio::test]
+async fn hashed_home_claude_session_is_imported_into_readable_agent_home() {
+    verify_existing_claude_session_import(2).await;
+}
+
+#[tokio::test]
+async fn existing_named_claude_home_imports_only_the_bound_session() {
+    verify_existing_claude_session_import(3).await;
+}
+
+#[tokio::test]
+async fn resource_owner_home_resumes_under_executing_user_without_owner_metadata() {
+    verify_existing_claude_session_import(5).await;
+}
+
+async fn verify_existing_claude_session_import(schema: u64) {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let executor = root.path().join("executor");
+    let workbench = root.path().join("workbench");
+    let _workbench = EnvGuard::set("WEGENT_WORKBENCH_HOME", &workbench);
+    let legacy = if schema == 1 {
+        root.path().join(".claude")
+    } else if schema == 2 {
+        let owner = format!(
+            "{:x}",
+            Sha256::digest(json!(["https://backend.example", "7"]).to_string())
+        );
+        let instance = format!(
+            "{:x}",
+            Sha256::digest(json!(["12", "7", "99123", "claudecode"]).to_string())
+        );
+        workbench.join("agents").join(owner).join(instance)
+    } else if schema == 3 {
+        workbench.join("agents/user7/design")
+    } else if schema == 5 {
+        workbench.join("agents/agent-author/default/design")
+    } else {
+        root.path().join("legacy-claude")
+    };
+    let _executor = EnvGuard::set("WEGENT_EXECUTOR_HOME", executor.to_str().unwrap());
+    let _legacy = if schema == 1 {
+        EnvGuard::remove("WEGENT_CLAUDE_HOME")
+    } else {
+        EnvGuard::set(
+            "WEGENT_CLAUDE_HOME",
+            if schema != 0 {
+                root.path().join("unused-claude")
+            } else {
+                legacy.clone()
+            },
+        )
+    };
+    let _home = EnvGuard::set("HOME", root.path().to_str().unwrap());
+    let marker = executor.join("sessions/99123/.claude_session_id_7");
+    fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    fs::write(&marker, "existing-session").unwrap();
+    let relative = "projects/-workspace-task/existing-session.jsonl";
+    fs::create_dir_all(legacy.join("projects/-workspace-task")).unwrap();
+    fs::write(
+        legacy.join(relative),
+        "{\"sessionId\":\"existing-session\",\"type\":\"user\"}\n",
+    )
+    .unwrap();
+    fs::write(legacy.join("auth.json"), "not-a-task-secret").unwrap();
+    if schema > 1 {
+        fs::write(legacy.join(".execution.lock"), "").unwrap();
+        let mut identity = json!({"schema_version":schema,
+            "backend_url":"https://backend.example", "user_id":"7", "team_id":"12",
+            "bot_id":"7", "shell_type":"claudecode"});
+        if schema == 3 {
+            identity["team_namespace"] = json!("default");
+            identity["team_name"] = json!("design");
+            fs::create_dir_all(legacy.join("runtime/tasks")).unwrap();
+            let mut task = identity.clone();
+            task["task_id"] = json!("99123");
+            fs::write(legacy.join("runtime/tasks/99123.json"), task.to_string()).unwrap();
+        } else if schema == 5 {
+            fs::create_dir_all(legacy.join("runtime/tasks")).unwrap();
+            fs::write(
+                legacy.join("runtime/tasks/99123.json"),
+                json!({"task_id":"99123", "migrated_session":null}).to_string(),
+            )
+            .unwrap();
+        } else {
+            identity["task_id"] = json!("99123");
+        }
+        fs::write(legacy.join("agent.json"), identity.to_string()).unwrap();
+    }
+    if schema == 3 {
+        let fresh_log = root.path().join("fresh.json");
+        let fresh_native = write_fake_claude(&fresh_log);
+        let fresh_engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+            fresh_native.to_str().unwrap(),
+            "codex",
+        ));
+        let fresh = authenticated_bot_request(ExecutionRequest {
+            task_id: "new-task".to_owned(),
+            bot: json!([{"id":7,"shell_type":"ClaudeCode"}]),
+            project_workspace_path: Some(root.path().display().to_string()),
+            ..Default::default()
+        });
+        assert!(matches!(
+            fresh_engine.run(fresh).await,
+            ExecutionOutcome::Completed { .. }
+        ));
+        let home = task_home("new-task");
+        assert!(
+            !home.join(relative).exists(),
+            "New tasks must not import old conversations"
+        );
+    }
+    let log = root.path().join("args.json");
+    let native = write_fake_claude_with_prelude(
+        &log,
+        r#"
+test -f "$CLAUDE_CONFIG_DIR/projects/-workspace-task/existing-session.jsonl" || exit 80
+test ! -f "$CLAUDE_CONFIG_DIR/auth.json" || exit 81
+"#,
+    );
+    let engine =
+        AgentProcessEngine::new(AgentCommandPlanner::new(native.to_str().unwrap(), "codex"));
+    let request = ExecutionRequest {
+        task_id: "99123".to_owned(),
+        subtask_id: "followup".to_owned(),
+        bot: json!([{"id":7,"shell_type":"ClaudeCode"}]),
+        prompt: json!("continue"),
+        project_workspace_path: Some(root.path().display().to_string()),
+        ..Default::default()
+    };
+    let mut request = authenticated_bot_request(request);
+    request
+        .extra
+        .insert("legacy_session_bindings".to_owned(), json!([]));
+    let refused = engine.run(request.clone()).await;
+    assert!(
+        matches!(refused, ExecutionOutcome::Failed { ref message } if message.contains("ownership proof"))
+    );
+    assert!(!log.exists(), "Unproven history must not start the engine");
+    let proof = json!({"task_id":99123, "user_id":7, "agent":"ClaudeCode", "botId":7, "sessionId":"existing-session"});
+    for (key, value) in [
+        ("botId", json!(null)),
+        ("botId", json!(8)),
+        ("agent", json!("Codex")),
+        ("sessionId", json!("another-session")),
+        ("task_id", json!(99124)),
+        ("user_id", json!(8)),
+    ] {
+        let mut wrong = proof.clone();
+        wrong[key] = value;
+        request
+            .extra
+            .insert("legacy_session_bindings".to_owned(), json!([wrong]));
+        assert!(matches!(engine.run(request.clone()).await,
+            ExecutionOutcome::Failed { ref message } if message.contains("ownership")));
+        assert!(!log.exists());
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "existing-session");
+    }
+    request
+        .extra
+        .insert("legacy_session_bindings".to_owned(), json!([proof]));
+    if matches!(schema, 0 | 1 | 5) {
+        request.extra.remove("team_owner");
+        request.extra.remove("legacy_session_bindings");
+    }
+    assert_eq!(legacy.join("agent.json").exists(), schema > 1);
+    assert!(matches!(
+        engine.run(request.clone()).await,
+        ExecutionOutcome::Completed { .. }
+    ));
+    let arguments = read_json(&log);
+    assert!(arguments
+        .as_array()
+        .unwrap()
+        .windows(2)
+        .any(|pair| pair[0] == "--resume" && pair[1] == "existing-session"));
+    let selected = task_home("99123");
+    assert_eq!(
+        read_json(&selected.join("runtime/tasks/99123.json"))["migrated_session"]["id"],
+        "existing-session"
+    );
+    assert!(legacy.join(relative).is_file());
+    if schema != 0 {
+        fs::write(legacy.join("agent.json"), "invalid-old-marker").unwrap();
+        assert!(
+            matches!(
+                engine.run(request).await,
+                ExecutionOutcome::Completed { .. }
+            ),
+            "Bound tasks must not migrate again"
+        );
+    }
+}
+
+#[tokio::test]
 async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
     let _lock = env_lock().await;
     let home = unique_dir("claude-runtime-home");
     let workspace_root = unique_dir("claude-runtime-workspace");
     let log_path = unique_dir("claude-runtime-log").join("args.json");
     let fake_claude = write_fake_claude(&log_path);
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -88,7 +414,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request.clone()).await;
+    let outcome = engine.run(authenticated_bot_request(request.clone())).await;
 
     assert_eq!(
         outcome,
@@ -103,15 +429,12 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         .position(|arg| arg == "--mcp-config")
         .expect("Claude command should include --mcp-config");
     let mcp_config_path = args[mcp_flag_index + 1].as_str().unwrap();
-    let mcp_config = read_json(Path::new(mcp_config_path));
-    assert_eq!(
-        Path::new(mcp_config_path),
-        workspace_root.join("7788/.wework/runtime/claude-mcp-7788-99.json")
-    );
-    #[cfg(unix)]
-    assert_eq!(
-        fs::metadata(mcp_config_path).unwrap().permissions().mode() & 0o777,
-        0o600
+    let mcp_config = read_json(&log_path.with_extension("mcp"));
+    let agent_home = task_home("7788");
+    assert_eq!(Path::new(mcp_config_path), agent_home.join("mcp.json"));
+    assert!(
+        Path::new(mcp_config_path).exists(),
+        "agent MCP definitions must survive execution"
     );
 
     assert_eq!(
@@ -130,7 +453,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         json!(["bot-tool"])
     );
     assert_eq!(mcp_config["mcpServers"]["bot-shell"]["env"]["BOT_ENV"], "1");
-    let settings_path = home.join(".claude/settings.json");
+    let settings_path = agent_home.join("settings.json");
     let settings = read_json(&settings_path);
     let pre_tool_use = settings["hooks"]["PreToolUse"].as_array().unwrap();
     assert!(pre_tool_use.iter().any(|entry| {
@@ -154,9 +477,13 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
     followup.mcp_servers = vec![json!({
         "name": "bot-shell", "type": "stdio", "command": "updated-tool"
     })];
-    assert_eq!(engine.run(followup.clone()).await, outcome);
-    let runtime_dir = Path::new(mcp_config_path).parent().unwrap();
-    let merged = read_json(&runtime_dir.join("claude-mcp-7788-100.json"));
+    assert_eq!(
+        engine
+            .run(authenticated_bot_request(followup.clone()))
+            .await,
+        outcome
+    );
+    let merged = read_json(&log_path.with_extension("mcp"));
     assert_eq!(
         merged["mcpServers"]["request-docs"],
         mcp_config["mcpServers"]["request-docs"]
@@ -168,28 +495,48 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
 
     followup.subtask_id = "101".to_owned();
     followup.mcp_servers.clear();
-    assert_eq!(engine.run(followup.clone()).await, outcome);
+    assert_eq!(
+        engine
+            .run(authenticated_bot_request(followup.clone()))
+            .await,
+        outcome
+    );
     let latest_args = read_json(&log_path);
     let latest_args = latest_args.as_array().unwrap();
-    let index = latest_args
-        .iter()
-        .position(|arg| arg == "--mcp-config")
-        .unwrap();
-    let latest_path = runtime_dir.join("claude-mcp-7788-101.json");
-    assert_eq!(latest_args[index + 1], latest_path.to_str().unwrap());
-    assert_eq!(read_json(&latest_path), merged);
-    assert_eq!(read_json(Path::new(mcp_config_path)), mcp_config);
+    assert!(latest_args.iter().any(|arg| arg == "--mcp-config"));
+    assert_eq!(read_json(&log_path.with_extension("mcp")), merged);
+    assert!(Path::new(mcp_config_path).exists());
+    assert!(!agent_home.join("runtime/claude-mcp-7788-101.json").exists());
 
-    // Even a task sharing the same checkout must not inherit these services.
+    // The stable definitions belong to the agent, not a single task.
     followup.task_id = "7789".to_owned();
     followup.project_workspace_path = Some(workspace_root.join("7788").display().to_string());
-    assert_eq!(engine.run(followup).await, outcome);
+    assert_eq!(
+        engine
+            .run(authenticated_bot_request(followup.clone()))
+            .await,
+        outcome
+    );
     let other_args = read_json(&log_path);
-    assert!(!other_args
+    assert!(other_args
         .as_array()
         .unwrap()
         .iter()
         .any(|arg| arg == "--mcp-config"));
+    assert_eq!(read_json(&log_path.with_extension("mcp")), merged);
+
+    // A different agent sharing the checkout must not inherit the definitions.
+    let mut other_agent = authenticated_bot_request(followup);
+    other_agent.task_id = "7791".to_owned();
+    other_agent.extra.insert("team_id".to_owned(), json!(13));
+    other_agent
+        .extra
+        .insert("team_name".to_owned(), json!("other-agent"));
+    assert_eq!(engine.run(other_agent).await, outcome);
+    assert_eq!(
+        read_json(&log_path.with_extension("mcp")),
+        json!({"mcpServers": {}})
+    );
 }
 
 #[tokio::test]
@@ -203,7 +550,7 @@ async fn claude_runtime_prepares_project_custom_instructions_and_claude_md() {
     fs::write(task_dir.join(".windsurfrules"), "windsurf rules\n").unwrap();
     let log_path = unique_dir("claude-runtime-custom-log").join("args.json");
     let fake_claude = write_fake_claude(&log_path);
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let _custom_files = EnvGuard::set(
         "CUSTOM_INSTRUCTION_FILES",
@@ -222,7 +569,7 @@ async fn claude_runtime_prepares_project_custom_instructions_and_claude_md() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -263,7 +610,7 @@ async fn claude_runtime_does_not_overwrite_regular_claude_md() {
     fs::write(task_dir.join("CLAUDE.md"), "# Keep me\n").unwrap();
     let log_path = unique_dir("claude-runtime-existing-claude-md-log").join("args.json");
     let fake_claude = write_fake_claude(&log_path);
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -278,7 +625,7 @@ async fn claude_runtime_does_not_overwrite_regular_claude_md() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -313,8 +660,8 @@ async fn claude_runtime_downloads_request_skills_before_process_start() {
         stream.write_all(response.as_bytes()).await.unwrap();
         stream.write_all(&archive).await.unwrap();
     });
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
     let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
@@ -340,7 +687,7 @@ async fn claude_runtime_downloads_request_skills_before_process_start() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -349,8 +696,100 @@ async fn claude_runtime_downloads_request_skills_before_process_start() {
         }
     );
     server.await.unwrap();
-    let skill_path = workspace_root.join("7789/.claude/skills/example-skill/SKILL.md");
+    let skill_path = task_home("7789").join("skills/example-skill/SKILL.md");
     assert_eq!(fs::read_to_string(skill_path).unwrap(), "# Example Skill\n");
+}
+
+#[tokio::test]
+async fn claude_runtime_uses_metadata_version_when_download_etag_differs() {
+    let _lock = env_lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let workspace_root = temp.path().join("workspace");
+    let log_path = temp.path().join("args.json");
+    let fake_claude = write_fake_claude(&log_path);
+    let skills_dir = workspace_root.join("7796/.claude/skills");
+    let old_skill = skills_dir.join("optional-skill/SKILL.md");
+    fs::create_dir_all(old_skill.parent().unwrap()).unwrap();
+    fs::write(&old_skill, "# Old Skill\n").unwrap();
+    let manifest = json!({"optional-skill": {
+        "skill_id": 41,
+        "namespace": "previous",
+        "content_hash": format!("sha256:{:x}", Sha256::digest(b"old archive"))
+    }})
+    .to_string();
+    fs::write(skills_dir.join(".wegent-skills.json"), &manifest).unwrap();
+    let archive = skill_zip("optional-skill/SKILL.md", "# Updated Skill\n");
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_http_request_headers(&mut stream).await;
+        assert!(!request.to_ascii_lowercase().contains("if-none-match:"));
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nETag: \"sha256:{:x}\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            Sha256::digest(&archive), archive.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+        stream.write_all(&archive).await.unwrap();
+    });
+    let _home = EnvGuard::set("HOME", home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let request = ExecutionRequest {
+        task_id: "7796".to_owned(),
+        subtask_id: "107".to_owned(),
+        prompt: json!("use optional skill"),
+        auth_token: Some("synthetic-token".to_owned()),
+        bot: json!([{"id": 7, "shell_type": "ClaudeCode", "skills": ["optional-skill"]}]),
+        extra: serde_json::Map::from_iter([(
+            "skill_refs".to_owned(),
+            json!({"optional-skill": {
+                "skill_id": 42,
+                "namespace": "default",
+                "content_hash": format!("sha256:{:x}", Sha256::digest(b"expected archive"))
+            }}),
+        )]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(authenticated_bot_request(request)).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "ok".to_owned()
+        }
+    );
+    assert!(log_path.exists());
+    let managed = task_home("7796").join("skills");
+    assert!(!managed.is_symlink());
+    let link = managed.join("optional-skill");
+    assert!(link.is_symlink());
+    assert!(fs::read_link(&link).unwrap().is_relative());
+    assert_eq!(
+        fs::read_to_string(link.join("SKILL.md")).unwrap(),
+        "# Updated Skill\n"
+    );
+    let records: Value =
+        serde_json::from_slice(&fs::read(managed.join(".wegent-skills.json")).unwrap()).unwrap();
+    assert_eq!(
+        records["optional-skill"]["content_hash"],
+        format!("sha256:{:x}", Sha256::digest(b"expected archive"))
+    );
+    assert!(
+        old_skill.exists(),
+        "legacy repository content is not the managed Home"
+    );
+    assert!(skills_dir.join(".wegent-skills.json").exists());
+    server.await.unwrap();
 }
 
 #[tokio::test]
@@ -370,8 +809,8 @@ async fn claude_runtime_does_not_start_when_required_skill_download_fails() {
             .await
             .unwrap();
     });
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
     let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
@@ -405,7 +844,7 @@ async fn claude_runtime_does_not_start_when_required_skill_download_fails() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -437,8 +876,8 @@ async fn claude_runtime_remaps_historical_skill_zip_root_to_skill_name() {
         stream.write_all(response.as_bytes()).await.unwrap();
         stream.write_all(&archive).await.unwrap();
     });
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
     let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
@@ -472,7 +911,7 @@ async fn claude_runtime_remaps_historical_skill_zip_root_to_skill_name() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -480,11 +919,9 @@ async fn claude_runtime_remaps_historical_skill_zip_root_to_skill_name() {
             content: "ok".to_owned()
         }
     );
-    let skill_path = workspace_root.join("7791/.claude/skills/requested-skill/SKILL.md");
+    let skill_path = task_home("7791").join("skills/requested-skill/SKILL.md");
     assert_eq!(fs::read_to_string(skill_path).unwrap(), "# Test Skill\n");
-    assert!(!workspace_root
-        .join("7791/.claude/skills/unexpected-root")
-        .exists());
+    assert!(!task_home("7791").join("skills/unexpected-root").exists());
     server.await.unwrap();
 }
 
@@ -513,8 +950,8 @@ async fn claude_runtime_reports_missing_skill_md_without_exposing_token() {
         stream.write_all(response.as_bytes()).await.unwrap();
         stream.write_all(&archive).await.unwrap();
     });
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
     let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
@@ -548,7 +985,7 @@ async fn claude_runtime_reports_missing_skill_md_without_exposing_token() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
     let ExecutionOutcome::Failed { message } = outcome else {
         panic!("expected required Skill deployment to fail");
     };
@@ -587,7 +1024,7 @@ async fn claude_runtime_downloads_attachments_and_rewrites_prompt_before_process
         stream.write_all(response.as_bytes()).await.unwrap();
         stream.write_all(body).await.unwrap();
     });
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
     let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
@@ -615,7 +1052,7 @@ async fn claude_runtime_downloads_attachments_and_rewrites_prompt_before_process
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -639,8 +1076,25 @@ async fn claude_runtime_downloads_attachments_and_rewrites_prompt_before_process
 
 #[tokio::test]
 async fn local_claude_runtime_downloads_project_attachments_outside_the_project() {
+    check_device_project_attachment_download(Some("local"), false).await;
+}
+
+#[tokio::test]
+async fn cloud_claude_runtime_downloads_project_attachments_outside_the_project() {
+    check_device_project_attachment_download(None, true).await;
+}
+
+async fn check_device_project_attachment_download(mode: Option<&str>, runtime_turn: bool) {
     let _lock = env_lock().await;
+    let isolated_home = tempfile::tempdir().unwrap();
+    let _process_home = EnvGuard::set("HOME", isolated_home.path());
+    let _workbench = EnvGuard::set(
+        "WEGENT_WORKBENCH_HOME",
+        isolated_home.path().join("workbench"),
+    );
     let executor_home = unique_dir("local-claude-runtime-home");
+    let workspace_root = unique_dir("local-claude-attachment-workspace");
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let project_workspace = unique_dir("local-claude-project-workspace");
     fs::create_dir_all(&project_workspace).unwrap();
     let log_path = unique_dir("local-claude-runtime-log").join("args.json");
@@ -659,14 +1113,17 @@ async fn local_claude_runtime_downloads_project_attachments_outside_the_project(
         stream.write_all(response.as_bytes()).await.unwrap();
         stream.write_all(body).await.unwrap();
     });
-    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
-    let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", executor_home.display().to_string());
+    let _mode = match mode {
+        Some(mode) => EnvGuard::set("EXECUTOR_MODE", mode),
+        None => EnvGuard::remove("EXECUTOR_MODE"),
+    };
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
         "codex",
     ));
-    let request = ExecutionRequest {
+    let mut request = ExecutionRequest {
         task_id: "runtime-7792".to_owned(),
         subtask_id: "turn-101".to_owned(),
         prompt: json!("summarize [attachment:56]"),
@@ -686,8 +1143,14 @@ async fn local_claude_runtime_downloads_project_attachments_outside_the_project(
         )]),
         ..ExecutionRequest::default()
     };
+    if runtime_turn {
+        request.task_id = "backend-task".to_owned();
+        request
+            .extra
+            .insert("runtimeLocalTaskId".to_owned(), json!("runtime-7792"));
+    }
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -696,8 +1159,7 @@ async fn local_claude_runtime_downloads_project_attachments_outside_the_project(
         }
     );
     server.await.unwrap();
-    let expected_path =
-        executor_home.join("workspace/attachments/runtime/runtime-7792/turn-101/note.txt");
+    let expected_path = workspace_root.join("runtime-7792/attachments/turn-101/note.txt");
     assert_eq!(
         fs::read_to_string(&expected_path).unwrap(),
         "private attachment"
@@ -714,7 +1176,7 @@ async fn claude_runtime_retries_retryable_api_error_with_saved_session() {
     let workspace_root = unique_dir("claude-runtime-api-retry-workspace");
     let marker = unique_dir("claude-runtime-api-retry-marker").join("attempt");
     let fake_claude = write_fake_claude_api_error_then_completed(&marker);
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -730,7 +1192,7 @@ async fn claude_runtime_retries_retryable_api_error_with_saved_session() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -748,8 +1210,8 @@ async fn claude_runtime_decrypts_git_token_and_injects_request_auth_environment(
     let log_path = unique_dir("claude-runtime-git-auth-log").join("args.json");
     let fake_claude =
         write_fake_claude_with_git_auth(&log_path, "github.com", "token", "ghp_test_token");
-    let _home = EnvGuard::set("HOME", &home_dir.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", home_dir.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let _key = EnvGuard::set("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012");
     let _iv = EnvGuard::set("GIT_TOKEN_AES_IV", "1234567890123456");
@@ -778,7 +1240,7 @@ async fn claude_runtime_decrypts_git_token_and_injects_request_auth_environment(
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -800,8 +1262,8 @@ async fn claude_runtime_injects_github_enterprise_auth_environment() {
         "token",
         "ghp_enterprise_token",
     );
-    let _home = EnvGuard::set("HOME", &home_dir.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", home_dir.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -828,7 +1290,7 @@ async fn claude_runtime_injects_github_enterprise_auth_environment() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -847,11 +1309,11 @@ async fn claude_runtime_keeps_request_auth_out_of_persistent_cli_config() {
     let fake_claude = write_fake_claude_with_git_auth(
         &log_path,
         "github.com",
-        "feifei325",
+        "test-git-user",
         "ghp_repo_only_token",
     );
-    let _home = EnvGuard::set("HOME", &home_dir.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", home_dir.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -868,13 +1330,13 @@ async fn claude_runtime_keeps_request_auth_out_of_persistent_cli_config() {
             json!({
                 "git_domain": "github.com",
                 "git_token": "ghp_repo_only_token",
-                "git_login": "feifei325"
+                "git_login": "test-git-user"
             }),
         )]),
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -896,9 +1358,8 @@ async fn codex_runtime_authenticates_github_cli_before_start() {
     fs::create_dir_all(&bin_dir).unwrap();
     write_fake_gh(&bin_dir, &marker, "github.com");
     let fake_codex = write_fake_codex_app_server(&log_path);
-    let _executor_home =
-        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _executor_home = EnvGuard::set("WEGENT_EXECUTOR_HOME", executor_home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let path_value = format!(
         "{}:{}",
@@ -926,7 +1387,7 @@ async fn codex_runtime_authenticates_github_cli_before_start() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -962,7 +1423,7 @@ async fn claude_runtime_proxies_deferred_interactive_mcp_to_waiting_outcome() {
         }),
     ])
     .await;
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -976,16 +1437,19 @@ async fn claude_runtime_proxies_deferred_interactive_mcp_to_waiting_outcome() {
             "id": 7,
             "shell_type": "ClaudeCode"
         }]),
+        backend_url: Some(mcp_url),
+        auth_token: Some("synthetic-form-token".to_owned()),
         mcp_servers: vec![json!({
             "name": "interactive-wegent-interactive-form-question",
             "type": "streamable-http",
-            "url": mcp_url
+            "url": "${{backend_url}}",
+            "headers": {"Authorization": "Bearer ${{auth_token}}"}
         })],
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -1013,7 +1477,7 @@ async fn claude_runtime_retries_deferred_interactive_mcp_invalid_form() {
         }),
     ])
     .await;
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -1036,7 +1500,7 @@ async fn claude_runtime_retries_deferred_interactive_mcp_invalid_form() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -1052,7 +1516,7 @@ async fn claude_runtime_drains_stale_defer_after_interactive_form_answer() {
     let workspace_root = unique_dir("claude-runtime-answer-drain-workspace");
     let marker = unique_dir("claude-runtime-answer-drain-marker").join("count");
     let fake_claude = write_fake_claude_stale_defer_then_completed(&marker);
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -1080,7 +1544,7 @@ async fn claude_runtime_drains_stale_defer_after_interactive_form_answer() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -1096,7 +1560,7 @@ async fn claude_runtime_completes_after_answer_drain_even_if_old_defer_remains()
     let workspace_root = unique_dir("claude-runtime-answer-drain-stale-workspace");
     let marker = unique_dir("claude-runtime-answer-drain-stale-marker").join("count");
     let fake_claude = write_fake_claude_answer_drain_final_text_with_stale_defer(&marker);
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -1104,7 +1568,7 @@ async fn claude_runtime_completes_after_answer_drain_even_if_old_defer_remains()
     ));
     let request = interactive_form_answer_request(7793, 104);
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -1120,7 +1584,7 @@ async fn claude_runtime_streams_answer_drain_follow_up_output() {
     let workspace_root = unique_dir("claude-runtime-answer-drain-stream-workspace");
     let marker = unique_dir("claude-runtime-answer-drain-stream-marker").join("count");
     let fake_claude = write_fake_claude_answer_drain_final_text_with_stale_defer(&marker);
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -1134,7 +1598,9 @@ async fn claude_runtime_streams_answer_drain_follow_up_output() {
         "claude",
     );
 
-    let outcome = engine.run_with_events(request, sink.clone(), builder).await;
+    let outcome = engine
+        .run_with_events(authenticated_bot_request(request), sink.clone(), builder)
+        .await;
     let events = sink.events();
 
     assert_eq!(
@@ -1174,7 +1640,7 @@ async fn claude_runtime_preserves_new_deferred_form_after_answer_drain() {
         }),
     ])
     .await;
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -1187,7 +1653,7 @@ async fn claude_runtime_preserves_new_deferred_form_after_answer_drain() {
         "url": mcp_url
     })];
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(authenticated_bot_request(request)).await;
 
     assert_eq!(
         outcome,
@@ -1197,9 +1663,60 @@ async fn claude_runtime_preserves_new_deferred_form_after_answer_drain() {
     );
 }
 
-async fn env_lock() -> MutexGuard<'static, ()> {
+struct TestEnvironment {
+    // Restore the environment and remove this case's temporary tree before unlocking.
+    _environment: Vec<EnvGuard>,
+    _root: tempfile::TempDir,
+    _lock: MutexGuard<'static, ()>,
+}
+
+async fn env_lock() -> TestEnvironment {
     static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().await
+    let lock = LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let mut environment = Vec::new();
+    for (key, relative) in [
+        ("HOME", "home"),
+        ("USERPROFILE", "home"),
+        ("WEGENT_EXECUTOR_HOME", "executor"),
+        ("WEGENT_WORKBENCH_HOME", "workbench"),
+        ("WEGENT_CAPABILITIES_HOME", "capabilities"),
+        ("WEGENT_CODEX_HOME", "codex"),
+        ("CODEX_HOME", "codex"),
+        ("WEGENT_CLAUDE_HOME", "claude"),
+        ("CLAUDE_CONFIG_DIR", "claude"),
+    ] {
+        let path = root.path().join(relative);
+        fs::create_dir_all(&path).unwrap();
+        environment.push(EnvGuard::set(key, path));
+    }
+    for key in [
+        "WEGENT_BACKEND_URL",
+        "TASK_API_DOMAIN",
+        "WORKSPACE_ROOT",
+        "WEGENT_WORKSPACE_ROOT",
+        "LOCAL_WORKSPACE_ROOT",
+        "WEGENT_EXECUTOR_PROJECTS_DIR",
+    ] {
+        environment.push(EnvGuard::remove(key));
+    }
+    TestEnvironment {
+        _environment: environment,
+        _root: root,
+        _lock: lock,
+    }
+}
+
+fn task_home(task_id: &str) -> PathBuf {
+    let root = PathBuf::from(std::env::var_os("WEGENT_WORKBENCH_HOME").unwrap());
+    let home = root.join("agents/user7/default/design");
+    assert!(
+        home.join("runtime/tasks")
+            .join(format!("{task_id}.json"))
+            .is_file(),
+        "missing agent Home for task {task_id}"
+    );
+    home
 }
 
 fn skill_zip(path: &str, content: &str) -> Vec<u8> {
@@ -1228,8 +1745,8 @@ if [ "$GH_TOKEN" != "{expected_token}" ]; then exit 32; fi
 if [ "$GIT_ASKPASS_REQUIRE" != "force" ]; then exit 33; fi
 if [ "$GIT_TERMINAL_PROMPT" != "0" ]; then exit 34; fi
 if [ ! -x "$GIT_ASKPASS" ]; then exit 35; fi
-if [ "$(cat "$WEGENT_GIT_USERNAME_FILE")" != "{expected_username}" ]; then exit 36; fi
-if [ "$(cat "$WEGENT_GIT_TOKEN_FILE")" != "{expected_token}" ]; then exit 37; fi"#
+if [ "$("$GIT_ASKPASS" Username)" != "{expected_username}" ]; then exit 36; fi
+if [ "$("$GIT_ASKPASS" Password)" != "{expected_token}" ]; then exit 37; fi"#
     );
     write_fake_claude_with_prelude(log_path, &prelude)
 }
@@ -1246,6 +1763,9 @@ fn write_fake_claude_with_prelude(log_path: &Path, prelude: &str) -> PathBuf {
 {}
 LOG_PATH='{}'
 STDIN_LOG_PATH='{}'
+if [ -n "$WEGENT_MCP_CONFIG_PATH" ]; then
+  cp "$WEGENT_MCP_CONFIG_PATH" "${{LOG_PATH%.json}}.mcp"
+fi
 printf '[' > "$LOG_PATH"
 first=1
 for arg in "$@"; do
@@ -1602,18 +2122,18 @@ fn unique_dir(name: &str) -> PathBuf {
 
 struct EnvGuard {
     key: &'static str,
-    previous: Option<String>,
+    previous: Option<OsString>,
 }
 
 impl EnvGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var(key).ok();
+    fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
+        let previous = std::env::var_os(key);
         std::env::set_var(key, value);
         Self { key, previous }
     }
 
     fn remove(key: &'static str) -> Self {
-        let previous = std::env::var(key).ok();
+        let previous = std::env::var_os(key);
         std::env::remove_var(key);
         Self { key, previous }
     }

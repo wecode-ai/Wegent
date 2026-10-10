@@ -2755,7 +2755,7 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
         "runnable_wegent_team",
         lambda db, user_id, team_id: team,
     )
-    execution_request = SimpleNamespace(workspace={})
+    execution_request = SimpleNamespace(workspace={}, subtask_id=123456)
     builder = MagicMock()
     builder.build.return_value = execution_request
     monkeypatch.setattr(execution, "TaskRequestBuilder", lambda db: builder)
@@ -2795,6 +2795,7 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
         "path": "/srv/workspaces/Wegent",
     }
     assert execution_request.task_id == "runtime-team-1"
+    assert execution_request.subtask_id == 123456
     assert execution_request.device_id == "cloud-device-1"
     assert test_db.query(TaskResource).count() == 0
 
@@ -5402,9 +5403,11 @@ async def test_send_runtime_request_user_input_response_omits_execution_request(
     assert "executionRequest" not in payload
 
 
+@pytest.mark.parametrize("local_task_id", [None, "runtime-local-1"])
 def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path(
     test_db,
     test_user,
+    local_task_id,
 ):
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
@@ -5423,6 +5426,7 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
         modelType=runtime_work_service.RUNTIME_MODEL_TYPE,
         deviceId="device-1",
         workspacePath="/repo/Wegent",
+        taskId=local_task_id,
     )
 
     execution_request = runtime_work_service._build_runtime_execution_request(
@@ -5438,6 +5442,19 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
     )
 
     assert execution_request.team_id == 0
+    followup = runtime_work_service._build_runtime_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        request=request.model_copy(update={"local_task_id": execution_request.task_id}),
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="device-1",
+            workspace_path="/repo/Wegent",
+        ),
+    )
+    assert followup.task_id == execution_request.task_id
+    assert followup.subtask_id != execution_request.subtask_id
+    assert followup.subtask_id > 0
+    assert execution_request.subtask_id > 0
     assert execution_request.bot == []
     assert execution_request.model_config["model_id"] == "doubao-seed-2.0-lite"
     from app.services.auth import verify_skill_identity_token
@@ -5457,11 +5474,15 @@ def test_runtime_address_team_binding_is_additive() -> None:
     bound = RuntimeTaskAddress(
         deviceId="device-1",
         taskId="team-task",
-        runtimeHandle={"wegentTeam": {"id": 7}},
+        runtimeHandle={"wegentTeam": {"id": 7}, "privateField": "must-not-forward"},
     )
 
     assert runtime_work_service._runtime_address_team_id(legacy) is None
     assert runtime_work_service._runtime_address_team_id(bound) == 7
+    normalized = runtime_work_service._normalized_address(bound)
+    assert runtime_work_service._runtime_address_team_id(normalized) == 7
+    assert normalized.runtime_handle == {"wegentTeam": {"id": 7}}
+    assert runtime_work_service._normalized_address(legacy).runtime_handle is None
 
 
 @pytest.mark.asyncio

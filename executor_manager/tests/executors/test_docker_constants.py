@@ -57,7 +57,7 @@ class TestDockerConstants:
 
     def test_workspace_mount_path(self):
         """Test WORKSPACE_MOUNT_PATH constant"""
-        assert WORKSPACE_MOUNT_PATH == "/workspace"
+        assert WORKSPACE_MOUNT_PATH == "/root/.wegent/workspace"
         assert isinstance(WORKSPACE_MOUNT_PATH, str)
         assert WORKSPACE_MOUNT_PATH.startswith("/")
 

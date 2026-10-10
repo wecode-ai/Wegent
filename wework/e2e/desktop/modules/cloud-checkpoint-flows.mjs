@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
-import { basename } from 'node:path'
+import { basename, dirname } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
 
@@ -794,13 +794,7 @@ async function verifyCloudCheckpoint({
         appIdentifier,
         composerSelector,
         control,
-        runtimeAttachmentRoot: join(
-          resultDir,
-          'cloud-executor-home',
-          'workspace',
-          'attachments',
-          'runtime'
-        ),
+        runtimeWorkspaceRoot: dirname(workspacePath),
         workspacePath,
       })
       setPhase('cloud-pasted-zip')
