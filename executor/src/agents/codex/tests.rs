@@ -398,12 +398,21 @@ fn environment_change_diagnostics_report_keys_without_values() {
         &current,
         &requested,
         &active_threads,
+        0,
+    ));
+    assert!(!codex_process_environment_requires_restart(
+        "rpc_request",
+        &current,
+        &requested,
+        &HashMap::new(),
+        1,
     ));
     assert!(codex_process_environment_requires_restart(
         "turn_start",
         &current,
         &requested,
         &HashMap::new(),
+        0,
     ));
 }
 

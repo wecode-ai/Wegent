@@ -199,15 +199,20 @@ fn prepare_codex_runtime_enforces_required_skill_archive() {
 
 #[test]
 fn prepare_codex_runtime_deploys_skills_only_under_selected_home() {
-    assert_codex_skill_deployment(true);
+    assert_codex_skill_deployment(true, false);
 }
 
 #[test]
 fn older_backend_request_prepares_user_home_skills_without_owner() {
-    assert_codex_skill_deployment(false);
+    assert_codex_skill_deployment(false, false);
 }
 
-fn assert_codex_skill_deployment(with_owner: bool) {
+#[test]
+fn direct_profile_deploys_selected_backend_skills_in_its_workspace() {
+    assert_codex_skill_deployment(false, true);
+}
+
+fn assert_codex_skill_deployment(with_owner: bool, direct_profile: bool) {
     let _lock = crate::test_env::lock();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -252,9 +257,13 @@ fn assert_codex_skill_deployment(with_owner: bool) {
         if !with_owner {
             request.extra.remove("team_owner");
         }
-        let skills_dir = temp
-            .path()
-            .join("agents/test-user/default/skill-test-agent/skills");
+        let skills_dir = if direct_profile {
+            request.extra.insert("team_id".to_owned(), json!(0));
+            temp.path().join("workspace/.codex/skills")
+        } else {
+            temp.path()
+                .join("agents/test-user/default/skill-test-agent/skills")
+        };
 
         prepare_codex_runtime(&request).await.unwrap();
         let requested = tokio::time::timeout(Duration::from_secs(5), server)
@@ -268,6 +277,11 @@ fn assert_codex_skill_deployment(with_owner: bool) {
             "# Skill"
         );
         assert!(!temp.path().join("legacy").exists());
-        assert!(!temp.path().join("workspace/.codex").exists());
+        if direct_profile {
+            assert!(!temp.path().join("agents").exists());
+            assert!(!temp.path().join("codex/skills").exists());
+        } else {
+            assert!(!temp.path().join("workspace/.codex").exists());
+        }
     });
 }

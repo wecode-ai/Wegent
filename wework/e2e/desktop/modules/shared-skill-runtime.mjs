@@ -146,6 +146,7 @@ export function createSharedSkillRuntime({
       await request('teams', 'POST', {
         name: TEAM,
         namespace: 'default',
+        collaboration_model: 'pipeline',
         bots: [{ bot_id: bot.id }],
       })
     ).json()
@@ -229,7 +230,7 @@ export function createSharedSkillRuntime({
     const owners = await readdir(join(workbench, 'agents'))
     assert.equal(owners.length, 1)
     assert.equal(owners[0].startsWith('user-'), false)
-    const home = join(workbench, 'agents', owners[0], 'default', TEAM)
+    const home = join(workbench, 'agents', owners[0], 'default', TEAM, 'bots', String(bot.id))
     const mcpPath = join(home, 'mcp.json')
     let mcpFirst, mcpBefore, firstProbe, secondProbe
     const systemPath = join(home, 'skills', '.system')
@@ -240,7 +241,11 @@ export function createSharedSkillRuntime({
       assert.ok((await readdir(systemPath)).includes('skill-creator'))
     } else {
       mcpFirst = await readFile(mcpPath, 'utf8')
-      assert.ok(JSON.parse(mcpFirst).mcpServers[`${NAME}_retained-skill-mcp`])
+      const retainedServers = Object.keys(JSON.parse(mcpFirst).mcpServers).filter(name =>
+        name.endsWith('_retained-skill-mcp')
+      )
+      assert.equal(retainedServers.length, 1, 'The skill MCP server must remain registered')
+      assert.ok(retainedServers[0].length <= 32, 'Runtime MCP names must fit the provider limit')
       assert.ok(
         !mcpFirst.includes(cloud.authToken),
         'Task credentials leaked to persisted MCP config'

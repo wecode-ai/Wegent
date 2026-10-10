@@ -188,8 +188,8 @@ test.describe('Collaboration agent execution', () => {
     testInfo: TestInfo
   ): Promise<void> {
     const runtimeCapabilityCommand = [
-      `cat "$CODEX_HOME/skills/${SKILL_NAME}/SKILL.md"`,
-      `plugin_skill="$(find "$CODEX_HOME/plugins/cache/wegent/${PLUGIN_NAME}" -type f -path '*/skills/${PLUGIN_NAME}/SKILL.md' -print -quit)"`,
+      `cat ".codex/skills/${SKILL_NAME}/SKILL.md"`,
+      `plugin_skill="$(find "$CODEX_HOME/plugins/cache/${plugin!.marketplaceId}/${PLUGIN_NAME}" -type f -path '*/skills/${PLUGIN_NAME}/SKILL.md' -print -quit)"`,
       'test -n "$plugin_skill"',
       'cat "$plugin_skill"',
     ].join('\n')

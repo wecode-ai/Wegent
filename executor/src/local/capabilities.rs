@@ -1265,11 +1265,13 @@ impl GlobalCapabilityStore {
     }
 
     fn plugin_codex_link(&self, spec: &PluginSyncSpec) -> PathBuf {
+        // Codex selects the manifest version and removes other cache versions
+        // during native installation. Content hashes belong in the shared store.
         self.codex_plugins_dir
             .join("cache")
             .join(&spec.marketplace)
             .join(&spec.name)
-            .join(self.plugin_cache_version(spec))
+            .join(&spec.version)
     }
 
     fn plugin_cache_version(&self, spec: &PluginSyncSpec) -> String {

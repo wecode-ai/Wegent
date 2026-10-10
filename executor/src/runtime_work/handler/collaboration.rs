@@ -805,6 +805,24 @@ mod tests {
     }
 
     #[test]
+    fn fresh_manager_preserves_direct_runtime_home_classification() {
+        let mut source = source_link();
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "team_id": 0,
+            "bot": [{"id": 31, "shell_type": "Codex"}],
+            "auth_token": "synthetic-secret",
+            "runtime_auth_token": "synthetic-runtime-secret"
+        }))
+        .unwrap();
+        store_runtime_execution_request(&mut source.runtime_handle, &request);
+        let (resumed, _) = fresh_cloud_manager_payload(&source, &command(), &[]).unwrap();
+        assert_eq!(resumed.extra["team_id"], 0);
+        assert_eq!(resumed.bot[0]["id"], 31);
+        assert!(resumed.auth_token.is_none());
+        assert!(resumed.runtime_auth_token.is_none());
+    }
+
+    #[test]
     fn fresh_cloud_manager_payload_starts_new_session() {
         let command = command();
         let source = source_link();

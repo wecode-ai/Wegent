@@ -637,12 +637,17 @@ impl CodexAppServerClient {
             .unwrap_or(&empty_launch_environment);
         let process_environment =
             codex_process_environment(&state.runtime_proxy_env, launch_environment);
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
+        };
         if state.process.is_some()
             && codex_process_environment_requires_restart(
                 "rpc_request",
                 &state.process_environment,
                 &process_environment,
                 &state.active_threads,
+                pending_request_count,
             )
         {
             state.process = None;
@@ -962,12 +967,17 @@ impl CodexAppServerClient {
         let mut initialize_elapsed = None;
         let process_environment =
             codex_process_environment(&state.runtime_proxy_env, &BTreeMap::new());
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
+        };
         if state.process.is_some()
             && codex_process_environment_requires_restart(
                 "startup",
                 &state.process_environment,
                 &process_environment,
                 &state.active_threads,
+                pending_request_count,
             )
         {
             state.process = None;
@@ -1012,12 +1022,17 @@ impl CodexAppServerClient {
         }
         let process_environment =
             codex_process_environment(&state.runtime_proxy_env, &launch_config.env);
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
+        };
         if state.process.is_some()
             && codex_process_environment_requires_restart(
                 "turn_start",
                 &state.process_environment,
                 &process_environment,
                 &state.active_threads,
+                pending_request_count,
             )
         {
             state.process = None;
@@ -4214,11 +4229,12 @@ fn codex_process_environment_requires_restart(
     current: &BTreeMap<String, String>,
     requested: &BTreeMap<String, String>,
     active_threads: &HashMap<String, usize>,
+    pending_request_count: usize,
 ) -> bool {
     if current == requested {
         return false;
     }
-    let (event, restart) = if active_threads.is_empty() {
+    let (event, restart) = if active_threads.is_empty() && pending_request_count == 0 {
         (
             "codex shared app-server environment restart scheduled",
             true,

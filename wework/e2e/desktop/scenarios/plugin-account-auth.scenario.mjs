@@ -355,6 +355,18 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       workbenchReadyTimeoutMs,
       'Cloud task did not execute the public plugin command'
     )
+    const redactedOutput = [
+      secret,
+      oauthSecret,
+      transferSecret,
+      'synthetic-desktop-dws-access',
+      'synthetic-desktop-dws-refresh',
+      'synthetic-refreshed-access',
+    ].reduce((output, credential) => output.replaceAll(credential, '[redacted]'), toolResult)
+    await writeFile(
+      join(resultDir, `plugin-account-command-${expected}.json`),
+      JSON.stringify({ expected, output: redactedOutput }, null, 2)
+    )
     assert.ok(
       toolResult.includes(expected),
       `Cloud plugin output did not contain expected result ${expected}`

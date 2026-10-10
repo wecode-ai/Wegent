@@ -157,7 +157,12 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   assert.ok(!updatedSkill.includes(oldContent))
   await access(join(newRoot, 'skills', addedSkill, 'SKILL.md'))
   await assert.rejects(access(join(newRoot, 'skills', retiredSkill)), { code: 'ENOENT' })
-  await access(oldRoot)
+  assert.ok(
+    (await readFile(join(managed.store_path, 'skills', sharedSkill, 'SKILL.md'), 'utf8')).includes(
+      oldContent
+    ),
+    'Updating the native cache must preserve the immutable previous package'
+  )
   await writeFile(
     join(resultDir, 'plugin-upgrade-actual-manifest-after-update.json'),
     JSON.stringify(currentManifest, null, 2)
@@ -185,13 +190,12 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     'Uninstall left the cloud install active'
   )
   assert.equal((await readCapabilities()).plugins[managedKey], undefined)
-  // Shared packages and native caches may still be used by running agents.
-  await access(currentManifestPath)
-  await access(newRoot)
+  // Immutable packages remain available to running agents; Codex owns its cache.
+  await access(removedEntry.store_path)
   setPhase('plugin-refresh-cleans-cloud-uninstall-residue')
   // Reproduce a missed device cleanup after a successful cloud uninstall.
   await access(removedEntry.store_path)
-  await access(newRoot)
+  await cp(residueBackup, newRoot, { recursive: true })
   const stale = await readCapabilities()
   stale.plugins[managedKey] = removedEntry
   const sharedPluginKey = `${pluginKey}-shared`

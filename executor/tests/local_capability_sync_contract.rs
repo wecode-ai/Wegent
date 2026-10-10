@@ -61,7 +61,11 @@ fn plugin_store_uses_manifest_home_without_changing_skill_store() {
     let store =
         GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"));
 
-    assert_eq!(store.store_dir, legacy_store);
+    assert_eq!(
+        store.store_dir,
+        temp.path()
+            .join(".wegent/workbench/executor/capabilities/store")
+    );
     store.reconcile_managed_claude_plugins().unwrap();
 
     let migrated_manifest = read_json(&manifest_path);

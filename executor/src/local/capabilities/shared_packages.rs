@@ -659,6 +659,7 @@ mod tests {
         let old = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
         let shared = PathBuf::from(old["store_path"].as_str().unwrap());
         let native = PathBuf::from(old["runtime"]["codex_link"].as_str().unwrap());
+        assert_eq!(native.file_name().unwrap(), "1.0");
         assert!(!native.is_symlink());
         assert!(native.join(".codex-plugin/plugin.json").exists());
         assert!(!shared.join(".codex-plugin/plugin.json").exists());
@@ -672,12 +673,17 @@ mod tests {
             CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v2"));
         assert_eq!(updated.apply_sync(payload).await.unwrap()["success"], true);
         let current = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
-        assert_ne!(
+        assert_eq!(
             old["runtime"]["codex_link"],
             current["runtime"]["codex_link"]
         );
         assert_eq!(
             fs::read_to_string(native.join("payload.txt")).unwrap(),
+            "v2"
+        );
+        assert_ne!(old["store_path"], current["store_path"]);
+        assert_eq!(
+            fs::read_to_string(shared.join("payload.txt")).unwrap(),
             "v1"
         );
         updated

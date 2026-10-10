@@ -92,7 +92,9 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 
 ### Executor 启动环境与 Codex Home 初始化
 
-后端 Team 的原生 Home 位于工作台根目录的 `agents/<执行用户名>/<namespace>/<Team 名称>`。流水线中各 Bot 使用其下的 `bots/<Bot ID>`，分别保存配置、会话和执行锁；按任务调用技能时，只有持有执行锁且记录了该任务的 Home 才能消除多个阶段之间的歧义。Wework 直接运行的配置（`team_id = 0`）继续使用应用管理的原生 Home。
+共享插件包按内容哈希保存并保留旧包；Codex 原生缓存目录使用插件清单中的版本号。不能给该缓存版本追加哈希，否则 Codex 原生安装会清理该目录并使工作台保存的路径失效。
+
+后端 Team 的原生 Home 位于工作台根目录的 `agents/<执行用户名>/<namespace>/<Team 名称>`。流水线中各 Bot 使用其下的 `bots/<Bot ID>`，分别保存配置、会话和执行锁；按任务调用技能时，只有持有执行锁且记录了该任务的 Home 才能消除多个阶段之间的歧义。Wework 直接运行的配置（`team_id = 0`）继续使用应用管理的原生 Home，负责人续轮时保留此标记；其选择的后端技能部署到任务工作区的 `.codex/skills`，原生插件技能仍由 Codex 管理。共享 Codex 进程因环境变化重启前，必须等待活跃回合和未完成的 RPC 全部结束。
 
 Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过运行当前用户的非交互登录 shell 读取登录环境，避免执行仅供终端交互使用的提示符、补全和插件初始化。需要传递给 Agent 的环境变量应配置在登录 shell 会读取的启动文件中。shell 优先使用系统用户数据库中的登录 shell，并依次回退到 `$SHELL`、`zsh`、`bash` 和 `sh`。采集过程有固定超时；失败时 executor 保留父进程环境，并继续补充 Homebrew、`/usr/local` 等标准开发目录。最终环境由 executor 统一传递给 Codex、Claude Code、插件、技能、Hooks、PTY 和设备命令，因此 Wework 本地 sidecar、独立本地设备以及 Linux 云端或远程设备使用同一套 PATH 解析逻辑。
 
