@@ -6,11 +6,11 @@
 # This file contains the observability infrastructure services.
 #
 # Usage:
-#   cd telemetry
+#   cd docker/telemetry
 #   docker-compose up -d
 #
 # Or from project root:
-#   docker-compose -f telemetry/docker-compose.yml up -d
+#   docker-compose -f docker/telemetry/docker-compose.yml up -d
 #
 # Services included:
 # - Elasticsearch: Long-term storage for traces, metrics, and logs
@@ -40,7 +40,8 @@ services:
     networks:
       - wegent-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      test:
+        ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -69,8 +70,8 @@ services:
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     ports:
-      - "16686:16686"   # Jaeger UI
-      - "14250:14250"   # gRPC (for collector)
+      - "16686:16686" # Jaeger UI
+      - "14250:14250" # gRPC (for collector)
     networks:
       - wegent-network
 
@@ -86,9 +87,9 @@ services:
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     ports:
-      - "4317:4317"     # OTLP gRPC
-      - "4318:4318"     # OTLP HTTP
-      - "8888:8888"     # Prometheus metrics (collector self-metrics)
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+      - "8888:8888" # Prometheus metrics (collector self-metrics)
     depends_on:
       elasticsearch:
         condition: service_healthy

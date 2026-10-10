@@ -49,7 +49,8 @@ Wegent uses OpenTelemetry to collect and export telemetry data (traces, metrics,
 
 ### 1. Start the Observability Services
 
-The OpenTelemetry stack is in a separate folder `telemetry/` to keep it independent from business services.
+The OpenTelemetry stack is in `docker/telemetry/` to keep deployment
+infrastructure together and independent from business services.
 
 First, make sure the main services are running (to create the network):
 
@@ -60,18 +61,18 @@ docker-compose up -d
 Then start the observability stack:
 
 ```bash
-# Option 1: From telemetry folder
-cd telemetry
+# Option 1: From the observability stack folder
+cd docker/telemetry
 docker-compose up -d
 
 # Option 2: From project root
-docker-compose -f telemetry/docker-compose.yml up -d
+docker-compose -f docker/telemetry/docker-compose.yml up -d
 ```
 
 Wait for Elasticsearch to be healthy:
 
 ```bash
-docker-compose -f telemetry/docker-compose.yml logs -f elasticsearch
+docker-compose -f docker/telemetry/docker-compose.yml logs -f elasticsearch
 # Wait until you see "started" message
 ```
 
@@ -126,16 +127,16 @@ docker-compose restart backend executor_manager
 
 ### Environment Variables
 
-| Variable | Description | Default |
+| Variable                          | Description                                         | Default                      |
 |----------|-------------|---------|
-| `OTEL_ENABLED` | Enable/disable OpenTelemetry | `false` |
-| `OTEL_SERVICE_NAME` | Service name for tracing | `wegent-service` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP gRPC endpoint | `http://otel-collector:4317` |
-| `OTEL_TRACES_SAMPLER_ARG` | Sampling ratio (0.0-1.0) | `1.0` |
-| `OTEL_METRICS_ENABLED` | Enable/disable metrics export | `false` |
-| `OTEL_EXCLUDED_URLS` | Comma-separated URL patterns to exclude (blacklist) | See below |
-| `OTEL_INCLUDED_URLS` | Comma-separated URL patterns to include (whitelist) | Empty (all) |
-| `OTEL_DISABLE_SEND_RECEIVE_SPANS` | Disable internal http.send/http.receive spans | `true` |
+| `OTEL_ENABLED`                    | Enable/disable OpenTelemetry                        | `false`                      |
+| `OTEL_SERVICE_NAME`               | Service name for tracing                            | `wegent-service`             |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`     | OTLP gRPC endpoint                                  | `http://otel-collector:4317` |
+| `OTEL_TRACES_SAMPLER_ARG`         | Sampling ratio (0.0-1.0)                            | `1.0`                        |
+| `OTEL_METRICS_ENABLED`            | Enable/disable metrics export                       | `false`                      |
+| `OTEL_EXCLUDED_URLS`              | Comma-separated URL patterns to exclude (blacklist) | See below                    |
+| `OTEL_INCLUDED_URLS`              | Comma-separated URL patterns to include (whitelist) | Empty (all)                  |
+| `OTEL_DISABLE_SEND_RECEIVE_SPANS` | Disable internal http.send/http.receive spans       | `true`                       |
 
 **Note:** Metrics export is disabled by default because Elasticsearch exporter has limited support for certain metric types. If you see `StatusCode.UNIMPLEMENTED` errors, keep metrics disabled.
 
@@ -233,11 +234,11 @@ OTEL_INCLUDED_URLS="/api/tasks/*,/api/chat/*,/api/teams/*"
 
 #### Pattern Syntax
 
-| Pattern | Description | Example |
+| Pattern            | Description             | Example                                      |
 |---------|-------------|---------|
-| `/api/health` | Exact match | Matches only `/api/health` |
-| `/api/*` | Prefix wildcard | Matches `/api/users`, `/api/tasks/123`, etc. |
-| `^/api/v[0-9]+/.*` | Regex (starts with `^`) | Matches `/api/v1/users`, `/api/v2/tasks` |
+| `/api/health`      | Exact match             | Matches only `/api/health`                   |
+| `/api/*`           | Prefix wildcard         | Matches `/api/users`, `/api/tasks/123`, etc. |
+| `^/api/v[0-9]+/.*` | Regex (starts with `^`) | Matches `/api/v1/users`, `/api/v2/tasks`     |
 
 #### Example Configurations
 
@@ -259,7 +260,7 @@ environment:
 ```yaml
 environment:
   OTEL_ENABLED: "true"
-  OTEL_EXCLUDED_URLS: ""  # Empty string clears defaults
+  OTEL_EXCLUDED_URLS: "" # Empty string clears defaults
 ```
 
 ### OpenTelemetry Collector Configuration
@@ -297,11 +298,11 @@ service:
 
 The following indices are created automatically:
 
-| Index | Description |
+| Index          | Description         |
 |-------|-------------|
-| `otel-traces` | Distributed traces |
+| `otel-traces`  | Distributed traces  |
 | `otel-metrics` | Application metrics |
-| `otel-logs` | Application logs |
+| `otel-logs`    | Application logs    |
 
 ## Viewing Traces in Jaeger
 
@@ -382,13 +383,13 @@ When the Collector is down or unreachable:
 
 The SDK uses `BatchSpanProcessor` with these fail-safe settings:
 
-| Setting | Value | Description |
+| Setting                 | Value | Description                             |
 |---------|-------|-------------|
-| `max_queue_size` | 2048 | Maximum spans to buffer before dropping |
-| `schedule_delay_millis` | 5000 | Export batch every 5 seconds |
-| `max_export_batch_size` | 512 | Maximum spans per export batch |
-| `export_timeout_millis` | 10000 | 10 second timeout per export attempt |
-| `exporter.timeout` | 5 | 5 second connection timeout |
+| `max_queue_size`        | 2048  | Maximum spans to buffer before dropping |
+| `schedule_delay_millis` | 5000  | Export batch every 5 seconds            |
+| `max_export_batch_size` | 512   | Maximum spans per export batch          |
+| `export_timeout_millis` | 10000 | 10 second timeout per export attempt    |
+| `exporter.timeout`      | 5     | 5 second connection timeout             |
 
 ### What Happens When Collector is Down
 
@@ -417,10 +418,10 @@ To monitor if the Collector is healthy:
 
 ```bash
 # Check collector status
-docker-compose -f telemetry/docker-compose.yml ps otel-collector
+docker-compose -f docker/telemetry/docker-compose.yml ps otel-collector
 
 # Check collector logs for errors
-docker-compose -f telemetry/docker-compose.yml logs otel-collector | tail -50
+docker-compose -f docker/telemetry/docker-compose.yml logs otel-collector | tail -50
 
 # Check collector metrics
 curl http://localhost:8888/metrics | grep otelcol_exporter
@@ -465,7 +466,7 @@ extensions:
 For high-traffic production environments, reduce the sampling rate:
 
 ```yaml
-OTEL_TRACES_SAMPLER_ARG: "0.1"  # Sample 10% of traces
+OTEL_TRACES_SAMPLER_ARG: "0.1" # Sample 10% of traces
 ```
 
 ### 3. Configure Data Retention
@@ -569,14 +570,14 @@ docker-compose restart backend executor_manager
 
 ## Service Ports Summary
 
-| Service | Port | URL | Purpose |
+| Service           | Port  | URL                           | Purpose                  |
 |---------|------|-----|---------|
-| Jaeger UI | 16686 | http://localhost:16686 | Trace visualization |
-| Kibana | 5601 | http://localhost:5601 | Query & Dashboard |
-| Elasticsearch | 9200 | http://localhost:9200 | Data storage API |
-| OTLP gRPC | 4317 | - | Telemetry data ingestion |
-| OTLP HTTP | 4318 | - | Telemetry data ingestion |
-| Collector Metrics | 8888 | http://localhost:8888/metrics | Collector self-metrics |
+| Jaeger UI         | 16686 | http://localhost:16686        | Trace visualization      |
+| Kibana            | 5601  | http://localhost:5601         | Query & Dashboard        |
+| Elasticsearch     | 9200  | http://localhost:9200         | Data storage API         |
+| OTLP gRPC         | 4317  | -                             | Telemetry data ingestion |
+| OTLP HTTP         | 4318  | -                             | Telemetry data ingestion |
+| Collector Metrics | 8888  | http://localhost:8888/metrics | Collector self-metrics   |
 
 ## References
 
