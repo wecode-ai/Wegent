@@ -2148,8 +2148,12 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     }
   )
-  const restoredDetachedSnapshot = JSON.parse(
-    await restoredDetachedControl.command('snapshot', 'body')
+  const restoredDetachedSnapshot = await waitForSnapshot(
+    restoredDetachedControl,
+    snapshot => !snapshot.testIds.includes(`workspace-tab-close-${secondTaskId}`),
+    'The restored detached tab did not regain its fixed state',
+    DEFAULT_STEP_TIMEOUT_MS,
+    `[data-testid="workspace-tab-${secondTaskId}"]`
   )
   assert.deepEqual(
     allWorkspaceTabIds(restoredDetachedSnapshot),
