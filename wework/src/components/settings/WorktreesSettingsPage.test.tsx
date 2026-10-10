@@ -7,6 +7,7 @@ import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import '@/i18n'
 
 describe('WorktreesSettingsPage', () => {
+  const getWorktreeCapabilities = vi.fn()
   const getWorktreeSettings = vi.fn()
   const updateWorktreeSettings = vi.fn()
   const listWorktrees = vi.fn()
@@ -14,6 +15,7 @@ describe('WorktreesSettingsPage', () => {
   const restoreWorktree = vi.fn()
 
   const api = {
+    getWorktreeCapabilities,
     getWorktreeSettings,
     updateWorktreeSettings,
     listWorktrees,
@@ -21,6 +23,18 @@ describe('WorktreesSettingsPage', () => {
     restoreWorktree,
   } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
 
+  const managedWorktreeCapability = {
+    version: 1,
+    managed: true,
+    deferredPrepare: true,
+    snapshots: true,
+    restore: true,
+    preflight: true,
+    persistentStorageVerified: true,
+  }
+
+  // A local Executor record never carries `runtime_features`; support comes
+  // from the Runtime capability RPC instead.
   const devices = [
     {
       id: 1,
@@ -30,22 +44,17 @@ describe('WorktreesSettingsPage', () => {
       device_type: 'local',
       bind_shell: 'codex',
       is_default: true,
-      runtime_features: {
-        schemaVersion: 1,
-        worktrees: {
-          version: 1,
-          managed: true,
-          deferredPrepare: true,
-          snapshots: true,
-          restore: true,
-          preflight: true,
-        },
-      },
+      runtime_features: null,
     },
   ] as DeviceInfo[]
 
   beforeEach(() => {
     vi.clearAllMocks()
+    getWorktreeCapabilities.mockImplementation(async ({ deviceId }) => ({
+      success: true,
+      deviceId,
+      runtimeWorktrees: managedWorktreeCapability,
+    }))
     getWorktreeSettings.mockResolvedValue({
       deviceId: 'local-device',
       worktreeRoot: '',
@@ -103,7 +112,23 @@ describe('WorktreesSettingsPage', () => {
     expect(screen.getByText('Fix settings')).toBeInTheDocument()
   })
 
-  test('only lists online or busy devices with managed Worktree preflight support', async () => {
+  test('lists the local Executor even though its device record carries no runtime features', async () => {
+    render(<WorktreesSettingsPage api={api} devices={devices} />)
+
+    expect(await screen.findByTestId('worktree-row')).toBeInTheDocument()
+    expect(screen.queryByText(/没有可用的在线设备/)).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(getWorktreeCapabilities).toHaveBeenCalledWith({ deviceId: 'local-device' })
+    )
+    await waitFor(() => expect(listWorktrees).toHaveBeenCalledWith({ deviceId: 'local-device' }))
+  })
+
+  test('only lists online or busy devices whose Runtime reports managed Worktree support', async () => {
+    getWorktreeCapabilities.mockImplementation(async ({ deviceId }) => ({
+      success: true,
+      deviceId,
+      runtimeWorktrees: deviceId === 'unsupported-device' ? null : managedWorktreeCapability,
+    }))
     render(
       <WorktreesSettingsPage
         api={api}
@@ -140,6 +165,7 @@ describe('WorktreesSettingsPage', () => {
     expect(within(select).getByRole('option', { name: 'Busy Cloud' })).toBeInTheDocument()
     expect(within(select).queryByRole('option', { name: 'Old Executor' })).not.toBeInTheDocument()
     expect(within(select).queryByRole('option', { name: 'Offline Cloud' })).not.toBeInTheDocument()
+    expect(getWorktreeCapabilities).not.toHaveBeenCalledWith({ deviceId: 'offline-device' })
   })
 
   test('matches the Codex project grouping and opens a linked conversation', async () => {
@@ -385,19 +411,15 @@ describe('WorktreesSettingsPage', () => {
             name: 'Cloud',
             device_type: 'cloud',
             is_default: false,
-            runtime_features: {
-              ...devices[0].runtime_features,
-              worktrees: {
-                ...devices[0].runtime_features?.worktrees,
-                persistentStorageVerified: true,
-              },
-            },
           },
         ]}
       />
     )
 
-    await userEvent.selectOptions(screen.getByTestId('worktrees-device-select'), 'cloud-device')
+    await userEvent.selectOptions(
+      await screen.findByTestId('worktrees-device-select'),
+      'cloud-device'
+    )
     expect(await screen.findByText('/cloud/repo')).toBeInTheDocument()
     expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(7)
 
