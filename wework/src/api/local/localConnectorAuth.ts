@@ -82,12 +82,14 @@ interface LocalConnectorAuthHealthOptions {
 /** Short TTL so send preflight does not re-probe an already-healthy connector. */
 const OK_HEALTH_TTL_MS = 120_000
 const okHealthCache = new Map<string, number>()
+let healthCacheRevision = 0
 
 function healthCacheKey(target: LocalConnectorAuthTarget): string {
   return `${target.pluginKey.trim().toLowerCase()}::${target.connectorSlug.trim().toLowerCase()}`
 }
 
 export function clearLocalConnectorAuthHealthCache(): void {
+  healthCacheRevision += 1
   okHealthCache.clear()
 }
 
@@ -110,6 +112,7 @@ export function localConnectorAuthHealth(
   options: LocalConnectorAuthHealthOptions = {}
 ): Promise<LocalConnectorAuthResult> {
   const key = healthCacheKey(target)
+  const revision = healthCacheRevision
   const cachedAt = okHealthCache.get(key)
   if (
     !isGithubCliTarget(target) &&
@@ -120,8 +123,10 @@ export function localConnectorAuthHealth(
     return Promise.resolve({ status: 'ok' as const satisfies LocalConnectorAuthStatus })
   }
   return callLocalConnectorAuth('health', target).then(result => {
-    if (result.status === 'ok' && !isGithubCliTarget(target)) okHealthCache.set(key, Date.now())
-    else okHealthCache.delete(key)
+    if (revision === healthCacheRevision) {
+      if (result.status === 'ok' && !isGithubCliTarget(target)) okHealthCache.set(key, Date.now())
+      else okHealthCache.delete(key)
+    }
     return result
   })
 }
@@ -142,6 +147,7 @@ export function localConnectorAuthCancel(target: LocalConnectorAuthTarget, sessi
 }
 
 export function localConnectorAuthLogout(target: LocalConnectorAuthTarget) {
+  healthCacheRevision += 1
   okHealthCache.delete(healthCacheKey(target))
   return observeOperation(
     'plugin.disconnect',
