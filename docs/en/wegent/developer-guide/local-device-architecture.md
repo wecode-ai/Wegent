@@ -92,7 +92,7 @@ To investigate a request, take the `request_id` from the Wework frontend, DSH, o
 
 ### Executor Startup Environment and Codex Home Initialization
 
-Shared plugin packages use content hashes and retain previous packages. Native Codex cache directories use the version from the plugin manifest. Appending a hash to that cache version causes native installation to remove the directory and invalidate the workbench's stored path.
+Shared plugin packages use content hashes and retain previous packages. Native Codex cache directories use the version from the plugin manifest. Appending a hash to that cache version causes native installation to remove the directory and invalidate the workbench's stored path. The plugin authentication SDK resolves current installation identities from the Executor's `capabilities/manifest-v2.json`, ignoring any old manifest left after migration.
 
 Backend Teams use `agents/<executing-user-name>/<namespace>/<Team-name>` under the workbench root as their native Home. Pipeline Bots each use a `bots/<Bot-ID>` subdirectory with independent configuration, sessions, and execution locks. Task-scoped skill calls resolve multiple stages only when exactly one Home holds its execution lock and records that task as active. Direct Wework profiles (`team_id = 0`) continue to use the application's managed native Home and retain this marker when the manager resumes. Their selected backend Skills deploy into the task workspace's `.codex/skills`, while Codex owns native plugin Skills. Environment changes may restart the shared Codex process only after all active turns and pending RPCs finish.
 

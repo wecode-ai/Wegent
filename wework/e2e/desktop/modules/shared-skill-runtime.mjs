@@ -58,7 +58,7 @@ export function createSharedSkillRuntime({
         assert.ok(tool, 'Retained skill MCP tool is unavailable to native Claude')
         writeToolCall(response, `${turn.callId}-mcp`, `${turn.callId}-mcp`, tool.name, {})
       } else {
-        assert.match(JSON.stringify(mcpOutput), /MCP_CONTEXT:\d+/)
+        assert.match(JSON.stringify(mcpOutput), /MCP_CONTEXT:[A-Za-z0-9_-]+/)
         turn.mcpOutput = JSON.stringify(mcpOutput)
         completed = true
         writeText(response, `${turn.callId}-done`, turn.completion)
@@ -217,6 +217,8 @@ export function createSharedSkillRuntime({
       assert.ok(JSON.stringify(transcript).includes(turn.completion))
       if (!isCodex) {
         const probe = JSON.parse(await readFile(join(resultDir, 'claude-mcp-probe.json'), 'utf8'))
+        assert.equal(typeof probe.token, 'string', 'MCP subtask context must be present')
+        assert.match(probe.token, /^[A-Za-z0-9_-]+$/)
         assert.ok(turn.mcpOutput.includes(`MCP_CONTEXT:${probe.token}`))
       }
     }
