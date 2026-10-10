@@ -127,7 +127,7 @@ describe('TodoEditor external item sync', () => {
     const summary = screen.getByTestId('cloud-todo-state-summary')
     expect(summary).not.toHaveTextContent('负责人')
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('agent-1')
-    expect(screen.getByTestId('cloud-todo-state-due-date')).toHaveTextContent('未设置')
+    expect(screen.getByRole('button', { name: '时间范围' })).toHaveTextContent('添加日期')
 
     await user.hover(screen.getByTestId('cloud-todo-detail-status').parentElement!)
 
@@ -162,8 +162,8 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    expect(screen.getByTestId('cloud-todo-state-due-date')).toHaveTextContent('未设置')
-    const dueDateInput = screen.getByTestId('cloud-todo-detail-due-date')
+    await user.click(screen.getByRole('button', { name: '时间范围' }))
+    const dueDateInput = await screen.findByTestId('cloud-todo-detail-due-date')
     const showPicker = vi.fn()
     Object.defineProperty(dueDateInput, 'showPicker', {
       configurable: true,

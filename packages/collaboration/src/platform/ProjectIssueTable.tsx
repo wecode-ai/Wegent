@@ -147,7 +147,7 @@ export function ProjectIssueTable({
             ]),
         ).entries(),
       ],
-      tags: [...new Set(issues.flatMap((issue) => issue.tags))],
+      tags: [...new Set(issues.flatMap((issue) => issue.tags ?? []))],
     }),
     [availableStatuses, currentAssignmentByIssueId, issues],
   );
@@ -189,7 +189,7 @@ export function ProjectIssueTable({
         (assignment !== null &&
           `${assignment.target_type}:${assignment.target_id}` ===
             assigneeFilter);
-      const matchesTag = !tagFilter || issue.tags.includes(tagFilter);
+      const matchesTag = !tagFilter || (issue.tags ?? []).includes(tagFilter);
       return matchesQuery && matchesStatus && matchesAssignee && matchesTag;
     });
     if (!sort) return filteredIssues;
@@ -204,7 +204,7 @@ export function ProjectIssueTable({
         case "assignee":
           return assignment?.target_name ?? null;
         case "tags":
-          return issue.tags.length > 0 ? issue.tags.join(", ") : null;
+          return issue.tags?.length ? issue.tags.join(", ") : null;
         case "start_at":
           return issue.start_at ?? null;
         case "due_at":
@@ -616,7 +616,7 @@ export function ProjectIssueTable({
                 </td>
                 <td>{statusName(issue.status)}</td>
                 <td>{currentAssignment?.target_name || "—"}</td>
-                <td>{issue.tags.length > 0 ? issue.tags.join(", ") : "—"}</td>
+                <td>{issue.tags?.length ? issue.tags.join(", ") : "—"}</td>
                 <td className="collaboration-issue-table-date">
                   {issue.start_at?.slice(0, 10) || "—"}
                 </td>
