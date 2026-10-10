@@ -100,25 +100,36 @@ export default function GitProjectWorkSection({ context }: GitProjectWorkSection
             ) : null}
           </div>
         ) : null}
-        <button
-          type="button"
-          data-testid="execution-mode-button"
-          disabled={context.executionModeLocked}
-          onClick={() => setModeMenuOpen(open => !open)}
-          className={cn(
-            'flex h-9 w-full min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40',
-            modeMenuOpen && 'bg-background/70 text-text-primary'
-          )}
-          aria-expanded={modeMenuOpen}
-        >
-          {worktreeSelected ? (
-            <Workflow className="h-4 w-4 shrink-0" />
-          ) : (
-            <Folder className="h-4 w-4 shrink-0" />
-          )}
-          <span className="max-w-[8rem] truncate">{modeLabel}</span>
-          <ChevronDown className="h-4 w-4 shrink-0" />
-        </button>
+        {context.executionModeLocked ? (
+          <div
+            data-testid="execution-mode-button"
+            role="status"
+            className="flex h-9 items-center gap-2 px-2 text-sm text-text-secondary"
+          >
+            {worktreeSelected ? <Workflow className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
+            <span>{modeLabel}</span>
+          </div>
+        ) : (
+          <button
+            type="button"
+            data-testid="execution-mode-button"
+            disabled={context.executionModeLocked}
+            onClick={() => setModeMenuOpen(open => !open)}
+            className={cn(
+              'flex h-9 w-full min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40',
+              modeMenuOpen && 'bg-background/70 text-text-primary'
+            )}
+            aria-expanded={modeMenuOpen}
+          >
+            {worktreeSelected ? (
+              <Workflow className="h-4 w-4 shrink-0" />
+            ) : (
+              <Folder className="h-4 w-4 shrink-0" />
+            )}
+            <span className="max-w-[8rem] truncate">{modeLabel}</span>
+            <ChevronDown className="h-4 w-4 shrink-0" />
+          </button>
+        )}
       </div>
       {!context.executionModeLocked &&
       projectIsRepository &&

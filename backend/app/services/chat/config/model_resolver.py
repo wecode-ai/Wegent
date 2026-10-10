@@ -32,6 +32,10 @@ from shared.utils.crypto import decrypt_api_key
 logger = logging.getLogger(__name__)
 
 
+class PublicModelAccessDeniedError(ValueError):
+    """Raised when a public model's user whitelist rejects the current user."""
+
+
 def resolve_env_placeholder(value: str) -> str:
     """
     Resolve environment variable placeholders in a string.
@@ -486,8 +490,14 @@ def _resolve_model_for_bot(
     model_name = None
 
     # Priority 1: Force override from task
+    # Tracks whether the resolved model was explicitly chosen by the user.
+    # Bot-bound models that later become whitelist-restricted are reported as
+    # "not found" (the user never picked them), while a user-selected model
+    # keeps the informative whitelist error.
+    model_from_user_override = False
     if force_override and override_model_name:
         model_name = override_model_name
+        model_from_user_override = True
         logger.info(f"Using task model (force override): {model_name}")
     else:
         # Priority 2: Bot's agent_config.bind_model
@@ -504,6 +514,7 @@ def _resolve_model_for_bot(
         # Priority 4: Task-level override (fallback)
         if not model_name and override_model_name:
             model_name = override_model_name
+            model_from_user_override = True
             logger.info(f"Using task model (fallback): {model_name}")
 
     if not model_name:
@@ -528,10 +539,22 @@ def _resolve_model_for_bot(
     # Find the model Kind object, following any bind_model pointer chain
     # (e.g. a Bot's private Model that only carries an allowed_models
     # whitelist and points onward to the model with the real env config).
-    model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
-    model_kind, model_spec = _resolve_bind_model_pointer(
-        db, user_id, model_kind, model_spec
-    )
+    try:
+        model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+        model_kind, model_spec = _resolve_bind_model_pointer(
+            db, user_id, model_kind, model_spec
+        )
+    except PublicModelAccessDeniedError:
+        if model_from_user_override:
+            raise
+        # The bot's bound model became whitelist-restricted after it was
+        # configured. From this user's perspective the model is unusable, so
+        # treat it exactly like a model that no longer exists.
+        logger.warning(
+            f"Bot bound model '{model_name}' is not available to user_id={user_id} "
+            f"(public model whitelist); treating it as not found"
+        )
+        model_kind, model_spec = None, None
     return model_kind, model_spec, model_name, raw_agent_config
 
 
@@ -558,8 +581,12 @@ def _resolve_allowed_model_names(
     allowed_models = raw_agent_config.get("allowed_models")
     if not allowed_models:
         for bound_model_name in _bound_model_names(bot_crd, raw_agent_config):
+            # Only inspect the bound model's metadata here; the user is not
+            # executing with it, so the public-model user whitelist must not
+            # apply. Otherwise overriding away from a whitelist-restricted
+            # bound model would still fail with that model's whitelist error.
             _, bound_model_spec = _find_model_with_namespace(
-                db, bound_model_name, user_id
+                db, bound_model_name, user_id, enforce_public_whitelist=False
             )
             if not bound_model_spec:
                 continue
@@ -786,7 +813,10 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
 
 
 def _find_model_with_namespace(
-    db: Session, model_name: str, user_id: int
+    db: Session,
+    model_name: str,
+    user_id: int,
+    enforce_public_whitelist: bool = True,
 ) -> tuple[Optional[Kind], Optional[Dict[str, Any]]]:
     """
     Find model by name and return both the Kind object and spec.
@@ -801,6 +831,9 @@ def _find_model_with_namespace(
         db: Database session
         model_name: Model name to find
         user_id: User ID for private model lookup
+        enforce_public_whitelist: When False, skip the public model user
+            whitelist check. Only used by callers that read a model's metadata
+            (e.g. an agent's bound model) without executing with it.
 
     Returns:
         Tuple of (Kind object, Model spec dictionary) or (None, None) if not found
@@ -881,10 +914,12 @@ def _find_model_with_namespace(
     if public_model and public_model.json:
         # Enforce the public model user whitelist: only listed users may use it.
         user = db.query(User).filter(User.id == user_id).first()
-        if not is_public_model_allowed_for_user(
+        if enforce_public_whitelist and not is_public_model_allowed_for_user(
             public_model.json, user.user_name if user else None
         ):
-            raise ValueError(f"Model '{model_name}' is restricted to whitelisted users")
+            raise PublicModelAccessDeniedError(
+                f"Model '{model_name}' is restricted to whitelisted users"
+            )
         logger.info(
             f"Found model '{model_name}' in public models (namespace: {public_model.namespace})"
         )

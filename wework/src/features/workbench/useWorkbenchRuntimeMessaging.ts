@@ -951,17 +951,17 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
-        automaticWorkspaceSelection?: boolean
         preserveAttachments?: boolean
         launchStartedAt?: number
         taskCreateRequest?: RuntimeTaskCreateRequest | null
+        project?: ProjectWithTasks | null
       }
     ): Promise<RuntimeTaskAddress | false> => {
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const sourceBlankChatKey = state.currentRuntimeTask ? null : state.standaloneChatKey
       const projectId = intent.projectId
-      let workspaceExecution = options?.sideSource ? undefined : intent.execution
-      let requestedManagedWorkspace = Boolean(workspaceExecution?.workspace)
+      const workspaceExecution = options?.sideSource ? undefined : intent.execution
+      const requestedManagedWorkspace = Boolean(workspaceExecution?.workspace)
       const hasOverrideSelection = Boolean(
         options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
       )
@@ -1107,23 +1107,19 @@ export function useWorkbenchRuntimeMessaging({
 
       if (requestedManagedWorkspace && !hasDirectManagedWorkspaceTarget) {
         const worktreeProject =
+          (options?.project?.id === projectId ? options.project : null) ??
           state.projects.find(project => project.id === projectId) ??
           (state.currentProject?.id === projectId ? state.currentProject : null)
         const worktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
         const worktreeDevice = findWorkbenchDevice(state.devices, worktreeDeviceId)
         const runtimeWorkApi = services.runtimeWorkApi
         if (!runtimeWorkApi || !worktreeProject) {
-          if (options?.automaticWorkspaceSelection) {
-            workspaceExecution = undefined
-            requestedManagedWorkspace = false
-          } else {
-            reportSendBlocked(
-              i18n.t('workbench.worktree_unavailable_preflight_failed'),
-              { worktreeDeviceId, reason: 'runtime_api_unavailable' },
-              options
-            )
-            return false
-          }
+          reportSendBlocked(
+            i18n.t('workbench.worktree_unavailable_preflight_failed'),
+            { worktreeDeviceId, reason: 'runtime_api_unavailable' },
+            options
+          )
+          return false
         } else {
           const availability = await probeProjectWorktreeAvailability({
             api: runtimeWorkApi,
@@ -1133,21 +1129,16 @@ export function useWorkbenchRuntimeMessaging({
             ref: workspaceExecution?.workspace?.branch ?? projectWorktreeBranch,
           })
           if (!availability.available) {
-            if (options?.automaticWorkspaceSelection) {
-              workspaceExecution = undefined
-              requestedManagedWorkspace = false
-            } else {
-              reportSendBlocked(
-                i18n.t(`workbench.worktree_unavailable_${availability.reason}`),
-                {
-                  worktreeDeviceId,
-                  reason: availability.reason,
-                  sourcePath: availability.sourcePath,
-                },
-                options
-              )
-              return false
-            }
+            reportSendBlocked(
+              i18n.t(`workbench.worktree_unavailable_${availability.reason}`),
+              {
+                worktreeDeviceId,
+                reason: availability.reason,
+                sourcePath: availability.sourcePath,
+              },
+              options
+            )
+            return false
           }
         }
       }
@@ -1945,10 +1936,10 @@ export function useWorkbenchRuntimeMessaging({
         runtimeExecutablePath: taskRequest?.runtimeExecutablePath,
         runtimePermissionMode: taskRequest?.runtimePermissionMode,
         taskCreateRequest,
+        project: options.project,
         onError: options.onError,
         prepareRuntimeTask: options.prepareRuntimeTask,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
-        automaticWorkspaceSelection: options.automaticWorkspaceSelection,
         openInMainPane: false,
       })
     },

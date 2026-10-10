@@ -25,6 +25,7 @@ import {
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import {
   findRuntimeTaskProjectWork,
+  mergeRuntimeTaskAddresses,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
   updateRuntimeWorkTask,
@@ -1309,7 +1310,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         currentProject: action.project,
-        currentRuntimeTask: action.address,
+        currentRuntimeTask: mergeRuntimeTaskAddresses(state.currentRuntimeTask, action.address),
       }
     case 'runtime_task_address_reconciled': {
       const currentRuntimeTask = state.currentRuntimeTask

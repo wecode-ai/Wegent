@@ -415,6 +415,16 @@ export function createWeworkPlatformApi(
           ? localApi.issues.archive(issueId)
           : cloudApi.issues.archive(issueId)
       },
+      async listArchived(projectId, input) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.listArchived(projectId, input)
+          : cloudApi.issues.listArchived(projectId, input)
+      },
+      async restore(issueId) {
+        return (await issueLocation(issueId)) === 'local'
+          ? localApi.issues.restore(issueId)
+          : cloudApi.issues.restore(issueId)
+      },
       async reorder(projectId, input) {
         return (await projectLocation(projectId)) === 'local'
           ? localApi.issues.reorder(projectId, input)

@@ -563,7 +563,7 @@ test.describe('Collaboration cloud capabilities', () => {
         'Cloud E2E persistent comment'
       )
 
-      await page.getByTestId('cloud-todo-edit-content').click()
+      await page.getByTestId('cloud-todo-detail-description').click()
       await page.getByTestId('cloud-todo-attachment-input').setInputFiles({
         name: `issue-${suffix}.txt`,
         mimeType: 'text/plain',

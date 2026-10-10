@@ -91,12 +91,29 @@ export function isSameRuntimeTaskAddress(
   left: RuntimeTaskAddress | null | undefined,
   right: RuntimeTaskAddress
 ): boolean {
-  return Boolean(
-    left &&
-    left.deviceId === right.deviceId &&
-    left.taskId === right.taskId &&
-    matchesRequestedWorkspacePath(left.workspacePath, right.workspacePath)
-  )
+  if (
+    !left ||
+    left.deviceId !== right.deviceId ||
+    left.taskId !== right.taskId ||
+    !matchesRequestedWorkspacePath(left.workspacePath, right.workspacePath)
+  ) {
+    return false
+  }
+  if (
+    right.issueExecution &&
+    (left.issueExecution?.projectId !== right.issueExecution.projectId ||
+      left.issueExecution?.issueId !== right.issueExecution.issueId)
+  ) {
+    return false
+  }
+  if (
+    right.projectSession &&
+    (left.projectSession?.projectId !== right.projectSession.projectId ||
+      left.projectSession?.issueId !== right.projectSession.issueId)
+  ) {
+    return false
+  }
+  return true
 }
 
 export function mergeRuntimeTaskHandles(
@@ -107,6 +124,26 @@ export function mergeRuntimeTaskHandles(
   return {
     ...(base ?? {}),
     ...(override ?? {}),
+  }
+}
+
+export function mergeRuntimeTaskAddresses(
+  base: RuntimeTaskAddress | null | undefined,
+  override: RuntimeTaskAddress
+): RuntimeTaskAddress {
+  if (
+    !base ||
+    (!base.issueExecution && !base.projectSession) ||
+    base.deviceId !== override.deviceId ||
+    base.taskId !== override.taskId
+  ) {
+    return override
+  }
+  const runtimeHandle = mergeRuntimeTaskHandles(base.runtimeHandle, override.runtimeHandle)
+  return {
+    ...base,
+    ...override,
+    ...(runtimeHandle ? { runtimeHandle } : {}),
   }
 }
 

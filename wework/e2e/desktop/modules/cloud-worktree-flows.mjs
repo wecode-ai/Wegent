@@ -269,6 +269,7 @@ async function deleteWorktreeFromSettings(control, task) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('clickWhenEnabled', deleteSelector)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-recycle-worktree-button"]')
   await waitForCondition(
     async () =>
       Number(await control.command('getElementCount', deleteSelector).catch(() => '0')) === 0,

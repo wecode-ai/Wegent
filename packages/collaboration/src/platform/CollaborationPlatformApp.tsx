@@ -2289,7 +2289,11 @@ function WorkspaceHome({
         {metrics.map((metric) => {
           const Icon = metric.icon;
           return (
-            <div data-tone={metric.tone} key={metric.id}>
+            <div
+              data-testid={`collaboration-workspace-metric-${metric.id}`}
+              data-tone={metric.tone}
+              key={metric.id}
+            >
               <span>
                 <Icon aria-hidden="true" />
               </span>
@@ -3828,7 +3832,9 @@ export function CollaborationPlatformApp({
         <CollaborationApp
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
+          issueArchiveEnabled
           locale={locale}
+          onProjectChange={commands.registerProject}
           showProjectBack={false}
           host={{
             capabilities: {

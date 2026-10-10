@@ -36,6 +36,7 @@ classify_path() {
       .github/actions/* | \
       .github/scripts/classify-ci-cache-warmup.sh | \
       .github/scripts/classify-ci-changes.sh | \
+      .github/scripts/download-actions-artifact.sh | \
       .github/scripts/lib/apt-packages.sh | \
       .github/scripts/lib/validate-ci-cache-policy.rb | \
       .github/scripts/test-ci-cache-policy.sh | \
@@ -98,6 +99,11 @@ classify_path() {
       ;;
     knowledge_engine/*)
       changed[knowledge_engine]=true
+      changed[platform_e2e]=true
+      ;;
+    knowledge_runtime/*)
+      changed[knowledge_engine]=true
+      changed[platform_e2e]=true
       ;;
     frontend/*)
       changed[frontend]=true

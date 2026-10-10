@@ -10,6 +10,7 @@ import type {
   WorkspaceIssueCollaborator,
   WorkspaceTaskBinding,
 } from "../ports/SharedWorkspaceApi";
+import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
   CollaborationAssignment,
   CollaborationExecution,
@@ -77,8 +78,12 @@ export function mapWorkspaceTaskBindingDto(
     ),
     assignmentId: nullableString(row.assignment_id ?? row.assignmentId),
     modelSelection:
-      (row.modelSelection as Record<string, unknown> | null | undefined) ??
-      (row.model_selection as Record<string, unknown> | null | undefined) ??
+      (row.modelSelection as ModelSelectionConfig | null | undefined) ??
+      (row.model_selection as ModelSelectionConfig | null | undefined) ??
+      null,
+    executionContext:
+      (row.executionContext as WorkspaceTaskBinding["executionContext"]) ??
+      (row.execution_context as WorkspaceTaskBinding["executionContext"]) ??
       null,
     ...(bindingType === "system" || bindingType === "user"
       ? { bindingType }
@@ -252,6 +257,11 @@ export function mapCollaborationWorkspaceDto(
       row.execution_environment_count ?? row.executionEnvironmentCount ?? 0,
     ),
     execution_environment: {
+      workspace_policy:
+        (executionEnvironment.workspace_policy ??
+          executionEnvironment.workspacePolicy) === "project"
+          ? "project"
+          : "git_worktree",
       repositories: Array.isArray(repositories)
         ? repositories.map((value) => {
             const repository = asRecord(value);

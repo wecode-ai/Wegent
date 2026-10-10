@@ -98,6 +98,40 @@ function runtimeTaskKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.taskId}`
 }
 
+function runtimeTaskAddressForBinding(
+  identity: RuntimeTaskAddress,
+  current: RuntimeTaskAddress | null
+): RuntimeTaskAddress {
+  return current?.deviceId === identity.deviceId && current.taskId === identity.taskId
+    ? current
+    : identity
+}
+
+function executionAddressFromContext(
+  task: RuntimeTaskAddress,
+  context: Awaited<ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']>>
+): RuntimeTaskAddress | null {
+  const execution = context.executionContext
+  const modelSelection = context.modelSelection
+  if (!execution && !modelSelection) return null
+  return {
+    ...task,
+    ...(execution?.runtime ? { runtime: execution.runtime } : {}),
+    ...(execution?.threadId ? { threadId: execution.threadId } : {}),
+    ...(execution?.workspacePath ? { workspacePath: execution.workspacePath } : {}),
+    ...(execution?.workspaceKind ? { workspaceKind: execution.workspaceKind } : {}),
+    ...(execution?.worktreeId ? { worktreeId: execution.worktreeId } : {}),
+    ...(modelSelection
+      ? {
+          runtimeHandle: {
+            ...(task.runtimeHandle ?? {}),
+            modelSelection,
+          },
+        }
+      : {}),
+  }
+}
+
 function pendingBindingFor(
   address: RuntimeTaskAddress | null,
   paneKey: string
@@ -307,9 +341,11 @@ export function useWorkbenchCloudProjectContext({
   const currentContextTaskKey = contextRuntimeTask ? runtimeTaskKey(contextRuntimeTask) : null
   const contextMountedRef = useRef(true)
   const currentContextTaskKeyRef = useRef(currentContextTaskKey)
+  const currentRuntimeTaskRef = useRef(currentRuntimeTask)
   useLayoutEffect(() => {
     currentContextTaskKeyRef.current = currentContextTaskKey
-  }, [currentContextTaskKey])
+    currentRuntimeTaskRef.current = currentRuntimeTask
+  }, [currentContextTaskKey, currentRuntimeTask])
   const contextLookupGenerationRef = useRef(0)
   const contextLookupTaskKeyRef = useRef<string | null>(null)
   useEffect(
@@ -326,6 +362,9 @@ export function useWorkbenchCloudProjectContext({
   const [deliveryItem, setDeliveryItem] = useState<Omit<LocalWorkItem, 'projectId'> | null>(null)
   const [boundCloudProject, setBoundCloudProject] = useState<CloudProject | null>(null)
   const [boundCloudItem, setBoundCloudItem] = useState<CloudLoopItem | null>(null)
+  const [boundRuntimeTaskAddress, setBoundRuntimeTaskAddress] = useState<RuntimeTaskAddress | null>(
+    null
+  )
   const [contextRefreshKey, setContextRefreshKey] = useState(0)
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false)
   const [pendingTodoItem, setPendingTodoItem] = useState<CloudLoopItem | null>(() =>
@@ -445,6 +484,7 @@ export function useWorkbenchCloudProjectContext({
         if (!active) return
         setBoundCloudItem(null)
         setBoundCloudProject(null)
+        setBoundRuntimeTaskAddress(null)
         setDeliveryItem(null)
       })
       return () => {
@@ -456,6 +496,7 @@ export function useWorkbenchCloudProjectContext({
       contextLookupTaskKeyRef.current = contextTaskKey
       setBoundCloudItem(null)
       setBoundCloudProject(null)
+      setBoundRuntimeTaskAddress(null)
       setDeliveryItem(null)
     }
     const contextApis = todoBindingApis
@@ -481,6 +522,12 @@ export function useWorkbenchCloudProjectContext({
           }
           setBoundCloudProject(context.project)
           setBoundCloudItem(context.loop_item)
+          setBoundRuntimeTaskAddress(
+            executionAddressFromContext(
+              currentRuntimeTaskRef.current ?? contextRuntimeTask,
+              context
+            )
+          )
           setDeliveryItem(
             context.loop_item
               ? cloudItemAsLocalWorkItem(context.loop_item, contextRuntimeTask)
@@ -569,14 +616,18 @@ export function useWorkbenchCloudProjectContext({
       runtimeTaskTitleRef.current ||
       truncateRuntimeTaskTitle(pendingBinding?.description) ||
       t('workbench.untitled_task', '未命名任务')
+    const taskForBinding = runtimeTaskAddressForBinding(
+      contextRuntimeTask,
+      currentRuntimeTaskRef.current
+    )
     let active = true
     const bindingRequest = itemToBind
       ? api
-          .bindTask(itemToBind.id, contextRuntimeTask, bindingTaskTitle)
+          .bindTask(itemToBind.id, taskForBinding, bindingTaskTitle)
           .then(() => ({ item: itemToBind }))
       : api.trackProjectTask(
           projectToBind.id,
-          contextRuntimeTask,
+          taskForBinding,
           bindingTaskTitle,
           pendingBinding?.description ?? ''
         )
@@ -891,13 +942,17 @@ export function useWorkbenchCloudProjectContext({
         t('workbench.untitled_task', '未命名任务')
       try {
         let linkedItem: CloudLoopItem
+        const taskForBinding = runtimeTaskAddressForBinding(
+          contextRuntimeTask,
+          currentRuntimeTaskRef.current
+        )
         if (item) {
-          await api.bindTask(item.id, contextRuntimeTask, taskTitle)
+          await api.bindTask(item.id, taskForBinding, taskTitle)
           linkedItem = item
         } else {
           const tracked = await api.trackProjectTask(
             project.id,
-            contextRuntimeTask,
+            taskForBinding,
             taskTitle,
             runtimeTaskDescription
           )
@@ -953,7 +1008,7 @@ export function useWorkbenchCloudProjectContext({
   const openBoundProjectSpaceTask = useCallback(() => {
     if (!boundCloudProject || !boundCloudItem) return
     const projectRef = projectSpaceRef(boundCloudProject)
-    const contentRoute = projectSpaceContentRoute(projectRef)
+    const contentRoute = projectSpaceContentRoute(projectRef, boundCloudItem.id)
     if (workspaceTabs) {
       const existingBoardTab = workspaceTabs.tabs.find(
         tab =>
@@ -1182,6 +1237,7 @@ export function useWorkbenchCloudProjectContext({
     activeDeliveryItem,
     boundCloudItem,
     boundCloudProject,
+    boundRuntimeTaskAddress,
     boundProjectSpaceApi,
     clearCloudActionNotice,
     clearPendingProjectContext,

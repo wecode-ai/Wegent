@@ -95,11 +95,13 @@ describe('shared Issue execution facts', () => {
   function Activity({
     selected = message,
     single = true,
+    persistedStatus,
   }: {
     selected?: ProjectChatMessage
     single?: boolean
+    persistedStatus?: string
   }) {
-    const { status } = useIssueActivityExecutionStatus(selected, single)
+    const { status } = useIssueActivityExecutionStatus(selected, single, undefined, persistedStatus)
     return <output data-testid="activity">{status ?? 'unverified'}</output>
   }
   function Viewer({
@@ -120,17 +122,29 @@ describe('shared Issue execution facts', () => {
     issue = 'issue-1',
     selected = message,
     single = true,
+    persistedStatus,
     strict = false,
   } = {}) {
     const view = (
       <RuntimeConversationScope key={issue} runtime={runtime}>
-        <Activity selected={selected} single={single} />
+        <Activity selected={selected} single={single} persistedStatus={persistedStatus} />
         {open && <Viewer selected={selected} single={single} />}
       </RuntimeConversationScope>
     )
     await act(async () => root.render(strict ? <StrictMode>{view}</StrictMode> : view))
   }
   const status = (id = 'activity') => container.querySelector(`[data-testid="${id}"]`)?.textContent
+
+  it('keeps a durable terminal execution authoritative over stale streaming metadata', async () => {
+    await render({ persistedStatus: 'cancelled' })
+    expect(status()).toBe('cancelled')
+    expect(runtime.getTranscript).not.toHaveBeenCalled()
+  })
+
+  it('uses a durable active execution when no runtime turn has been observed', async () => {
+    await render({ persistedStatus: 'running' })
+    expect(status()).toBe('running')
+  })
 
   it.each([true, false])(
     'shares facts and retains the original turn after closing (identified=%s)',

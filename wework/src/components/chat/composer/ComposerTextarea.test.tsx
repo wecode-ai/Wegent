@@ -1263,6 +1263,37 @@ describe('ComposerTextarea', () => {
     await waitFor(() => expect(onSetPlanMode).toHaveBeenCalledOnce())
   })
 
+  test('opens drawing from the @ menu and removes only the action trigger', async () => {
+    const onDraw = vi.fn()
+    const textareaRef = createRef<HTMLElement>()
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          textareaRef={textareaRef}
+          className="min-h-12"
+          onPasteFiles={vi.fn()}
+          onDraw={onDraw}
+        />
+      )
+    }
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = 'Draft @'
+      editor.focus()
+    })
+    fireEvent.click(await screen.findByTestId('mention-draw-action'))
+    expect(onDraw).toHaveBeenCalledOnce()
+    expect(editor.value).toBe('Draft ')
+    expect(screen.queryByTestId('local-skill-autocomplete')).not.toBeInTheDocument()
+  })
+
   test('adds a selected folder as an atomic composer reference', async () => {
     const textareaRef = createRef<HTMLElement>()
     const onPasteFiles = vi.fn()

@@ -2,14 +2,43 @@ import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef } from 'react'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
-import { isElectronRuntime } from '@/lib/runtime-environment'
-import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { parseRuntimeTaskRoute } from '@/lib/navigation'
+import {
+  useWorkspaceTabs,
+  type WorkspaceTabsContextValue,
+} from '@/features/workspace-tabs/workspaceTabsContextValue'
+import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 import { parseWeworkScheme, weworkDestinationRoute } from './scheme'
+
+function navigateWorkspaceTab(
+  workspaceTabs: WorkspaceTabsContextValue,
+  kind: WorkspaceTabKind,
+  contentRoute: string
+) {
+  const [pathname, search] = contentRoute.split('?')
+  const target = parseRuntimeTaskRoute(pathname, search)
+  const candidates = workspaceTabs.tabs.filter(tab => tab.kind === kind)
+  const matching = candidates.find(tab => {
+    if (!target) return tab.contentRoute === contentRoute
+    const [tabPath, tabSearch] = tab.contentRoute.split('?')
+    const task = parseRuntimeTaskRoute(tabPath, tabSearch)
+    return task?.deviceId === target.deviceId && task.taskId === target.taskId
+  })
+  const existing =
+    matching ??
+    candidates.find(tab => tab.id === workspaceTabs.activeTabId) ??
+    candidates.find(tab => tab.fixed) ??
+    candidates[0]
+  if (existing) workspaceTabs.selectTab(existing.id, { contentRoute })
+  else workspaceTabs.openTab(kind, { contentRoute })
+}
 
 export function WeworkSchemeBridge() {
   const tabs = useWorkspaceTabs()
   const connection = useContext(CloudConnectionContext)
   const connectionRef = useRef(connection)
+  const focusRequestRef = useRef(0)
   const pendingUrls = useRef(new Set<string>())
   const tabsRef = useRef(tabs)
   useLayoutEffect(() => {
@@ -23,13 +52,20 @@ export function WeworkSchemeBridge() {
     if (destination.kind === 'board' && (!cloud?.isConnected || !cloud.token)) {
       if (deferInRenderer) pendingUrls.current.add(url)
       if (cloud?.status !== 'restoring' && cloud?.status !== 'connecting') {
-        tabsRef.current.openTab('task', { contentRoute: '/settings/connections' })
+        navigateWorkspaceTab(tabsRef.current, 'task', '/settings/connections')
       }
       return false
     }
-    tabsRef.current.openTab(destination.kind === 'task' ? 'task' : 'board', {
-      contentRoute: weworkDestinationRoute(destination),
-    })
+    const route = weworkDestinationRoute(destination)
+    const focusedRoute =
+      destination.kind === 'board' && destination.commentId
+        ? `${route}&focusRequest=${Date.now()}-${++focusRequestRef.current}`
+        : route
+    navigateWorkspaceTab(
+      tabsRef.current,
+      destination.kind === 'task' ? 'task' : 'board',
+      focusedRoute
+    )
     return true
   }, [])
 
@@ -59,7 +95,7 @@ export function WeworkSchemeBridge() {
   }, [open])
 
   useEffect(() => {
-    if (!isElectronRuntime()) return
+    if (!isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
     let disposed = false
     let running = false
     let requested = false

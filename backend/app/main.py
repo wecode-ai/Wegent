@@ -392,11 +392,11 @@ async def _application_lifespan(app: FastAPI):
     # Initialize Socket.IO WebSocket emitter
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
     logger.info("Initializing Socket.IO...")
-    from app.core.socketio import get_sio
+    from app.core.socketio import initialize_socketio_server
     from app.services.chat.webpage_ws_chat_emitter import init_ws_emitter
     from app.services.loop_item_executions.wake import bind_socketio_loop
 
-    sio = get_sio()
+    sio = initialize_socketio_server()
     try:
         bind_socketio_loop(asyncio.get_running_loop())
     except RuntimeError:

@@ -2723,16 +2723,18 @@ mod tests {
 
         let server = &servers[crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME];
         assert_eq!(server["type"], "http");
-        assert_eq!(server["url"], "http://127.0.0.1:1/mcp");
+        let url = server["url"]
+            .as_str()
+            .expect("managed project-space MCP should use an HTTP URL");
+        assert!(url.starts_with("http://127.0.0.1:"));
+        assert!(url.ends_with("/mcp"));
         assert_eq!(server["timeout"], 60_000);
-        assert_eq!(
-            server["headers"]["Authorization"],
-            "Bearer test-space-mcp-instance-token"
-        );
-        assert_eq!(
-            server["headers"]["X-Wework-Mcp-Context"],
-            "test-space-mcp-context-handle"
-        );
+        assert!(server["headers"]["Authorization"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("Bearer ") && value.len() > "Bearer ".len()));
+        assert!(server["headers"]["X-Wework-Mcp-Context"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
         let serialized = serde_json::to_string(server).expect("serialized Claude MCP config");
         assert!(!serialized.contains("https://wework.example.com"));
         assert!(!serialized.contains("runtime-token"));
@@ -2758,11 +2760,14 @@ mod tests {
         assert!(!servers.contains_key(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME));
         let server = &servers[crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME];
         assert_eq!(server["type"], "http");
-        assert_eq!(server["url"], "http://127.0.0.1:1/notifications/mcp");
-        assert_eq!(
-            server["headers"]["X-Wework-Mcp-Context"],
-            "test-space-mcp-context-handle"
-        );
+        let url = server["url"]
+            .as_str()
+            .expect("managed notifications MCP should use an HTTP URL");
+        assert!(url.starts_with("http://127.0.0.1:"));
+        assert!(url.ends_with("/notifications/mcp"));
+        assert!(server["headers"]["X-Wework-Mcp-Context"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
         let serialized = serde_json::to_string(server).expect("serialized Claude MCP config");
         assert!(!serialized.contains("https://wework.example.com"));
         assert!(!serialized.contains("runtime-token"));

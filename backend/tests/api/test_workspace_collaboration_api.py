@@ -90,6 +90,7 @@ def test_workspace_persists_shared_execution_environment_defaults(
     assert updated.status_code == 200
     environment = updated.json()["execution_environment"]
     assert environment == {
+        "workspace_policy": "git_worktree",
         "repositories": [
             {
                 "name": "Wegent",
@@ -240,6 +241,7 @@ def test_workspace_execution_environment_initialize_preserves_namespace(
     initialized_workspace = initialize_response.json()
     assert initialized_workspace["namespace"] == group_name
     assert initialized_workspace["execution_environment"] == {
+        "workspace_policy": "git_worktree",
         "repositories": [],
         "setup_steps": [],
         "fingerprint": "",

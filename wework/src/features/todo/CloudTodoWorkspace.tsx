@@ -1,4 +1,4 @@
-import { RuntimeConfigurationProvider } from '@wegent/collaboration'
+import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { useIssueDispatchNotificationActionRegistration } from '@/features/notifications/useIssueDispatchNotificationActionRegistration'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
@@ -199,14 +199,22 @@ import { rememberProjectTaskStore } from '@/features/workbench/projectTaskTracki
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { IssueComposer } from './IssueComposer'
-import { issueDraftFromText } from './issueComposerDraft'
 import { associateLoopItemTags, loopItemLocalProject } from '@/api/localProjectAssociation'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns } from './todoShared'
 import { AiChatModal } from './AiChatModal'
 import { BackgroundTaskStarter } from './BackgroundTaskStarter'
 import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
-import { shouldPrepareWorkItemTask, workItemTaskInput } from './workItemTaskInput'
+import {
+  loadProjectSpaceCodeWorkspacePreference,
+  saveProjectSpaceCodeWorkspacePreference,
+} from './projectSpaceCodeWorkspacePreference'
+import {
+  shouldPrepareWorkItemTask,
+  workItemComposerReference,
+  workItemStartedUpdate,
+  workItemTaskInput,
+} from './workItemTaskInput'
 import {
   isRuntimeMyWorkItem,
   mergeRuntimeMyWorkItems,
@@ -320,6 +328,7 @@ function toWeworkTaskBinding(binding: WorkspaceTaskBinding): LoopItemTaskBinding
     task_title: binding.taskTitle,
     backend_task_id: binding.backendTaskId,
     modelSelection: binding.modelSelection as LoopItemTaskBinding['modelSelection'],
+    executionContext: binding.executionContext,
     binding_type: binding.bindingType,
     linked_at: binding.linkedAt,
   }
@@ -403,7 +412,10 @@ type SelectedTaskBinding = Pick<
 > & {
   work_item_id: string
 }
-type TaskBindingAddressInput = Pick<LoopItemTaskBinding, 'device_id' | 'task_id' | 'modelSelection'>
+type TaskBindingAddressInput = Pick<
+  LoopItemTaskBinding,
+  'device_id' | 'task_id' | 'modelSelection' | 'executionContext'
+>
 
 function selectedTaskBindingAddress(
   binding: TaskBindingAddressInput,
@@ -413,6 +425,17 @@ function selectedTaskBindingAddress(
   return hydrateRuntimeTaskAddress(runtimeWork, {
     deviceId: resolveWorkbenchDeviceId(devices, binding.device_id) ?? binding.device_id,
     taskId: binding.task_id,
+    ...(binding.executionContext?.runtime ? { runtime: binding.executionContext.runtime } : {}),
+    ...(binding.executionContext?.threadId ? { threadId: binding.executionContext.threadId } : {}),
+    ...(binding.executionContext?.workspacePath
+      ? { workspacePath: binding.executionContext.workspacePath }
+      : {}),
+    ...(binding.executionContext?.workspaceKind
+      ? { workspaceKind: binding.executionContext.workspaceKind }
+      : {}),
+    ...(binding.executionContext?.worktreeId
+      ? { worktreeId: binding.executionContext.worktreeId }
+      : {}),
     ...(binding.modelSelection
       ? { runtimeHandle: { modelSelection: binding.modelSelection } }
       : {}),
@@ -2434,9 +2457,6 @@ export function CloudTodoWorkspace({
           project_store: project.project_store,
         }
         const initialInput = issueDispatchPersonalTaskInput(action)
-        const preparedEnvironmentTaskRequest = projectExecutionEnvironmentTaskRequest(
-          project as CollaborationProject
-        )
         selectProject(project)
         setProjectView('board')
         setSelectedTaskBinding(null)
@@ -2447,24 +2467,22 @@ export function CloudTodoWorkspace({
           initialInput,
           backgroundAfterSend: true,
           dispatch: action,
-          taskRequest: preparedEnvironmentTaskRequest
-            ? {
-                ...preparedEnvironmentTaskRequest,
-                message: initialInput,
-                title: action.taskTitle,
-                cloudProjectId: String(project.id),
-                origin: {
-                  type: 'issue_dispatch',
-                  cloudProjectId: String(project.id),
-                  loopItemId: String(item.id),
-                  projectStore: project.project_store,
-                  dispatchId: action.dispatchId,
-                  roundId: action.roundId,
-                  assignmentId: action.assignmentId,
-                  humanAssignmentId: action.humanAssignmentId,
-                },
-              }
-            : undefined,
+          taskRequest: {
+            runtime: 'codex',
+            message: initialInput,
+            title: action.taskTitle,
+            cloudProjectId: String(project.id),
+            origin: {
+              type: 'issue_dispatch',
+              cloudProjectId: String(project.id),
+              loopItemId: String(item.id),
+              projectStore: project.project_store,
+              dispatchId: action.dispatchId,
+              roundId: action.roundId,
+              assignmentId: action.assignmentId,
+              humanAssignmentId: action.humanAssignmentId,
+            },
+          },
         })
       } catch (cause) {
         acceptedDispatchTaskActions.current.delete(action.idempotencyKey)
@@ -3581,6 +3599,27 @@ export function CloudTodoWorkspace({
   }
 
   const aiChatProject = selectedItemProject
+  const selectedProjectCodeWorkspacePreference = selectedItemProject
+    ? loadProjectSpaceCodeWorkspacePreference(user.id, projectSpaceRef(selectedItemProject))
+    : null
+  const selectedItemLocalProjectId = selectedItem ? localProjectIdForItem(selectedItem) : null
+  const selectedItemDefaultLocalProjectId =
+    selectedItemLocalProjectId ??
+    selectedProjectCodeWorkspacePreference?.localProjectId ??
+    (isMyTasksBoard ? selectedLocalProject?.id : null)
+  const selectedItemDefaultDeviceWorkspaceId =
+    selectedItemDefaultLocalProjectId === selectedProjectCodeWorkspacePreference?.localProjectId
+      ? (selectedProjectCodeWorkspacePreference?.deviceWorkspaceId ?? null)
+      : null
+  const selectedItemTaskRequestProjectId =
+    selectedItem && taskComposerRequest?.workItemId === selectedItem.id
+      ? runtimeTaskProjectUiId(runtimeWork, taskComposerRequest.taskRequest)
+      : null
+  const selectedItemTaskDeviceWorkspaceId =
+    selectedItemTaskRequestProjectId !== null &&
+    selectedItemTaskRequestProjectId !== selectedItemDefaultLocalProjectId
+      ? null
+      : selectedItemDefaultDeviceWorkspaceId
 
   function openIssueCreation(
     status: CloudLoopItem['status'] = 'inbox',
@@ -3948,9 +3987,16 @@ export function CloudTodoWorkspace({
 
   async function handleSelectedItemTaskCreated(
     _address: RuntimeTaskAddress,
-    localProject: ProjectWithTasks | null
+    localProject: ProjectWithTasks | null,
+    deviceWorkspaceId: number | null
   ) {
     if (!selectedItem || !selectedItemProject) return
+    if (localProject) {
+      saveProjectSpaceCodeWorkspacePreference(user.id, projectSpaceRef(selectedItemProject), {
+        localProjectId: localProject.id,
+        deviceWorkspaceId,
+      })
+    }
     const localApi = apiForProject(selectedItemProject)
     if (selectedItemProject.location === 'cloud' ? !cloudWorkspaceApi : !localApi) return
     try {
@@ -3963,28 +4009,15 @@ export function CloudTodoWorkspace({
           : await localApi!.getLoopItem(selectedItem.id)
       const associatedTags =
         isMyTasksBoard && localProject ? associateLoopItemTags(latest, localProject) : latest.tags
-      const associationChanged =
-        associatedTags.length !== latest.tags.length ||
-        associatedTags.some((tag, index) => tag !== latest.tags[index])
-      const updated =
-        latest.status === 'inbox' || associationChanged
-          ? selectedItemProject.location === 'cloud'
-            ? await cloudWorkspace.commands
-                .updateIssue(latest.id, {
-                  version: latest.version,
-                  ...(latest.status === 'inbox' ? { status: 'pending' } : {}),
-                  ...(associationChanged ? { tags: associatedTags } : {}),
-                })
-                .then(updated => {
-                  if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
-                  return toCloudLoopItem(updated)
-                })
-            : await localApi!.updateLoopItem(latest.id, {
-                version: latest.version,
-                ...(latest.status === 'inbox' ? { status: 'pending' } : {}),
-                ...(associationChanged ? { tags: associatedTags } : {}),
-              })
-          : latest
+      const startUpdate = workItemStartedUpdate(latest, associatedTags)
+      const updated = startUpdate
+        ? selectedItemProject.location === 'cloud'
+          ? await cloudWorkspace.commands.updateIssue(latest.id, startUpdate).then(updated => {
+              if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
+              return toCloudLoopItem(updated)
+            })
+          : await localApi!.updateLoopItem(latest.id, startUpdate)
+        : latest
       const locatedUpdated = {
         ...updated,
         project_store: selectedItem.project_store,
@@ -4686,6 +4719,9 @@ export function CloudTodoWorkspace({
                                   ? cloudWorkspaceApi!
                                   : localProjectManageApi!
                               }
+                              onProjectChange={updated =>
+                                replaceProject(selectedProject, updated as CloudProject)
+                              }
                               project={selectedProject}
                               translate={(key, fallback, options) =>
                                 fallback === undefined ? t(key, options) : t(key, fallback, options)
@@ -5357,6 +5393,7 @@ export function CloudTodoWorkspace({
                   key={selectedItem.id}
                   mode="edit"
                   presentation="workspace-panel"
+                  readFirst
                   selectedTaskId={
                     selectedTaskBinding?.work_item_id === selectedItem.id
                       ? selectedTaskBinding.task_id
@@ -5369,7 +5406,7 @@ export function CloudTodoWorkspace({
                   teamApi={services.teamApi}
                   projectChatClient={selectedProjectChatClient}
                   selfManagedExecution={selectedProjectSelfManagedExecution}
-                  currentUserId={user.id}
+                  currentUserId={selectedItemProject?.current_user_id ?? user.id}
                   localProjects={localProjects}
                   aitableApi={
                     selectedItemProject?.task_provider === 'dingtalk_aitable'
@@ -5380,7 +5417,6 @@ export function CloudTodoWorkspace({
                   project={selectedItemProject}
                   allItems={detailAllItems}
                   showChildren={false}
-                  showAdditionalTaskAction={selectedItem.can_edit !== false}
                   initialTaskBindings={activeItemTaskBindings[selectedItem.id]}
                   taskExecutionStates={taskExecutionStatesByBindingId}
                   deviceNamesById={deviceNamesById}
@@ -5399,12 +5435,8 @@ export function CloudTodoWorkspace({
                     if (!selectedItemProject) return
                     openTaskComposer({
                       workItemId: selectedItem.id,
-                      initialInput: workItemTaskInput(selectedItem),
+                      initialInput: workItemComposerReference(selectedItemProject, selectedItem),
                       backgroundAfterSend: false,
-                      taskRequest:
-                        projectExecutionEnvironmentTaskRequest(
-                          selectedItemProject as CollaborationProject
-                        ) ?? undefined,
                     })
                   }}
                   onClose={closeIssuePanelStack}
@@ -5455,10 +5487,10 @@ export function CloudTodoWorkspace({
                   task={selectedItem}
                   initialLocalProjectId={
                     taskComposerRequest?.workItemId === selectedItem.id
-                      ? runtimeTaskProjectUiId(runtimeWork, taskComposerRequest.taskRequest)
-                      : (localProjectIdForItem(selectedItem) ??
-                        (isMyTasksBoard ? selectedLocalProject?.id : null))
+                      ? (selectedItemTaskRequestProjectId ?? selectedItemDefaultLocalProjectId)
+                      : selectedItemDefaultLocalProjectId
                   }
+                  initialDeviceWorkspaceId={selectedItemTaskDeviceWorkspaceId}
                   initialTaskRequest={
                     taskComposerRequest?.workItemId === selectedItem.id
                       ? taskComposerRequest.taskRequest
@@ -5538,10 +5570,8 @@ export function CloudTodoWorkspace({
               localProjects={localProjects}
               task={selectedItem}
               input={taskComposerRequest.initialInput}
-              initialLocalProjectId={
-                localProjectIdForItem(selectedItem) ??
-                (isMyTasksBoard ? selectedLocalProject?.id : null)
-              }
+              initialLocalProjectId={selectedItemDefaultLocalProjectId}
+              initialDeviceWorkspaceId={selectedItemTaskDeviceWorkspaceId}
               taskRequest={taskComposerRequest.taskRequest}
               inheritFromTask={taskComposerRequest.inheritFromTask}
               onAddressChange={() => {

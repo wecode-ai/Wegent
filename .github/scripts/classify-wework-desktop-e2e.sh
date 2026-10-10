@@ -6,7 +6,9 @@ core_segments=(
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
+  collaboration-issue-archive
   collaboration-first-use
+  collaboration-worktree-policy
   collaboration-group-onboarding
   collaboration-local-agent-dispatch
   collaboration-remote-agent-dispatch
@@ -39,6 +41,7 @@ core_segments=(
   task-board-bulk-actions
   core-task-flow
   task-attachments
+  drawing-attachment
   window-lifecycle
   goal-lifecycle
   supervisor-lifecycle
@@ -155,9 +158,9 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-local-group-cancellation
-  workspace-attachments,automation-lifecycle
+  project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
+  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation
+  workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
   rendering-extensions,transcript-sync
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
@@ -300,6 +303,7 @@ select_cloud_worktree_checkpoints() {
 }
 
 select_collaboration_dispatch_checkpoints() {
+  select_target "core:collaboration-worktree-policy"
   select_target "core:project-assignment-notification"
   select_target "core:collaboration-local-agent-dispatch"
   select_target "core:collaboration-remote-agent-dispatch"
@@ -320,6 +324,14 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/components/chat/composer/Drawing* | \
+      wework/src/components/chat/composer/useComposerDrawing* | \
+      wework/src/components/chat/composer/drawing-canvas.css | \
+      wework/vite/excalidrawAssets* | \
+      wework/e2e/desktop/scenarios/drawing-attachment.scenario.mjs)
+      select_target "core:drawing-attachment"
+      return
+      ;;
     # System proxy resolution spans Electron, local runtime request routing,
     # and the proxy settings surface.
     wework/electron/src/host/system-proxy* | \
@@ -551,6 +563,14 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs)
       select_target "core:collaboration-shared-core"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs)
+      select_target "core:collaboration-issue-archive"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-worktree-policy.scenario.mjs)
+      select_target "core:collaboration-worktree-policy"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-first-use.scenario.mjs)
@@ -900,6 +920,11 @@ classify_wework_path() {
       select_target "core:core-task-flow"
       select_target "core:project-ai-settings"
       select_target "core:model-routing"
+      if [[ "$path" == wework/src/components/chat/composer/ComposerToolbar* || \
+        "$path" == wework/src/components/chat/composer/ComposerTextarea* || \
+        "$path" == wework/src/components/chat/composer/CompactChatComposer* ]]; then
+        select_target "core:drawing-attachment"
+      fi
       return
       ;;
 
@@ -1020,13 +1045,18 @@ classify_path() {
       packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-issue-archive"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
       select_target "cloud:cloud-device-lifecycle"
       ;;
     packages/collaboration/*)
+      if [[ "$path" == packages/collaboration/src/composer/* ]]; then
+        select_target "core:drawing-attachment"
+      fi
       select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-issue-archive"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
@@ -1043,7 +1073,9 @@ classify_path() {
       select_all_desktop_suites
       ;;
     .github/workflows/wework-e2e.yml | \
+      .github/actions/build-wework-core-e2e/* | \
       docker/wework-e2e/* | \
+      .github/scripts/download-actions-artifact.sh | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \

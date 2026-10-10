@@ -5,6 +5,18 @@
   "events": [
     {
       "description": {
+        "zh-CN": "智能工作台运行时启动尝试，用于关联成功、失败和超时卡住",
+        "en": "A Smart App runtime startup attempt used to correlate success, failure, and timeout"
+      },
+      "eventSchemaVersion": 1,
+      "key": "smart_app.start_attempted",
+      "kind": "observation",
+      "name": "smart_app_start_attempted",
+      "properties": [{ "name": "startup_id", "type": "string", "maxLength": 36 }],
+      "title": { "zh-CN": "开始启动智能工作台运行时", "en": "Begin starting Smart App runtime" }
+    },
+    {
+      "description": {
         "zh-CN": "用户进入智能工作台市场入口",
         "en": "The user enters the Smart App marketplace"
       },
@@ -374,7 +386,10 @@
       "name": "smart_app_start_succeeded",
       "operation": "start",
       "outcome": "succeeded",
-      "properties": [{ "name": "domain", "type": "enum", "values": ["smart_app"] }],
+      "properties": [
+        { "name": "domain", "type": "enum", "values": ["smart_app"] },
+        { "name": "startup_id", "type": "string", "maxLength": 36 }
+      ],
       "title": { "zh-CN": "启动智能工作台运行时", "en": "Start Smart App runtime" }
     },
     {
@@ -391,6 +406,7 @@
       "outcome": "failed",
       "properties": [
         { "name": "domain", "type": "enum", "values": ["smart_app"] },
+        { "name": "startup_id", "type": "string", "maxLength": 36 },
         { "name": "failure_stage", "type": "enum", "values": ["request", "confirm"] }
       ],
       "title": { "zh-CN": "启动智能工作台运行时", "en": "Start Smart App runtime" }

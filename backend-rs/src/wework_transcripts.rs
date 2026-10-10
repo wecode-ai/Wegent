@@ -2,15 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Wework transcript listing for `GET /api/wework-transcripts`.
+//! Wework transcript listing for `GET /api/wework-transcripts` and the
+//! per-user segment key for
+//! `GET /api/wework-transcripts/{transcript_id}/encryption-key`.
 //!
-//! Mirrors `app.api.endpoints.wework_transcripts.list_transcripts_endpoint`
-//! (router prefix `/wework-transcripts`, mounted under the app prefix
-//! `/api`): authenticate the bearer token, list the user's transcripts
-//! ordered by `updated_at` descending, and for each transcript load its
-//! retained archives ordered by `to_sequence`. The response follows the
-//! `TranscriptListResponse` pydantic model with `by_alias=True` so fields
-//! render in camelCase.
+//! Mirrors `app.api.endpoints.wework_transcripts` (router prefix
+//! `/wework-transcripts`, mounted under the app prefix `/api`):
+//! authenticate the bearer token, then list the user's transcripts ordered by
+//! `updated_at` descending while loading each transcript's retained archives
+//! ordered by `to_sequence`, or resolve one transcript for the requesting user
+//! before returning that user's encryption key. The listing response follows
+//! the `TranscriptListResponse` pydantic model with `by_alias=True` so fields
+//! render in camelCase; the key response renders the source
+//! `TranscriptEncryptionKeyResponse` fields unchanged.
 //! Column aliases (`wework_transcripts_<column>`,
 //! `wework_transcript_archives_<column>`) mirror the source SQLAlchemy
 //! labeled rendering so the prepared statements match the recorded exchanges.
@@ -148,6 +152,31 @@ const TRANSCRIPTS_QUERY_ACTIVE_ONLY: &str = "SELECT wework_transcripts.id AS wew
      FROM wework_transcripts \
      WHERE wework_transcripts.user_id = ? AND wework_transcripts.state = 'active' \
      ORDER BY wework_transcripts.updated_at DESC";
+
+/// The single-transcript lookup
+/// (`wework_transcript_service.get_transcript`): the same labeled projection
+/// as the listing, filtered by the requesting `user_id` and the
+/// `transcript_id`, with the source `query.first()`'s `LIMIT 1`. Recorded
+/// exchanges render both filters as row values, so the projection mirrors the
+/// listing query and the conditions stay separate AND branches.
+const TRANSCRIPT_BY_ID_QUERY: &str = "SELECT wework_transcripts.id AS wework_transcripts_id, \
+     wework_transcripts.user_id AS wework_transcripts_user_id, \
+     wework_transcripts.transcript_id AS wework_transcripts_transcript_id, \
+     wework_transcripts.parent_transcript_id AS wework_transcripts_parent_transcript_id, \
+     wework_transcripts.forked_at_sequence AS wework_transcripts_forked_at_sequence, \
+     wework_transcripts.title AS wework_transcripts_title, \
+     wework_transcripts.state AS wework_transcripts_state, \
+     wework_transcripts.current_sequence AS wework_transcripts_current_sequence, \
+     wework_transcripts.archived_through_sequence AS wework_transcripts_archived_through_sequence, \
+     wework_transcripts.writer_client_id AS wework_transcripts_writer_client_id, \
+     wework_transcripts.writer_fencing_token AS wework_transcripts_writer_fencing_token, \
+     wework_transcripts.writer_lease_expires_at AS wework_transcripts_writer_lease_expires_at, \
+     wework_transcripts.archived_at AS wework_transcripts_archived_at, \
+     wework_transcripts.created_at AS wework_transcripts_created_at, \
+     wework_transcripts.updated_at AS wework_transcripts_updated_at \
+     FROM wework_transcripts \
+     WHERE wework_transcripts.user_id = ? AND wework_transcripts.transcript_id = ? \
+     LIMIT 1";
 
 /// The `wework_transcript_archives` retained-floor query
 /// (`wework_transcript_service._retained_archive_floor`): the two newest
@@ -321,6 +350,96 @@ async fn transcripts_list(
     Ok(TranscriptListResponse { items })
 }
 
+/// `TranscriptEncryptionKeyResponse` (`app.schemas.wework_transcript`):
+/// `algorithm` is the source `KEY_ALGORITHM` constant and `key` is the
+/// requesting user's derived segment key. The model declares no aliases, so
+/// both fields render unchanged.
+#[derive(serde::Serialize)]
+struct TranscriptEncryptionKeyResponse {
+    algorithm: &'static str,
+    key: String,
+}
+
+/// GET /api/wework-transcripts/{transcript_id}/encryption-key: the source
+/// handler resolves the transcript for the authenticated user before it
+/// returns the key, so an unknown or foreign transcript id is a 404.
+#[brz_http_server::get("/api/wework-transcripts/:transcript_id/encryption-key")]
+async fn get_transcript_encryption_key(
+    #[inject(state)] state: &AppState,
+    transcript_id: &str,
+    #[auth] user: crate::auth::SessionUser,
+) -> Result<TranscriptEncryptionKeyResponse, FastApiError> {
+    encryption_key_response(state, user.id, transcript_id).await
+}
+
+/// Handler body for `GET /api/wework-transcripts/{transcript_id}/encryption-key`:
+/// `_translate(wework_transcript_service.get_transcript(...))` followed by
+/// `transcript_encryption_key(current_user.id)`. The lookup is a read-only
+/// existence check, so the loaded row is not rendered.
+async fn encryption_key_response(
+    state: &AppState,
+    user_id: i32,
+    transcript_id: &str,
+) -> Result<TranscriptEncryptionKeyResponse, FastApiError> {
+    let transcript: Option<TranscriptRow> = match state
+        .mysql
+        .fetch_optional(TRANSCRIPT_BY_ID_QUERY, (user_id, transcript_id))
+        .await
+    {
+        Ok(row) => row,
+        Err(error) => {
+            tracing::error!(%error, "wework_transcripts database dependency failure");
+            return Err(internal_error());
+        }
+    };
+    if transcript.is_none() {
+        return Err(transcript_not_found());
+    }
+
+    Ok(TranscriptEncryptionKeyResponse {
+        algorithm: crate::wework_transcript_encryption::KEY_ALGORITHM,
+        key: crate::wework_transcript_encryption::transcript_encryption_key(
+            &configured_master_key(state),
+            user_id,
+        ),
+    })
+}
+
+/// `settings.WEWORK_TRANSCRIPT_ENCRYPTION_KEY or settings.SECRET_KEY`:
+/// the configured master secret the per-user key derives from. The source
+/// `or` treats an unset (empty) encryption key as absent and then uses the JWT
+/// signing key, which the target already loaded at startup.
+fn configured_master_key(state: &AppState) -> String {
+    crate::config::env_or_dotenv("WEWORK_TRANSCRIPT_ENCRYPTION_SECRET")
+        .unwrap_or_else(|| state.auth.jwt_key.clone())
+}
+
+/// `WeworkTranscriptError` rendered by `_translate`:
+/// `404 {"detail": {"code": "transcript_not_found", "message": ...}}`.
+fn transcript_not_found() -> FastApiError {
+    FastApiError::json_body(
+        brz_http_server::StatusCode::NOT_FOUND,
+        TranscriptErrorResponse {
+            detail: TranscriptErrorBody {
+                code: "transcript_not_found",
+                message: "Wework transcript not found",
+            },
+        },
+    )
+}
+
+/// The `_translate` error body (`{"detail": {"code", "message"}}`).
+#[derive(serde::Serialize)]
+struct TranscriptErrorResponse {
+    detail: TranscriptErrorBody,
+}
+
+#[derive(serde::Serialize)]
+struct TranscriptErrorBody {
+    code: &'static str,
+    message: &'static str,
+}
+
 /// `wework_transcript_service._retained_archive_floor`: the two newest
 /// snapshot `to_sequence` values for the transcript; the floor is the second
 /// value, or `0` when fewer than two snapshots exist. A database failure here
@@ -484,5 +603,48 @@ mod tests {
              ORDER BY wework_transcript_archives.to_sequence DESC \
              LIMIT 2";
         assert_eq!(ARCHIVES_FLOOR_QUERY, expected);
+    }
+
+    #[test]
+    fn transcript_by_id_query_filters_the_user_and_transcript_with_limit_one() {
+        let expected_tail = "WHERE wework_transcripts.user_id = ? \
+             AND wework_transcripts.transcript_id = ? \
+             LIMIT 1";
+        assert!(
+            TRANSCRIPT_BY_ID_QUERY
+                .trim()
+                .ends_with(expected_tail.trim())
+        );
+        assert!(
+            TRANSCRIPT_BY_ID_QUERY.starts_with(TRANSCRIPTS_QUERY.split(" FROM ").next().unwrap())
+        );
+    }
+
+    #[test]
+    fn encryption_key_response_renders_the_source_model_fields() {
+        let body = crate::json_contract_tests::serialized(TranscriptEncryptionKeyResponse {
+            algorithm: crate::wework_transcript_encryption::KEY_ALGORITHM,
+            key: crate::wework_transcript_encryption::transcript_encryption_key("master", 2095),
+        })
+        .unwrap();
+        assert_eq!(body["algorithm"], json!("aes-256-gcm"));
+        assert_eq!(
+            body["key"],
+            json!(crate::wework_transcript_encryption::transcript_encryption_key("master", 2095))
+        );
+    }
+
+    #[test]
+    fn encryption_key_missing_transcript_renders_the_translate_error_body() {
+        let error = transcript_not_found();
+        assert_eq!(error.status(), brz_http_server::StatusCode::NOT_FOUND);
+        let detail: Value = serde_json::from_str(&error.validation_detail()).unwrap();
+        assert_eq!(
+            detail,
+            json!({
+                "code": "transcript_not_found",
+                "message": "Wework transcript not found",
+            })
+        );
     }
 }

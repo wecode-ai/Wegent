@@ -24,6 +24,7 @@ import {
   Flag,
   Folder,
   History,
+  Eye,
   Link2,
   ListTodo,
   Maximize2,
@@ -44,6 +45,9 @@ import {
   IssueDetailSearchableSelect,
   IssueDetailStatusSelect,
   IssueStatusHistoryList,
+  issueExecutionElapsedMinutes,
+  isExecutionActive as isTaskExecutionActive,
+  Tooltip,
   issueAssigneeTarget,
   parseIssueAssigneeTarget,
   persistIssueDetailDraft,
@@ -61,6 +65,7 @@ import {
   type SharedIssueDetailTaskExecutionState,
 } from "./issue-detail";
 import "./issue-detail/issue-detail.css";
+import { issueDraftFromText } from "./issueDraft";
 import type {
   CollaborationAssignment,
   CollaborationAttachment,
@@ -138,13 +143,19 @@ export interface SharedIssueDetailExtensions {
   dueDateFromSource?(value: string | null): string;
   dueDateToSource?(value: string, context: DueDateSourceContext): string;
   isExecutionActive?(item: SharedEditorIssue): boolean;
-  openAttachment?(attachmentId: string, filename: string): Promise<void>;
+  openAttachment?(
+    attachmentId: string,
+    filename: string,
+    contentType: string | null,
+    sizeBytes: number,
+  ): Promise<void>;
   renderDescriptionEditor?(context: {
     value: string;
     editable: boolean;
     onChange(value: string): void;
-    onPasteFiles(files: File[]): void;
+    onPasteFiles(files: File[]): Promise<string | null>;
     readAttachment(attachmentId: string): Promise<Blob>;
+    onInlineAttachmentIdsChange(attachmentIds: string[]): void;
   }): ReactNode;
   renderActivity?(context: SharedIssueDetailExtensionContext): ReactNode;
   renderAITableFields?(context: {
@@ -164,6 +175,11 @@ export interface SharedIssueDetailExtensions {
     onClose(): void;
   }): ReactNode;
   renderCreateOptions?(context: { saving: boolean }): ReactNode;
+  renderPersonalTaskAction?(context: {
+    item: SharedEditorIssue;
+    tasks: SharedIssueDetailTaskBinding[];
+    onCreateTask(): void;
+  }): ReactNode;
 }
 
 type TodoEditorPort = SharedIssueDetailPort;
@@ -206,7 +222,7 @@ function memberNameById(
 
 type AttachmentRow = Pick<
   CloudLoopItemAttachment,
-  "id" | "display_name" | "size_bytes"
+  "id" | "display_name" | "content_type" | "size_bytes"
 >;
 
 type TodoDraft = {
@@ -301,14 +317,6 @@ function descendantIds(items: CloudLoopItem[], itemId: string): Set<string> {
     }
   }
   return result;
-}
-
-function appendAttachmentMarkdown(
-  description: string,
-  markdown: string,
-): string {
-  if (!markdown) return description;
-  return `${description.trimEnd()}\n\n${markdown}`.trim();
 }
 
 function todoDueDateFromSource(dueAt: string | null): string {
@@ -426,8 +434,10 @@ function TodoAttachmentSection({
   error,
   editable,
   compactRail = false,
+  totalCount,
   downloadingId,
   onAdd,
+  onReadPreview,
   onOpen,
   onDownload,
   onRemove,
@@ -438,8 +448,10 @@ function TodoAttachmentSection({
   error: string | null;
   editable: boolean;
   compactRail?: boolean;
+  totalCount?: number;
   downloadingId?: string | null;
   onAdd: (files: FileList | null) => Promise<void>;
+  onReadPreview?: (attachmentId: string) => Promise<Blob>;
   onOpen?: (attachment: AttachmentRow) => Promise<void>;
   onDownload?: (attachment: AttachmentRow) => Promise<void>;
   onRemove: (attachment: AttachmentRow) => Promise<void>;
@@ -453,6 +465,7 @@ function TodoAttachmentSection({
     (attachment) => ({
       id: attachment.id,
       displayName: attachment.display_name,
+      contentType: attachment.content_type,
       sizeBytes: attachment.size_bytes,
     }),
   );
@@ -466,6 +479,7 @@ function TodoAttachmentSection({
       error={error}
       editable={editable}
       compact={compactRail}
+      totalCount={totalCount}
       downloadingId={downloadingId}
       labels={{
         title: translate("todo.attachment", "附件"),
@@ -477,6 +491,10 @@ function TodoAttachmentSection({
           "点击上传或拖拽文件到这里",
         ),
         downloading: translate("todo.file_downloading", "下载中…"),
+        open: (name) =>
+          translate("todo.preview_task_attachment", "预览任务附件 {{name}}", {
+            name,
+          }),
         expand: (count) =>
           translate("todo.view_all_count", "查看全部 {{count}} 个", {
             count,
@@ -493,6 +511,7 @@ function TodoAttachmentSection({
         remove: <Trash2 className="icon" />,
       }}
       onAdd={onAdd}
+      loadPreview={onReadPreview}
       onOpen={
         onOpen
           ? async (attachment) => {
@@ -502,7 +521,7 @@ function TodoAttachmentSection({
           : undefined
       }
       onDownload={
-        onDownload
+        !compactRail && onDownload
           ? async (attachment) => {
               const original = byId.get(attachment.id);
               if (original) await onDownload(original);
@@ -581,11 +600,9 @@ export type TodoEditorProps = {
   /** Device display names keyed by the device ID stored in task bindings. */
   deviceNamesById?: Readonly<Record<string, string>>;
   headerActions?: ReactNode;
-  /**
-   * Delete this Issue. Rendered inside the header overflow menu so the
-   * destructive action stays away from the primary edit and save controls.
-   */
+  /** Render the host-provided destructive or lifecycle action in the menu. */
   onDelete?: () => void;
+  deleteLabel?: string;
   selectedTaskId?: string | null;
   onCreateTask?: () => void;
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void;
@@ -646,6 +663,8 @@ function taskExecutionDotClass(
   return "is-idle";
 }
 
+const COLLAPSED_EXECUTION_TASK_LIMIT = 2;
+
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
 // local draft and stages attachments until the item exists; edit mode loads the
 // sections that require an item id (children, collaborators, executions,
@@ -684,9 +703,11 @@ export function TodoEditor(props: TodoEditorProps) {
     ? todoDraftKey(createProps.project.id, createProps.initialStatus)
     : null;
   const [draft] = useState(() => (draftKey ? readTodoDraft(draftKey) : null));
+  const [editingContent, setEditingContent] = useState(!readFirst);
 
   const {
     draft: issueDraft,
+    setDraft: setIssueDraft,
     setField: setIssueDraftField,
     dirty,
   } = useIssueDetailDraft({
@@ -718,20 +739,31 @@ export function TodoEditor(props: TodoEditorProps) {
     setIssueDraftField("title", value);
   const setDescription = (value: SetStateAction<string>) =>
     setIssueDraftField("description", value);
-  const setStatus = (value: SetStateAction<CloudLoopItem["status"]>) =>
+  const setStatus = (value: SetStateAction<CloudLoopItem["status"]>) => {
     setIssueDraftField("status", value);
-  const setPriority = (value: SetStateAction<CloudLoopItem["priority"]>) =>
+    if (readFirst) setEditingContent(true);
+  };
+  const setPriority = (value: SetStateAction<CloudLoopItem["priority"]>) => {
     setIssueDraftField("priority", value);
+    if (readFirst) setEditingContent(true);
+  };
   const setParentId = useCallback(
-    (value: SetStateAction<string>) => setIssueDraftField("parentId", value),
-    [setIssueDraftField],
+    (value: SetStateAction<string>) => {
+      setIssueDraftField("parentId", value);
+      if (readFirst) setEditingContent(true);
+    },
+    [readFirst, setIssueDraftField],
   );
-  const setDueDate = (value: SetStateAction<string>) =>
+  const setDueDate = (value: SetStateAction<string>) => {
     setIssueDraftField("dueDate", value);
+    if (readFirst) setEditingContent(true);
+  };
   const setAssigneeTarget = (value: SetStateAction<IssueAssigneeTarget>) =>
     setIssueDraftField("assigneeTarget", value);
-  const setTags = (value: SetStateAction<string[]>) =>
+  const setTags = (value: SetStateAction<string[]>) => {
     setIssueDraftField("tags", value);
+    if (readFirst) setEditingContent(true);
+  };
   const [notifyAssignee, setNotifyAssignee] = useState(
     draft?.notifyAssignee ?? true,
   );
@@ -764,6 +796,9 @@ export function TodoEditor(props: TodoEditorProps) {
     () => props.initialTaskBindings ?? [],
   );
   const [attachments, setAttachments] = useState<CloudLoopItemAttachment[]>([]);
+  const [inlinePreviewAttachmentIds, setInlinePreviewAttachmentIds] = useState<
+    Set<string>
+  >(new Set());
   const [collaborators, setCollaborators] = useState<
     CloudLoopItemCollaborator[]
   >([]);
@@ -795,7 +830,6 @@ export function TodoEditor(props: TodoEditorProps) {
   >({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [editingContent, setEditingContent] = useState(!readFirst);
   const [tasksExpanded, setTasksExpanded] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   const [assignmentChainOpen, setAssignmentChainOpen] = useState(false);
@@ -805,6 +839,29 @@ export function TodoEditor(props: TodoEditorProps) {
   const detailScrollRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
+
+  const beginContentEditing = useCallback(
+    (target: "title" | "description") => {
+      if (!readFirst || !editable || editingContent) return;
+      setDescriptionExpanded(true);
+      setEditingContent(true);
+      window.requestAnimationFrame(() => {
+        if (target === "title") {
+          const titleElement = titleRef.current;
+          if (!titleElement) return;
+          titleElement.focus();
+          titleElement.setSelectionRange(title.length, title.length);
+          return;
+        }
+        const editorElement =
+          descriptionCollapseRef.current?.querySelector<HTMLElement>(
+            '[contenteditable="true"], textarea',
+          );
+        editorElement?.focus();
+      });
+    },
+    [editable, editingContent, readFirst, title],
+  );
 
   const editItemId = item?.id ?? null;
   const editProjectId = item?.cloud_project_id ?? null;
@@ -819,16 +876,34 @@ export function TodoEditor(props: TodoEditorProps) {
   const currentDeliveryRequestIdRef = useRef(0);
   const selectedDeliveryRequestIdRef = useRef(0);
   const attachmentsRequestIdRef = useRef(0);
-  const visibleAttachments = useMemo(() => {
+  const allAttachments = useMemo(() => {
     const merged = new Map<string, AttachmentRow>();
     markdownAttachmentRows(description).forEach((attachment) =>
-      merged.set(attachment.id, attachment),
+      merged.set(attachment.id, { ...attachment, content_type: null }),
     );
     attachments.forEach((attachment) => merged.set(attachment.id, attachment));
     return Array.from(merged.values());
   }, [attachments, description]);
-  const effectiveTasks =
-    tasks.length > 0 ? tasks : (props.initialTaskBindings ?? tasks);
+  const visibleAttachments = useMemo(() => {
+    const inlineAttachmentIds = new Set(
+      markdownAttachmentRows(description).map((attachment) => attachment.id),
+    );
+    return allAttachments.filter(
+      (attachment) =>
+        !inlineAttachmentIds.has(attachment.id) ||
+        !inlinePreviewAttachmentIds.has(attachment.id),
+    );
+  }, [allAttachments, description, inlinePreviewAttachmentIds]);
+  const effectiveTasks = useMemo(() => {
+    if (!props.initialTaskBindings) return tasks;
+    const initialTaskIds = new Set(
+      props.initialTaskBindings.map((task) => String(task.id)),
+    );
+    return [
+      ...props.initialTaskBindings,
+      ...tasks.filter((task) => !initialTaskIds.has(String(task.id))),
+    ];
+  }, [props.initialTaskBindings, tasks]);
   const refreshTaskBindings = useCallback(async () => {
     if (editItemId == null) return;
     const requestId = ++taskBindingsRequestIdRef.current;
@@ -1205,24 +1280,51 @@ export function TodoEditor(props: TodoEditorProps) {
       ? effectiveTasks.slice(0, 1)
       : []
     : effectiveTasks;
+  const activeDisplayedTasks = displayedTasks.filter((task) =>
+    isTaskExecutionActive(
+      props.taskExecutionStates?.[String(task.id)]?.status,
+    ),
+  );
+  const activeDisplayedTaskIds = new Set(
+    activeDisplayedTasks.map((task) => String(task.id)),
+  );
+  const recentInactiveTasks = displayedTasks
+    .filter((task) => !activeDisplayedTaskIds.has(String(task.id)))
+    .slice()
+    .sort(
+      (left, right) =>
+        Date.parse(right.linked_at ?? "") - Date.parse(left.linked_at ?? ""),
+    );
+  const collapsedDisplayedTasks = [
+    ...activeDisplayedTasks,
+    ...recentInactiveTasks.slice(
+      0,
+      Math.max(
+        0,
+        COLLAPSED_EXECUTION_TASK_LIMIT - activeDisplayedTasks.length,
+      ),
+    ),
+  ];
+  const orderedDisplayedTasks = [
+    ...activeDisplayedTasks,
+    ...recentInactiveTasks,
+  ];
+  const visibleDisplayedTasks = tasksExpanded
+    ? orderedDisplayedTasks
+    : collapsedDisplayedTasks;
   const executionChildItems = showChildren ? [] : childItems;
   const executionTaskCount = executionChildItems.length + displayedTasks.length;
+  const canToggleExecutionDetails =
+    displayedTasks.length > collapsedDisplayedTasks.length ||
+    executionChildItems.length > COLLAPSED_EXECUTION_TASK_LIMIT ||
+    deliveries.length > 0;
   const hasExecutionDetails =
     executionTaskCount > 0 ||
     deliveries.length > 0 ||
     (showChildren && childItems.length > 0);
-  const executionStartedAt = displayedTasks
-    .map((task) => task.linked_at)
-    .filter(Boolean)
-    .sort()[0];
-  const executionElapsedMinutes = executionStartedAt
-    ? Math.max(
-        1,
-        Math.floor(
-          (Date.now() - new Date(executionStartedAt).getTime()) / 60_000,
-        ),
-      )
-    : null;
+  const executionElapsedMinutes = issueExecutionElapsedMinutes(
+    displayedTasks.map((task) => task.linked_at),
+  );
   const executionElapsedLabel =
     executionElapsedMinutes === null
       ? t("todo.not_started", "未开始")
@@ -1251,6 +1353,7 @@ export function TodoEditor(props: TodoEditorProps) {
     (file, index) => ({
       id: `pending-${index}`,
       display_name: file.name,
+      content_type: file.type || null,
       size_bytes: file.size,
     }),
   );
@@ -1328,6 +1431,8 @@ export function TodoEditor(props: TodoEditorProps) {
         (project.access_role === "Owner" ||
           project.access_role === "Maintainer"),
       ));
+  const assigneeChanged =
+    item !== null && assigneeTarget !== issueAssigneeTarget(item);
   const creator =
     item?.created_by_user_name ||
     (item && item.created_by_user_id === editProps?.project?.current_user_id
@@ -1335,11 +1440,12 @@ export function TodoEditor(props: TodoEditorProps) {
       : item
         ? memberNameById(projectMembers, item.created_by_user_id)
         : null);
+  const createTitle = title.trim() || issueDraftFromText(description).title;
 
   async function submitCreate() {
     if (
       props.mode !== "create" ||
-      !title.trim() ||
+      !createTitle ||
       saving ||
       createBlockedByExecutionEnvironment
     )
@@ -1347,7 +1453,7 @@ export function TodoEditor(props: TodoEditorProps) {
     setSaving(true);
     setSaveError(null);
     const createInput: SharedIssueDetailCreateInput = {
-      title: title.trim(),
+      title: createTitle,
       description,
       priority,
       status,
@@ -1400,13 +1506,7 @@ export function TodoEditor(props: TodoEditorProps) {
               ...(assigneeTarget.startsWith("user:") ? { notifyAssignee } : {}),
             });
       }
-      const uploaded = await uploadAttachments(created.id, pendingFiles);
-      if (uploaded.markdown) {
-        created = await editorPort.issues.update(created.id, {
-          version: created.version,
-          description: appendAttachmentMarkdown(description, uploaded.markdown),
-        });
-      }
+      await uploadAttachments(created.id, pendingFiles);
       if (draftKey) {
         localStorage.removeItem(draftKey);
         draftAttachmentStore.delete(draftKey);
@@ -1539,7 +1639,10 @@ export function TodoEditor(props: TodoEditorProps) {
         },
       );
       props.onUpdated(updated);
-      if (readFirst) setEditingContent(false);
+      if (readFirst) {
+        setEditingContent(false);
+        setDescriptionExpanded(false);
+      }
     } catch (cause) {
       setSaveError(
         cause instanceof Error
@@ -1549,6 +1652,29 @@ export function TodoEditor(props: TodoEditorProps) {
     } finally {
       setSaving(false);
     }
+  }
+
+  function cancelContentEditing() {
+    if (!item) return;
+    setIssueDraft({
+      title: item.title ?? "",
+      description: (extensions?.normalizeDescription ?? ((value) => value))(
+        item.description ?? "",
+      ),
+      status: item.status,
+      priority: item.priority,
+      parentId: item.parent_id ?? "",
+      dueDate: (extensions?.dueDateFromSource ?? todoDueDateFromSource)(
+        item.due_at,
+      ),
+      tags: item.tags ?? [],
+      assigneeTarget: issueAssigneeTarget(item),
+      workflow: null,
+    });
+    setTagDraft("");
+    setSaveError(null);
+    setEditingContent(false);
+    setDescriptionExpanded(false);
   }
 
   async function addCollaborator() {
@@ -1654,41 +1780,38 @@ export function TodoEditor(props: TodoEditorProps) {
     };
   }
 
-  function pasteAttachments(files: File[]) {
+  async function pasteAttachments(files: File[]): Promise<string | null> {
     if (isCreate) {
       setPendingFiles((current) => [...current, ...files]);
-      return;
+      return null;
     }
-    if (!editable || !editItemId || attachmentBusy) return;
+    if (!editable || !editItemId || attachmentBusy) return null;
     const itemId = editItemId;
     const itemLoadGeneration = itemLoadGenerationRef.current;
     attachmentsRequestIdRef.current += 1;
     setAttachmentBusy(true);
     setAttachmentError(null);
-    void uploadAttachments(itemId, files)
-      .then((result) => {
-        if (!isCurrentItemLoad(itemId, itemLoadGeneration)) return;
-        attachmentsRequestIdRef.current += 1;
-        setAttachments((current) => [
-          ...result.attachments.reverse(),
-          ...current,
-        ]);
-        setDescription((current) =>
-          appendAttachmentMarkdown(current, result.markdown),
-        );
-      })
-      .catch((cause) => {
-        if (!isCurrentItemLoad(itemId, itemLoadGeneration)) return;
-        setAttachmentError(
-          cause instanceof Error
-            ? cause.message
-            : t("todo.attachment_upload_failed", "附件上传失败"),
-        );
-      })
-      .finally(() => {
-        if (isCurrentItemLoad(itemId, itemLoadGeneration))
-          setAttachmentBusy(false);
-      });
+    try {
+      const result = await uploadAttachments(itemId, files);
+      if (!isCurrentItemLoad(itemId, itemLoadGeneration)) return null;
+      attachmentsRequestIdRef.current += 1;
+      setAttachments((current) => [
+        ...result.attachments.reverse(),
+        ...current,
+      ]);
+      return result.markdown || null;
+    } catch (cause) {
+      if (!isCurrentItemLoad(itemId, itemLoadGeneration)) return null;
+      setAttachmentError(
+        cause instanceof Error
+          ? cause.message
+          : t("todo.attachment_upload_failed", "附件上传失败"),
+      );
+      return null;
+    } finally {
+      if (isCurrentItemLoad(itemId, itemLoadGeneration))
+        setAttachmentBusy(false);
+    }
   }
 
   async function openAttachment(attachment: AttachmentRow) {
@@ -1697,7 +1820,12 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachmentError(null);
     try {
       if (extensions?.openAttachment) {
-        await extensions.openAttachment(attachment.id, attachment.display_name);
+        await extensions.openAttachment(
+          attachment.id,
+          attachment.display_name,
+          attachment.content_type,
+          attachment.size_bytes,
+        );
       } else {
         await editorPort.attachments.download(
           attachment.id,
@@ -2033,6 +2161,20 @@ export function TodoEditor(props: TodoEditorProps) {
       />
     </>
   );
+  const assigneeSaveButton =
+    assigneeChanged && (editable || canAssign) ? (
+      <button
+        type="button"
+        data-testid="cloud-todo-save"
+        disabled={!title.trim() || saving}
+        onClick={() => void saveDetails()}
+        className="task-detail-assignment-save"
+      >
+        {saving
+          ? t("todo.saving", "保存中…")
+          : t("todo.save_assignment", "保存分配")}
+      </button>
+    ) : null;
   const parentSelect = (
     <IssueDetailSearchableSelect
       testId={
@@ -2068,6 +2210,7 @@ export function TodoEditor(props: TodoEditorProps) {
       aria-label={t("todo.due_date", "截止时间")}
       type={extensions?.dueDateInputType ?? "date"}
       value={dueDate}
+      onClick={(event) => event.currentTarget.showPicker?.()}
       onChange={(event) => setDueDate(event.target.value)}
       disabled={!editable}
       className={overlayControlClass}
@@ -2084,6 +2227,11 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusLabel}
     </>
   );
+  const assigneeDisplayName = assigneeName ?? t("todo.unassigned", "未指派");
+  const issueSecurityLabel =
+    item?.security_level === "related"
+      ? t("todo.issue_security_related", "仅相关人员可见")
+      : t("todo.issue_security_open", "项目可访问者可见");
   const priorityValue = (
     <span
       className={cn(
@@ -2218,6 +2366,7 @@ export function TodoEditor(props: TodoEditorProps) {
           {assigneeSelect}
         </span>
       ) : null}
+      {!twoColumn ? assigneeSaveButton : null}
       {item && (
         <span
           data-testid="cloud-todo-detail-creator"
@@ -2393,11 +2542,6 @@ export function TodoEditor(props: TodoEditorProps) {
               <ChevronDown className="h-3 w-3" />
             </span>
           </RailProp>
-          <RailProp label={t("todo.due_date", "截止时间")} control={dueInput}>
-            <span className={cn(!dueDate && "text-text-muted")}>
-              {dueDate ? dueDate.slice(5) : t("todo.not_set", "未设置")}
-            </span>
-          </RailProp>
           <RailProp
             label={t("todo.project_tags", "标签")}
             clickable={false}
@@ -2430,9 +2574,10 @@ export function TodoEditor(props: TodoEditorProps) {
               {editable ? (
                 <label className="task-detail-workspace-tag-add">
                   <Plus className="h-3 w-3" />
-                  <span>{t("todo.add_tag", "添加标签")}</span>
                   <input
                     data-testid="cloud-todo-detail-tag-input"
+                    aria-label={t("todo.add_tag", "添加标签")}
+                    placeholder={t("todo.add_tag", "添加标签")}
                     value={tagDraft}
                     onChange={(event) => setTagDraft(event.target.value)}
                     onBlur={commitTagDraft}
@@ -2480,14 +2625,15 @@ export function TodoEditor(props: TodoEditorProps) {
     <div
       className={cn(
         "flex items-start justify-center",
-        fullScreen
-          ? "fixed inset-0 z-modal bg-black/35 p-3 backdrop-blur-sm"
-          : workspacePanel
-            ? cn(
-                "task-detail-workspace-panel-shell relative z-10 h-full min-h-0 shrink-0",
-                props.workspacePanelFill &&
-                  "task-detail-workspace-panel-fill w-full min-w-0",
-              )
+        workspacePanel
+          ? cn(
+              "task-detail-workspace-panel-shell relative z-10 h-full min-h-0 shrink-0",
+              props.workspacePanelFill &&
+                "task-detail-workspace-panel-fill w-full min-w-0",
+              fullScreen && "is-expanded",
+            )
+          : fullScreen
+            ? "fixed inset-0 z-modal bg-black/35 p-3 backdrop-blur-sm"
             : twoColumn
               ? "fixed bottom-0 right-0 top-[38px] z-modal w-[min(760px,calc(100vw-48px))]"
               : "fixed inset-0 z-modal bg-black/35 px-6 pb-6 pt-[6vh] backdrop-blur-sm",
@@ -2500,10 +2646,10 @@ export function TodoEditor(props: TodoEditorProps) {
         data-testid={isCreate ? "cloud-todo-create-panel" : "cloud-todo-detail"}
         className={cn(
           "flex flex-col overflow-hidden rounded-2xl bg-background shadow-2xl",
-          fullScreen
-            ? "h-full w-full"
-            : workspacePanel
-              ? "todo-floating-panel-surface h-full w-full max-w-none"
+          workspacePanel
+            ? "todo-floating-panel-surface h-full w-full max-w-none"
+            : fullScreen
+              ? "h-full w-full"
               : cn(
                   "max-w-[calc(100vw-48px)]",
                   twoColumn
@@ -2558,16 +2704,6 @@ export function TodoEditor(props: TodoEditorProps) {
           )}
           <span className="flex-1" />
           {props.headerActions}
-          {readFirst && editable && !editingContent ? (
-            <button
-              type="button"
-              data-testid="cloud-todo-edit-content"
-              onClick={() => setEditingContent(true)}
-              className="task-detail-workspace-edit"
-            >
-              {t("common.edit", "编辑")}
-            </button>
-          ) : null}
           {workspacePanel && item ? (
             <details className="task-detail-more-menu">
               <summary
@@ -2585,26 +2721,23 @@ export function TodoEditor(props: TodoEditorProps) {
                     onClick={props.onDelete}
                     type="button"
                   >
-                    {t("todo.delete_issue", "删除任务")}
+                    {props.deleteLabel ?? t("todo.delete_issue", "删除任务")}
                   </button>
                 ) : null}
               </div>
             </details>
           ) : null}
-          {twoColumn && !isCreate ? (
+          {twoColumn && !isCreate && !workspacePanel ? (
             <>
-              {(editable || canAssign) && (dirty || saving) ? (
+              {(editable || canAssign) &&
+              (dirty || saving) &&
+              !assigneeChanged ? (
                 <button
                   type="button"
                   data-testid="cloud-todo-save"
                   disabled={!title.trim() || saving}
                   onClick={() => void saveDetails()}
-                  className={cn(
-                    "mr-2 bg-text-primary px-3 font-medium text-background transition hover:opacity-90 disabled:opacity-50",
-                    workspacePanel
-                      ? "task-detail-workspace-save"
-                      : "h-8 rounded-lg text-sm",
-                  )}
+                  className="mr-2 h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                 >
                   {saving
                     ? t("todo.saving", "保存中…")
@@ -2623,12 +2756,24 @@ export function TodoEditor(props: TodoEditorProps) {
                       ? "cloud-todo-create-fullscreen"
                       : "cloud-todo-detail-fullscreen"
                   }
-                  onClick={() => setFullScreen((current) => !current)}
+                  onClick={() =>
+                    setFullScreen((current) => {
+                      const expanded = !current;
+                      if (expanded && workspacePanel) {
+                        setDescriptionExpanded(true);
+                      }
+                      return expanded;
+                    })
+                  }
                   className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
                   aria-label={
                     fullScreen
-                      ? t("todo.exit_full_screen", "退出全屏显示")
-                      : t("todo.full_screen", "全屏显示")
+                      ? workspacePanel
+                        ? t("todo.restore_issue_sidebar", "还原侧边栏")
+                        : t("todo.exit_full_screen", "退出全屏显示")
+                      : workspacePanel
+                        ? t("todo.expand_issue_detail", "展开详情")
+                        : t("todo.full_screen", "全屏显示")
                   }
                 >
                   {fullScreen ? (
@@ -2706,6 +2851,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 autoFocus={isCreate}
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
+                onClick={() => beginContentEditing("title")}
                 readOnly={!editable || (readFirst && !editingContent)}
                 rows={1}
                 maxLength={255}
@@ -2719,6 +2865,10 @@ export function TodoEditor(props: TodoEditorProps) {
                   readFirst &&
                     !editingContent &&
                     "task-detail-content-readonly",
+                  readFirst &&
+                    editable &&
+                    !editingContent &&
+                    "task-detail-content-clickable",
                 )}
               />
               {!workspacePanel ? (
@@ -2806,6 +2956,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       ) : null}
                     </span>
                   ) : null}
+                  {assigneeSaveButton}
                   <span className="task-detail-meta-item relative cursor-pointer">
                     <Calendar className="h-3.5 w-3.5" />
                     {t("todo.due_date", "截止时间")}
@@ -2826,12 +2977,25 @@ export function TodoEditor(props: TodoEditorProps) {
                 !description.trim()
               ) ? (
                 <div
+                  onClick={(event) => {
+                    if (
+                      event.target instanceof Element &&
+                      event.target.closest("button, a")
+                    ) {
+                      return;
+                    }
+                    beginContentEditing("description");
+                  }}
                   className={cn(
                     twoColumn ? "mt-0" : "mt-3 min-h-[240px]",
                     workspacePanel && "task-detail-workspace-description",
                     readFirst &&
                       !editingContent &&
                       "task-detail-content-readonly",
+                    readFirst &&
+                      editable &&
+                      !editingContent &&
+                      "task-detail-content-clickable",
                   )}
                 >
                   <div
@@ -2839,7 +3003,10 @@ export function TodoEditor(props: TodoEditorProps) {
                     data-overflowing={descriptionOverflowing ? "true" : "false"}
                     className={cn(
                       twoColumn && "task-detail-desc",
-                      twoColumn && !descriptionExpanded && "is-collapsed",
+                      twoColumn &&
+                        !editingContent &&
+                        !descriptionExpanded &&
+                        "is-collapsed",
                     )}
                   >
                     {extensions?.renderDescriptionEditor?.({
@@ -2849,6 +3016,8 @@ export function TodoEditor(props: TodoEditorProps) {
                       onPasteFiles: pasteAttachments,
                       readAttachment: (attachmentId) =>
                         editorPort.attachments.read(attachmentId),
+                      onInlineAttachmentIdsChange: (attachmentIds) =>
+                        setInlinePreviewAttachmentIds(new Set(attachmentIds)),
                     }) ?? (
                       <textarea
                         data-testid="cloud-todo-detail-description"
@@ -2870,37 +3039,65 @@ export function TodoEditor(props: TodoEditorProps) {
                       />
                     )}
                   </div>
-                  {twoColumn &&
-                  (descriptionOverflowing || descriptionExpanded) ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setDescriptionExpanded((current) => !current)
-                      }
-                      className="task-detail-desc-toggle"
+                  <div className="task-detail-desc-footer">
+                    {twoColumn &&
+                    !editingContent &&
+                    (descriptionOverflowing || descriptionExpanded) ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDescriptionExpanded((current) => !current)
+                        }
+                        className="task-detail-desc-toggle"
+                      >
+                        <span>
+                          {descriptionExpanded
+                            ? t("todo.collapse", "收起")
+                            : t("todo.expand_description", "展开描述")}
+                        </span>
+                        <ChevronDown
+                          className={cn(
+                            "h-3.5 w-3.5 transition-transform",
+                            descriptionExpanded && "rotate-180",
+                          )}
+                        />
+                      </button>
+                    ) : null}
+                    <p
+                      className={cn(
+                        "text-xs text-text-muted",
+                        twoColumn && !workspacePanel && "hidden",
+                        workspacePanel && "task-detail-desc-hint",
+                      )}
                     >
-                      <span>
-                        {descriptionExpanded
-                          ? t("todo.collapse", "收起")
-                          : t("todo.expand_description", "展开描述")}
+                      支持 Markdown，可拖拽文件到编辑器添加附件
+                    </p>
+                    {workspacePanel && editingContent ? (
+                      <span
+                        className="task-detail-desc-actions"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          data-testid="cloud-todo-cancel-content-edit"
+                          disabled={saving}
+                          onClick={cancelContentEditing}
+                        >
+                          {t("common.cancel", "取消")}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="cloud-todo-save"
+                          disabled={!dirty || !title.trim() || saving}
+                          onClick={() => void saveDetails()}
+                        >
+                          {saving
+                            ? t("todo.saving", "保存中…")
+                            : t("common.save", "保存")}
+                        </button>
                       </span>
-                      <ChevronDown
-                        className={cn(
-                          "h-3.5 w-3.5 transition-transform",
-                          descriptionExpanded && "rotate-180",
-                        )}
-                      />
-                    </button>
-                  ) : null}
-                  <p
-                    className={cn(
-                      "mt-2.5 text-xs text-text-muted",
-                      twoColumn && !workspacePanel && "hidden",
-                      workspacePanel && "task-detail-desc-hint",
-                    )}
-                  >
-                    支持 Markdown，可拖拽文件到编辑器添加附件
-                  </p>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
               {saveError && (
@@ -2932,8 +3129,10 @@ export function TodoEditor(props: TodoEditorProps) {
                         error={attachmentError}
                         editable={editable && editingContent}
                         compactRail
+                        totalCount={visibleAttachments.length}
                         downloadingId={downloadingAttachmentId}
                         onAdd={addAttachments}
+                        onReadPreview={editorPort.attachments.read}
                         onOpen={openAttachment}
                         onDownload={
                           extensions?.openAttachment
@@ -2987,98 +3186,174 @@ export function TodoEditor(props: TodoEditorProps) {
                     aria-label={t("todo.current_state", "当前状态")}
                   >
                     <span className="task-detail-state-leading">
-                      <span className="task-detail-state-primary relative">
-                        {statusValue}
-                        {editable ? (
-                          <ChevronDown aria-hidden="true" size={13} />
-                        ) : null}
-                        {statusSelect}
-                      </span>
-                      {showAssignee ? (
-                        <span
-                          className="task-detail-state-assignee"
-                          data-testid="cloud-todo-state-assignee"
-                          title={t("todo.assignee", "负责人")}
-                        >
-                          {assigneeTarget.startsWith("group:") ? (
-                            <UsersRound aria-hidden="true" size={15} />
-                          ) : assigneeTarget.startsWith("agent:") ||
-                            assigneeTarget.startsWith("team:") ? (
-                            <Bot aria-hidden="true" size={15} />
-                          ) : (
-                            <CircleUserRound aria-hidden="true" size={15} />
-                          )}
-                          <strong title={assigneeName ?? undefined}>
-                            {assigneeName ?? t("todo.unassigned", "未指派")}
-                          </strong>
-                          {canAssign ? (
+                      <Tooltip
+                        label={t(
+                          "todo.issue_status_help",
+                          "状态：{{value}}。表示 Issue 当前所处的处理阶段。",
+                          { value: statusLabel },
+                        )}
+                        side="bottom"
+                        align="start"
+                      >
+                        <span className="task-detail-state-primary relative">
+                          {statusValue}
+                          {editable ? (
                             <ChevronDown aria-hidden="true" size={13} />
                           ) : null}
-                          {assigneeSelect}
+                          {statusSelect}
                         </span>
+                      </Tooltip>
+                      {showAssignee ? (
+                        <Tooltip
+                          label={t(
+                            "todo.assignee_help",
+                            "负责人：{{value}}。负责推进并跟进这个 Issue。",
+                            { value: assigneeDisplayName },
+                          )}
+                          side="bottom"
+                          align="start"
+                        >
+                          <span
+                            className="task-detail-state-assignee"
+                            data-testid="cloud-todo-state-assignee"
+                          >
+                            {assigneeTarget.startsWith("group:") ? (
+                              <UsersRound aria-hidden="true" size={15} />
+                            ) : assigneeTarget.startsWith("agent:") ||
+                              assigneeTarget.startsWith("team:") ? (
+                              <Bot aria-hidden="true" size={15} />
+                            ) : (
+                              <CircleUserRound aria-hidden="true" size={15} />
+                            )}
+                            <strong>{assigneeDisplayName}</strong>
+                            {canAssign ? (
+                              <ChevronDown aria-hidden="true" size={13} />
+                            ) : null}
+                            {assigneeSelect}
+                          </span>
+                        </Tooltip>
                       ) : null}
+                      {assigneeSaveButton}
+                      <Tooltip
+                        label={t(
+                          "todo.due_date_help",
+                          "截止时间：{{value}}。",
+                          {
+                            value: dueDate
+                              ? dueDate.slice(0, 10)
+                              : t("todo.not_set", "未设置"),
+                          },
+                        )}
+                        side="bottom"
+                        align="start"
+                      >
+                        <span
+                          className="task-detail-state-due relative"
+                          data-testid="cloud-todo-state-due-date"
+                        >
+                          <Calendar aria-hidden="true" size={15} />
+                          <strong>
+                            {dueDate
+                              ? dueDate.slice(0, 10)
+                              : t("todo.not_set", "未设置")}
+                          </strong>
+                          {editable ? (
+                            <ChevronDown aria-hidden="true" size={13} />
+                          ) : null}
+                          {dueInput}
+                        </span>
+                      </Tooltip>
                       {item &&
                       project?.project_store === "backend" &&
                       canAssign ? (
-                        <select
-                          data-testid="cloud-issue-security-level"
-                          aria-label={t("todo.issue_security", "任务可见范围")}
-                          value={item.security_level ?? "open"}
-                          disabled={securityBusy}
-                          onChange={async (event) => {
-                            if (!editProps) return;
-                            setSecurityBusy(true);
-                            setSaveError(null);
-                            try {
-                              const updated = await editorPort.issues.update(
-                                item.id,
-                                {
-                                  version: item.version,
-                                  security_level: event.target.value as
-                                    | "open"
-                                    | "related",
-                                },
-                              );
-                              editProps.onUpdated(updated);
-                            } catch (cause) {
-                              setSaveError(
-                                cause instanceof Error
-                                  ? cause.message
-                                  : t("todo.save_issue_failed", "保存任务失败"),
-                              );
-                            } finally {
-                              setSecurityBusy(false);
-                            }
-                          }}
+                        <Tooltip
+                          label={t(
+                            "todo.issue_security_help",
+                            "可见范围：{{value}}。控制谁可以查看这个 Issue 的详情。",
+                            { value: issueSecurityLabel },
+                          )}
+                          side="bottom"
+                          align="start"
                         >
-                          <option value="open">
-                            {t("todo.issue_security_open", "项目可访问者可见")}
-                          </option>
-                          <option value="related">
-                            {t("todo.issue_security_related", "仅相关人员可见")}
-                          </option>
-                        </select>
+                          <span className="task-detail-state-security">
+                            <Eye aria-hidden="true" size={15} />
+                            <strong>{issueSecurityLabel}</strong>
+                            <ChevronDown aria-hidden="true" size={13} />
+                            <select
+                              data-testid="cloud-issue-security-level"
+                              aria-label={t(
+                                "todo.issue_security",
+                                "任务可见范围",
+                              )}
+                              className={overlayControlClass}
+                              value={item.security_level ?? "open"}
+                              disabled={securityBusy}
+                              onChange={async (event) => {
+                                if (!editProps) return;
+                                setSecurityBusy(true);
+                                setSaveError(null);
+                                try {
+                                  const updated =
+                                    await editorPort.issues.update(item.id, {
+                                      version: item.version,
+                                      security_level: event.target.value as
+                                        | "open"
+                                        | "related",
+                                    });
+                                  editProps.onUpdated(updated);
+                                } catch (cause) {
+                                  setSaveError(
+                                    cause instanceof Error
+                                      ? cause.message
+                                      : t(
+                                          "todo.save_issue_failed",
+                                          "保存任务失败",
+                                        ),
+                                  );
+                                } finally {
+                                  setSecurityBusy(false);
+                                }
+                              }}
+                            >
+                              <option value="open">
+                                {t(
+                                  "todo.issue_security_open",
+                                  "项目可访问者可见",
+                                )}
+                              </option>
+                              <option value="related">
+                                {t(
+                                  "todo.issue_security_related",
+                                  "仅相关人员可见",
+                                )}
+                              </option>
+                            </select>
+                          </span>
+                        </Tooltip>
                       ) : null}
                     </span>
-                    {executionTaskCount > 0 || executionStartedAt ? (
+                    {executionElapsedMinutes !== null ? (
                       <span className="task-detail-state-metrics">
-                        {executionTaskCount > 0 ? (
-                          <span title={t("todo.execution_tasks", "执行任务")}>
-                            <ListTodo aria-hidden="true" size={15} />
-                            <strong>{executionTaskCount}</strong>
-                          </span>
-                        ) : null}
-                        {executionStartedAt ? (
-                          <span
-                            title={t("todo.execution_duration", "执行时长")}
+                        {executionElapsedMinutes !== null ? (
+                          <Tooltip
+                            label={t(
+                              "todo.execution_duration_help",
+                              "执行时长：{{duration}}。从本轮执行开始后持续计时。",
+                              { duration: executionElapsedLabel },
+                            )}
+                            side="bottom"
                           >
-                            <History aria-hidden="true" size={15} />
-                            <strong>{executionElapsedLabel}</strong>
-                          </span>
+                            <span className="task-detail-state-metric">
+                              <History aria-hidden="true" size={15} />
+                              <strong data-testid="issue-execution-duration">
+                                {executionElapsedLabel}
+                              </strong>
+                            </span>
+                          </Tooltip>
                         ) : null}
                       </span>
                     ) : null}
-                    {hasExecutionDetails ? (
+                    {hasExecutionDetails && canToggleExecutionDetails ? (
                       <button
                         type="button"
                         data-testid="cloud-todo-toggle-tasks"
@@ -3087,8 +3362,8 @@ export function TodoEditor(props: TodoEditorProps) {
                         className="task-detail-state-action"
                       >
                         {tasksExpanded
-                          ? t("todo.collapse_tasks", "收起任务")
-                          : t("todo.view_tasks", "查看任务")}
+                          ? t("todo.collapse_execution_details", "收起")
+                          : t("todo.expand_execution_details", "展开")}
                       </button>
                     ) : canStartWork && !props.defaultAssistant ? (
                       <button
@@ -3103,12 +3378,20 @@ export function TodoEditor(props: TodoEditorProps) {
                     ) : null}
                   </section>
 
+                  {props.onCreateTask
+                    ? extensions?.renderPersonalTaskAction?.({
+                        item,
+                        tasks: effectiveTasks,
+                        onCreateTask: props.onCreateTask,
+                      })
+                    : null}
+
                   <ExecutionConfigurationNotice
                     key={item.id}
                     issue={item}
                     translate={t}
                   />
-                  {!isCreate && tasksExpanded && executionTaskCount > 0 ? (
+                  {!isCreate && executionTaskCount > 0 ? (
                     <section
                       className="task-detail-workspace-section"
                       data-testid="cloud-todo-tasks"
@@ -3117,7 +3400,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         <h3 className="task-detail-workspace-section-title">
                           {props.showCurrentTaskOnly
                             ? t("todo.current_running_task")
-                            : t("todo.execution_tasks")}
+                            : t("todo.linked_tasks", "关联任务")}
                         </h3>
                         <span
                           className="task-detail-workspace-count"
@@ -3125,12 +3408,29 @@ export function TodoEditor(props: TodoEditorProps) {
                         >
                           {executionTaskCount}
                         </span>
+                        {props.onCreateTask ? (
+                          <button
+                            type="button"
+                            data-testid="cloud-todo-create-task"
+                            onClick={() => props.onCreateTask?.()}
+                            className="task-detail-workspace-ghost-action"
+                          >
+                            <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+                            {t("todo.new_task", "新建任务")}
+                          </button>
+                        ) : null}
                       </div>
                       <div
                         data-testid="cloud-todo-task-list"
                         className="task-detail-flat-task-list"
                       >
-                        {executionChildItems.map((child) => {
+                        {(tasksExpanded
+                          ? executionChildItems
+                          : executionChildItems.slice(
+                              0,
+                              COLLAPSED_EXECUTION_TASK_LIMIT,
+                            )
+                        ).map((child) => {
                           const assignee =
                             child.assignee_agent_name ??
                             child.assignee_team_name ??
@@ -3173,7 +3473,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             </button>
                           );
                         })}
-                        {displayedTasks.map((task) => {
+                        {visibleDisplayedTasks.map((task) => {
                           const selected =
                             props.selectedTaskId === task.task_id;
                           const executionState =
@@ -3365,8 +3665,16 @@ export function TodoEditor(props: TodoEditorProps) {
                     busy={attachmentBusy}
                     error={attachmentError}
                     editable={editable}
+                    totalCount={
+                      isCreate
+                        ? pendingAttachmentRows.length
+                        : allAttachments.length
+                    }
                     downloadingId={downloadingAttachmentId}
                     onAdd={isCreate ? stageFiles : addAttachments}
+                    onReadPreview={
+                      isCreate ? undefined : editorPort.attachments.read
+                    }
                     onOpen={isCreate ? undefined : openAttachment}
                     onDownload={
                       !isCreate && extensions?.openAttachment
@@ -3746,8 +4054,10 @@ export function TodoEditor(props: TodoEditorProps) {
                     error={attachmentError}
                     editable={editable}
                     compactRail
+                    totalCount={allAttachments.length}
                     downloadingId={downloadingAttachmentId}
                     onAdd={addAttachments}
+                    onReadPreview={editorPort.attachments.read}
                     onOpen={openAttachment}
                     onDownload={
                       extensions?.openAttachment
@@ -3938,7 +4248,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     type="button"
                     data-testid="cloud-todo-create-confirm"
                     disabled={
-                      !title.trim() ||
+                      !createTitle ||
                       saving ||
                       createBlockedByExecutionEnvironment
                     }
@@ -3952,7 +4262,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 </>
               ) : (
                 <>
-                  {(editable || canAssign) && dirty && (
+                  {(editable || canAssign) && dirty && !assigneeChanged && (
                     <button
                       type="button"
                       data-testid="cloud-todo-save"

@@ -19,6 +19,7 @@ const chatCallbacks = vi.hoisted(
 
 const issue = {
   id: 'TEST-1',
+  sequence_number: 1,
   title: 'Execute pwd',
   status: 'pending',
   can_edit: true,
@@ -77,6 +78,20 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
     <>
       <button onClick={() => props.host.navigate({ ...props.host.location, issueId: issue.id })}>
         Open Issue
+      </button>
+      <button
+        data-testid="create-issue-without-environment"
+        onClick={() => {
+          props.host.notify?.('请先完成项目执行环境初始化，再创建 Issue。', 'error')
+          props.host.navigate({
+            ...props.host.location,
+            issueId: null,
+            view: 'manage',
+            projectSettingsSection: 'environments',
+          })
+        }}
+      >
+        Create Issue without environment
       </button>
       {props.renderBoardIssueCard?.({
         issue,
@@ -138,6 +153,7 @@ vi.mock('./TodoEditor', () => ({
         data-read-first={props.readFirst ? 'true' : 'false'}
         data-selected-task-id={props.selectedTaskId ?? ''}
         data-task-status={props.taskExecutionStates?.['binding-1']?.status ?? ''}
+        data-current-user-id={props.currentUserId}
         onKeyDown={event => {
           if (event.key === 'Escape') {
             event.stopPropagation()
@@ -155,9 +171,7 @@ vi.mock('./TodoEditor', () => ({
         />
         <div data-testid="cloud-todo-detail-scroll" />
         <div data-testid="cloud-todo-detail-device-name">{props.deviceNamesById?.device ?? ''}</div>
-        {props.showAdditionalTaskAction && (
-          <button onClick={() => props.onCreateTask?.()}>Add task</button>
-        )}
+        {props.onCreateTask && <button onClick={() => props.onCreateTask?.()}>Add task</button>}
         {['run-1', 'run-2'].map(taskId => (
           <button
             key={taskId}
@@ -187,6 +201,7 @@ vi.mock('./AiChatModal', () => ({
         data-testid="ai-chat-modal"
         data-address={props.initialAddress?.taskId}
         data-device-id={props.initialTaskRequest?.deviceId}
+        data-initial-input={props.initialTaskInput}
         data-mount-id={mountId}
         data-workspace-path={props.initialTaskRequest?.workspacePath}
       >
@@ -221,6 +236,10 @@ function Project({
       api={
         {
           projects: {
+            get: vi.fn(async () => ({
+              id: 'project',
+              execution_environment: executionEnvironment,
+            })),
             listExecutionEnvironments: vi.fn(async () => [
               {
                 id: 'environment-22',
@@ -243,9 +262,12 @@ function Project({
       project={
         {
           id: 'project',
+          project_key: 'TEST',
           name: 'Project',
           project_store: 'backend',
-          execution_environment: executionEnvironment,
+          current_user_id: 1,
+          // The shell snapshot can predate settings saved inside CollaborationApp.
+          execution_environment: undefined,
         } as never
       }
       workspace={{ id: 'workspace' } as never}
@@ -261,18 +283,28 @@ function Project({
       runtimeWork={runtimeWork}
       runtimePort={{ bindTask: vi.fn(), unbindTask: vi.fn() }}
       sendRuntimePaneMessage={vi.fn(async () => true)}
-      userId={1}
+      userId={9001}
     />
   )
 }
 
 describe('Wework Issue conversation drawers', () => {
-  it('opens an editable Issue without the read-first content lock', async () => {
+  it('keeps the missing environment explanation visible after opening environment settings', async () => {
+    render(<Project />)
+
+    await userEvent.click(screen.getByTestId('create-issue-without-environment'))
+
+    expect(screen.getByTestId('transient-notice')).toHaveTextContent(
+      '请先完成项目执行环境初始化，再创建 Issue。'
+    )
+  })
+
+  it('opens an Issue in read-first mode', async () => {
     render(<Project />)
 
     await userEvent.click(screen.getByText('Open Issue'))
 
-    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-read-first', 'false')
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-read-first', 'true')
   })
 
   it('keeps the assignee directory scoped to the current project', async () => {
@@ -317,7 +349,7 @@ describe('Wework Issue conversation drawers', () => {
     expect(screen.getByTestId('cloud-todo-detail-device-name')).toHaveTextContent('Wework 开发设备')
   })
 
-  it('starts manual work in the project prepared execution environment', async () => {
+  it('lets the personal task composer choose the current computer', async () => {
     taskBindings = [
       {
         id: 'binding-existing',
@@ -348,16 +380,23 @@ describe('Wework Issue conversation drawers', () => {
     )
 
     await user.click(screen.getByText('Open Issue'))
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-current-user-id', '1')
     await user.click(screen.getByRole('button', { name: 'Add task' }))
 
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-device-id')
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-workspace-path')
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-device-id',
-      'shared-runtime-device'
+      'data-initial-input',
+      '[$TEST-1 · Execute pwd](wework-issue://project/TEST-1)'
     )
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-workspace-path',
-      '/srv/collaboration/project'
-    )
+  })
+
+  it('can start the first task without an existing task binding', async () => {
+    const user = userEvent.setup()
+    render(<Project />)
+    await user.click(screen.getByText('Open Issue'))
+    await user.click(screen.getByRole('button', { name: 'Add task' }))
+    expect(screen.getByTestId('ai-chat-modal')).toBeInTheDocument()
   })
 
   it('can start another task after returning from an existing execution', async () => {

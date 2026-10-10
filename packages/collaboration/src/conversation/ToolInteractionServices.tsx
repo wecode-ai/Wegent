@@ -2,6 +2,7 @@ import { createContext, useContext, type ReactNode } from "react";
 export interface ToolInteractionServices {
   openProxySettings?: () => void;
   onOutputAction?: (action: "copy" | "open_file") => void;
+  readImageFile?: (path: string) => Promise<Blob>;
 }
 const Context = createContext<ToolInteractionServices>({});
 export function ToolInteractionServicesProvider({

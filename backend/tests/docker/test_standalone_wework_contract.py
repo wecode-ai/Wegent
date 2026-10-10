@@ -5,6 +5,8 @@
 """Static contract tests for the standalone Wework launch path."""
 
 import json
+import re
+import shlex
 from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[3]
@@ -124,11 +126,21 @@ def test_standalone_start_can_skip_container_executor() -> None:
     assert 'if [ "$STANDALONE_EXECUTOR_ENABLED" != "false" ]; then' in start_script
     assert 'echo "[4/8] Skipping Standalone Executor' in start_script
     assert "${EXECUTOR_PID:-}" in start_script
-    assert (
-        'WAIT_PIDS=("$REDIS_PID" "$MYSQL_PID" "$PYTHON_BACKEND_PID" "$BACKEND_PID" '
-        '"$FRONTEND_PID" "$NGINX_PID")' in start_script
-    )
+    wait_pids_match = re.search(r"^WAIT_PIDS=\((.*?)\)$", start_script, re.MULTILINE)
+    assert wait_pids_match is not None
+    required_pids = set(shlex.split(wait_pids_match.group(1)))
+    assert {
+        "$REDIS_PID",
+        "$MYSQL_PID",
+        "$KNOWLEDGE_RUNTIME_PID",
+        "$PYTHON_BACKEND_PID",
+        "$BACKEND_PID",
+        "$FRONTEND_PID",
+        "$NGINX_PID",
+    } <= required_pids
+    assert "$EXECUTOR_PID" not in required_pids
     assert 'if [ -n "${EXECUTOR_PID:-}" ]; then' in start_script
+    assert 'WAIT_PIDS+=("$EXECUTOR_PID")' in start_script
 
 
 def test_standalone_start_ensures_token_before_optional_executor() -> None:

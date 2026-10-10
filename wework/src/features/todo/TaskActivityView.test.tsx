@@ -964,7 +964,7 @@ describe('TaskActivityView', () => {
     )
 
     await screen.findByText('Code Reviewer 已进入执行队列，将自动处理并提交结果供你验收。')
-    expect(await screen.findByTestId('model-selector-button')).toHaveTextContent('默认')
+    expect(await screen.findByTestId('model-selector-button')).toHaveTextContent('选择模型')
   })
 
   it('keeps a manual model choice when the model catalog refreshes', async () => {
@@ -1440,9 +1440,13 @@ describe('TaskActivityView', () => {
     const card = screen.getByTestId('cloud-task-activity-card-message-1')
     expect(card).toHaveTextContent('请完成接入')
     expect(card).toHaveTextContent('CPU 验证智能体')
-    expect(within(card).getByTestId('cloud-task-activity-task-title-message-2')).toHaveTextContent(
-      '验证 CPU 检查项'
-    )
+    const agentMessageCard = within(card).getByTestId('cloud-task-activity-message-message-2')
+    const agentMessageHeader = agentMessageCard.querySelector('header')
+    expect(agentMessageHeader).toHaveTextContent('CPU 验证智能体')
+    expect(agentMessageHeader).not.toHaveTextContent('验证 CPU 检查项')
+    expect(
+      within(agentMessageCard).getByTestId('cloud-task-activity-task-title-message-2')
+    ).toHaveTextContent('验证 CPU 检查项')
     expect(within(card).queryByTestId('cloud-task-activity-role-message-2')).not.toBeInTheDocument()
     expect(card).not.toHaveTextContent('执行成员')
     expect(card).toHaveTextContent('请补充验证')
@@ -1454,13 +1458,16 @@ describe('TaskActivityView', () => {
       'cloud-task-activity-execution-badge-message-2'
     )
     expect(executionButton).toHaveAttribute('data-status', 'succeeded')
-    await user.click(executionButton)
+    const taskLink = within(card).getByTestId('cloud-task-activity-open-task-message-2')
+    expect(taskLink).toHaveTextContent('验证 CPU 检查项')
+    await user.click(taskLink)
     expect(openTaskConversation).toHaveBeenCalledWith(
       expect.objectContaining({ device_id: 'device-1', task_id: 'runtime-task-1' })
     )
+    await user.click(executionButton)
+    expect(openTaskConversation).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('runtime-execution-detail-overlay')).toBeNull()
     const replyToggle = within(card).getByTestId('cloud-task-activity-reply-toggle-message-1')
-    expect(within(card).queryByTestId('cloud-task-activity-open-task-message-2')).toBeNull()
     const actions = replyToggle.closest('.task-detail-thread-actions') as HTMLElement
     expect(actions.querySelector('time')).toHaveAttribute('datetime', '2026-08-03T10:00:00Z')
     expect(
@@ -1471,7 +1478,12 @@ describe('TaskActivityView', () => {
     await user.click(replyToggle)
     expect(replyToggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('issue-reply-composer')).toBeVisible()
-    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent('回复 Ada')
+    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent(
+      '正在回复 Ada · 将继续原执行任务'
+    )
+    expect(
+      within(screen.getByTestId('issue-reply-composer')).getByText('回复此讨论（继续原执行任务）…')
+    ).toBeInTheDocument()
     expect(
       screen.queryByTestId('cloud-task-activity-card-composer-message-1')
     ).not.toBeInTheDocument()
@@ -1481,7 +1493,7 @@ describe('TaskActivityView', () => {
     expect(screen.queryByTestId('issue-reply-composer')).toBeNull()
   })
 
-  it('hides replies while the comment execution is running', async () => {
+  it('allows replies to queue while the comment execution is running', async () => {
     const runningComment = {
       ...agentMessage,
       rootMessageId: null,
@@ -1513,7 +1525,7 @@ describe('TaskActivityView', () => {
     expect(
       within(card).getByTestId('cloud-task-activity-execution-badge-message-2')
     ).toHaveAttribute('data-status', 'running')
-    expect(within(card).queryByTestId('cloud-task-activity-reply-toggle-message-2')).toBeNull()
+    expect(within(card).getByTestId('cloud-task-activity-reply-toggle-message-2')).toBeVisible()
   })
 
   it('shows creation and allows replies when a completed run is persisted', async () => {
@@ -2780,14 +2792,13 @@ describe('TaskActivityView', () => {
 
       runtimeWorkMock.value = {
         projects: [],
-        chats: [
-          {
-            deviceId: 'device-1',
-            projectId: null,
-            tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
-          },
-        ],
-        totalTasks: 1,
+        chats: [],
+        totalTasks: 0,
+      }
+      const boundModelSelection = {
+        modelName: 'wework-custom-desktop-e2e-responses',
+        modelType: 'runtime' as const,
+        options: { reasoning: 'medium' },
       }
       render(
         <TaskActivityView
@@ -2804,6 +2815,26 @@ describe('TaskActivityView', () => {
               assignee_agent_id: '12',
             } as never
           }
+          taskBindings={[
+            {
+              id: 'binding-1',
+              loop_item_id: 'WEG-1',
+              task_user_id: 1,
+              device_id: 'device-1',
+              task_id: 'parent-session-1',
+              task_title: '执行任务',
+              backend_task_id: null,
+              modelSelection: boundModelSelection,
+              executionContext: {
+                runtime: 'codex',
+                threadId: 'thread-1',
+                workspacePath: '/workspace',
+                workspaceKind: 'worktree',
+                worktreeId: 'worktree-1',
+              },
+              linked_at: '2026-10-09T00:00:00Z',
+            },
+          ]}
           linear
         />
       )
@@ -2831,7 +2862,16 @@ describe('TaskActivityView', () => {
       await waitFor(() =>
         expect(sendRuntimePaneMessage).toHaveBeenCalledWith(
           expect.objectContaining({
-            address: { deviceId: 'device-1', taskId: 'parent-session-1' },
+            address: {
+              deviceId: 'device-1',
+              taskId: 'parent-session-1',
+              runtime: 'codex',
+              threadId: 'thread-1',
+              workspacePath: '/workspace',
+              workspaceKind: 'worktree',
+              worktreeId: 'worktree-1',
+              runtimeHandle: { modelSelection: boundModelSelection },
+            },
             message: '继续处理',
             attachmentIds: [7],
           }),
@@ -3819,7 +3859,7 @@ describe('TaskActivityView', () => {
         dispose: vi.fn(),
       } satisfies ProjectChatClient
 
-      render(
+      const { rerender } = render(
         <TaskActivityView
           client={client}
           currentUserId={1}
@@ -3845,9 +3885,29 @@ describe('TaskActivityView', () => {
       )
 
       await act(async () => {
-        vi.advanceTimersByTime(2500)
+        await vi.advanceTimersByTimeAsync(2500)
       })
       expect(comment).not.toHaveAttribute('data-flash')
+
+      rerender(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          focusedCommentId="message-1"
+          focusedCommentRequestKey="second-open"
+          project={{ id: '11', name: 'Wework' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Inspect changes',
+              description: 'Review the current diff',
+              status: 'inbox',
+              version: 1,
+            } as never
+          }
+        />
+      )
+      await waitFor(() => expect(comment).toHaveAttribute('data-flash', 'true'))
     } finally {
       vi.useRealTimers()
     }

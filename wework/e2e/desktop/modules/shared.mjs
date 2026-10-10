@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
 import { reservePort } from '../port-reservation.mjs'
+import { appendProcessOutput } from '../process-output.mjs'
 import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
@@ -485,6 +486,7 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'arch',
   'distinct_id',
   'domain',
+  'duration_ms',
   'event_schema_version',
   'feature',
   'failure_stage',
@@ -492,6 +494,7 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'os',
   'release_channel',
   'runtime_mode',
+  'startup_id',
   'surface',
   'telemetry_session_id',
   'token',
@@ -1140,13 +1143,6 @@ async function resolveExecutable(configuredPath, fallbackCommand, description) {
   const resolved = commandOutput('which', [fallbackCommand])
   assert.equal(await isExecutable(resolved), true, `${description} is not executable: ${resolved}`)
   return resolved
-}
-
-async function appendProcessOutput(stream, destination) {
-  if (!stream) return
-  stream.on('data', chunk => {
-    void appendFile(destination, chunk)
-  })
 }
 
 function macosSleepAssertionIds(appProcessId) {

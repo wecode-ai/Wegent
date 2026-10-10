@@ -638,37 +638,32 @@ export function IssueChatMessage({
         hideTime={hideTime}
         metadata={
           isAgent && showInlineExecutionStatus ? (
-            <>
-              {isManager ? (
-                <span
-                  className="text-xs text-text-muted"
-                  data-testid={`cloud-task-activity-role-${message.messageId}`}
-                >
-                  {t("activity.task_activity_manager_role")}
-                </span>
-              ) : taskSummary?.title ? (
-                <span
-                  className="text-xs text-text-muted"
-                  data-testid={`cloud-task-activity-task-title-${message.messageId}`}
-                >
-                  {taskSummary.title}
-                </span>
-              ) : null}
-              <ExecutionStatusBadge
-                translate={t}
-                testId={executionTestId}
-                aliasTestId={executionAliasTestId}
-                messageId={message.messageId}
-                status={runStatus}
-                onOpenExecution={openExecution}
-                onStopExecution={onStopExecution}
-                stopping={stopping}
-              />
-            </>
+            isManager ? (
+              <span
+                className="text-xs text-text-muted"
+                data-testid={`cloud-task-activity-role-${message.messageId}`}
+              >
+                {t("activity.task_activity_manager_role")}
+              </span>
+            ) : null
           ) : isSubagent ? (
             <span className="text-xs text-text-muted">
               {t("activity.task_activity_subagent_execution")}
             </span>
+          ) : null
+        }
+        trailing={
+          isAgent && showInlineExecutionStatus ? (
+            <ExecutionStatusBadge
+              translate={t}
+              testId={executionTestId}
+              aliasTestId={executionAliasTestId}
+              messageId={message.messageId}
+              status={runStatus}
+              onOpenExecution={openExecution}
+              onStopExecution={onStopExecution}
+              stopping={stopping}
+            />
           ) : null
         }
         data-testid={
@@ -687,7 +682,7 @@ export function IssueChatMessage({
         >
           {body}
         </div>
-        {taskSummary && !showInlineExecutionStatus ? (
+        {taskSummary ? (
           <div className="task-detail-thread-task-link">
             {taskSummary.onOpen ? (
               <button
@@ -696,11 +691,19 @@ export function IssueChatMessage({
                 onClick={taskSummary.onOpen}
                 className="task-detail-ai-run-open-task"
               >
-                {taskSummary.title}
+                <span
+                  data-testid={`cloud-task-activity-task-title-${message.messageId}`}
+                >
+                  {taskSummary.title}
+                </span>
                 <ChevronRight className="h-3.5 w-3.5" />
               </button>
             ) : (
-              <span>{taskSummary.title}</span>
+              <span
+                data-testid={`cloud-task-activity-task-title-${message.messageId}`}
+              >
+                {taskSummary.title}
+              </span>
             )}
             {taskSummary.stageName ? (
               <span>{taskSummary.stageName}</span>

@@ -7,18 +7,35 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_executor import QueryExecutor
-
 from shared.models import (
+    RemoteAuthorizedRetrievalResources,
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRequest,
     RemoteQueryResponse,
+    RemoteRetrievalResourceRef,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+
+
+def _authorized(knowledge_base_id: int) -> RemoteAuthorizedRetrievalResources:
+    """Authorize one knowledge base's stored retrieval resources."""
+    return RemoteAuthorizedRetrievalResources(
+        operation="query",
+        knowledge_base_id=knowledge_base_id,
+        index_owner_user_id=7,
+        retriever=RemoteRetrievalResourceRef(
+            kind="Retriever", name="test-retriever", namespace="default"
+        ),
+        embedding_model=RemoteRetrievalResourceRef(
+            kind="Model", name="text-embedding-3-small", namespace="default"
+        ),
+    )
 
 
 def _make_query_config(knowledge_base_id: int = 1) -> QueryConfig:
@@ -66,6 +83,7 @@ def query_request():
         user_id=42,
         query="test query",
         max_results=10,
+        authorized_resources=[_authorized(1), _authorized(2)],
     )
 
 
@@ -73,7 +91,10 @@ class TestQueryExecutor:
     """Tests for QueryExecutor."""
 
     @pytest.mark.asyncio
-    async def test_execute_uses_planned_backend_query(self, query_request) -> None:
+    async def test_execute_uses_planned_backend_query(
+        self, query_request, caplog
+    ) -> None:
+        caplog.set_level("INFO", logger="knowledge_runtime.services.query_executor")
         mock_storage_backend = MagicMock()
         mock_embed_model = MagicMock()
         mock_kb_executor = MagicMock()
@@ -100,6 +121,11 @@ class TestQueryExecutor:
             executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
+
+        assert (
+            "kb_id=1 top_k=5 score_threshold=0.7 retrieval_mode=vector" in caplog.text
+        )
+        assert "test-key" not in caplog.text
 
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",
@@ -198,11 +224,15 @@ class TestQueryExecutor:
                 "conditions": [{"key": "source", "operator": "==", "value": "kb"}],
             }
             config = _make_query_config(1)
+            config.scoped_document_ids = [10, 11]
             config_loader = _make_config_loader(config)
             executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
 
+        assert config_loader.resolve_query_configs.call_args.kwargs[
+            "scope"
+        ] == RetrievalScope(document_ids=[10, 11])
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",
             query="test query",
@@ -248,14 +278,16 @@ class TestQueryExecutor:
             query_request.knowledge_base_ids = [1]
             query_request.scope = RetrievalScope(document_ids=[20])
             query_request.document_ids = [20]
-            executor = QueryExecutor(db=MagicMock())
             config = _make_query_config(1)
-            executor._config_resolver.resolve_query_config = MagicMock(
-                return_value=config
-            )
+            config.scoped_document_ids = [20]
+            config_loader = _make_config_loader(config)
+            executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
 
+        assert config_loader.resolve_query_configs.call_args.kwargs[
+            "scope"
+        ] == RetrievalScope(document_ids=[20])
         assert mock_kb_executor.execute.await_args.kwargs["scope"] == RetrievalScope(
             document_ids=[20]
         )
@@ -349,6 +381,19 @@ class TestQueryExecutor:
 
             await executor.execute(query_request)
 
+        # The override is handed to config resolution, which applies it through
+        # the module; the executor executes whatever the resolver returned.
+        assert config_loader.resolve_query_configs.call_args.kwargs[
+            "retrieval_overrides"
+        ] == {
+            1: {
+                "top_k": 9,
+                "score_threshold": 0.2,
+                "retrieval_mode": "hybrid",
+                "vector_weight": 0.8,
+                "keyword_weight": 0.2,
+            }
+        }
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",
             query="test query",
@@ -359,13 +404,7 @@ class TestQueryExecutor:
                 "phrases": [],
                 "hint_source": "fallback",
             },
-            retrieval_config=RuntimeRetrievalConfig(
-                top_k=9,
-                score_threshold=0.2,
-                retrieval_mode="hybrid",
-                vector_weight=0.8,
-                keyword_weight=0.2,
-            ),
+            retrieval_config=config.retrieval_config,
             scope=None,
             metadata_condition=None,
             user_id=7,
@@ -411,6 +450,17 @@ class TestQueryExecutor:
             ValueError,
             match="unknown knowledge_base_id",
         ):
+            await executor.execute(query_request)
+
+    @pytest.mark.asyncio
+    async def test_execute_rejects_query_without_authorized_resources(
+        self, query_request
+    ) -> None:
+        """Backend must authorize the retrieval resources before the query runs."""
+        query_request.authorized_resources = None
+        executor = QueryExecutor(config_loader=MagicMock())
+
+        with pytest.raises(ValueError, match="authorized retrieval resources"):
             await executor.execute(query_request)
 
     @pytest.mark.asyncio
@@ -576,33 +626,60 @@ class TestQueryExecutor:
         config_loader.resolve_query_configs.assert_called_once_with(
             knowledge_base_ids=[1, 2],
             user_id=42,
+            authorized={1: _authorized(1), 2: _authorized(2)},
+            retrieval_overrides={},
+            scope=None,
         )
 
     @pytest.mark.asyncio
-    async def test_extract_document_id_from_doc_ref(self) -> None:
-        """Test document ID extraction from various doc_ref formats."""
-        executor = QueryExecutor(config_loader=MagicMock())
-
-        # Test "doc_XXX" format
-        assert (
-            executor._extract_document_id({"metadata": {"doc_ref": "doc_123"}}) == 123
+    async def test_execute_returns_knowledge_base_and_document_reference(
+        self, query_request
+    ) -> None:
+        """A scoped query returns its knowledge base and document reference."""
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(
+            return_value={
+                "records": [
+                    {
+                        "content": "Release checklist",
+                        "title": "release-notes",
+                        "score": 0.9,
+                        "metadata": {"doc_ref": "100"},
+                    }
+                ]
+            }
         )
+        config = _make_query_config(1)
+        config.scoped_document_ids = [100]
+        config_loader = _make_config_loader(config)
+        query_request.knowledge_base_ids = [1]
+        query_request.scope = RetrievalScope(document_ids=[100])
 
-        # Test numeric string
-        assert executor._extract_document_id({"metadata": {"doc_ref": "456"}}) == 456
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            result = await QueryExecutor(config_loader=config_loader).execute(
+                query_request
+            )
 
-        # Test invalid format
-        assert executor._extract_document_id({"metadata": {"doc_ref": "abc"}}) is None
-
-        # Test missing doc_ref
-        assert executor._extract_document_id({"metadata": {}}) is None
-        assert executor._extract_document_id({}) is None
-
-    def test_estimate_tokens(self) -> None:
-        """Test token estimation heuristic."""
-        executor = QueryExecutor(config_loader=MagicMock())
-
-        # ~4 characters per token
-        assert executor._estimate_tokens("test") == 1  # 4 chars
-        assert executor._estimate_tokens("test test test test") == 4  # 19 chars
-        assert executor._estimate_tokens("") == 0
+        assert config_loader.resolve_query_configs.call_args.kwargs[
+            "scope"
+        ] == RetrievalScope(document_ids=[100])
+        assert mock_kb_executor.execute.await_args.kwargs["scope"] == RetrievalScope(
+            document_ids=[100]
+        )
+        assert result.records[0].knowledge_base_id == 1
+        assert result.records[0].document_id == 100

@@ -845,11 +845,15 @@ export function useWorkbenchDataRefresh({
   const refreshDevices = useCallback(
     async (options?: { useCacheFallback?: boolean }) => {
       const devices = await loadDevicesForRefresh(options)
+      const visibleDevices = resolveDeviceListWithCache(
+        selectVisibleDevices(devices, cloudRuntimeStateRef.current),
+        { useCacheFallback: false }
+      )
       dispatch({
         type: 'devices_refreshed',
-        devices,
+        devices: visibleDevices,
         standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
-          devices,
+          visibleDevices,
           state.standaloneDeviceId,
           state.standaloneWorkspacePath
         ),

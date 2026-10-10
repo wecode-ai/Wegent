@@ -4,7 +4,7 @@ import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
 // SPDX-License-Identifier: Apache-2.0
 
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   collaborationMessages,
@@ -17,7 +17,7 @@ import { CollaborationSettings } from "./CollaborationSettings";
 import { IssueCreate, IssueDetail } from "./IssueDetail";
 import { IssueExecutionEnvironmentNotice } from "./execution-environment/IssueExecutionEnvironmentNotice";
 import { useProjectExecutionEnvironmentReadiness } from "./execution-environment/issueEnvironmentReadiness";
-import { IssueDeleteDialog } from "./issue-delete";
+import { IssueArchiveDialog, IssueArchiveDrawer } from "./issue-archive";
 import {
   CollaborationProjectViewShell,
   ProjectLoadingSkeleton,
@@ -66,7 +66,7 @@ export interface CollaborationIssueDetailRenderContext {
   onClose(): void;
   onChange(issue: CollaborationIssue): void;
   onCreateTask?(): void;
-  /** Present only when the host enabled Issue deletion. */
+  /** Present only for completed Issues when archiving is enabled. */
   onDelete?(): void;
 }
 
@@ -79,14 +79,15 @@ interface CollaborationAppProps {
   createProjectRequestKey?: number;
   refreshProjectRequestKey?: number;
   showProjectBack?: boolean;
-  /** Enables the per-Issue delete action across board, table, and detail. */
-  issueDeleteEnabled?: boolean;
+  /** Enables completed-Issue archive actions and the project archive box. */
+  issueArchiveEnabled?: boolean;
+  onProjectChange?(project: CollaborationProject): void;
   /**
-   * Host work that must succeed before the Issue is deleted, such as stopping
-   * an in-flight run on the device that owns it. A rejection aborts the delete
+   * Host work that must succeed before the Issue is archived, such as stopping
+   * an in-flight run on the device that owns it. A rejection aborts the archive
    * and its message is shown in the confirmation dialog.
    */
-  onPrepareIssueDelete?(issue: CollaborationIssue): Promise<void>;
+  onPrepareIssueArchive?(issue: CollaborationIssue): Promise<void>;
   onCreateTask?(project: CollaborationProject, issue: CollaborationIssue): void;
   renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode;
   renderBoardIssueCard?(
@@ -128,9 +129,10 @@ export function CollaborationApp({
   createProjectRequestKey = 0,
   refreshProjectRequestKey = 0,
   showProjectBack = true,
-  issueDeleteEnabled = false,
+  issueArchiveEnabled = false,
+  onProjectChange,
   onCreateTask,
-  onPrepareIssueDelete,
+  onPrepareIssueArchive,
   renderBoardIssueCard,
   renderIssueDetail,
 }: CollaborationAppProps) {
@@ -146,10 +148,26 @@ export function CollaborationApp({
     useState<ProjectSettingsSectionId>(
       host.location.projectSettingsSection ?? "project",
     );
-  const [deleteIssueTarget, setDeleteIssueTarget] =
-    useState<CollaborationIssue | null>(null);
-  const [deleteIssueBusy, setDeleteIssueBusy] = useState(false);
-  const [deleteIssueError, setDeleteIssueError] = useState<string | null>(null);
+  const [archiveIssueTargets, setArchiveIssueTargets] = useState<
+    CollaborationIssue[] | null
+  >(null);
+  const [archiveIssueBusy, setArchiveIssueBusy] = useState(false);
+  const [archiveIssueError, setArchiveIssueError] = useState<string | null>(
+    null,
+  );
+  const [archiveDrawerOpen, setArchiveDrawerOpen] = useState(false);
+  const [archivedIssues, setArchivedIssues] = useState<CollaborationIssue[]>(
+    [],
+  );
+  const [archiveNextCursor, setArchiveNextCursor] = useState<string | null>(
+    null,
+  );
+  const [archiveDrawerLoading, setArchiveDrawerLoading] = useState(false);
+  const [archiveDrawerError, setArchiveDrawerError] = useState<string | null>(
+    null,
+  );
+  const archiveLoadGeneration = useRef(0);
+  const [restoringIssueId, setRestoringIssueId] = useState<string | null>(null);
   const { state, commands } = useCollaborationWorkspaceController({
     api,
     location: host.location,
@@ -231,6 +249,17 @@ export function CollaborationApp({
     );
   }, [host.location.projectSettingsSection, host.location.view, project?.id]);
 
+  useEffect(() => {
+    archiveLoadGeneration.current += 1;
+    setArchiveIssueTargets(null);
+    setArchiveIssueError(null);
+    setArchiveDrawerOpen(false);
+    setArchivedIssues([]);
+    setArchiveNextCursor(null);
+    setArchiveDrawerLoading(false);
+    setArchiveDrawerError(null);
+  }, [project?.id]);
+
   const navigateView = (view: CollaborationView) => {
     host.navigate({
       projectId: project?.id ?? null,
@@ -240,44 +269,117 @@ export function CollaborationApp({
     });
   };
 
-  const requestIssueDelete = (issue: CollaborationIssue) => {
-    setDeleteIssueError(null);
-    setDeleteIssueTarget(issue);
+  const requestIssueArchive = (issue: CollaborationIssue) => {
+    setArchiveIssueError(null);
+    setArchiveIssueTargets([issue]);
   };
-  const closeIssueDelete = () => {
-    setDeleteIssueTarget(null);
-    setDeleteIssueError(null);
+  const closeIssueArchive = () => {
+    setArchiveIssueTargets(null);
+    setArchiveIssueError(null);
   };
-  const confirmIssueDelete = async () => {
-    if (!deleteIssueTarget || deleteIssueBusy) return;
-    setDeleteIssueBusy(true);
-    setDeleteIssueError(null);
-    try {
-      // Stopping the run first keeps a deleted Issue from leaving an execution
-      // that no board or detail view can reach any more.
-      await onPrepareIssueDelete?.(deleteIssueTarget);
-      await commands.archiveIssue(deleteIssueTarget.id, {
-        throwOnError: true,
-      });
-      if (host.location.issueId === deleteIssueTarget.id) {
-        host.navigate({
-          projectId: project?.id ?? null,
-          issueId: null,
-          view: host.location.view,
+  const confirmIssueArchive = async () => {
+    if (!archiveIssueTargets?.length || archiveIssueBusy) return;
+    setArchiveIssueBusy(true);
+    setArchiveIssueError(null);
+    const results = await Promise.allSettled(
+      archiveIssueTargets.map(async (issue) => {
+        await onPrepareIssueArchive?.(issue);
+        const archived = await commands.archiveIssue(issue.id, {
+          throwOnError: true,
         });
-      }
-      setDeleteIssueTarget(null);
+        if (!archived) throw new Error("Issue could not be archived");
+        return issue;
+      }),
+    );
+    const failed = results.flatMap((result, index) =>
+      result.status === "rejected" ? [archiveIssueTargets[index]] : [],
+    );
+    const archivedIds = new Set(
+      results.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value.id] : [],
+      ),
+    );
+    if (host.location.issueId && archivedIds.has(host.location.issueId)) {
+      host.navigate({
+        projectId: project?.id ?? null,
+        issueId: null,
+        view: host.location.view,
+      });
+    }
+    if (failed.length === 0) {
+      setArchiveIssueTargets(null);
+    } else {
+      setArchiveIssueTargets(failed);
+      setArchiveIssueError(
+        translate(
+          "todo.archive_issue_failed_count",
+          "{{count}} 个任务归档失败，请重试。",
+          { count: failed.length },
+        ),
+      );
+    }
+    setArchiveIssueBusy(false);
+  };
+  const loadArchivedIssues = async (cursor: string | null = null) => {
+    if (!project || (cursor && archiveDrawerLoading)) return;
+    const generation = ++archiveLoadGeneration.current;
+    setArchiveDrawerLoading(true);
+    setArchiveDrawerError(null);
+    try {
+      const page = await api.issues.listArchived(project.id, {
+        cursor,
+        limit: 50,
+      });
+      if (generation !== archiveLoadGeneration.current) return;
+      setArchivedIssues((current) =>
+        cursor ? [...current, ...page.items] : page.items,
+      );
+      setArchiveNextCursor(page.nextCursor);
     } catch (error) {
-      setDeleteIssueError(
-        error instanceof Error && error.message
+      if (generation !== archiveLoadGeneration.current) return;
+      setArchiveDrawerError(
+        error instanceof Error
           ? error.message
-          : translate("todo.delete_issue_failed", "删除任务失败"),
+          : translate("todo.archive_box_load_failed", "加载归档任务失败"),
       );
     } finally {
-      setDeleteIssueBusy(false);
+      if (generation === archiveLoadGeneration.current) {
+        setArchiveDrawerLoading(false);
+      }
     }
   };
-  const issueDeleteAvailable = issueDeleteEnabled;
+  const openArchiveDrawer = () => {
+    setArchiveDrawerOpen(true);
+    setArchivedIssues([]);
+    setArchiveNextCursor(null);
+    void loadArchivedIssues();
+  };
+  const closeArchiveDrawer = () => {
+    archiveLoadGeneration.current += 1;
+    setArchiveDrawerOpen(false);
+    setArchiveDrawerLoading(false);
+  };
+  const restoreArchivedIssue = async (issue: CollaborationIssue) => {
+    if (!project || restoringIssueId) return;
+    setRestoringIssueId(issue.id);
+    setArchiveDrawerError(null);
+    try {
+      await api.issues.restore(issue.id);
+      setArchivedIssues((current) =>
+        current.filter((candidate) => candidate.id !== issue.id),
+      );
+      await commands.loadProjectSnapshot(project.id);
+    } catch (error) {
+      setArchiveDrawerError(
+        error instanceof Error
+          ? error.message
+          : translate("todo.restore_issue_failed", "恢复任务失败"),
+      );
+    } finally {
+      setRestoringIssueId(null);
+    }
+  };
+  const issueArchiveAvailable = issueArchiveEnabled;
   const environmentNotice = project ? (
     <IssueExecutionEnvironmentNotice
       canManage={
@@ -619,7 +721,21 @@ export function CollaborationApp({
                         onCreateIssue={requestIssueCreate}
                         onOpenBoardSettings={() => setBoardSettingsOpen(true)}
                         onDeleteIssue={
-                          issueDeleteAvailable ? requestIssueDelete : undefined
+                          issueArchiveAvailable
+                            ? requestIssueArchive
+                            : undefined
+                        }
+                        onArchiveCompleted={
+                          issueArchiveAvailable
+                            ? (completedIssues) => {
+                                if (completedIssues.length === 0) return;
+                                setArchiveIssueError(null);
+                                setArchiveIssueTargets(completedIssues);
+                              }
+                            : undefined
+                        }
+                        onOpenArchive={
+                          issueArchiveAvailable ? openArchiveDrawer : undefined
                         }
                         onGroupByChange={(groupBy) =>
                           commands.changeProjectGroup({
@@ -671,9 +787,15 @@ export function CollaborationApp({
                           : "Assigned in Issue",
                       )}
                       actionsLabel={translate("common.actions", "操作")}
-                      deleteLabel={translate("todo.delete_issue", "删除任务")}
+                      deleteLabel={translate("todo.archive_issue", "归档任务")}
+                      canDelete={(issue) => issue.status === "completed"}
                       onDelete={
-                        issueDeleteAvailable ? requestIssueDelete : undefined
+                        issueArchiveAvailable
+                          ? (issue) => {
+                              if (issue.status === "completed")
+                                requestIssueArchive(issue);
+                            }
+                          : undefined
                       }
                       statusName={(status) =>
                         projectStatuses(project, messages, translate).find(
@@ -817,7 +939,10 @@ export function CollaborationApp({
                                 ? () => host.manageResource?.("environments")
                                 : undefined
                             }
-                            onProjectChange={commands.replaceProject}
+                            onProjectChange={(nextProject) => {
+                              commands.replaceProject(nextProject);
+                              onProjectChange?.(nextProject);
+                            }}
                             project={project}
                             translate={translate}
                           />
@@ -940,9 +1065,10 @@ export function CollaborationApp({
                   ? () => onCreateTask(project, selectedIssue)
                   : undefined,
                 onDelete:
-                  issueDeleteAvailable &&
+                  issueArchiveAvailable &&
+                  selectedIssue.status === "completed" &&
                   canEditCollaborationIssue(selectedIssue)
-                    ? () => requestIssueDelete(selectedIssue)
+                    ? () => requestIssueArchive(selectedIssue)
                     : undefined,
               })
             ) : (
@@ -984,9 +1110,10 @@ export function CollaborationApp({
                     : undefined
                 }
                 onDelete={
-                  issueDeleteAvailable &&
+                  issueArchiveAvailable &&
+                  selectedIssue.status === "completed" &&
                   canEditCollaborationIssue(selectedIssue)
-                    ? () => requestIssueDelete(selectedIssue)
+                    ? () => requestIssueArchive(selectedIssue)
                     : undefined
                 }
                 onConflict={commands.refreshSelectedIssue}
@@ -994,16 +1121,31 @@ export function CollaborationApp({
               />
             )
           ) : null}
-          {deleteIssueTarget ? (
-            <IssueDeleteDialog
-              busy={deleteIssueBusy}
-              error={deleteIssueError}
+          {archiveIssueTargets?.length ? (
+            <IssueArchiveDialog
+              busy={archiveIssueBusy}
+              count={archiveIssueTargets.length}
+              error={archiveIssueError}
               hasChildren={issues.some(
-                (candidate) => candidate.parent_id === deleteIssueTarget.id,
+                (candidate) =>
+                  candidate.parent_id === archiveIssueTargets[0]?.id,
               )}
-              onCancel={closeIssueDelete}
-              onConfirm={() => void confirmIssueDelete()}
-              title={deleteIssueTarget.title}
+              onCancel={closeIssueArchive}
+              onConfirm={() => void confirmIssueArchive()}
+              title={archiveIssueTargets[0]?.title}
+              translate={translate}
+            />
+          ) : null}
+          {archiveDrawerOpen ? (
+            <IssueArchiveDrawer
+              busyId={restoringIssueId}
+              error={archiveDrawerError}
+              items={archivedIssues}
+              loading={archiveDrawerLoading}
+              nextCursor={archiveNextCursor}
+              onClose={closeArchiveDrawer}
+              onLoadMore={() => void loadArchivedIssues(archiveNextCursor)}
+              onRestore={(issue) => void restoreArchivedIssue(issue)}
               translate={translate}
             />
           ) : null}
