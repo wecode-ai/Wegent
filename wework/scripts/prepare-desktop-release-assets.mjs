@@ -72,22 +72,19 @@ if (platform === 'macos') {
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
   )
-  await copyUpdateArtifacts(
-    [
-      appImage,
-      ...(useComponentizedHostUpdate
-        ? [
-            await findFile(
-              onlineUpdateRoot,
-              new RegExp(
-                `^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`
-              )
-            ),
-          ]
-        : []),
-    ],
-    false
-  )
+  await copyUpdateArtifacts([
+    appImage,
+    ...(useComponentizedHostUpdate
+      ? [
+          await findFile(
+            onlineUpdateRoot,
+            new RegExp(
+              `^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`
+            )
+          ),
+        ]
+      : []),
+  ])
 } else {
   throw new Error(`Unsupported desktop release platform: ${platform}`)
 }
@@ -163,13 +160,9 @@ async function sha256(path) {
   return hash.digest('hex')
 }
 
-async function copyUpdateArtifacts(paths, includeBlockmap = true) {
+async function copyUpdateArtifacts(paths) {
   for (const path of new Set(paths)) {
     await cp(path, join(output, basename(path)))
-    if (!includeBlockmap) continue
-    const blockmap = `${path}.blockmap`
-    await requireFile(blockmap)
-    await cp(blockmap, join(output, basename(blockmap)))
   }
 }
 
