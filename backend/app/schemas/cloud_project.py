@@ -139,12 +139,25 @@ def default_board_statuses() -> list[CloudProjectBoardStatus]:
     ]
 
 
+class CloudProjectScheduleViewConfig(BaseModel):
+    status_filter: str | None = Field(default=None, max_length=32)
+    assignee_filter: str | None = Field(default=None, max_length=128)
+    tag_filter: str | None = Field(default=None, max_length=80)
+    group_by: Literal["none", "status", "priority", "assignee", "tag"] = "none"
+    sort_by: Literal["start_asc", "due_asc", "updated_desc", "priority_desc"] = (
+        "start_asc"
+    )
+
+
 class CloudProjectBoardConfig(BaseModel):
     group_by: Literal["status", "priority", "assignee", "tag"] = "status"
     statuses: list[CloudProjectBoardStatus] = Field(
         default_factory=default_board_statuses
     )
     processing_start_status_id: str | None = None
+    schedule_view: CloudProjectScheduleViewConfig = Field(
+        default_factory=CloudProjectScheduleViewConfig
+    )
 
     @model_validator(mode="after")
     def validate_statuses(self) -> "CloudProjectBoardConfig":

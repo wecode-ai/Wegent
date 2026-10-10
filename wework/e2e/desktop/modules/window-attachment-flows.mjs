@@ -62,6 +62,7 @@ import {
 } from './shared.mjs'
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
+import { waitForWindowState } from './native-window-state.mjs'
 
 const MODEL_RESPONSE_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
@@ -295,33 +296,53 @@ async function verifyRuntimeTaskNotificationNavigation({
   composerSelector,
   control,
   taskRowTestId,
+  taskAddress,
 }) {
-  const activeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    .workbench?.currentRuntimeTask
   assert.equal(
-    activeTask?.taskId,
+    taskAddress?.taskId,
     taskRowTestId.replace('runtime-local-task-row-', ''),
     'The notification navigation fixture did not expose the expected active task'
   )
-  assert.ok(activeTask?.deviceId, 'The notification navigation fixture did not expose a device ID')
+  assert.ok(taskAddress?.deviceId, 'The notification navigation fixture did not expose a device ID')
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
+  const tabsBefore = JSON.parse(await control.command('snapshot', 'body'))
+    .testIds.filter(testId => testId.startsWith('workspace-tab-select-'))
+    .sort()
+  assert.ok(tabsBefore.length > 0, 'The notification fixture has no workspace tabs')
+  await control.command('closeMainWindowToTray', 'body')
+  await waitForWindowState(
+    control,
+    state => !state.visible,
+    'The notification fixture did not hide the main window',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
   await control.command('activateRuntimeTaskCompletionNotification', 'body', {
     value: JSON.stringify({
-      deviceId: activeTask.deviceId,
-      taskId: activeTask.taskId,
+      deviceId: taskAddress.deviceId,
+      taskId: taskAddress.taskId,
     }),
   })
+  await waitForWindowState(
+    control,
+    state => state.visible && !state.minimized,
+    'Activating the task notification did not restore the main window',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
 
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     const currentTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       .workbench?.currentRuntimeTask
     if (
-      currentTask?.deviceId === activeTask.deviceId &&
-      currentTask?.taskId === activeTask.taskId
+      currentTask?.deviceId === taskAddress.deviceId &&
+      currentTask?.taskId === taskAddress.taskId
     ) {
+      const tabsAfter = JSON.parse(await control.command('snapshot', 'body'))
+        .testIds.filter(testId => testId.startsWith('workspace-tab-select-'))
+        .sort()
+      assert.deepEqual(tabsAfter, tabsBefore, 'The task notification created a duplicate tab')
       return
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
@@ -395,6 +416,8 @@ async function verifyBackgroundTaskWindowLifecycle({
     'runtime-local-task-running-',
     'runtime-local-task-row-'
   )
+  const taskAddress = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    .workbench?.currentRuntimeTask
 
   await getSingleElementMetrics(control, ACTIVE_WORKBENCH_SELECTOR, 'The running conversation pane')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -524,9 +547,12 @@ async function verifyBackgroundTaskWindowLifecycle({
     snapshot => snapshot.testIds.includes(unreadTaskTestId),
     'The settled background task did not become unread'
   )
-  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  setPhase('first-turn-task-notification-navigation')
+  await verifyRuntimeTaskNotificationNavigation({
+    composerSelector,
+    control,
+    taskRowTestId,
+    taskAddress,
   })
   await waitForSnapshot(
     control,
@@ -535,7 +561,7 @@ async function verifyBackgroundTaskWindowLifecycle({
       snapshot.text.includes(WINDOW_LIFECYCLE_COMPLETION_TEXT) &&
       !snapshot.testIds.includes(unreadTaskTestId) &&
       !snapshot.testIds.includes('thinking-indicator'),
-    'Switching to the completed background task did not show its latest read state',
+    'The first-turn notification did not open the completed task and mark it read',
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
@@ -552,12 +578,6 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     lifecycleScreenshotName('04-background-task-latest-state-after-switch.png')
   )
-  setPhase('task-notification-navigation')
-  await verifyRuntimeTaskNotificationNavigation({
-    composerSelector,
-    control,
-    taskRowTestId,
-  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1270,18 +1290,28 @@ async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
   throw new Error('The attachment-only tasks did not persist durable attachment previews')
 }
 
-async function waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, expectedCount) {
+async function waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, expectedCount) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const attachments = await findAttachmentFiles(runtimeAttachmentRoot)
+    const entries = await readdir(runtimeWorkspaceRoot, { withFileTypes: true })
+    const attachments = (
+      await Promise.all(
+        entries
+          .filter(entry => entry.isDirectory())
+          .map(entry => findAttachmentFiles(join(runtimeWorkspaceRoot, entry.name, 'attachments')))
+      )
+    ).flat()
     if (attachments.length >= expectedCount) return attachments
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error('The remote device did not persist attachments in its private runtime root')
+  throw new Error('The remote device did not persist attachments in its task workspace directories')
 }
 
 async function findAttachmentFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  const entries = await readdir(directory, { withFileTypes: true }).catch(error => {
+    if (error.code === 'ENOENT') return []
+    throw error
+  })
   const files = await Promise.all(
     entries.map(entry => {
       const path = join(directory, entry.name)
@@ -1304,7 +1334,7 @@ async function verifyAttachmentOnlySidebarLifecycle({
   composerSelector,
   control,
   executorHome,
-  runtimeAttachmentRoot,
+  runtimeWorkspaceRoot,
   workspacePath,
 }) {
   const gitStatusBefore = workspacePath ? readGitStatus(workspacePath) : null
@@ -1349,8 +1379,8 @@ async function verifyAttachmentOnlySidebarLifecycle({
   if (executorHome) {
     await waitForDurableAttachmentPreviews(executorHome, 2)
   }
-  if (runtimeAttachmentRoot) {
-    await waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, 2)
+  if (runtimeWorkspaceRoot) {
+    await waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, 2)
   }
   if (workspacePath) {
     assert.equal(

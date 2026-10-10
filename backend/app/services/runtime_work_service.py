@@ -1370,7 +1370,6 @@ async def create_runtime_task(
     )
     return await _dispatch_compiled_runtime_task(
         user_id=user_id,
-        request=request,
         compiled=compiled,
     )
 
@@ -1378,7 +1377,6 @@ async def create_runtime_task(
 async def _dispatch_compiled_runtime_task(
     *,
     user_id: int,
-    request: RuntimeTaskCreateRequest,
     compiled: CompiledRuntimeTaskCreate,
 ) -> RuntimeTaskCreateResponse:
     """Dispatch one already compiled runtime task."""
@@ -1398,7 +1396,7 @@ async def _dispatch_compiled_runtime_task(
         ) from exc
     response = _runtime_create_response(
         result,
-        request.runtime,
+        compiled.payload["runtime"],
         compiled.target.device_id,
         compiled.target.workspace_path,
         compiled.target.workspace_source,
@@ -1488,8 +1486,15 @@ def _runtime_task_create_payload(
 ) -> dict[str, Any]:
     """Compile one validated create request into the Executor wire payload."""
 
+    runtime = request.runtime
+    bots = getattr(execution_request, "bot", [])
+    if request.wegent_team_id is not None and bots:
+        runtime = {
+            "Codex": "codex",
+            "ClaudeCode": "claude_code",
+        }.get(bots[0].get("shell_type"), runtime)
     payload: dict[str, Any] = {
-        "runtime": request.runtime,
+        "runtime": runtime,
         "message": request.message,
         "title": _runtime_task_title(request),
         "executionRequest": _runtime_execution_request_payload(execution_request),
@@ -1551,7 +1556,7 @@ def _runtime_task_create_payload(
         payload["initialSupervisor"] = _materialize_initial_supervisor(
             db=db,
             user_id=user_id,
-            runtime=request.runtime,
+            runtime=runtime,
             supervisor=request.initial_supervisor,
         )
     if request.side_source:
@@ -3828,11 +3833,12 @@ def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
         if address.workspace_path
         else None
     )
+    team_id = _runtime_address_team_id(address)
     return RuntimeTaskAddress(
         deviceId=address.device_id,
         workspacePath=workspace_path,
         localTaskId=address.local_task_id.strip(),
-        runtimeHandle=address.runtime_handle,
+        runtimeHandle={"wegentTeam": {"id": team_id}} if team_id is not None else None,
     )
 
 
@@ -4249,7 +4255,8 @@ def _build_direct_wework_runtime_execution_request(
     from app.services.auth import create_skill_identity_token, create_task_token
 
     user = _get_user(db, user_id)
-    task_id = request.local_task_id or str(_runtime_execution_ids()[0])
+    generated_task_id, subtask_id = _runtime_execution_ids()
+    task_id = request.local_task_id or str(generated_task_id)
     title = _runtime_task_title(request)
     runtime_model_config, _, _ = _runtime_model_override(
         db,
@@ -4259,9 +4266,25 @@ def _build_direct_wework_runtime_execution_request(
     model_config = dict(request.runtime_model_config or runtime_model_config or {})
     first_bot = request.bot[0] if request.bot else {}
     origin = request.origin if isinstance(request.origin, dict) else {}
+    auth_token = create_task_token(
+        task_id=0,
+        subtask_id=0,
+        user_id=user.id,
+        user_name=user.user_name,
+        dispatch_id=str(origin.get("dispatchId") or origin.get("dispatch_id") or "")
+        or None,
+        dispatch_role=str(
+            origin.get("dispatchRole") or origin.get("dispatch_role") or ""
+        )
+        or None,
+        manager_agent_id=str(
+            origin.get("managerAgentId") or origin.get("manager_agent_id") or ""
+        )
+        or None,
+    )
     execution_request = ExecutionRequest(
         task_id=task_id,
-        subtask_id=f"{task_id}-assistant",
+        subtask_id=subtask_id,
         team_id=0,
         team_name="Wework",
         team_namespace="default",
@@ -4293,24 +4316,10 @@ def _build_direct_wework_runtime_execution_request(
         collaboration_model="single",
         mode="code",
         task_mode="code",
+        mcp_servers=[],
         preload_skills=list(request.additional_skills),
         attachments=[],
-        auth_token=create_task_token(
-            task_id=0,
-            subtask_id=0,
-            user_id=user.id,
-            user_name=user.user_name,
-            dispatch_id=str(origin.get("dispatchId") or origin.get("dispatch_id") or "")
-            or None,
-            dispatch_role=str(
-                origin.get("dispatchRole") or origin.get("dispatch_role") or ""
-            )
-            or None,
-            manager_agent_id=str(
-                origin.get("managerAgentId") or origin.get("manager_agent_id") or ""
-            )
-            or None,
-        ),
+        auth_token=auth_token,
         skill_identity_token=create_skill_identity_token(
             user_id=user.id,
             user_name=user.user_name,
@@ -4344,7 +4353,6 @@ def _apply_runtime_create_request(
 
     if request.local_task_id:
         execution_request.task_id = request.local_task_id
-        execution_request.subtask_id = f"{request.local_task_id}-assistant"
     if request.bot:
         execution_request.bot = request.bot
         first_bot = request.bot[0] if request.bot else {}

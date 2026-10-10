@@ -1,4 +1,8 @@
 {
+  "history": {
+    "load_failed": "会话历史加载失败",
+    "retry": "重试"
+  },
   "table": {
     "expand": "展开表格",
     "close": "收起表格",
@@ -118,6 +122,12 @@
     "send_with_paused_preserve": "保留并继续"
   },
   "request_user_input": {
+    "url_title": "{{server}} 请求浏览器授权",
+    "url_destination": "将打开：{{host}}",
+    "url_hint": "请在浏览器中完成授权。打开页面不代表授权成功；完成后返回此对话。若未继续，可停止后重试。",
+    "url_open": "打开浏览器授权",
+    "url_failed": "无法打开授权页面或提交响应，请重试。",
+    "url_summary": "已响应浏览器授权请求；授权结果由连接器确认。",
     "asked_count": "已询问 {{count}} 个问题",
     "ignore": "取消",
     "submit": "提交",

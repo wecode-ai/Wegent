@@ -23,6 +23,11 @@ describe('runtimeSendError', () => {
 })
 
 describe('buildRuntimeTaskCreateHandle', () => {
+  test('retains the Team identity before the runtime task is bound', () => {
+    expect(buildRuntimeTaskCreateHandle(null, { wegentTeamId: 1880 })).toEqual({
+      wegentTeam: { id: 1880 },
+    })
+  })
   test('keeps board ownership in the optimistic runtime address', () => {
     expect(
       buildRuntimeTaskCreateHandle(null, {

@@ -47,11 +47,13 @@ pub struct KindRow {
     pub kinds_updated_at: NaiveDateTime,
 }
 
-/// `KindReader.get_by_id` for the Team kind: one
-/// active Team `kinds` row by id. The source inlines the id as a text
+/// `team_share_service._get_resource` team lookup
+/// (`team_kinds_service.get_team_skills` -> `get_resource_for_use`): one
+/// active Team `kinds` row by id, a plain `db.query(Kind)` that does not go
+/// through the cached kind reader. The source inlines the id as a text
 /// literal; the target binds it as a parameter, which the replay matcher
-/// accepts. Retained for callers that use the repository directly.
-#[allow(dead_code)]
+/// accepts. The `is_active IS true` rendering mirrors the source's
+/// `Kind.is_active.is_(True)`.
 pub async fn team_by_id<M>(mysql: &M, team_id: i64) -> MysqlResult<Option<KindRow>>
 where
     M: Mysql,
@@ -61,7 +63,7 @@ where
             format!(
                 "SELECT {KIND_COLUMNS} \nFROM kinds \n\
                  WHERE kinds.id = ? AND kinds.kind = 'Team' \
-                 AND kinds.is_active = true \n LIMIT 1"
+                 AND kinds.is_active IS true \n LIMIT 1"
             )
             .as_str(),
             (team_id,),
@@ -71,7 +73,9 @@ where
 
 /// `batch_load_kinds_by_refs` personal rows: the user's active kinds with
 /// the given names in the `default` namespace. `names` keeps the caller's
-/// order.
+/// order. Retained for parity with the source's direct kind-ref queries; the
+/// cached reader resolves personal lookups on the request path.
+#[allow(dead_code)]
 pub async fn kinds_by_names<M>(
     mysql: &M,
     user_id: i64,

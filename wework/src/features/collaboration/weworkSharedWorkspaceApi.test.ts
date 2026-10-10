@@ -270,6 +270,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       pullRequestAutomation: { enabled: true },
       workflowDefinition: { version: 1 },
       executionEnvironment: {
+        workspacePolicy: 'project',
         repositories: [
           {
             name: 'Wegent',
@@ -292,6 +293,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       pull_request_automation: { enabled: true },
       workflow_definition: { version: 1 },
       execution_environment: {
+        workspace_policy: 'project',
         repositories: [
           {
             name: 'Wegent',
@@ -348,6 +350,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.issues.get('issue-1')
     await api.issues.create('project-1', {
       title: 'Issue',
+      startAt: '2026-09-10',
       dueAt: '2026-09-11',
       parentId: null,
       localProjectId: 3,
@@ -359,6 +362,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       'project-1',
       expect.objectContaining({
         title: 'Issue',
+        start_at: '2026-09-10',
         due_at: '2026-09-11',
         parent_id: null,
         local_project_id: 3,
@@ -369,6 +373,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.issues.update('issue-1', {
       version: 3,
       assigneeUserId: 8,
+      startAt: null,
       dueAt: null,
       automationRuleId: null,
     })
@@ -377,6 +382,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       expect.objectContaining({
         version: 3,
         assignee_user_id: 8,
+        start_at: null,
         due_at: null,
       })
     )
@@ -677,6 +683,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       location: 'cloud' as const,
       namespace: 'default',
       execution_environment: {
+        workspace_policy: 'git_worktree',
         repositories: [],
         setup_steps: [],
         fingerprint: '',
@@ -1183,6 +1190,7 @@ describe('createWeworkWorkspaceRuntimePort', () => {
       taskId: 'task-1',
       backendTaskId: 9,
       modelSelection: { model: 'gpt-5' },
+      wegentTeamId: 1880,
     }
     const deliveryTask = {
       deviceId: 'device-1',
@@ -1190,6 +1198,7 @@ describe('createWeworkWorkspaceRuntimePort', () => {
       backendTaskId: 9,
       runtimeHandle: {
         modelSelection: { model: 'gpt-5' },
+        wegentTeam: { id: 1880 },
       },
     }
 

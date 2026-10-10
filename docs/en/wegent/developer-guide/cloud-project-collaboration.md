@@ -121,7 +121,7 @@ Local and cloud Executors use the same claim protocol and board data model. When
 
 #### Three assignment loops
 
-For a human assignment, Backend sends an in-app notification and notifications to connected IM channels. The member creates a personal task from the notification and submits a Delivery, which updates the root Issue. When the human task belongs to a collaboration-group round, the Delivery also releases that round's barrier and wakes the manager.
+For a direct human assignment, Backend sends in-app and connected IM notifications that open the original Issue without creating a personal task. The assignee starts work, enters the result, and submits it for review on that Issue. Optional AI assistance creates a linked Runtime Task; its Delivery returns only as a draft and never submits or accepts the Issue on the person's behalf. Human tasks inside a collaboration-group round still create a personal task from the notification; its Delivery releases the round's barrier and wakes the manager.
 
 For a direct Agent assignment, an Executor claims the root Issue and starts a Runtime session for the assigned Agent. Results are persisted as activity and delivery evidence; success moves the root Issue to `in_review` for user confirmation. Backend never creates or owns the internal Runtime session.
 

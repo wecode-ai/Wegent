@@ -7,6 +7,41 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn named_home_rpc_clients_preserve_process_isolation() {
+    let _environment = environment::LaunchEnvironment::new();
+    let root = PathBuf::from(env::var("WEGENT_WORKBENCH_HOME").unwrap());
+    let client = CodexAppServerClient::new("synthetic-home-rpc-client");
+    let mut request: ExecutionRequest = serde_json::from_value(json!({
+        "user_name":"synthetic", "team_namespace":"default", "team_name":"agent-a",
+        "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}]
+    }))
+    .unwrap();
+    let first = client.for_request(&request).unwrap();
+    let repeated = client.for_request(&request).unwrap();
+    assert!(Arc::ptr_eq(&first.state, &repeated.state));
+    assert!(!Arc::ptr_eq(&client.state, &first.state));
+    request
+        .extra
+        .insert("team_name".to_owned(), json!("agent-b"));
+    let second = client.for_request(&request).unwrap();
+    assert!(!Arc::ptr_eq(&first.state, &second.state));
+    assert_eq!(
+        first.process_environment(&BTreeMap::new(), &BTreeMap::new())["CODEX_HOME"],
+        root.join("agents/synthetic/default/agent-a")
+            .display()
+            .to_string()
+    );
+    request.extra.insert("team_id".to_owned(), json!(0));
+    assert!(Arc::ptr_eq(
+        &client.state,
+        &client.for_request(&request).unwrap().state
+    ));
+}
+
+#[path = "tests/environment.rs"]
+mod environment;
+
+#[test]
 fn inject_session_headers_adds_plain_header_for_direct_providers() {
     let mut headers = vec![("user".to_owned(), "alice".to_owned())];
     inject_session_headers(&mut headers, "123");
@@ -395,12 +430,21 @@ fn environment_change_diagnostics_report_keys_without_values() {
         &current,
         &requested,
         &active_threads,
+        0,
+    ));
+    assert!(!codex_process_environment_requires_restart(
+        "rpc_request",
+        &current,
+        &requested,
+        &HashMap::new(),
+        1,
     ));
     assert!(codex_process_environment_requires_restart(
         "turn_start",
         &current,
         &requested,
         &HashMap::new(),
+        0,
     ));
 }
 
@@ -563,6 +607,27 @@ fn codex_app_server_uses_codex_home_as_working_directory() {
 }
 
 #[test]
+fn codex_app_server_uses_native_desktop_http_identity() {
+    let mut config = CodexLaunchConfig::default();
+    config.env.insert(
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE".to_owned(),
+        "untrusted".to_owned(),
+    );
+    let command = codex_app_server_command("codex", Path::new("/tmp/codex"), &config);
+    let identity = command
+        .as_std()
+        .get_envs()
+        .find(|(key, _)| *key == "CODEX_INTERNAL_ORIGINATOR_OVERRIDE");
+    assert_eq!(
+        identity
+            .and_then(|(_, value)| value)
+            .and_then(|value| value.to_str()),
+        Some("Codex")
+    );
+    assert_eq!(initialize_params()["clientInfo"]["name"], "wegent_executor");
+}
+
+#[test]
 fn mcp_thread_diagnostics_report_names_without_config_values() {
     let params = json!({
         "config": {
@@ -587,6 +652,7 @@ fn mcp_thread_diagnostics_report_names_without_config_values() {
 
 #[test]
 fn vision_sidecar_thread_start_forwards_selected_reasoning_effort() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         model_config: json!({
             "model_id": "deepseek-v4-pro",
@@ -660,6 +726,101 @@ fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
             {"label": "仅自己", "description": "owner"},
             {"label": "指定人", "description": "custom"}
         ])
+    );
+}
+
+#[test]
+fn mcp_url_elicitation_is_visible_and_requires_explicit_consent() {
+    let params = json!({
+        "serverName": "codex_apps", "mode": "url",
+        "message": "Connect GitHub", "elicitationId": "github-auth-1",
+        "url": "https://chatgpt.com/connect/github?state=secret"
+    });
+    let message = json!({"id": 0, "method": "mcpServer/elicitation/request", "params": params});
+    let payload = mcp_server_elicitation_request_user_input_params(&message["params"]).unwrap();
+    assert_eq!(payload["interactionKind"], "mcp_url");
+    assert_eq!(payload["elicitationId"], "github-auth-1");
+    assert_eq!(payload["url"], message["params"]["url"]);
+    assert!(codex_notification_requires_user_input(&message));
+    assert!(!is_mcp_tool_call_approval_request(&message));
+    for action in ["accept", "cancel", "decline"] {
+        let result = mcp_server_elicitation_response(
+            &message,
+            Some(&json!({
+                "requestId": 0, "answers": {"__mcp_url": {"answers": [action]}}
+            })),
+        )
+        .unwrap();
+        assert_eq!(result, json!({"action": action}));
+    }
+    assert_eq!(
+        url_elicitation::response_result(&json!({"answers": {"other": {"answers": ["accept"]}}})),
+        json!({"action": "cancel"})
+    );
+}
+
+#[test]
+fn mcp_url_elicitation_rejects_unsafe_or_incomplete_requests() {
+    for address in [
+        "javascript:alert(1)",
+        "file:///tmp/auth",
+        "http://example.com/login",
+        "https://user:password@example.com",
+        "not-a-url",
+    ] {
+        let params = json!({"mode": "url", "url": address, "elicitationId": "1"});
+        assert!(mcp_server_elicitation_request_user_input_params(&params).is_none());
+        let result = mcp_server_elicitation_response(&json!({"params": params}), None).unwrap();
+        assert_eq!(result["action"], "decline");
+    }
+    for address in ["http://127.0.0.1:1234/auth", "http://[::1]:1234/auth"] {
+        assert!(
+            url_elicitation::request_params(&json!({"url": address, "elicitationId": "1"}))
+                .is_some()
+        );
+    }
+    assert!(url_elicitation::request_params(&json!({"url": "https://example.com"})).is_none());
+}
+
+#[tokio::test]
+async fn mcp_shared_unsupported_elicitation_does_not_wait_for_invisible_input() {
+    let (_sender, receiver) = mpsc::channel(1);
+    let router = InteractionAnswerRouter::new(receiver);
+    let message = json!({"id": 0, "params": {"mode": "unsupported"}});
+    let result = timeout(
+        Duration::from_secs(1),
+        url_elicitation::shared_response(&message, Some(router), "0".to_owned(), true),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    assert_eq!(result["action"], "decline");
+}
+
+#[tokio::test]
+async fn mcp_shared_url_elicitation_routes_consent_without_auto_approval() {
+    let (sender, receiver) = mpsc::channel(1);
+    let router = InteractionAnswerRouter::new(receiver);
+    let message = json!({"id": 0, "params": {
+        "mode": "url", "url": "https://chatgpt.com/connect/github", "elicitationId": "1",
+        "_meta": {"codex_approval_kind": "mcp_tool_call"}
+    }});
+    assert!(!is_mcp_tool_call_approval(&message["params"]));
+    let task = tokio::spawn(async move {
+        url_elicitation::shared_response(&message, Some(router), "0".to_owned(), true).await
+    });
+    sender
+        .send(json!({"requestId": 0, "answers": {"__mcp_url": {"answers": ["cancel"]}}}))
+        .await
+        .unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        Some(json!({"action": "cancel"}))
     );
 }
 
@@ -861,15 +1022,18 @@ fn wework_codex_home_defaults_to_executor_home_codex() {
 #[test]
 fn wework_codex_home_ignores_empty_executor_home() {
     let _lock = crate::test_env::lock();
+    let temp = tempfile::tempdir().unwrap();
+    let _platform_home = EnvRestore::capture("HOME");
+    let _workbench_home = EnvRestore::capture("WEGENT_WORKBENCH_HOME");
+    env::set_var("HOME", temp.path());
+    env::remove_var("WEGENT_WORKBENCH_HOME");
     let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
 
     env::set_var("WEGENT_EXECUTOR_HOME", "");
     env::remove_var(WEGENT_CODEX_HOME_ENV);
 
-    let expected = dirs::home_dir()
-        .map(|home| home.join(".wegent-executor").join("codex"))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor/codex"));
+    let expected = temp.path().join(".wegent/workbench/executor/codex");
     assert_eq!(wework_codex_home(), expected);
 }
 
@@ -1248,6 +1412,7 @@ fn strip_wework_browser_instructions_removes_all_generated_versions() {
 
 #[test]
 fn codex_launch_config_enables_streaming_patch_updates() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -1949,6 +2114,7 @@ fn header_overrides_preserve_custom_provider_headers() {
 
 #[test]
 fn codex_launch_config_forwards_web_search_mode() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -1975,6 +2141,7 @@ fn codex_launch_config_forwards_web_search_mode() {
 
 #[test]
 fn codex_launch_config_defaults_context_window_to_256k() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -1997,6 +2164,7 @@ fn codex_launch_config_defaults_context_window_to_256k() {
 
 #[test]
 fn codex_launch_config_reserves_the_output_budget_from_the_auto_compact_limit() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -2047,6 +2215,7 @@ fn auto_compact_limit_requires_a_usable_output_budget() {
 
 #[test]
 fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -2128,7 +2297,79 @@ fn fork_launch_config_owns_its_route_with_or_without_a_running_source() {
 }
 
 #[test]
+fn binds_an_idle_thread_to_the_task_model_route() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("idle-thread-route");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
+    let request = ExecutionRequest {
+        task_id: "idle-thread-route-task".to_owned(),
+        subtask_id: "idle-thread-route-task-context-compact".to_owned(),
+        model_config: json!({
+            "model_id": "selected-model",
+            "base_url": "https://cloud-model.example/v1",
+            "api_key": "test-cloud-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true,
+        }),
+        ..ExecutionRequest::default()
+    };
+    assert!(
+        !local_model_proxy::thread_has_bound_route("idle-thread-route-thread"),
+        "an idle thread starts without a bound route"
+    );
+
+    let registration = bind_codex_thread_model_route(&request, "idle-thread-route-thread")
+        .expect("binding the task route should succeed")
+        .expect("payload providers must route through the local model proxy");
+    assert!(
+        local_model_proxy::thread_has_bound_route("idle-thread-route-thread"),
+        "the thread should resolve the task route"
+    );
+
+    // Action routes share the task scope with the turns that launched them.
+    let launch = build_codex_launch_config(&request).expect("launch config should register");
+    assert_eq!(
+        launch
+            .local_proxy_registration
+            .as_ref()
+            .expect("launch route")
+            .0,
+        registration.0
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn skips_the_local_route_for_providers_that_are_reached_directly() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("direct-provider-route");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
+    let request = ExecutionRequest {
+        task_id: "direct-provider-route-task".to_owned(),
+        model_config: json!({
+            "model": "gpt-5.6-sol",
+            "api_key": "test-cloud-key",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert!(
+        bind_codex_thread_model_route(&request, "direct-provider-thread")
+            .expect("a direct provider needs no local route")
+            .is_none()
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
+    let _environment = environment::LaunchEnvironment::new();
     let task_id = "codex-launch-config-stable-model-switch-task".to_owned();
     let luna_request = ExecutionRequest {
         task_id: task_id.clone(),
@@ -2177,6 +2418,7 @@ fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
 
 #[test]
 fn codex_launch_config_forwards_runtime_proxy_to_standalone_engine() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -2291,6 +2533,7 @@ fn replacing_proxy_environment_preserves_local_mcp_auth() {
 
 #[test]
 fn codex_launch_config_forwards_task_identity_to_thread_only() {
+    let _environment = environment::LaunchEnvironment::new();
     let mut request = ExecutionRequest {
         task_id: "task-525".to_owned(),
         auth_token: Some("task-jwt".to_owned()),
@@ -2315,6 +2558,13 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         .get("config")
         .and_then(Value::as_object)
         .expect("thread config should include shell env");
+
+    assert!(!launch_config
+        .config_overrides
+        .iter()
+        .any(|argument| argument.contains("task-jwt")
+            || argument.contains("runtime-jwt")
+            || argument.contains("skill-jwt")));
 
     assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
     assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
@@ -2351,6 +2601,7 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
 
 #[test]
 fn codex_worktree_launch_config_sets_pnpm_environment() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         workspace_source: Some("git_worktree".to_owned()),
         ..ExecutionRequest::default()
@@ -3246,6 +3497,58 @@ fn thread_start_uses_paginated_history_mode() {
 }
 
 #[test]
+fn stdio_mcp_environment_is_private_per_service_in_start_and_resume_rpc() {
+    let request = ExecutionRequest {
+        bot: json!([{"shell_type":"Codex", "mcp_servers": {
+            "first": {"command":"tool-one", "env":{"TOKEN":"first-secret", "OPENAI_API_KEY":"key-one", "PATH":"/one/bin"}},
+            "second": {"command":"tool-two", "env":{"TOKEN":"second-secret", "OPENAI_API_KEY":"key-two", "PATH":"/two/bin"}}
+        }}]),
+        ..Default::default()
+    };
+    let mut launch = CodexLaunchConfig::default();
+    let (overrides, environment) =
+        runtime_capabilities::request_mcp_config_overrides(&request, &mut launch.thread_config)
+            .unwrap();
+    launch.config_overrides.extend(overrides);
+    launch.env.extend(environment);
+    for name in ["TOKEN", "OPENAI_API_KEY", "PATH"] {
+        assert!(!launch.env.contains_key(name));
+    }
+    let argv = launch.config_overrides.join("\n");
+    for value in [
+        "first-secret",
+        "second-secret",
+        "key-one",
+        "key-two",
+        "/one/bin",
+        "/two/bin",
+    ] {
+        assert!(!argv.contains(value));
+    }
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("existing-thread", &request, &launch),
+    ] {
+        assert_eq!(
+            params["config"]["mcp_servers.first.env"]["TOKEN"],
+            "first-secret"
+        );
+        assert_eq!(
+            params["config"]["mcp_servers.second.env"]["TOKEN"],
+            "second-secret"
+        );
+        assert_eq!(
+            params["config"]["mcp_servers.first.env"]["OPENAI_API_KEY"],
+            "key-one"
+        );
+        assert_eq!(
+            params["config"]["mcp_servers.second.env"]["PATH"],
+            "/two/bin"
+        );
+    }
+}
+
+#[test]
 fn codex_thread_plan_trims_and_prioritizes_direct_thread() {
     let plan = codex_thread_plan(
         Some("  direct-thread  "),
@@ -4049,6 +4352,38 @@ fn turn_input_expands_app_and_plugin_markdown_mentions_for_app_server() {
 }
 
 #[test]
+fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
+    for marketplace in ["openai-bundled", "openai-curated-remote"] {
+        let input = turn_input(&json!(format!(
+            "[$GitHub](plugin://github@{marketplace}) list repositories"
+        )));
+        assert_eq!(
+            input,
+            vec![text_input("GitHub (gh) list repositories".to_owned())]
+        );
+    }
+    assert_eq!(
+        turn_input(&json!([{"type":"mention", "name":"GitHub", "path":"app://github"}])),
+        vec![text_input("GitHub (gh)".to_owned())]
+    );
+    assert_eq!(
+        turn_input(&json!(
+            "[$GitHub](app://connector_account_specific_id) list repositories"
+        )),
+        vec![text_input("GitHub (gh) list repositories".to_owned())]
+    );
+    assert_eq!(
+        turn_input(
+            &json!([{"type":"mention", "name":"GitHub", "path":"app://connector_account_specific_id"}])
+        ),
+        vec![text_input("GitHub (gh)".to_owned())]
+    );
+    let instructions = codex_thread_developer_instructions("user settings", "task settings");
+    assert!(instructions.contains(github_cli::INSTRUCTIONS));
+    assert!(instructions.contains("connectorSlug=wework-github-cli"));
+}
+
+#[test]
 fn turn_input_binds_managed_plugin_mentions_to_the_plugin_entry_skill() {
     let root = unique_test_path("managed-plugin-skill-input");
     let codex_home = root.join("codex");
@@ -4324,6 +4659,7 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
 
 #[test]
 fn codex_thread_binds_project_space_through_context_grant() {
+    let _environment = environment::LaunchEnvironment::new();
     let mut request = ExecutionRequest {
         task_id: "runtime-task-1".to_owned(),
         backend_url: Some("https://wework.example.com".to_owned()),
@@ -4412,6 +4748,7 @@ fn codex_thread_exposes_project_space_to_issue_automation_executor() {
 
 #[test]
 fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest::default();
 
     let launch_config =
@@ -4435,6 +4772,7 @@ fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
 
 #[test]
 fn codex_thread_exposes_notifications_without_project_context() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         task_id: "runtime-task-notification".to_owned(),
         backend_url: Some("https://wework.example.com".to_owned()),

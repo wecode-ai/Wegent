@@ -273,6 +273,53 @@ describe('runtimeTaskProjection', () => {
     expect(shouldReplaceRuntimeTaskProjection(completed, staleActive)).toBe(false)
   })
 
+  test('requires an active snapshot to advance past the entire completed projection', () => {
+    const updatedAt = 1_791_473_979_351
+    const completed = task({
+      running: false,
+      status: 'done',
+      completedAt: 1_791_473_979_000,
+      updatedAt,
+    })
+    const active = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      updatedAt,
+    })
+
+    expect(shouldReplaceRuntimeTaskProjection(completed, active)).toBe(false)
+    expect(
+      shouldReplaceRuntimeTaskProjection(completed, { ...active, updatedAt: updatedAt + 1 })
+    ).toBe(true)
+  })
+
+  test('rejects the same active snapshot after a second-precision completion', () => {
+    const started = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      updatedAt: 1_791_522_458_204,
+    })
+    const completed = {
+      ...started,
+      running: false,
+      status: 'done',
+      turnStatus: 'completed',
+      completedAt: 1_791_522_458_000,
+    }
+
+    expect(shouldReplaceRuntimeTaskProjection(completed, started)).toBe(false)
+    expect(
+      shouldReplaceRuntimeTaskProjection(completed, {
+        ...started,
+        updatedAt: 1_791_522_459_000,
+      })
+    ).toBe(true)
+  })
+
   test('rejects a stale active projection that still carries completion', () => {
     const completed = task({
       running: false,

@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
 import { reservePort } from '../port-reservation.mjs'
+import { appendProcessOutput } from '../process-output.mjs'
 import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
@@ -112,6 +113,21 @@ const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
+const REQUEST_USER_INPUT_ASYNC_PROMPT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC: ask which implementation direction to use without blocking the turn.'
+const REQUEST_USER_INPUT_ASYNC_QUESTION = 'Which async implementation direction should be used?'
+const REQUEST_USER_INPUT_ASYNC_ANSWER = 'Complete'
+const REQUEST_USER_INPUT_ASYNC_CALL_ID = 'wework-e2e-request-user-input-async'
+const REQUEST_USER_INPUT_ASYNC_WAITING_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_WAITING'
+const REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_COMPLETE'
+const REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_BUSY: ask which implementation direction to use while the turn keeps running.'
+const REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION =
+  'Which implementation direction should be used while the turn keeps running?'
+const REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER = 'Proceed'
+const REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID = 'wework-e2e-request-user-input-async-busy'
+const REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_BUSY_COMPLETE'
 const MCP_ELICITATION_PROMPT =
   'WEWORK_DESKTOP_E2E_MCP_ELICITATION: confirm the inner-site access audience.'
 const MCP_ELICITATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MCP_ELICITATION_COMPLETE'
@@ -485,6 +501,7 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'arch',
   'distinct_id',
   'domain',
+  'duration_ms',
   'event_schema_version',
   'feature',
   'failure_stage',
@@ -492,6 +509,7 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'os',
   'release_channel',
   'runtime_mode',
+  'startup_id',
   'surface',
   'telemetry_session_id',
   'token',
@@ -1142,13 +1160,6 @@ async function resolveExecutable(configuredPath, fallbackCommand, description) {
   return resolved
 }
 
-async function appendProcessOutput(stream, destination) {
-  if (!stream) return
-  stream.on('data', chunk => {
-    void appendFile(destination, chunk)
-  })
-}
-
 function macosSleepAssertionIds(appProcessId) {
   if (process.platform !== 'darwin') return []
   const output = commandOutput('/usr/bin/pmset', ['-g', 'assertions'])
@@ -1583,6 +1594,17 @@ export {
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   REQUEST_USER_INPUT_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
+  REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT,
   MCP_ELICITATION_PROMPT,
   MCP_ELICITATION_COMPLETION_TEXT,
   MCP_ELICITATION_ACCEPTED_MARKER,

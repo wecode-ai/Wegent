@@ -109,7 +109,15 @@ The default project space belongs to the local project's settings and is stored 
 
 Project-space lists, default-space selection, and current-task links are resolved in the background. The composer, image and file paste, attachment upload, and message sending remain available while a lookup or link is pending. Wework adds the project context or completes the task link after the result arrives instead of blocking the conversation with a linking state.
 
+### Initialize the project execution environment
+
+Creating and manually handling an issue does not require an initialized execution environment. Starting an AI execution task requires the project's execution environment to be initialized on at least one online device. If the collaboration home reports that the environment is not initialized, choose **Configure execution environment**, initialize an available device in project settings, and then return to the issue to continue execution.
+
+After initialization, the collaboration home reads the latest project configuration and device status again; reloading the page or reopening the project is not required. If the device is marked complete but the warning remains, confirm that the device is still online and reopen the execution-environment settings to check the initialization result.
+
 ## Board quick start
+
+You can create an issue even when no device has been added, the device is offline, or the environment is not initialized. Creating an issue does not redirect to execution environment settings. Manual work can continue; configure the environment when AI execution is needed.
 
 The first time an empty project-space board is opened, Wework shows a collapsible three-step guide above the existing board:
 
@@ -121,6 +129,22 @@ Each completed step is marked automatically, and the guide hides after all three
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
 
+## Calendar, Gantt, and table views
+
+Use the project-space header to switch among **Board**, **Calendar**, **Gantt**, and **Table**. Issue details use one date-range control for the start and end dates. If only one date is set, Calendar and Gantt treat the issue as a one-day task.
+
+- **Calendar** displays tasks by month, week, or day. Multi-day tasks use continuous bars; when a task crosses a week boundary, each row keeps its outer spacing and continues on the next row. Dragging any segment moves the whole task and highlights the destination dates. Calendar does not expose separate start or end resize handles.
+- **Gantt** displays a week, month, quarter, or year timeline. Drag the whole bar to reschedule a task while preserving its duration. Hover the bar and drag either edge to change only the start or end date. Unscheduled tasks appear below the timeline and can be dragged onto a date.
+- **Table** shows title, status, assignee, tags, start date, end date, execution state, and updated time by default. Issue IDs and assignment sources are hidden by default. Select a sortable header to toggle ascending and descending order; status, assignee, and tag headers provide filters. Selecting multiple rows enables bulk status changes and bulk archive, while a single-row archive uses an icon action.
+
+Calendar and Gantt filters, grouping, and sorting are first stored as personal settings on the current device. Choose **Restore project settings** to discard personal changes. Members with project-management permission can choose **Save as project settings** so other members open the project with the same defaults.
+
+## Execution environment in Project settings
+
+In a collaboration project, open **Project settings → Execution environment** to add a repository and initialize an execution environment when needed. A project without a repository can use a blank workspace. Normally, selecting a repository or entering its Git URL is enough: the name and directory are derived automatically. Expand **Advanced options** only to customize the name, directory, or branch. Setup steps are optional; no placeholder fields are required to save the configuration.
+
+The **Human processing** settings page only explains the direct-assignment and review workflow; project administrators do not need to fill in another form. Actions happen in the Issue detail. See [Work on an Issue assigned to me](../wegent/user-guide/coding/collaboration-issue-home.md).
+
 ## Message AI
 
 Use **Message AI** in the project-space header for project exploration and temporary questions. It opens the project conversation sidebar, where you can start or switch conversations and select an execution project. For work that needs formal execution, create a board task and assign a robot so its owner, status, and deliverables remain trackable.
@@ -130,6 +154,13 @@ Use **Message AI** in the project-space header for project exploration and tempo
 Opening an issue from a project-space board shows its attachments directly in the detail panel, with actions to download, remove, or upload more files. The attachment section uses the same dividers and spacing as the other detail fields, and the complete row containing the file name and size downloads the file. A download shows progress; if it fails, the attachment remains available, an error is shown, and the row can be selected again to retry. The detail view keeps each file name and size visible instead of showing only an attachment count, so the context can be checked before execution starts.
 
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
+
+Comments in the issue activity have two different execution semantics:
+
+- Sending a new top-level comment from the bottom composer creates a separate execution task from the issue title, description, attachments, and current project configuration. The new task can read the issue context, but it does not automatically inherit another execution task's conversation history.
+- Selecting **Reply** inside an execution activity continues the original execution task and model session owned by that activity. Use it to add requirements, ask follow-up questions, or request corrections without creating another parallel task.
+
+The **Execution tasks** section lists these independent tasks separately. An increased task count normally means that a new top-level comment was sent; a thread reply adds another turn to the original task instead.
 
 For ordinary linked tasks, the Executor writes the issue's execution status from the runtime lifecycle. The board and the issue summary above the task composer do not write status independently. When the same task starts another turn or reaches a terminal state, they use the lifecycle transition as an invalidation signal and read the issue again, so an already-open board moves the issue between columns such as **In progress** and **Pending review** without a manual reload. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status.
 

@@ -134,6 +134,7 @@ export interface CreateTemporaryRuntimeTaskOptions {
 }
 
 export interface CreateProjectRuntimeTaskOptions {
+  wegentTeamId?: number
   project?: ProjectWithTasks | null
   /** Select a project workspace without mutating the global workbench
    * selection, for embedded project-space composers. */
@@ -142,9 +143,6 @@ export interface CreateProjectRuntimeTaskOptions {
   /** Override the globally selected project execution strategy. Pass null to
    * bind the task to the selected project's main workspace. */
   workspaceExecution?: RuntimeTaskCreateRequest['execution'] | null
-  /** Collaboration entry points choose worktrees automatically. If the
-   * executor rejects the worktree preflight, continue in the main workspace. */
-  automaticWorkspaceSelection?: boolean
   /** Reuse the exact workspace or worktree from a previous runtime task
    * without inheriting its conversation. */
   workspaceSource?: RuntimeTaskAddress | null

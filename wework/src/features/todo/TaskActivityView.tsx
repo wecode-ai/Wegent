@@ -1,14 +1,13 @@
 import { IssueManagerEvent } from './IssueManagerEvent'
 import { issueActivityRole } from './issueActivityRole'
-import {
-  useActivityExecutionBinding,
-  useActivityExecutionDisplayStatus,
-} from './useActivityExecutionStatus'
+import { useActivityExecutionBinding } from './useActivityExecutionStatus'
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
+import { useFocusedComment } from './useFocusedComment'
 import {
   dispatchTaskCardReply,
   commentAgentMentions,
+  cardSessionAddress,
   cardSessionActive as sharedCardSessionActive,
   type TaskReplyCard,
   type TaskCardDispatchResult,
@@ -22,9 +21,8 @@ import {
   IssueActivityThread,
   groupIssueActivityThreads,
   createCollaborationTranslator,
+  compareIssueTimestamps,
   formatIssueTimestamp,
-  executionDisplayStatus,
-  isExecutionActive,
   IssueStatusHistoryList,
   type SharedIssueStatusHistoryEntry,
 } from '@wegent/collaboration'
@@ -110,6 +108,8 @@ interface TaskActivityViewProps {
   agents?: CollaborationAgent[]
   /** Opens the comment list on this comment and flashes it once. */
   focusedCommentId?: string | null
+  /** Changes for each navigation request, including reopening the same comment. */
+  focusedCommentRequestKey?: string | null
 }
 
 interface ActivityExecutionDetail {
@@ -124,52 +124,65 @@ interface ActivityExecutionDetail {
 type TaskCardQueuedReply = RuntimePaneQueuedMessage
 const EMPTY_STATUS_HISTORY: SharedIssueStatusHistoryEntry[] = []
 
+function boundCardSessionAddress(
+  card: TaskReplyCard,
+  taskBindings: LoopItemTaskBinding[]
+): RuntimeTaskAddress | null {
+  const address = cardSessionAddress(card)
+  if (!address) return null
+  const binding = taskBindings.find(
+    candidate => candidate.device_id === address.deviceId && candidate.task_id === address.taskId
+  )
+  if (!binding) return address
+  const context = binding.executionContext
+  return {
+    ...address,
+    ...(context?.runtime ? { runtime: context.runtime as RuntimeTaskAddress['runtime'] } : {}),
+    ...(context?.threadId ? { threadId: context.threadId } : {}),
+    ...(context?.workspacePath ? { workspacePath: context.workspacePath } : {}),
+    ...(context?.workspaceKind ? { workspaceKind: context.workspaceKind } : {}),
+    ...(context?.worktreeId ? { worktreeId: context.worktreeId } : {}),
+    ...(binding.modelSelection
+      ? {
+          runtimeHandle: {
+            ...address.runtimeHandle,
+            modelSelection: binding.modelSelection,
+          },
+        }
+      : {}),
+  }
+}
+
 function TimelineReply({
   rootId,
   createdAt,
   replyLabel,
-  executionMessage,
-  executionTurnId,
-  fallbackExecutionStatus,
-  sessionBusy,
   active,
   onReply,
 }: {
   rootId: string
   createdAt: string
   replyLabel: string
-  executionMessage?: ProjectChatMessage
-  executionTurnId?: string
-  fallbackExecutionStatus?: string | null
-  sessionBusy: boolean
   active: boolean
   onReply: () => void
 }) {
-  const { status } = useActivityExecutionDisplayStatus(executionMessage, executionTurnId)
-  const displayStatus = executionDisplayStatus(status ?? fallbackExecutionStatus)
-  const blocked = sessionBusy || isExecutionActive(displayStatus)
   return (
     <div className="task-detail-thread-actions">
       <time dateTime={createdAt} className="text-xs text-text-muted">
         {formatIssueTimestamp(createdAt)}
       </time>
-      {!blocked ? (
-        <button
-          type="button"
-          data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
-          aria-expanded={active}
-          aria-controls="issue-reply-composer"
-          onClick={onReply}
-        >
-          {replyLabel}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
+        aria-expanded={active}
+        aria-controls="issue-reply-composer"
+        onClick={onReply}
+      >
+        {replyLabel}
+      </button>
     </div>
   )
 }
-
-/** How long a comment keeps the "you were sent here" highlight. */
-const COMMENT_FLASH_MS = 2000
 
 function isVersionConflict(cause: unknown): boolean {
   if (!cause || typeof cause !== 'object') return false
@@ -199,6 +212,7 @@ export function TaskActivityView({
   members = [],
   agents = [],
   focusedCommentId = null,
+  focusedCommentRequestKey = null,
 }: TaskActivityViewProps) {
   const { t, i18n } = useTranslation('common')
   const activityTranslate = createCollaborationTranslator(
@@ -419,25 +433,13 @@ export function TaskActivityView({
       cardTestIdPrefix: 'cloud-task-activity-card-',
     })
 
-  // A notification can point at one comment. Land on it once, flash it, and
-  // then leave the list under the reader's control.
-  const [flashedCommentId, setFlashedCommentId] = useState<string | null>(null)
-  const revealedCommentRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!focusedCommentId || revealedCommentRef.current === focusedCommentId) return
-    const target = Array.from(
-      listRef.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []
-    ).find(node => node.dataset.messageId === focusedCommentId)
-    if (!target) return
-    revealedCommentRef.current = focusedCommentId
-    target.scrollIntoView?.({ block: 'center' })
-    setFlashedCommentId(focusedCommentId)
-  }, [focusedCommentId, listRef, threadMessages])
-  useEffect(() => {
-    if (!flashedCommentId) return
-    const timer = window.setTimeout(() => setFlashedCommentId(null), COMMENT_FLASH_MS)
-    return () => window.clearTimeout(timer)
-  }, [flashedCommentId])
+  // Land once per notification, then leave scrolling under the reader's control.
+  const flashedCommentId = useFocusedComment(
+    listRef,
+    threadMessages,
+    focusedCommentId,
+    focusedCommentRequestKey
+  )
 
   useEffect(() => {
     const agentApi = projectChatAgentApi ?? services.projectChatAgentApi
@@ -582,7 +584,7 @@ export function TaskActivityView({
       })),
       ...comments,
     ].sort((left, right) => {
-      const delta = Date.parse(left.at) - Date.parse(right.at)
+      const delta = compareIssueTimestamps(left.at, right.at)
       if (delta) return delta
       const order = { created: 0, status: 1, comment: 2 }
       return order[left.kind] - order[right.kind] || left.index - right.index
@@ -748,6 +750,7 @@ export function TaskActivityView({
         agent: assignedAgent,
         selfManagedExecution,
         card,
+        sessionAddress: boundCardSessionAddress(card, taskBindings),
         reply,
         messages,
         executionProject: null,
@@ -1019,6 +1022,9 @@ export function TaskActivityView({
                 controls={commentProjectChat}
                 projectWork={commentProjectWork}
                 serverExecution={projectLocation !== 'local' && Boolean(client?.executeTaskComment)}
+                placeholder={
+                  replyTarget ? t('workbench.task_activity_inline_placeholder') : undefined
+                }
               />
             </div>
           ) : (
@@ -1074,10 +1080,10 @@ export function TaskActivityView({
                   <div
                     key="issue-created"
                     data-testid="cloud-task-status-created"
-                    className="flex gap-3 border-b border-border/60 px-3 py-2"
+                    className="task-detail-timeline-system-event"
                   >
-                    <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-text-muted" />
-                    <div className="min-w-0 flex-1 text-xs text-text-primary">
+                    <span className="task-detail-timeline-marker" aria-hidden="true" />
+                    <div className="task-detail-timeline-system-content text-xs text-text-primary">
                       <span className="font-medium">
                         {task.created_by_user_name ||
                           memberNameById(projectMembers, task.created_by_user_id) ||
@@ -1096,10 +1102,10 @@ export function TaskActivityView({
                   <div
                     key={`status-${activity.index}`}
                     data-testid={`cloud-task-status-event-${activity.index}`}
-                    className="flex gap-3 border-b border-border/60 px-3 py-2"
+                    className="task-detail-timeline-system-event"
                   >
-                    <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-text-muted" />
-                    <div className="min-w-0 flex-1">
+                    <span className="task-detail-timeline-marker" aria-hidden="true" />
+                    <div className="task-detail-timeline-system-content">
                       <IssueStatusHistoryList
                         entries={[activity.entry]}
                         startIndex={activity.index}
@@ -1140,7 +1146,6 @@ export function TaskActivityView({
               const executions = [card.root, ...card.replies].filter(
                 message => message.sender.type === 'agent'
               )
-              const latestExecution = executions.at(-1)
               return (
                 <IssueActivityThread
                   key={rootId}
@@ -1168,21 +1173,7 @@ export function TaskActivityView({
                         <TimelineReply
                           rootId={rootId}
                           createdAt={card.root.createdAt}
-                          replyLabel={t('workbench.task_activity_inline_placeholder')}
-                          executionMessage={latestExecution}
-                          executionTurnId={
-                            latestExecution
-                              ? executionBinding.getTurnId(latestExecution)
-                              : undefined
-                          }
-                          fallbackExecutionStatus={
-                            latestExecution
-                              ? resolveMessageRunStatus(task.ai_state, latestExecution)
-                              : task.ai_state?.project_chat_message_id === rootId
-                                ? task.ai_state.status
-                                : null
-                          }
-                          sessionBusy={cardSessionActive(card)}
+                          replyLabel={t('workbench.task_activity_reply_action')}
                           active={replyTarget?.root.messageId === rootId}
                           onReply={() => setReplyTarget(card)}
                         />

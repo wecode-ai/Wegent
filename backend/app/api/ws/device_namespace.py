@@ -88,6 +88,7 @@ from app.services.channels.callback import (
     forward_event_to_channel_callbacks,
 )
 from app.services.chat.access import get_token_expiry, verify_jwt_token
+from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.device.capability_sync_service import device_capability_sync_service
@@ -976,6 +977,7 @@ def _project_chat_runtime_event_sync(
             runtime_task_id=runtime_task_id,
             event_name=event_name,
             payload=payload,
+            owner_user_id=user_id,
         )
         if projected is None:
             return {
@@ -2094,6 +2096,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
             ),
             "reconcile unconfirmed executions after device heartbeat",
         )
+        from app.services.device.plugin_removal_sync import sync_pending_plugin_removals
+
+        self._schedule_background_task(
+            sync_pending_plugin_removals(int(user_id), payload.device_id),
+            "reconcile persisted plugin removals after device heartbeat",
+        )
 
         return {"success": True}
 
@@ -2822,6 +2830,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 )
                 await emitter.emit(event)
                 await emitter.close()
+
+                # Forward device events to active OpenAPI SSE consumers.
+                await session_manager.publish_callback_event(subtask_id, event)
 
                 await forward_event_to_channel_callbacks(
                     task_id=task_id,

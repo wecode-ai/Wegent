@@ -24,7 +24,7 @@ import {
 } from 'electron'
 import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
@@ -39,6 +39,7 @@ import {
 } from './host/electron-capabilities.js'
 import { HostPipeServer } from './host/host-pipe.js'
 import { DesktopHostEventBroker } from './host/desktop-host-events.js'
+import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/startup-telemetry.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
@@ -76,6 +77,8 @@ import {
 } from './host/window-presentation.js'
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
+import { isolateDevelopmentEnvironment } from './runtime/development-isolation.js'
+import { prepareDevelopmentHistory } from './runtime/development-history-migration.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import {
   createStartupReadyHandler,
@@ -110,10 +113,18 @@ import {
   resolveConfiguredNodePath,
   type ElectronNodeRuntime,
 } from './runtime/electron-node-runtime.js'
+import type { BrandRuntimeMetadata } from './runtime/brand-runtime-environment.js'
 import {
-  applyBrandRuntimeEnvironment,
-  type BrandRuntimeMetadata,
-} from './runtime/brand-runtime-environment.js'
+  prepareWorkbenchEnvironment,
+  resolveWorkbenchPaths,
+} from './runtime/workbench-environment.js'
+import {
+  prepareDesktopDataSource,
+  migrateWorkbenchDesktopData,
+  packagedUpdaterCache,
+  migrateDesktopControlRegistry,
+} from './runtime/workbench-desktop-data.js'
+import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import {
@@ -142,12 +153,23 @@ import { resolveDevelopmentDockIdentity } from './host/development-dock-identity
 import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import { normalizeWeworkSyncApiBaseUrl, requestWeworkSync } from './host/wework-sync-request.js'
+import { fixedWorkspaceWindowDescriptors } from './host/fixed-workspace-window-restore.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
+  name: string
   weworkAppId?: string
+  weworkProductName?: string
   weworkUpdateBaseUrl?: string
 } & BrandRuntimeMetadata
+if (packageMetadata.weworkProductName?.trim()) app.setName(packageMetadata.weworkProductName.trim())
+const packagedApplication = isEffectivePackagedApplication(app.isPackaged, process.env)
+isolateDevelopmentEnvironment(process.env, {
+  packaged: packagedApplication,
+  packageRoot,
+  appData: app.getPath('appData'),
+  homeDirectory: process.env.HOME?.trim() || app.getPath('home'),
+})
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-preload.cjs')
 const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
@@ -168,7 +190,6 @@ const applicationId =
   packageMetadata.weworkAppId?.trim() ||
   'io.wecode.wework'
 const developmentDockIdentity = resolveDevelopmentDockIdentity(process.env)
-const packagedApplication = isEffectivePackagedApplication(app.isPackaged, process.env)
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 const startupStartedAt = performance.now()
 const pluginDevelopmentInstance = process.env.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development'
@@ -200,9 +221,51 @@ function commandLineValue(argv: string[], name: string): string | null {
 }
 
 const configuredUserDataPath = process.env.WEWORK_USER_DATA_DIR?.trim()
-const userDataPath = resolve(configuredUserDataPath || join(app.getPath('appData'), applicationId))
+let userDataPath = resolve(configuredUserDataPath || join(app.getPath('appData'), applicationId))
+const desktopDataPaths =
+  !configuredUserDataPath && packagedApplication
+    ? resolveWorkbenchPaths({
+        environment: process.env,
+        metadata: packageMetadata,
+        homeDirectory: app.getPath('home'),
+      })
+    : null
+if (desktopDataPaths) prepareDesktopDataSource(userDataPath, desktopDataPaths.desktop)
 app.setPath('userData', userDataPath)
-if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
+// Acquire the existing installation's lock before moving any application state.
+const hasSingleInstanceLock = app.requestSingleInstanceLock({
+  pluginDevelopmentCommand,
+  workspaceOpenRequest: startupWorkspaceOpenRequest,
+})
+if (hasSingleInstanceLock && desktopDataPaths) {
+  try {
+    const migrated = migrateWorkbenchDesktopData({
+      source: userDataPath,
+      desktop: desktopDataPaths.desktop,
+      logs: app.getPath('logs'),
+      updaterCache: packagedUpdaterCache(
+        process.env.HOME?.trim() || app.getPath('home'),
+        process.resourcesPath,
+        process.env
+      ),
+    })
+    if (!process.env.WEWORK_DESKTOP_CONTROL_REGISTRY_DIR?.trim()) {
+      migrateDesktopControlRegistry(
+        process.env.HOME?.trim() || app.getPath('home'),
+        desktopDataPaths.shared
+      )
+    }
+    userDataPath = migrated.userData
+    app.setPath('userData', userDataPath)
+    app.setPath('sessionData', userDataPath)
+    app.setAppLogsPath(migrated.logs)
+  } catch (error) {
+    console.error('[startup] application data migration failed', error)
+    dialog.showErrorBox('Wework', error instanceof Error ? error.message : String(error))
+    app.exit(1)
+    throw error
+  }
+} else if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 
 let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
@@ -267,12 +330,26 @@ const pluginDevelopmentChildRuntime =
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
+const startupTelemetry = new StartupTelemetryLifecycle({
+  id: randomUUID(),
+  now: () => performance.now(),
+  publish: (type, payload) => desktopHostEvents.publish(type, payload),
+})
+const startupTelemetrySuccess = new StartupTelemetrySuccessGate(startupTelemetry)
+startupTelemetry.start()
 const pendingSchemes = new SchemeQueue()
 process.argv.forEach(value => pendingSchemes.enqueue(value))
 
 function queueScheme(url: string): void {
   if (!pendingSchemes.enqueue(url)) return
   desktopHostEvents.publish('wework-scheme-requested', {})
+}
+
+function openSchemeInMainWindow(url: string): void {
+  queueScheme(url)
+  void reactivateMainWindow().catch(error => {
+    console.error('[navigation] failed to activate main window for scheme navigation', error)
+  })
 }
 
 app.on('open-url', (event, url) => {
@@ -283,7 +360,7 @@ app.on('open-url', (event, url) => {
   mainWindow?.focus()
 })
 
-if (app.isPackaged && !process.env.WEWORK_E2E_CONTROL_URL) {
+if (packagedApplication && !pluginDevelopmentInstance && !process.env.WEWORK_E2E_CONTROL_URL) {
   app.setAsDefaultProtocolClient('wework')
 }
 const pendingWorkspaceOpenRequests: LocalWorkspaceOpenRequest[] = startupWorkspaceOpenRequest
@@ -327,7 +404,9 @@ app.on('web-contents-created', (_event, contents) => {
   })
 })
 const executorHome =
-  process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+  process.env.WEGENT_EXECUTOR_HOME?.trim() ||
+  desktopDataPaths?.desktop ||
+  join(app.getPath('home'), '.wework')
 const configuredExecutorLogFile = process.env.WEGENT_EXECUTOR_LOG_FILE?.trim()
 const runtimeLogDirectories = [
   app.getPath('logs'),
@@ -364,10 +443,6 @@ const appUpdates = new AppUpdateService({
   updateBaseUrl,
 })
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
-const hasSingleInstanceLock = app.requestSingleInstanceLock({
-  pluginDevelopmentCommand,
-  workspaceOpenRequest: startupWorkspaceOpenRequest,
-})
 
 if (keepE2EWindowInBackground) {
   app.setActivationPolicy('prohibited')
@@ -689,29 +764,23 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     await contents.loadURL(targetUrl.toString(), {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
-    void desktopRuntime
-      .listCoreDshPlugins()
-      .then(plugins =>
-        detectCoreDshStartupPluginFailure(
-          contents,
-          plugins.filter(plugin => plugin.enabled && plugin.canToggle).map(plugin => plugin.name)
-        )
-      )
-      .then(pluginName => {
-        if (!pluginName || quitting || contents.isDestroyed()) return
-        runtimeError = `Core DSH plugin failed to load: ${pluginName}`
-        rendererHealth.failed('plugin_load_failed')
-        logStartupStep('core-dsh-plugin-load', 'failed', { plugin: pluginName })
-        notifyRuntimeChanged()
-        return startupSplash?.showError(pluginName)
-      })
-      .catch(error => {
-        console.error('[startup] failed to inspect Core DSH plugin loading', error)
-      })
+    const plugins = await desktopRuntime.listCoreDshPlugins()
+    const pluginName = await detectCoreDshStartupPluginFailure(
+      contents,
+      plugins.filter(plugin => plugin.enabled && plugin.canToggle).map(plugin => plugin.name)
+    )
+    if (!pluginName || quitting || contents.isDestroyed()) return
+    runtimeError = `Core DSH plugin failed to load: ${pluginName}`
+    rendererHealth.failed('plugin_load_failed')
+    logStartupStep('core-dsh-plugin-load', 'failed', { plugin: pluginName })
+    startupTelemetry.fail('core_plugin')
+    notifyRuntimeChanged()
+    await startupSplash?.showError(pluginName)
   } catch (error) {
     primaryDshLoaded = false
     rendererHealth.failed('renderer_load_failed')
     logStartupStep('primary-renderer-load', 'failed')
+    startupTelemetry.fail('renderer_load')
     throw error
   }
 })
@@ -744,6 +813,7 @@ async function restartPrimaryCoreDsh(): Promise<void> {
   await mainWindow?.webContents.loadURL('about:blank')
   await desktopRuntime.restartCoreDsh()
   await loadPrimaryDshView()
+  await restoreFixedWorkspaceWindows()
 }
 
 function scheduleCoreDshRestart(): void {
@@ -820,6 +890,17 @@ async function openWorkspaceWindow(input: {
     workspaceWindow.destroy()
     throw error
   }
+}
+
+async function restoreFixedWorkspaceWindows(): Promise<void> {
+  const descriptors = fixedWorkspaceWindowDescriptors(await requiredPreferences().read())
+  await Promise.all(
+    descriptors.map(descriptor =>
+      openWorkspaceWindow(descriptor).catch(error => {
+        console.error(`[workspace-window] failed to restore ${descriptor.label}`, error)
+      })
+    )
+  )
 }
 
 async function ensureAuxiliaryWindow(
@@ -1444,11 +1525,15 @@ function downloadsDirectory(): string {
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
+  logStartupStep('workbench-mode-initialize', 'started')
   await initializeWorkbenchModePreference(requiredPreferences(), {
     environment: process.env,
     homeDirectory: app.getPath('home'),
   })
+  logStartupStep('workbench-mode-initialize', 'completed')
+  logStartupStep('desktop-environment', 'started')
   const environment = await desktopEnvironment()
+  logStartupStep('desktop-environment', 'completed')
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
       ...currentElectronLaunch(),
@@ -1470,7 +1555,9 @@ async function configureDesktopRuntime(): Promise<void> {
   }
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
+  logStartupStep('runtime-preferences-read', 'started')
   const codexSubscriptionPreferences = await preferences.read()
+  logStartupStep('runtime-preferences-read', 'completed')
   // The Electron PreferencesStore returns raw JSON without normalization, so an
   // absent field (e.g. a fresh install or a user who never toggled it) must fall
   // back to the default (enabled) rather than being treated as disabled.
@@ -1505,7 +1592,9 @@ async function configureDesktopRuntime(): Promise<void> {
     embeddedBrowser,
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
+  logStartupStep('embedded-browser-bridge', 'started')
   environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
+  logStartupStep('embedded-browser-bridge', 'completed')
   Object.assign(environment, embeddedBrowserBridge.environment())
   desktopControlBridge = new WeworkDesktopControlBridge({
     instanceId: desktopControlInstanceId(),
@@ -1519,7 +1608,9 @@ async function configureDesktopRuntime(): Promise<void> {
     window: () => mainWindow,
     smartApps: () => smartApps,
   })
+  logStartupStep('desktop-control-bridge', 'started')
   await desktopControlBridge.start()
+  logStartupStep('desktop-control-bridge', 'completed')
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
@@ -1527,6 +1618,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
       dataDirectory: app.getPath('userData'),
+      documentsDirectory: () => app.getPath('documents'),
       downloadsDirectory,
       logDirectory: app.getPath('logs'),
       runtimeRoot,
@@ -1568,6 +1660,8 @@ async function configureDesktopRuntime(): Promise<void> {
         embeddedBrowser,
         computerUse,
         {
+          executorHome:
+            environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
           coreDshPlugins: () => desktopRuntime,
           pluginDevelopment: () =>
             pluginDevelopment
@@ -1612,7 +1706,7 @@ async function configureDesktopRuntime(): Promise<void> {
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,
-          openScheme: queueScheme,
+          openScheme: openSchemeInMainWindow,
           updatePreferences: updateDesktopPreferences,
           weworkSyncRequest: async request => {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
@@ -1646,6 +1740,7 @@ async function configureDesktopRuntime(): Promise<void> {
           rendererStartupReady: createStartupReadyHandler(async source => {
             if (!mainWindow || mainWindow.isDestroyed()) return
             logStartupStep('renderer-startup-ready', 'completed', { source })
+            startupTelemetrySuccess.markRendererReady()
             if (!keepE2EWindowInBackground) mainWindow.show()
             logStartupStep('main-window-show', 'completed')
             await startupSplash?.close({
@@ -1660,6 +1755,7 @@ async function configureDesktopRuntime(): Promise<void> {
           }),
           rendererStartupFailed: () => {
             logStartupStep('renderer-startup', 'failed')
+            startupTelemetry.fail('renderer_initialize')
             return startupSplash?.showError()
           },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
@@ -1806,6 +1902,7 @@ function startDesktopRuntime(): Promise<void> {
     logStartupStep('core-dsh-start', 'completed')
     trayNativeStatus?.start()
     await loadPrimaryDshView()
+    await restoreFixedWorkspaceWindows()
     logStartupStep('component-update-confirmation', 'started')
     await componentUpdates?.confirmStartup()
     logStartupStep('component-update-confirmation', 'completed')
@@ -1813,6 +1910,7 @@ function startDesktopRuntime(): Promise<void> {
     pluginDevelopmentChildRuntime?.startWatcher()
     await pluginDevelopmentChildRuntime?.writeState('ready')
     logStartupStep('desktop-runtime-start', 'completed')
+    startupTelemetrySuccess.markRuntimeReady()
     if (!pluginDevelopmentInstance && shouldStageDesktopComponentUpdates(process.env)) {
       void componentUpdates
         ?.stageAvailableUpdate()
@@ -1825,11 +1923,26 @@ function startDesktopRuntime(): Promise<void> {
     }
   })()
     .catch(async error => {
-      if (await componentUpdates?.rollbackStartup()) {
-        console.error('[components] startup failed after activation; rolling back and relaunching')
-        app.relaunch()
-        app.exit(1)
-        return
+      const failurePublished = startupTelemetry.fail('desktop_runtime')
+      try {
+        if (await componentUpdates?.rollbackStartup()) {
+          console.error(
+            '[components] startup failed after activation; rolling back and relaunching'
+          )
+          if (failurePublished) {
+            const failureSequence = desktopHostEvents.latestSequence()
+            await Promise.race([
+              desktopHostEvents.waitUntilRead(failureSequence),
+              new Promise<void>(resolve => setTimeout(resolve, 1_500)),
+            ])
+          }
+          app.relaunch()
+          app.exit(1)
+          return
+        }
+      } catch (rollbackError) {
+        console.error('[components] rollback compatibility check failed; refusing relaunch')
+        error = rollbackError
       }
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
@@ -1926,15 +2039,9 @@ if (hasSingleInstanceLock) {
     } catch (error) {
       console.warn('[popout-window] failed to register global shortcut', error)
     }
-    await Promise.all([
-      createWindow(
-        resolveStartupSplashTheme(
-          startupPreferences.appearanceMode,
-          nativeTheme.shouldUseDarkColors
-        )
-      ),
-      configureDesktopRuntime(),
-    ])
+    await createWindow(
+      resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
+    )
     void startDesktopRuntime()
   })
 }
@@ -1962,9 +2069,15 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     !packagedApplication && configuredComponentResourcesRoot
       ? resolve(configuredComponentResourcesRoot)
       : resourcesRoot
+  logStartupStep('desktop-components-prepare', 'started')
   const preparedComponents = await prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
+      validateExecutor: path =>
+        assertExecutorWorkbenchCompatibility({
+          ...process.env,
+          WEWORK_EXECUTOR_PATH: process.env.WEWORK_EXECUTOR_PATH?.trim() || path,
+        }),
       log: event => appUpdateLogger.info(event),
       resourcesRoot: componentResourcesRoot,
       dataDirectory: app.getPath('userData'),
@@ -1972,6 +2085,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       currentAppVersion: app.getVersion(),
     },
   })
+  logStartupStep('desktop-components-prepare', 'completed')
   componentUpdates = preparedComponents.manager
   const components = preparedComponents.paths
   const developmentRuntimeRoot = resolve(
@@ -1982,6 +2096,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     'harness-runtime-dev'
   )
   const configuredRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
+  logStartupStep('core-runtime-materialize', 'started')
   const runtimeRoot = configuredRuntimeRoot
     ? configuredRuntimeRoot
     : components
@@ -1989,8 +2104,12 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
           'core',
         ])
       : developmentRuntimeRoot
+  logStartupStep('core-runtime-materialize', 'completed')
+  logStartupStep('node-runtime-prepare', 'started')
   const nodeRuntime = await electronNodeRuntime()
+  logStartupStep('node-runtime-prepare', 'completed')
   const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
+  logStartupStep('wework-cli-install', 'started')
   await installWeworkCli(
     cliBin,
     resolve(packageRoot, 'dist', 'cli', 'wework-cli.mjs'),
@@ -2026,8 +2145,10 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)
-  return applyBrandRuntimeEnvironment(
-    {
+  logStartupStep('wework-cli-install', 'completed')
+  logStartupStep('workbench-environment', 'started')
+  const environment = await prepareWorkbenchEnvironment({
+    environment: {
       ...nodeRuntime.environment,
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
       ...(components
@@ -2053,9 +2174,21 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
         ? {}
         : { DWS_BINARY_PATH: components.dws }),
     },
-    packageMetadata,
-    app.getPath('home')
-  )
+    metadata: packageMetadata,
+    homeDirectory: app.getPath('home'),
+  })
+  logStartupStep('workbench-environment', 'completed')
+  if (environment.WEWORK_DEVELOPMENT_ISOLATED === '1') {
+    await assertExecutorWorkbenchCompatibility(environment)
+    logStartupStep('development-history', 'started')
+    await prepareDevelopmentHistory(
+      environment,
+      app.getPath('userData'),
+      process.env.HOME?.trim() || app.getPath('home')
+    )
+    logStartupStep('development-history', 'completed')
+  }
+  return environment
 }
 
 function weworkCliAppCommand(): string[] {
@@ -2065,7 +2198,14 @@ function weworkCliAppCommand(): string[] {
 function desktopControlRegistryDirectory(): string {
   return (
     process.env.WEWORK_DESKTOP_CONTROL_REGISTRY_DIR?.trim() ||
-    join(app.getPath('home'), '.wework', 'runtime', 'desktop-instances')
+    join(
+      resolveWorkbenchPaths({
+        environment: process.env,
+        metadata: packageMetadata,
+        homeDirectory: app.getPath('home'),
+      }).shared,
+      'desktop-instances'
+    )
   )
 }
 

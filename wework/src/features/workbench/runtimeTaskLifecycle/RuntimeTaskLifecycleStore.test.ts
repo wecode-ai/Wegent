@@ -58,6 +58,32 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
 }
 
 describe('RuntimeTaskLifecycleStore', () => {
+  test('does not revive a completed turn from its earlier millisecond-precision snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('completion-precision-test')
+    const started = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      updatedAt: 1_791_522_458_204,
+    })
+    store.syncRuntimeWork(runtimeWork(started))
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'turn-1', items: [], status: 'completed', completedAt: 1_791_522_458_000 }],
+      })
+    )
+
+    store.syncRuntimeWork(runtimeWork(started))
+
+    expect(store.getTask(address)?.derived.isRunning).toBe(false)
+    expect(store.getTask(address)?.task?.status).toBe('done')
+  })
+
   test('compares lifecycle transitions by stable fields instead of snapshot identity', () => {
     const store = new RuntimeTaskLifecycleStore('stable-transition-test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
@@ -952,6 +978,40 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.turn.phase).toBe('idle')
     expect(snapshot?.turn.outcome).toBe('succeeded')
     expect(snapshot?.derived.isBusy).toBe(false)
+  })
+
+  test('does not revive a completed turn from its unchanged millisecond start snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const running = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      updatedAt: 1_791_473_979_351,
+    })
+    store.syncRuntimeWork(runtimeWork(running))
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [
+          {
+            id: 'turn-1',
+            items: [],
+            status: 'completed',
+            completedAt: 1_791_473_979_000,
+          },
+        ],
+      })
+    )
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+
+    store.syncRuntimeWork(runtimeWork(running))
+
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    expect(store.getTask(address)?.task?.running).toBe(false)
   })
 
   test('ignores a stale streaming transcript after the current turn settles', () => {

@@ -3,18 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    fs,
     future::Future,
-    io::{Cursor, Read},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     pin::Pin,
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use reqwest::Url;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use zip::ZipArchive;
 
 use crate::{
     agents::wework_codex_home,
@@ -23,11 +19,10 @@ use crate::{
         CapabilitySyncHandler, GlobalCapabilityReporter, GlobalCapabilityStore,
         ManagedCapabilityManifest, SkillSyncSpec,
     },
+    services::workbench::stage_skill_archive,
 };
 
 use super::LocalBackendConfig;
-
-static STAGING_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub trait CapabilityReportProvider: Send + Sync + 'static {
     fn build_report(&self) -> Value;
@@ -87,12 +82,20 @@ where
 pub(super) fn default_capability_sync_handler(
     config: &LocalBackendConfig,
 ) -> CapabilitySyncHandler<HttpPackageProvider> {
-    let home = home_dir();
     let codex_home = wework_codex_home();
-    let store =
-        GlobalCapabilityStore::new(default_manifest_path(), home.join(".claude").join("skills"))
-            .with_codex_skills_dir(codex_home.join("skills"))
-            .with_codex_plugins_dir(codex_home.join("plugins"));
+    let claude_home = std::env::var_os("WEGENT_CLAUDE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            codex_home
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("claude")
+        });
+    let store = GlobalCapabilityStore::new(default_manifest_path(), claude_home.join("skills"))
+        .with_plugins_dir(claude_home.join("plugins"))
+        .with_codex_skills_dir(codex_home.join("skills"))
+        .with_codex_plugins_dir(codex_home.join("plugins"))
+        .with_shared_packages();
     CapabilitySyncHandler::with_package_provider(
         config.auth_token.clone(),
         store,
@@ -168,6 +171,13 @@ impl HttpPackageProvider {
 }
 
 impl CapabilityPackageProvider for HttpPackageProvider {
+    fn download_skill<'a>(
+        &'a self,
+        spec: &'a SkillSyncSpec,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
+        Box::pin(async move { self.get_bytes(&skill_download_path(spec)?).await })
+    }
+
     fn stage_skill<'a>(
         &'a self,
         spec: &'a SkillSyncSpec,
@@ -175,7 +185,8 @@ impl CapabilityPackageProvider for HttpPackageProvider {
     ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
         Box::pin(async move {
             let package = self.get_bytes(&skill_download_path(spec)?).await?;
-            extract_skill_zip(&package, target)
+            stage_skill_archive(&package, target, spec.content_hash.as_deref())
+                .map_err(CapabilitySyncError::invalid_payload)
         })
     }
 
@@ -215,105 +226,6 @@ fn skill_download_path(spec: &SkillSyncSpec) -> Result<String, CapabilitySyncErr
     Ok(path)
 }
 
-fn extract_skill_zip(package: &[u8], target: &Path) -> Result<(), CapabilitySyncError> {
-    let mut archive = ZipArchive::new(Cursor::new(package))?;
-    let mut entries = Vec::new();
-    for index in 0..archive.len() {
-        let mut file = archive.by_index(index)?;
-        if file.is_dir() {
-            continue;
-        }
-        let Some(path) = file.enclosed_name().map(Path::to_path_buf) else {
-            continue;
-        };
-        if is_macos_metadata_path(&path) {
-            continue;
-        }
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
-        entries.push((path, bytes));
-    }
-
-    let skill_prefix = entries
-        .iter()
-        .filter(|(path, _)| path.ends_with("SKILL.md"))
-        .map(|(path, _)| path.parent().map(Path::to_path_buf).unwrap_or_default())
-        .min_by_key(|path| path.components().count())
-        .ok_or_else(|| CapabilitySyncError::invalid_payload("Skill package is missing SKILL.md"))?;
-    let temp_path = target.with_file_name(format!(
-        ".{}.staged-{}-{}",
-        target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("skill"),
-        std::process::id(),
-        STAGING_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    remove_existing_path(&temp_path)?;
-    fs::create_dir_all(&temp_path)?;
-
-    let extraction = (|| -> Result<(), CapabilitySyncError> {
-        for (path, bytes) in &entries {
-            if !skill_prefix.as_os_str().is_empty() && !path.starts_with(&skill_prefix) {
-                continue;
-            }
-            let relative = path.strip_prefix(&skill_prefix).unwrap_or(path);
-            if relative.as_os_str().is_empty() {
-                continue;
-            }
-            let output = temp_path.join(relative);
-            if let Some(parent) = output.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(output, bytes)?;
-        }
-        if !temp_path.join("SKILL.md").is_file() {
-            return Err(CapabilitySyncError::invalid_payload(
-                "Skill package is missing SKILL.md",
-            ));
-        }
-        Ok(())
-    })();
-    if let Err(error) = extraction {
-        let _ = remove_existing_path(&temp_path);
-        return Err(error);
-    }
-
-    remove_existing_path(target)?;
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::rename(&temp_path, target)?;
-    Ok(())
-}
-
-fn is_macos_metadata_path(path: &Path) -> bool {
-    path.components().any(|component| match component {
-        Component::Normal(value) => value
-            .to_str()
-            .is_some_and(|value| value == "__MACOSX" || value.starts_with("._")),
-        _ => false,
-    })
-}
-
-fn remove_existing_path(path: &Path) -> Result<(), CapabilitySyncError> {
-    if path.is_symlink() || path.is_file() {
-        match fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
-        }
-    } else if path.is_dir() {
-        match fs::remove_dir_all(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
-        }
-    } else {
-        Ok(())
-    }
-}
-
 fn empty_capability_report() -> Value {
     let details = json!({
         "skills": [],
@@ -340,8 +252,4 @@ fn canonical_digest(value: &Value) -> String {
         output.push_str(&format!("{byte:02x}"));
     }
     output
-}
-
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }

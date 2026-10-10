@@ -1,4 +1,5 @@
 import { type MouseEvent, useContext, useEffect, useRef, useState } from 'react'
+import { issueDraftFromText } from '@wegent/collaboration'
 import {
   Bot,
   ChevronDown,
@@ -38,8 +39,8 @@ import type {
   RuntimeTaskCreateRequest,
 } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
+import { collaborationExecutionMode } from './collaborationWorkspacePolicy'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
-import { issueDraftFromText } from './issueComposerDraft'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 
 interface IssueComposerProps {
@@ -548,9 +549,14 @@ export function IssueComposer({
         }
       : undefined
   const renderComposer = (resolvedProjectWork: ProjectWorkControls | undefined) => {
-    const executionMode: ProjectExecutionMode = resolvedProjectWork?.worktreeAvailability?.available
-      ? 'git_worktree'
-      : 'current_workspace'
+    const executionMode: ProjectExecutionMode =
+      collaborationExecutionMode(
+        selectedLocalProject,
+        selectedWorkItemProject?.execution_environment?.workspace_policy,
+        resolvedProjectWork?.worktreeAvailability
+      ) === 'git_worktree'
+        ? 'git_worktree'
+        : 'current_workspace'
 
     return (
       <div
@@ -1236,6 +1242,7 @@ export function IssueComposer({
             </div>
             {creationMode === 'task' && workbench?.selectProject && selectedLocalProject ? (
               <ConnectedIssueProjectWork
+                projects={runtimeTaskProjects}
                 project={selectedLocalProject}
                 selectedDeviceWorkspaceId={localDeviceWorkspaceId}
                 onSelectProject={selectLocalProject}

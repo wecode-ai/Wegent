@@ -6,12 +6,11 @@
 use crate::runtime_check::{AppState, config::Config};
 use anyhow::{Context as _, Result};
 use brz_redis::{RedisService, RedisServiceOptions};
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 pub async fn build(
     mysql: brz_mysql::MysqlService,
-    user_reader: Arc<dyn crate::user_reader::UserByIdReader>,
-    task_policy: crate::task_routing::TaskPolicy,
+    task_store: std::sync::Arc<dyn crate::task_store::TaskStore>,
 ) -> Result<AppState<brz_mysql::MysqlService, brz_redis::RedisService>> {
     let config = Config::load()?;
     let redis = match build_redis(&config).await {
@@ -21,13 +20,7 @@ pub async fn build(
             None
         }
     };
-    Ok(AppState::new(
-        config,
-        mysql,
-        redis,
-        user_reader,
-        task_policy,
-    ))
+    Ok(AppState::new(config, mysql, task_store, redis))
 }
 
 /// Unsharded master/slave service with the configured optional password and

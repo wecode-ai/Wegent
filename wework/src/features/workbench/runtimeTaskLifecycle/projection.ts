@@ -2,6 +2,19 @@ import type { RuntimeTaskSummary } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import type { RuntimeTaskLifecycleSnapshot } from './types'
 
+export function summarizeRuntimeTaskExecution(task: RuntimeTaskSummary | null) {
+  if (!task) return null
+  return {
+    taskId: task.taskId,
+    status: task.status ?? null,
+    running: task.running ?? null,
+    threadStatus: task.threadStatus ?? null,
+    turnStatus: task.turnStatus ?? null,
+    completedAt: task.completedAt ?? null,
+    updatedAt: task.updatedAt ?? null,
+  }
+}
+
 export type RuntimeTaskBoardState = 'attention' | 'queued' | 'active' | 'completed'
 
 export { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
@@ -98,7 +111,8 @@ export function shouldReplaceRuntimeTaskProjection(
     if (candidateCompleted) return true
     if (!isRuntimeTaskConfirmedActive(candidate)) return false
     const candidateTime = runtimeTaskProjectionTime(candidate)
-    return candidateTime === 0 || candidateTime > runtimeTaskTimestamp(current.completedAt)
+    // Native completion can be second-precision while the accepted start is milliseconds.
+    return candidateTime === 0 || candidateTime > runtimeTaskProjectionTime(current)
   }
 
   if (current.optimistic === true && candidate.optimistic !== true) {

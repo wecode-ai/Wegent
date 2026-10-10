@@ -153,11 +153,7 @@ fn prepare_local_harness_launch_at(
 }
 
 fn executor_home() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
+    crate::config::paths::executor_home()
 }
 
 fn safe_session_component(session_id: &str) -> Result<&str, String> {

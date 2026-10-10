@@ -136,18 +136,53 @@ See [wework/README.md](wework/README.md) for desktop development, build, and rel
 
 ## Repository map
 
-| Directory                  | Responsibility                                     |
-| -------------------------- | -------------------------------------------------- |
-| `wework/`                  | Wegent Desktop (Electron, Vite, React)             |
-| `executor/`                | Local and remote agent task execution environments |
-| `frontend/`                | Wegent platform web administration                 |
-| `backend/`                 | REST API and core business logic                   |
-| `backend-rs/`              | Incremental Rust API migration gateway and handlers |
-| `executor_manager/`        | Executor scheduling and orchestration              |
-| `chat_shell/`              | Chat runtime                                       |
-| `knowledge_runtime/`       | Knowledge retrieval services                       |
-| `knowledge_doc_converter/` | Document parsing and conversion                    |
-| `shared/`                  | Modules shared across services                     |
+### Products and services
+
+| Directory                  | Responsibility                                                  |
+| -------------------------- | --------------------------------------------------------------- |
+| `wework/`                  | Wegent Desktop (Electron, Vite, React)                          |
+| `wework-mobile/`           | Independent Expo application for iOS and Android                |
+| `frontend/`                | Wegent Web (Next.js, React)                                     |
+| `backend/`                 | Default public API, business logic, and data models             |
+| `backend-rs/`              | Rust hybrid gateway and APIs that have completed migration      |
+| `executor/`                | Rust task executor, local-device runtime, and Codex integration |
+| `executor_manager/`        | Server-side executor scheduling, sandboxes, and orchestration   |
+| `chat_shell/`              | Lightweight chat and agent runtime                              |
+| `knowledge_runtime/`       | Knowledge indexing and retrieval API                            |
+| `knowledge_doc_converter/` | Document parsing and asynchronous conversion service            |
+
+### Shared code and developer tools
+
+| Directory           | Responsibility                                                             |
+| ------------------- | -------------------------------------------------------------------------- |
+| `knowledge_engine/` | Reusable Python kernel for parsing, indexing, vector stores, and retrieval |
+| `shared/`           | Python models, protocols, utilities, and telemetry shared by services      |
+| `packages/`         | TypeScript chat and collaboration modules shared by Web and Desktop        |
+| `sdk/`              | Plugin authentication, build, creation, and DingTalk workspace SDKs        |
+| `wegent-cli/`       | Python CLI for managing Wegent CRD resources                               |
+
+### Infrastructure, tests, and documentation
+
+| Directory   | Responsibility                                                                        |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `docker/`   | Service images, standalone resources, and the `docker/telemetry/` observability stack |
+| `scripts/`  | Installation, release, acceptance, repository-policy, and development automation      |
+| `tests/`    | Cross-service Playwright integration tests and installation tests                     |
+| `docs/`     | English and Chinese user docs, developer docs, architecture, and historical designs   |
+| `patches/`  | Third-party dependency patches used by pnpm `patchedDependencies`                     |
+| `LICENSES/` | Third-party license texts required for repository distribution                        |
+| `.github/`  | CI, release workflows, composite actions, and repository automation                   |
+
+### Root entry points
+
+| File                                   | Responsibility                                    |
+| -------------------------------------- | ------------------------------------------------- |
+| `start.sh`, `install.sh`               | Local startup and self-hosted installation        |
+| `build_image.sh`, `build_image_mac.sh` | Multi-architecture and host Docker image builds   |
+| `docker-compose*.yml`                  | Default, build, and E2E Compose orchestration     |
+| `package.json`, `pnpm-workspace.yaml`  | JavaScript/TypeScript workspace definition        |
+| `pyproject.toml`, `uv.lock`            | Repository-level Python tooling and lock metadata |
+| `AGENTS.md`, `CLAUDE.md`               | Contributor rules and compatibility symlink       |
 
 ## Documentation
 
@@ -353,6 +388,13 @@ Thanks to everyone who helps Wegent grow.
 		</tr>
 		<tr>
             <td align="center">
+                <a href="https://github.com/Twelveeee">
+                    <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
+                    <br />
+                    <sub><b>Twelveeee</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/kerwin612">
                     <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
                     <br />
@@ -364,13 +406,6 @@ Thanks to everyone who helps Wegent grow.
                     <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
                     <br />
                     <sub><b>RockysGit</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/Twelveeee">
-                    <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
-                    <br />
-                    <sub><b>Twelveeee</b></sub>
                 </a>
             </td>
             <td align="center">

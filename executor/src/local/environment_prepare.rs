@@ -46,6 +46,7 @@ pub async fn execute_environment_prepare(args: &[String], timeout_seconds: f64) 
             } else {
                 request
             };
+            let _workspace_lease = crate::agents::git_workspace::acquire_execution_lease(&request)?;
             let prepared = crate::agents::git_workspace::prepare_git_workspace(request)
                 .await
                 .map_err(|error| format!("Failed to prepare execution repositories: {error}"))?;

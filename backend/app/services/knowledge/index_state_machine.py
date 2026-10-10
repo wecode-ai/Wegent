@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.timezone import database_datetime_now
 from app.models.knowledge import DocumentIndexStatus, DocumentStatus, KnowledgeDocument
 from app.schemas.knowledge import DocumentProcessingError, DocumentProcessingStage
 from app.services.knowledge.external_refresh_snapshot import (
@@ -31,7 +32,33 @@ from app.services.knowledge.external_refresh_snapshot import (
     restore_external_refresh_snapshot,
 )
 from app.services.knowledge.processing_errors import generic_processing_error
+from shared.knowledge_module import (
+    CONVERSION_COMPLETE_STATUSES,
+    IndexStateSnapshot,
+    active_index_stale_reason,
+    decide_conversion_started,
+    decide_index_transition,
+)
+from shared.knowledge_module.index_state import (
+    ACTIVE_INDEX_STATUSES as ACTIVE_INDEX_STATUS_VALUES,
+)
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
+
+
+def conversion_complete_statuses() -> list[DocumentIndexStatus]:
+    """The statuses a completed conversion callback may still replace.
+
+    The module owns the rule; the callback endpoint and the state transition
+    both read it here so their pre-check and their update can never disagree.
+    """
+    return [
+        DocumentIndexStatus(value) for value in sorted(CONVERSION_COMPLETE_STATUSES)
+    ]
+
+
+def _status_value(status: DocumentIndexStatus | str | None) -> str | None:
+    """Return the stored status string for the module's pure decision rules."""
+    return getattr(status, "value", status)
 
 
 @dataclass(frozen=True)
@@ -62,16 +89,18 @@ class ExternalImportAttemptDecision:
 
 
 ACTIVE_INDEX_STATUSES = {
-    DocumentIndexStatus.QUEUED,
-    DocumentIndexStatus.PENDING_CONVERSION,
-    DocumentIndexStatus.CONVERTING,
-    DocumentIndexStatus.INDEXING,
+    DocumentIndexStatus(value) for value in ACTIVE_INDEX_STATUS_VALUES
 }
 
 
-def _utcnow() -> datetime:
-    """Return a timezone-naive UTC timestamp for DB comparisons."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _index_snapshot(document: KnowledgeDocument | None) -> IndexStateSnapshot | None:
+    """Supply primitive state to the module while the caller holds the row lock."""
+    if document is None:
+        return None
+    return IndexStateSnapshot(
+        status=_status_value(document.index_status) or "not_indexed",
+        generation=document.index_generation or 0,
+    )
 
 
 def _get_active_index_stale_reason(
@@ -92,35 +121,20 @@ def _get_active_index_stale_reason_for(
     Accepts raw values instead of ORM object so callers can use
     lightweight column queries without loading full KnowledgeDocument rows.
     """
-    if updated_at is None:
-        return None
-
-    age_seconds = (_utcnow() - updated_at).total_seconds()
-    if (
-        index_status == DocumentIndexStatus.QUEUED
-        and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS
-    ):
-        return "stale_queued"
-
-    if (
-        index_status == DocumentIndexStatus.PENDING_CONVERSION
-        and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS
-    ):
-        return "stale_pending_conversion"
-
-    if (
-        index_status == DocumentIndexStatus.INDEXING
-        and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS
-    ):
-        return "stale_indexing"
-
-    if (
-        index_status == DocumentIndexStatus.CONVERTING
-        and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS
-    ):
-        return "stale_converting"
-
-    return None
+    return active_index_stale_reason(
+        _status_value(index_status),
+        age_seconds=(
+            (database_datetime_now() - updated_at).total_seconds()
+            if updated_at is not None
+            else None
+        ),
+        thresholds={
+            "queued": settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS,
+            "pending_conversion": settings.KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS,
+            "indexing": settings.KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS,
+            "converting": settings.KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS,
+        },
+    )
 
 
 def get_document_index_lock_name(document_id: int) -> str:
@@ -182,139 +196,64 @@ def _prepare_document_index_enqueue(
         .populate_existing()
         .first()
     )
-    if document is None:
+    current_status = (
+        (document.index_status or DocumentIndexStatus.NOT_INDEXED) if document else None
+    )
+    decision = decide_index_transition(
+        _index_snapshot(document),
+        event="enqueue",
+        expected_generation=expected_generation,
+        allow_if_success=allow_if_success,
+        replace_active=replace_active,
+        stale=bool(document and _get_active_index_stale_reason(document)),
+    )
+    if not decision.accepted:
         db.rollback()
         _record_transition(
             "knowledge.index.enqueue.skipped",
             document_id=document_id,
-            generation=None,
-            reason="document_not_found",
-        )
-        return IndexEnqueueDecision(
-            should_enqueue=False,
-            generation=None,
-            reason="document_not_found",
-        )
-
-    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-    if (
-        expected_generation is not None
-        and document.index_generation != expected_generation
-    ):
-        db.rollback()
-        _record_transition(
-            "knowledge.index.enqueue.skipped",
-            document_id=document_id,
-            generation=expected_generation,
-            reason="stale_generation",
-        )
-        return IndexEnqueueDecision(
-            should_enqueue=False,
-            generation=expected_generation,
-            reason="stale_generation",
-            previous_status=current_status,
-        )
-
-    if current_status in ACTIVE_INDEX_STATUSES and not replace_active:
-        stale_reason = _get_active_index_stale_reason(document)
-        if stale_reason is None:
-            db.rollback()
-            _record_transition(
-                "knowledge.index.enqueue.skipped",
-                document_id=document_id,
-                generation=document.index_generation,
-                reason="already_in_progress",
-                previous_status=current_status,
-            )
-            return IndexEnqueueDecision(
-                should_enqueue=False,
-                generation=document.index_generation,
-                reason="already_in_progress",
-                previous_status=current_status,
-            )
-
-        superseded_attachment_ids: set[int] | None = None
-        previous_snapshot_status = DocumentIndexStatus.FAILED
-        if capture_refresh_snapshot:
-            superseded_attachment_ids = restore_external_refresh_snapshot(
-                document,
-                generation=document.index_generation,
-            )
-            if superseded_attachment_ids is not None:
-                previous_snapshot_status = document.index_status
-        next_generation = (document.index_generation or 0) + 1
-        if capture_refresh_snapshot:
-            capture_external_refresh_snapshot(
-                document,
-                generation=next_generation,
-                previous_index_status=previous_snapshot_status,
-            )
-        document.index_generation = next_generation
-        document.index_status = DocumentIndexStatus.QUEUED
-        document.clear_processing_error_payload()
-        db.commit()
-        if superseded_attachment_ids:
-            _cleanup_external_refresh_attachments(
-                db,
-                owner_user_id=document.user_id,
-                attachment_ids=superseded_attachment_ids,
-            )
-        _record_transition(
-            "knowledge.index.enqueue.scheduled",
-            document_id=document_id,
-            generation=next_generation,
-            reason="scheduled_after_stale_recovery",
-            previous_status=current_status,
-        )
-
-        return IndexEnqueueDecision(
-            should_enqueue=True,
-            generation=next_generation,
-            reason="scheduled_after_stale_recovery",
-            previous_status=current_status,
-        )
-
-    if current_status == DocumentIndexStatus.SUCCESS and not allow_if_success:
-        db.rollback()
-        _record_transition(
-            "knowledge.index.enqueue.skipped",
-            document_id=document_id,
-            generation=document.index_generation,
-            reason="already_indexed",
+            generation=decision.generation,
+            reason=decision.reason,
             previous_status=current_status,
         )
         return IndexEnqueueDecision(
-            should_enqueue=False,
-            generation=document.index_generation,
-            reason="already_indexed",
-            previous_status=current_status,
+            False, decision.generation, decision.reason, current_status
         )
 
-    next_generation = (document.index_generation or 0) + 1
+    superseded_attachment_ids = None
+    previous_snapshot_status = current_status
+    if decision.reason == "scheduled_after_stale_recovery" and capture_refresh_snapshot:
+        superseded_attachment_ids = restore_external_refresh_snapshot(
+            document, generation=document.index_generation
+        )
+        previous_snapshot_status = (
+            document.index_status
+            if superseded_attachment_ids is not None
+            else DocumentIndexStatus.FAILED
+        )
     if capture_refresh_snapshot:
         capture_external_refresh_snapshot(
             document,
-            generation=next_generation,
-            previous_index_status=current_status,
+            generation=decision.generation,
+            previous_index_status=previous_snapshot_status,
         )
-    document.index_generation = next_generation
-    document.index_status = DocumentIndexStatus.QUEUED
+    document.index_generation = decision.generation
+    document.index_status = DocumentIndexStatus(decision.next_status)
     document.clear_processing_error_payload()
-
     db.commit()
+    if superseded_attachment_ids:
+        _cleanup_external_refresh_attachments(
+            db, owner_user_id=document.user_id, attachment_ids=superseded_attachment_ids
+        )
     _record_transition(
         "knowledge.index.enqueue.scheduled",
         document_id=document_id,
-        generation=next_generation,
-        reason="scheduled",
+        generation=decision.generation,
+        reason=decision.reason,
         previous_status=current_status,
     )
-
     return IndexEnqueueDecision(
-        should_enqueue=True,
-        generation=next_generation,
-        reason="scheduled",
-        previous_status=current_status,
+        True, decision.generation, decision.reason, current_status
     )
 
 
@@ -408,77 +347,24 @@ def mark_document_index_started(
         .with_for_update()
         .first()
     )
-    if document is None:
+    current_status = (
+        (document.index_status or DocumentIndexStatus.NOT_INDEXED) if document else None
+    )
+    decision = decide_index_transition(
+        _index_snapshot(document), event="start", generation=generation
+    )
+    if not decision.accepted:
         db.rollback()
         _record_transition(
             "knowledge.index.start.skipped",
             document_id=document_id,
             generation=generation,
-            reason="document_not_found",
-        )
-        return IndexExecutionDecision(
-            should_execute=False,
-            reason="document_not_found",
-        )
-
-    if document.index_generation != generation:
-        db.rollback()
-        _record_transition(
-            "knowledge.index.start.skipped",
-            document_id=document_id,
-            generation=generation,
-            reason="stale_generation",
-            previous_status=document.index_status,
-        )
-        return IndexExecutionDecision(
-            should_execute=False,
-            reason="stale_generation",
-        )
-
-    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-    if current_status == DocumentIndexStatus.SUCCESS:
-        db.rollback()
-        _record_transition(
-            "knowledge.index.start.skipped",
-            document_id=document_id,
-            generation=generation,
-            reason="already_completed",
+            reason=decision.reason,
             previous_status=current_status,
         )
-        return IndexExecutionDecision(
-            should_execute=False,
-            reason="already_completed",
-        )
+        return IndexExecutionDecision(False, decision.reason)
 
-    if current_status == DocumentIndexStatus.NOT_INDEXED:
-        db.rollback()
-        _record_transition(
-            "knowledge.index.start.skipped",
-            document_id=document_id,
-            generation=generation,
-            reason="not_scheduled",
-            previous_status=current_status,
-        )
-        return IndexExecutionDecision(
-            should_execute=False,
-            reason="not_scheduled",
-        )
-
-    if current_status == DocumentIndexStatus.FAILED:
-        db.rollback()
-        _record_transition(
-            "knowledge.index.start.skipped",
-            document_id=document_id,
-            generation=generation,
-            reason="already_failed",
-            previous_status=current_status,
-        )
-        return IndexExecutionDecision(
-            should_execute=False,
-            reason="already_failed",
-        )
-
-    document.index_status = DocumentIndexStatus.INDEXING
+    document.index_status = DocumentIndexStatus(decision.next_status)
     db.commit()
     _record_transition(
         "knowledge.index.start.accepted",
@@ -492,12 +378,6 @@ def mark_document_index_started(
         should_execute=True,
         reason="started",
     )
-
-
-_INDEX_SUCCEEDED_ALLOWED_STATUSES = {
-    DocumentIndexStatus.QUEUED,
-    DocumentIndexStatus.INDEXING,
-}
 
 
 def _finalize_external_source_on_success(
@@ -575,21 +455,10 @@ def mark_document_index_succeeded(
         .with_for_update()
         .first()
     )
-    if document is None:
-        db.rollback()
-        _record_transition(
-            "knowledge.index.finalize.success",
-            document_id=document_id,
-            generation=generation,
-            reason="stale_or_already_finalized",
-        )
-        return False
-
-    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-    if (
-        document.index_generation != generation
-        or current_status not in _INDEX_SUCCEEDED_ALLOWED_STATUSES
-    ):
+    decision = decide_index_transition(
+        _index_snapshot(document), event="success", generation=generation
+    )
+    if not decision.accepted:
         db.rollback()
         _record_transition(
             "knowledge.index.finalize.success",
@@ -603,13 +472,22 @@ def mark_document_index_succeeded(
         document,
         generation=generation,
     )
-    document.index_status = DocumentIndexStatus.SUCCESS
+    document.index_status = DocumentIndexStatus(decision.next_status)
     document.is_active = True
     document.status = DocumentStatus.ENABLED
     if chunk_storage_enabled:
         document.chunks = chunks
+    else:
+        document.chunks = (
+            {
+                field: chunks[field]
+                for field in ("splitter_subtype", "qa_pair_count")
+                if field in chunks
+            }
+            if chunks
+            else None
+        )
     _finalize_external_source_on_success(document)
-    document.updated_at = _utcnow()
 
     db.commit()
     if cleanup_attachment_ids:
@@ -643,15 +521,10 @@ def _load_active_index_attempt(
         .populate_existing()
         .first()
     )
-    if document is None:
-        db.rollback()
-        return None
-
-    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-    if (
-        document.index_generation != generation
-        or current_status not in ACTIVE_INDEX_STATUSES
-    ):
+    decision = decide_index_transition(
+        _index_snapshot(document), event="failure", generation=generation
+    )
+    if not decision.accepted:
         db.rollback()
         return None
     return document
@@ -665,7 +538,6 @@ def _persist_attempt_failure(
     """Store the attempt's failure for the user and return what was stored."""
     persisted_error = _normalize_processing_error(candidate, generation)
     document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
-    document.updated_at = _utcnow()
     return persisted_error
 
 
@@ -724,6 +596,7 @@ def mark_document_index_failed(
     *,
     error: Optional[DocumentProcessingError] = None,
     preserve_active_sync_index: bool = False,
+    require_stale: bool = False,
 ) -> bool:
     """Persist a failed processing result for the active generation.
 
@@ -735,6 +608,11 @@ def mark_document_index_failed(
     """
     document = _load_active_index_attempt(db, document_id, generation)
     if document is None:
+        return False
+    # A scanner's snapshot may expire before a worker advances this attempt.
+    # Recheck the current timeout while holding the existing document row lock.
+    if require_stale and _get_active_index_stale_reason(document) is None:
+        db.rollback()
         return False
 
     candidate = error or generic_processing_error(
@@ -771,7 +649,6 @@ def mark_document_index_failed(
         # The restored snapshot already carries the previous body's outcome;
         # this attempt only reports what it learned about the source.
         persisted_error = _normalize_processing_error(candidate, generation)
-        document.updated_at = _utcnow()
     else:
         persisted_error = _persist_attempt_failure(document, generation, candidate)
         if has_active_sync_index:
@@ -953,37 +830,27 @@ def mark_document_conversion_started(
         )
         return IndexExecutionDecision(should_execute=False, reason="document_not_found")
 
-    if document.index_generation != generation:
-        db.rollback()
-        _record_transition(
-            "knowledge.conversion.start.skipped",
-            document_id=document_id,
-            generation=generation,
-            reason="stale_generation",
-            previous_status=document.index_status,
-        )
-        return IndexExecutionDecision(should_execute=False, reason="stale_generation")
-
     current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-    if current_status not in (
-        DocumentIndexStatus.QUEUED,
-        DocumentIndexStatus.PENDING_CONVERSION,
-    ):
+    decision = decide_conversion_started(
+        generation=generation,
+        current_generation=document.index_generation,
+        status=_status_value(current_status),
+    )
+    if not decision.should_execute:
         db.rollback()
         _record_transition(
             "knowledge.conversion.start.skipped",
             document_id=document_id,
             generation=generation,
-            reason=f"unexpected_status_{current_status.value}",
+            reason=decision.reason,
             previous_status=current_status,
         )
         return IndexExecutionDecision(
             should_execute=False,
-            reason=f"unexpected_status_{current_status.value}",
+            reason=decision.reason,
         )
 
     document.index_status = DocumentIndexStatus.CONVERTING
-    document.updated_at = _utcnow()
     db.commit()
     _record_transition(
         "knowledge.conversion.start.accepted",
@@ -1023,7 +890,6 @@ def mark_document_conversion_succeeded(
     """
     update_payload = {
         KnowledgeDocument.index_status: DocumentIndexStatus.QUEUED,
-        KnowledgeDocument.updated_at: _utcnow(),
     }
     # No longer update file_extension / name / file_size.
     # These fields keep their original file values so users can download the source document.
@@ -1034,12 +900,7 @@ def mark_document_conversion_succeeded(
         .filter(
             KnowledgeDocument.id == document_id,
             KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status.in_(
-                [
-                    DocumentIndexStatus.CONVERTING,
-                    DocumentIndexStatus.PENDING_CONVERSION,
-                ]
-            ),
+            KnowledgeDocument.index_status.in_(conversion_complete_statuses()),
         )
         .update(update_payload, synchronize_session=False)
     )

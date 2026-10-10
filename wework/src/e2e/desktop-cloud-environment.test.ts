@@ -4,6 +4,58 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, test, vi } from 'vitest'
 
+test('remote executor owns its logs and Homes independently of the desktop host', async () => {
+  const moduleUrl = pathToFileURL(
+    resolve(import.meta.dirname, '../../e2e/desktop/modules/cloud-environment.mjs')
+  ).href
+  const { RealCloudEnvironment } = await import(/* @vite-ignore */ moduleUrl)
+  const inheritedHomes = [
+    'WEGENT_WORKBENCH_HOME',
+    'WEGENT_CAPABILITIES_HOME',
+    'WEGENT_CLAUDE_HOME',
+    'CLAUDE_CONFIG_DIR',
+    'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+    'CODEX_SQLITE_HOME',
+    'WEWORK_E2E_NATIVE_CODEX_HOME',
+  ]
+  vi.stubEnv('WEGENT_EXECUTOR_DISABLE_FILE_LOG', 'true')
+  for (const key of [...inheritedHomes, 'HOME', 'USERPROFILE', 'WEGENT_CODEX_HOME']) {
+    vi.stubEnv(key, '/synthetic-desktop-home')
+  }
+  try {
+    const cloud = new RealCloudEnvironment({
+      workspacePath: '/synthetic-remote/workspace',
+      codexBinary: '/synthetic-remote/codex',
+      claudeBinary: '/synthetic-remote/claude',
+    })
+    for (const deviceType of ['cloud', 'remote']) {
+      const home = `/synthetic-${deviceType}`
+      const environment = cloud.executorEnv({
+        deviceId: `${deviceType}-device`,
+        deviceName: deviceType,
+        deviceType,
+        home,
+        codexHome: `${home}/codex`,
+        logFile: `${deviceType}-runtime.log`,
+      })
+      expect(environment.WEGENT_EXECUTOR_DISABLE_FILE_LOG).toBe('false')
+      expect(environment.WEGENT_EXECUTOR_LOG_FILE).toBe(`${deviceType}-runtime.log`)
+      expect(environment.WEGENT_EXECUTOR_LOG_DIR).toBeTruthy()
+      expect(environment.HOME).toBe(home)
+      expect(environment.USERPROFILE).toBe(home)
+      expect(environment.WEGENT_EXECUTOR_HOME).toBe(home)
+      expect(environment.CODEX_HOME).toBe(`${home}/codex`)
+      expect(environment.WEGENT_CODEX_HOME).toBe(`${home}/codex`)
+      expect(environment.CLAUDE_BINARY_PATH).toBe('/synthetic-remote/claude')
+      for (const key of inheritedHomes) expect(environment).not.toHaveProperty(key)
+    }
+    expect(process.env.WEGENT_EXECUTOR_DISABLE_FILE_LOG).toBe('true')
+    expect(process.env.CLAUDE_CONFIG_DIR).toBe('/synthetic-desktop-home')
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
+
 interface CloudEnvironment {
   backend: null
   backendEnv: Record<string, string>

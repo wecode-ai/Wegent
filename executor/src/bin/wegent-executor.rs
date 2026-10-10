@@ -95,6 +95,62 @@ fn macos_max_files_per_process() -> Option<libc::rlim_t> {
 fn raise_open_files_soft_limit() {}
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--workbench-project-state") {
+        if let Err(error) = wegent_executor::runtime_work::run_project_state_query() {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if env::args().nth(1).as_deref() == Some("--migrate-workspace-metadata") {
+        let args: Vec<_> = env::args().skip(2).collect();
+        let result = match args.as_slice() {
+            [root, stopped] if stopped == "--executor-stopped" =>
+                wegent_executor::migrate_workspace_metadata(std::path::Path::new(root)),
+            _ => Err("Stop every executor sharing this workspace, then run --migrate-workspace-metadata <absolute-workspace-root> --executor-stopped".into()),
+        };
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        println!("Workspace metadata migration complete; repositories were not moved");
+        return;
+    }
+    if env::args().nth(1).as_deref() == Some("--workbench-codex-migration-check") {
+        let result = env::args()
+            .nth(2)
+            .ok_or_else(|| "Missing Codex Home".to_owned())
+            .and_then(|home| {
+                wegent_executor::local::workbench_codex_migration::check(std::path::Path::new(
+                    &home,
+                ))
+            });
+        // Return bounded, credential-free diagnostics without initializing the runtime.
+        println!(
+            "{}",
+            match result {
+                Ok(()) => serde_json::json!({"codex_home_migration": 1, "allowed": true}),
+                Err(reason) =>
+                    serde_json::json!({"codex_home_migration": 1, "allowed": false, "reason": reason}),
+            }
+        );
+        return;
+    }
+    if env::args().nth(1).as_deref() == Some("--workbench-lock") {
+        let result = env::args()
+            .nth(2)
+            .ok_or_else(|| "Missing migration lock resources".to_owned())
+            .and_then(|resources| wegent_executor::local::workbench_lock::run(&resources));
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if wegent_executor::local::workbench_schema::is_query(env::args().skip(1)) {
+        println!("{}", wegent_executor::local::workbench_schema::response());
+        return;
+    }
     raise_open_files_soft_limit();
     if wegent_executor::plugin_workspace_cli::is_plugin_workspace_command() {
         if let Err(error) = runtime().block_on(wegent_executor::plugin_workspace_cli::run()) {

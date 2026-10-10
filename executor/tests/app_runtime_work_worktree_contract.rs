@@ -53,6 +53,10 @@ async fn worktree_capabilities_rpc_uses_the_frozen_contract() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-worktree-capabilities-home");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _workspace = EnvGuard::set(
+        "WORKSPACE_ROOT",
+        executor_home.join("workspace").to_str().unwrap(),
+    );
     let (_device_type, _persistent_storage) = verified_cloud_worktree_env();
     let handler = RuntimeWorkRpcHandler::new("device-1", "unused");
 
@@ -86,6 +90,10 @@ async fn cloud_worktree_rpc_fails_closed_without_verified_persistent_storage() {
     let executor_home = temp_path("runtime-worktree-unverified-storage-home");
     let source = temp_path("runtime-worktree-unverified-storage-source");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _workspace = EnvGuard::set(
+        "WORKSPACE_ROOT",
+        executor_home.join("workspace").to_str().unwrap(),
+    );
     let _device_type = EnvGuard::set("DEVICE_TYPE", "cloud");
     let _persistent_storage = EnvGuard::set("WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED", "false");
     initialize_repository(&source);
@@ -141,6 +149,10 @@ async fn worktree_preflight_rpc_reports_git_identity_without_creating_a_worktree
     let executor_home = temp_path("runtime-worktree-preflight-home");
     let source = temp_path("runtime-worktree-preflight-source");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _workspace = EnvGuard::set(
+        "WORKSPACE_ROOT",
+        executor_home.join("workspace").to_str().unwrap(),
+    );
     let (_device_type, _persistent_storage) = verified_cloud_worktree_env();
     initialize_repository(&source);
     let handler = RuntimeWorkRpcHandler::new("device-1", "unused");
@@ -183,6 +195,10 @@ async fn worktree_task_create_rejects_non_git_source_without_fallback() {
     let executor_home = temp_path("runtime-worktree-create-home");
     let source = temp_path("runtime-worktree-create-source");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _workspace = EnvGuard::set(
+        "WORKSPACE_ROOT",
+        executor_home.join("workspace").to_str().unwrap(),
+    );
     let (_device_type, _persistent_storage) = verified_cloud_worktree_env();
     fs::create_dir_all(&source).unwrap();
     let handler = RuntimeWorkRpcHandler::new("device-1", "must-not-start");
@@ -228,6 +244,10 @@ async fn worktree_prepare_rpc_rejects_an_existing_plain_directory() {
     let executor_home = temp_path("runtime-worktree-existing-target-home");
     let source = temp_path("runtime-worktree-existing-target-source");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _workspace = EnvGuard::set(
+        "WORKSPACE_ROOT",
+        executor_home.join("workspace").to_str().unwrap(),
+    );
     let (_device_type, _persistent_storage) = verified_cloud_worktree_env();
     initialize_repository(&source);
     let repository_name = source.file_name().unwrap();
@@ -261,6 +281,10 @@ async fn concurrent_worktree_prepare_uses_distinct_task_paths() {
     let executor_home = temp_path("runtime-worktree-concurrent-home");
     let source = temp_path("runtime-worktree-concurrent-source");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _workspace = EnvGuard::set(
+        "WORKSPACE_ROOT",
+        executor_home.join("workspace").to_str().unwrap(),
+    );
     let (_device_type, _persistent_storage) = verified_cloud_worktree_env();
     initialize_repository(&source);
     let handler = RuntimeWorkRpcHandler::new("device-1", "unused");

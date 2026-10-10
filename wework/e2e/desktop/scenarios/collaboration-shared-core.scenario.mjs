@@ -5,6 +5,11 @@ import { createBoardReplyModelRegression } from '../modules/board-reply-model.mj
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import {
+  verifyIssueDetailPropertyUi,
+  verifyNewDiscussionComposerUi,
+  verifyReplyComposerUi,
+} from '../modules/collaboration-issue-detail-ui.mjs'
+import {
   verifyIssueActivityTimeline,
   verifyCommentExecutionStatus,
 } from '../modules/issue-activity-timeline.mjs'
@@ -24,7 +29,7 @@ const HUMAN_WORKFLOW_STEP = '需求确认'
 const AGENT_ASSIGNMENT_COMMENT = '请处理实现步骤'
 const AGENT_WORKFLOW_STEP = '实现'
 const AGENT_NAME = '协作核心 Codex'
-const TASK_PROMPT = '检查当前 Issue 并开始执行'
+const TERMINAL_STATUS_ISSUE_TITLE = '验证终态任务不再显示执行中'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -300,28 +305,93 @@ export function createDesktopScenario({
             plugins: [],
           }),
         })
+        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
         await control.command(
-          'click',
-          scoped(
-            `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
-          )
-        )
-        await control.command(
-          'clickWhenEnabled',
-          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
+          'waitFor',
+          scoped('[data-testid="issue-execution-environment-notice"]'),
           { timeoutMs: uiTimeoutMs }
         )
-        await control.command('waitFor', scoped('[data-testid="collaboration-empty-project"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
-
+        await control.command(
+          'click',
+          scoped('[data-testid="issue-execution-environment-notice-action"]')
+        )
         await initializeFirstProjectExecutionEnvironment(
           control,
           ACTIVE_WORKBENCH_SELECTOR,
           uiTimeoutMs,
           remoteDevice.id
         )
+        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="issue-execution-environment-notice"]')
+            )
+          ),
+          0,
+          'The execution environment warning remained after initialization and returning home'
+        )
+        const terminalStatusIssue = await request(
+          `/api/v1/cloud-projects/${project.id}/loop-items`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              title: TERMINAL_STATUS_ISSUE_TITLE,
+              status: 'in_progress',
+              assignee_agent_id: agent.id,
+            }),
+          }
+        )
+        assert.equal(terminalStatusIssue.execution_state, 'waiting_approval')
+        const rejectedTerminalStatusIssue = await request(
+          `/api/v1/cloud-projects/${project.id}/loop-items/${terminalStatusIssue.id}/reject`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              version: terminalStatusIssue.version,
+              reason: 'Desktop E2E terminal status mapping fixture',
+            }),
+          }
+        )
+        assert.equal(rejectedTerminalStatusIssue.status, 'in_progress')
+        assert.equal(rejectedTerminalStatusIssue.execution_state, 'cancelled')
+        await control.command(
+          'click',
+          scoped(
+            `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
+          )
+        )
+        await control.command('waitFor', scoped('[data-testid="collaboration-workspace-home"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-metric-running"]'),
+          { text: '0', timeoutMs: uiTimeoutMs }
+        )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-metric-pending"]'),
+          { text: '1', timeoutMs: uiTimeoutMs }
+        )
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
+          text: project.name,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-create"]'), {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
         await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
           timeoutMs: uiTimeoutMs,
@@ -364,6 +434,8 @@ export function createDesktopScenario({
         const activityListSelector = scoped('[data-testid="cloud-task-activity-list"]')
         const activityComposerSelector = scoped('[data-testid="cloud-task-activity-composer"]')
         await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
+        await verifyIssueDetailPropertyUi(control, scoped, uiTimeoutMs)
+        await verifyNewDiscussionComposerUi(control, scoped, uiTimeoutMs)
         assert.equal(
           await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
           ISSUE_TITLE,
@@ -383,6 +455,7 @@ export function createDesktopScenario({
           '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
         )
         await control.command('waitFor', replyComposerSelector, { timeoutMs: uiTimeoutMs })
+        await verifyReplyComposerUi(control, scoped, uiTimeoutMs)
         await control.command('fill', replyComposerSelector, {
           value: '在动态卡片内回复',
         })
@@ -453,7 +526,77 @@ export function createDesktopScenario({
         await verifyCommentExecutionStatus(control, scoped, uiTimeoutMs)
         await verifyIssueConversationDrawers(control, scoped, uiTimeoutMs)
         await capture(control, 'collaboration-shared-core-06-cloud-model-reply.png')
+        const personalAssignment = await request(`/api/v1/loop-items/${issue.id}/assignments`, {
+          method: 'POST',
+          body: JSON.stringify({
+            target_type: 'human',
+            target_id: String(owner.id),
+            workflow_step: '本机处理',
+            comment_body: '请在自己的电脑上创建任务并处理',
+            notify_target: false,
+          }),
+        })
+        assert.equal(
+          personalAssignment.issue.assignee_user_id,
+          owner.id,
+          'The real backend did not make the current user the Issue assignee'
+        )
+        assert.equal(
+          personalAssignment.issue.assignee_agent_id,
+          null,
+          'The real backend retained the previous Agent as the Issue assignee'
+        )
+        await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="cloud-todo-card-${issue.id}"]`),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-tasks"]'), {
+          text: '关联任务',
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
+          text: '新建任务',
+          timeoutMs: uiTimeoutMs,
+        })
+        const personalTaskSnapshot = await snapshot(control)
+        assert.ok(
+          personalTaskSnapshot.testIds.includes('cloud-task-activity-composer'),
+          'The public Issue comment composer disappeared when linked Tasks were shown'
+        )
         const previousBindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)
+        const durationSelector = scoped('[data-testid="cloud-todo-execution-duration"]')
+        await control.command('waitFor', durationSelector, {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        // Compare actual execution start/end instants, not the binding creation time.
+        const executionState = (await request(`/api/v1/loop-items/${issue.id}`)).ai_state
+        assert.ok(executionState?.started_at, 'The real execution must have a start time')
+        const utcInstant = timestamp =>
+          Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp) ? timestamp : `${timestamp}Z`)
+        const startedAt = utcInstant(executionState.started_at)
+        const endedAt = executionState.completed_at
+          ? utcInstant(executionState.completed_at)
+          : Date.now()
+        assert.ok(Number.isFinite(startedAt) && Number.isFinite(endedAt))
+        const elapsedMinutes = Math.max(1, Math.floor((endedAt - startedAt) / 60_000))
+        assert.ok(elapsedMinutes < 60, 'The fresh Issue fixture must be less than an hour old')
+        const durationText = await control.command('getText', durationSelector)
+        assert.match(
+          durationText,
+          /^\d+\s*分钟$/,
+          'A fresh execution must not include a timezone-sized offset'
+        )
+        assert.ok(
+          Math.abs(Number.parseInt(durationText, 10) - elapsedMinutes) <= 1,
+          `Execution duration ${durationText} must match the actual execution ${elapsedMinutes} minutes`
+        )
         const previousTaskIds = new Set(
           previousBindings.map(binding => binding.taskId ?? binding.task_id)
         )
@@ -465,6 +608,16 @@ export function createDesktopScenario({
         await control.command('waitFor', scoped('[data-testid="work-item-new-task-chat-panel"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        await control.command(
+          'waitFor',
+          scoped(
+            '[data-testid="work-item-new-task-chat-panel"] [data-composer-reference-kind="issue"]'
+          ),
+          {
+            text: ISSUE_TITLE,
+            timeoutMs: uiTimeoutMs,
+          }
+        )
         await control.command(
           'waitFor',
           scoped(
@@ -486,8 +639,17 @@ export function createDesktopScenario({
         const taskComposer = scoped(
           '[data-testid="work-item-new-task-chat-panel"] [data-testid="chat-message-input"]'
         )
-        await control.command('fill', taskComposer, { value: TASK_PROMPT })
         await control.command('press', taskComposer, { key: 'Enter' })
+        await control.command(
+          'waitFor',
+          scoped(
+            '[data-testid="work-item-new-task-chat-panel"] [data-testid^="sent-issue-token-"]'
+          ),
+          {
+            text: ISSUE_TITLE,
+            timeoutMs: uiTimeoutMs,
+          }
+        )
         const taskBindings = await waitForApiValue(
           async () =>
             (await request(`/api/v1/loop-items/${issue.id}/tasks`)).filter(
@@ -498,18 +660,33 @@ export function createDesktopScenario({
           uiTimeoutMs
         )
         const binding = taskBindings[0]
-        assert.ok(binding.deviceId ?? binding.device_id, 'The Task binding has no device identity')
+        const bindingDeviceId = binding.deviceId ?? binding.device_id
+        assert.ok(bindingDeviceId, 'The Task binding has no device identity')
+        assert.notEqual(
+          String(bindingDeviceId),
+          String(remoteDevice.id),
+          'The personal Task incorrectly reused the Project shared execution device'
+        )
         assert.ok(
           binding.taskId ?? binding.task_id,
           'The Task binding has no runtime task identity'
         )
-        const updatedIssue = await waitForApiValue(
+        const issueAfterPersonalTask = await waitForApiValue(
           () => request(`/api/v1/loop-items/${issue.id}`),
-          value => ['in_progress', 'in_review'].includes(value?.status),
-          'Starting the Wework local Task did not project its runtime status to the Issue',
+          value => value?.status === 'in_progress',
+          'Starting the private local Task did not mark the shared Issue in progress',
           uiTimeoutMs
         )
-        assert.notEqual(updatedIssue.status, 'inbox')
+        assert.equal(
+          issueAfterPersonalTask.status,
+          'in_progress',
+          'Starting the private local Task did not preserve the shared Issue running state'
+        )
+        assert.equal(
+          issueAfterPersonalTask.assignee_user_id,
+          owner.id,
+          'The private personal Task unexpectedly changed the shared Issue assignee'
+        )
         await capture(control, 'collaboration-shared-core-08-local-task-bound.png')
         await verifyCollaborationLocalProjectImport(control, {
           cloudProjectId: project.id,

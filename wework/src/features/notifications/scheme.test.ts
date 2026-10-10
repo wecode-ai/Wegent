@@ -1,7 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { parseWeworkScheme, weworkDestinationRoute } from './scheme'
+import {
+  parseWeworkScheme,
+  weworkDestinationRoute,
+  weworkIssueScheme,
+  weworkTaskScheme,
+} from './scheme'
 
 describe('Wework scheme routing', () => {
+  it('encodes notification targets without changing their identifiers', () => {
+    expect(
+      parseWeworkScheme(weworkTaskScheme({ deviceId: 'device:1', taskId: 'task/# 1' }))
+    ).toEqual({ kind: 'task', deviceId: 'device:1', taskId: 'task/# 1' })
+    expect(parseWeworkScheme(weworkIssueScheme('12', 'gitlab:12/issue#3'))).toEqual({
+      kind: 'board',
+      projectId: '12',
+      itemId: 'gitlab:12/issue#3',
+    })
+  })
   it('preserves external Issue identifiers and targets backend storage', () => {
     const destination = parseWeworkScheme('wework://boards/12/issues/gitlab%3A12%2Fissue%233')!
     expect(destination).toEqual({ kind: 'board', projectId: '12', itemId: 'gitlab:12/issue#3' })
@@ -31,6 +46,13 @@ describe('Wework scheme routing', () => {
     const route = new URL(weworkDestinationRoute(destination), 'https://local')
     expect(route.pathname).toBe('/todo')
     expect(route.searchParams.get('itemId')).toBe('WEG-12')
+    expect(route.searchParams.get('commentId')).toBe('c-1')
+  })
+  it('encodes the navigation request key using the same parameter read by the workbench', () => {
+    const destination = parseWeworkScheme('wework://boards/12/issues/WEG-12/comments/c-1')!
+    const route = new URL(weworkDestinationRoute(destination, 'second open/#'), 'https://local')
+
+    expect(route.searchParams.get('focusRequest')).toBe('second open/#')
     expect(route.searchParams.get('commentId')).toBe('c-1')
   })
   it.each([

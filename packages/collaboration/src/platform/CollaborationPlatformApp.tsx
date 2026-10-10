@@ -2289,7 +2289,11 @@ function WorkspaceHome({
         {metrics.map((metric) => {
           const Icon = metric.icon;
           return (
-            <div data-tone={metric.tone} key={metric.id}>
+            <div
+              data-testid={`collaboration-workspace-metric-${metric.id}`}
+              data-tone={metric.tone}
+              key={metric.id}
+            >
               <span>
                 <Icon aria-hidden="true" />
               </span>
@@ -2900,6 +2904,7 @@ function WorkItemsPage({
   locale,
   messages,
   onOpenItem,
+  showHumanFilter = false,
 }: {
   title: string;
   subtitle: string;
@@ -2908,18 +2913,81 @@ function WorkItemsPage({
   locale: CollaborationLocale;
   messages: PlatformMessages;
   onOpenItem(item: WorkspaceMyWorkItem): void;
+  showHumanFilter?: boolean;
 }) {
-  const sections = [
-    {
-      id: "assigned",
-      title: locale === "zh-CN" ? "待我处理" : "Assigned to me",
-      items,
-    },
-  ];
+  const [humanOnly, setHumanOnly] = useState(false);
+  const filterHuman = showHumanFilter && humanOnly;
+  const visibleItems = filterHuman
+    ? items.filter((item) => item.human_work)
+    : items;
+  const sections = filterHuman
+    ? [
+        {
+          id: "human-action",
+          title: locale === "zh-CN" ? "待我处理" : "Needs my action",
+          items: visibleItems.filter(
+            (item) => item.human_work?.can_start || item.human_work?.can_submit,
+          ),
+        },
+        {
+          id: "human-review",
+          title: locale === "zh-CN" ? "待我确认" : "Needs my review",
+          items: visibleItems.filter((item) => item.human_work?.can_review),
+        },
+        {
+          id: "human-waiting",
+          title: locale === "zh-CN" ? "等待确认" : "Awaiting review",
+          items: visibleItems.filter(
+            (item) =>
+              item.human_work?.state === "submitted" &&
+              !item.human_work.can_review,
+          ),
+        },
+        {
+          id: "human-done",
+          title: locale === "zh-CN" ? "已完成" : "Completed",
+          items: visibleItems.filter((item) => item.status === "completed"),
+        },
+        {
+          id: "human-other",
+          title: locale === "zh-CN" ? "等待处理" : "Waiting for others",
+          items: visibleItems.filter(
+            (item) =>
+              item.status !== "completed" &&
+              item.human_work?.state !== "submitted" &&
+              !item.human_work?.can_start &&
+              !item.human_work?.can_submit &&
+              !item.human_work?.can_review,
+          ),
+        },
+      ].filter((section) => section.items.length)
+    : [
+        {
+          id: "assigned",
+          title: locale === "zh-CN" ? "待我处理" : "Assigned to me",
+          items: visibleItems,
+        },
+      ];
   return (
     <div className="collaboration-platform-page">
-      <PageHeader title={title} subtitle={subtitle} />
-      {items.length ? (
+      <PageHeader
+        title={title}
+        subtitle={subtitle}
+        action={
+          showHumanFilter ? (
+            <button
+              type="button"
+              className="collaboration-platform-secondary-button"
+              data-testid="collaboration-my-work-human-filter"
+              aria-pressed={humanOnly}
+              onClick={() => setHumanOnly((current) => !current)}
+            >
+              {locale === "zh-CN" ? "人工任务" : "Human tasks"}
+            </button>
+          ) : null
+        }
+      />
+      {visibleItems.length ? (
         <div className="collaboration-home-work-groups">
           {sections.map((section) => (
             <section
@@ -2944,7 +3012,16 @@ function WorkItemsPage({
           ))}
         </div>
       ) : (
-        <EmptyState title={empty} description={messages.workspaceHint} />
+        <EmptyState
+          title={
+            filterHuman
+              ? locale === "zh-CN"
+                ? "暂无人工任务"
+                : "No human tasks"
+              : empty
+          }
+          description={messages.workspaceHint}
+        />
       )}
     </div>
   );
@@ -3828,7 +3905,9 @@ export function CollaborationPlatformApp({
         <CollaborationApp
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
+          issueArchiveEnabled
           locale={locale}
+          onProjectChange={commands.registerProject}
           showProjectBack={false}
           host={{
             capabilities: {
@@ -3882,7 +3961,13 @@ export function CollaborationPlatformApp({
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {
       const operation = workspaceIssueOperationState(item);
-      return item.is_unread || operation === "failed" || operation === "review";
+      return (
+        item.is_unread ||
+        item.human_work?.can_start ||
+        item.human_work?.can_review ||
+        operation === "failed" ||
+        operation === "review"
+      );
     });
     content =
       rootView === "agents" ||
@@ -3972,6 +4057,7 @@ export function CollaborationPlatformApp({
           locale={locale}
           messages={messages}
           onOpenItem={openMyWorkItem}
+          showHumanFilter
         />
       ) : rootView === "inbox" ? (
         <WorkItemsPage

@@ -1,4 +1,5 @@
 import type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
+import { readRuntimeTranscript } from '@wegent/chat-core'
 import {
   DshExecutorTransportError,
   describeDshExecutor,
@@ -6,6 +7,7 @@ import {
   subscribeDshExecutorEvents,
 } from '@/api/dsh/executorTransport'
 import { resolveLocalCodexProxyUrl } from './systemProxy'
+import { createModelLoadingTrace, traceModelLoading } from '@/lib/model-loading-diagnostics'
 
 export type UnlistenFn = () => void
 
@@ -283,16 +285,25 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
     return Promise.resolve(initializedLocalExecutorStatus)
   }
   if (!ensureLocalExecutorStartedPromise) {
+    const traceId = createModelLoadingTrace()
     ensureLocalExecutorStartedPromise = (async () => {
-      const available = await ensureLocalExecutorAvailable()
-      const proxyUrl = await resolveLocalCodexProxyUrl()
-      await requestDshExecutor('runtime.codex.runtime_config.update', {
-        proxyUrl,
-      })
-      const codexStartup = await requestDshExecutor<CodexStartupStatus>(
-        'runtime.codex.ensure_started'
+      const available = await traceModelLoading(
+        traceId,
+        'executor.available',
+        ensureLocalExecutorAvailable
       )
-      await initializeBundledPluginMarketplace()
+      const proxyUrl = await traceModelLoading(traceId, 'executor.proxy', resolveLocalCodexProxyUrl)
+      await traceModelLoading(traceId, 'executor.runtime_config', () =>
+        requestDshExecutor('runtime.codex.runtime_config.update', { proxyUrl })
+      )
+      const codexStartup = await traceModelLoading(traceId, 'executor.codex_start', () =>
+        requestDshExecutor<CodexStartupStatus>('runtime.codex.ensure_started')
+      )
+      await traceModelLoading(
+        traceId,
+        'executor.bundled_marketplace',
+        initializeBundledPluginMarketplace
+      )
       const status: LocalExecutorStatus = {
         ...available,
         ready: codexStartup.ready,
@@ -393,7 +404,11 @@ export function requestLocalExecutor<T = unknown>(
     failure.resolve()
     return Promise.reject(new Error(failure.message))
   }
-  return requestDshExecutor<T>(method, params).catch((cause: unknown) => {
+  const request =
+    method === 'runtime.tasks.transcript' && params.transcriptProtocolVersion === undefined
+      ? readRuntimeTranscript<T>(params, query => requestDshExecutor(method, query))
+      : requestDshExecutor<T>(method, params)
+  return request.catch((cause: unknown) => {
     if (isExecutorTransportFailure(cause)) {
       availableLocalExecutorStatus = null
       initializedLocalExecutorStatus = null

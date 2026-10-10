@@ -9,14 +9,16 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
-from knowledge_runtime.services.admin_executor import AdminExecutor
 
+from knowledge_runtime.services.admin_executor import AdminExecutor
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
     RemoteListChunksRequest,
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
+    RemoteTestConnectionRequest,
+    RemoteTestConnectionResponse,
 )
 
 router = APIRouter()
@@ -56,3 +58,12 @@ async def list_chunks(
     """List all chunks in a knowledge base."""
     executor = AdminExecutor()
     return await executor.list_chunks(request)
+
+
+@router.post("/test-connection")
+async def test_connection(
+    request: RemoteTestConnectionRequest,
+) -> RemoteTestConnectionResponse:
+    """Test connectivity for a storage configuration supplied by the Backend."""
+    executor = AdminExecutor()
+    return await executor.test_connection(request)

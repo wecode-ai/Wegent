@@ -100,11 +100,13 @@ describe("createSharedIssueDetailPort", () => {
     await port.issues.update("issue-1", {
       version: 7,
       parent_id: "parent-1",
+      start_at: "2026-09-10",
       due_at: "2026-09-12",
     });
     expect(update).toHaveBeenCalledWith("issue-1", {
       version: 7,
       parentId: "parent-1",
+      startAt: "2026-09-10",
       dueAt: "2026-09-12",
     });
 

@@ -1,4 +1,8 @@
 {
+  "history": {
+    "load_failed": "Could not load conversation history",
+    "retry": "Retry"
+  },
   "table": {
     "expand": "Expand table",
     "close": "Close expanded table",
@@ -122,6 +126,12 @@
     "send_with_paused_preserve": "Keep and resume"
   },
   "request_user_input": {
+    "url_title": "{{server}} requests browser authorization",
+    "url_destination": "Destination: {{host}}",
+    "url_hint": "Complete authorization in your browser, then return here. Opening the page does not confirm authorization. If the task does not continue, stop it and retry.",
+    "url_open": "Authorize in browser",
+    "url_failed": "Could not open authorization or submit the response. Try again.",
+    "url_summary": "Browser authorization request answered; the connector confirms the result.",
     "asked_count": "Asked {{count}} question(s)",
     "ignore": "Cancel",
     "submit": "Submit",

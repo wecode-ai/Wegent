@@ -165,6 +165,82 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_completed_todo_subtree_can_be_archived_listed_and_restored(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    parent = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Completed parent", "status": "completed"},
+    ).json()
+    child = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={
+            "title": "Completed child",
+            "status": "completed",
+            "parent_id": parent["id"],
+        },
+    ).json()
+
+    archived = test_client.delete(
+        f"/api/v1/loop-items/{parent['id']}",
+        headers=_auth(test_token),
+    )
+    assert archived.status_code == 204
+
+    archive_page = test_client.get(
+        f"/api/v1/cloud-projects/{delivery_project.id}/archived-loop-items",
+        headers=_auth(test_token),
+    )
+    assert archive_page.status_code == 200
+    assert [item["id"] for item in archive_page.json()["items"]] == [parent["id"]]
+    assert archive_page.json()["items"][0]["archived_at"]
+
+    child_restore = test_client.post(
+        f"/api/v1/loop-items/{child['id']}/restore",
+        headers=_auth(test_token),
+    )
+    assert child_restore.status_code == 409
+
+    restored = test_client.post(
+        f"/api/v1/loop-items/{parent['id']}/restore",
+        headers=_auth(test_token),
+    )
+    assert restored.status_code == 200
+    assert {item["id"] for item in restored.json()["items"]} == {
+        parent["id"],
+        child["id"],
+    }
+
+
+def test_incomplete_todo_subtree_cannot_be_archived(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    parent = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Completed parent", "status": "completed"},
+    ).json()
+    test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Incomplete child", "parent_id": parent["id"]},
+    )
+
+    response = test_client.delete(
+        f"/api/v1/loop-items/{parent['id']}",
+        headers=_auth(test_token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Only completed TODO subtrees can be archived"
+
+
 def test_external_loop_items_forward_assignee_filters(
     test_client: TestClient,
     test_token: str,
@@ -211,6 +287,109 @@ def test_external_loop_items_forward_assignee_filters(
 
     assert response.status_code == 200
     assert captured == {"assignee_type": "user", "assignee_id": str(test_user.id)}
+
+
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_external_loop_items_reject_unsupported_schedule_changes(
+    operation: str,
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+) -> None:
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="EXTSCHEDULE",
+        name="External schedule",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/example"},
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    if operation == "create":
+        response = test_client.post(
+            f"/api/v1/cloud-projects/{project.id}/loop-items",
+            headers=_auth(test_token),
+            json={"title": "Scheduled issue", "start_at": "2026-10-11T00:00:00Z"},
+        )
+    else:
+        response = test_client.patch(
+            "/api/v1/loop-items/EXTSCHEDULE-7",
+            headers=_auth(test_token),
+            json={"version": 1, "due_at": "2026-10-12T00:00:00Z"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Scheduling is not supported by this Issue provider"
+    )
+
+
+def test_external_loop_item_update_allows_unchanged_null_schedule_fields(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.schemas.delivery import LoopItemUpdate
+    from app.services.loop_items.external_provider import external_loop_item_provider
+
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="EXTNULLSCHEDULE",
+        name="External null schedule",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/example"},
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    issue = {"number": 7, "title": "Old title"}
+    response = {
+        "can_edit": True,
+        "start_at": None,
+        "due_at": None,
+        "assignee_user_id": None,
+    }
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_get_issue",
+        MagicMock(return_value=issue),
+    )
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_response",
+        MagicMock(return_value=response),
+    )
+    update_issue = MagicMock(return_value={**issue, "title": "New title"})
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+
+    result = external_loop_item_provider.update(
+        test_db,
+        "EXTNULLSCHEDULE-7",
+        test_user.id,
+        LoopItemUpdate(
+            version=1,
+            title="New title",
+            start_at=None,
+            due_at=None,
+        ),
+    )
+
+    assert result == response
+    update_issue.assert_called_once_with(project, 7, {"title": "New title"})
 
 
 def test_external_loop_item_comments_reject_unauthorized_private_project_access(
@@ -384,6 +563,11 @@ def test_board_snapshot_returns_first_screen_dependencies(
         "modelType": "public",
         "options": {"reasoning": "high"},
     }
+    bindings = test_client.get(
+        f"/api/v1/loop-items/{item['id']}/tasks", headers=headers
+    )
+    assert bindings.status_code == 200
+    assert bindings.json() == [binding.json()]
 
     response = test_client.get(
         f"/api/v1/cloud-projects/{delivery_project.id}/board-snapshot",
@@ -535,6 +719,7 @@ def test_delivery_returns_service_unavailable_without_repeating_cleanup(
 def test_delivery_flow_creates_immutable_snapshot(
     test_client: TestClient,
     test_token: str,
+    test_db: Session,
     delivery_project: CloudProject,
     delivery_storage: FakeDeliveryStorage,
     monkeypatch: pytest.MonkeyPatch,
@@ -553,6 +738,9 @@ def test_delivery_flow_creates_immutable_snapshot(
     )
     assert item_response.status_code == 201
     item_id = item_response.json()["id"]
+    initial_history = list(
+        (test_db.get(LoopItem, item_id).metadata_json or {}).get("status_history", [])
+    )
     source_task = {
         "deviceId": "local-device",
         "taskId": "runtime-task-1",
@@ -602,6 +790,13 @@ def test_delivery_flow_creates_immutable_snapshot(
     assert finalized.json()["status"] == "delivered"
     assert any(key.endswith("manifest.json") for key in delivery_storage.objects)
     assert published_events == [(item_id, "delivery_finalized")]
+    test_db.expire_all()
+    item = test_db.get(LoopItem, item_id)
+    assert item is not None
+    assert item.status == "inbox"
+    assert item.completed_at is None
+    assert item.current_delivery_id == delivery_id
+    assert (item.metadata_json or {}).get("status_history", []) == initial_history
 
     detail = test_client.get(
         f"/api/v1/deliveries/{delivery_id}", headers=_auth(test_token)
@@ -635,6 +830,9 @@ def test_collaboration_human_delivery_closes_assignment_without_completing_issue
     )
     assert item_response.status_code == 201
     item_id = item_response.json()["id"]
+    initial_history = list(
+        (test_db.get(LoopItem, item_id).metadata_json or {}).get("status_history", [])
+    )
     source_task = {
         "deviceId": "human-device",
         "taskId": "human-runtime-task",
@@ -687,7 +885,7 @@ def test_collaboration_human_delivery_closes_assignment_without_completing_issue
     assert item.current_delivery_id == delivery_id
 
 
-def test_direct_human_delivery_moves_issue_to_review(
+def test_direct_human_ai_delivery_stays_a_draft_until_person_submits(
     test_client: TestClient,
     test_token: str,
     test_db: Session,
@@ -697,10 +895,13 @@ def test_direct_human_delivery_moves_issue_to_review(
     item_response = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Prepare release notes", "status": "in_progress"},
+        json={"title": "Prepare release notes", "status": "inbox"},
     )
     assert item_response.status_code == 201
     item_id = item_response.json()["id"]
+    initial_history = list(
+        (test_db.get(LoopItem, item_id).metadata_json or {}).get("status_history", [])
+    )
     source_task = {
         "deviceId": "human-device",
         "taskId": "direct-human-runtime-task",
@@ -737,11 +938,11 @@ def test_direct_human_delivery_moves_issue_to_review(
     test_db.expire_all()
     item = test_db.get(LoopItem, item_id)
     assert item is not None
-    assert item.status == "in_review"
+    assert item.status == "inbox"
     assert item.completed_at is None
     assert item.current_delivery_id == delivery_id
-    assert item.metadata_json["status_history"][-1]["trigger"] == "human_delivery"
-    assert item.metadata_json["status_history"][-1]["to_status"] == "in_review"
+    assert (item.metadata_json or {}).get("status_history", []) == initial_history
+    assert item.metadata_json["human_work"]["ai_draft_delivery_id"] == delivery_id
 
 
 def test_delivery_response_reads_expired_orm_fields(

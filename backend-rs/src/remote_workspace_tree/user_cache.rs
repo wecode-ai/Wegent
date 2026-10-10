@@ -88,6 +88,23 @@ where
     load_document(mysql, redis, user_id).await.map(|_| ())
 }
 
+/// The public-model whitelist gate's direct read
+/// (`app.services.adapters.public_model.is_public_model_allowed_for_user_id`):
+/// `db.query(User).filter(User.id == user_id).first()`. Unlike
+/// `userReader.get_by_id` it never consults `user:v2:data`, so the gate adds
+/// one `users` SQL exchange and no cache read. Returns the `user_name` the
+/// whitelist matches.
+pub(crate) async fn user_name_by_id<M>(mysql: &M, user_id: i64) -> Result<Option<String>, ApiError>
+where
+    M: Mysql,
+{
+    let row: Option<UserCacheRow> = mysql
+        .fetch_optional(USER_BY_ID_QUERY, (user_id,))
+        .await
+        .map_err(super::error::database_query_failed)?;
+    Ok(row.map(|row| row.user_name))
+}
+
 /// The same `userReader.get_by_id` read, returning the `user:v2:data`
 /// document that now backs the key: the cached text on a hit, otherwise the
 /// row's `json.dumps(model_to_dict(user))` payload written back with `SETEX`.

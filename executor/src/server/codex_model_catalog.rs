@@ -253,18 +253,7 @@ pub(crate) fn invalidate_models_cache() -> Result<(), String> {
 }
 
 fn codex_models_cache_path() -> PathBuf {
-    env::var_os("WEGENT_CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            env::var_os("WEGENT_EXECUTOR_HOME")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .map(|home| home.join("codex"))
-        })
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor/codex")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor/codex"))
-        .join("models_cache.json")
+    crate::agents::wework_codex_home().join("models_cache.json")
 }
 
 fn invalidate_models_cache_at(path: &Path) -> Result<(), String> {
@@ -327,19 +316,12 @@ fn catalog_override_fields(
 }
 
 fn custom_models_path() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
-        .join("capabilities/model-catalog.json")
+    crate::local::capabilities::default_manifest_path().with_file_name("model-catalog.json")
 }
 
 fn catalog_overrides_path() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
-        .join("capabilities/model-catalog-overrides.json")
+    crate::local::capabilities::default_manifest_path()
+        .with_file_name("model-catalog-overrides.json")
 }
 
 fn read_custom_models() -> Vec<Value> {

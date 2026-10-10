@@ -15,4 +15,4 @@ mod handler;
 mod models;
 mod repository;
 mod service;
-mod set_order;
+mod skill_bindings;

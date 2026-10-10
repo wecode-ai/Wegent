@@ -61,6 +61,32 @@ describe('pluginDeviceAutoSync', () => {
     expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
   })
 
+  test('does not let an old completion release a newer lease after reset', () => {
+    const finishOld = beginPluginDeviceSync('device-a')!
+    clearPluginDeviceAutoSyncAttempts()
+    const finishNew = beginPluginDeviceSync('device-a')!
+
+    finishOld()
+
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(true)
+    expect(beginPluginDeviceSync('device-a')).toBeNull()
+    finishNew()
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
+  })
+
+  test('makes lease release idempotent after another sync starts', () => {
+    const finishOld = beginPluginDeviceSync('device-a')!
+    finishOld()
+    const finishNew = beginPluginDeviceSync('device-a')!
+
+    finishOld()
+
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(true)
+    expect(beginPluginDeviceSync('device-a')).toBeNull()
+    finishNew()
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
+  })
+
   test('detects account installs that are missing on the current device', () => {
     expect(
       marketplaceItemNeedsDeviceSync(

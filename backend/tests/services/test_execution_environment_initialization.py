@@ -36,6 +36,23 @@ PRIMARY_REPOSITORY = {
 }
 
 
+def test_workspace_policy_change_preserves_prepared_devices():
+    definition = {
+        "repositories": [PRIMARY_REPOSITORY],
+        "workspace_policy": "git_worktree",
+    }
+    previous = execution_environment_initialization.preparing_execution_environment(
+        definition
+    )
+    previous["devices"] = {"device": {"status": "ready", "workspace_path": "/repo"}}
+    updated = execution_environment_initialization.preparing_execution_environment(
+        {**definition, "workspace_policy": "project"}, previous
+    )
+    assert updated["fingerprint"] == previous["fingerprint"]
+    assert updated["devices"] == previous["devices"]
+    assert updated["workspace_policy"] == "project"
+
+
 def _remote_device() -> Kind:
     return Kind(
         kind="Device",

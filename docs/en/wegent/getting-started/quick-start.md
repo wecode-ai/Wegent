@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 
 Then open http://localhost:3000 in your browser.
 
-> Optional: Enable RAG features with `docker compose --profile rag up -d`
+> In standard mode, `docker compose up -d` starts the knowledge retrieval service (Knowledge Runtime) together with the Backend. Optional: run `docker compose --profile rag up -d` when you need the bundled Elasticsearch storage.
 
 ---
 

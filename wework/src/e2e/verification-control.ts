@@ -97,6 +97,27 @@ async function preflightLocalWorktree(command: DesktopControlCommand): Promise<s
   )
 }
 
+async function readLocalProjectRuntimeTasks(command: DesktopControlCommand): Promise<string> {
+  const projectId = command.value?.trim()
+  if (!projectId) throw new Error('readLocalProjectRuntimeTasks requires a project ID')
+  const issues = await requestLocalExecutor<Array<{ id: string }>>('todos.list', {
+    project_id: projectId,
+  })
+  const bindings = (
+    await Promise.all(
+      issues.map(issue =>
+        requestLocalExecutor<Array<{ task_id: string }>>('todos.bindings', { task_id: issue.id })
+      )
+    )
+  ).flat()
+  const tasks = await Promise.all(
+    [...new Set(bindings.map(binding => binding.task_id))].map(taskId =>
+      requestLocalExecutor<{ success: boolean; task?: unknown }>('runtime.tasks.get', { taskId })
+    )
+  )
+  return JSON.stringify(tasks.filter(result => result.success).map(result => result.task))
+}
+
 async function archiveLocalProject(command: DesktopControlCommand): Promise<string> {
   const fixture = JSON.parse(command.value ?? '{}') as { projectKey?: string }
   const projectKey = fixture.projectKey?.trim()
@@ -166,6 +187,8 @@ export async function executeVerificationControlCommand(
       return { handled: true, value: await seedLocalProject(command) }
     case 'readLocalProject':
       return { handled: true, value: await readLocalProject(command) }
+    case 'readLocalProjectRuntimeTasks':
+      return { handled: true, value: await readLocalProjectRuntimeTasks(command) }
     case 'preflightLocalWorktree':
       return { handled: true, value: await preflightLocalWorktree(command) }
     case 'archiveLocalProject':

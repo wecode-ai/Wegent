@@ -18,6 +18,8 @@ pub(crate) mod environment_setup;
 pub(crate) mod git_auth;
 pub(crate) mod git_workspace;
 mod image_validator;
+mod instance_home;
+pub(crate) use instance_home::validate_session;
 pub mod interactive_mcp;
 mod pnpm_worktree;
 pub(crate) mod runtime_capabilities;
@@ -43,8 +45,8 @@ use claude_code::{
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{
-    codex_notification_requires_user_input, codex_runtime_approval_policy,
-    configured_inference_model_provider, executor_home,
+    bind_codex_thread_model_route, codex_notification_requires_user_input,
+    codex_runtime_approval_policy, configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, replace_config,
     select_wework_codex_user_instructions, wework_codex_home,
     CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
@@ -60,6 +62,11 @@ pub use codex::{
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
+pub(crate) use instance_home::{task_skills_directory, task_skills_directory_at};
+
+pub(crate) fn has_isolated_native_home(request: &ExecutionRequest) -> bool {
+    instance_home::request_home(request).is_some()
+}
 
 /// Terminates every agent process owned by this executor.
 ///
@@ -314,8 +321,6 @@ async fn prepare_standard_codex_request(
         )
     })?;
     request.project_workspace_path = Some(task_dir.display().to_string());
-    environment_setup::prepare_execution_environment(&request).await?;
-    runtime_capabilities::prepare_codex_runtime(&request).await?;
     Ok(request)
 }
 
@@ -345,6 +350,29 @@ impl AgentEngine for AgentProcessEngine {
         let codex_engine = self.codex_engine.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
+            let _capability_lease = if agent_kind == AgentKind::ClaudeCode {
+                Some(crate::services::capability_activation::begin_execution().await)
+            } else {
+                None
+            };
+            let _home_lease = if agent_kind == AgentKind::ClaudeCode {
+                match instance_home::acquire(&request) {
+                    Ok(lease) => lease,
+                    Err(message) => {
+                        let mut fields = task_fields(&request.task_id, &request.subtask_id);
+                        fields.push(("phase", "agent_home".to_owned()));
+                        fields.push(("error", message.clone()));
+                        log_executor_event("agent preparation failed", &fields);
+                        return ExecutionOutcome::Failed { message };
+                    }
+                }
+            } else {
+                None
+            };
+            let _workspace_lease = match git_workspace::acquire_execution_lease(&request) {
+                Ok(lease) => lease,
+                Err(message) => return ExecutionOutcome::Failed { message },
+            };
             let mut fields = task_fields(&request.task_id, &request.subtask_id);
             fields.push(("agent", format!("{agent_kind:?}")));
             log_executor_event("agent dispatch", &fields);
@@ -483,6 +511,29 @@ impl AgentEngine for AgentProcessEngine {
         let codex_engine = self.codex_engine.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
+            let _capability_lease = if agent_kind == AgentKind::ClaudeCode {
+                Some(crate::services::capability_activation::begin_execution().await)
+            } else {
+                None
+            };
+            let _home_lease = if agent_kind == AgentKind::ClaudeCode {
+                match instance_home::acquire(&request) {
+                    Ok(lease) => lease,
+                    Err(message) => {
+                        let mut fields = task_fields(&request.task_id, &request.subtask_id);
+                        fields.push(("phase", "agent_home".to_owned()));
+                        fields.push(("error", message.clone()));
+                        log_executor_event("agent preparation failed", &fields);
+                        return ExecutionOutcome::Failed { message };
+                    }
+                }
+            } else {
+                None
+            };
+            let _workspace_lease = match git_workspace::acquire_execution_lease(&request) {
+                Ok(lease) => lease,
+                Err(message) => return ExecutionOutcome::Failed { message },
+            };
             let mut fields = task_fields(&request.task_id, &request.subtask_id);
             fields.push(("agent", format!("{agent_kind:?}")));
             log_executor_event("agent dispatch", &fields);

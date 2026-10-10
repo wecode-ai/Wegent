@@ -1903,32 +1903,7 @@ fn resolve_worktree_root(configured: &str) -> PathBuf {
 }
 
 fn default_worktree_root() -> PathBuf {
-    default_worktree_root_from_paths(
-        env::var_os("WEGENT_EXECUTOR_PROJECTS_DIR").map(PathBuf::from),
-        env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
-        env::var_os("WECODE_HOME").map(PathBuf::from),
-        home_dir(),
-    )
-}
-
-fn default_worktree_root_from_paths(
-    projects: Option<PathBuf>,
-    executor_home: Option<PathBuf>,
-    wecode_home: Option<PathBuf>,
-    home: PathBuf,
-) -> PathBuf {
-    if let Some(projects) = projects {
-        if let Some(parent) = projects.parent() {
-            return parent.join("worktrees");
-        }
-    }
-    if let Some(executor_home) = executor_home {
-        return executor_home.join("workspace").join("worktrees");
-    }
-    let base = wecode_home.unwrap_or_else(|| home.join(".wecode"));
-    base.join("wegent-executor")
-        .join("workspace")
-        .join("worktrees")
+    crate::workspace_paths::worktrees_root()
 }
 
 fn expand_home(value: &str) -> PathBuf {
@@ -2079,33 +2054,6 @@ mod tests {
         assert_eq!(capabilities["reconcile"], true);
         assert_eq!(capabilities["persistentStorageVerified"], true);
         let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn isolated_executor_home_owns_its_default_worktree_root() {
-        let root = default_worktree_root_from_paths(
-            None,
-            Some(PathBuf::from("/tmp/isolated-executor")),
-            Some(PathBuf::from("/tmp/shared-wecode")),
-            PathBuf::from("/tmp/home"),
-        );
-
-        assert_eq!(
-            root,
-            PathBuf::from("/tmp/isolated-executor/workspace/worktrees")
-        );
-    }
-
-    #[test]
-    fn explicit_projects_directory_has_highest_worktree_root_precedence() {
-        let root = default_worktree_root_from_paths(
-            Some(PathBuf::from("/tmp/verification/workspace/projects")),
-            Some(PathBuf::from("/tmp/isolated-executor")),
-            Some(PathBuf::from("/tmp/shared-wecode")),
-            PathBuf::from("/tmp/home"),
-        );
-
-        assert_eq!(root, PathBuf::from("/tmp/verification/workspace/worktrees"));
     }
 
     #[test]

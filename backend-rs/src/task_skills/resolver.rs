@@ -415,7 +415,7 @@ pub async fn resolve_task_skills<M: Mysql>(
             preload_skills.insert(name.clone());
         }
         for (name, meta) in
-            resolve_skill_refs_by_names(mysql, &user_selected, team_owner_id, &team_namespace)
+            resolve_skill_refs_by_names(kinds_cache, &user_selected, team_owner_id, &team_namespace)
                 .await?
         {
             skill_refs.insert(name.clone(), meta.clone());
@@ -512,7 +512,7 @@ async fn find_skill_by_name<M: Mysql, R: brz_redis::Redis>(
             return Ok(Some(skill));
         }
     }
-    let default_ids = list_user_default_skill_ids(mysql, owner_user_id).await?;
+    let default_ids = list_user_default_skill_ids(kinds, owner_user_id).await?;
     if !default_ids.is_empty()
         && let Some(skill) = repo::skill_by_bound_ids(mysql, &default_ids, skill_name).await?
     {
@@ -552,10 +552,14 @@ async fn find_skill_by_ref<M: Mysql>(
 /// `SkillBinding` rows whose bound Skill is active and accessible. Each
 /// binding is checked in database order (`created_at DESC`), which is also
 /// the order the callers iterate.
-async fn list_accessible_bindings<M: Mysql>(
-    mysql: &M,
+async fn list_accessible_bindings<M, R: brz_redis::Redis>(
+    kinds: &KindCacheStore<'_, M, R>,
     user_id: i64,
-) -> Result<Vec<repo::KindRow>, brz_mysql::MysqlError> {
+) -> Result<Vec<repo::KindRow>, brz_mysql::MysqlError>
+where
+    M: Mysql,
+{
+    let mysql = kinds.mysql;
     let bindings = repo::user_default_bindings(mysql, user_id).await?;
     let target_id = format!("user:{user_id}");
     let mut accessible = Vec::new();
@@ -569,7 +573,7 @@ async fn list_accessible_bindings<M: Mysql>(
         let Some(skill) = repo::active_skill_by_id(mysql, skill_id).await? else {
             continue;
         };
-        if !can_user_access_skill(&skill, user_id) {
+        if !can_user_access_skill(kinds, &skill, user_id).await? {
             continue;
         }
         accessible.push(binding);
@@ -578,25 +582,42 @@ async fn list_accessible_bindings<M: Mysql>(
 }
 
 /// `skill_binding_service.can_user_access_skill`: the bound Skill is
-/// accessible when it is the user's own or public (`user_id = 0`), or when
-/// its CRD marks it as a published public capability. The source also
-/// admits a non-default-namespace Skill through the requester's group
-/// Reporter role; every recorded default-namespace binding belongs to the
-/// requesting user, so that branch has no recorded traffic.
-fn can_user_access_skill(skill: &repo::KindRow, user_id: i64) -> bool {
-    skill.kinds_user_id == 0
-        || skill.kinds_user_id == user_id
-        || CrdDocument::project_opaque(&skill.kinds_json.0).is_published_public()
+/// accessible when it is the user's own or public (`user_id = 0`), when its
+/// CRD marks it as a published public capability, or when the requester holds
+/// a Reporter-or-above role in the Skill's group namespace. The last branch is
+/// the shared group-role check (`skill_binding_service` uses the same
+/// `get_effective_role_in_group` for it).
+async fn can_user_access_skill<M, R: brz_redis::Redis>(
+    kinds: &KindCacheStore<'_, M, R>,
+    skill: &repo::KindRow,
+    user_id: i64,
+) -> Result<bool, brz_mysql::MysqlError>
+where
+    M: Mysql,
+{
+    let published_public = CrdDocument::project_opaque(&skill.kinds_json.0).is_published_public();
+    crate::skills::skills_unified::can_user_access_skill(
+        kinds.mysql,
+        &kinds.erp_context(),
+        user_id,
+        skill.kinds_user_id,
+        &skill.kinds_namespace,
+        published_public,
+    )
+    .await
 }
 
 /// `skill_binding_service.list_user_default_skill_ids`: the accessible
 /// user-default bindings' skill ids, in binding order.
-async fn list_user_default_skill_ids<M: Mysql>(
-    mysql: &M,
+async fn list_user_default_skill_ids<M, R: brz_redis::Redis>(
+    kinds: &KindCacheStore<'_, M, R>,
     user_id: i64,
-) -> Result<Vec<i64>, brz_mysql::MysqlError> {
+) -> Result<Vec<i64>, brz_mysql::MysqlError>
+where
+    M: Mysql,
+{
     let mut ids = Vec::new();
-    for binding in list_accessible_bindings(mysql, user_id).await? {
+    for binding in list_accessible_bindings(kinds, user_id).await? {
         if let Some(skill_id) = extract_skill_id(&binding.kinds_json.0) {
             ids.push(skill_id);
         }
@@ -628,7 +649,7 @@ async fn merge_user_default_skill_refs<M: Mysql, R: brz_redis::Redis>(
     // binding's Skill a second time. Both runs issue `kinds.id = ? AND kind
     // = 'Skill' AND is_active = true LIMIT 1` per accessible binding, so the
     // target issues the same two passes over the same accessible list.
-    let mut bindings = list_accessible_bindings(mysql, user_id).await?;
+    let mut bindings = list_accessible_bindings(kinds, user_id).await?;
     // The group bindings of the context's group namespace follow the user's
     // default bindings (`list_group_bindings`), gated on the Reporter role.
     if let Some(group_namespace) = group_namespace {
@@ -657,14 +678,6 @@ async fn merge_user_default_skill_refs<M: Mysql, R: brz_redis::Redis>(
         let Some(skill) = repo::active_skill_by_id(mysql, skill_id).await? else {
             continue;
         };
-        let skill_name = skill.kinds_name.clone();
-        // `_merge_user_default_skill_refs` writes only skill_id/namespace/
-        // is_public into the ref dict; the response model's `content_hash`
-        // default then renders null even when the bound Skill row carries a
-        // `status.fileHash` (unlike the ghost-loop refs, which resolve the
-        // hash explicitly).
-        let mut meta = SkillRefMeta::from_kind(&skill);
-        meta.content_hash = None;
         let binding_crd = CrdDocument::project_opaque(&binding.kinds_json.0);
         let force_preload = binding_crd.spec.as_ref().is_some_and(|spec| {
             if spec.force_preload.is_some() {
@@ -673,16 +686,44 @@ async fn merge_user_default_skill_refs<M: Mysql, R: brz_redis::Redis>(
                 spec.legacy_force_preload.unwrap_or(false)
             }
         });
-        skills.insert(skill_name.clone());
-        skill_refs
-            .entry(skill_name.clone())
-            .or_insert_with(|| meta.clone());
-        if force_preload {
-            preload_skills.insert(skill_name.clone());
-            preload_skill_refs.insert(skill_name, meta);
-        }
+        merge_user_default_skill_ref(
+            &skill,
+            force_preload,
+            skills,
+            skill_refs,
+            preload_skills,
+            preload_skill_refs,
+        );
     }
     Ok(())
+}
+
+/// One `_merge_user_default_skill_refs` entry, split out so its map semantics
+/// stay testable without a database.
+fn merge_user_default_skill_ref(
+    skill: &repo::KindRow,
+    force_preload: bool,
+    skills: &mut HashSet<String>,
+    skill_refs: &mut HashMap<String, SkillRefMeta>,
+    preload_skills: &mut HashSet<String>,
+    preload_skill_refs: &mut HashMap<String, SkillRefMeta>,
+) {
+    let skill_name = skill.kinds_name.clone();
+    // `_merge_user_default_skill_refs` writes only skill_id/namespace/
+    // is_public into the ref dict; the response model's `content_hash`
+    // default then renders null even when the bound Skill row carries a
+    // `status.fileHash` (unlike the ghost-loop refs, which resolve the
+    // hash explicitly).
+    let mut meta = SkillRefMeta::from_kind(skill);
+    meta.content_hash = None;
+    skills.insert(skill_name.clone());
+    let resolved = skill_refs.entry(skill_name.clone()).or_insert(meta);
+    if force_preload {
+        preload_skills.insert(skill_name.clone());
+        // The source assigns `skill_refs[skill_name]`, so a name the ghost
+        // loop already resolved keeps its `content_hash` here.
+        preload_skill_refs.insert(skill_name, resolved.clone());
+    }
 }
 
 /// `_merge_provider_skill_refs`: `PROVIDER_SKILLS` (wegent ->
@@ -737,15 +778,19 @@ fn provider_skill_name(provider_id: &str) -> Option<&'static str> {
 /// `resolve_skill_refs_by_names` (the legacy additional-skills path). Like
 /// the other skill_resolution helpers, the source queries `kinds` directly
 /// at every step.
-async fn resolve_skill_refs_by_names<M: Mysql>(
-    mysql: &M,
+async fn resolve_skill_refs_by_names<M, R: brz_redis::Redis>(
+    kinds: &KindCacheStore<'_, M, R>,
     skill_names: &[String],
     user_id: i64,
     namespace: &str,
-) -> Result<Vec<(String, SkillRefMeta)>, brz_mysql::MysqlError> {
+) -> Result<Vec<(String, SkillRefMeta)>, brz_mysql::MysqlError>
+where
+    M: Mysql,
+{
     if skill_names.is_empty() {
         return Ok(Vec::new());
     }
+    let mysql = kinds.mysql;
     let mut resolved: Vec<(String, SkillRefMeta)> = Vec::new();
     let mut remaining: Vec<String> = Vec::new();
     for name in skill_names {
@@ -781,7 +826,7 @@ async fn resolve_skill_refs_by_names<M: Mysql>(
         });
     }
     if !remaining.is_empty() {
-        let default_ids = list_user_default_skill_ids(mysql, user_id).await?;
+        let default_ids = list_user_default_skill_ids(kinds, user_id).await?;
         if !default_ids.is_empty() {
             for name in &remaining {
                 if let Some(skill) = repo::skill_by_bound_ids(mysql, &default_ids, name).await? {
@@ -909,51 +954,5 @@ fn is_excluded_by_context(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn skill_row(user_id: i64, spec: serde_json::Value) -> repo::KindRow {
-        repo::KindRow {
-            kinds_id: 274676,
-            kinds_user_id: user_id,
-            kinds_kind: "Skill".to_string(),
-            kinds_name: "chaoneng-xiadanya-suicai-analysis".to_string(),
-            kinds_namespace: "default".to_string(),
-            kinds_json: brz_mysql::Json(OpaqueJson::from_serializable(spec)),
-            kinds_is_active: 1,
-            kinds_created_at: chrono::NaiveDateTime::default(),
-            kinds_updated_at: chrono::NaiveDateTime::default(),
-        }
-    }
-
-    #[test]
-    fn group_bindings_match_their_namespace_target() {
-        let binding = OpaqueJson::from_serializable(serde_json::json!({
-            "kind": "SkillBinding",
-            "spec": {"targetType": "group", "targetId": "example/example_community"}
-        }));
-        assert!(is_group_binding(&binding, "example/example_community"));
-        assert!(!is_group_binding(&binding, "default"));
-        assert!(!is_user_default_binding(&binding, "user:6013"));
-    }
-
-    #[test]
-    fn accessibility_admits_own_and_public_skills() {
-        let own = skill_row(4751, serde_json::json!({"kind": "Skill", "spec": {}}));
-        assert!(can_user_access_skill(&own, 4751));
-        let public = skill_row(0, serde_json::json!({"kind": "Skill", "spec": {}}));
-        assert!(can_user_access_skill(&public, 4751));
-    }
-
-    #[test]
-    fn accessibility_requires_a_published_public_capability_for_foreign_skills() {
-        let foreign = skill_row(999, serde_json::json!({"kind": "Skill", "spec": {}}));
-        assert!(!can_user_access_skill(&foreign, 4751));
-        let published = skill_row(
-            999,
-            serde_json::json!({"kind": "Skill", "spec": {"capability": {
-                "visibility": "public", "publishStatus": "published"}}}),
-        );
-        assert!(can_user_access_skill(&published, 4751));
-    }
-}
+#[path = "resolver_tests.rs"]
+mod tests;

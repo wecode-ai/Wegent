@@ -29,6 +29,7 @@ import {
   stoppedTaskNeedsAttention,
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
+import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
 import { Archive, CircleCheck } from 'lucide-react'
 
 export interface BoardCardDisplaySettings {
@@ -89,6 +90,13 @@ export interface CloudTodoBoardTaskBinding {
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
   modelSelection?: ModelSelectionConfig | null
+  executionContext?: {
+    runtime?: string | null
+    threadId?: string | null
+    workspacePath?: string | null
+    workspaceKind?: string | null
+    worktreeId?: string | null
+  } | null
   runtimeGoal?: RuntimeGoal | null
   runtimeGoalLoaded?: boolean
 }
@@ -291,13 +299,25 @@ function RuntimeTaskProgressSummary({
   const { t: toolTranslate } = useTranslation('chat')
   const taskAddress = useMemo<RuntimeTaskAddress>(
     () => ({
-      deviceId: binding.device_id,
-      taskId: binding.task_id,
-      ...(binding.modelSelection
-        ? { runtimeHandle: { modelSelection: binding.modelSelection } }
-        : {}),
+      ...runtimeTaskBindingAddress({
+        device_id: binding.device_id,
+        task_id: binding.task_id,
+        modelSelection: binding.modelSelection,
+        executionContext: binding.executionContext,
+      }),
+      projectSession: {
+        projectId: String(item.cloud_project_id),
+        issueId: String(item.id),
+      },
     }),
-    [binding.device_id, binding.modelSelection, binding.task_id]
+    [
+      binding.device_id,
+      binding.executionContext,
+      binding.modelSelection,
+      binding.task_id,
+      item.cloud_project_id,
+      item.id,
+    ]
   )
   useEffect(() => {
     if (binding.runtimeGoalLoaded || !onLoadRuntimeGoal) return
@@ -356,6 +376,7 @@ function RuntimeTaskProgressSummary({
             initialAddress={taskAddress}
             runtimeContext={{ cloudProjectId: String(item.cloud_project_id) }}
             sendEphemeral={false}
+            readOnly
             collapseComposerWhenIdle
             initialScrollPosition="latest"
             emptyStateText={t('todo.task_progress_empty', '暂无任务进展详情')}

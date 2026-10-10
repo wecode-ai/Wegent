@@ -44,6 +44,39 @@ describe('runtime task navigation', () => {
       }
     )
   })
+
+  test('round-trips local Issue execution context without cloud session routing', () => {
+    const route = buildRuntimeTaskRoute({
+      deviceId: 'local-device',
+      taskId: 'runtime-1',
+      issueExecution: { projectId: 'local-project', issueId: 'issue-1' },
+    })
+
+    expect(route).toBe(
+      '/runtime-tasks?deviceId=local-device&taskId=runtime-1&issueProjectId=local-project&issueId=issue-1'
+    )
+    expect(parseRuntimeTaskRoute('/runtime-tasks', route.slice(route.indexOf('?')))).toEqual({
+      deviceId: 'local-device',
+      taskId: 'runtime-1',
+      issueExecution: { projectId: 'local-project', issueId: 'issue-1' },
+    })
+  })
+
+  test('round-trips cloud Issue execution authorization context', () => {
+    const route = buildRuntimeTaskRoute({
+      deviceId: 'cloud-device',
+      taskId: 'runtime-1',
+      issueExecution: { projectId: 'cloud-project', issueId: 'issue-1' },
+      projectSession: { projectId: 'cloud-project', issueId: 'issue-1' },
+    })
+
+    expect(parseRuntimeTaskRoute('/runtime-tasks', route.slice(route.indexOf('?')))).toEqual({
+      deviceId: 'cloud-device',
+      taskId: 'runtime-1',
+      issueExecution: { projectId: 'cloud-project', issueId: 'issue-1' },
+      projectSession: { projectId: 'cloud-project', issueId: 'issue-1' },
+    })
+  })
 })
 
 describe('resolveDesktopAppRoute', () => {

@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { DocumentDetailDialog } from '@/features/knowledge/document/components/DocumentDetailDialog'
 import type { DocumentSummary, KnowledgeDocument } from '@/types/knowledge'
 import { toast } from 'sonner'
+import { formatDateTime } from '@/utils/dateTime'
 
 const mockRouterPush = jest.fn()
 const mockDownloadDocument = jest.fn()
@@ -198,6 +199,25 @@ const baseDocument: KnowledgeDocument = {
 }
 
 describe('DocumentDetailDialog permissions', () => {
+  it.each(['2026-10-07T01:47:00', '2026-10-07T01:47:00Z', '2026-10-07T01:47:00+08:00'])(
+    'uses the list timestamp semantics for %s',
+    updatedAt => {
+      render(
+        <DocumentDetailDialog
+          open
+          onOpenChange={jest.fn()}
+          document={{ ...baseDocument, updated_at: updatedAt }}
+          knowledgeBaseId={21}
+        />
+      )
+
+      const expected = formatDateTime(new Date(updatedAt).getTime())
+      expect(
+        screen.getByText(`document.document.detail.contentUpdatedAt: ${expected}`)
+      ).toBeInTheDocument()
+    }
+  )
+
   it('renders the protected watermark inside the scrollable content so it covers scrolled sections', async () => {
     const canvasContext = {
       scale: jest.fn(),

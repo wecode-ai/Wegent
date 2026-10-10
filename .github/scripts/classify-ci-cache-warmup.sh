@@ -26,6 +26,7 @@ classify_path() {
       mark_all
       ;;
     .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/download-actions-artifact.sh | \
       .github/scripts/publish-wework-core-e2e-build-oci.sh | \
       .github/scripts/resolve-wework-core-e2e-build-ref.sh | \
       .github/scripts/restore-oci-runtime-binary.sh | \
@@ -56,7 +57,7 @@ classify_path() {
     .github/claude-code-cli/* | frontend/src/* | package.json | \
       pnpm-workspace.yaml | \
       frontend/package.json | wework/package.json | packages/*/package.json | \
-      packages/chat-core/*)
+      packages/chat-core/* | packages/collaboration/*)
       changed[node]=true
       changed[wework_target]=true
       ;;

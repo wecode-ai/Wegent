@@ -18,9 +18,11 @@ git -c "safe.directory=$PWD" ls-files -s -- \
   .github/actions/build-wework-core-e2e \
   .github/actions/setup-node-workspace \
   .github/scripts/archive-wework-core-e2e-build.sh \
+  .github/scripts/download-actions-artifact.sh \
   .github/scripts/restore-oci-runtime-binary.sh \
   package.json \
   packages/chat-core \
+  packages/collaboration \
   pnpm-lock.yaml \
   pnpm-workspace.yaml \
   wework \

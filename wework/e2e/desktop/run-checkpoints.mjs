@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,6 +20,13 @@ import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_RESOURCES = new Map([
+  // These macOS checkpoints move native windows and require a foreground renderer for cursor arrival.
+  ['browser-toolbar-actions', ['macos-inspector-foreground']],
+  ['tray-lifecycle', ['macos-inspector-foreground']],
+  ['browser-annotation-design', ['macos-inspector-foreground']],
+  // Fresh packaged runtime extraction contends when these cloud checkpoints share a runner.
+  ['plugin-account-auth', ['desktop-runtime-intensive']],
+  ['cloud-device-lifecycle', ['desktop-runtime-intensive']],
   ['resilience', ['desktop-runtime-intensive']],
   ['environment-panel-scroll', ['desktop-runtime-intensive']],
   ['workspace-attachments', ['desktop-runtime-intensive']],
@@ -33,10 +42,14 @@ const CHECKPOINT_RESOURCES = new Map([
     ['collaboration-runtime', 'desktop-runtime-intensive'],
   ],
   ['collaboration-issue-comment-notification', ['collaboration-runtime']],
+  ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-uninstall-resilience': './scenarios/plugin-uninstall-resilience.scenario.mjs',
+  'plugin-composer-long-list': './scenarios/plugin-composer-long-list.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
@@ -94,8 +107,10 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
   'collaboration-issue-comment-notification':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
+  'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
+  'drawing-attachment': './scenarios/drawing-attachment.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
   'send-key-preference': './scenarios/send-key-preference.scenario.mjs',
   'system-proxy': './scenarios/system-proxy.scenario.mjs',
@@ -105,8 +120,11 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'collaboration-worktree-policy',
   'cloud-model-recovery',
   'plugin-account-auth',
+  'plugin-uninstall-resilience',
+  'plugin-composer-long-list',
   'codex-account-login',
   'cloud-space-mention',
   'change-request-status',
@@ -128,8 +146,10 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
   'collaboration-issue-comment-notification',
+  'collaboration-issue-archive',
   'plugin-development',
   'task-attachments',
+  'drawing-attachment',
   'project-assignment-notification',
   'runtime-task-queue',
   'codex-invalid-launch-cwd',
@@ -321,6 +341,10 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (checkpoint === 'collaboration-shared-core') {
+    // Exercise timezone-less UTC API timestamps outside the UTC timezone.
+    nextEnv.TZ = 'Asia/Shanghai'
+  }
   if (
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'browser-multi-tabs' ||
@@ -401,6 +425,94 @@ async function sharedBuildEnvironment(environment = process.env) {
     WEWORK_E2E_CODEX_BIN: codexBinary,
     WEWORK_E2E_EXECUTOR_BIN: build.executorBinary,
   }
+}
+
+async function fileSha256(path) {
+  const hash = createHash('sha256')
+  await new Promise((resolvePromise, reject) => {
+    const stream = createReadStream(path)
+    stream.on('data', chunk => hash.update(chunk))
+    stream.once('end', resolvePromise)
+    stream.once('error', reject)
+  })
+  return hash.digest('hex')
+}
+
+async function extractArchive(archivePath, destination) {
+  await new Promise((resolvePromise, reject) => {
+    const child = spawn('tar', ['-xzf', archivePath, '-C', destination], {
+      stdio: ['ignore', 'inherit', 'inherit'],
+    })
+    child.once('error', reject)
+    child.once('exit', (code, signal) => {
+      if (code === 0) {
+        resolvePromise()
+        return
+      }
+      reject(
+        new Error(
+          `Core DSH runtime extraction failed: ${signal ? `signal=${signal}` : `exit=${code}`}`
+        )
+      )
+    })
+  })
+}
+
+async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
+  const resourcesRoot = resolve(
+    dirname(appBinary),
+    ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
+  )
+  const resourceRoot = join(resourcesRoot, 'harness-runtime')
+  const catalog = JSON.parse(await readFile(join(resourceRoot, 'runtimes.json'), 'utf8'))
+  const runtimes =
+    catalog.runtimes?.filter(runtime => ['core', 'workbench'].includes(runtime.role)) ?? []
+  const roles = new Set(runtimes.map(runtime => runtime.role))
+  if (!roles.has('core') || !roles.has('workbench')) {
+    throw new Error('Bundled Electron runtime catalog must contain Core and Workbench runtimes')
+  }
+
+  const runtimeRoot = join(parentDirectory, 'harness-runtime')
+  const startedAt = Date.now()
+  await mkdir(runtimeRoot, { recursive: true })
+  for (const runtime of runtimes) {
+    if (
+      !/^[0-9a-f]{64}$/.test(runtime.sourceFingerprint) ||
+      !/^[0-9a-f]{64}$/.test(runtime.archiveSha256) ||
+      !Number.isSafeInteger(runtime.archiveBytes) ||
+      runtime.archiveBytes <= 0 ||
+      typeof runtime.assetName !== 'string' ||
+      !runtime.assetName.endsWith('.tar.gz')
+    ) {
+      throw new Error('Bundled Electron runtime descriptor is invalid')
+    }
+
+    const archivePath = join(resourceRoot, runtime.assetName)
+    const archiveMetadata = await stat(archivePath)
+    if (archiveMetadata.size !== runtime.archiveBytes) {
+      throw new Error(`Bundled DSH runtime size mismatch: ${runtime.assetName}`)
+    }
+    if ((await fileSha256(archivePath)) !== runtime.archiveSha256) {
+      throw new Error(`Bundled DSH runtime checksum mismatch: ${runtime.assetName}`)
+    }
+
+    const extractedRoot = join(runtimeRoot, runtime.sourceFingerprint)
+    await mkdir(extractedRoot, { recursive: true })
+    await extractArchive(archivePath, extractedRoot)
+    const identity = JSON.parse(await readFile(join(extractedRoot, 'runtime.json'), 'utf8'))
+    if (
+      identity.dshVersion !== runtime.dshVersion ||
+      identity.role !== runtime.role ||
+      identity.sourceFingerprint !== runtime.sourceFingerprint
+    ) {
+      throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
+    }
+  }
+  await writeFile(join(runtimeRoot, 'runtimes.json'), `${JSON.stringify({ runtimes }, null, 2)}\n`)
+  console.log(
+    `[desktop-e2e] shared harness runtimes ready: duration=${formatDuration(Date.now() - startedAt)}, root=${runtimeRoot}`
+  )
+  return runtimeRoot
 }
 
 function requestedCheckpointRange(args) {
@@ -496,11 +608,19 @@ async function runRequestedArgs() {
 }
 
 async function runParallelCheckpoints(checkpoints) {
-  const portRegistryDir = await mkdtemp(join(tmpdir(), 'wework-e2e-ports-'))
+  const sharedRuntimeDirectory = await mkdtemp(join(tmpdir(), 'wework-e2e-shared-'))
   try {
+    const baseEnvironment = await sharedBuildEnvironment()
+    const sharedHarnessRuntime =
+      baseEnvironment.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() ||
+      (await prepareSharedHarnessRuntime(
+        baseEnvironment.WEWORK_E2E_APP_BIN,
+        sharedRuntimeDirectory
+      ))
     const sharedEnv = {
-      ...(await sharedBuildEnvironment()),
-      WEWORK_E2E_PORT_REGISTRY_DIR: portRegistryDir,
+      ...baseEnvironment,
+      WEWORK_E2E_HARNESS_RUNTIME_ROOT: sharedHarnessRuntime,
+      WEWORK_E2E_PORT_REGISTRY_DIR: sharedRuntimeDirectory,
     }
     const failures = []
     const workerCount = Math.min(parallelCheckpointLimit(), checkpoints.length)
@@ -547,7 +667,7 @@ async function runParallelCheckpoints(checkpoints) {
     }
     process.exitCode = 1
   } finally {
-    await rm(portRegistryDir, { recursive: true, force: true })
+    await rm(sharedRuntimeDirectory, { recursive: true, force: true })
   }
 }
 

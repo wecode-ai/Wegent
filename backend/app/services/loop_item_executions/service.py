@@ -571,11 +571,11 @@ def _agent_text_produced(db: Session, execution: LoopItemExecution) -> bool | No
             *identity,
             ProjectChatMessage.sender_type == "agent",
             loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            func.length(func.trim(ProjectChatMessage.content)) > 0,
         )
-        .order_by(ProjectChatMessage.id.desc())
         .first()
     )
-    return message is not None and bool((message.content or "").strip())
+    return message is not None
 
 
 class LoopItemExecutionService:
@@ -1383,7 +1383,7 @@ class LoopItemExecutionService:
         note: Optional[str] = None,
         commit: bool = True,
     ) -> Optional[LoopItemExecution]:
-        """Commit cancellation after Runtime's stop ACK or cancelled event."""
+        """Commit cancellation after a terminal Runtime event or trusted snapshot."""
 
         current = db.get(LoopItemExecution, execution_id)
         if current is not None and current.termination_reason == "stall_timeout":
@@ -2062,7 +2062,29 @@ class LoopItemExecutionService:
             )
         )
         row = self._linked_activity(db, execution)
+        if row is not None and row.status in {
+            "completed",
+            "failed",
+            "cancelled",
+        }:
+            logger.info(
+                "[LoopItemExecution] Activity open preserved terminal projection "
+                "execution=%s message=%s status=%s",
+                execution.id,
+                row.message_id,
+                row.status,
+            )
+            return project_chat_service.to_view(row, db=db)
         if row is None:
+            task = db.get(LoopItem, execution.loop_item_id)
+            if task is not None and task.status == "completed":
+                logger.info(
+                    "[LoopItemExecution] Activity open skipped for completed "
+                    "Issue execution=%s task=%s",
+                    execution.id,
+                    execution.loop_item_id,
+                )
+                return None
             message_id = (
                 str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
             )
@@ -2132,7 +2154,7 @@ class LoopItemExecutionService:
             db.refresh(row)
         else:
             db.flush()
-        view = project_chat_service.to_view(row)
+        view = project_chat_service.to_view(row, db=db)
         if push:
             from app.services.project_chat.push import push_project_chat_message
 
@@ -2789,7 +2811,9 @@ class LoopItemExecutionService:
             for projected in activities:
                 db.refresh(projected)
                 payloads.append(
-                    project_chat_service.to_view(projected).model_dump(by_alias=True)
+                    project_chat_service.to_view(projected, db=db).model_dump(
+                        by_alias=True
+                    )
                 )
             # ``refresh`` starts a read transaction. End it before publishing to
             # Redis so a slow transport cannot retain a SQL connection or locks.

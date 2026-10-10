@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 
 然后在浏览器中访问 http://localhost:3000
 
-> 可选：启用 RAG 功能 `docker compose --profile rag up -d`
+> 标准模式（`docker compose`）会随 Backend 一起启动知识库检索服务（Knowledge Runtime）。可选：需要内置 Elasticsearch 存储时执行 `docker compose --profile rag up -d`
 
 ---
 

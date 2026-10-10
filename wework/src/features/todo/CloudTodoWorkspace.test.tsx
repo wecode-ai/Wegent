@@ -23,8 +23,16 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskCreateRequest, RuntimeTranscriptResponse, User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
-import { workItemTaskInput } from './workItemTaskInput'
+import {
+  workItemComposerReference,
+  workItemStartedUpdate,
+  workItemTaskInput,
+} from './workItemTaskInput'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
+import {
+  loadProjectSpaceCodeWorkspacePreference,
+  saveProjectSpaceCodeWorkspacePreference,
+} from './projectSpaceCodeWorkspacePreference'
 import {
   createWeworkSharedWorkspaceApi,
   createWeworkWorkspaceRuntimePort,
@@ -180,6 +188,8 @@ vi.mock('./AiChatModal', () => ({
     prepareTask,
     initialTaskRequest,
     initialTaskInput,
+    initialLocalProjectId,
+    initialDeviceWorkspaceId,
   }: {
     task?: { id: string }
     open: boolean
@@ -192,7 +202,11 @@ vi.mock('./AiChatModal', () => ({
     } | null
     onOpenRuntimeTask?: (address: { deviceId: string; taskId: string }) => void
     onAddressChange?: (address: { deviceId: string; taskId: string }) => void
-    onTaskCreated?: (address: { deviceId: string; taskId: string }) => void | Promise<void>
+    onTaskCreated?: (
+      address: { deviceId: string; taskId: string },
+      localProject: { id: number; name: string; tasks: [] } | null,
+      deviceWorkspaceId: number | null
+    ) => void | Promise<void>
     prepareTask?: (address: {
       deviceId: string
       taskId: string
@@ -205,6 +219,8 @@ vi.mock('./AiChatModal', () => ({
       workspacePath?: string
     }
     initialTaskInput?: string
+    initialLocalProjectId?: number | null
+    initialDeviceWorkspaceId?: number | null
   }) => (
     <div
       data-testid="ai-chat-modal"
@@ -218,15 +234,18 @@ vi.mock('./AiChatModal', () => ({
       data-task-device-id={initialTaskRequest?.deviceId}
       data-task-workspace-path={initialTaskRequest?.workspacePath}
       data-initial-task-input={initialTaskInput}
+      data-initial-local-project-id={initialLocalProjectId ?? undefined}
+      data-initial-device-workspace-id={initialDeviceWorkspaceId ?? undefined}
     >
       <button
         type="button"
         data-testid="mock-create-runtime-task"
         onClick={() => {
           const address = { deviceId: 'local-device', taskId: 'runtime-created' }
+          const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
           void Promise.resolve(prepareTask?.(address)).then(() => {
             onAddressChange?.(address)
-            return onTaskCreated?.(address)
+            return onTaskCreated?.(address, localProject, 201)
           })
         }}
       >
@@ -247,9 +266,10 @@ vi.mock('./AiChatModal', () => ({
               },
             },
           }
+          const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
           void Promise.resolve(prepareTask?.(address)).then(() => {
             onAddressChange?.(address)
-            return onTaskCreated?.(address)
+            return onTaskCreated?.(address, localProject, 201)
           })
         }}
       >
@@ -297,7 +317,8 @@ vi.mock('./BackgroundTaskStarter', () => ({
     taskRequest?: RuntimeTaskCreateRequest | null
     onTaskCreated?: (
       address: { deviceId: string; taskId: string },
-      localProject: { id: number; name: string; tasks: [] } | null
+      localProject: { id: number; name: string; tasks: [] } | null,
+      deviceWorkspaceId: number | null
     ) => void | Promise<void>
     prepareTask?: (
       address: { deviceId: string; taskId: string },
@@ -313,7 +334,7 @@ vi.mock('./BackgroundTaskStarter', () => ({
         const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
         void Promise.resolve(prepareTask?.(address, localProject)).then(() => {
           onAddressChange(address)
-          return onTaskCreated?.(address, localProject)
+          return onTaskCreated?.(address, localProject, null)
         })
       }}
     >
@@ -362,6 +383,24 @@ const item = {
 }
 
 describe('workItemTaskInput', () => {
+  it('creates an Issue composer chip reference', () => {
+    expect(
+      workItemComposerReference(
+        { id: 'project', project_key: 'WORK' },
+        { id: 'issue', sequence_number: 806, title: '本地电脑处理配置' }
+      )
+    ).toBe('[$WORK-806 · 本地电脑处理配置](wework-issue://project/issue)')
+  })
+
+  it('removes Markdown escapes from an Issue composer chip label', () => {
+    expect(
+      workItemComposerReference(
+        { id: 'project', project_key: 'WORK' },
+        { id: 'issue', sequence_number: 806, title: '处理 [路径]\\\r\n' }
+      )
+    ).toBe('[$WORK-806 · 处理  路径](wework-issue://project/issue)')
+  })
+
   it('sends the original user-authored title without adding an AI instruction wrapper', () => {
     expect(
       workItemTaskInput({
@@ -375,6 +414,24 @@ describe('workItemTaskInput', () => {
     expect(workItemTaskInput({ title: '  ', description: 'Use the shared workspace' })).toBe(
       'Use the shared workspace'
     )
+  })
+
+  it('marks a pending Issue in progress when its personal task starts', () => {
+    expect(workItemStartedUpdate({ status: 'pending', tags: [], version: 3 } as never, [])).toEqual(
+      {
+        version: 3,
+        status: 'in_progress',
+      }
+    )
+  })
+
+  it('returns a reviewed Issue to progress when a new personal task starts', () => {
+    expect(
+      workItemStartedUpdate({ status: 'in_review', tags: [], version: 4 } as never, [])
+    ).toEqual({
+      version: 4,
+      status: 'in_progress',
+    })
   })
 })
 
@@ -691,7 +748,7 @@ async function expandIssueExecutionDetails() {
 
 async function openIssueMoreProperties() {
   const trigger = screen.getByTestId('cloud-todo-more-properties')
-  if (!trigger.closest('details')?.open) {
+  if (trigger.getAttribute('aria-expanded') !== 'true') {
     await userEvent.click(trigger)
   }
 }
@@ -2710,6 +2767,7 @@ describe('CloudTodoWorkspace', () => {
 
   it('ignores a task address that resolves after reopening the task panel', async () => {
     const workbenchServices = services()
+    const user = userEvent.setup()
     let resolveBinding: (() => void) | null = null
     const binding = new Promise<void>(resolve => {
       resolveBinding = resolve
@@ -2721,19 +2779,21 @@ describe('CloudTodoWorkspace', () => {
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
         services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
       />
     )
 
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
-    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+    await user.click(screen.getByTestId('cloud-todo-create-task'))
+    await user.click(screen.getByTestId('mock-create-runtime-task'))
     await waitFor(() => expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledTimes(1))
 
-    await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
+    await user.click(screen.getByTestId('ai-chat-modal-close'))
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     await openIssueFromBoard()
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await user.click(screen.getByTestId('cloud-todo-create-task'))
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
       'data-conversation-open',
       'true'
@@ -2783,6 +2843,23 @@ describe('CloudTodoWorkspace', () => {
         'data-runtime-task-id',
         'runtime-created-with-model'
       )
+    )
+    expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledWith(
+      item.id,
+      {
+        deviceId: 'local-device',
+        taskId: 'runtime-created-with-model',
+        runtimeHandle: {
+          modelSelection: {
+            modelName: 'deepseek-v4-pro-responses',
+            modelType: 'public',
+            options: { reasoning: 'high' },
+          },
+        },
+      },
+      item.title,
+      null,
+      null
     )
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
       'data-model-name',
@@ -2872,7 +2949,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('mock-start-background-task')).not.toBeInTheDocument()
   })
 
-  it('uses the prepared project environment when starting a task from the Issue detail', async () => {
+  it('does not use the agent prepared environment when starting a personal task', async () => {
     const preparedProject = {
       ...project,
       execution_environment: {
@@ -2908,13 +2985,57 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
 
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-task-device-id')
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-task-workspace-path')
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-task-device-id',
-      'project-runtime-device'
+      'data-initial-task-input',
+      '[$WEG-1 · Implement cloud MCP](wework-issue://11/WEG-1)'
+    )
+  })
+
+  it('restores and updates the project-space code workspace mapping after task creation', async () => {
+    saveProjectSpaceCodeWorkspacePreference(
+      1,
+      { projectStore: 'backend', projectId: String(project.id) },
+      { localProjectId: 92, deviceWorkspaceId: 202 }
+    )
+    const workbenchServices = services()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[
+          { id: 91, name: '运营工作区', tasks: [] },
+          { id: 92, name: '历史工作区', tasks: [] },
+        ]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-initial-local-project-id',
+      '92'
     )
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-task-workspace-path',
-      '/srv/projects/wegent-v4'
+      'data-initial-device-workspace-id',
+      '202'
+    )
+
+    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+    await waitFor(() =>
+      expect(
+        loadProjectSpaceCodeWorkspacePreference(1, {
+          projectStore: 'backend',
+          projectId: String(project.id),
+        })
+      ).toEqual({
+        localProjectId: 91,
+        deviceWorkspaceId: 201,
+      })
     )
   })
 
@@ -3434,6 +3555,7 @@ describe('CloudTodoWorkspace', () => {
         priority: item.priority,
         status: item.status,
         parent_id: 'WEG-2',
+        start_at: null,
         due_at: null,
         tags: [],
       })
@@ -3601,7 +3723,7 @@ describe('CloudTodoWorkspace', () => {
     await expandIssueExecutionDetails()
     expect(screen.queryByTestId('cloud-todo-detail-add-child')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-children')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-tasks')).toHaveTextContent('执行任务')
+    expect(screen.getByTestId('cloud-todo-tasks')).toHaveTextContent('关联任务')
     expect(screen.getByTestId('cloud-todo-execution-task-count')).toHaveTextContent('1')
     expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toHaveTextContent('实现快速排序')
     expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toHaveTextContent('开发机器人')
@@ -3623,6 +3745,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     const file = new File(['context'], 'brief.txt', { type: 'text/plain' })
     await userEvent.upload(screen.getByTestId('cloud-todo-attachment-input'), file)
 
@@ -3638,6 +3761,16 @@ describe('CloudTodoWorkspace', () => {
 
   it('shows existing Issue attachments in the detail panel', async () => {
     const workbenchServices = services()
+    const createObjectURL = vi.fn(() => 'blob:https://example.test/feedback')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    })
     workbenchServices.deliveryApi!.listLoopItemAttachments = vi.fn(async () => [
       {
         id: 'attachment-existing',
@@ -3652,7 +3785,23 @@ describe('CloudTodoWorkspace', () => {
         markdown:
           '[feedback.png](wegent://attachments/attachment-existing)\n<!-- wegent-attachment:attachment-existing -->',
       },
+      {
+        id: 'attachment-pdf',
+        loop_item_id: item.id,
+        display_name: 'spec.pdf',
+        content_type: 'application/pdf',
+        size_bytes: 4096,
+        sha256: 'pdf-hash',
+        created_by_user_id: 1,
+        created_at: '2026-08-26T00:00:00Z',
+        markdown_url: 'wegent://attachments/attachment-pdf',
+        markdown:
+          '[spec.pdf](wegent://attachments/attachment-pdf)\n<!-- wegent-attachment:attachment-pdf -->',
+      },
     ])
+    workbenchServices.deliveryApi!.readLoopItemAttachment = vi.fn(
+      async () => new Blob(['image'], { type: 'image/png' })
+    )
 
     render(
       <CloudTodoWorkspace
@@ -3667,16 +3816,46 @@ describe('CloudTodoWorkspace', () => {
     await openIssueFromBoard()
 
     expect(await screen.findByText('feedback.png')).toBeInTheDocument()
+    const imageCard = screen
+      .getByTestId('cloud-todo-attachment-open-attachment-existing')
+      .closest('.task-detail-rail-file')
+    const pdfCard = screen
+      .getByTestId('cloud-todo-attachment-open-attachment-pdf')
+      .closest('.task-detail-rail-file')
+    expect(imageCard).toBeInTheDocument()
+    expect(pdfCard).toBeInTheDocument()
     expect(
-      screen.getByTestId('cloud-todo-attachment-download-attachment-existing')
-    ).toBeInTheDocument()
+      await screen.findByTestId('issue-detail-attachment-thumbnail-attachment-existing')
+    ).toHaveAttribute('src', 'blob:https://example.test/feedback')
+    expect(
+      screen.queryByTestId('issue-detail-attachment-thumbnail-attachment-pdf')
+    ).not.toBeInTheDocument()
+    expect(workbenchServices.deliveryApi?.readLoopItemAttachment).not.toHaveBeenCalledWith(
+      'attachment-pdf'
+    )
 
-    await userEvent.click(screen.getByTestId('cloud-todo-attachment-download-attachment-existing'))
+    await userEvent.click(screen.getByTestId('cloud-todo-attachment-open-attachment-existing'))
 
+    expect(await screen.findByTestId('cloud-file-preview-size')).toHaveTextContent('2.0 KB')
+    expect(await screen.findByTestId('cloud-file-preview-image')).toHaveAttribute(
+      'src',
+      'blob:https://example.test/feedback'
+    )
+    expect(workbenchServices.deliveryApi?.readLoopItemAttachment).toHaveBeenCalledWith(
+      'attachment-existing'
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-file-preview-download'))
     expect(workbenchServices.deliveryApi?.downloadLoopItemAttachment).toHaveBeenCalledWith(
       'attachment-existing',
       'feedback.png'
     )
+
+    await userEvent.click(screen.getByTestId('cloud-file-preview-close'))
+    expect(screen.queryByTestId('cloud-file-preview-dialog')).not.toBeInTheDocument()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:https://example.test/feedback')
+    delete (URL as Partial<typeof URL>).createObjectURL
+    delete (URL as Partial<typeof URL>).revokeObjectURL
   })
 
   it('shows attachment download failures and allows another attempt', async () => {
@@ -3712,10 +3891,13 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    const download = await screen.findByTestId('cloud-todo-attachment-download-attachment-existing')
+    await userEvent.click(
+      await screen.findByTestId('cloud-todo-attachment-open-attachment-existing')
+    )
+    const download = await screen.findByTestId('cloud-file-preview-download')
 
     await userEvent.click(download)
-    expect(await screen.findByRole('alert')).toHaveTextContent('下载服务不可用')
+    expect(await screen.findByText('下载服务不可用')).toBeInTheDocument()
 
     await userEvent.click(download)
     await waitFor(() =>
@@ -4792,6 +4974,7 @@ describe('CloudTodoWorkspace', () => {
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
     expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.clear(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.type(screen.getByTestId('cloud-todo-detail-title'), 'Updated TODO')
     await userEvent.click(screen.getByTestId('cloud-todo-save'))
@@ -4804,6 +4987,7 @@ describe('CloudTodoWorkspace', () => {
         parent_id: null,
         priority: 'high',
         status: 'in_progress',
+        start_at: null,
         due_at: null,
         tags: [],
       })

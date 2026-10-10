@@ -36,7 +36,8 @@ use crate::{
         collect_claude_stream_summary, compact_claude_stdout_line, extract_claude_message_blocks,
         extract_claude_result_error, extract_claude_subagent_update, extract_reasoning,
         extract_text, ClaudeAsyncTaskTracker, ClaudeChildBlock, ClaudeMessageBlock,
-        ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError, ClaudeToolResult, ClaudeToolUse,
+        ClaudePartialMessages, ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError, ClaudeToolResult,
+        ClaudeToolUse,
     },
 };
 
@@ -44,6 +45,7 @@ use crate::{
 mod windows_batch;
 
 pub(crate) mod debug_stdout;
+mod stream_diagnostics;
 use debug_stdout::line as debug_claude_stdout_line;
 #[cfg(test)]
 use debug_stdout::{
@@ -71,6 +73,7 @@ impl EventSink for NoopEventSink {
 struct ClaudeOutputTextState {
     item_id: Option<String>,
     offset: usize,
+    segment_start: usize,
     segment_count: usize,
 }
 
@@ -90,7 +93,8 @@ impl ClaudeOutputTextState {
 
     fn finish_segment(&mut self) {
         self.item_id = None;
-        self.offset = 0;
+        // HTTP callbacks use a turn-wide offset; native clients also need the item offset.
+        self.segment_start = self.offset;
     }
 }
 
@@ -276,6 +280,9 @@ impl AgentEngine for StreamProcessEngine {
                     let stderr_text = decode_output(stderr.clone().into_bytes());
                     let stdout_text = decode_output(stdout.clone().into_bytes());
                     if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
+                        if crate::agents::has_isolated_native_home(&request) {
+                            return isolated_session_restore_failure();
+                        }
                         agent_session::delete_saved_session_files(&request);
                         let retry_spec = claude_spec_without_resume(&spec);
                         match run_command_output(retry_spec, timeout_seconds).await {
@@ -363,6 +370,9 @@ impl AgentEngine for StreamProcessEngine {
                     let stderr_text = decode_output(stderr.clone().into_bytes());
                     let stdout_text = decode_output(stdout.clone().into_bytes());
                     if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
+                        if crate::agents::has_isolated_native_home(&request) {
+                            return isolated_session_restore_failure();
+                        }
                         agent_session::delete_saved_session_files(&request);
                         let retry_spec = claude_spec_without_resume(&spec);
                         let runner = FollowUpCommandRunner::Streaming {
@@ -471,7 +481,15 @@ async fn handle_deferred_mcp_loop(
     timeout_seconds: u64,
     runner: FollowUpCommandRunner<impl EventSink>,
 ) -> ExecutionOutcome {
-    let mcp_servers = mcp_servers_from_spec(&base_spec).unwrap_or(Value::Null);
+    let mut mcp_servers = mcp_servers_from_spec(&base_spec).unwrap_or(Value::Null);
+    // Claude expands these references in its child environment. The executor's
+    // deferred HTTP proxy must use the same execution bindings, only in memory.
+    if let Err(message) = crate::agents::runtime_capabilities::mcp_environment::resolve_context(
+        &mut mcp_servers,
+        &base_spec.env,
+    ) {
+        return ExecutionOutcome::Failed { message };
+    }
     let mut retry_count = 0;
     let mut stale_answer_defer_drained = false;
     let fields = task_fields(&request.task_id, &request.subtask_id);
@@ -509,12 +527,15 @@ async fn handle_deferred_mcp_loop(
                 }
             }
         }
-        log_executor_event("deferred mcp proxy started", &fields);
+        let mut proxy_fields = fields.clone();
+        proxy_fields.push(("tool_use_id", deferred_tool_use.id.clone()));
+        proxy_fields.push(("tool_name", deferred_tool_use.name.clone()));
+        log_executor_event("deferred mcp proxy started", &proxy_fields);
         let proxy_result = match proxy_deferred_mcp_tool(&deferred_tool_use, &mcp_servers).await {
             Ok(proxy_result) => proxy_result,
             Err(error) => {
                 let decision = deferred_proxy_exception_failure(&deferred_tool_use, &error);
-                let mut failed_fields = fields.clone();
+                let mut failed_fields = proxy_fields.clone();
                 push_error_fields(&mut failed_fields, &error);
                 log_executor_event("deferred mcp proxy failed", &failed_fields);
                 return ExecutionOutcome::Failed {
@@ -671,6 +692,12 @@ fn claude_spec_without_resume(base_spec: &CommandSpec) -> CommandSpec {
 ///
 /// Claude Code exits with `No conversation found with session ID` when `--resume`
 /// references a session that does not exist in the current sandbox.
+fn isolated_session_restore_failure() -> ExecutionOutcome {
+    ExecutionOutcome::Failed {
+        message: "The isolated Bot's existing Claude session could not be restored; its session marker was preserved and no new conversation was started".to_owned(),
+    }
+}
+
 fn is_stale_claude_session_failure(stderr: &str, stdout: &str) -> bool {
     stderr.contains("No conversation found with session ID")
         || stdout.contains("No conversation found with session ID")
@@ -714,6 +741,10 @@ enum CommandOutcome {
 
 enum StreamingStdoutOutcome {
     Success(String),
+    InvalidStream {
+        stdout: String,
+        message: String,
+    },
     InvalidJson {
         stdout: String,
         error: ClaudeStdoutJsonError,
@@ -847,6 +878,17 @@ where
     fields.push(("timeout_seconds", timeout_seconds.to_string()));
     let debug_stdout_path =
         debug_claude_stdout_path_for_spec(&spec, Some(&task_id), Some(&subtask_id));
+    fields.extend([
+        ("task_id", task_id.clone()),
+        ("subtask_id", subtask_id.clone()),
+        (
+            "include_partial_messages",
+            spec.args
+                .iter()
+                .any(|arg| arg == "--include-partial-messages")
+                .to_string(),
+        ),
+    ]);
     if let Some(path) = debug_stdout_path.as_ref() {
         fields.push(("debug_stdout_path", path.display().to_string()));
     }
@@ -988,6 +1030,13 @@ where
 
     let stdout = match stdout {
         StreamingStdoutOutcome::Success(stdout) => stdout,
+        StreamingStdoutOutcome::InvalidStream { stdout, message } => {
+            return CommandOutcome::Failure {
+                stderr: message,
+                stdout,
+                exit_code: status.ok().and_then(|status| status.code()),
+            };
+        }
         StreamingStdoutOutcome::InvalidJson { stdout, error } => {
             let fields = vec![
                 ("task_id", task_id.to_string()),
@@ -1042,6 +1091,8 @@ where
     let mut line_number = 0usize;
     let mut json_buffer = ClaudeStdoutJsonBuffer::default();
     let mut async_tasks = ClaudeAsyncTaskTracker::default();
+    let mut diagnostics = stream_diagnostics::ClaudeStreamDiagnostics::new();
+    let mut partial_messages = ClaudePartialMessages::default();
     let dispatcher = StreamingEventDispatcher::new(sink);
     while let Ok(Some(line)) = lines.next_line().await {
         line_number += 1;
@@ -1072,7 +1123,19 @@ where
         }) else {
             continue;
         };
+        diagnostics.observe(&value, &task_id, &subtask_id);
         async_tasks.observe(&value);
+        let value = match partial_messages.normalize(value) {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
+            Err(message) => {
+                dispatcher.flush().await;
+                return StreamingStdoutOutcome::InvalidStream {
+                    stdout: output,
+                    message,
+                };
+            }
+        };
         if value.get("type").and_then(Value::as_str) == Some("user") {
             output_text_state.finish_segment();
         }
@@ -1131,6 +1194,7 @@ where
             &subtask_id,
         );
     }
+    diagnostics.finish(&task_id, &subtask_id);
     dispatcher
         .compact_pending_and_flush(&task_id, &subtask_id)
         .await;
@@ -1214,7 +1278,7 @@ fn emit_claude_output_text(
         &mut state.offset,
         task_id,
         subtask_id,
-        Some(&item_id),
+        Some((&item_id, state.segment_start)),
     );
 }
 
@@ -1432,13 +1496,14 @@ fn emit_reasoning_chunks(
     let chunk_count = chunks.len();
     for delta in chunks {
         let event = builder.response_reasoning_delta(&delta);
-        dispatcher.send(
+        dispatcher.send_text_delta(
             event,
             "streaming reasoning callback failed",
             vec![
                 ("task_id", task_id.to_string()),
                 ("subtask_id", subtask_id.to_string()),
             ],
+            delta.chars().count(),
         );
     }
     let fields = vec![
@@ -1457,13 +1522,17 @@ fn emit_text_chunks(
     offset: &mut usize,
     task_id: &str,
     subtask_id: &str,
-    item_id: Option<&str>,
+    item: Option<(&str, usize)>,
 ) -> usize {
     let chunks = split_stream_text(text, stream_text_chunk_chars());
     let chunk_count = chunks.len();
     for delta in chunks {
-        let event = match item_id {
-            Some(item_id) => builder.response_text_delta_for_item(item_id, &delta, *offset),
+        let event = match item {
+            Some((item_id, segment_start)) => {
+                let mut event = builder.response_text_delta_for_item(item_id, &delta, *offset);
+                event.data["block_offset"] = Value::from(*offset - segment_start);
+                event
+            }
             None => builder.response_text_delta(&delta, *offset),
         };
         let delta_chars = delta.chars().count();
@@ -1488,11 +1557,9 @@ fn emit_text_chunks_with_log(
     offset: &mut usize,
     task_id: &str,
     subtask_id: &str,
-    item_id: Option<&str>,
+    item: Option<(&str, usize)>,
 ) {
-    let emitted = emit_text_chunks(
-        dispatcher, builder, text, offset, task_id, subtask_id, item_id,
-    );
+    let emitted = emit_text_chunks(dispatcher, builder, text, offset, task_id, subtask_id, item);
     let fields = vec![
         ("task_id", task_id.to_owned()),
         ("subtask_id", subtask_id.to_owned()),
@@ -1780,6 +1847,9 @@ pub fn hide_windows_console<C: windows_console::HideConsole>(command: &mut C) {
 
 #[cfg(not(windows))]
 pub fn hide_windows_console<C>(_command: &mut C) {}
+
+#[cfg(test)]
+mod output_text_tests;
 
 #[cfg(test)]
 mod tests {

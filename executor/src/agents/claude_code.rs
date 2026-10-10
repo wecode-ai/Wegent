@@ -305,6 +305,9 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
         .arg("--output-format")
         .arg("stream-json")
         .arg("--verbose")
+        .arg("--include-partial-messages")
+        .arg("--disallowedTools")
+        .arg("EnterWorktree")
         .arg("--permission-mode")
         .arg(claude_permission_mode(request));
 
@@ -681,10 +684,11 @@ fn apply_claude_workspace_environment(
         return spec;
     };
 
-    if !spec.envs().contains_key("CLAUDE_CONFIG_DIR") {
+    let isolated = super::instance_home::request_home(request).is_some();
+    if isolated || !spec.envs().contains_key("CLAUDE_CONFIG_DIR") {
         spec = spec.env("CLAUDE_CONFIG_DIR", config_dir.display().to_string());
     }
-    if !spec.envs().contains_key("SKILLS_DIR") {
+    if isolated || !spec.envs().contains_key("SKILLS_DIR") {
         let skills_dir = claude_skills_dir(request, &config_dir, task_dir);
         spec = spec.env("SKILLS_DIR", skills_dir.display().to_string());
     }
@@ -700,10 +704,17 @@ pub(crate) fn claude_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
 }
 
 pub(crate) fn claude_config_dir(
-    _request: &ExecutionRequest,
+    request: &ExecutionRequest,
     _task_dir: Option<&PathBuf>,
 ) -> Option<PathBuf> {
-    Some(home_claude_dir())
+    super::instance_home::request_home(request).or_else(|| {
+        Some(
+            std::env::var_os("WEGENT_CLAUDE_HOME")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(home_claude_dir),
+        )
+    })
 }
 
 fn claude_skills_dir(
@@ -711,6 +722,9 @@ fn claude_skills_dir(
     config_dir: &Path,
     task_dir: Option<&PathBuf>,
 ) -> PathBuf {
+    if super::instance_home::request_home(request).is_some() {
+        return config_dir.join("skills");
+    }
     if has_task_skill_names(request) {
         if let Some(task_dir) = task_dir {
             return task_dir.join(".claude/skills");

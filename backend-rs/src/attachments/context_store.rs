@@ -15,7 +15,6 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 
 use super::auth::UserRow;
-use crate::task_routing::{ByTaskId, ByUserId, TaskPolicy};
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
@@ -35,11 +34,23 @@ pub struct AttachmentMetadata {
     pub cover_url: Option<OpaqueJson>,
     pub comment_count: Option<OpaqueJson>,
     pub fetched_comment_count: Option<OpaqueJson>,
+    /// Media ids persisted by the external storage adapter.
+    pub weibo_video_upload: Option<MediaUploadReference>,
+    pub weibo_audio_upload: Option<MediaUploadReference>,
+    /// Legacy file-platform id of a knowledge-base video
+    /// (`weibo_media_service.get_download_url`).
+    pub fid: Option<OpaqueJson>,
 }
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct VideoMetadata {
     pub video_url: Option<String>,
+    pub media_id: Option<OpaqueJson>,
+}
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct MediaUploadReference {
+    pub media_id: Option<OpaqueJson>,
 }
 
 /// One `subtask_contexts` row (`SubtaskContext`). Each field decodes from
@@ -137,6 +148,66 @@ impl SubtaskContextRow {
     }
 }
 
+impl AttachmentMetadata {
+    /// The stored media reference: the persisted external upload reference as
+    /// `(media_type, str(media_id))`, `None` when the attachment carries none.
+    pub fn stored_media_reference(&self) -> Option<(&'static str, String)> {
+        for (media_type, upload) in [
+            ("video", &self.weibo_video_upload),
+            ("audio", &self.weibo_audio_upload),
+        ] {
+            let media_id = upload
+                .as_ref()
+                .and_then(|upload| upload.media_id.as_ref())
+                .and_then(truthy_str);
+            if let Some(media_id) = media_id {
+                return Some((media_type, media_id));
+            }
+        }
+        let media_id = self
+            .video_metadata
+            .as_ref()
+            .and_then(|video| video.media_id.as_ref())
+            .and_then(truthy_str)?;
+        Some(("video", media_id))
+    }
+
+    /// The legacy playback resolver's file-platform `fid` of a legacy video,
+    /// `None` for every other attachment.
+    pub fn legacy_weibo_fid(&self) -> Option<String> {
+        if self.storage_backend.as_deref() != Some("weibo") {
+            return None;
+        }
+        self.fid.as_ref().and_then(truthy_str)
+    }
+}
+
+/// `bool(value)` and `str(value)`: the Python truthiness and string form the
+/// resolver applies to the `type_data` scalars it reads.
+fn truthy_str(value: &OpaqueJson) -> Option<String> {
+    let value = value.to_value();
+    let truthy = match &value {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(value) => *value,
+        serde_json::Value::Number(number) => number.as_f64() != Some(0.0),
+        serde_json::Value::String(value) => !value.is_empty(),
+        serde_json::Value::Array(values) => !values.is_empty(),
+        serde_json::Value::Object(object) => !object.is_empty(),
+    };
+    truthy.then(|| python_str(&value))
+}
+
+/// `str(value)` for the JSON scalars the resolver reads.
+fn python_str(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Bool(flag) => if *flag { "True" } else { "False" }.to_string(),
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::Null => "None".to_string(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
 /// `context_service.get_context_optional`: the full source column list for
 /// `SELECT ... FROM subtask_contexts WHERE id = ? LIMIT 1`.
 pub async fn get_context_optional<M>(
@@ -210,6 +281,10 @@ where
 /// (`SubtaskStore.get_by_id`/`list_by_user` projections).
 #[derive(Debug, FromMysqlRow)]
 pub struct SubtaskRow {
+    #[allow(
+        dead_code,
+        reason = "selected to match the source projection; the store compares ids before decoding"
+    )]
     pub id: i64,
     #[allow(dead_code)]
     pub user_id: i32,
@@ -219,70 +294,23 @@ pub struct SubtaskRow {
 /// `subtask_store.get_by_id`: the configured repository resolves the table
 /// from the subtask id. The public policy performs one base-table read; the
 /// private migration policy retains the fallback probe for moved rows.
-pub async fn get_subtask_by_id<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+pub async fn get_subtask_by_id(
+    task_store: &dyn crate::task_store::TaskStore,
     subtask_id: i64,
-) -> MysqlResult<Option<SubtaskRow>>
-where
-    M: Mysql,
-{
-    let sql = "SELECT id, user_id, task_id FROM {{subtasks}} WHERE id = ? LIMIT 1";
-    let row: Option<SubtaskRow> = mysql
-        .route(ByTaskId(subtask_id as u64))
-        .fetch_optional(sql, (subtask_id,))
-        .await?;
-    if row.is_some() {
-        return Ok(row);
-    }
-    if !task_policy.resolve_migrated_legacy {
-        return Ok(None);
-    }
-    // Legacy/migrated fallback: the base `subtasks` index row. A legacy id
-    // already routes to the base table via `ByTaskId`, so this fallback is
-    // only reached when the first query resolved to a shard table and missed.
-    let fallback: Option<SubtaskRow> = mysql
-        .fetch_optional(
-            "SELECT id, user_id, task_id FROM subtasks WHERE id = ? LIMIT 1",
-            (subtask_id,),
-        )
-        .await?;
-    Ok(fallback)
+) -> MysqlResult<Option<SubtaskRow>> {
+    let row = task_store.get_subtask_ref(subtask_id).await?;
+    row.map(SubtaskRow::from_mysql_row).transpose()
 }
 
 /// `subtask_store.list_by_user` (limit 1): the public policy reads the base
 /// table; the private migration policy additionally checks the owner's shard
 /// and merges by descending id.
-pub async fn get_latest_subtask_by_user<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+pub async fn get_latest_subtask_by_user(
+    task_store: &dyn crate::task_store::TaskStore,
     user_id: i32,
-) -> MysqlResult<Option<SubtaskRow>>
-where
-    M: Mysql,
-{
-    let base: Option<SubtaskRow> = mysql
-        .fetch_optional(
-            "SELECT id, user_id, task_id FROM subtasks WHERE user_id = ? \
-             ORDER BY id DESC LIMIT 1",
-            (user_id,),
-        )
-        .await?;
-    if !task_policy.resolve_migrated_legacy {
-        return Ok(base);
-    }
-    let shard: Option<SubtaskRow> = mysql
-        .route(ByUserId(user_id as u64))
-        .fetch_optional(
-            "SELECT id, user_id, task_id FROM {{subtasks}} WHERE user_id = ? \
-             ORDER BY id DESC LIMIT 1",
-            (user_id,),
-        )
-        .await?;
-    Ok(match (base, shard) {
-        (Some(base), Some(shard)) => Some(if base.id >= shard.id { base } else { shard }),
-        (base, shard) => base.or(shard),
-    })
+) -> MysqlResult<Option<SubtaskRow>> {
+    let row = task_store.get_latest_subtask_ref_for_user(user_id).await?;
+    row.map(SubtaskRow::from_mysql_row).transpose()
 }
 
 /// A `tasks`/`tasks_{:04}` row restricted to the ownership columns
@@ -298,34 +326,12 @@ pub struct TaskRow {
 /// `task_store.get_by_id`: the configured routed table. The public policy
 /// performs one base-table read; the private migration policy keeps the
 /// fallback probe for a shard miss.
-pub async fn get_task_by_id<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+pub async fn get_task_by_id(
+    task_store: &dyn crate::task_store::TaskStore,
     task_id: i64,
-) -> MysqlResult<Option<TaskRow>>
-where
-    M: Mysql,
-{
-    let sql = "SELECT id, user_id, kind FROM {{tasks}} WHERE id = ? LIMIT 1";
-    let row: Option<TaskRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(sql, (task_id,))
-        .await?;
-    if row.is_some() {
-        return Ok(row);
-    }
-    if !task_policy.resolve_migrated_legacy {
-        return Ok(None);
-    }
-    // Legacy/migrated fallback: the base `tasks` index row. A legacy id
-    // already routes to the base table via `ByTaskId`, so this fallback is
-    // only reached when the first query resolved to a shard table and missed.
-    mysql
-        .fetch_optional(
-            "SELECT id, user_id, kind FROM tasks WHERE id = ? LIMIT 1",
-            (task_id,),
-        )
-        .await
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store.get_task_ref(task_id).await?;
+    row.map(TaskRow::from_mysql_row).transpose()
 }
 
 /// `resource_members` approved-membership probe (`_check_task_access`).
@@ -566,15 +572,12 @@ fn is_group_role_or_above(role: &str) -> bool {
 
 /// `_ensure_attachment_access`: uploader, task owner/member through the
 /// subtask linkage, knowledge-base ACL, or the owner-fallback subtask probe.
-pub async fn ensure_attachment_access<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+pub async fn ensure_attachment_access(
+    task_store: &dyn crate::task_store::TaskStore,
+    mysql: &brz_mysql::MysqlService,
     context: &SubtaskContextRow,
     current_user: &UserRow,
-) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
+) -> MysqlResult<bool> {
     // 1. Uploader.
     if context.user_id == current_user.users_id {
         return Ok(true);
@@ -583,7 +586,7 @@ where
     let mut task_id: Option<i64> = None;
     if context.subtask_id > 0 {
         // 2. Linked attachment: find the task via the subtask.
-        if let Some(subtask) = get_subtask_by_id(mysql, task_policy, context.subtask_id).await? {
+        if let Some(subtask) = get_subtask_by_id(task_store, context.subtask_id).await? {
             task_id = Some(subtask.task_id);
         }
     } else {
@@ -593,7 +596,7 @@ where
             Some(access) => return Ok(access),
             None => {
                 if let Some(subtask) =
-                    get_latest_subtask_by_user(mysql, task_policy, context.user_id).await?
+                    get_latest_subtask_by_user(task_store, context.user_id).await?
                 {
                     task_id = Some(subtask.task_id);
                 }
@@ -602,26 +605,95 @@ where
     }
 
     if let Some(task_id) = task_id {
-        return check_task_access(mysql, task_policy, task_id, current_user.users_id).await;
+        return check_task_access(task_store, mysql, task_id, current_user.users_id).await;
     }
     Ok(false)
 }
 
 /// `_check_task_access`: task owner or approved task member.
-async fn check_task_access<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+async fn check_task_access(
+    task_store: &dyn crate::task_store::TaskStore,
+    mysql: &brz_mysql::MysqlService,
     task_id: i64,
     user_id: i32,
-) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
-    if let Some(task) = get_task_by_id(mysql, task_policy, task_id).await?
+) -> MysqlResult<bool> {
+    if let Some(task) = get_task_by_id(task_store, task_id).await?
         && task.kind == "Task"
         && task.user_id == user_id
     {
         return Ok(true);
     }
     is_task_member(mysql, task_id, user_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn metadata(value: serde_json::Value) -> AttachmentMetadata {
+        serde_json::from_value(value).expect("type_data decodes")
+    }
+
+    #[test]
+    fn stored_media_references_report_the_python_string_form() {
+        // The stored media reference: the three persisted upload shapes, as
+        // `str(media_id)`.
+        assert_eq!(
+            metadata(serde_json::json!({
+                "weibo_video_upload": {"media_id": 1000000000000001_u64}
+            }))
+            .stored_media_reference(),
+            Some(("video", "1000000000000001".to_string()))
+        );
+        assert_eq!(
+            metadata(serde_json::json!({"weibo_audio_upload": {"media_id": "42"}}))
+                .stored_media_reference(),
+            Some(("audio", "42".to_string()))
+        );
+        assert_eq!(
+            metadata(serde_json::json!({"video_metadata": {"media_id": 7}}))
+                .stored_media_reference(),
+            Some(("video", "7".to_string()))
+        );
+        // `upload.get("media_id")` truthiness, and the local-storage case.
+        for value in [
+            serde_json::json!({"weibo_video_upload": {"media_id": ""}}),
+            serde_json::json!({"weibo_video_upload": {"media_id": 0}}),
+            serde_json::json!({"weibo_video_upload": {"upload_id": "E"}}),
+            serde_json::json!({"video_metadata": {"video_url": "http://a"}}),
+            serde_json::json!({
+                "mime_type": "text/markdown",
+                "storage_backend": "minio",
+                "storage_key": "attachments/c4dc99e190f2_20260924074255_1731_1344271"
+            }),
+        ] {
+            assert_eq!(metadata(value).stored_media_reference(), None);
+        }
+        assert_eq!(AttachmentMetadata::default().stored_media_reference(), None);
+    }
+
+    #[test]
+    fn legacy_weibo_fids_need_the_weibo_backend() {
+        let legacy = metadata(serde_json::json!({
+            "mime_type": "video/mp4",
+            "file_extension": ".mp4",
+            "storage_backend": "weibo",
+            "fid": 1000000000000002_u64
+        }));
+        assert_eq!(
+            legacy.legacy_weibo_fid(),
+            Some("1000000000000002".to_string())
+        );
+        assert_eq!(legacy.stored_media_reference(), None);
+        // The legacy playback resolver needs the `weibo` backend and a truthy id.
+        assert_eq!(
+            metadata(serde_json::json!({"fid": 1000000000000002_u64})).legacy_weibo_fid(),
+            None
+        );
+        assert_eq!(
+            metadata(serde_json::json!({"storage_backend": "weibo", "fid": 0})).legacy_weibo_fid(),
+            None
+        );
+        assert_eq!(AttachmentMetadata::default().legacy_weibo_fid(), None);
+    }
 }

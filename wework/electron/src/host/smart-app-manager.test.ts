@@ -1,7 +1,7 @@
 import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,6 +24,48 @@ afterEach(async () => {
 })
 
 describe('SmartAppManager', () => {
+  test('creates a workbench under Documents/WeworkSmartApps when no parent is selected', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-default-'))
+    roots.push(root)
+    const manager = createManager(root)
+
+    const created = await manager.createDirectory({
+      parentPath: '',
+      name: 'default-app',
+      displayName: '默认工作台',
+      description: '',
+      template: 'web',
+    })
+
+    expect(created.packagePath).toBe(
+      join(await realpath(root), 'Documents', 'WeworkSmartApps', 'default-app')
+    )
+    expect(created.manifest.description).toBe('')
+    expect((await stat(created.packagePath)).isDirectory()).toBe(true)
+  })
+
+  test('reports an unavailable default folder and accepts a chosen folder on retry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-default-error-'))
+    roots.push(root)
+    await writeFile(join(root, 'Documents'), 'not a directory')
+    const manager = createManager(root)
+    const input = {
+      parentPath: '',
+      name: 'chosen-app',
+      displayName: 'Chosen App',
+      description: '',
+      template: 'web',
+    }
+
+    await expect(manager.createDirectory(input)).rejects.toThrow(
+      'Smart app default save location is unavailable'
+    )
+    const chosenParent = join(root, 'chosen')
+    await mkdir(chosenParent)
+    const created = await manager.createDirectory({ ...input, parentPath: chosenParent })
+    expect(created.packagePath).toBe(join(await realpath(chosenParent), 'chosen-app'))
+  })
+
   test('previews, installs and exports a compatible Smart app', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-'))
     roots.push(root)
@@ -513,6 +555,7 @@ function createManager(
 ): SmartAppManager {
   return new SmartAppManager({
     dataDirectory: join(root, 'data'),
+    documentsDirectory: () => join(root, 'Documents'),
     downloadsDirectory: () => join(root, 'downloads'),
     logDirectory: join(root, 'logs'),
     runtimeRoot: join(root, 'runtime'),

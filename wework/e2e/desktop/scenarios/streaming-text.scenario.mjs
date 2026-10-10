@@ -71,6 +71,7 @@ const SUBAGENT_CHILD_TOOL_CALL_ID = 'wework-subagent-child-tool'
 const SUBAGENT_CHILD_PROMPT = 'Inspect the child event stream and report the routing result.'
 const SUBAGENT_CHILD_TOOL_MARKER = 'WEWORK_DESKTOP_E2E_SUBAGENT_TOOL'
 const SUBAGENT_CHILD_TOOL_TIMEOUT_MS = 10_000
+const SUBAGENT_CHILD_STARTUP_TIMEOUT_MS = 60_000
 const SUBAGENT_CHILD_TOOL_START = `${SUBAGENT_CHILD_TOOL_MARKER}_START`
 const SUBAGENT_CHILD_TOOL_COMPLETE = `${SUBAGENT_CHILD_TOOL_MARKER}_COMPLETE`
 const SUBAGENT_CHILD_PARTIAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARTIAL'
@@ -923,13 +924,15 @@ async function retainSecondTaskWorkspace(control, timeoutMs) {
 
 export function createDesktopScenario({
   captureScreenshot,
+  resultDir,
   standalone,
   uiTimeoutMs,
   workspacePath,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
-  const subagentToolRenderTimeoutMs = SUBAGENT_CHILD_TOOL_TIMEOUT_MS + uiTimeoutMs
+  const subagentToolRenderTimeoutMs =
+    SUBAGENT_CHILD_STARTUP_TIMEOUT_MS + SUBAGENT_CHILD_TOOL_TIMEOUT_MS + uiTimeoutMs
   let active = false
   let generatedImageStage = 'initial'
   let subagentStage = 'initial'
@@ -1122,17 +1125,39 @@ export function createDesktopScenario({
     )
     await waitForBottom(control, 'The terminal-burst long-code conversation', uiTimeoutMs)
     const rapidScrollSamples = JSON.parse(
-      await control.command('sampleRapidScrollContent', SCROLLER_SELECTOR, {
+      await control.command('sampleRapidMarkdownWindowing', SCROLLER_SELECTOR, {
         value: JSON.stringify({
-          contentSelector: '[data-markdown-window-chunk] > *',
+          contentSelector: '[data-markdown-window-chunk]',
+          framesPerRatio: 4,
           ratios: [0.75, 0.5, 0.25],
         }),
       })
     )
+    await writeFile(
+      join(resultDir, 'streaming-text-rapid-markdown-windowing.json'),
+      JSON.stringify(rapidScrollSamples, null, 2) + '\n',
+      'utf8'
+    )
+    assert.equal(rapidScrollSamples.frameCount, 12, 'Rapid Markdown scrolling missed frame samples')
+    assert.ok(
+      rapidScrollSamples.initial.placeholderChunkCount > 0,
+      'The completed transcript eagerly mounted every distant Markdown chunk'
+    )
     assert.equal(
-      rapidScrollSamples.every(sample => sample.hasVisibleContent),
+      rapidScrollSamples.samples.every(sample => sample.visiblePlaceholderCount === 0),
+      true,
+      `Rapid scrolling painted a Markdown placeholder before rich rendering: ${JSON.stringify(rapidScrollSamples)}`
+    )
+    assert.equal(
+      rapidScrollSamples.samples.every(
+        sample => sample.visibleRichChunkCount > 0 && sample.hasVisibleText
+      ),
       true,
       `Rapid scrolling exposed an empty Markdown viewport: ${JSON.stringify(rapidScrollSamples)}`
+    )
+    assert.ok(
+      rapidScrollSamples.maxVisibleChunkHeightDelta <= 1,
+      `Completed Markdown changed height between visible frames: ${JSON.stringify(rapidScrollSamples)}`
     )
     await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
   }

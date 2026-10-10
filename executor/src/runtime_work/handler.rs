@@ -23,11 +23,11 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_notification_requires_user_input, codex_runtime_approval_policy,
-        select_wework_codex_user_instructions, AgentCommandPlanner, AgentProcessEngine,
-        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
-        CodexAppServerTurnOptions, CodexAuthMutationError, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        bind_codex_thread_model_route, codex_notification_requires_user_input,
+        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
+        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexAuthMutationError,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
@@ -201,8 +201,19 @@ const CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL: Duration = Duration::from_secs(30);
 const CODEX_TRANSCRIPT_NAVIGATION_CACHE_MAX_ENTRIES: usize = 64;
 const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
-const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
 const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
+/// How long a context-compaction action waits for the Codex app-server to finish
+/// the compaction turn.
+const CONTEXT_COMPACTION_WAIT_BUDGET: Duration = Duration::from_secs(120);
+/// Margin covering the Codex app-server round trips around the wait loop and the
+/// App-IPC response for the action.
+const CONTEXT_COMPACTION_ACTION_MARGIN: Duration = Duration::from_secs(60);
+/// Wall-clock budget a single context-compaction action may consume: the wait
+/// loop below plus the round trips around it. The App-IPC deadline for
+/// `runtime.tasks.compact` must stay above this budget, otherwise the frontend
+/// reports a timeout for an action that is still running.
+pub(crate) const CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS: u64 =
+    CONTEXT_COMPACTION_WAIT_BUDGET.as_secs() + CONTEXT_COMPACTION_ACTION_MARGIN.as_secs();
 const PROVIDER_TURN_INTERRUPT_WAIT_MS: u64 = 100;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
@@ -259,6 +270,8 @@ struct SpawnTurnRequest {
     #[serde(default = "default_turn_runtime")]
     runtime: String,
     request: ExecutionRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    send_payload: Option<Value>,
     direct_thread_id: Option<String>,
     fork_thread_id: Option<String>,
     fork_thread_path: Option<String>,
@@ -289,7 +302,10 @@ impl RuntimeTurnScheduler {
     }
 
     fn enqueue(&mut self, turn: SpawnTurnRequest) -> Option<SpawnTurnRequest> {
-        if self.active_tasks >= self.max_concurrent_tasks || !self.queued_turns.is_empty() {
+        if self.active_tasks >= self.max_concurrent_tasks
+            || self.active_task_ids.contains(&turn.local_task_id)
+            || !self.queued_turns.is_empty()
+        {
             self.queued_turns.push_back(turn);
             return None;
         }
@@ -302,6 +318,10 @@ impl RuntimeTurnScheduler {
         self.active_tasks += 1;
         self.active_task_ids.insert(turn.local_task_id.clone());
         turn
+    }
+
+    fn enqueue_queued(&mut self, turn: SpawnTurnRequest) {
+        self.queued_turns.push_back(turn);
     }
 
     fn queued_position(&self, local_task_id: &str) -> Option<usize> {
@@ -350,11 +370,21 @@ impl RuntimeTurnScheduler {
 
     fn take_available(&mut self) -> Vec<SpawnTurnRequest> {
         let available = self.max_concurrent_tasks.saturating_sub(self.active_tasks);
-        let turns = (0..available)
-            .filter_map(|_| self.queued_turns.pop_front())
-            .collect::<Vec<_>>();
-        self.active_task_ids
-            .extend(turns.iter().map(|turn| turn.local_task_id.clone()));
+        let mut turns = Vec::with_capacity(available);
+        while turns.len() < available {
+            let Some(position) = self
+                .queued_turns
+                .iter()
+                .position(|turn| !self.active_task_ids.contains(&turn.local_task_id))
+            else {
+                break;
+            };
+            let Some(turn) = self.queued_turns.remove(position) else {
+                break;
+            };
+            self.active_task_ids.insert(turn.local_task_id.clone());
+            turns.push(turn);
+        }
         self.active_tasks += turns.len();
         turns
     }

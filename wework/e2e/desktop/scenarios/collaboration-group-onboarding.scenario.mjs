@@ -187,6 +187,22 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
 
+      // Creating an Issue does not require an initialized execution environment.
+      await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+      await control.command('waitFor', scoped('[data-testid="collaboration-issue-create-dialog"]'))
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped(
+              '[data-testid="collaboration-project-settings-environments"][aria-current="page"]'
+            )
+          )
+        ),
+        0,
+        'Issue creation must not redirect to execution environment settings'
+      )
+      await control.command('click', scoped('[data-testid="cloud-todo-modal-close"]'))
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
       await control.command(
         'click',

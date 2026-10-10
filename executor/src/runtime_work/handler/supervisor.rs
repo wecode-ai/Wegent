@@ -599,6 +599,7 @@ impl RuntimeWorkRpcHandler {
             local_task_id: local_task_id.to_owned(),
             runtime: "codex".to_owned(),
             request,
+            send_payload: None,
             direct_thread_id: link.ephemeral.then(|| thread_id.clone()),
             fork_thread_id: None,
             fork_thread_path: None,

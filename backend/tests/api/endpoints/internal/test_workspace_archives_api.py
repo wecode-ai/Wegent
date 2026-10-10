@@ -225,3 +225,35 @@ def test_restore_sandbox_endpoint_uses_sandbox_runtime(
     restore_mock.assert_awaited_once()
     assert restore_mock.await_args.kwargs["runtime_type"] == "sandbox"
     assert restore_mock.await_args.kwargs["executor_name"] == "sandbox-1502"
+
+
+def test_restore_sandbox_without_archive_is_explicitly_skipped(
+    test_client: TestClient, test_db: Session, test_user: User, mocker
+):
+    task = _create_task(test_db, task_id=1503, user_id=test_user.id)
+    mocker.patch.object(
+        archive_service, "restore_workspace", new=AsyncMock(return_value=None)
+    )
+    response = test_client.post(
+        f"/api/internal/workspace-archives/{task.id}/restore-sandbox",
+        json={"executor_name": "sandbox-1503", "executor_namespace": "default"},
+    )
+    assert response.status_code == 200
+    assert response.json()["skipped"] is True
+
+
+def test_restore_sandbox_with_failed_archive_blocks_startup(
+    test_client: TestClient, test_db: Session, test_user: User, mocker
+):
+    task = _create_task(test_db, task_id=1504, user_id=test_user.id)
+    task.json = {**task.json, "status": {"archive": {"storageKey": "archive-1504"}}}
+    test_db.commit()
+    mocker.patch.object(
+        archive_service, "restore_workspace", new=AsyncMock(return_value=None)
+    )
+    response = test_client.post(
+        f"/api/internal/workspace-archives/{task.id}/restore-sandbox",
+        json={"executor_name": "sandbox-1504", "executor_namespace": "default"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "sandbox_archive_restore_failed"

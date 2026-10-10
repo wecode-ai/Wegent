@@ -21,6 +21,7 @@ from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionC
 from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
 from app.schemas.tagging import normalize_tags as _normalize_tags
+from app.utils.schedule_time import normalize_schedule_datetime
 
 
 class LoopItemCreate(BaseModel):
@@ -33,6 +34,7 @@ class LoopItemCreate(BaseModel):
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
+    start_at: datetime | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
@@ -55,6 +57,13 @@ class LoopItemCreate(BaseModel):
         )
         if selected > 1:
             raise ValueError("Only one assignee may be selected")
+        if (
+            self.start_at
+            and self.due_at
+            and normalize_schedule_datetime(self.start_at)
+            > normalize_schedule_datetime(self.due_at)
+        ):
+            raise ValueError("start_at cannot be after due_at")
         return self
 
 
@@ -70,6 +79,7 @@ class LoopItemUpdate(BaseModel):
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
+    start_at: datetime | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
@@ -149,6 +159,7 @@ class LoopItemResponse(BaseModel):
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
     status_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
+    human_work: dict[str, Any] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
     execution_error: str | None = None
@@ -156,6 +167,7 @@ class LoopItemResponse(BaseModel):
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
     priority: str
+    start_at: datetime | None = None
     due_at: datetime | None
     sort_order: int
     tags: list[str] = []
@@ -288,7 +300,7 @@ class LoopItemResponse(BaseModel):
     def normalize_empty_numeric_assignee_id(cls, value: object) -> object:
         return None if value == 0 else value
 
-    @field_validator("due_at", "completed_at", mode="before")
+    @field_validator("start_at", "due_at", "completed_at", mode="before")
     @classmethod
     def normalize_unset_datetime(cls, value: object) -> object:
         if isinstance(value, datetime) and value == datetime(1970, 1, 1, 0, 0, 1):
@@ -299,6 +311,19 @@ class LoopItemResponse(BaseModel):
 
 
 class LoopItemListResponse(BaseModel):
+    items: list[LoopItemResponse]
+
+
+class ArchivedLoopItemResponse(LoopItemResponse):
+    archived_at: datetime
+
+
+class ArchivedLoopItemPageResponse(BaseModel):
+    items: list[ArchivedLoopItemResponse]
+    next_cursor: str | None = None
+
+
+class LoopItemRestoreResponse(BaseModel):
     items: list[LoopItemResponse]
 
 
@@ -402,9 +427,14 @@ class LoopItemTaskBind(BaseModel):
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)
     task_title: str | None = Field(default=None, alias="taskTitle", max_length=255)
     backend_task_id: int | None = Field(default=None, alias="backendTaskId")
+    wegent_team_id: int | None = Field(default=None, alias="wegentTeamId", gt=0)
     model_selection: RuntimeModelSelection | None = Field(
         default=None,
         alias="modelSelection",
+    )
+    execution_context: dict[str, Any] | None = Field(
+        default=None,
+        alias="executionContext",
     )
     workflow_node_id: str | None = Field(
         default=None,
@@ -453,6 +483,10 @@ class LoopItemTaskBindingResponse(BaseModel):
     model_selection: RuntimeModelSelection | None = Field(
         default=None,
         alias="modelSelection",
+    )
+    execution_context: dict[str, Any] | None = Field(
+        default=None,
+        alias="executionContext",
     )
     workflow_node_id: str | None = None
     human_assignment_id: str | None = None

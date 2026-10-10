@@ -73,6 +73,7 @@ mkdir -p \
   "$repo/.github/actions/setup-node-workspace" \
   "$repo/.github/scripts" \
   "$repo/packages/chat-core" \
+  "$repo/packages/collaboration" \
   "$repo/wework/e2e" \
   "$repo/wework/src"
 cp "$script_dir/resolve-wework-core-e2e-build-ref.sh" "$repo/.github/scripts/"
@@ -112,5 +113,19 @@ printf 'changed source\n' >"$repo/wework/src/app.ts"
 (cd "$repo" && git add wework/src/app.ts)
 reference_after_source="$(resolve_reference)"
 test "$reference_before" != "$reference_after_source"
+
+printf 'artifact downloader\n' >"$repo/.github/scripts/download-actions-artifact.sh"
+(cd "$repo" && git add .github/scripts/download-actions-artifact.sh)
+reference_after_downloader="$(resolve_reference)"
+test "$reference_after_source" != "$reference_after_downloader"
+
+printf 'shared issue UI\n' >"$repo/packages/collaboration/issue.ts"
+(cd "$repo" && git add packages/collaboration/issue.ts)
+reference_after_collaboration="$(resolve_reference)"
+test "$reference_after_downloader" != "$reference_after_collaboration"
+
+printf 'changed shared issue UI\n' >"$repo/packages/collaboration/issue.ts"
+(cd "$repo" && git add packages/collaboration/issue.ts)
+test "$reference_after_collaboration" != "$(resolve_reference)"
 
 echo "Wework Core E2E OCI build tests passed"

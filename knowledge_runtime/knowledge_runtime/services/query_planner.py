@@ -7,12 +7,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
-from knowledge_engine.retrieval.query_planning import build_search_hint_plan
-from shared.models import SearchHints
-
-HintSource = Literal["explicit_hints", "fallback"]
+from shared.knowledge_contracts import SearchHints
+from shared.knowledge_module.query_planning import HintSource, plan_query
 
 
 @dataclass(slots=True)
@@ -35,8 +33,10 @@ class QueryPlanner:
         self,
         query: str,
         search_hints: SearchHints | dict[str, Any] | None = None,
+        *,
+        qa_pair_count: int = 0,
     ) -> QueryPlan:
-        resolved = build_search_hint_plan(query, search_hints)
+        resolved = plan_query(query, search_hints, qa_pair_count=qa_pair_count)
 
         return QueryPlan(
             original_query=query,

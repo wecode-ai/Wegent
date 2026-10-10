@@ -36,6 +36,7 @@ import {
 import { dispatchWorkspaceTabsClosed } from '@/features/workspace-tabs/workspaceTabs'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
+import { StandaloneFolderProjectDialog } from '@/components/projects/StandaloneProjectDialogs'
 import {
   archiveLocalHarnessSession,
   closeLocalTerminal,
@@ -56,7 +57,12 @@ import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAp
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import { navigateTo } from '@/lib/navigation'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
-import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
   RuntimePaneTranscript,
@@ -70,6 +76,7 @@ import {
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
 } from '@/components/topnav/TitlebarActionsPortal'
 import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
+import { requestProjectCreateMode } from './workbenchShellEvents'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
@@ -1262,6 +1269,7 @@ describe('DesktopWorkbenchLayout', () => {
     onRefreshDevices?: () => Promise<void>
     onUpgradeDevice?: (...args: unknown[]) => Promise<void>
     onCreateProject?: (...args: unknown[]) => Promise<unknown>
+    onCreateLocalRuntimeProject?: WorkbenchContextValue['createLocalRuntimeProject']
     onCreateGitWorkspaceProject?: (...args: unknown[]) => Promise<unknown>
     onPrepareDeviceWorkspace?: (...args: unknown[]) => Promise<unknown>
     onDeleteDeviceWorkspace?: (...args: unknown[]) => Promise<void>
@@ -1583,6 +1591,9 @@ describe('DesktopWorkbenchLayout', () => {
       upgradeDevice: props.onUpgradeDevice ?? vi.fn().mockResolvedValue(undefined),
       createProject:
         props.onCreateProject ?? baseProps.onCreateProject ?? vi.fn().mockResolvedValue({}),
+      createLocalRuntimeProject:
+        props.onCreateLocalRuntimeProject ??
+        vi.fn().mockResolvedValue({ id: 99, name: 'Created project', tasks: [] }),
       createGitWorkspaceProject:
         props.onCreateGitWorkspaceProject ??
         baseProps.onCreateGitWorkspaceProject ??
@@ -3368,7 +3379,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
     deliveryApiMock.findRuntimeIssue.mockResolvedValue(issue)
 
-    render(
+    const { rerender } = render(
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
@@ -3392,9 +3403,46 @@ describe('DesktopWorkbenchLayout', () => {
       expect(deliveryApiMock.findRuntimeContext).toHaveBeenCalledWith(runtimeTask)
     )
     expect(deliveryApiMock.findRuntimeIssue).toHaveBeenCalledWith(runtimeTask)
+    expect(screen.getByTestId('chat-message-input')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-execution-reply-in-issue')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
     expect(await screen.findByTestId('environment-delivery-button')).toHaveTextContent('交付')
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+          currentRuntimeTask: {
+            ...runtimeTask,
+            issueExecution: {
+              projectId: project.id,
+              issueId: issue.id,
+            },
+            projectSession: {
+              projectId: project.id,
+              issueId: issue.id,
+            },
+          },
+          runtimeWork: {
+            projects: [],
+            chats: [],
+            totalTasks: 0,
+          },
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId('project-execution-reply-in-issue')).toBeInTheDocument()
+    expect(screen.queryByTestId('chat-message-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
   })
 
   test('shows the existing local task data in the board presentation', async () => {
@@ -5815,6 +5863,84 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('standalone-remote-device-option-remote-device')).toBeEnabled()
   })
 
+  test('remote project device picker remains stable while a device refresh is temporarily empty', async () => {
+    const cloudDevice = {
+      id: 2,
+      device_id: 'cloud-device',
+      name: 'Cloud Device',
+      status: 'online',
+      is_default: true,
+      device_type: 'cloud',
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+      runtime_transfer_host: '10.201.3.200',
+    }
+    const view = render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [cloudDevice],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('cloud-device')
+    )
+
+    view.rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [],
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('cloud-device')
+    expect(screen.getByTestId('standalone-remote-device-option-cloud-device')).toBeEnabled()
+    expect(screen.queryByTestId('standalone-folder-no-device')).not.toBeInTheDocument()
+  })
+
+  test('remote project device picker discards retained devices after the dialog closes', async () => {
+    const cloudDevice: DeviceInfo = {
+      id: 2,
+      device_id: 'cloud-device',
+      name: 'Cloud Device',
+      status: 'online',
+      is_default: true,
+      device_type: 'cloud',
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const dialog = (open: boolean, devices: DeviceInfo[]) => (
+      <StandaloneFolderProjectDialog
+        open={open}
+        mode="remote"
+        devices={devices}
+        onClose={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/ubuntu')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn().mockResolvedValue(undefined)}
+      />
+    )
+    const view = render(dialog(true, [cloudDevice]))
+
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('cloud-device')
+
+    view.rerender(dialog(false, []))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    view.rerender(dialog(true, []))
+
+    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
+  })
+
   test('remote project dialog shows a version-mismatched Docker device as disabled', async () => {
     const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
 
@@ -6083,6 +6209,72 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+  })
+
+  test('creates a project from a collaboration composer without navigating to the task surface', async () => {
+    const onOpenStandaloneWorkspace = vi.fn()
+    const onCreated = vi.fn()
+    const createdProject = {
+      id: 93,
+      name: 'Product',
+      config: {
+        mode: 'workspace' as const,
+        execution: { targetType: 'local' as const, deviceId: 'device-1' },
+        workspace: { source: 'local_path' as const, localPath: '/Users/alice/repo' },
+      },
+      tasks: [],
+    }
+    const onCreateLocalRuntimeProject = vi.fn().mockResolvedValue(createdProject)
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(
+      '/Users/alice/repo'
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        surfaceKind="board"
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        onCreateLocalRuntimeProject={onCreateLocalRuntimeProject}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'sifang-executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              device_type: 'local',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    act(() => {
+      requestProjectCreateMode('existing', {
+        preserveCurrentSurface: true,
+        onCreated,
+      })
+    })
+
+    expect(await screen.findByTestId('local-project-create-dialog')).toBeInTheDocument()
+    await userEvent.clear(screen.getByTestId('local-project-create-name-input'))
+    await userEvent.type(screen.getByTestId('local-project-create-name-input'), 'Product')
+    await userEvent.click(screen.getByTestId('confirm-local-project-create-button'))
+
+    await waitFor(() =>
+      expect(onCreateLocalRuntimeProject).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        name: 'Product',
+        roots: ['/Users/alice/repo'],
+      })
+    )
+    expect(onCreated).toHaveBeenCalledWith(createdProject)
+    expect(onOpenStandaloneWorkspace).not.toHaveBeenCalled()
+    expect(screen.getByTestId('cloud-board-loading')).toBeInTheDocument()
   })
 
   test('opens Finder without waiting for the local executor home directory', async () => {

@@ -42,6 +42,9 @@ const electronMocks = vi.hoisted(() => ({
   dialogShowOpenDialog: vi.fn(),
   dialogShowSaveDialog: vi.fn(),
   powerMonitorGetSystemIdleTime: vi.fn(() => 0),
+  notificationOnce: vi.fn<(event: string, listener: () => void) => void>(),
+  notificationShow: vi.fn(),
+  notificationIsSupported: vi.fn(() => true),
   shellOpenExternal: vi.fn(async () => undefined),
   shellOpenPath: vi.fn(async () => ''),
   shellShowItemInFolder: vi.fn(),
@@ -66,9 +69,10 @@ vi.mock('electron', () => ({
     showSaveDialog: electronMocks.dialogShowSaveDialog,
   },
   Notification: class Notification {
+    static isSupported = electronMocks.notificationIsSupported
     constructor(readonly options: { title: string; body: string }) {}
-    once = vi.fn()
-    show = vi.fn()
+    once = electronMocks.notificationOnce
+    show = electronMocks.notificationShow
   },
   powerMonitor: {
     getSystemIdleTime: electronMocks.powerMonitorGetSystemIdleTime,
@@ -93,6 +97,23 @@ describe('Smart App verification capabilities', () => {
   test('grants only the named inspect and verify operations', () => {
     expect(HOST_CAPABILITIES).toContain('smartApps.inspectVerification')
     expect(HOST_CAPABILITIES).toContain('smartApps.verify')
+  })
+
+  test('allows an empty parent and purpose when creating a workbench', async () => {
+    const createDirectory = vi.fn(async () => ({ id: 'created-app' }))
+    const { router } = createIsolatedClipboardRouter(true, undefined, { createDirectory })
+    const input = {
+      parentPath: '',
+      name: 'created-app',
+      displayName: 'Created App',
+      description: '',
+      template: 'web',
+    }
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.createDirectory', input)
+    ).resolves.toEqual({ id: 'created-app' })
+    expect(createDirectory).toHaveBeenCalledWith(input)
   })
 })
 
@@ -137,6 +158,52 @@ describe('e2eSaveDialogOverride', () => {
 })
 
 describe('showElectronNotification', () => {
+  beforeEach(() => {
+    electronMocks.notificationOnce.mockClear()
+    electronMocks.notificationShow.mockClear()
+  })
+
+  test('carries the URL through the actual notification capability and click callback', async () => {
+    const { router, notificationNavigation } = createIsolatedClipboardRouter()
+    const url = 'wework://boards/12/issues/ISSUE-1'
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.show', {
+      title: 'Assigned',
+      body: 'Open the project task.',
+      url,
+    })
+    expect(notificationNavigation.openScheme).not.toHaveBeenCalled()
+    expect(electronMocks.notificationShow).toHaveBeenCalledOnce()
+
+    const click = electronMocks.notificationOnce.mock.calls[0][1]
+    click()
+
+    expect(notificationNavigation.openScheme).toHaveBeenCalledExactlyOnceWith(url)
+    expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  test('uses the production click action for desktop regression activation', async () => {
+    const { router, notificationNavigation } = createIsolatedClipboardRouter()
+    const url = 'wework://tasks/device-1/task-1'
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.activateNotification', { url })
+
+    expect(notificationNavigation.openScheme).toHaveBeenCalledExactlyOnceWith(url)
+    expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  test('rejects external notification destinations before displaying them', () => {
+    const createNotification = vi.fn()
+    expect(() =>
+      showElectronNotification(
+        { title: 'Ready', body: 'Open.', url: 'https://example.com' },
+        { openScheme: vi.fn(), openRuntimeTask: vi.fn() },
+        createNotification
+      )
+    ).toThrow('Notification links must use wework://')
+    expect(createNotification).not.toHaveBeenCalled()
+  })
+
   test('opens the targeted runtime task when the notification is clicked', () => {
     const openRuntimeTask = vi.fn()
     const listeners = new Map<string, () => void>()
@@ -153,7 +220,7 @@ describe('showElectronNotification', () => {
         body: 'The reply is ready.',
         taskAddressId: 'device-1:task-1',
       },
-      openRuntimeTask,
+      { openRuntimeTask, openScheme: vi.fn() },
       () => notification
     )
     listeners.get('click')?.()
@@ -173,12 +240,38 @@ describe('showElectronNotification', () => {
         title: 'Assigned',
         body: 'A project task was assigned.',
       },
-      vi.fn(),
+      { openRuntimeTask: vi.fn(), openScheme: vi.fn() },
       () => notification
     )
 
-    expect(notification.once).not.toHaveBeenCalled()
+    expect(notification.once).toHaveBeenCalledWith('close', expect.any(Function))
     expect(notification.show).toHaveBeenCalledOnce()
+  })
+
+  test.each([
+    'wework://tasks/device-1/task-1',
+    'wework://boards/12/issues/gitlab%3A12%2Fissue%233',
+  ])('queues the same destination as an in-app notification on click: %s', url => {
+    const navigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
+    const listeners = new Map<string, () => void>()
+    const notification = {
+      once: vi.fn((event: string, listener: () => void) => {
+        listeners.set(event, listener)
+      }),
+      show: vi.fn(),
+    }
+    showElectronNotification(
+      { title: 'Ready', body: 'Open the result.', url },
+      navigation,
+      () => notification
+    )
+
+    expect(navigation.openScheme).not.toHaveBeenCalled()
+    expect(notification.once).toHaveBeenCalledWith('click', expect.any(Function))
+    listeners.get('click')!()
+
+    expect(navigation.openScheme).toHaveBeenCalledExactlyOnceWith(url)
+    expect(navigation.openRuntimeTask).not.toHaveBeenCalled()
   })
 })
 
@@ -225,9 +318,12 @@ function createIsolatedClipboardRouter(
   focused = true,
   popoutHost?: {
     openPopoutTaskInMain: (taskAddressId: string) => void
+    scheduleCoreDshRestart?: () => void
     setPopoutMode: (mode: 'composer' | 'menu' | 'conversation') => void
-  }
+  },
+  smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> }
 ) {
+  const notificationNavigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
   const targetWindow = {
     isDestroyed: vi.fn(() => false),
     isFocused: vi.fn(() => focused),
@@ -241,18 +337,18 @@ function createIsolatedClipboardRouter(
       state: 'ready',
       updatedAt: '2026-09-12T00:00:00.000Z',
     }),
-    () => null,
+    () => (smartApps ?? null) as never,
     {} as never,
     {} as never,
     {} as never,
     {} as never,
     {
+      executorHome: '/tmp/wework-clipboard-test/executor',
       cleanupStaleTemporaryImages: vi.fn(),
       coreDshPlugins: () => null,
       events: { read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })) },
       feedback: {} as never,
-      openRuntimeTask: vi.fn(),
-      openScheme: vi.fn(),
+      ...notificationNavigation,
       pendingSchemes: {
         acknowledge: vi.fn(),
         read: vi.fn(() => ({ items: [] })),
@@ -266,8 +362,36 @@ function createIsolatedClipboardRouter(
     } as never,
     popoutHost as never
   )
-  return { router, targetWindow }
+  return { router, targetWindow, notificationNavigation }
 }
+
+describe('Core DSH runtime capabilities', () => {
+  test('schedules a restart only after the host response is sent', async () => {
+    const scheduleCoreDshRestart = vi.fn()
+    const completions: Array<() => void | Promise<void>> = []
+    const { router } = createIsolatedClipboardRouter(true, {
+      openPopoutTaskInMain: vi.fn(),
+      scheduleCoreDshRestart,
+      setPopoutMode: vi.fn(),
+    })
+
+    await expect(
+      router.invoke(
+        WEWORK_APP_PRINCIPAL,
+        'runtime.restartCoreDsh',
+        {},
+        {
+          onResponseSent: completion => completions.push(completion),
+        }
+      )
+    ).resolves.toEqual({ scheduled: true })
+
+    expect(scheduleCoreDshRestart).not.toHaveBeenCalled()
+    expect(completions).toHaveLength(1)
+    await completions[0]()
+    expect(scheduleCoreDshRestart).toHaveBeenCalledOnce()
+  })
+})
 
 describe('Popout Window sizing capabilities', () => {
   test('forwards validated conversation and menu states to the native window', async () => {
@@ -565,6 +689,55 @@ describe('registerRendererStorageCapabilities', () => {
 })
 
 describe('registerDesktopServiceCapabilities', () => {
+  test.each([
+    {
+      label: 'supplied',
+      diagnostics: {
+        schemaVersion: 1,
+        events: [{ name: 'anchor-lost', details: { scrollerId: 1, rowIndex: 4 } }],
+      },
+    },
+    { label: 'null', diagnostics: null },
+    { label: 'omitted', diagnostics: undefined },
+  ])(
+    'forwards $label conversation diagnostics through feedback request parsing',
+    async ({ diagnostics }) => {
+      const handlers = new Map<HostCapability, HostCapabilityHandler>()
+      const router = {
+        register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+          handlers.set(capability, handler)
+        }),
+      } as unknown as HostCapabilityRouter
+      const preview = vi.fn(async () => ({ stagingId: 'stage-1' }))
+      registerDesktopServiceCapabilities(
+        router,
+        { feedback: { preview } } as unknown as Parameters<
+          typeof registerDesktopServiceCapabilities
+        >[1],
+        { openLogDirectory: vi.fn(), openDevTools: vi.fn() }
+      )
+      const request = {
+        includeRuntimeLogs: true,
+        includeTaskInfo: false,
+        includeScreenshot: false,
+        includeSystemInfo: false,
+        note: 'Conversation flickers during upward scrolling',
+        taskContext: null,
+        screenshotDataUrl: null,
+        composerDiagnostics: null,
+        attachments: [],
+        ...(diagnostics === undefined ? {} : { conversationDiagnostics: diagnostics }),
+      }
+
+      await handlers.get('feedback.previewBundle')?.({ request }, { principal: 'test' })
+
+      expect(preview).toHaveBeenCalledWith({
+        ...request,
+        conversationDiagnostics: diagnostics ?? null,
+      })
+    }
+  )
+
   test('allowlists and forwards all migrated desktop capability contracts', async () => {
     const handlers = new Map<HostCapability, HostCapabilityHandler>()
     const router = {

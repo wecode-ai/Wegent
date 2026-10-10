@@ -8,11 +8,13 @@
 //! Dependency sequence (the recorded path):
 //! 1. `get_current_user_jwt_apikey_tasktoken` (task token: the full
 //!    `users` row by id);
-//! 2. `task_store.get_by_id` on the configured task table (404 `Task not found`
-//!    when absent);
+//! 2. `task_store.get_by_id` on the table `_model_for_task_id_lookup` resolves
+//!    (a legacy id probes the base `tasks` owner index and the owner's shard
+//!    table first); 404 `Task not found` when absent;
 //! 3. owner check, else the inline approved-`resource_members` membership
 //!    query (403 `Access denied`);
-//! 4. `subtask_store.list_by_task_unfiltered` on the configured task table;
+//! 4. `subtask_store.list_by_task_unfiltered` on the table
+//!    `_subtask_model_for_task_lookup` resolves (the same probes again);
 //! 5. `context_service.get_attachments_by_task` (empty subtask list
 //!    short-circuits to `[]`);
 //! 6. the `AttachmentDetailResponse` list
@@ -44,7 +46,7 @@ async fn run(
     user_id: i64,
 ) -> Result<Vec<AttachmentDetailResponse>, HttpError> {
     // `task_store.get_by_id`.
-    let Some(task) = repository::get_task_by_id(&state.mysql, task_id)
+    let Some(task) = repository::get_task_by_id(&*state.task_store, task_id)
         .await
         .map_err(HttpError::dependency)?
     else {
@@ -63,7 +65,7 @@ async fn run(
     }
 
     // `subtask_store.list_by_task_unfiltered`.
-    let subtasks = repository::list_subtask_ids_by_task(&state.mysql, task_id)
+    let subtasks = repository::list_subtask_ids_by_task(&*state.task_store, task_id)
         .await
         .map_err(HttpError::dependency)?;
     let subtask_ids = subtasks

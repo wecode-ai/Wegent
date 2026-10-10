@@ -90,6 +90,8 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'approveRun',
     'rejectRun',
     'archive',
+    'listArchived',
+    'restore',
     'reorder',
     'markRead',
   ],
@@ -183,14 +185,19 @@ function toIssue(issue: CloudLoopItem): CollaborationIssue {
   }
 }
 
-function toRuntimeTaskAddress(task: WorkspaceRuntimeTaskAddress): RuntimeTaskAddress {
+export function toRuntimeTaskAddress(task: WorkspaceRuntimeTaskAddress): RuntimeTaskAddress {
   return {
     deviceId: task.deviceId,
     taskId: task.taskId,
     ...(task.backendTaskId == null ? {} : { backendTaskId: task.backendTaskId }),
-    ...(task.modelSelection == null
+    ...(task.modelSelection == null && task.wegentTeamId == null
       ? {}
-      : { runtimeHandle: { modelSelection: task.modelSelection } }),
+      : {
+          runtimeHandle: {
+            ...(task.modelSelection == null ? {} : { modelSelection: task.modelSelection }),
+            ...(task.wegentTeamId == null ? {} : { wegentTeam: { id: task.wegentTeamId } }),
+          },
+        }),
   } as RuntimeTaskAddress
 }
 
@@ -440,6 +447,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               execution_environment: input.executionEnvironment
                 ? {
                     repositories: input.executionEnvironment.repositories,
+                    workspace_policy: input.executionEnvironment.workspacePolicy ?? 'git_worktree',
                     setup_steps: input.executionEnvironment.setupSteps.map(step => ({
                       command: step.command,
                       working_directory: step.workingDirectory,
@@ -493,6 +501,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               description: input.description,
               status: input.status,
               priority: input.priority,
+              start_at: input.startAt,
               due_at: input.dueAt,
               parent_id: input.parentId,
               tags: input.tags,
@@ -521,6 +530,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               assignee_group_id: input.assigneeGroupId,
               assignee_agent_id: input.assigneeAgentId,
               assignee_team_id: input.assigneeTeamId,
+              start_at: input.startAt,
               due_at: input.dueAt,
               tags: input.tags,
               security_level: input.securityLevel,
@@ -539,6 +549,16 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
       archive(issueId) {
         return deliveryApi.archiveLoopItem(issueId)
+      },
+      async listArchived(projectId, input) {
+        const page = await deliveryApi.listArchivedLoopItems(projectId, input)
+        return {
+          items: page.items.map(toIssue),
+          nextCursor: page.next_cursor,
+        }
+      },
+      async restore(issueId) {
+        return (await deliveryApi.restoreLoopItem(issueId)).items.map(toIssue)
       },
       async reorder(projectId, input) {
         return (

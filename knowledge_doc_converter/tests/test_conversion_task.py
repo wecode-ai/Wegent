@@ -249,7 +249,7 @@ class TestConvertDocumentTask:
             "knowledge_doc_converter.tasks.conversion_task.settings", mock_settings
         ):
             with patch(
-                "knowledge_engine.conversion.convert_document",
+                "knowledge_doc_converter.services.conversion_engine.convert_document",
                 return_value=mock_result,
             ) as mock_convert:
                 from knowledge_doc_converter.tasks.conversion_task import (
@@ -266,6 +266,9 @@ class TestConvertDocumentTask:
 
         # Verify conversion was called
         mock_convert.assert_called_once()
+        # The shared module owns the converted filename and object-key prefix.
+        convert_kwargs = mock_convert.call_args.kwargs
+        assert convert_kwargs["s3_base_path"] == "doc-converter/test-kb/1/test"
         mock_fetcher.download.assert_called_once_with(
             "/api/internal/attachments/42/download"
         )
@@ -276,6 +279,47 @@ class TestConvertDocumentTask:
         # expected: filename_without_ext="test", md_filename="test.pdf.md"
         assert call_kwargs["converted_name"] == "test.pdf.md"
         assert call_kwargs["converted_extension"] == "md"
+
+    @patch("knowledge_doc_converter.tasks.conversion_task.lock_service")
+    @patch("knowledge_doc_converter.tasks.conversion_task.callback_client")
+    @patch("knowledge_doc_converter.tasks.conversion_task.content_fetcher")
+    def test_unsupported_format_is_rejected_by_the_module(
+        self, mock_fetcher, mock_callback, mock_lock, mock_settings
+    ):
+        """A format the module refuses fails visibly instead of being indexed."""
+        from shared.knowledge_module import KnowledgeDocumentError
+
+        mock_self = _make_mock_task()
+
+        mock_ctx = MagicMock()
+        mock_ctx.__enter__ = MagicMock(return_value=True)
+        mock_ctx.__exit__ = MagicMock(return_value=False)
+        mock_lock.acquire_watchdog_context.return_value = mock_ctx
+
+        mock_callback.notify_started.return_value = {
+            "ok": True,
+            "document_exists": True,
+        }
+        mock_fetcher.download.return_value = b"archived content"
+        mock_callback.notify_failed.return_value = {
+            "ok": True,
+            "document_exists": True,
+        }
+
+        with patch(
+            "knowledge_doc_converter.tasks.conversion_task.settings", mock_settings
+        ):
+            from knowledge_doc_converter.tasks.conversion_task import (
+                convert_document_task,
+            )
+
+            with pytest.raises(KnowledgeDocumentError):
+                convert_document_task._get_current_object().run.__func__(
+                    mock_self, **{**TASK_KWARGS, "file_extension": "zip"}
+                )
+
+        mock_callback.notify_failed.assert_called_once()
+        mock_callback.notify_completed.assert_not_called()
 
     @patch("knowledge_doc_converter.tasks.conversion_task.lock_service")
     @patch("knowledge_doc_converter.tasks.conversion_task.callback_client")
@@ -314,7 +358,7 @@ class TestConvertDocumentTask:
             "knowledge_doc_converter.tasks.conversion_task.settings", mock_settings
         ):
             with patch(
-                "knowledge_engine.conversion.convert_document",
+                "knowledge_doc_converter.services.conversion_engine.convert_document",
                 return_value=mock_result,
             ):
                 from knowledge_doc_converter.tasks.conversion_task import (

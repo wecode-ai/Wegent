@@ -38,8 +38,17 @@ def create_socketio_server() -> socketio.AsyncServer:
     redis_url = settings.REDIS_URL
 
     try:
-        mgr = socketio.AsyncRedisManager(redis_url)
-        logger.info(f"Socket.IO Redis manager initialized with {redis_url}")
+        # A half-open subscription must time out so redis-py can resubscribe.
+        mgr = socketio.AsyncRedisManager(
+            redis_url,
+            redis_options={
+                "socket_timeout": settings.SOCKETIO_REDIS_SOCKET_TIMEOUT,
+                "socket_connect_timeout": settings.SOCKETIO_REDIS_CONNECT_TIMEOUT,
+                "socket_keepalive": True,
+                "health_check_interval": settings.SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL,
+            },
+        )
+        logger.info("Socket.IO Redis manager initialized with bounded timeouts")
     except Exception as e:
         logger.warning(
             f"Failed to create Redis manager: {e}, falling back to in-memory"
@@ -92,3 +101,13 @@ def get_sio() -> socketio.AsyncServer:
     if _sio_instance is None:
         _sio_instance = create_socketio_server()
     return _sio_instance
+
+
+def initialize_socketio_server() -> socketio.AsyncServer:
+    """Start cross-worker callbacks even without a local Socket.IO client."""
+    sio = get_sio()
+    if not sio.manager_initialized:
+        sio.manager_initialized = True
+        sio.manager.initialize()
+        logger.info("Socket.IO cross-worker callback listener started")
+    return sio

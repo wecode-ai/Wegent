@@ -121,7 +121,7 @@ Backend 只负责持久化和展示根 Issue 的负责人、队列、claim、lea
 
 #### 三种指派闭环
 
-指派给人时，Backend 发送应用内和已连接 IM 通知。成员从通知创建个人任务并提交 Delivery；Delivery 回写根 Issue。若该人工任务属于协作小组的一轮，交付同时解除该轮 barrier，并唤醒负责人继续评估。
+直接指派给人时，Backend 发送应用内和已连接 IM 通知；通知打开原 Issue，不自动创建个人任务。负责人在原 Issue 中接手、填写处理结果并提交待验收。AI 辅助是可选的关联 Runtime Task，其 Delivery 只作为草稿回到原 Issue，不代替人工提交或验收。协作小组轮次中的人工任务仍通过通知创建个人任务；其 Delivery 解除该轮 barrier，并唤醒负责人继续评估。
 
 指派给智能体时，Executor 领取根 Issue，按所分配智能体创建 Runtime 会话并执行。结果写入活动与交付，成功后进入 `in_review` 等待用户确认；Backend 不创建或接管内部执行会话。
 

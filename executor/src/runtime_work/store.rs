@@ -5,7 +5,6 @@
 use std::{
     cmp::Reverse,
     collections::HashMap,
-    env,
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
@@ -350,6 +349,10 @@ struct IndexFileSignature {
 }
 
 impl RuntimeWorkStore {
+    pub(super) fn index_path(&self) -> &Path {
+        &self.index_path
+    }
+
     pub fn new(index_path: PathBuf) -> Self {
         let persisted_index = read_persisted_index_from_path(&index_path);
         let migration_required = persisted_index_requires_migration(&persisted_index);
@@ -849,27 +852,7 @@ pub(crate) fn runtime_work_dir() -> PathBuf {
 }
 
 fn executor_home() -> PathBuf {
-    env::var("WEGENT_EXECUTOR_HOME")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .map(expand_home)
-        .unwrap_or_else(|| expand_home("~/.wegent-executor"))
-}
-
-fn expand_home(value: impl AsRef<str>) -> PathBuf {
-    let value = value.as_ref();
-    if value == "~" {
-        return home_dir();
-    }
-    if let Some(rest) = value.strip_prefix("~/") {
-        return home_dir().join(rest);
-    }
-    Path::new(value).to_path_buf()
-}
-
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
+    crate::config::paths::executor_home()
 }
 
 #[cfg(test)]

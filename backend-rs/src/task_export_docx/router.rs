@@ -121,18 +121,23 @@ async fn export(
             }
         }
     } else {
-        // `get_current_user_optional`: a missing or invalid token yields
-        // `None`, and the member check below turns that into 404.
+        // `get_current_user_optional` yields `None` when the request carries
+        // no valid bearer session; the source maps that to
+        // `401 {"detail": "Not authenticated"}` before any member check
+        // (`app/api/endpoints/adapter/tasks.py`).
         let Some(user) = current_user else {
-            return Err(not_found().into());
+            return Err(FastApiError::unauthorized("Not authenticated").into());
         };
         i64::from(user.id)
     };
 
     // `task_member_service.is_member` (accessible task + owner/member check).
-    let owner_id = repository::get_accessible_task_owner(&state.mysql, task_id)
+    let owner_id = state
+        .task_store
+        .get_task_owner_id(task_id)
         .await
-        .map_err(|_| ExportError::Internal)?;
+        .map_err(|_| ExportError::Internal)?
+        .and_then(|row| row.get_required::<i64>("user_id").ok());
     let is_member = match owner_id {
         Some(owner) if owner == user_id => true,
         Some(_) => repository::is_approved_member(&state.mysql, task_id, user_id)
@@ -145,8 +150,14 @@ async fn export(
     }
 
     // `task_store.get_task_by_states`.
-    let task = repository::get_task_by_states(&state.mysql, state.task_policy, task_id)
+    let task = state
+        .task_store
+        .get_active_task(task_id)
         .await
+        .map_err(|_| ExportError::Internal)?
+        .as_ref()
+        .map(repository::decode_task_row)
+        .transpose()
         .map_err(|_| ExportError::Internal)?;
     let Some(task) = task else {
         return Err(not_found().into());
@@ -175,14 +186,15 @@ async fn export(
     };
 
     // `subtask_store.list_by_task_ordered` + `_attach_contexts`.
-    let subtasks = repository::list_subtasks_ordered(
-        &state.mysql,
-        state.task_policy,
-        task_id,
-        filter_message_ids.as_deref(),
-    )
-    .await
-    .map_err(|_| ExportError::Internal)?;
+    let subtasks = state
+        .task_store
+        .list_subtasks_ordered(task_id, filter_message_ids.as_deref())
+        .await
+        .map_err(|_| ExportError::Internal)?
+        .iter()
+        .map(repository::decode_subtask_row)
+        .collect::<brz_mysql::MysqlResult<Vec<_>>>()
+        .map_err(|_| ExportError::Internal)?;
     let subtask_ids = subtasks.iter().map(|s| s.id).collect::<Vec<_>>();
     let contexts = repository::list_contexts(&state.mysql, &subtask_ids)
         .await

@@ -289,6 +289,14 @@ jobs:
           backend-rs-image: ${{ needs.changes.outputs.backend_rs_image }}
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Inspect shared Wework desktop E2E archive
+        run: |
+          archive=.ci-artifacts/wework-core-e2e-build.tar.zst
+          echo "[wework-core-e2e-build] source bytes=$(wc -c < "$archive")"
+          sha256sum "$archive"
+          zstd --version
+          zstd -t "$archive"
+
       - name: Upload Wework desktop Core E2E build
         uses: actions/upload-artifact@v4
         with:
@@ -369,6 +377,10 @@ jobs:
         uses: ./.github/actions/setup-node-workspace
         with:
           setup-toolchain: "false"
+
+      - name: Install Electron for workbench schema verification
+        if: contains(matrix.segments, 'workbench-mode')
+        run: pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Run Wework desktop Core shard E2E
         env:
@@ -782,6 +794,17 @@ jobs:
           python-version: "3.12"
           setup-python: "false"
           setup-uv: "false"
+
+      - name: Prepare real GitHub CLI for account authentication E2E
+        if: contains(matrix.segments, 'plugin-account-auth')
+        run: |
+          source .github/scripts/lib/apt-packages.sh
+          mapfile -t missing < <(find_missing_apt_packages gh)
+          if ((${#missing[@]} > 0)); then
+            apt-get update
+            apt-get install -y --no-install-recommends "${missing[@]}"
+          fi
+          gh --version
 
       - name: Prepare the pinned native DWS compiler for account authentication E2E
         if: contains(matrix.segments, 'plugin-account-auth')

@@ -459,6 +459,7 @@ class RealCloudEnvironment {
       cwd: join(repoDir, 'backend-rs'),
       env: {
         ...this.backendEnv,
+        RS_DATABASE_URL_COLLATION: 'utf8mb4_0900_ai_ci',
         WEGENT_RS_LISTEN_HOST: '127.0.0.1',
         WEGENT_RS_LISTEN_PORT: String(this.backendPort),
         WEGENT_PYTHON_UPSTREAM_URL: `http://127.0.0.1:${this.pythonBackendPort}`,
@@ -663,10 +664,13 @@ class RealCloudEnvironment {
         '2.0.0',
         `Plugin ${slug} kept stale local runtime metadata after update`
       )
+      const capabilities = JSON.parse(
+        await readFile(join(dirname(codexHome), 'capabilities/manifest-v2.json'), 'utf8')
+      )
       assert.equal(
-        await pathExists(join(codexHome, 'plugins', 'cache', 'wegent', slug, '1.0.0')),
-        false,
-        `Plugin ${slug} kept its old local runtime after update`
+        capabilities.plugins[`${slug}@wegent`].runtime.codex_link,
+        dirname(dirname(currentManifest)),
+        `Plugin ${slug} did not activate its updated native cache`
       )
     }
   }
@@ -694,11 +698,12 @@ class RealCloudEnvironment {
       CODEX_BIN: this.codexBinary,
       CODEX_HOME: codexHome,
       HOME: home,
+      USERPROFILE: home,
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: home,
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: logFile,
-      WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED: 'true',
+      WEGENT_EXECUTOR_DISABLE_FILE_LOG: 'false',
       EXECUTOR_MODE: 'local',
       WEGENT_BACKEND_URL: this.backendUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
@@ -714,6 +719,14 @@ class RealCloudEnvironment {
       DEVICE_SESSION_GATEWAY_PORT: '0',
     }
     for (const key of [
+      'WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED',
+      'WEGENT_WORKBENCH_HOME',
+      'WEGENT_CAPABILITIES_HOME',
+      'WEGENT_CLAUDE_HOME',
+      'CLAUDE_CONFIG_DIR',
+      'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+      'CODEX_SQLITE_HOME',
+      'WEWORK_E2E_NATIVE_CODEX_HOME',
       'WEGENT_APP_IPC_DEVICE_ID',
       'WEGENT_APP_IPC_ENDPOINT',
       'WEGENT_APP_IPC_OWNER_TOKEN',

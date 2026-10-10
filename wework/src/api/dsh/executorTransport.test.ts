@@ -5,6 +5,9 @@ import {
   requestDshExecutor,
   subscribeDshExecutorEvents,
 } from './executorTransport'
+import { logModelLoading } from '@/lib/model-loading-diagnostics'
+
+vi.mock('@/lib/model-loading-diagnostics', () => ({ logModelLoading: vi.fn() }))
 
 describe('DSH executor transport', () => {
   afterEach(() => {
@@ -70,6 +73,16 @@ describe('DSH executor transport', () => {
     })
     expect(request.id).toBe(
       (fetchMock.mock.calls[0][1]?.headers as Record<string, string>)['x-request-id']
+    )
+    expect(logModelLoading).toHaveBeenCalledWith(
+      request.id,
+      'rpc.runtime.tasks.list.fetch_started',
+      expect.objectContaining({ elapsedMs: expect.any(Number) })
+    )
+    expect(logModelLoading).toHaveBeenCalledWith(
+      request.id,
+      'rpc.runtime.tasks.list.body_parsed',
+      expect.objectContaining({ ok: true })
     )
   })
 

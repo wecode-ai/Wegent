@@ -282,6 +282,11 @@ class ExternalLoopItemProvider:
         self._require_external(project)
         if not has_permission(access.role, BaseRole.Developer):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        if values.start_at is not None or values.due_at is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Scheduling is not supported by this Issue provider",
+            )
         item_status = values.status or "inbox"
         if item_status not in EXTERNAL_BOARD_STATUSES:
             raise HTTPException(
@@ -682,6 +687,12 @@ class ExternalLoopItemProvider:
     ) -> dict[str, object]:
         project, number = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
+        schedule_fields = {"start_at", "due_at"} & values.model_fields_set
+        if any(getattr(values, field) is not None for field in schedule_fields):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Scheduling is not supported by this Issue provider",
+            )
         current = self._get_issue(project, number)
         current_response = self._response(db, project, current, access, user_id)
         if not current_response["can_edit"]:
@@ -781,16 +792,163 @@ class ExternalLoopItemProvider:
         return self._response(db, project, issue, access, user_id)
 
     def archive(self, db: Session, item_id: str, user_id: int) -> None:
-        """Remove an external issue from the board by closing it upstream."""
+        """Archive a completed external issue subtree by closing it upstream."""
 
-        project, number = self._resolve_project(db, item_id)
+        project, _ = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
-        issue = self._get_issue(project, number)
-        response = self._base_response(db, project, issue, access, user_id)
-        if not response["can_edit"]:
+        issues = self._list_issues(project)
+        responses = {
+            str(response["id"]): (issue, response)
+            for issue in issues
+            for response in [self._base_response(db, project, issue, access, user_id)]
+        }
+        target = responses.get(item_id)
+        if target is None or not target[1]["can_edit"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
-        self._update_issue(project, number, {"state": "closed"})
+        subtree_ids = self._subtree_ids(responses, item_id)
+        if any(
+            responses[current_id][1]["status"] != "completed"
+            for current_id in subtree_ids
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Only completed TODO subtrees can be archived",
+            )
+        closed: list[int] = []
+        try:
+            for current_id in reversed(subtree_ids):
+                number = self._number(responses[current_id][0])
+                self._update_issue(project, number, {"state": "closed"})
+                closed.append(number)
+        except Exception:
+            for number in reversed(closed):
+                try:
+                    self._update_issue(
+                        project,
+                        number,
+                        {"state": self._open_state(project)},
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to compensate external Issue archive project=%s issue=%s",
+                        project.id,
+                        number,
+                    )
+            raise
         self._invalidate_issue_page_cache(project.id)
+
+    def list_archived(
+        self,
+        db: Session,
+        project_id: int,
+        user_id: int,
+        *,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[dict[str, object]], str | None]:
+        """List closed completed external Issue roots."""
+
+        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        project = access.project
+        self._require_external(project)
+        responses = [
+            self._base_response(db, project, issue, access, user_id)
+            | {
+                "archived_at": str(
+                    issue.get("closed_at") or issue.get("updated_at") or self._now()
+                )
+            }
+            for issue in self._list_issues_state(project, "closed")
+        ]
+        visible = [
+            response
+            for response in responses
+            if response["can_view_detail"] and response["status"] == "completed"
+        ]
+        archived_ids = {str(response["id"]) for response in visible}
+        roots = [
+            response
+            for response in visible
+            if not response["parent_id"]
+            or str(response["parent_id"]) not in archived_ids
+        ]
+        roots.sort(
+            key=lambda response: (
+                str(response["archived_at"]),
+                str(response["id"]),
+            ),
+            reverse=True,
+        )
+        page = roots[offset : offset + limit + 1]
+        has_more = len(page) > limit
+        return page[:limit], str(offset + limit) if has_more else None
+
+    def restore(
+        self, db: Session, item_id: str, user_id: int
+    ) -> list[dict[str, object]]:
+        """Restore a closed external Issue subtree by reopening it upstream."""
+
+        project, _ = self._resolve_project(db, item_id)
+        access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
+        issues = self._list_issues_state(project, "closed")
+        responses = {
+            str(response["id"]): (issue, response)
+            for issue in issues
+            for response in [self._base_response(db, project, issue, access, user_id)]
+        }
+        target = responses.get(item_id)
+        if target is None or not target[1]["can_edit"]:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        parent_id = target[1].get("parent_id")
+        if parent_id and str(parent_id) in responses:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Restore the archived subtree from its root TODO",
+            )
+        subtree_ids = self._subtree_ids(responses, item_id)
+        reopened: list[dict[str, object]] = []
+        opened: list[int] = []
+        try:
+            for current_id in subtree_ids:
+                number = self._number(responses[current_id][0])
+                updated = self._update_issue(
+                    project,
+                    number,
+                    {"state": self._open_state(project)},
+                )
+                opened.append(number)
+                reopened.append(self._response(db, project, updated, access, user_id))
+        except Exception:
+            for number in reversed(opened):
+                try:
+                    self._update_issue(project, number, {"state": "closed"})
+                except Exception:
+                    logger.exception(
+                        "Failed to compensate external Issue restore "
+                        "project=%s issue=%s",
+                        project.id,
+                        number,
+                    )
+            raise
+        self._invalidate_issue_page_cache(project.id)
+        return reopened
+
+    @staticmethod
+    def _subtree_ids(
+        responses: dict[str, tuple[dict[str, Any], dict[str, object]]],
+        root_id: str,
+    ) -> list[str]:
+        ordered: list[str] = []
+        pending = [root_id]
+        while pending:
+            current = pending.pop(0)
+            ordered.append(current)
+            pending.extend(
+                candidate_id
+                for candidate_id, (_, response) in responses.items()
+                if response.get("parent_id") == current
+            )
+        return ordered
 
     def _assignee_label_for_values(
         self,
@@ -1699,6 +1857,7 @@ class ExternalLoopItemProvider:
             "assignee_group_id": assignee_group_id,
             "assignee_group_name": assignee_group_name,
             "priority": self._priority(labels),
+            "start_at": None,
             "due_at": None,
             "sort_order": number,
             "tags": self._public_tags(labels),
@@ -1902,6 +2061,11 @@ class ExternalLoopItemProvider:
         return repository
 
     def _list_issues(self, project: CloudProject) -> list[dict[str, Any]]:
+        return self._list_issues_state(project, self._open_state(project))
+
+    def _list_issues_state(
+        self, project: CloudProject, issue_state: str
+    ) -> list[dict[str, Any]]:
         repository = self._repository(project)
         results: list[dict[str, Any]] = []
         for page in range(1, 101):
@@ -1915,13 +2079,14 @@ class ExternalLoopItemProvider:
                 "GET",
                 path,
                 params={
-                    "state": self._open_state(project),
+                    "state": issue_state,
                     "per_page": ISSUE_LIST_PAGE_SIZE,
                     "page": page,
                 },
             )
             batch_size = len(batch)
-            batch = [issue for issue in batch if issue.get("state") != "closed"]
+            if issue_state != "closed":
+                batch = [issue for issue in batch if issue.get("state") != "closed"]
             if project.task_provider == "github":
                 batch = [issue for issue in batch if "pull_request" not in issue]
             results.extend(batch)

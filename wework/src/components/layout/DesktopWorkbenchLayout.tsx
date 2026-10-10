@@ -36,7 +36,10 @@ import {
 } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
+import {
+  useWorkbenchShellEventHandlers,
+  type ProjectCreateRequestOptions,
+} from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
@@ -115,13 +118,34 @@ function isSameRuntimeTask(
   current: RuntimeTaskAddress | null | undefined,
   next: RuntimeTaskAddress
 ): boolean {
-  const currentPath = current?.workspacePath?.trim()
-  const nextPath = next.workspacePath?.trim()
-  return (
-    current?.deviceId === next.deviceId &&
-    current.taskId === next.taskId &&
-    (!currentPath || !nextPath || currentPath === nextPath)
-  )
+  if (current?.deviceId !== next.deviceId || current.taskId !== next.taskId) return false
+  const resolvedFields = [
+    ['runtime', current.runtime, next.runtime],
+    ['threadId', current.threadId, next.threadId],
+    ['workspacePath', current.workspacePath?.trim(), next.workspacePath?.trim()],
+    ['workspaceKind', current.workspaceKind, next.workspaceKind],
+    ['worktreeId', current.worktreeId, next.worktreeId],
+  ] as const
+  if (
+    resolvedFields.some(([, currentValue, nextValue]) => nextValue && currentValue !== nextValue)
+  ) {
+    return false
+  }
+  if (
+    next.projectSession &&
+    (current.projectSession?.projectId !== next.projectSession.projectId ||
+      current.projectSession?.issueId !== next.projectSession.issueId)
+  ) {
+    return false
+  }
+  if (
+    next.issueExecution &&
+    (current.issueExecution?.projectId !== next.issueExecution.projectId ||
+      current.issueExecution?.issueId !== next.issueExecution.issueId)
+  ) {
+    return false
+  }
+  return !next.runtimeHandle || current.runtimeHandle === next.runtimeHandle
 }
 
 interface DesktopWorkbenchLayoutProps {
@@ -608,6 +632,7 @@ export function DesktopWorkbenchLayout({
   const [standaloneRemoteDialogIntent, setStandaloneRemoteDialogIntent] =
     useState<StandaloneRemoteDialogIntent>('project')
   const [standalonePreferNativeLocalPicker, setStandalonePreferNativeLocalPicker] = useState(true)
+  const scopedProjectCreateRequestRef = useRef<ProjectCreateRequestOptions | null>(null)
   const [projectWorkEditProject, setProjectWorkEditProject] = useState<ProjectWithTasks | null>(
     null
   )
@@ -688,11 +713,13 @@ export function DesktopWorkbenchLayout({
   const openStandaloneFolderProject = useCallback(
     async (
       mode: StandaloneWorkspaceDialogMode,
-      intent: StandaloneRemoteDialogIntent = 'project'
+      intent: StandaloneRemoteDialogIntent = 'project',
+      options: ProjectCreateRequestOptions | null = null
     ) => {
       setBlankProjectDialogOpen(false)
       setProjectWorkEditProject(null)
       setStandaloneRemoteDialogIntent(intent)
+      scopedProjectCreateRequestRef.current = options
 
       if (mode === 'existing') {
         // Mount the dialog before opening the native picker so the triggering menu and
@@ -714,21 +741,23 @@ export function DesktopWorkbenchLayout({
   )
 
   const closeStandaloneFolderProject = useCallback(() => {
+    scopedProjectCreateRequestRef.current = null
     setStandaloneWorkspaceDialogMode(null)
     setStandaloneRemoteDialogIntent('project')
     setStandalonePreferNativeLocalPicker(true)
   }, [])
 
   const openProjectFromWorkMenu = useCallback(
-    (mode: ProjectCreateMode) => {
+    (mode: ProjectCreateMode, options?: ProjectCreateRequestOptions) => {
       if (mode === 'scratch') {
+        scopedProjectCreateRequestRef.current = null
         setBlankProjectDialogOpen(true)
         setStandaloneWorkspaceDialogMode(null)
         void onRefreshDevices?.().catch(() => undefined)
       } else if (mode === 'existing') {
-        void openStandaloneFolderProject('existing')
+        void openStandaloneFolderProject('existing', 'project', options ?? null)
       } else if (mode === 'git') {
-        void openStandaloneFolderProject('remote', 'project')
+        void openStandaloneFolderProject('remote', 'project', options ?? null)
       }
       setProjectWorkEditProject(null)
     },
@@ -1380,6 +1409,11 @@ export function DesktopWorkbenchLayout({
                       ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'commentId')
                       : undefined
                   }
+                  focusedCommentRequestKey={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'focusRequest')
+                      : undefined
+                  }
                   onFocusedItemHandled={() => {
                     if (
                       !workspaceTabs ||
@@ -1473,7 +1507,26 @@ export function DesktopWorkbenchLayout({
         onCreateDeviceDirectory={onCreateDeviceDirectory}
         onCloneGitRepository={onCloneGitRepository}
         onStartGitCloneProject={startGitCloneProject}
-        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        onOpenStandaloneWorkspace={async (deviceId, workspacePath, name, projectRoots) => {
+          const scopedRequest = scopedProjectCreateRequestRef.current
+          if (!scopedRequest?.preserveCurrentSurface) {
+            if (projectRoots) {
+              await onOpenStandaloneWorkspace(deviceId, workspacePath, name, projectRoots)
+            } else {
+              await onOpenStandaloneWorkspace(deviceId, workspacePath, name)
+            }
+            return
+          }
+          const roots = projectRoots?.length ? projectRoots : [workspacePath]
+          const projectName =
+            name?.trim() || workspacePath.split(/[\\/]/).filter(Boolean).at(-1) || 'Project'
+          const createdProject = await onCreateLocalRuntimeProject({
+            deviceId,
+            name: projectName,
+            roots,
+          })
+          scopedRequest.onCreated?.(createdProject)
+        }}
         onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
         onRefreshDevices={onRefreshDevices}
       />

@@ -6,12 +6,13 @@ use serde_json::Value;
 
 use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
-    issue_provider::IssueProvider, store::task_provider, BinaryInput, ChatAgent, ChatAgentCreate,
-    ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
-    IssueComment, LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
-    LocalRuntimeCommentStart, LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor,
-    ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate,
-    TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
+    issue_provider::IssueProvider, store::task_provider, ArchivedLoopItemPage, BinaryInput,
+    ChatAgent, ChatAgentCreate, ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate,
+    DeliveryDetail, DeliveryFinalize, IssueComment, LocalComment, LocalCommentCreate,
+    LocalExecution, LocalExecutionClaim, LocalRuntimeCommentStart, LocalTaskStore, LoopItem,
+    ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress,
+    TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError,
+    TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -466,13 +467,36 @@ impl TaskRuntime {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_with_schedule(project_id, input, None, None)
+            .await
+    }
+
+    pub async fn create_task_with_schedule(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        start_at: Option<String>,
+        due_at: Option<String>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
-            TaskProviderKind::Local => self.local_store.create_task(project_id, input),
+            TaskProviderKind::Local => self
+                .local_store
+                .create_task_with_schedule(project_id, input, start_at, due_at),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
+                if start_at.is_some() || due_at.is_some() {
+                    return Err(TaskRuntimeError::UnsupportedProvider(format!(
+                        "{provider:?} scheduling"
+                    )));
+                }
                 self.issue_provider.create(&project, provider, input).await
             }
             TaskProviderKind::DingtalkAitable => {
+                if start_at.is_some() || due_at.is_some() {
+                    return Err(TaskRuntimeError::UnsupportedProvider(
+                        "DingtalkAitable scheduling".to_owned(),
+                    ));
+                }
                 self.aitable_provider.create_board(&project, input).await
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
@@ -487,15 +511,39 @@ impl TaskRuntime {
         task_id: &str,
         input: TaskUpdate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.update_task_with_schedule(project_id, task_id, input, None, None)
+            .await
+    }
+
+    pub async fn update_task_with_schedule(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        start_at: Option<Option<String>>,
+        due_at: Option<Option<String>>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
-            TaskProviderKind::Local => self.local_store.update_task(project_id, task_id, input),
+            TaskProviderKind::Local => self
+                .local_store
+                .update_task_with_schedule(project_id, task_id, input, start_at, due_at),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
+                if start_at.is_some() || due_at.is_some() {
+                    return Err(TaskRuntimeError::UnsupportedProvider(format!(
+                        "{provider:?} scheduling"
+                    )));
+                }
                 self.issue_provider
                     .update(&project, provider, task_id, input)
                     .await
             }
             TaskProviderKind::DingtalkAitable => {
+                if start_at.is_some() || due_at.is_some() {
+                    return Err(TaskRuntimeError::UnsupportedProvider(
+                        "DingtalkAitable scheduling".to_owned(),
+                    ));
+                }
                 self.aitable_provider
                     .update_board(&project, task_id, input)
                     .await
@@ -532,6 +580,37 @@ impl TaskRuntime {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.archive_task(project_id, task_id),
+            provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?}"
+            ))),
+        }
+    }
+
+    pub async fn list_archived_tasks(
+        &self,
+        project_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ArchivedLoopItemPage, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Local => self
+                .local_store
+                .list_archived_tasks(project_id, offset, limit),
+            provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?}"
+            ))),
+        }
+    }
+
+    pub async fn restore_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Local => self.local_store.restore_task(project_id, task_id),
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
@@ -2055,6 +2134,7 @@ esac
                     task_title: Some("AI Table task".to_owned()),
                     backend_task_id: None,
                     model_selection: None,
+                    execution_context: None,
                     workflow_node_id: None,
                 },
             )

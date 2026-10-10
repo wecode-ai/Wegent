@@ -14,8 +14,10 @@ import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnecti
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { openWorkspaceTabWindow } from './workspaceWindow'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
@@ -25,6 +27,11 @@ import { harnessAppRoute } from '@/features/harness-apps/harnessAppTabs'
 import { dshWorkspaceTabs, dshWorkspaceTabRoute } from '@/features/dsh-runtime/dshWorkspaceTabs'
 import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
+import {
+  fixedWorkspaceTabPreference,
+  fixedWorkspaceWindowLabel,
+  saveFixedWorkspaceTabs,
+} from './fixedWorkspaceTabs'
 
 type MenuPosition = CSSProperties & {
   left: number
@@ -171,7 +178,7 @@ function WorkspaceTabButton({
         onContextMenu={event => {
           event.preventDefault()
           onContextMenu(
-            clampMenuPosition({ left: event.clientX, top: event.clientY }, 196, 80),
+            clampMenuPosition({ left: event.clientX, top: event.clientY }, 196, 112),
             tab.id
           )
         }}
@@ -180,7 +187,7 @@ function WorkspaceTabButton({
           event.preventDefault()
           const rect = event.currentTarget.getBoundingClientRect()
           onContextMenu(
-            clampMenuPosition({ left: rect.left + 12, top: rect.bottom + 4 }, 196, 80),
+            clampMenuPosition({ left: rect.left + 12, top: rect.bottom + 4 }, 196, 112),
             tab.id
           )
         }}
@@ -225,6 +232,7 @@ export function WorkspaceTabStrip({
 }: WorkspaceTabStripProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
+  const appPreferences = useAppPreferencesState()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const {
     tabs,
@@ -232,6 +240,7 @@ export function WorkspaceTabStrip({
     openTab,
     selectTab,
     closeTab,
+    detachTab,
     closeOtherTabs,
     restoreClosedTab,
     moveTab,
@@ -353,6 +362,73 @@ export function WorkspaceTabStrip({
     setAddMenuPosition(null)
   }
   const contextTab = visibleTabs.find(tab => tab.id === contextMenu?.tabId) ?? null
+  const pinContextTab = async () => {
+    if (!contextTab || contextTab.fixed || !appPreferences?.loaded) return
+    setContextMenu(null)
+    const preference = fixedWorkspaceTabPreference(contextTab)
+    const windowLabel = getDesktopWindowLabel()
+    try {
+      await saveFixedWorkspaceTabs(
+        [
+          ...appPreferences.preferences.fixedWorkspaceTabs,
+          windowLabel.startsWith('workspace-') ? { ...preference, windowLabel } : preference,
+        ],
+        appPreferences.preferences.startupWorkspaceTabId
+      )
+    } catch (error) {
+      console.error('Failed to pin workspace tab', error)
+    }
+  }
+  const unpinContextTab = async () => {
+    if (!contextTab?.fixed || !appPreferences?.loaded) return
+    setContextMenu(null)
+    try {
+      await saveFixedWorkspaceTabs(
+        appPreferences.preferences.fixedWorkspaceTabs.filter(tab => tab.id !== contextTab.id),
+        appPreferences.preferences.startupWorkspaceTabId
+      )
+    } catch (error) {
+      console.error('Failed to unpin workspace tab', error)
+    }
+  }
+  const openContextTabInNewWindow = async () => {
+    if (!contextTab) return
+    setContextMenu(null)
+    const preferences = appPreferences?.loaded ? appPreferences.preferences : null
+    const fixedPreference = preferences?.fixedWorkspaceTabs.find(tab => tab.id === contextTab.id)
+    const label = fixedPreference ? fixedWorkspaceWindowLabel(contextTab.id) : undefined
+    const currentPreference = fixedWorkspaceTabPreference(contextTab)
+    const reassignedPreferences =
+      fixedPreference && preferences
+        ? preferences.fixedWorkspaceTabs.map(tab =>
+            tab.id === fixedPreference.id
+              ? { ...tab, ...currentPreference, windowLabel: label }
+              : tab
+          )
+        : null
+    try {
+      if (reassignedPreferences && preferences) {
+        await saveFixedWorkspaceTabs(reassignedPreferences, preferences.startupWorkspaceTabId)
+      }
+      const opened = label
+        ? await openWorkspaceTabWindow(contextTab, { label })
+        : await openWorkspaceTabWindow(contextTab)
+      if (opened) {
+        if (detachTab) detachTab(contextTab.id)
+        else closeTab(contextTab.id)
+      }
+    } catch (error) {
+      if (fixedPreference && preferences) {
+        void saveFixedWorkspaceTabs(
+          preferences.fixedWorkspaceTabs,
+          preferences.startupWorkspaceTabId
+        ).catch(rollbackError => {
+          console.error('Failed to restore pinned workspace tab after window error', rollbackError)
+        })
+      }
+      console.error('Failed to open workspace tab in a new window', error)
+    }
+  }
   const addMenuKinds = (
     [
       ['task', CheckSquare2, t('workbench.workspace_tab_task', '任务')],
@@ -518,26 +594,40 @@ export function WorkspaceTabStrip({
               className="fixed z-system-popover w-[196px] rounded-xl border border-border/70 bg-popover/95 p-1 shadow-lg backdrop-blur-md"
               style={{ left: contextMenu.left, top: contextMenu.top }}
             >
-              {!contextTab.fixed ? (
+              {contextTab.fixed ? (
                 <button
                   type="button"
                   role="menuitem"
-                  data-testid="workspace-tab-open-new-window"
-                  onClick={() => {
-                    setContextMenu(null)
-                    void openWorkspaceTabWindow(contextTab)
-                      .then(opened => {
-                        if (opened) closeTab(contextTab.id)
-                      })
-                      .catch(error => {
-                        console.error('Failed to open workspace tab in a new window', error)
-                      })
-                  }}
-                  className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-black/[0.04]"
+                  data-testid="workspace-tab-unpin"
+                  disabled={!appPreferences?.loaded}
+                  onClick={() => void unpinContextTab()}
+                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-black/[0.04] disabled:opacity-50"
                 >
-                  {t('workbench.workspace_tab_open_new_window', '在新窗口中打开')}
+                  <Pin aria-hidden="true" className="h-4 w-4 text-text-secondary" />
+                  {t('workbench.workspace_tab_unpin', '取消固定标签页')}
                 </button>
-              ) : null}
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="workspace-tab-pin"
+                  disabled={!appPreferences?.loaded}
+                  onClick={() => void pinContextTab()}
+                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-black/[0.04] disabled:opacity-50"
+                >
+                  <Pin aria-hidden="true" className="h-4 w-4 text-text-secondary" />
+                  {t('workbench.workspace_tab_pin', '固定标签页')}
+                </button>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="workspace-tab-open-new-window"
+                onClick={() => void openContextTabInNewWindow()}
+                className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-black/[0.04]"
+              >
+                {t('workbench.workspace_tab_open_new_window', '在新窗口中打开')}
+              </button>
               <button
                 type="button"
                 role="menuitem"

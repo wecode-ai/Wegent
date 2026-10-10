@@ -14,6 +14,7 @@
 
 import * as http from 'http'
 import { handleEmbeddingRequest } from './mock-embedding'
+import { handleMineruRequest } from './mock-mineru'
 import { handleProviderMcpHttpRequest, providerMcpToolCallCount } from './mock-provider-mcp'
 
 interface CapturedRequest {
@@ -902,7 +903,7 @@ const server = http.createServer((req, res) => {
     body += chunk.toString()
   })
 
-  req.on('end', () => {
+  req.on('end', async () => {
     const timestamp = new Date().toISOString()
 
     // Parse request body
@@ -939,7 +940,15 @@ const server = http.createServer((req, res) => {
       return
     }
 
-    if (handleEmbeddingRequest(req, res, body)) return
+    if (await handleEmbeddingRequest(req, res, body)) return
+
+    try {
+      if (await handleMineruRequest(req, res, body)) return
+    } catch (error) {
+      console.error('Failed to handle mock MinerU request:', error)
+      res.writeHead(500).end('mock mineru request failed')
+      return
+    }
 
     // Check for image_url in messages
     if (parsedBody?.messages) {
