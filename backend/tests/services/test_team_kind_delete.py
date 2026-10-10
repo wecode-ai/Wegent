@@ -388,3 +388,20 @@ def test_default_namespace_ghost_references_are_owner_scoped(test_db):
     assert ("Ghost", 1, "ghost-x") not in remaining
     assert ("Bot", 2, "bot-b") in remaining
     assert ("Ghost", 2, "ghost-x") in remaining
+
+
+def test_reference_prefilter_handles_like_wildcards(test_db):
+    """Names containing LIKE wildcards (e.g. underscores) must still be
+    matched by the SQL prefilter on every database dialect."""
+    # Arrange
+    team = _add_team(test_db, name="agent_a", bot_refs=[{"name": "bot_shared_v2"}])
+    _add_team(test_db, name="agent_b", bot_refs=[{"name": "bot_shared_v2"}])
+    _add_kind(test_db, kind="Bot", name="bot_shared_v2")
+    service = TeamKindService()
+
+    # Act
+    service._pre_delete_side_effects(test_db, team.user_id, team)
+    test_db.commit()
+
+    # Assert: the shared Bot is kept despite the underscores in its name
+    assert "bot_shared_v2" in _bot_names(test_db)

@@ -42,7 +42,10 @@ def _json_text_mentions_any(names: list[str]):
     (e.g. substring collisions) is therefore safe.
     """
     return or_(
-        *[cast(Kind.json, String).like(f'%"{_escape_like(name)}"%') for name in names]
+        *[
+            cast(Kind.json, String).like(f'%"{_escape_like(name)}"%', escape="\\")
+            for name in names
+        ]
     )
 
 
