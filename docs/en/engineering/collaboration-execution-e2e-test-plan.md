@@ -144,6 +144,29 @@ Each runtime uses distinct probe values so a result from one runtime cannot acci
 
 The final artifact must contain the correct probe values and be proven through a file, backend activity, MCP call record, or delivery API.
 
+## Agent Model and Session Regressions
+
+Cover the agent execution flow in the `project-automation`,
+`collaboration-local-agent-dispatch`, and `collaboration-remote-agent-dispatch`
+checkpoints. Report local and remote-process evidence separately; passing an
+isolated remote Executor does not verify the user's cloud device.
+
+| Scenario                       | Required result                                                                                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Automatic tag assignment       | Adding `auto` in the UI creates one execution; the actual model request uses the assigned agent's model, and completion moves the Issue to review |
+| Team model inheritance         | Without a model override, submit `wegentTeamId` instead of the workbench default model; the compiled Team determines the execution Shell          |
+| V2 request boundary            | The materialize response omits top-level `modelConfig: null`; materialized configuration exists only in the compiled execution request            |
+| Replies after manual execution | TaskBinding persists the Team ID; a reply continues the original task with `newSession=false` and uses the same actual model                      |
+| Manual execution capabilities  | The executor role reads its bound Issue through a real Code Mode tool call without exposing assignment or management tools                        |
+| Complete result persistence    | A final event saves full content after an outcome-only history snapshot; a previous turn's final event cannot complete a newer continuation       |
+| App device event projection    | The owned device's `app-record-*` and installation ID match the same activity; completion and failure both update its terminal state              |
+| Failure authorization          | Only the initiating user can fail a manually started response without a trigger message; unrelated users and senders cannot bypass authorization  |
+
+Assert the agent message content and terminal state; a user's prompt containing
+the probe text is not proof of model execution. Retain Electron screenshots,
+task IDs, model routing logs, and backend terminal states without logging
+authentication tokens or model secrets.
+
 ## Complete Scenario Matrix
 
 ### E2E-01: Create collaboration resources in Wegent
@@ -371,6 +394,13 @@ Additional scenario:
 - Proactive participation must not fabricate an “assigned to me” notification or assignment event.
 - Starting a private Task for an Issue already in review or completed must not
   move the Issue back to in progress.
+- Start work in the human-processing panel is a separate explicit action:
+  reassigning an in-review or completed Issue preserves its status and clears
+  the previous human submission. Only the new assignee's Start work action
+  moves it to in progress. The former assignee cannot start, and a submitted or
+  accepted result under the current assignment cannot be started again.
+  `project-assignment-notification` covers reassignment after acceptance and
+  explicit start without making an AI request.
 
 ### E2E-08: Cross-host consistency
 

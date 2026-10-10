@@ -2851,6 +2851,98 @@ def test_team_create_v3_keeps_executor_wire_protocol_at_v2(
     assert "wegentTeamId" not in payload
 
 
+@pytest.mark.parametrize(
+    ("requested_runtime", "shell_type", "expected_runtime"),
+    [("claude_code", "Codex", "codex"), ("codex", "ClaudeCode", "claude_code")],
+)
+def test_team_create_uses_compiled_shell_not_workbench_default(
+    test_db, test_user, monkeypatch, requested_runtime, shell_type, expected_runtime
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    supervisor = {
+        "mode": "auto",
+        "modelSelection": {"modelName": "supervisor-model", "modelType": "cloud"},
+        "intervalSeconds": 60,
+    }
+    supervisor_resolver = Mock(return_value=supervisor)
+    monkeypatch.setattr(
+        runtime_work_service, "_materialize_initial_supervisor", supervisor_resolver
+    )
+    payload = runtime_work_service._runtime_task_create_payload(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=3,
+            wegentTeamId=42,
+            deviceId="local-device-1",
+            workspacePath="/srv/workspaces/Wegent",
+            runtime=requested_runtime,
+            message="Run the assigned agent",
+            initialSupervisor=supervisor,
+        ),
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="local-device-1", workspace_path="/srv/workspaces/Wegent"
+        ),
+        execution_request=SimpleNamespace(
+            team_id=42,
+            bot=[{"shell_type": shell_type}],
+            attachments=[],
+            to_dict=lambda: {
+                "team_id": 42,
+                "bot": [{"shell_type": shell_type}],
+                "model_config": {"model_id": "configured-team-model"},
+            },
+        ),
+    )
+
+    assert payload["runtime"] == expected_runtime
+    assert payload["executionRequest"]["model_config"]["model_id"] == (
+        "configured-team-model"
+    )
+    assert supervisor_resolver.call_args.kwargs["runtime"] == expected_runtime
+
+
+@pytest.mark.asyncio
+async def test_team_create_response_uses_compiled_runtime(
+    test_db, test_user, monkeypatch
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    compiled = runtime_work_service.CompiledRuntimeTaskCreate(
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="local-device-1", workspace_path="/srv/workspaces/Wegent"
+        ),
+        payload={"runtime": "codex"},
+        team_id=42,
+    )
+    monkeypatch.setattr(
+        runtime_work_service, "compile_runtime_task_create", lambda **kwargs: compiled
+    )
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(return_value={"accepted": True, "taskId": "runtime-team-1"}),
+    )
+
+    response = await runtime_work_service.create_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=3,
+            wegentTeamId=42,
+            deviceId="local-device-1",
+            runtime="claude_code",
+            message="Run the assigned agent",
+        ),
+    )
+
+    assert response.runtime == "codex"
+    assert response.runtime_handle["wegentTeam"] == {"id": 42}
+
+
 def test_runtime_create_payload_preserves_additional_skill_refs(
     test_db,
     test_user,

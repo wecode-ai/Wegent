@@ -27,6 +27,31 @@ from app.services.project_chat.service import project_chat_service
 TERMINAL_STATUSES = {"done": "completed", "failed": "failed", "cancelled": "cancelled"}
 
 
+def completed_activity_for_turn(
+    db: Session,
+    *,
+    device_ids: list[str],
+    task_id: str,
+    turn_id: object,
+) -> ProjectChatMessage | None:
+    """Match final content to an outcome-only reconciliation of the same turn."""
+    if not isinstance(turn_id, str) or not turn_id:
+        return None
+    return (
+        db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id.in_(device_ids),
+            ProjectChatMessage.runtime_task_id == task_id,
+            ProjectChatMessage.sender_type == "agent",
+            ProjectChatMessage.status == "completed",
+            ProjectChatMessage.metadata_json["runtime_turn_id"].as_string() == turn_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+
+
 def _match_turn(
     row: ProjectChatMessage,
     snapshot: RuntimeExecutionSnapshot,
@@ -129,7 +154,7 @@ def reconcile_execution_snapshot(
             changed.append(row)
     project_chat_service._commit(db)
     return [
-        project_chat_service.to_view(row).model_dump(mode="json", by_alias=True)
+        project_chat_service.to_view(row, db=db).model_dump(mode="json", by_alias=True)
         for row in changed
     ]
 

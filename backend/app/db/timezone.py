@@ -4,8 +4,10 @@
 
 """Configured database timezone and clock helpers."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import cast
+
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 
@@ -31,3 +33,16 @@ def database_datetime_timezone() -> timezone:
 def database_datetime_now() -> datetime:
     """Return now in the configured convention for persisted naive datetimes."""
     return datetime.now(database_datetime_timezone()).replace(tzinfo=None)
+
+
+def database_datetime_as_utc(db: Session, value: datetime) -> datetime:
+    """Normalize a database-generated timestamp without shifting aware values."""
+    if value.tzinfo is None:
+        bind = db.get_bind()
+        source_timezone = (
+            timezone.utc
+            if bind is not None and bind.dialect.name == "sqlite"
+            else database_datetime_timezone()
+        )
+        value = value.replace(tzinfo=source_timezone)
+    return value.astimezone(UTC)

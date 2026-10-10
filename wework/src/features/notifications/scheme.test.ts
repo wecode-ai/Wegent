@@ -48,6 +48,13 @@ describe('Wework scheme routing', () => {
     expect(route.searchParams.get('itemId')).toBe('WEG-12')
     expect(route.searchParams.get('commentId')).toBe('c-1')
   })
+  it('encodes the navigation request key using the same parameter read by the workbench', () => {
+    const destination = parseWeworkScheme('wework://boards/12/issues/WEG-12/comments/c-1')!
+    const route = new URL(weworkDestinationRoute(destination, 'second open/#'), 'https://local')
+
+    expect(route.searchParams.get('focusRequest')).toBe('second open/#')
+    expect(route.searchParams.get('commentId')).toBe('c-1')
+  })
   it.each([
     'https://boards/12',
     'wework://boards/0',

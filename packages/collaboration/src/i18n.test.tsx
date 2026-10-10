@@ -10,6 +10,23 @@ import {
 } from "./i18n";
 
 describe("collaboration i18n", () => {
+  it("localizes execution duration units with interpolation", () => {
+    const english = createCollaborationTranslator("en");
+    const chinese = createCollaborationTranslator("zh-CN");
+    expect(english("todo.elapsed_minutes", undefined, { count: 7 })).toBe(
+      "7 min",
+    );
+    expect(chinese("todo.elapsed_minutes", undefined, { count: 7 })).toBe(
+      "7 分钟",
+    );
+    expect(english("todo.elapsed_hours", undefined, { count: 2 })).toBe("2 h");
+    expect(chinese("todo.elapsed_hours", undefined, { count: 2 })).toBe(
+      "2 小时",
+    );
+    expect(english("todo.elapsed_days", undefined, { count: 1 })).toBe("1 d");
+    expect(chinese("todo.elapsed_days", undefined, { count: 1 })).toBe("1 天");
+  });
+
   it("localizes only the complete standard status set by stable id", () => {
     const standard = [
       { id: "inbox", name: "收集箱" },
