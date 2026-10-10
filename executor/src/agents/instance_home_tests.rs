@@ -14,6 +14,58 @@ fn request() -> ExecutionRequest {
 }
 
 #[test]
+fn pipeline_stages_have_independent_homes_and_route_skills_to_the_active_task() {
+    let root = tempfile::tempdir().unwrap();
+    let mut first = request();
+    first
+        .extra
+        .insert("collaboration_model".to_owned(), json!("pipeline"));
+    let first_home = named_home_at(root.path(), &first).unwrap();
+    assert_eq!(
+        first_home,
+        root.path()
+            .join("agents/user1/wecode-ai/wegent-design/bots/23")
+    );
+    let first_lease = acquire_at(&first, root.path(), &first_home).unwrap();
+    fs::create_dir_all(first_home.join("skills")).unwrap();
+    fs::write(first_home.join("session"), "first-stage-session").unwrap();
+    let mut second = first.clone();
+    second.bot[0]["id"] = json!(24);
+    second.bot[0]["shell_type"] = json!("ClaudeCode");
+    let second_home = named_home_at(root.path(), &second).unwrap();
+    assert_ne!(first_home, second_home);
+    let second_lease = acquire_at(&second, root.path(), &second_home).unwrap();
+    fs::create_dir_all(second_home.join("skills")).unwrap();
+    let lookup = || task_skills_directory_at(root.path(), "task-1", "https://backend.example", "1");
+    assert!(lookup().unwrap_err().contains("multiple"));
+    drop(first_lease);
+    assert_eq!(lookup().unwrap(), second_home.join("skills"));
+    assert!(acquire_at(&second, root.path(), &second_home)
+        .unwrap_err()
+        .contains("active"));
+    assert!(task_skills_directory_at(root.path(), "task-1", "https://other.example", "1").is_err());
+    drop(second_lease);
+    assert!(lookup().unwrap_err().contains("multiple"));
+    // An execution for another task must not select a historical pipeline stage.
+    second.task_id = "task-2".to_owned();
+    let unrelated_lease = acquire_at(&second, root.path(), &second_home).unwrap();
+    assert!(lookup().unwrap_err().contains("multiple"));
+    drop(unrelated_lease);
+    first.new_session = false;
+    let resumed = acquire_at(&first, root.path(), &first_home).unwrap();
+    assert_eq!(lookup().unwrap(), first_home.join("skills"));
+    assert_eq!(
+        fs::read_to_string(first_home.join("session")).unwrap(),
+        "first-stage-session"
+    );
+    drop(resumed);
+    first.bot[0]["id"] = Value::Null;
+    assert!(named_home_at(root.path(), &first)
+        .unwrap_err()
+        .contains("Bot identity"));
+}
+
+#[test]
 fn backend_requests_use_executing_user_independently_of_resource_owner() {
     for shell in ["Codex", "ClaudeCode"] {
         for owner in [

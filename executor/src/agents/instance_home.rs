@@ -71,7 +71,25 @@ fn path_component(value: &str) -> Result<&str, String> {
 }
 
 fn named_home_at(root: &Path, request: &ExecutionRequest) -> Result<PathBuf, String> {
-    home_with_user(root, request, current_user_component(request)?)
+    let home = home_with_user(root, request, current_user_component(request)?)?;
+    if request
+        .extra
+        .get("collaboration_model")
+        .and_then(Value::as_str)
+        == Some("pipeline")
+    {
+        let bot = request
+            .bot
+            .as_array()
+            .and_then(|bots| bots.first())
+            .unwrap_or(&request.bot);
+        let id = bot
+            .get("id")
+            .and_then(positive_id)
+            .ok_or("Pipeline Bot identity is missing")?;
+        return Ok(home.join("bots").join(id));
+    }
+    Ok(home)
 }
 
 fn current_user_component(request: &ExecutionRequest) -> Result<&str, String> {
@@ -440,6 +458,10 @@ fn acquire_at(request: &ExecutionRequest, root: &Path, home: &Path) -> Result<Ho
     if !binding.exists() || read_marker(&binding)? != task {
         super::runtime_capabilities::write_json_file(&binding, &task)?;
     }
+    // The held lease identifies the active pipeline stage for task-scoped tools.
+    let active = home.join("runtime/active-task.json");
+    reject_symlink_ancestors(&active, root)?;
+    super::runtime_capabilities::write_json_file(&active, &json!({"task_id": request.task_id}))?;
     Ok(lock)
 }
 
@@ -612,6 +634,17 @@ pub(crate) fn task_skills_directory_at(
     if found.iter().any(|(_, current)| *current) {
         found.retain(|(_, current)| *current);
     }
+    if found.len() > 1 {
+        let mut active = Vec::new();
+        for (home, current) in &found {
+            if active_task_lease(home, root, task_id)? {
+                active.push((home.clone(), *current));
+            }
+        }
+        if active.len() == 1 {
+            found = active;
+        }
+    }
     let [(home, _)] = found.as_slice() else {
         return Err(if found.is_empty() {
             "Task has no prepared agent Home"
@@ -646,7 +679,52 @@ fn agent_homes(agents: &Path) -> Result<Vec<PathBuf>, String> {
         }
         directories = children;
     }
-    Ok(directories)
+    let mut homes = directories.clone();
+    for directory in directories {
+        let bots = directory.join("bots");
+        match fs::symlink_metadata(&bots) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+        for entry in fs::read_dir(bots).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if entry
+                .file_type()
+                .map_err(|error| error.to_string())?
+                .is_dir()
+            {
+                homes.push(entry.path());
+            }
+        }
+    }
+    Ok(homes)
+}
+
+fn active_task_lease(home: &Path, root: &Path, task_id: &str) -> Result<bool, String> {
+    let path = home.join(".execution.lock");
+    reject_symlink_ancestors(&path, root)?;
+    let file = match fs::OpenOptions::new().read(true).write(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.to_string()),
+    };
+    match file.try_lock_exclusive() {
+        Ok(()) => {
+            FileExt::unlock(&file).map_err(|error| error.to_string())?;
+            Ok(false)
+        }
+        Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
+            let active = home.join("runtime/active-task.json");
+            reject_symlink_ancestors(&active, root)?;
+            if !active.try_exists().map_err(|error| error.to_string())? {
+                return Ok(false);
+            }
+            Ok(read_marker(&active)?["task_id"].as_str() == Some(task_id))
+        }
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
 export function packagedResourcesRoot(appBinary) {
   return process.platform === 'darwin'
@@ -174,7 +175,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
   const { stdout } = await promisify(execFile)(
     require('electron'),
-    [scriptPath, JSON.stringify(input)],
+    [scriptPath, JSON.stringify(input), ...resolveElectronLaunchArguments()],
     {
       env: environment,
       timeout: 60_000,
