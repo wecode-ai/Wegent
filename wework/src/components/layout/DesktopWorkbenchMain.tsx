@@ -3259,7 +3259,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [openRightPanelTab, t]
   )
   const currentWorkItemGuideProject =
-    boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
+    boundCloudProject ??
+    pendingCloudProject ??
+    defaultProject ??
+    (defaultProjectSpace ? null : defaultWorkItemPreviewProject)
   const availableWorkItemProjects =
     cloudProjects.length > 0
       ? cloudProjects.filter(project => !isDefaultWorkItemProject(project))

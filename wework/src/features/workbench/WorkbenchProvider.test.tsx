@@ -1575,6 +1575,21 @@ function ProjectSendProbe({
       </button>
       <button
         type="button"
+        onClick={() =>
+          void workbench.createProjectRuntimeTask('隔离处理项目 Issue', {
+            project: createProject(),
+            deviceWorkspaceId: 22,
+            workspaceExecution: {
+              workspace: { source: 'git_worktree', branch: 'main' },
+            },
+            runtime: 'codex',
+          })
+        }
+      >
+        send worktree with explicit project
+      </button>
+      <button
+        type="button"
         onClick={() => {
           const project =
             workbench.state.currentProject ??
@@ -7191,6 +7206,72 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(request.execution).toBeUndefined()
     expect(prepareWorktree).not.toHaveBeenCalled()
+  })
+
+  test('validates a managed workspace with the explicitly selected embedded project', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getWorktreeCapabilities: vi.fn().mockResolvedValue({
+        success: true,
+        deviceId: 'device-1',
+        runtimeWorktrees: {
+          version: 1,
+          managed: true,
+          deferredPrepare: true,
+          snapshots: true,
+          restore: true,
+          preflight: true,
+          persistentStorageVerified: true,
+        },
+      }),
+      preflightWorktree: vi.fn().mockResolvedValue({
+        success: true,
+        deviceId: 'device-1',
+        supported: true,
+        sourcePath: '/workspace/project-alpha',
+        sourceExists: true,
+        sourceDirectory: true,
+        gitRepository: true,
+        gitCommonDirValid: true,
+        gitCommonDirWritable: true,
+        writable: true,
+        repoRoot: '/workspace/project-alpha',
+        repoRootFingerprint: 'repo-fingerprint',
+        resolvedWorktreeRoot: '/workspace/worktrees',
+      }),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: `/workspace/worktrees/${request.taskId}`,
+        runtime: 'codex',
+      })),
+    })
+    const services = createWorkbenchServices({
+      projectApi: {
+        listProjects: vi.fn().mockResolvedValue({ items: [] }),
+      } as Partial<WorkbenchServices['projectApi']> as WorkbenchServices['projectApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('send worktree with explicit project'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.preflightWorktree).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      sourcePath: '/workspace/project-alpha',
+      ref: 'main',
+    })
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 7,
+        deviceWorkspaceId: 22,
+        execution: {
+          workspace: { source: 'git_worktree', branch: 'main' },
+        },
+      })
+    )
   })
 
   test('reuses a predecessor workspace without creating another worktree', async () => {

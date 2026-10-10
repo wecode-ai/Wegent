@@ -209,6 +209,116 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   text-decoration: none;
 }
 
+.task-description-editor .bn-block-content[data-content-type='attachmentImage'] {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.task-description-editor
+  .bn-block-content[data-content-type='attachmentImage'].ProseMirror-selectednode,
+.task-description-editor
+  .ProseMirror-selectednode
+  > .bn-block-content[data-content-type='attachmentImage'],
+.task-description-editor
+  .ProseMirror-selectednode:has(.bn-block-content[data-content-type='attachmentImage']),
+.task-description-editor
+  .bn-block-content[data-content-type='attachmentImage'].ProseMirror-selectednode
+  > *,
+.task-description-editor
+  .ProseMirror-selectednode
+  > .bn-block-content[data-content-type='attachmentImage']
+  > *,
+.task-description-editor
+  .bn-block-content[data-content-type='attachmentImage']
+  .ProseMirror-selectednode {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.task-description-attachment-image-block {
+  width: min(280px, 100%);
+  margin: 4px 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: rgb(var(--color-muted));
+  box-shadow: none;
+}
+
+.task-description-attachment-image-block img,
+.task-description-attachment-image-placeholder {
+  display: block;
+  width: 100%;
+  height: 158px;
+}
+
+.task-description-attachment-image-trigger {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.task-description-attachment-image-block img {
+  object-fit: contain;
+  background: rgb(var(--color-muted));
+}
+
+.task-description-attachment-image-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--color-text-muted));
+  background: rgb(var(--color-muted));
+  font-size: var(--text-sm);
+}
+
+.task-description-attachment-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgb(0 0 0 / 0.82);
+  cursor: zoom-out;
+}
+
+.task-description-attachment-image-lightbox > img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  cursor: default;
+}
+
+.task-description-attachment-image-lightbox-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.16);
+  color: #fff;
+  cursor: pointer;
+}
+
+.task-description-attachment-image-lightbox-close:hover {
+  background: rgb(255 255 255 / 0.26);
+}
+
 /* Compact description editors do not reserve BlockNote's default side gutter. */
 .task-description-editor .bn-editor {
   padding-inline: 0;
@@ -292,127 +402,6 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 
 .task-description-editor .bn-side-menu[data-block-type='heading'][data-level='6'] {
   height: 54px;
-}
-
-.task-description-attachment-preview {
-  z-index: 50;
-  max-width: 320px;
-  background: rgb(var(--color-bg-base));
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 8px;
-  padding: 6px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
-}
-
-.task-description-attachment-preview-figure {
-  position: relative;
-}
-
-.task-description-attachment-preview img {
-  display: block;
-  max-width: 100%;
-  max-height: 320px;
-  border-radius: 4px;
-}
-
-.task-description-attachment-preview-image {
-  cursor: zoom-in;
-}
-
-.task-description-attachment-preview-view {
-  position: absolute;
-  left: 50%;
-  bottom: 10px;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: 0;
-  background: rgb(0 0 0 / 0.6);
-  color: #fff;
-  font-size: var(--text-xs);
-  line-height: 1.4;
-  cursor: pointer;
-  backdrop-filter: blur(2px);
-}
-
-.task-description-attachment-preview-view:hover {
-  background: rgb(0 0 0 / 0.78);
-}
-
-.task-description-attachment-preview-label {
-  display: block;
-  padding: 8px;
-  font-size: var(--text-xs);
-  color: rgb(var(--color-text-muted));
-}
-
-.task-description-image-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgb(0 0 0 / 0.72);
-}
-
-.task-description-image-lightbox-stage {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  max-width: 92vw;
-  max-height: 86vh;
-  overflow: auto;
-}
-
-.task-description-image-lightbox-stage img {
-  display: block;
-  max-width: 92vw;
-  max-height: 86vh;
-  transform-origin: center center;
-  transition: transform 0.15s ease;
-  user-select: none;
-}
-
-.task-description-image-lightbox-toolbar {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 0.92);
-  color: #222;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
-}
-
-.task-description-image-lightbox-toolbar button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-
-.task-description-image-lightbox-toolbar button:hover {
-  background: rgb(0 0 0 / 0.08);
-}
-
-.task-description-image-lightbox-toolbar span {
-  min-width: 44px;
-  font-size: var(--text-xs);
-  text-align: center;
-  font-variant-numeric: tabular-nums;
 }
 
 @keyframes suffix-roll-out-up {
