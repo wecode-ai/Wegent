@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
 
@@ -14,6 +16,11 @@ const SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH_COMPLETE'
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
 const LONG_HISTORY_ITEM_COUNT = 1_200
+// High-entropy output forces several transport chunks even after compression.
+const LARGE_TOOL_OUTPUT = Array.from(
+  { length: 28_000 },
+  (_, index) => `${createHash('sha256').update(String(index)).digest('hex')}中文🙂\n`
+).join('')
 const HYDRATION_RESPONSE_TIMEOUT_MS = 3_000
 
 function sse(events) {
@@ -89,10 +96,29 @@ function appendLongRunningHistory(rollout, threadId) {
           type: 'CommandExecution',
           command: ['printf', String(index)],
           status: 'completed',
+          aggregatedOutput: index === 0 ? LARGE_TOOL_OUTPUT : String(index),
         },
       },
     })
   ).join('\n')
+}
+
+async function assertLargeHistoryTransfer(executorHome, taskId, threadId) {
+  const scope = createHash('sha256')
+    .update(JSON.stringify([taskId, threadId]))
+    .digest('hex')
+  const directory = join(executorHome, 'runtime-work', 'transcript-transfers', scope)
+  const snapshots = (await readdir(directory)).filter(name => name.endsWith('.gz'))
+  assert.ok(snapshots.length > 0, 'The large history never used a persistent transfer snapshot')
+  for (const name of snapshots) {
+    const bytes = await readFile(join(directory, name))
+    const packed = JSON.parse(gunzipSync(bytes).toString('utf8'))
+    if (packed.strings?.some(text => text.includes(LARGE_TOOL_OUTPUT))) {
+      assert.ok(bytes.length > 360 * 1024, 'The fixture did not exercise multiple transfer chunks')
+      return
+    }
+  }
+  assert.fail('The history transfer truncated or omitted the large tool output')
 }
 
 async function findRolloutPath(directory, threadId) {
@@ -407,6 +433,7 @@ export function createDesktopScenario({
         hydratedSnapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT,
         'The restored conversation did not include the complete long tool history'
       )
+      await assertLargeHistoryTransfer(executorHome, taskId, moved.address.threadId)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FIRST_COMPLETION,
         timeoutMs: uiTimeoutMs,

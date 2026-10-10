@@ -297,6 +297,14 @@ class LoopItemTaskBinding(LoopNode):
         return value if isinstance(value, dict) else None
 
     @property
+    def execution_context(self) -> dict[str, object] | None:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get("execution_context")
+        return value if isinstance(value, dict) else None
+
+    @property
     def workflow_node_id(self) -> str | None:
         metadata = self.metadata_json
         if not isinstance(metadata, dict):

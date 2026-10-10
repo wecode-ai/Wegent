@@ -165,6 +165,82 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_completed_todo_subtree_can_be_archived_listed_and_restored(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    parent = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Completed parent", "status": "completed"},
+    ).json()
+    child = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={
+            "title": "Completed child",
+            "status": "completed",
+            "parent_id": parent["id"],
+        },
+    ).json()
+
+    archived = test_client.delete(
+        f"/api/v1/loop-items/{parent['id']}",
+        headers=_auth(test_token),
+    )
+    assert archived.status_code == 204
+
+    archive_page = test_client.get(
+        f"/api/v1/cloud-projects/{delivery_project.id}/archived-loop-items",
+        headers=_auth(test_token),
+    )
+    assert archive_page.status_code == 200
+    assert [item["id"] for item in archive_page.json()["items"]] == [parent["id"]]
+    assert archive_page.json()["items"][0]["archived_at"]
+
+    child_restore = test_client.post(
+        f"/api/v1/loop-items/{child['id']}/restore",
+        headers=_auth(test_token),
+    )
+    assert child_restore.status_code == 409
+
+    restored = test_client.post(
+        f"/api/v1/loop-items/{parent['id']}/restore",
+        headers=_auth(test_token),
+    )
+    assert restored.status_code == 200
+    assert {item["id"] for item in restored.json()["items"]} == {
+        parent["id"],
+        child["id"],
+    }
+
+
+def test_incomplete_todo_subtree_cannot_be_archived(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    parent = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Completed parent", "status": "completed"},
+    ).json()
+    test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Incomplete child", "parent_id": parent["id"]},
+    )
+
+    response = test_client.delete(
+        f"/api/v1/loop-items/{parent['id']}",
+        headers=_auth(test_token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Only completed TODO subtrees can be archived"
+
+
 def test_external_loop_items_forward_assignee_filters(
     test_client: TestClient,
     test_token: str,

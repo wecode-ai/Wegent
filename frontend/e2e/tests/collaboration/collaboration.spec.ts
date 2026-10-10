@@ -193,7 +193,7 @@ test.describe('Collaboration module', () => {
     const issueId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
     expect(issueId).not.toBe('')
 
-    await page.getByTestId('cloud-todo-edit-content').click()
+    await page.getByTestId('cloud-todo-detail-title').click()
     await page.getByTestId('cloud-todo-detail-title').fill(updatedIssueTitle)
     await page.getByTestId('cloud-todo-detail-status').selectOption('pending')
     await page.getByTestId('cloud-todo-save').click()

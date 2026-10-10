@@ -7,6 +7,10 @@ describe('openProjectSpaceRuntimeTaskInTab', () => {
     const address = {
       deviceId: 'local-device',
       taskId: 'runtime-1',
+      issueExecution: {
+        projectId: 'local-project',
+        issueId: 'issue-1',
+      },
     }
     const taskTab = {
       id: 'task-existing',
@@ -44,7 +48,8 @@ describe('openProjectSpaceRuntimeTaskInTab', () => {
 
     expect(callOrder).toEqual(['select-task-tab', 'open-runtime-task'])
     expect(selectTab).toHaveBeenCalledWith(taskTab.id, {
-      contentRoute: '/runtime-tasks?deviceId=local-device&taskId=runtime-1',
+      contentRoute:
+        '/runtime-tasks?deviceId=local-device&taskId=runtime-1&issueProjectId=local-project&issueId=issue-1',
     })
     expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
   })

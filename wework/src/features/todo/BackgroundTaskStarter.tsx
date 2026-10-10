@@ -15,6 +15,7 @@ interface BackgroundTaskStarterProps {
   task: CloudLoopItem
   input: string
   initialLocalProjectId?: number | null
+  initialDeviceWorkspaceId?: number | null
   taskRequest?: RuntimeTaskCreateRequest | null
   inheritFromTask?: RuntimeTaskAddress | null
   prepareTask?: (
@@ -23,7 +24,8 @@ interface BackgroundTaskStarterProps {
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   onTaskCreated?: (
     address: RuntimeTaskAddress,
-    localProject: ProjectWithTasks | null
+    localProject: ProjectWithTasks | null,
+    deviceWorkspaceId: number | null
   ) => Promise<void> | void
   onAddressChange: (address: RuntimeTaskAddress) => void
   onError: (message: string) => void
@@ -35,6 +37,7 @@ export function BackgroundTaskStarter({
   task,
   input,
   initialLocalProjectId = null,
+  initialDeviceWorkspaceId = null,
   taskRequest = null,
   inheritFromTask = null,
   prepareTask,
@@ -62,6 +65,7 @@ export function BackgroundTaskStarter({
   const runtimeContext = useMemo(() => buildWorkItemRuntimeContext(project, task), [project, task])
   const createConversation = useProjectRuntimeTaskComposer({
     project: selectedLocalProject,
+    deviceWorkspaceId: taskRequest?.deviceWorkspaceId ?? initialDeviceWorkspaceId,
     workspaceSource: inheritFromTask,
     taskRequest,
     runtimeContext,

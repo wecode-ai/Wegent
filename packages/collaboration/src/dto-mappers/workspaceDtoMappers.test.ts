@@ -96,6 +96,10 @@ describe("workspace DTO mappers", () => {
             modelName: "gpt-5.6-sol",
             modelType: "runtime",
           },
+          execution_context: {
+            runtime: "codex",
+            workspacePath: "/workspace/task-1",
+          },
           binding_type: "user",
           linked_at: "2026-09-10T00:00:00Z",
         },
@@ -117,6 +121,10 @@ describe("workspace DTO mappers", () => {
       modelSelection: {
         modelName: "gpt-5.6-sol",
         modelType: "runtime",
+      },
+      executionContext: {
+        runtime: "codex",
+        workspacePath: "/workspace/task-1",
       },
       bindingType: "user",
       linkedAt: "2026-09-10T00:00:00Z",

@@ -5,7 +5,17 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.knowledge.indexing import run_document_indexing
+import pytest
+
+from app.core.config import settings
+from app.services.knowledge.indexing import OldIndexCleanupError, run_document_indexing
+from app.services.rag.remote_gateway import RemoteRagGateway
+
+
+def test_index_gateway_executes_remotely() -> None:
+    from app.services.rag.gateway_factory import get_rag_gateway
+
+    assert isinstance(get_rag_gateway(), RemoteRagGateway)
 
 
 def test_run_document_indexing_closes_owned_session_before_gateway_call() -> None:
@@ -45,7 +55,7 @@ def test_run_document_indexing_closes_owned_session_before_gateway_call() -> Non
             return_value=object(),
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -72,6 +82,7 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
     gateway = MagicMock()
+    gateway.delete_document_index = AsyncMock(return_value={"deleted_chunks": 0})
     gateway.index_document = AsyncMock(
         return_value={
             "status": "skipped",
@@ -91,7 +102,11 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
             return_value=object(),
         ) as mock_build_runtime_spec,
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -130,7 +145,7 @@ def test_run_document_indexing_deletes_the_old_index_before_the_write() -> None:
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
-    runtime_spec = SimpleNamespace(embedding_model_config=None)
+    runtime_spec = SimpleNamespace(knowledge_base_id=1, document_id=4)
     delete_spec = SimpleNamespace(knowledge_base_id=1, document_ref="4")
     gateway = MagicMock()
     call_order: list[str] = []
@@ -160,7 +175,7 @@ def test_run_document_indexing_deletes_the_old_index_before_the_write() -> None:
             return_value=delete_spec,
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -185,6 +200,99 @@ def test_run_document_indexing_deletes_the_old_index_before_the_write() -> None:
     assert call_order == ["delete", "index"]
 
 
+def test_run_document_indexing_aborts_when_the_old_index_cannot_be_deleted() -> None:
+    """A rebuild must not write the new generation over the surviving old one."""
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
+    gateway = MagicMock()
+    gateway.delete_document_index = AsyncMock(
+        side_effect=RuntimeError("runtime unavailable")
+    )
+    gateway.index_document = AsyncMock()
+
+    with (
+        patch(
+            "app.services.knowledge.indexing.resolve_kb_index_info",
+            return_value=kb_index_info,
+        ),
+        patch(
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.knowledge.indexing.get_rag_gateway",
+            return_value=gateway,
+        ),
+    ):
+        with pytest.raises(OldIndexCleanupError):
+            run_document_indexing(
+                knowledge_base_id="1",
+                attachment_id=2,
+                retriever_name="retriever-1",
+                retriever_namespace="default",
+                embedding_model_name="embedding-1",
+                embedding_model_namespace="default",
+                user_id=3,
+                user_name="tester",
+                document_id=4,
+                kb_index_info=kb_index_info,
+                trigger_summary=False,
+                db=db,
+            )
+
+    gateway.index_document.assert_not_awaited()
+
+
+def test_run_document_indexing_aborts_when_the_old_index_spec_cannot_be_built() -> None:
+    """Without an addressable old index the rebuild must stop, not overwrite."""
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
+    gateway = MagicMock()
+    gateway.index_document = AsyncMock()
+
+    with (
+        patch(
+            "app.services.knowledge.indexing.resolve_kb_index_info",
+            return_value=kb_index_info,
+        ),
+        patch(
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
+            side_effect=ValueError("Knowledge base 1 not found"),
+        ),
+        patch(
+            "app.services.knowledge.indexing.get_rag_gateway",
+            return_value=gateway,
+        ),
+    ):
+        with pytest.raises(OldIndexCleanupError):
+            run_document_indexing(
+                knowledge_base_id="1",
+                attachment_id=2,
+                retriever_name="retriever-1",
+                retriever_namespace="default",
+                embedding_model_name="embedding-1",
+                embedding_model_namespace="default",
+                user_id=3,
+                user_name="tester",
+                document_id=4,
+                kb_index_info=kb_index_info,
+                trigger_summary=False,
+                db=db,
+            )
+
+    gateway.index_document.assert_not_awaited()
+
+
 def test_run_document_indexing_normalizes_empty_splitter_config_for_runtime_spec() -> (
     None
 ):
@@ -192,6 +300,7 @@ def test_run_document_indexing_normalizes_empty_splitter_config_for_runtime_spec
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
     gateway = MagicMock()
+    gateway.delete_document_index = AsyncMock(return_value={"deleted_chunks": 0})
     gateway.index_document = AsyncMock(
         return_value={"status": "success", "indexed_count": 1, "index_name": "kb_1"}
     )
@@ -206,7 +315,11 @@ def test_run_document_indexing_normalizes_empty_splitter_config_for_runtime_spec
             return_value=object(),
         ) as mock_build_runtime_spec,
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -245,6 +358,7 @@ def test_run_document_indexing_normalizes_legacy_splitter_config_for_runtime_spe
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
     gateway = MagicMock()
+    gateway.delete_document_index = AsyncMock(return_value={"deleted_chunks": 0})
     gateway.index_document = AsyncMock(
         return_value={"status": "success", "indexed_count": 1, "index_name": "kb_1"}
     )
@@ -259,7 +373,11 @@ def test_run_document_indexing_normalizes_legacy_splitter_config_for_runtime_spe
             return_value=object(),
         ) as mock_build_runtime_spec,
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):

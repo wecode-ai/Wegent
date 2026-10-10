@@ -1544,19 +1544,21 @@ def _running_ai_task(
     return task, message
 
 
+@pytest.mark.parametrize("initial_status", ["todo", "in_review"])
 @pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
 def test_running_ai_state_clears_completed_at_using_schema_contract(
     test_db: Session,
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
+    initial_status: str,
     unset_value: datetime | None,
 ) -> None:
     project = create_project(test_db, test_user)
     task = LoopItem(
         cloud_project_id=project.id,
-        title="Restart completed task",
+        title="Start or continue task",
         description="",
-        status="todo",
+        status=initial_status,
         completed_at=datetime(2026, 9, 10, 12),
         assignee_agent_id="12",
         created_by_user_id=test_user.id,
@@ -1593,10 +1595,194 @@ def test_running_ai_state_clears_completed_at_using_schema_contract(
 
     assert task.status == "in_progress"
     assert task.completed_at == unset_value
+    latest_change = task.metadata_json["status_history"][-1]
+    assert latest_change["from_status"] == initial_status
+    assert latest_change["to_status"] == "in_progress"
+    assert latest_change["trigger"] == "ai_started"
     assert len(contract_calls) == 1
     assert contract_calls[0][1] == "completed_at"
 
 
+def test_running_ai_state_does_not_reopen_completed_task(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = create_project(test_db, test_user)
+    completed_at = datetime(2026, 9, 10, 12)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Keep accepted task completed",
+        description="",
+        status="completed",
+        completed_at=completed_at,
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+        sender_name="Code Reviewer",
+        metadata_json={"run_id": str(uuid.uuid4())},
+    )
+
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=row,
+        trigger=None,
+        agent=None,
+        status_value="running",
+    )
+
+    assert task.status == "completed"
+    assert task.completed_at == completed_at
+
+
+@pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
+def test_advance_to_review_clears_completed_at_using_schema_contract(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    unset_value: datetime | None,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Review completed task",
+        description="",
+        status="in_progress",
+        completed_at=datetime(2026, 9, 10, 12),
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+    )
+    contract_calls: list[tuple[object, str]] = []
+
+    def unset_for_connection(connection: object, attribute: str) -> datetime | None:
+        contract_calls.append((connection, attribute))
+        return unset_value
+
+    monkeypatch.setattr(
+        "app.services.project_chat.service.loop_unset_datetime_for_connection",
+        unset_for_connection,
+    )
+
+    project_chat_service._advance_task_to_review(test_db, row)
+
+    assert task.status == "in_review"
+    assert task.completed_at == unset_value
+    assert len(contract_calls) == 1
+    assert contract_calls[0][1] == "completed_at"
+
+
+def test_older_run_completion_does_not_hide_a_newer_queued_follow_up(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Queued follow-up",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    older = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="12",
+        sender_name="Code Reviewer",
+        agent_id="12",
+        metadata_json={"run_id": "older-run"},
+    )
+    newer = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="12",
+        sender_name="Code Reviewer",
+        agent_id="12",
+        metadata_json={"run_id": "newer-run"},
+    )
+
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=older,
+        trigger=None,
+        agent=None,
+        status_value="running",
+    )
+    test_db.commit()
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=newer,
+        trigger=None,
+        agent=None,
+        status_value="running",
+    )
+    test_db.commit()
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=older,
+        trigger=None,
+        agent=None,
+        status_value="completed",
+    )
+    project_chat_service._advance_task_to_review(test_db, older)
+
+    assert task.status == "in_progress"
+    assert task.metadata_json["ai_state"]["run_id"] == "newer-run"
+    assert task.metadata_json["ai_state"]["status"] == "running"
+
+
+@pytest.mark.parametrize("dispatch_role", ["manager", "member"])
+def test_collaboration_execution_cannot_advance_parent_issue_to_review(
+    test_db: Session,
+    test_user: User,
+    dispatch_role: str,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Collaboration parent",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+        metadata_json={"dispatch_role": dispatch_role},
+    )
+
+    project_chat_service._advance_task_to_review(test_db, row)
+
+    assert task.status == "in_progress"
 def _expire_ai_lease(
     test_db: Session, task: LoopItem, *, minutes_ago: int = 10
 ) -> None:

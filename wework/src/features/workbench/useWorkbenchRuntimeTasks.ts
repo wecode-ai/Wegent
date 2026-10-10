@@ -38,6 +38,7 @@ import {
   getRuntimeTaskWorkspacePath,
   isSameRuntimeTaskAddress,
   isSameRuntimeTaskIdentity,
+  mergeRuntimeTaskAddresses,
   projectTaskAddresses,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -101,22 +102,23 @@ export function useWorkbenchRuntimeTasks({
       options?: { markOpened?: boolean; navigate?: boolean }
     ) => {
       const reopeningCurrentTask = isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)
-      currentRuntimeTaskRef.current = address
+      const openedAddress = mergeRuntimeTaskAddresses(currentRuntimeTaskRef.current, address)
+      currentRuntimeTaskRef.current = openedAddress
       if (options?.markOpened !== false) {
-        openedRuntimeTaskKeysRef.current.add(getRuntimeTaskRouteKey(address))
+        openedRuntimeTaskKeysRef.current.add(getRuntimeTaskRouteKey(openedAddress))
       }
       dispatch({
         type: 'runtime_task_opened',
-        address,
+        address: openedAddress,
         project,
       })
       console.info('[Wework] Runtime task view opened', {
-        address: runtimeAddressDebug(address),
+        address: runtimeAddressDebug(openedAddress),
         reopeningCurrentTask,
         navigate: options?.navigate === true,
       })
       if (options?.navigate && canNavigate()) {
-        navigateTo(buildRuntimeTaskRoute(address))
+        navigateTo(buildRuntimeTaskRoute(openedAddress))
       }
     },
     [canNavigate, dispatch]
@@ -130,6 +132,10 @@ export function useWorkbenchRuntimeTasks({
 
   const reconcileCurrentRuntimeTaskAddress = useCallback(
     (previousAddress: RuntimeTaskAddress, address: RuntimeTaskAddress) => {
+      currentRuntimeTaskRef.current = mergeRuntimeTaskAddresses(
+        currentRuntimeTaskRef.current,
+        address
+      )
       dispatch({
         type: 'runtime_task_address_reconciled',
         previousAddress,

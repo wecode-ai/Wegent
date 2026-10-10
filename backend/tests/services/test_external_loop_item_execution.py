@@ -509,6 +509,9 @@ def test_completed_external_issue_stays_open_and_archive_closes_it(
     monkeypatch.setattr(
         external_loop_item_provider, "_get_issue", lambda _project, _number: issue
     )
+    monkeypatch.setattr(
+        external_loop_item_provider, "_list_issues", lambda _project: [issue]
+    )
 
     def update_issue(_project, _number, payload):
         writes.append(dict(payload))
@@ -531,6 +534,51 @@ def test_completed_external_issue_stays_open_and_archive_closes_it(
     assert writes[0]["state"] == "opened"
     assert "wegent:status:completed" in writes[0]["labels"]
     assert writes[1] == {"state": "closed"}
+
+
+def test_external_restore_compensates_reopened_issues_on_failure(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    parent = {
+        **_issue(1),
+        "state": "closed",
+        "labels": ["wegent:status:completed"],
+    }
+    child = {
+        **_issue(2),
+        "description": f"Child details\n\n{PARENT_MARKER} {_item_id(project)}",
+        "state": "closed",
+        "labels": ["wegent:status:completed"],
+    }
+    writes: list[tuple[int, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_list_issues_state",
+        lambda _project, _state: [parent, child],
+    )
+
+    def update_issue(_project, number, payload):
+        writes.append((number, dict(payload)))
+        if number == 2:
+            raise RuntimeError("provider restore failed")
+        return {**parent, "state": payload["state"]}
+
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+
+    with pytest.raises(RuntimeError, match="provider restore failed"):
+        external_loop_item_provider.restore(
+            test_db,
+            _item_id(project),
+            test_user.id,
+        )
+
+    assert writes == [
+        (1, {"state": "opened"}),
+        (2, {"state": "opened"}),
+        (1, {"state": "closed"}),
+    ]
 
 
 def test_assign_robot_on_gitlab_creates_index_row_and_execution(
