@@ -139,7 +139,7 @@ pub(super) fn manifest_path_for_home(home: &Path) -> PathBuf {
     if is_current_executor_home(home) {
         crate::local::capabilities::default_manifest_path()
     } else {
-        home.join("capabilities/manifest.json")
+        home.join("capabilities/manifest-v2.json")
     }
 }
 
@@ -289,7 +289,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         assert_eq!(
             manifest_path_for_home(temp.path()),
-            temp.path().join("capabilities/manifest.json")
+            temp.path().join("capabilities/manifest-v2.json")
         );
     }
 

@@ -178,12 +178,20 @@ mod tests {
         assert!(installed_ids(home.path()).unwrap().is_empty());
         fs::create_dir(home.path().join("capabilities")).unwrap();
         fs::write(
-            home.path().join("capabilities/manifest.json"),
+            home.path().join("capabilities/manifest-v2.json"),
             json!({"plugins": {
                 "managed": {"installed_plugin_id": 12, "managed": true, "enabled": true},
                 "disabled": {"installed_plugin_id": 13, "managed": true, "enabled": false},
                 "personal": {"installed_plugin_id": 14, "managed": false, "enabled": true},
                 "duplicate": {"installed_plugin_id": 12, "managed": true, "enabled": true}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            home.path().join("capabilities/manifest.json"),
+            json!({"plugins": {
+                "stale": {"installed_plugin_id": 99, "managed": true, "enabled": true}
             }})
             .to_string(),
         )
@@ -226,7 +234,7 @@ mod tests {
         fs::write(home.path().join("untrusted.json"), r#"{"plugins":{}}"#).unwrap();
         std::os::unix::fs::symlink(
             home.path().join("untrusted.json"),
-            home.path().join("capabilities/manifest.json"),
+            home.path().join("capabilities/manifest-v2.json"),
         )
         .unwrap();
         assert_eq!(
