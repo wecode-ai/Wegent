@@ -1601,6 +1601,21 @@ function ProjectSendProbe({
       </button>
       <button
         type="button"
+        data-testid="send-assigned-team-task"
+        onClick={() =>
+          void workbench.createProjectRuntimeTask('Run assigned Team', {
+            project: null,
+            wegentTeamId: 1880,
+            modelSelection: null,
+            deviceId: 'device-1',
+            prepareRuntimeTask,
+          })
+        }
+      >
+        send assigned Team task
+      </button>
+      <button
+        type="button"
         onClick={() =>
           void workbench.createProjectRuntimeTask('处理项目 Issue', {
             project: null,
@@ -9801,6 +9816,55 @@ describe('WorkbenchProvider runtime tasks', () => {
       'deviceWorkspaceId'
     )
     expect(updateCurrentUser).not.toHaveBeenCalled()
+  })
+
+  test('forwards the assigned Team without overriding it with the global model', async () => {
+    const prepareRuntimeTask = vi.fn(async () => undefined)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: '/workspace/team-task',
+        runtime: 'codex',
+        runtimeHandle: { wegentTeam: { id: 1880 } },
+      })),
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'global-model',
+              type: 'runtime',
+              provider: 'local',
+              config: { weworkModelKind: 'codex-provider' },
+            },
+          ],
+        }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+    renderWorkbench(<ProjectSendProbe prepareRuntimeTask={prepareRuntimeTask} />, services)
+    await userEvent.click(await screen.findByText('select project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('global-model')
+    )
+
+    await userEvent.click(screen.getByTestId('send-assigned-team-task'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        wegentTeamId: 1880,
+        modelId: undefined,
+        modelSelection: null,
+        message: 'Run assigned Team',
+      })
+    )
+    expect(prepareRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimeHandle: { wegentTeam: { id: 1880 } } })
+    )
   })
 
   test('creates an Issue task in its prepared execution environment workspace', async () => {

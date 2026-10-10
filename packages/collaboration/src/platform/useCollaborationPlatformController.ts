@@ -403,24 +403,25 @@ export function useCollaborationPlatformController({
             ),
           });
         };
+        // Navigation sources own independent storage, not resource identity.
+        if (
+          api.resources &&
+          (rootView === "agents" ||
+            rootView === "teams" ||
+            rootView === "devices")
+        ) {
+          void api.resources
+            .list()
+            .then((resources) => {
+              updateSnapshot(0, { resources });
+            })
+            .catch(() => undefined);
+        }
         for (const [index, source] of sources.entries()) {
           if (rootView === "my-work" || rootView === "inbox") {
             void loadRootMyWork(source).then((myWork) => {
               updateSnapshot(index, { myWork });
             });
-          }
-          if (
-            source.resources &&
-            (rootView === "agents" ||
-              rootView === "teams" ||
-              rootView === "devices")
-          ) {
-            void source.resources
-              .list()
-              .then((resources) => {
-                updateSnapshot(index, { resources });
-              })
-              .catch(() => undefined);
           }
         }
         const results = await Promise.allSettled(

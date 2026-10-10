@@ -12,6 +12,7 @@ import json
 import logging
 import time
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from socketio.exceptions import BadNamespaceError, DisconnectedError
 from socketio.exceptions import TimeoutError as SocketTimeoutError
@@ -93,7 +94,25 @@ def _runtime_model_configs(value: Any) -> list[dict[str, Any]]:
     return configs
 
 
+def _uses_backend_model_gateway(model_config: dict[str, Any]) -> bool:
+    headers = model_config.get("default_headers")
+    base_url = model_config.get("base_url") or model_config.get("baseUrl")
+    if not isinstance(headers, dict) or not isinstance(base_url, str):
+        return False
+    try:
+        path = urlsplit(base_url).path.rstrip("/")
+    except ValueError:
+        return False
+    return path == "/api/runtime-work/llm-responses-proxy" and any(
+        str(key).lower() == "x-wegent-model-type" for key in headers
+    )
+
+
 def _set_runtime_proxy(model_config: dict[str, Any], proxy_url: str) -> None:
+    # Cloud models already route through the backend, which owns the provider
+    # connection. Device-to-backend traffic must not use the provider proxy.
+    if _uses_backend_model_gateway(model_config):
+        proxy_url = ""
     model_config.pop("proxy_url", None)
     model_config.pop("proxyUrl", None)
     if proxy_url:

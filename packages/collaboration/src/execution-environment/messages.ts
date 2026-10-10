@@ -26,6 +26,8 @@ export const executionEnvironmentMessages: Record<
     "todo.execution_environment_configuration_description":
       "定义初始化执行环境时使用的代码来源和初始化命令。",
     "todo.execution_environment_repositories": "代码仓库",
+    "todo.show_advanced_options": "高级选项",
+    "todo.hide_advanced_options": "收起高级选项",
     "todo.execution_environment_repositories_description":
       "添加仓库后，主仓库是智能体默认工作目录；不添加则创建空白工作目录。",
     "todo.execution_environment_no_repositories":
@@ -68,19 +70,17 @@ export const executionEnvironmentMessages: Record<
     "todo.execution_environment_readiness_pending": "待完成",
     "todo.execution_environment_readiness_ready": "已完成",
     "todo.issue_environment_notice_unassigned":
-      "当前项目还没有可用的执行环境。请先完成环境初始化，再创建 Issue。",
+      "当前项目未添加执行环境。AI 执行前需要配置，不影响创建和人工处理 Issue。",
     "todo.issue_environment_notice_offline":
-      "项目环境已配置，但运行设备当前离线。请先启动设备，再创建 Issue。",
+      "运行设备离线，暂时无法执行 AI 任务。可以继续创建和人工处理 Issue。",
     "todo.issue_environment_notice_preparing":
-      "项目环境正在初始化。请等待环境就绪后再创建 Issue。",
+      "项目环境正在初始化，AI 执行需等待环境就绪。可以继续创建和人工处理 Issue。",
     "todo.issue_environment_notice_error":
-      "项目环境初始化失败。请修复并重新初始化环境后再创建 Issue。",
+      "项目环境初始化失败，AI 执行前需修复。可以继续创建和人工处理 Issue。",
     "todo.issue_environment_notice_unknown":
-      "暂时无法检查项目执行环境。请重新检查后再创建 Issue。",
+      "暂时无法检查项目执行环境，不影响创建和人工处理 Issue。",
     "todo.issue_environment_notice_uninitialized":
-      "项目运行设备尚未完成环境初始化。请先初始化环境，再创建 Issue。",
-    "todo.issue_environment_create_blocked":
-      "请先完成项目执行环境初始化，再创建 Issue。",
+      "项目环境尚未初始化。AI 执行前需要初始化，不影响创建和人工处理 Issue。",
     "todo.issue_environment_notice_contact_manager":
       "如需初始化，请联系项目 Owner 或 Maintainer。",
     "todo.issue_environment_notice_configure": "去配置执行环境",
@@ -127,6 +127,8 @@ export const executionEnvironmentMessages: Record<
     "todo.execution_environment_configuration_description":
       "Define the code source and commands used to initialize an execution environment.",
     "todo.execution_environment_repositories": "Code repositories",
+    "todo.show_advanced_options": "Advanced options",
+    "todo.hide_advanced_options": "Hide advanced options",
     "todo.execution_environment_repositories_description":
       "When repositories are added, the primary repository is the agent's default working directory. Without one, initialization creates a blank working directory.",
     "todo.execution_environment_no_repositories":
@@ -173,19 +175,17 @@ export const executionEnvironmentMessages: Record<
     "todo.execution_environment_readiness_pending": "Not completed",
     "todo.execution_environment_readiness_ready": "Completed",
     "todo.issue_environment_notice_unassigned":
-      "This project has no available execution environment yet. Initialize it before creating an Issue.",
+      "This project has no execution environment. Configure one before running AI; Issue creation and human work are available.",
     "todo.issue_environment_notice_offline":
-      "The project environment is configured, but its runtime device is offline. Start the device before creating an Issue.",
+      "The runtime device is offline, so AI tasks cannot run. You can still create and handle Issues manually.",
     "todo.issue_environment_notice_preparing":
-      "The project environment is being initialized. Wait until it is ready before creating an Issue.",
+      "The project environment is initializing. AI runs must wait, but you can still create and handle Issues manually.",
     "todo.issue_environment_notice_error":
-      "Project environment initialization failed. Repair and initialize it before creating an Issue.",
+      "Project environment initialization failed. Repair it before running AI; Issue creation and human work are available.",
     "todo.issue_environment_notice_unknown":
-      "The project execution environment could not be checked. Check again before creating an Issue.",
+      "The project execution environment could not be checked. You can still create and handle Issues manually.",
     "todo.issue_environment_notice_uninitialized":
-      "The project's runtime device has not finished initialization. Initialize it before creating an Issue.",
-    "todo.issue_environment_create_blocked":
-      "Initialize the project execution environment before creating an Issue.",
+      "The project environment is not initialized. Initialize it before running AI; Issue creation and human work are available.",
     "todo.issue_environment_notice_contact_manager":
       "Contact a project Owner or Maintainer to initialize it.",
     "todo.issue_environment_notice_configure": "Configure environment",

@@ -76,7 +76,7 @@ export function issueAssigneeTarget(
   if (source.assignee_group_id) return `group:${source.assignee_group_id}`;
   if (source.assignee_team_id) return `team:${source.assignee_team_id}`;
   if (source.assignee_agent_id) return `agent:${source.assignee_agent_id}`;
-  if (source.assignee_user_id) return `user:${source.assignee_user_id}`;
+  if (source.assignee_user_id != null) return `user:${source.assignee_user_id}`;
   return "";
 }
 

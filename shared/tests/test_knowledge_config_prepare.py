@@ -498,7 +498,8 @@ def test_minimal_caller_produces_a_saveable_config() -> None:
     assert json.loads(json.dumps(config)) == config
 
 
-_BOUNDARY_SCRIPT = textwrap.dedent("""
+_BOUNDARY_SCRIPT = textwrap.dedent(
+    """
     import json
     import sys
 
@@ -536,7 +537,8 @@ _BOUNDARY_SCRIPT = textwrap.dedent("""
         if any(name == item or name.startswith(f"{item}.") for item in forbidden)
     )
     print(json.dumps({"config": config, "loaded": loaded}))
-    """)
+    """
+)
 
 
 def test_module_composes_config_without_wegent_product_orm() -> None:

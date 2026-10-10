@@ -111,13 +111,13 @@ Project-space lists, default-space selection, and current-task links are resolve
 
 ### Initialize the project execution environment
 
-Before creating an issue, Wework verifies that the project execution environment has been initialized on at least one online device. If the collaboration home reports that the environment is not initialized, choose **Configure execution environment**, initialize an available device in project settings, and then return to the collaboration home.
+Creating and manually handling an issue does not require an initialized execution environment. Starting an AI execution task requires the project's execution environment to be initialized on at least one online device. If the collaboration home reports that the environment is not initialized, choose **Configure execution environment**, initialize an available device in project settings, and then return to the issue to continue execution.
 
 After initialization, the collaboration home reads the latest project configuration and device status again; reloading the page or reopening the project is not required. If the device is marked complete but the warning remains, confirm that the device is still online and reopen the execution-environment settings to check the initialization result.
 
 ## Board quick start
 
-If the project's execution environment has not been initialized, creating an issue opens the project's execution environment settings and displays a message explaining that initialization is required first. Complete initialization, then return to the board to create the issue.
+You can create an issue even when no device has been added, the device is offline, or the environment is not initialized. Creating an issue does not redirect to execution environment settings. Manual work can continue; configure the environment when AI execution is needed.
 
 The first time an empty project-space board is opened, Wework shows a collapsible three-step guide above the existing board:
 
@@ -128,6 +128,12 @@ The first time an empty project-space board is opened, Wework shows a collapsibl
 Each completed step is marked automatically, and the guide hides after all three steps are complete. Choose **Collapse** to reduce its footprint temporarily, or **Don't show again** to disable it for the current user and project space. Boards that already contain items do not interrupt users with this first-run guide.
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
+
+## Execution environment in Project settings
+
+In a collaboration project, open **Project settings → Execution environment** to add a repository and initialize an execution environment when needed. A project without a repository can use a blank workspace. Normally, selecting a repository or entering its Git URL is enough: the name and directory are derived automatically. Expand **Advanced options** only to customize the name, directory, or branch. Setup steps are optional; no placeholder fields are required to save the configuration.
+
+The **Human processing** settings page only explains the direct-assignment and review workflow; project administrators do not need to fill in another form. Actions happen in the Issue detail. See [Work on an Issue assigned to me](../wegent/user-guide/coding/collaboration-issue-home.md).
 
 ## Message AI
 

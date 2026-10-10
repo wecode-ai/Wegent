@@ -1022,6 +1022,57 @@ describe("ProjectExecutionEnvironments", () => {
     expect(element("-repository-url-0")).toBeInstanceOf(HTMLSelectElement);
   });
 
+  it("keeps repository details optional and derives the manual URL defaults", async () => {
+    const api = await render();
+    await addRepositoryDraft();
+
+    expect(
+      element<HTMLButtonElement>("-advanced-repositories").getAttribute(
+        "aria-expanded",
+      ),
+    ).toBe("false");
+    expect(
+      element(
+        "-repository-name-0",
+      ).parentElement?.parentElement?.classList.contains("hidden"),
+    ).toBe(true);
+
+    await change(
+      "-repository-url-0",
+      "https://github.com/example/api-engine.git",
+    );
+    expect(element<HTMLInputElement>("-repository-name-0").value).toBe(
+      "api-engine",
+    );
+    expect(element<HTMLInputElement>("-repository-path-0").value).toBe(
+      "api-engine",
+    );
+    await saveConfiguration();
+    expect(api.projects.update).toHaveBeenCalledWith(
+      "project-1",
+      expect.objectContaining({
+        executionEnvironment: expect.objectContaining({
+          repositories: [
+            expect.objectContaining({
+              name: "api-engine",
+              path: "api-engine",
+              ref: "",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    await act(async () =>
+      element<HTMLButtonElement>("-advanced-repositories").click(),
+    );
+    expect(
+      element<HTMLButtonElement>("-advanced-repositories").getAttribute(
+        "aria-expanded",
+      ),
+    ).toBe("true");
+  });
+
   it("keeps a saved repository that is outside the catalog editable", async () => {
     await render({
       gitRepositories: {

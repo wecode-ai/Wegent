@@ -589,7 +589,7 @@ class ProjectAutomationExecution:
         row = ProjectAutomationExecution._activity(db, run)
         if row is None:
             return None
-        return project_chat_service.to_view(row).model_dump(by_alias=True)
+        return project_chat_service.to_view(row, db=db).model_dump(by_alias=True)
 
     def _commit_and_push_activity(
         self,
