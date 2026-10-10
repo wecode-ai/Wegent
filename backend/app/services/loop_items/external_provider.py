@@ -1204,12 +1204,14 @@ class ExternalLoopItemProvider:
 
         project, number = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
-        if access.is_viewer:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
-        if not has_permission(access.role, BaseRole.Maintainer):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         current = self._get_issue(project, number)
         current_labels = self._labels(current)
+        require_issue_action(
+            access,
+            action=IssueAction.ASSIGN,
+            issue_creator_user_id=self._creator_id(current_labels),
+            user_id=user_id,
+        )
         previous_assignee = self._assignee_from_labels(current_labels)
         agent: ProjectChatAgent | None = None
         team: Kind | None = None

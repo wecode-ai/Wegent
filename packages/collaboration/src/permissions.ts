@@ -5,8 +5,27 @@
 import type {
   CollaborationIssue,
   CollaborationProject,
+  CollaborationRole,
   CollaborationView,
 } from "./types";
+
+type ProjectRoleSource = Pick<
+  CollaborationProject,
+  "access_role" | "project_store"
+>;
+
+/** Resolve the effective role, treating a local project as owner-trusted. */
+function resolveProjectRole(project: ProjectRoleSource): CollaborationRole {
+  return (
+    project.access_role ??
+    (project.project_store === "local" ? "Owner" : "Viewer")
+  );
+}
+
+/** Developer and above may change Issue content. */
+function canModifyIssues(role: CollaborationRole): boolean {
+  return role === "Owner" || role === "Maintainer" || role === "Developer";
+}
 
 export function canEditCollaborationIssue(
   issue: Pick<CollaborationIssue, "can_edit">,
@@ -15,23 +34,24 @@ export function canEditCollaborationIssue(
 }
 
 export function canCommentCollaborationIssue(
-  project: Pick<CollaborationProject, "access_role" | "project_store">,
+  project: ProjectRoleSource,
   issue: Pick<CollaborationIssue, "can_view_detail">,
 ): boolean {
   if (issue.can_view_detail === false) return false;
-  const role =
-    project.access_role ??
-    (project.project_store === "local" ? "Owner" : "Viewer");
-  return role === "Owner" || role === "Maintainer" || role === "Developer";
+  return canModifyIssues(resolveProjectRole(project));
 }
 
 export function canAssignCollaborationIssue(
-  project: Pick<CollaborationProject, "access_role" | "project_store">,
+  project: ProjectRoleSource & Pick<CollaborationProject, "current_user_id">,
+  issue?: Pick<CollaborationIssue, "created_by_user_id">,
 ): boolean {
-  const role =
-    project.access_role ??
-    (project.project_store === "local" ? "Owner" : "Viewer");
-  return role === "Owner" || role === "Maintainer";
+  if (canModifyIssues(resolveProjectRole(project))) return true;
+  // The Issue creator keeps control of their own assignee regardless of role.
+  return (
+    issue?.created_by_user_id !== undefined &&
+    project.current_user_id !== undefined &&
+    issue.created_by_user_id === project.current_user_id
+  );
 }
 
 export function canStartWorkOnCollaborationIssue(
@@ -48,31 +68,27 @@ export interface CollaborationIssueActionPermissions {
 }
 
 export function getCollaborationIssueActionPermissions(
-  project: Pick<CollaborationProject, "access_role" | "project_store">,
-  issue: Pick<CollaborationIssue, "can_edit" | "can_view_detail">,
+  project: ProjectRoleSource & Pick<CollaborationProject, "current_user_id">,
+  issue: Pick<
+    CollaborationIssue,
+    "can_edit" | "can_view_detail" | "created_by_user_id"
+  >,
 ): CollaborationIssueActionPermissions {
-  const role =
-    project.access_role ??
-    (project.project_store === "local" ? "Owner" : "Viewer");
-  const canStartWork =
-    canStartWorkOnCollaborationIssue(issue) &&
-    (role === "Owner" || role === "Maintainer" || role === "Developer");
+  const canViewDetail = canStartWorkOnCollaborationIssue(issue);
+  const canWork = canViewDetail && canModifyIssues(resolveProjectRole(project));
   return {
     canEdit: canEditCollaborationIssue(issue),
     canComment: canCommentCollaborationIssue(project, issue),
-    canAssign: canStartWork && canAssignCollaborationIssue(project),
-    canStartWork,
+    canAssign: canViewDetail && canAssignCollaborationIssue(project, issue),
+    canStartWork: canWork,
   };
 }
 
 export function canAccessCollaborationProjectView(
-  project: Pick<CollaborationProject, "access_role"> &
-    Partial<Pick<CollaborationProject, "project_store">>,
+  project: ProjectRoleSource,
   view: CollaborationView,
 ): boolean {
-  const accessRole =
-    project.access_role ??
-    (project.project_store === "local" ? "Owner" : "Viewer");
+  const role = resolveProjectRole(project);
   if (
     view === "board" ||
     view === "calendar" ||
@@ -80,11 +96,6 @@ export function canAccessCollaborationProjectView(
     view === "table"
   )
     return true;
-  if (view === "files")
-    return (
-      accessRole === "Owner" ||
-      accessRole === "Maintainer" ||
-      accessRole === "Developer"
-    );
-  return accessRole === "Owner" || accessRole === "Maintainer";
+  if (view === "files") return canModifyIssues(role);
+  return role === "Owner" || role === "Maintainer";
 }

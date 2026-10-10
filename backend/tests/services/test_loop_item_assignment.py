@@ -1184,11 +1184,14 @@ def test_reject_with_stale_version_has_no_side_effects(
     assert execution.approval_status == "pending"
 
 
-def test_assign_requires_admin_and_visible_bot(
+def test_assign_ignores_member_role_but_respects_bot_visibility(
     test_db: Session, test_user: User
 ) -> None:
+    """Only the creator or Developer+ may assign; the robot must stay visible."""
+
     project = _make_project(test_db, test_user)
     private_bot = _make_bot(test_db, project, test_user, visibility="private")
+    viewer = _make_member(test_db, project, "viewer", BaseRole.Viewer)
     developer = _make_member(test_db, project, "dev", BaseRole.Developer)
     maintainer = _make_member(test_db, project, "admin", BaseRole.Maintainer)
     item = _make_item(test_db, project, test_user)
@@ -1198,7 +1201,7 @@ def test_assign_requires_admin_and_visible_bot(
             test_db,
             project_id=int(project.id),
             item_id=item.id,
-            user_id=developer.id,
+            user_id=viewer.id,
             values=LoopItemAssign(
                 version=item.version,
                 assignee_type="agent",
@@ -1206,18 +1209,67 @@ def test_assign_requires_admin_and_visible_bot(
             ),
         )
 
-    with pytest.raises(HTTPException, match="not visible"):
-        loop_item_service.assign(
-            test_db,
-            project_id=int(project.id),
-            item_id=item.id,
-            user_id=maintainer.id,
-            values=LoopItemAssign(
-                version=item.version,
-                assignee_type="agent",
-                assignee_id=private_bot.id,
-            ),
-        )
+    for assigner in (developer, maintainer):
+        with pytest.raises(HTTPException, match="not visible"):
+            loop_item_service.assign(
+                test_db,
+                project_id=int(project.id),
+                item_id=item.id,
+                user_id=assigner.id,
+                values=LoopItemAssign(
+                    version=item.version,
+                    assignee_type="agent",
+                    assignee_id=private_bot.id,
+                ),
+            )
+
+
+def test_developer_can_assign_issue_to_member(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    developer = _make_member(test_db, project, "dev", BaseRole.Developer)
+    member = _make_member(test_db, project, "assignee", BaseRole.Developer)
+    item = _make_item(test_db, project, test_user)
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=developer.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="user",
+            assignee_id=str(member.id),
+        ),
+    )
+
+    assert updated.assignee_user_id == member.id
+    metadata = updated.metadata_json or {}
+    assert metadata["assignment_history"][-1]["by_user_id"] == developer.id
+
+
+def test_issue_creator_can_assign_regardless_of_role(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    creator = _make_member(test_db, project, "creator", BaseRole.Viewer)
+    item = _make_item(test_db, project, creator)
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=creator.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
+    )
+
+    assert updated.assignee_agent_id == bot.id
 
 
 def test_queue_listing_is_a_projection_of_assigned_tasks(

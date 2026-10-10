@@ -68,6 +68,7 @@ import {
 } from "./issue-detail";
 import "./issue-detail/issue-detail.css";
 import { issueDraftFromText } from "./issueDraft";
+import { canAssignCollaborationIssue } from "./permissions";
 import type {
   CollaborationAssignment,
   CollaborationAttachment,
@@ -1570,12 +1571,9 @@ export function TodoEditor(props: TodoEditorProps) {
       : null);
   const canAssign =
     props.canAssign ??
-    (editable &&
-      Boolean(
-        project &&
-        (project.access_role === "Owner" ||
-          project.access_role === "Maintainer"),
-      ));
+    (project !== undefined &&
+      (item === null || item.can_view_detail !== false) &&
+      canAssignCollaborationIssue(project, item ?? undefined));
   const assigneeChanged =
     item !== null && assigneeTarget !== issueAssigneeTarget(item);
   const creator =

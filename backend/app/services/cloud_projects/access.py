@@ -54,13 +54,20 @@ def issue_permissions(
     issue_creator_user_id: int | None,
     user_id: int,
 ) -> IssuePermissions:
-    """Resolve action-specific permissions without a generic edit shortcut."""
+    """Resolve action-specific permissions without a generic edit shortcut.
 
+    Assignment follows the role hierarchy, but the Issue creator always keeps
+    control of their own assignee.
+    """
+
+    is_developer = has_permission(access.role, BaseRole.Developer)
+    # The Issue creator keeps control of their own assignee regardless of role.
+    is_creator = issue_creator_user_id is not None and issue_creator_user_id == user_id
     return IssuePermissions(
-        edit_content=has_permission(access.role, BaseRole.Developer),
-        comment=has_permission(access.role, BaseRole.Developer),
-        assign=has_permission(access.role, BaseRole.Maintainer),
-        execute=has_permission(access.role, BaseRole.Developer),
+        edit_content=is_developer,
+        comment=is_developer,
+        assign=is_developer or is_creator,
+        execute=is_developer,
     )
 
 

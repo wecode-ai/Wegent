@@ -1937,13 +1937,17 @@ class LoopItemService:
         queue.
         """
 
-        access = self._require_internal_task_project(
-            db, project_id, user_id, BaseRole.Maintainer
-        )
+        access = self._require_internal_task_project(db, project_id, user_id)
         project = access.project
         item = self.get(db, item_id, user_id)
         if item.cloud_project_id != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        require_issue_action(
+            access,
+            action=IssueAction.ASSIGN,
+            issue_creator_user_id=item.created_by_user_id,
+            user_id=user_id,
+        )
         previous_assignee_user_id = item.assignee_user_id
         metadata = dict(item.metadata_json or {})
         assignment_created = False
