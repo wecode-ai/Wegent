@@ -619,7 +619,13 @@ impl RuntimeWorkRpcHandler {
             return Ok(response);
         };
 
-        if refresh && !local_execution_running && !direct_thread_override {
+        // Named Homes execute in a separate per-turn process. Resuming in the
+        // reader would retain the native writer lock and block the next turn.
+        if refresh
+            && !local_execution_running
+            && !direct_thread_override
+            && !codex_client.has_dedicated_home()
+        {
             if let Some(link) = local_link.as_ref().filter(|link| !link.ephemeral) {
                 thread_id = self
                     .resume_codex_thread_for_action(link, &thread_id)

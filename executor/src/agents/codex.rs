@@ -322,6 +322,10 @@ impl CodexAppServerClient {
         })
     }
 
+    pub(crate) fn has_dedicated_home(&self) -> bool {
+        self.home.is_some()
+    }
+
     fn process_environment(
         &self,
         runtime: &BTreeMap<String, String>,
