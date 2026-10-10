@@ -20,6 +20,8 @@ use crate::{config::device::DeviceConfig, protocol::ExecutionRequest};
 
 use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
 
+mod manifest_migration;
+mod shared_packages;
 mod support;
 
 use support::*;
@@ -255,6 +257,17 @@ fn rollback_plugin_package(
 }
 
 pub trait CapabilityPackageProvider {
+    fn download_skill<'a>(
+        &'a self,
+        _spec: &'a SkillSyncSpec,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
+        Box::pin(std::future::ready(Err(
+            CapabilitySyncError::invalid_payload(
+                "Package provider must supply skill archive bytes for shared storage",
+            ),
+        )))
+    }
+
     fn stage_skill<'a>(
         &'a self,
         spec: &'a SkillSyncSpec,
@@ -313,6 +326,8 @@ impl SkillSyncSpec {
         let namespace = value_string(value.get("namespace"))
             .filter(|namespace| !namespace.is_empty())
             .unwrap_or_else(|| DEFAULT_NAMESPACE.to_owned());
+        shared_packages::validate_component(&name)?;
+        shared_packages::validate_component(&namespace)?;
         let is_public = value
             .get("is_public")
             .or_else(|| value.get("isPublic"))
@@ -378,6 +393,9 @@ impl PluginSyncSpec {
             })
             .unwrap_or_else(|| DEFAULT_PLUGIN_MARKETPLACE.to_owned());
         let version = value_string(value.get("version")).unwrap_or_else(|| "latest".to_owned());
+        for component in [&name, &marketplace, &version] {
+            shared_packages::validate_component(component)?;
+        }
         let installed_plugin_id =
             value_i64(value.get("installed_plugin_id").or_else(|| value.get("id")));
         let cloud_plugin_id = value_i64(
@@ -457,20 +475,24 @@ impl ManagedCapabilityManifest {
     }
 
     pub fn load(&self) -> Result<Value, CapabilitySyncError> {
+        manifest_migration::initialize(&self.path)?;
         if !self.path.exists() {
             return Ok(default_manifest());
         }
         let mut value: Value = serde_json::from_str(&fs::read_to_string(&self.path)?)?;
+        manifest_migration::validate_current(&self.path, &value)?;
         normalize_manifest(&mut value);
         Ok(value)
     }
 
     pub fn save(&self, mut value: Value) -> Result<(), CapabilitySyncError> {
+        manifest_migration::prepare_save(&self.path, &mut value)?;
         normalize_manifest(&mut value);
-        write_json(&self.path, &value)
+        write_plugin_manifest_atomic(&self.path, &value)
     }
 
     fn save_with_revision_bump(&self, mut value: Value) -> Result<(), CapabilitySyncError> {
+        manifest_migration::prepare_save(&self.path, &mut value)?;
         normalize_manifest(&mut value);
         let revision = value
             .get("revision")
@@ -478,7 +500,7 @@ impl ManagedCapabilityManifest {
             .unwrap_or_default()
             + 1;
         value["revision"] = json!(revision);
-        write_json(&self.path, &value)
+        write_plugin_manifest_atomic(&self.path, &value)
     }
 }
 
@@ -491,6 +513,8 @@ pub struct GlobalCapabilityStore {
     pub codex_plugins_dir: PathBuf,
     pub store_dir: PathBuf,
     plugin_store_dir_override: Option<PathBuf>,
+    shared_packages: bool,
+    workbench_root_override: Option<PathBuf>,
 }
 
 impl GlobalCapabilityStore {
@@ -505,13 +529,26 @@ impl GlobalCapabilityStore {
             codex_plugins_dir: base.join(".codex/plugins"),
             // Skills stay on the legacy store root. Plugin packages use plugin_store_dir()
             // (manifest-adjacent) so marketplace installs follow WEGENT_EXECUTOR_HOME.
-            store_dir: base.join(".wegent-executor/capabilities/store"),
+            store_dir: base.join(".wegent/workbench/executor/capabilities/store"),
             plugin_store_dir_override: None,
+            shared_packages: false,
+            workbench_root_override: None,
         }
     }
 
     pub fn with_manifest(mut self, manifest: ManagedCapabilityManifest) -> Self {
         self.manifest = manifest;
+        self
+    }
+
+    pub fn with_shared_packages(mut self) -> Self {
+        self.shared_packages = true;
+        self
+    }
+
+    pub fn with_workbench_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.shared_packages = true;
+        self.workbench_root_override = Some(root.into());
         self
     }
 
@@ -644,6 +681,11 @@ impl GlobalCapabilityStore {
         &self,
         manifest: &Value,
     ) -> Result<Vec<PathBuf>, CapabilitySyncError> {
+        // Live and rollback references span agents and processes. A local manifest
+        // cannot prove a shared package or native cache is unreferenced.
+        if self.shared_packages {
+            return Ok(Vec::new());
+        }
         let plugins = object_map(manifest.get("plugins")).unwrap_or_default();
         let referenced_store_paths = plugins
             .values()
@@ -743,7 +785,7 @@ impl GlobalCapabilityStore {
                 .map(PathBuf::from);
             if !managed_runtime
                 .as_ref()
-                .is_some_and(|path| path.starts_with(&self.plugins_dir))
+                .is_some_and(|path| shared_packages::managed_descendant(&self.plugins_dir, path))
             {
                 continue;
             }
@@ -753,15 +795,17 @@ impl GlobalCapabilityStore {
             if !store_path.is_dir() {
                 continue;
             }
-            let manifests_changed = ensure_dual_plugin_manifests(&store_path)?;
             let spec = PluginSyncSpec::from_manifest_entry(&key, &plugin);
             let runtime_path = self.plugin_runtime_link(&spec);
-            if manifests_changed || !runtime_path.is_dir() || runtime_path.is_symlink() {
+            let missing_native_manifest = !runtime_path.join(".codex-plugin/plugin.json").is_file()
+                || !runtime_path.join(".claude-plugin/plugin.json").is_file();
+            if !runtime_path.is_dir() || runtime_path.is_symlink() || missing_native_manifest {
                 copy_dir_atomic(&store_path, &runtime_path)?;
                 restored.push(key.clone());
             }
+            ensure_dual_plugin_manifests(&runtime_path)?;
             ensure_plugin_hook_permissions(&runtime_path)?;
-            self.install_marketplace_metadata(&spec, &store_path)?;
+            self.install_marketplace_metadata(&spec, &runtime_path)?;
             let installed = read_installed_plugins(&self.plugins_dir)?;
             let registered = installed
                 .get("plugins")
@@ -780,6 +824,10 @@ impl GlobalCapabilityStore {
 
     fn load_manifest_with_plugin_store_migration(&self) -> Result<Value, CapabilitySyncError> {
         let mut manifest = self.manifest.load()?;
+        if self.shared_packages {
+            // Legacy packages remain readable until a verified archive is synced.
+            return Ok(manifest);
+        }
         let plugin_store_dir = self.plugin_store_dir();
         let (changed, legacy_paths) =
             rewrite_managed_plugin_store_paths(&mut manifest, &plugin_store_dir)?;
@@ -851,10 +899,9 @@ impl GlobalCapabilityStore {
         let previous_codex_link = previous_runtime
             .and_then(|runtime| value_string(runtime.get("codex_link")))
             .map(PathBuf::from);
-        if previous_runtime_link
-            .as_ref()
-            .is_some_and(|path| path != &runtime_link && !path.starts_with(&self.plugins_dir))
-        {
+        if previous_runtime_link.as_ref().is_some_and(|path| {
+            path != &runtime_link && !shared_packages::managed_descendant(&self.plugins_dir, path)
+        }) {
             return Err(CapabilitySyncError::invalid_payload(
                 "Managed Claude plugin runtime path is outside the plugin directory",
             ));
@@ -886,12 +933,14 @@ impl GlobalCapabilityStore {
                 .join("plugins")
                 .join(self.marketplace_plugin_name(spec, false)),
         ];
-        if let Some(path) = &previous_runtime_link {
-            moved_paths.push(path.clone());
-        }
-        if let Some(path) = &previous_codex_link {
-            if path.starts_with(&self.codex_plugins_dir) {
+        if !self.shared_packages {
+            if let Some(path) = &previous_runtime_link {
                 moved_paths.push(path.clone());
+            }
+            if let Some(path) = &previous_codex_link {
+                if path.starts_with(&self.codex_plugins_dir) {
+                    moved_paths.push(path.clone());
+                }
             }
         }
         let original_manifest = manifest.clone();
@@ -899,21 +948,36 @@ impl GlobalCapabilityStore {
         let result = (|| {
             self.install_claude_plugin_runtime_metadata(spec, store_path)?;
             copy_dir_atomic(store_path, &codex_link)?;
+            ensure_dual_plugin_manifests(&codex_link)?;
             if let Some(previous_runtime_link) = previous_runtime_link {
-                if previous_runtime_link != runtime_link {
+                if !self.shared_packages && previous_runtime_link != runtime_link {
                     self.remove_claude_plugin_runtime_path(&previous_runtime_link)?;
                 }
             }
             if let Some(previous_codex_link) = previous_codex_link {
-                if previous_codex_link != codex_link
+                if !self.shared_packages
+                    && previous_codex_link != codex_link
                     && previous_codex_link.starts_with(&self.codex_plugins_dir)
                 {
                     self.remove_codex_plugin_runtime_path(&previous_codex_link)?;
                 }
             }
-            self.install_codex_marketplace_metadata(spec, store_path)?;
-            let entry = plugin_manifest_entry(spec, store_path, &runtime_link, &codex_link);
+            self.install_codex_marketplace_metadata(spec, &codex_link)?;
+            let mut entry = plugin_manifest_entry(spec, store_path, &runtime_link, &codex_link);
+            if self.shared_packages {
+                let previous = original_manifest
+                    .get("plugins")
+                    .and_then(|plugins| plugins.get(&spec.key));
+                entry["previous"] = shared_packages::previous_for_hash(
+                    previous,
+                    "checksum",
+                    spec.checksum.as_deref(),
+                );
+            }
             ensure_object_field(manifest, "plugins").insert(spec.key.clone(), entry);
+            if self.shared_packages {
+                self.manifest.save_with_revision_bump(manifest.clone())?;
+            }
             Ok(())
         })();
         match result {
@@ -935,7 +999,9 @@ impl GlobalCapabilityStore {
     ) -> Result<(), CapabilitySyncError> {
         let runtime_path = self.plugin_runtime_link(spec);
         copy_dir_atomic(store_path, &runtime_path)?;
-        self.install_marketplace_metadata(spec, store_path)?;
+        ensure_dual_plugin_manifests(&runtime_path)?;
+        ensure_plugin_hook_permissions(&runtime_path)?;
+        self.install_marketplace_metadata(spec, &runtime_path)?;
         upsert_installed_plugin(&self.plugins_dir, spec, &runtime_path)?;
         set_plugin_enabled(&self.plugins_dir, &spec.key, spec.enabled)
     }
@@ -1195,7 +1261,7 @@ impl GlobalCapabilityStore {
             .join("cache")
             .join(&spec.marketplace)
             .join(&spec.name)
-            .join(&spec.version)
+            .join(self.plugin_cache_version(spec))
     }
 
     fn plugin_codex_link(&self, spec: &PluginSyncSpec) -> PathBuf {
@@ -1203,7 +1269,22 @@ impl GlobalCapabilityStore {
             .join("cache")
             .join(&spec.marketplace)
             .join(&spec.name)
-            .join(&spec.version)
+            .join(self.plugin_cache_version(spec))
+    }
+
+    fn plugin_cache_version(&self, spec: &PluginSyncSpec) -> String {
+        if self.shared_packages {
+            if let Some(hash) = spec
+                .checksum
+                .as_deref()
+                .and_then(|hash| hash.strip_prefix("sha256:"))
+            {
+                if hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return format!("{}-{hash}", spec.version);
+                }
+            }
+        }
+        spec.version.clone()
     }
 }
 
@@ -1349,6 +1430,9 @@ where
 
     pub async fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
         let _sync_guard = self.sync_lock.lock().await;
+        let _activation = crate::services::capability_activation::activate().await;
+        let _changed = shared_packages::ActivationRevision;
+        let _publication_lock = self.store.lock_shared_manifest()?;
         let plugins_only = payload.get("scope").and_then(Value::as_str) == Some("plugins");
         if plugins_only
             && (payload.get("plugins").and_then(Value::as_array).is_none()
@@ -1445,6 +1529,9 @@ where
         spec: &SkillSyncSpec,
         manifest: &mut Value,
     ) -> Result<(), CapabilitySyncError> {
+        if self.store.shared_packages {
+            return self.try_sync_shared_skill(spec, manifest).await;
+        }
         let store_path = self.store.skill_store_path(spec);
         let runtime_link = self.store.skills_dir.join(&spec.name);
         let codex_link = self.store.codex_skills_dir.join(&spec.name);
@@ -1516,6 +1603,9 @@ where
         spec: &PluginSyncSpec,
         manifest: &mut Value,
     ) -> Result<(), PluginSyncFailure> {
+        if self.store.shared_packages {
+            return self.try_sync_shared_plugin(spec, manifest).await;
+        }
         let Some(store_path) = self.store.plugin_store_path(spec) else {
             ensure_object_field(manifest, "plugins").insert(
                 spec.key.clone(),
@@ -1727,26 +1817,32 @@ where
         for (_, plugin) in &stale {
             if let Some(runtime) = plugin.get("runtime") {
                 if let Some(path) = value_string(runtime.get("claude_link")).map(PathBuf::from) {
-                    if !path.starts_with(&self.store.plugins_dir) {
+                    if !shared_packages::managed_descendant(&self.store.plugins_dir, &path) {
                         return Err(CapabilitySyncError::invalid_payload(format!(
                             "Managed Claude plugin path is outside the plugin directory: {}",
                             path.display()
                         )));
                     }
-                    moved_paths.push(path);
+                    if !self.store.shared_packages {
+                        moved_paths.push(path);
+                    }
                 }
                 if let Some(path) = value_string(runtime.get("codex_link")).map(PathBuf::from) {
-                    if !path.starts_with(&self.store.codex_plugins_dir) {
+                    if !shared_packages::managed_descendant(&self.store.codex_plugins_dir, &path) {
                         return Err(CapabilitySyncError::invalid_payload(format!(
                             "Managed Codex plugin path is outside the plugin directory: {}",
                             path.display()
                         )));
                     }
-                    moved_paths.push(path);
+                    if !self.store.shared_packages {
+                        moved_paths.push(path);
+                    }
                 }
             }
             if let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from) {
-                moved_paths.push(store_path);
+                if !self.store.shared_packages {
+                    moved_paths.push(store_path);
+                }
             }
         }
         let mut file_paths = vec![
@@ -1777,15 +1873,21 @@ where
                 ensure_object_field(&mut installed, "plugins").remove(&key);
                 if let Some(runtime) = plugin.get("runtime") {
                     if let Some(path) = value_string(runtime.get("claude_link")) {
-                        remove_existing_path(Path::new(&path))?;
+                        if !self.store.shared_packages {
+                            remove_existing_path(Path::new(&path))?;
+                        }
                     }
                     if let Some(path) = value_string(runtime.get("codex_link")) {
-                        remove_existing_path(Path::new(&path))?;
+                        if !self.store.shared_packages {
+                            remove_existing_path(Path::new(&path))?;
+                        }
                     }
                 }
                 if let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from)
                 {
-                    remove_existing_path(&store_path)?;
+                    if !self.store.shared_packages {
+                        remove_existing_path(&store_path)?;
+                    }
                 }
                 if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
                     self.remove_personal_shared_marketplace_plugin(&spec)?;
@@ -2324,30 +2426,35 @@ fn managed_plugin_scan_path(plugin: &Value) -> Option<PathBuf> {
 }
 
 pub fn default_manifest_path() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
-        .join("capabilities/manifest.json")
+    if let Some(home) = env::var_os("WEGENT_CAPABILITIES_HOME")
+        .filter(|value| !value.to_string_lossy().trim().is_empty())
+    {
+        return PathBuf::from(home).join("manifest-v2.json");
+    }
+    crate::config::paths::executor_home().join("capabilities/manifest-v2.json")
+}
+
+/// Initialize before any component reads the default manifest as raw JSON.
+pub fn initialize_default_manifest() -> Result<PathBuf, CapabilitySyncError> {
+    let path = default_manifest_path();
+    manifest_migration::initialize(&path)?;
+    Ok(path)
 }
 
 pub fn restore_enabled_claude_plugin_cache(
     config_dir: &Path,
 ) -> Result<Vec<String>, CapabilitySyncError> {
+    restore_enabled_claude_plugin_cache_with_manifest(config_dir, &default_manifest_path())
+}
+
+pub fn restore_enabled_claude_plugin_cache_with_manifest(
+    config_dir: &Path,
+    manifest_path: &Path,
+) -> Result<Vec<String>, CapabilitySyncError> {
     let plugins_dir = config_dir.join("plugins");
-    let executor_home = env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            config_dir
-                .parent()
-                .map(|home| home.join(".wegent-executor"))
-        })
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"));
-    let store = GlobalCapabilityStore::new(
-        executor_home.join("capabilities/manifest.json"),
-        config_dir.join("skills"),
-    )
-    .with_plugins_dir(plugins_dir.clone());
+    let store = GlobalCapabilityStore::new(manifest_path, config_dir.join("skills"))
+        .with_plugins_dir(plugins_dir.clone())
+        .with_shared_packages();
     let mut restored = store.reconcile_managed_claude_plugins()?;
     let settings = read_json_or_default(&config_dir.join("settings.json"), || json!({}))?;
     let enabled_plugins = object_map(settings.get("enabledPlugins")).unwrap_or_default();

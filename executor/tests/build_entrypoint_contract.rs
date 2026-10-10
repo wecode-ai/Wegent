@@ -158,8 +158,7 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         .contains("test \"$installed_code_server_version\" = \"$CODE_SERVER_VERSION\""));
     assert!(device_dockerfile
         .contains("install -m 0755 /app/executor \"$WEGENT_EXECUTOR_HOME/bin/wegent-executor\""));
-    assert!(device_dockerfile
-        .contains("ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wecode/wegent-executor/workspace"));
+    assert!(device_dockerfile.contains("ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wegent/workspace"));
     assert!(device_dockerfile.contains("ENV WEGENT_WORKSPACE_ROOTS=/home/wegent"));
     assert!(device_dockerfile.contains("ENV DEVICE_CODE_SERVER_ENABLED=true"));
     assert!(device_dockerfile.contains("ENV DEVICE_TERMINAL_ENABLED=true"));
@@ -190,10 +189,10 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         assert!(device_dockerfile.contains(persistent_path));
     }
     assert!(device_dockerfile
-        .contains("EXPECTED_EXECUTOR_HOME=\"/home/wegent/.wecode/wegent-executor\""));
+        .contains("EXPECTED_EXECUTOR_HOME=\"/home/wegent/.wegent/workbench/executor\""));
     assert!(!device_dockerfile.contains("WEGENT_EXECUTOR_HOME_EXPECTED_PATH"));
     assert!(device_dockerfile
-        .contains("WEGENT_EXECUTOR_HOME=\"$(realpath -m -- \"$WEGENT_EXECUTOR_HOME\")\""));
+        .contains("WEGENT_EXECUTOR_HOME=\"$(realpath -ms -- \"$WEGENT_EXECUTOR_HOME\")\""));
     assert!(device_dockerfile
         .contains("LOCAL_WORKSPACE_ROOT=\"$(realpath -m -- \"$LOCAL_WORKSPACE_ROOT\")\""));
     assert!(device_dockerfile.contains("WEGENT_EXECUTOR_HOME_ID"));

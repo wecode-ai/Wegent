@@ -42,6 +42,43 @@ function createTool(input: string | Record<string, unknown>, toolName = 'Write')
 }
 
 describe('ToolBlock', () => {
+  it('shows the full native written content on expansion', () => {
+    const content = 'created line\n'.repeat(60) + 'last written line'
+    render(<ToolBlock tool={createTool({ file_path: 'index.html', content })} defaultExpanded />)
+    expect(screen.queryByText(/last written line/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('thinking.expand'))
+    expect(screen.getByText(/last written line/).textContent).toBe(content)
+  })
+
+  it('shows a collapsible native diff instead of fabricated replacement strings', () => {
+    const diff = '@@ -1 +1 @@\n-old\n+new\n'.repeat(60) + '+last changed line'
+    render(
+      <ToolBlock tool={createTool({ file_path: 'styles.css', diff }, 'Edit')} defaultExpanded />
+    )
+    expect(screen.queryByText('Old String')).not.toBeInTheDocument()
+    expect(screen.queryByText(/last changed line/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('edit-tool-diff-toggle'))
+    expect(screen.getByTestId('edit-tool-diff').querySelector('pre')?.textContent).toBe(diff)
+    fireEvent.click(screen.getByTestId('edit-tool-diff-toggle'))
+    expect(screen.queryByText(/last changed line/)).not.toBeInTheDocument()
+  })
+
+  it('preserves Claude replacement input rendering', () => {
+    render(
+      <ToolBlock
+        tool={createTool(
+          { file_path: 'a.txt', old_string: 'before', new_string: 'after', replace_all: false },
+          'Edit'
+        )}
+        defaultExpanded
+      />
+    )
+    expect(screen.getByText('before')).toBeInTheDocument()
+    expect(screen.getByText('after')).toBeInTheDocument()
+    expect(screen.getByText('Mode: Replace First Match')).toBeInTheDocument()
+    expect(screen.queryByTestId('edit-tool-diff')).not.toBeInTheDocument()
+  })
+
   it('does not show empty stringified input in the compact label', () => {
     render(<ToolBlock tool={createTool('{}')} />)
 

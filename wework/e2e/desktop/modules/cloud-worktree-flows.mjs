@@ -298,6 +298,12 @@ async function setRuntimeConcurrency(context, value) {
 
 async function verifyCapability(context) {
   const { cloudEnvironment, workspacePath } = context
+  for (const env of [
+    cloudEnvironment.remoteExecutorEnv,
+    cloudEnvironment.remoteDockerExecutorEnv,
+  ]) {
+    assert.equal(env.WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED, undefined)
+  }
   const initialWorktreeRoot = join(resultDir, 'cloud-executor-home', 'workspace', 'worktrees')
   const rootExistedBeforeProbe = await pathExists(initialWorktreeRoot)
   const ref = commandOutput('git', ['branch', '--show-current'], { cwd: workspacePath })

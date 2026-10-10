@@ -18,9 +18,9 @@ use wegent_executor::{
     config::device::{ConnectionConfig, DeviceConfig},
     local::capabilities::{
         default_manifest_path, get_project_id, is_project_task,
-        restore_enabled_claude_plugin_cache, CapabilityPackageProvider, CapabilitySyncError,
-        CapabilitySyncHandler, GlobalCapabilityReporter, GlobalCapabilityStore,
-        ManagedCapabilityManifest, SkillSyncSpec,
+        restore_enabled_claude_plugin_cache_with_manifest, CapabilityPackageProvider,
+        CapabilitySyncError, CapabilitySyncHandler, GlobalCapabilityReporter,
+        GlobalCapabilityStore, ManagedCapabilityManifest, SkillSyncSpec,
     },
     protocol::ExecutionRequest,
 };
@@ -1436,7 +1436,13 @@ fn restore_enabled_claude_plugin_cache_repairs_existing_hook_permissions() {
     )
     .unwrap();
 
-    let restored = restore_enabled_claude_plugin_cache(&claude_dir).unwrap();
+    let restored = restore_enabled_claude_plugin_cache_with_manifest(
+        &claude_dir,
+        &temp
+            .path()
+            .join(".wegent-executor/capabilities/manifest.json"),
+    )
+    .unwrap();
 
     assert!(restored.is_empty());
     let mode = fs::metadata(&hook_path).unwrap().permissions().mode();
@@ -1494,7 +1500,13 @@ fn restore_enabled_claude_plugin_cache_recovers_managed_plugin_from_store() {
     }))
     .unwrap();
 
-    let restored = restore_enabled_claude_plugin_cache(&claude_dir).unwrap();
+    let restored = restore_enabled_claude_plugin_cache_with_manifest(
+        &claude_dir,
+        &temp
+            .path()
+            .join(".wegent-executor/capabilities/manifest.json"),
+    )
+    .unwrap();
 
     assert_eq!(restored, vec!["wegent-sites@wegent"]);
     assert!(install_path.is_dir());
@@ -2109,10 +2121,12 @@ fn global_capability_helpers_match_project_and_device_config_contract() {
     let temp = TempRoot::new("capability-sync-global");
     let _home = EnvGuard::set("HOME", temp.path().display().to_string());
     let _executor_home = EnvGuard::remove("WEGENT_EXECUTOR_HOME");
+    let _workbench_home = EnvGuard::remove("WEGENT_WORKBENCH_HOME");
+    let _capabilities_home = EnvGuard::remove("WEGENT_CAPABILITIES_HOME");
     assert_eq!(
         default_manifest_path(),
         temp.path()
-            .join(".wegent-executor/capabilities/manifest.json")
+            .join(".wegent/workbench/executor/capabilities/manifest-v2.json")
     );
 
     let mut frontend_device_chat = ExecutionRequest::default();

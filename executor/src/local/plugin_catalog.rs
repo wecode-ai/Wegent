@@ -14,7 +14,6 @@ use serde_json::{json, Value};
 
 use super::bundled_plugins::BUNDLED_PLUGIN_MARKETPLACE_SOURCE_ENV;
 
-const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const COMPONENT_RESOURCES_ROOT_ENV: &str = "WEWORK_COMPONENT_RESOURCES_ROOT";
 const BUNDLED_PLUGINS_DIRECTORY: &str = "bundled-plugins";
 const PLUGIN_EXAMPLE_DIRECTORY: &str = "wework-plugin-example";
@@ -62,7 +61,10 @@ pub struct WegentStoreListResult {
 }
 
 pub fn list_wegent_store_plugins() -> Result<WegentStoreListResult, String> {
-    list_wegent_store_plugins_at(&executor_home_path()?)
+    list_wegent_store_plugins_from_roots(
+        &super::capabilities::default_manifest_path(),
+        &crate::services::workbench::workbench_root()?.join("shared/plugins"),
+    )
 }
 
 pub fn read_plugin_manifest(request: ReadPluginManifestRequest) -> Result<Value, String> {
@@ -74,19 +76,22 @@ pub fn save_plugin_example(request: SavePluginExampleRequest) -> Result<String, 
     save_plugin_example_from_source(&source, Path::new(&request.destination_path))
 }
 
-fn executor_home_path() -> Result<PathBuf, String> {
-    env::var_os(EXECUTOR_HOME_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .ok_or_else(|| "Unable to resolve executor home".to_owned())
+#[cfg(test)]
+fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListResult, String> {
+    list_wegent_store_plugins_from_roots(
+        &executor_home.join("capabilities/manifest.json"),
+        &executor_home.join("workbench/shared/plugins"),
+    )
 }
 
-fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListResult, String> {
-    let capabilities_root = executor_home.join("capabilities");
-    let store_root = capabilities_root.join("store/plugins");
-    let store_path = store_root.display().to_string();
-    let manifest_path = capabilities_root.join("manifest.json");
+fn list_wegent_store_plugins_from_roots(
+    manifest_path: &Path,
+    shared_plugins: &Path,
+) -> Result<WegentStoreListResult, String> {
+    let capabilities_root = manifest_path
+        .parent()
+        .ok_or("Invalid capability manifest path")?;
+    let store_path = shared_plugins.display().to_string();
     if !manifest_path.is_file() {
         return Ok(WegentStoreListResult {
             supports_plugin_reconciliation: true,
@@ -94,8 +99,8 @@ fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListR
             plugins: Vec::new(),
         });
     }
-    reject_symbolic_link(&manifest_path, "Capability manifest")?;
-    let content = fs::read_to_string(&manifest_path).map_err(|error| {
+    reject_symbolic_link(manifest_path, "Capability manifest")?;
+    let content = fs::read_to_string(manifest_path).map_err(|error| {
         format!(
             "Failed to read capability manifest {}: {error}",
             manifest_path.display()
@@ -116,33 +121,11 @@ fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListR
                 manifest_path.display()
             )
         })?;
-    let Ok(canonical_store_root) = store_root.canonicalize() else {
-        return Ok(WegentStoreListResult {
-            supports_plugin_reconciliation: true,
-            store_path,
-            plugins: Vec::new(),
-        });
-    };
-
     let mut plugins = Vec::new();
     for entry in installed.values() {
-        let Some(path) = optional_trimmed_string(entry.get("store_path")).map(PathBuf::from) else {
+        let Ok(plugin_root) = managed_plugin_root(capabilities_root, shared_plugins, entry) else {
             continue;
         };
-        let plugin_root = if path.is_absolute() {
-            path
-        } else {
-            capabilities_root.join(path)
-        };
-        if !plugin_root.is_dir() {
-            continue;
-        }
-        let Ok(plugin_root) = plugin_root.canonicalize() else {
-            continue;
-        };
-        if !plugin_root.starts_with(&canonical_store_root) {
-            continue;
-        }
         if let Some(summary) = wegent_store_plugin_summary(entry, &plugin_root) {
             plugins.push(summary);
         }
@@ -157,6 +140,53 @@ fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListR
         store_path,
         plugins,
     })
+}
+
+/// Accept legacy managed packages or exact content-addressed packages, never a store root.
+pub(crate) fn managed_plugin_root(
+    capabilities_root: &Path,
+    shared_plugins: &Path,
+    entry: &Value,
+) -> Result<PathBuf, String> {
+    let path = entry["store_path"]
+        .as_str()
+        .ok_or("Missing managed plugin path")?;
+    let path = capabilities_root.join(path);
+    let root = path
+        .canonicalize()
+        .map_err(|_| "Managed plugin is missing")?;
+    if !root.is_dir() {
+        return Err("Managed plugin must be a directory".into());
+    }
+    if let Ok(store) = capabilities_root.join("store/plugins").canonicalize() {
+        if root != store && root.starts_with(&store) {
+            return Ok(root);
+        }
+    }
+    let checksum = entry["checksum"]
+        .as_str()
+        .ok_or("Missing plugin checksum")?;
+    let digest = checksum.strip_prefix("sha256:").unwrap_or(checksum);
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Invalid plugin checksum".into());
+    }
+    // A hash-named symlink must not redirect credential operations to another package.
+    reject_symbolic_link(shared_plugins, "Shared plugin store")?;
+    let expected = shared_plugins.join(digest.to_ascii_lowercase());
+    reject_symbolic_link(&expected, "Shared plugin package")?;
+    reject_symbolic_link(&path, "Managed plugin package")?;
+    let store = shared_plugins
+        .canonicalize()
+        .map_err(|_| "Shared plugin store is missing")?;
+    if root.parent() != Some(store.as_path())
+        || root
+            != expected
+                .canonicalize()
+                .map_err(|_| "Shared plugin package is missing")?
+    {
+        return Err("Plugin is outside its managed package store".into());
+    }
+    Ok(root)
 }
 
 fn wegent_store_plugin_summary(
@@ -726,6 +756,73 @@ mod tests {
             listed.plugins[0].default_prompt,
             Some(json!(["Build an example"]))
         );
+    }
+
+    #[test]
+    fn relocated_catalog_lists_legacy_and_shared_packages_without_a_legacy_store_dependency() {
+        let temp = tempfile::tempdir().unwrap();
+        let capabilities = temp.path().join("workbench/wework/test/capabilities");
+        let shared = temp.path().join("workbench/shared/plugins");
+        let digest = "a".repeat(64);
+        let shared_package = shared.join(&digest);
+        write_plugin(&shared_package, "shared", json!([]));
+        let manifest = capabilities.join("manifest.json");
+        let mut entries = json!({"plugins": {
+            "shared": {"name":"shared", "marketplace":"wegent", "store_path":shared_package,
+                "checksum":format!("sha256:{digest}")},
+            "wrong-hash": {"name":"wrong-hash", "store_path":shared_package,
+                "checksum":format!("sha256:{}", "b".repeat(64))},
+            "store-root": {"name":"store-root", "store_path":shared,
+                "checksum":format!("sha256:{digest}")}
+        }});
+        write_json(&manifest, &entries);
+        let listed = list_wegent_store_plugins_from_roots(&manifest, &shared).unwrap();
+        assert_eq!(listed.plugins.len(), 1);
+        assert_eq!(listed.plugins[0].name, "shared");
+        assert_eq!(listed.store_path, shared.display().to_string());
+        assert!(!capabilities.join("store/plugins").exists());
+
+        let legacy = capabilities.join("store/plugins/legacy");
+        write_plugin(&legacy, "legacy", json!([]));
+        entries["plugins"]["legacy"] =
+            json!({"name":"legacy", "marketplace":"wegent", "store_path":"store/plugins/legacy"});
+        write_json(&manifest, &entries);
+        assert_eq!(
+            list_wegent_store_plugins_from_roots(&manifest, &shared)
+                .unwrap()
+                .plugins
+                .len(),
+            2
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_package_rejects_symlink_aliases_and_nested_or_sibling_directories() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let capabilities = temp.path().join("capabilities");
+        let shared = temp.path().join("shared/plugins");
+        let digest = "a".repeat(64);
+        let root = shared.join(&digest);
+        fs::create_dir_all(root.join("nested")).unwrap();
+        let entry = |path: &Path| json!({"store_path":path,"checksum":format!("sha256:{digest}")});
+        assert_eq!(
+            managed_plugin_root(&capabilities, &shared, &entry(&root)).unwrap(),
+            root.canonicalize().unwrap()
+        );
+        assert!(managed_plugin_root(&capabilities, &shared, &entry(&root.join("nested"))).is_err());
+        let sibling = shared.join("b".repeat(64));
+        fs::create_dir(&sibling).unwrap();
+        assert!(managed_plugin_root(&capabilities, &shared, &entry(&sibling)).is_err());
+        assert!(managed_plugin_root(&capabilities, &shared, &json!({"store_path":root})).is_err());
+        let alias = temp.path().join("alias");
+        symlink(&root, &alias).unwrap();
+        assert!(managed_plugin_root(&capabilities, &shared, &entry(&alias)).is_err());
+        let outside = temp.path().join("outside");
+        fs::rename(&root, &outside).unwrap();
+        symlink(&outside, &root).unwrap();
+        assert!(managed_plugin_root(&capabilities, &shared, &entry(&root)).is_err());
     }
 
     #[test]

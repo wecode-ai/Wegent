@@ -27,9 +27,8 @@ use super::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
     notification_mapping::{
-        codex_stream_debug_enabled, log_dropped_notification, log_stream_text_mapping,
-        log_text_mapping, map_text_chunk, map_tool_output_delta, notification_item_id,
-        TextChunkMapping,
+        codex_stream_debug_enabled, log_dropped_notification, map_text_chunk,
+        map_tool_output_delta, notification_item_id, TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -1266,14 +1265,6 @@ impl CodexNotificationEventMapper {
         match map_text_chunk(method, params, resolved_phase, output_item_id_fallback) {
             Ok(Some(TextChunkMapping::OutputDelta { item_id, delta })) => {
                 self.active_output_item_id = Some(item_id.clone());
-                log_stream_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "emit_output_delta",
-                    resolved_phase,
-                    params,
-                    &delta,
-                );
                 emit_response_event(
                     emit_context.event_tx,
                     emit_context.device_id,
@@ -1291,14 +1282,6 @@ impl CodexNotificationEventMapper {
                 if self.active_output_item_id.as_deref() == Some(item_id.as_str()) {
                     self.active_output_item_id = None;
                 }
-                log_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "emit_output_completed",
-                    resolved_phase,
-                    params,
-                    &text,
-                );
                 emit_response_event(
                     emit_context.event_tx,
                     emit_context.device_id,
@@ -1318,14 +1301,6 @@ impl CodexNotificationEventMapper {
                 item_id,
                 delta,
             })) => {
-                log_stream_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "emit_process_delta",
-                    resolved_phase,
-                    params,
-                    &delta,
-                );
                 self.emit_process_text_delta(
                     emit_context,
                     method,
@@ -1357,14 +1332,6 @@ impl CodexNotificationEventMapper {
                 if replaces_item_id.is_some() {
                     self.active_output_item_id = None;
                 }
-                log_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "emit_completed_process",
-                    resolved_phase,
-                    params,
-                    &text,
-                );
                 self.emit_completed_process_text(
                     emit_context,
                     block_type,
@@ -1563,23 +1530,6 @@ impl CodexNotificationEventMapper {
             );
             return;
         };
-
-        log_executor_event(
-            "codex patch update mapped",
-            &[
-                ("local_task_id", local_task_id.to_owned()),
-                ("block_id", block_id.clone()),
-                (
-                    "changes",
-                    params
-                        .get("changes")
-                        .and_then(Value::as_array)
-                        .map(Vec::len)
-                        .unwrap_or_default()
-                        .to_string(),
-                ),
-            ],
-        );
 
         emit_response_event(
             event_tx,

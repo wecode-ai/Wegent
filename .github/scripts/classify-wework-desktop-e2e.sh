@@ -409,8 +409,16 @@ classify_wework_path() {
       return
       ;;
 
-    # Workbench mode owns the managed Git plugin state and settings flow.
+    # Workbench mode covers Home migration before the managed Git/settings flow.
     wework/e2e/desktop/scenarios/workbench-mode.scenario.mjs | \
+      wework/e2e/desktop/modules/native-agent-mcp.mjs | \
+      wework/e2e/desktop/modules/workbench-home-migration.mjs | \
+      wework/e2e/desktop/modules/workbench-schema-compatibility.mjs | \
+      wework/electron/src/runtime/workbench-environment* | \
+      wework/electron/src/runtime/development-isolation* | \
+      wework/electron/src/runtime/workbench-executor-schema* | \
+      wework/electron/src/runtime/workbench-migration-lock* | \
+      wework/electron/src/runtime/workbench-home-migration* | \
       wework/electron/src/runtime/workbench-mode* | \
       wework/src/features/workbench-mode/*)
       select_target "core:workbench-mode"
@@ -832,6 +840,11 @@ classify_wework_path() {
       select_target "core:project-ai-settings"
       select_target "core:claude-runtime"
       select_cloud_worktree_checkpoints
+      return
+      ;;
+
+    wework/e2e/desktop/modules/shared-skill-runtime.mjs)
+      select_target "core:claude-runtime"
       return
       ;;
 

@@ -20,7 +20,6 @@ use crate::{agents::replace_config, logging::log_executor_event};
 use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
 
 pub const BUNDLED_PLUGIN_MARKETPLACE_SOURCE_ENV: &str = "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR";
-const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const MARKETPLACE_ID: &str = "wework-personal";
 const CONTENT_HASH_FILE: &str = ".wework-content-sha256";
@@ -45,15 +44,14 @@ pub fn initialize_bundled_plugin_marketplace() -> Result<BundledPluginMarketplac
     let source = non_empty_path(BUNDLED_PLUGIN_MARKETPLACE_SOURCE_ENV).ok_or_else(|| {
         format!("{BUNDLED_PLUGIN_MARKETPLACE_SOURCE_ENV} is required to initialize bundled plugins")
     })?;
-    let executor_home = non_empty_path(EXECUTOR_HOME_ENV)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .ok_or_else(|| "Unable to resolve executor home".to_owned())?;
+    let executor_home = crate::config::paths::executor_home();
     let codex_home = non_empty_path(CODEX_HOME_ENV).unwrap_or_else(|| executor_home.join("codex"));
     let legacy_personal_marketplaces = legacy_personal_marketplace_roots(&executor_home)?;
     initialize_bundled_plugin_marketplace_from_paths_with_recovery(
         &source,
-        &executor_home
-            .join("capabilities")
+        &super::capabilities::default_manifest_path()
+            .parent()
+            .ok_or_else(|| "Capabilities manifest has no parent directory".to_owned())?
             .join("bundled-marketplaces")
             .join(MARKETPLACE_ID),
         Some(&codex_home),

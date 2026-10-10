@@ -8,6 +8,10 @@ use serde_json::{json, Map, Value};
 
 use crate::emitter::{EventEnvelope, ResponsesEventBuilder};
 
+#[path = "standard_file_changes.rs"]
+mod file_changes;
+use file_changes::FileChangeProjection;
+
 /// Adapts desktop deltas to the callback protocol used by standard executors.
 #[derive(Default)]
 pub(super) struct StandardEventProjection {
@@ -15,13 +19,34 @@ pub(super) struct StandardEventProjection {
     published_blocks: BTreeSet<String>,
     output_text: BTreeMap<String, String>,
     output_offset: usize,
+    file_changes: FileChangeProjection,
 }
 
 impl StandardEventProjection {
+    pub(super) fn include_file_details(data: &mut Value, notification: &Value) {
+        FileChangeProjection::include_details(data, notification);
+    }
+
     pub(super) fn begin_response(&mut self) {
         self.published_blocks.clear();
         self.output_text.clear();
         self.output_offset = 0;
+        self.file_changes.begin_response();
+    }
+
+    pub(super) fn project_events(
+        &mut self,
+        event_type: &str,
+        data: Value,
+        builder: &ResponsesEventBuilder,
+    ) -> Result<Vec<EventEnvelope>, String> {
+        if self.file_changes.handles(event_type, &data) {
+            return self.file_changes.project(event_type, data, builder);
+        }
+        Ok(self
+            .project(event_type, data, builder)?
+            .into_iter()
+            .collect())
     }
 
     pub(super) fn project(

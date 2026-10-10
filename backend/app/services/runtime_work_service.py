@@ -3828,11 +3828,12 @@ def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
         if address.workspace_path
         else None
     )
+    team_id = _runtime_address_team_id(address)
     return RuntimeTaskAddress(
         deviceId=address.device_id,
         workspacePath=workspace_path,
         localTaskId=address.local_task_id.strip(),
-        runtimeHandle=address.runtime_handle,
+        runtimeHandle={"wegentTeam": {"id": team_id}} if team_id is not None else None,
     )
 
 

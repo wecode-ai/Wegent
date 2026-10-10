@@ -332,6 +332,7 @@ fn path_size(path: &Path) -> Option<u64> {
 
 fn is_local_attachment_draft_path(path: &str) -> bool {
     path.contains("/.wegent-executor/workspace/attachments/draft/")
+        || path.contains("/.wegent/workbench/executor/workspace/attachments/draft/")
         || path.contains("/.wecode/wegent-executor/workspace/attachments/draft/")
 }
 

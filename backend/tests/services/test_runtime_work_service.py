@@ -5365,11 +5365,15 @@ def test_runtime_address_team_binding_is_additive() -> None:
     bound = RuntimeTaskAddress(
         deviceId="device-1",
         taskId="team-task",
-        runtimeHandle={"wegentTeam": {"id": 7}},
+        runtimeHandle={"wegentTeam": {"id": 7}, "privateField": "must-not-forward"},
     )
 
     assert runtime_work_service._runtime_address_team_id(legacy) is None
     assert runtime_work_service._runtime_address_team_id(bound) == 7
+    normalized = runtime_work_service._normalized_address(bound)
+    assert runtime_work_service._runtime_address_team_id(normalized) == 7
+    assert normalized.runtime_handle == {"wegentTeam": {"id": 7}}
+    assert runtime_work_service._normalized_address(legacy).runtime_handle is None
 
 
 @pytest.mark.asyncio

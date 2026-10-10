@@ -69,6 +69,9 @@ fn claude_command_sends_text_prompt_through_stream_json_stdin() {
             "--output-format",
             "stream-json",
             "--verbose",
+            "--include-partial-messages",
+            "--disallowedTools",
+            "EnterWorktree",
             "--permission-mode",
             "bypassPermissions",
             "--model",
@@ -537,6 +540,10 @@ fn claude_command_resumes_saved_task_session() {
 
     assert!(spec.args().contains(&"--resume".to_owned()));
     assert!(spec.args().contains(&"saved-session".to_owned()));
+    assert!(spec
+        .args()
+        .windows(2)
+        .any(|args| args == ["--disallowedTools", "EnterWorktree"]));
 }
 
 #[test]
@@ -789,17 +796,18 @@ fn claude_command_uses_workspace_task_dir_for_chat_turn_state() {
         ..ExecutionRequest::default()
     };
 
-    let spec = build_claude_command(&request, "claude");
+    let spec = build_claude_command(&named_claude_request(request), "claude");
     let task_dir = workspace_root.join("42");
+    let agent_home = home.join(".wegent/workbench/agents/alice/default/Claude");
 
     assert_eq!(spec.current_dir().unwrap(), &task_dir);
     assert_eq!(
         spec.envs().get("CLAUDE_CONFIG_DIR").unwrap(),
-        &home.join(".claude").display().to_string()
+        &agent_home.display().to_string()
     );
     assert_eq!(
         spec.envs().get("SKILLS_DIR").unwrap(),
-        &home.join(".claude/skills").display().to_string()
+        &agent_home.join("skills").display().to_string()
     );
 }
 
@@ -833,7 +841,7 @@ fn claude_project_task_uses_global_capability_dirs() {
 }
 
 #[test]
-fn claude_project_task_with_agent_skills_uses_project_scoped_skill_dir() {
+fn claude_project_task_with_agent_skills_uses_named_home_skill_dir() {
     let _lock = env_lock();
     let home = unique_dir("claude-project-skill-home");
     let project_dir = unique_dir("claude-project-skill-workspace");
@@ -853,15 +861,17 @@ fn claude_project_task_with_agent_skills_uses_project_scoped_skill_dir() {
         ..ExecutionRequest::default()
     };
 
-    let spec = build_claude_command(&request, "claude");
+    let spec = build_claude_command(&named_claude_request(request), "claude");
+    let agent_home = home.join(".wegent/workbench/agents/alice/default/Claude");
 
+    assert_eq!(spec.current_dir().unwrap(), &project_dir);
     assert_eq!(
         spec.envs().get("CLAUDE_CONFIG_DIR").unwrap(),
-        &home.join(".claude").display().to_string()
+        &agent_home.display().to_string()
     );
     assert_eq!(
         spec.envs().get("SKILLS_DIR").unwrap(),
-        &project_dir.join(".claude/skills").display().to_string()
+        &agent_home.join("skills").display().to_string()
     );
 }
 
@@ -967,7 +977,7 @@ fn claude_standalone_project_zero_keeps_global_capabilities_and_project_header()
 }
 
 #[test]
-fn claude_standalone_project_zero_with_task_skills_keeps_global_config_and_uses_task_skills_dir() {
+fn claude_standalone_project_zero_with_task_skills_uses_named_home() {
     let _lock = env_lock();
     let home = unique_dir("claude-standalone-skill-home");
     let workspace_root = unique_dir("claude-standalone-skill-workspace");
@@ -985,17 +995,30 @@ fn claude_standalone_project_zero_with_task_skills_keeps_global_config_and_uses_
         ..ExecutionRequest::default()
     };
 
-    let spec = build_claude_command(&request, "claude");
+    let spec = build_claude_command(&named_claude_request(request), "claude");
     let task_dir = workspace_root.join("1905");
+    let agent_home = home.join(".wegent/workbench/agents/alice/default/Claude");
 
+    assert_eq!(spec.current_dir().unwrap(), &task_dir);
     assert_eq!(
         spec.envs().get("CLAUDE_CONFIG_DIR").unwrap(),
-        &home.join(".claude").display().to_string()
+        &agent_home.display().to_string()
     );
     assert_eq!(
         spec.envs().get("SKILLS_DIR").unwrap(),
-        &task_dir.join(".claude/skills").display().to_string()
+        &agent_home.join("skills").display().to_string()
     );
+}
+
+fn named_claude_request(mut request: ExecutionRequest) -> ExecutionRequest {
+    request.team_namespace = Some("default".into());
+    request.extra.insert("team_id".into(), json!(10));
+    request.extra.insert("team_name".into(), json!("Claude"));
+    request.extra.insert(
+        "team_owner".into(),
+        json!({"kind":"user", "id":1, "name":"alice"}),
+    );
+    request
 }
 
 #[test]

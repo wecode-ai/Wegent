@@ -1070,7 +1070,14 @@ async function main() {
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
     mkdir(codexSqliteHome, { recursive: true }),
+    mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  // Exercise consent explicitly; the product default already marks it as asked.
+  await writeFile(
+    join(electronUserDataDirectory, 'app-preferences.json'),
+    `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
+    { flag: 'wx', mode: 0o600 }
+  )
   await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
   await Promise.all([
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
@@ -1334,6 +1341,10 @@ async function main() {
       'WEGENT_RUNTIME_AUTH_TOKEN',
       'WEGENT_TASK_ID',
       'WEGENT_TASK_WORKSPACE',
+      'WEGENT_WORKBENCH_HOME',
+      'WEGENT_CAPABILITIES_HOME',
+      'WEGENT_CLAUDE_HOME',
+      'CLAUDE_CONFIG_DIR',
       'WEWORK_CORE_DSH_COMMAND',
       'WEWORK_CORE_DSH_URL',
       'WEWORK_CORE_PLUGIN_ROOT',
@@ -1356,6 +1367,7 @@ async function main() {
       delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
     }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
+    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: desktopScenario?.electronLaunchArguments ?? [],
     })

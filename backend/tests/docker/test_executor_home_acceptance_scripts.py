@@ -32,7 +32,7 @@ def _probe_env(
     return {
         **os.environ,
         "WEGENT_EXECUTOR_HOME": str(executor_home),
-        "LOCAL_WORKSPACE_ROOT": str(executor_home / "workspace"),
+        "LOCAL_WORKSPACE_ROOT": str(executor_home.parent / "data" / "workspace"),
         "WEGENT_EXECUTOR_HOME_ID": device_id,
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED": "true",
         "WEGENT_ACCEPTANCE_INSTANCE_ID": instance_id,
@@ -228,7 +228,8 @@ def test_persistence_probe_requires_instance_replacement_and_preserves_worktree(
     executor_home = tmp_path / "executor-home"
     executor_bin = tmp_path / "fake-wegent-executor"
     _write_fake_executor(executor_bin)
-    (executor_home / "workspace").mkdir(parents=True)
+    executor_home.mkdir()
+    (tmp_path / "data" / "workspace").mkdir(parents=True)
     (executor_home / ".executor-home-id").write_text(
         "device-stable-1",
         encoding="utf-8",
@@ -326,13 +327,15 @@ def test_persistence_probe_requires_instance_replacement_and_preserves_worktree(
     )
     assert cleaned.returncode == 0, cleaned.stderr
     assert not (
-        executor_home
+        tmp_path
+        / "data"
         / "workspace"
         / "projects"
         / ".wegent-acceptance-pytest-persistence"
     ).exists()
     assert not (
-        executor_home
+        tmp_path
+        / "data"
         / "workspace"
         / "worktrees"
         / "acceptance-pytest-persistence"
@@ -429,6 +432,8 @@ def test_acceptance_scripts_are_valid_shell_and_cover_required_lifecycle():
         "cmp -s /app/executor",
         "initialize_runtime_identity",
         "Docker volume identity changed",
+        "Docker data volume identity changed",
+        '--mount "type=volume,src=$DATA_VOLUME_NAME,dst=$DATA_ROOT"',
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true",
         "executor-rpc-probe.py",
         "executor-persistence-json.py",

@@ -3693,6 +3693,39 @@ fn transcript_restores_a_missing_supervisor_generated_user_message() {
 }
 
 #[test]
+fn transcript_restores_missing_historical_turns_in_chronological_order() {
+    let mut messages = vec![json!({
+        "id": "latest-answer", "turnId": "latest-turn", "role": "assistant",
+        "content": "Latest response", "createdAt": 300
+    })];
+    let presentations = vec![
+        json!({
+            "clientUserMessageId": "old-user-2", "turnId": "old-turn-2",
+            "content": "Second historical instruction", "createdAt": 200,
+            "ensureVisible": true
+        }),
+        json!({
+            "clientUserMessageId": "old-user-1", "turnId": "old-turn-1",
+            "content": "First historical instruction", "createdAt": 100,
+            "ensureVisible": true
+        }),
+    ];
+    attach_user_message_presentations(&mut messages, presentations.clone());
+    assert_eq!(
+        messages
+            .iter()
+            .map(|m| m["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["old-user-1", "old-user-2", "latest-answer"]
+    );
+    assert_eq!(messages[0]["turnId"], "old-turn-1");
+    assert_eq!(messages[1]["turnId"], "old-turn-2");
+    let before = messages.clone();
+    attach_user_message_presentations(&mut messages, presentations);
+    assert_eq!(messages, before);
+}
+
+#[test]
 fn transcript_restores_a_missing_user_message_before_an_equal_timestamp_response() {
     let mut provider_messages = vec![json!({
         "id": "assistant-1",

@@ -421,7 +421,11 @@ class TestBuildMcpServers:
 def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(
     test_db, mocker, shell_type, transport
 ):
+    from shared.models.db import User
+
     builder = TaskRequestBuilder(test_db)
+    test_db.add(User(id=7, user_name="alice", password_hash="unused"))
+    test_db.flush()
     subtask = SimpleNamespace(
         id=2,
         message_id=33,
@@ -430,6 +434,7 @@ def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(
     )
     task = SimpleNamespace(
         id=1,
+        user_id=7,
         json={
             "spec": {},
             "metadata": {

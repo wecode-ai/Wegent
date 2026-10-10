@@ -121,8 +121,11 @@ impl Reconciler {
 }
 
 fn installed_ids(home: &Path) -> Result<Vec<u64>, AuthError> {
-    let path = home.join("capabilities/manifest.json");
-    let metadata = match fs::symlink_metadata(&path) {
+    installed_ids_at(&super::migration::manifest_path_for_home(home))
+}
+
+fn installed_ids_at(path: &Path) -> Result<Vec<u64>, AuthError> {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(value) => value,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
         Err(_) => return Err(AuthError("plugin_auth_invalid_package")),
@@ -149,6 +152,25 @@ fn installed_ids(home: &Path) -> Result<Vec<u64>, AuthError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_reads_explicit_relocated_manifest_without_legacy_home() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp
+            .path()
+            .join("workbench/wework/test/capabilities/manifest.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            json!({"plugins": {
+                "mail": {"installed_plugin_id":42,"managed":true,"enabled":true}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(installed_ids_at(&path).unwrap(), vec![42]);
+        assert!(!temp.path().join("capabilities").exists());
+    }
 
     #[test]
     fn discovery_only_reports_enabled_managed_installations() {

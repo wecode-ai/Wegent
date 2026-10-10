@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env, path::PathBuf};
+use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 
@@ -32,12 +32,7 @@ fn device_runtime_attachment_root() -> PathBuf {
 }
 
 fn device_workspace_root() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| env::temp_dir().join("wegent-executor"))
-        .join("workspace")
+    crate::config::paths::executor_home().join("workspace")
 }
 
 fn safe_identity_segment(value: &str) -> String {

@@ -111,6 +111,7 @@ export function coreGrantedCapabilities(
 }
 
 export interface ElectronDesktopServices {
+  executorHome: string
   appUpdates?: AppUpdateService
   browserAnnotations?: BrowserAnnotationController
   events: DesktopHostEventBroker
@@ -312,9 +313,16 @@ export function createElectronCapabilityRouter(
   }
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
-  const attachments = new LocalAttachmentStore(localAttachmentRoot())
+  const attachments = new LocalAttachmentStore(
+    join(desktopServices.executorHome, 'workspace', 'attachments', 'draft')
+  )
   const filePreviewLog = new RotatingLog({
     path: join(app.getPath('logs'), 'file-preview.log'),
+    maxBytes: 2 * 1024 * 1024,
+    retainedFiles: 2,
+  })
+  const modelLoadingLog = new RotatingLog({
+    path: join(app.getPath('logs'), 'model-loading.log'),
     maxBytes: 2 * 1024 * 1024,
     retainedFiles: 2,
   })
@@ -352,6 +360,11 @@ export function createElectronCapabilityRouter(
   router.register('diagnostics.filePreview', params => {
     const event = recordParam(params, 'event')
     return filePreviewLog.write('supervisor', JSON.stringify(event))
+  })
+  router.register('diagnostics.modelLoading', params => {
+    const events = params.events
+    if (!Array.isArray(events) || events.length > 200) invalidParam('events')
+    return modelLoadingLog.write('supervisor', JSON.stringify({ events }))
   })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
@@ -1368,16 +1381,6 @@ export function registerBrowserHistoryCapabilities(
   )
   router.register('browser.historyRemove', params =>
     browser.removeHistory(stringArrayParam(params, 'ids') ?? [])
-  )
-}
-
-function localAttachmentRoot(): string {
-  const executorHome = process.env.WEGENT_EXECUTOR_HOME?.trim()
-  return join(
-    executorHome || join(app.getPath('home'), '.wework'),
-    'workspace',
-    'attachments',
-    'draft'
   )
 }
 

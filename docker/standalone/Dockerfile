@@ -112,7 +112,7 @@ RUN dnf install -y \
     redis \
     # MySQL server for standalone mode (embedded)
     mysql-server \
-    && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.142.5 \
+    && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

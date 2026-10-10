@@ -20,6 +20,10 @@ use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeW
 #[path = "support/runtime_task_project_move.rs"]
 mod runtime_task_project_move;
 
+#[cfg(unix)]
+#[path = "support/runtime_model_query_activation.rs"]
+mod runtime_model_query_activation;
+
 struct EnvLockGuard {
     _guard: OwnedMutexGuard<()>,
 }

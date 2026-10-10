@@ -1721,6 +1721,14 @@ async fn run_codex_app_server_turn_on_shared_client(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
+    if super::instance_home::request_home(&request).is_some() {
+        let mut options = options;
+        if let Some(thread_id) = options.direct_thread_id.take() {
+            options.resume_thread_id = Some(thread_id);
+        }
+        return run_codex_app_server_turn_with_cancel(&client.binary, request, options).await;
+    }
+    let _capability_lease = crate::services::capability_activation::begin_execution().await;
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -2069,6 +2077,10 @@ pub async fn run_codex_app_server_turn_with_cancel(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
+    let _capability_lease = crate::services::capability_activation::begin_execution().await;
+    let _home_lease = super::instance_home::acquire(&request)?;
+    super::environment_setup::prepare_execution_environment(&request).await?;
+    super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -2443,7 +2455,6 @@ async fn read_shared_turn_notifications(
         if !notification_belongs_to_thread(client, &message, thread_id).await {
             continue;
         }
-        log_codex_raw_turn_message(&message);
         if let Some(error) = required_mcp_startup_failure(&message) {
             if let Some(sender) = &options.notifications {
                 let _ = sender.send(message);
@@ -3145,8 +3156,17 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
 ) -> Result<tokio::process::Child, String> {
     let resolved_binary = resolve_codex_binary(binary);
-    let codex_home = wework_codex_home();
-    prepare_wework_codex_home(&codex_home)?;
+    let codex_home = launch_config
+        .env
+        .get(CODEX_HOME_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(wework_codex_home);
+    if launch_config.env.contains_key(CODEX_HOME_ENV) {
+        fs::create_dir_all(&codex_home)
+            .map_err(|error| format!("create agent Codex Home: {error}"))?;
+    } else {
+        prepare_wework_codex_home(&codex_home)?;
+    }
     codex_app_server_command(&resolved_binary, &codex_home, launch_config)
         .spawn()
         .map_err(|error| format!("failed to start codex app-server: {error}"))
@@ -3172,6 +3192,9 @@ fn codex_app_server_command(
         command.env(key, value);
     }
     command.env(CODEX_HOME_ENV, codex_home);
+    if launch_config.env.contains_key(CODEX_HOME_ENV) {
+        command.env("CODEX_SQLITE_HOME", codex_home);
+    }
     command.current_dir(codex_home);
     command.env(
         "PATH",
@@ -3345,7 +3368,7 @@ use json_rpc::JsonRpcConnection;
 #[path = "codex/run_state.rs"]
 mod run_state;
 
-use run_state::{log_codex_raw_turn_message, stream_thread_id, CodexRunState};
+use run_state::{stream_thread_id, CodexRunState};
 
 fn initialize_params() -> Value {
     json!({
@@ -3489,20 +3512,27 @@ fn build_codex_launch_config_with_route_scope(
     let reasoning = normalize_reasoning(codex_reasoning_config(&request.model_config));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
+    let instance_home = super::instance_home::request_home(request);
+    let codex_home = instance_home.clone().unwrap_or_else(wework_codex_home);
     let mut launch_config = CodexLaunchConfig {
         thread_config,
-        user_developer_instructions: read_wework_codex_user_instructions(&wework_codex_home())?,
+        user_developer_instructions: read_wework_codex_user_instructions(&codex_home)?,
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
         env: runtime_proxy_env(&request.model_config),
         ..CodexLaunchConfig::default()
     };
+    if let Some(home) = instance_home {
+        launch_config
+            .env
+            .insert(CODEX_HOME_ENV.to_owned(), home.display().to_string());
+    }
     launch_config
         .config_overrides
         .push(shell_path_config_override());
     launch_config
-        .config_overrides
-        .extend(task_identity_config_overrides(request));
+        .thread_config
+        .extend(task_identity_thread_config(request));
     if let Some(cargo_target_override) = super::cargo_cache::codex_config_override(request) {
         launch_config.config_overrides.push(cargo_target_override);
     }
@@ -3635,9 +3665,10 @@ fn build_codex_launch_config_with_route_scope(
         ));
     }
 
-    launch_config
-        .config_overrides
-        .extend(global_mcp_config_overrides());
+    if super::instance_home::request_home(request).is_none() {
+        let overrides = global_mcp_config_overrides(&mut launch_config.thread_config)?;
+        launch_config.config_overrides.extend(overrides);
+    }
     let (browser_overrides, browser_env) = cdp_browser_mcp_config_overrides(request)?;
     launch_config.config_overrides.extend(browser_overrides);
     launch_config.env.extend(browser_env);
@@ -3652,9 +3683,13 @@ fn build_codex_launch_config_with_route_scope(
         .config_overrides
         .extend(project_space_overrides);
     launch_config.env.extend(project_space_env);
-    launch_config
-        .config_overrides
-        .extend(runtime_capabilities::request_mcp_config_overrides(request));
+    let (request_mcp_overrides, request_mcp_environment) =
+        runtime_capabilities::request_mcp_config_overrides(
+            request,
+            &mut launch_config.thread_config,
+        )?;
+    launch_config.config_overrides.extend(request_mcp_overrides);
+    launch_config.env.extend(request_mcp_environment);
 
     Ok(launch_config)
 }
@@ -3823,14 +3858,13 @@ fn explicit_codex_upstream(
         .expect("explicit model config should produce an upstream")
 }
 
-fn task_identity_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
     task_identity_env(request)
         .into_iter()
         .map(|(key, value)| {
-            format!(
-                "shell_environment_policy.set.{}={}",
-                toml_key_segment(&key),
-                toml_value(&value)
+            (
+                toml_key_path(&["shell_environment_policy", "set", &key]),
+                Value::String(value),
             )
         })
         .collect()
@@ -4166,6 +4200,10 @@ fn codex_process_environment(
     launch_env: &BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
     let mut environment = codex_base_process_environment();
+    environment.insert(
+        "WEGENT_CAPABILITY_REVISION".to_owned(),
+        crate::services::capability_activation::revision().to_string(),
+    );
     environment.extend(launch_env.clone());
     replace_proxy_environment(&mut environment, runtime_proxy_env.clone());
     environment
@@ -4606,17 +4644,10 @@ fn normalize_service_tier(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn global_mcp_config_overrides() -> Vec<String> {
-    let manifest_path = executor_home().join("capabilities/manifest.json");
-    let Ok(manifest) = fs::read_to_string(manifest_path) else {
-        return Vec::new();
-    };
-    let Ok(manifest) = serde_json::from_str::<Value>(&manifest) else {
-        return Vec::new();
-    };
-    let Some(mcps) = manifest.get("mcps").and_then(Value::as_object) else {
-        return Vec::new();
-    };
+fn global_mcp_config_overrides(
+    thread_config: &mut Map<String, Value>,
+) -> Result<Vec<String>, String> {
+    let mcps = runtime_capabilities::load_global_mcp_records()?;
 
     let mut overrides = Vec::new();
     let mut names = mcps.keys().collect::<Vec<_>>();
@@ -4629,9 +4660,17 @@ fn global_mcp_config_overrides() -> Vec<String> {
         else {
             continue;
         };
-        overrides.extend(mcp_server_overrides(name, server));
+        let server = Value::Object(server.clone());
+        runtime_capabilities::mcp_environment::append_stdio_environment(
+            name,
+            &server,
+            thread_config,
+        )?;
+        if let Some(server) = server.as_object() {
+            overrides.extend(mcp_server_overrides(name, server));
+        }
     }
-    overrides
+    Ok(overrides)
 }
 
 fn cdp_browser_mcp_config_overrides(
@@ -4715,6 +4754,7 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
         );
     }
     environment.extend(computer_use_mcp_config_overrides().1);
+    environment.extend(crate::services::git_credentials::environment());
     environment
 }
 
@@ -4928,18 +4968,8 @@ fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> 
                 toml_json_value(&Value::Array(args))
             ));
         }
-        if let Some(env) = server.get("env").and_then(Value::as_object) {
-            let mut env_keys = env.keys().collect::<Vec<_>>();
-            env_keys.sort();
-            for env_key in env_keys {
-                if let Some(env_value) = env.get(env_key).and_then(value_string) {
-                    overrides.push(format!(
-                        "{key}.env.{}={}",
-                        toml_key_segment(env_key),
-                        toml_value(&env_value)
-                    ));
-                }
-            }
+        if let Some(names) = server.get("env_vars") {
+            overrides.push(format!("{key}.env_vars={}", toml_json_value(names)));
         }
         return overrides;
     }
@@ -5758,6 +5788,9 @@ fn thread_resume_params(
 ) -> Value {
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+    if let Some(path) = super::instance_home::migrated_codex_rollout(request, thread_id) {
+        params.insert("path".to_owned(), json!(path));
+    }
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }

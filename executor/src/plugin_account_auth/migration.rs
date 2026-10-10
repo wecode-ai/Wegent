@@ -116,9 +116,42 @@ pub fn resolve_managed_package(
     executor_home: &Path,
     package: &PreparedPackage,
 ) -> Result<PathBuf, AuthError> {
-    let capabilities = executor_home.join("capabilities");
-    let manifest_path = capabilities.join("manifest.json");
-    let metadata = fs::symlink_metadata(&manifest_path)
+    let manifest_path = manifest_path_for_home(executor_home);
+    let shared_plugins = if is_current_executor_home(executor_home) {
+        crate::services::workbench::workbench_root()
+            .map_err(|_| AuthError("plugin_auth_invalid_package"))?
+            .join("shared/plugins")
+    } else {
+        executor_home.join("workbench/shared/plugins")
+    };
+    resolve_managed_package_at(&manifest_path, &shared_plugins, package)
+}
+
+// Explicit homes are also used by isolated executor fixtures and enrollment callers.
+// Only the current executor may consume process-wide path overrides.
+fn is_current_executor_home(home: &Path) -> bool {
+    let configured = crate::config::paths::executor_home();
+    home == configured
+        || matches!((home.canonicalize(), configured.canonicalize()), (Ok(left), Ok(right)) if left == right)
+}
+
+pub(super) fn manifest_path_for_home(home: &Path) -> PathBuf {
+    if is_current_executor_home(home) {
+        crate::local::capabilities::default_manifest_path()
+    } else {
+        home.join("capabilities/manifest.json")
+    }
+}
+
+fn resolve_managed_package_at(
+    manifest_path: &Path,
+    shared_plugins: &Path,
+    package: &PreparedPackage,
+) -> Result<PathBuf, AuthError> {
+    let capabilities = manifest_path
+        .parent()
+        .ok_or(AuthError("plugin_auth_invalid_package"))?;
+    let metadata = fs::symlink_metadata(manifest_path)
         .map_err(|_| AuthError("plugin_auth_package_sync_required"))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 8 * 1024 * 1024
     {
@@ -143,27 +176,15 @@ pub fn resolve_managed_package(
     {
         return Err(AuthError("plugin_auth_package_sync_required"));
     }
-    let path = PathBuf::from(
-        entry["store_path"]
-            .as_str()
-            .ok_or(AuthError("plugin_auth_invalid_package"))?,
-    );
-    let root = if path.is_absolute() {
-        path
-    } else {
-        capabilities.join(path)
-    };
-    let root = root
+    let store_path = entry["store_path"]
+        .as_str()
+        .ok_or(AuthError("plugin_auth_invalid_package"))?;
+    capabilities
+        .join(store_path)
         .canonicalize()
         .map_err(|_| AuthError("plugin_auth_package_sync_required"))?;
-    let store = capabilities
-        .join("store/plugins")
-        .canonicalize()
-        .map_err(|_| AuthError("plugin_auth_package_sync_required"))?;
-    if !root.starts_with(&store) || !root.is_dir() || root == store {
-        return Err(AuthError("plugin_auth_invalid_package"));
-    }
-    Ok(root)
+    crate::local::plugin_catalog::managed_plugin_root(capabilities, shared_plugins, entry)
+        .map_err(|_| AuthError("plugin_auth_invalid_package"))
 }
 
 pub(super) fn interpreter_for(definition: &Value) -> Result<PathBuf, AuthError> {
@@ -181,5 +202,105 @@ pub(super) fn interpreter_for(definition: &Value) -> Result<PathBuf, AuthError> 
         Some("sh") if cfg!(unix) => Ok(PathBuf::from("sh")),
         // PowerShell needs invocation flags; unsupported runtimes fail explicitly.
         _ => Err(AuthError("plugin_auth_runtime_unsupported")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn fixture(root: &Path) -> (PathBuf, PathBuf, PathBuf, PreparedPackage) {
+        let capabilities = root.join("workbench/wework/test/capabilities");
+        let shared = root.join("workbench/shared/plugins");
+        let package_root = shared.join("a".repeat(64));
+        fs::create_dir_all(&package_root).unwrap();
+        fs::create_dir_all(&capabilities).unwrap();
+        let package = PreparedPackage {
+            installed_plugin_id: 42,
+            connector_slug: "mail".into(),
+            checksum: format!("sha256:{}", "a".repeat(64)),
+            auth_definition: json!({}),
+        };
+        let manifest = capabilities.join("manifest.json");
+        fs::write(
+            &manifest,
+            json!({"plugins":{"mail":{
+                "installed_plugin_id":42,"managed":true,"enabled":true,
+                "checksum":package.checksum,"store_path":package_root
+            }}})
+            .to_string(),
+        )
+        .unwrap();
+        (manifest, shared, package_root, package)
+    }
+
+    #[test]
+    fn enrollment_resolves_the_exact_shared_digest_from_relocated_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest, shared, root, mut package) = fixture(temp.path());
+        assert_eq!(
+            resolve_managed_package_at(&manifest, &shared, &package).unwrap(),
+            root.canonicalize().unwrap()
+        );
+        package.checksum = format!("sha256:{}", "b".repeat(64));
+        assert_eq!(
+            resolve_managed_package_at(&manifest, &shared, &package),
+            Err(AuthError("plugin_auth_package_sync_required"))
+        );
+        // Matching server and local metadata must not authorize a different hash directory.
+        let mut data: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        data["plugins"]["mail"]["checksum"] = json!(package.checksum);
+        fs::write(&manifest, data.to_string()).unwrap();
+        assert_eq!(
+            resolve_managed_package_at(&manifest, &shared, &package),
+            Err(AuthError("plugin_auth_invalid_package"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn enrollment_accepts_legacy_capabilities_bridge_not_manifest_or_package_symlinks() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest, shared, root, package) = fixture(temp.path());
+        let bridge = temp.path().join("legacy-capabilities");
+        symlink(manifest.parent().unwrap(), &bridge).unwrap();
+        assert!(
+            resolve_managed_package_at(&bridge.join("manifest.json"), &shared, &package).is_ok()
+        );
+        let alias = temp.path().join("manifest.json");
+        symlink(&manifest, &alias).unwrap();
+        assert_eq!(
+            resolve_managed_package_at(&alias, &shared, &package),
+            Err(AuthError("plugin_auth_invalid_package"))
+        );
+        let outside = temp.path().join("outside");
+        fs::rename(&root, &outside).unwrap();
+        symlink(&outside, &root).unwrap();
+        assert_eq!(
+            resolve_managed_package_at(&manifest, &shared, &package),
+            Err(AuthError("plugin_auth_invalid_package"))
+        );
+    }
+
+    #[test]
+    fn explicitly_supplied_home_keeps_its_manifest_isolated() {
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            manifest_path_for_home(temp.path()),
+            temp.path().join("capabilities/manifest.json")
+        );
+    }
+
+    #[test]
+    fn missing_shared_package_still_requests_sync() {
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest, shared, root, package) = fixture(temp.path());
+        fs::remove_dir(&root).unwrap();
+        assert_eq!(
+            resolve_managed_package_at(&manifest, &shared, &package),
+            Err(AuthError("plugin_auth_package_sync_required"))
+        );
     }
 }

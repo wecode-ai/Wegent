@@ -184,7 +184,7 @@ impl Default for DeviceConfig {
             connection: ConnectionConfig::default(),
             logging: LoggingConfig::default(),
             update: UpdateConfig::default(),
-            local_workspace_root: executor_home.join("workspace"),
+            local_workspace_root: crate::workspace_paths::local_workspace_root(),
             executor_home,
         }
     }
@@ -199,6 +199,13 @@ impl DeviceConfig {
     }
 
     fn apply_env_overrides(&mut self) {
+        let legacy_home = dirs::home_dir().map(|home| home.join(".wegent-executor"));
+        if legacy_home.as_ref() == Some(&self.executor_home) {
+            if self.local_workspace_root == self.executor_home.join("workspace") {
+                self.local_workspace_root = crate::workspace_paths::local_workspace_root();
+            }
+            self.executor_home = default_executor_home();
+        }
         set_from_env(&mut self.mode, "EXECUTOR_MODE");
         set_from_env(&mut self.connection.backend_url, "WEGENT_BACKEND_URL");
         set_from_env(&mut self.connection.socket_url, "WEGENT_SOCKET_URL");
@@ -214,12 +221,16 @@ impl DeviceConfig {
                 self.executor_home = PathBuf::from(value.trim());
             }
         }
-        if let Ok(value) = env::var("LOCAL_WORKSPACE_ROOT") {
-            if !value.trim().is_empty() {
-                self.local_workspace_root = PathBuf::from(value.trim());
-            }
-        } else if self.local_workspace_root.as_os_str().is_empty() {
-            self.local_workspace_root = self.executor_home.join("workspace");
+        if [
+            "WORKSPACE_ROOT",
+            "WEGENT_WORKSPACE_ROOT",
+            "LOCAL_WORKSPACE_ROOT",
+        ]
+        .iter()
+        .any(|key| env::var(key).is_ok_and(|value| !value.trim().is_empty()))
+            || self.local_workspace_root.as_os_str().is_empty()
+        {
+            self.local_workspace_root = crate::workspace_paths::local_workspace_root();
         }
     }
 
@@ -262,7 +273,7 @@ fn worktree_persistent_storage_verified_for(device_type: &str, verification: Opt
         "local" | "app" | "" => true,
         "cloud" | "remote" => verification
             .map(str::trim)
-            .is_some_and(|value| value.eq_ignore_ascii_case("true")),
+            .map_or(true, |value| value.eq_ignore_ascii_case("true")),
         _ => false,
     }
 }
@@ -303,7 +314,7 @@ pub fn load_device_config(config_path: Option<&str>) -> Result<DeviceConfig, Con
         config.executor_home = default_executor_home();
     }
     if config.local_workspace_root.as_os_str().is_empty() {
-        config.local_workspace_root = config.executor_home.join("workspace");
+        config.local_workspace_root = crate::workspace_paths::local_workspace_root();
     }
 
     config.apply_env_overrides();
@@ -451,16 +462,7 @@ fn default_config_path() -> PathBuf {
 }
 
 fn default_executor_home() -> PathBuf {
-    env::var("WEGENT_EXECUTOR_HOME")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".wegent-executor"))
-}
-
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
+    crate::config::paths::executor_home()
 }
 
 fn default_mode() -> String {
@@ -501,9 +503,9 @@ mod tests {
     }
 
     #[test]
-    fn cloud_and_remote_worktrees_require_explicit_true_verification() {
+    fn cloud_and_remote_worktrees_default_to_verified_storage_with_explicit_opt_out() {
         for device_type in ["cloud", "remote"] {
-            assert!(!worktree_persistent_storage_verified_for(device_type, None));
+            assert!(worktree_persistent_storage_verified_for(device_type, None));
             assert!(!worktree_persistent_storage_verified_for(
                 device_type,
                 Some("false")

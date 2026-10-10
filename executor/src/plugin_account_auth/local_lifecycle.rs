@@ -5,7 +5,7 @@ use crate::local::backend::LocalBackendTransport;
 use serde_json::{json, Value};
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -56,11 +56,12 @@ pub(super) fn start<T: LocalBackendTransport>(
 
 /// Return None only for a connector without a managed account adapter.
 pub async fn exchange(root: &Path, slug: &str, action: &str) -> Result<Option<Value>, AuthError> {
-    let home = std::env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .ok_or(AuthError("plugin_auth_broker_unavailable"))?;
-    let Some(id) = installed_id(&home, root, slug)? else {
+    let Some(id) = installed_id_at(
+        &crate::local::capabilities::default_manifest_path(),
+        root,
+        slug,
+    )?
+    else {
         return Ok(None);
     };
     let sender = super::broker::lifecycle_sender()?;
@@ -83,7 +84,7 @@ pub async fn exchange(root: &Path, slug: &str, action: &str) -> Result<Option<Va
     }
 }
 
-fn installed_id(home: &Path, root: &Path, slug: &str) -> Result<Option<u64>, AuthError> {
+fn installed_id_at(path: &Path, root: &Path, slug: &str) -> Result<Option<u64>, AuthError> {
     let root = root
         .canonicalize()
         .map_err(|_| AuthError("plugin_auth_invalid_package"))?;
@@ -95,15 +96,16 @@ fn installed_id(home: &Path, root: &Path, slug: &str) -> Result<Option<u64>, Aut
     }) {
         return Ok(None);
     }
-    let capabilities = home.join("capabilities");
-    let path = capabilities.join("manifest.json");
+    let capabilities = path
+        .parent()
+        .ok_or(AuthError("plugin_auth_invalid_package"))?;
     if !path
         .try_exists()
         .map_err(|_| AuthError("plugin_auth_invalid_package"))?
     {
         return Ok(None);
     }
-    let manifest = read_json(&path)?;
+    let manifest = read_json(path)?;
     let entries = manifest["plugins"]
         .as_object()
         .ok_or(AuthError("plugin_auth_invalid_package"))?;
@@ -153,6 +155,75 @@ mod tests {
     use std::{future::Future, pin::Pin, sync::Mutex};
 
     type TransportFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
+
+    #[test]
+    fn lifecycle_resolves_relocated_shared_package_and_runtime_copy_by_exact_installation() {
+        let temp = tempfile::tempdir().unwrap();
+        let capabilities = temp.path().join("workbench/wework/test/capabilities");
+        let root = temp
+            .path()
+            .join("workbench/shared/plugins")
+            .join("a".repeat(64));
+        let runtime = temp.path().join("agent/plugins/cache/mail");
+        for path in [&root, &runtime] {
+            fs::create_dir_all(path.join(".codex-plugin")).unwrap();
+            fs::write(
+                path.join(".codex-plugin/plugin.json"),
+                json!({"connectors":[
+                    {"slug":"mail","accountAuth":{},"localAuth":{}}
+                ]})
+                .to_string(),
+            )
+            .unwrap();
+        }
+        fs::create_dir_all(&capabilities).unwrap();
+        let manifest_path = capabilities.join("manifest.json");
+        let entry = json!({"store_path":root,"runtime":{"codex_link":runtime},
+            "installed_plugin_id":42,"managed":true,"enabled":true});
+        fs::write(
+            &manifest_path,
+            json!({"plugins":{"mail":entry}}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(installed_id_at(&manifest_path, &root, "mail"), Ok(Some(42)));
+        assert_eq!(
+            installed_id_at(&manifest_path, &runtime, "mail"),
+            Ok(Some(42))
+        );
+        fs::write(
+            &manifest_path,
+            json!({"plugins":{"mail":entry,"duplicate":entry}}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            installed_id_at(&manifest_path, &root, "mail"),
+            Err(AuthError("plugin_auth_invalid_package"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_rejects_symlinked_capabilities_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("plugin");
+        fs::create_dir_all(root.join(".codex-plugin")).unwrap();
+        fs::write(
+            root.join(".codex-plugin/plugin.json"),
+            json!({"connectors":[
+                {"slug":"mail","accountAuth":{},"localAuth":{}}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let actual = temp.path().join("actual.json");
+        fs::write(&actual, json!({"plugins":{}}).to_string()).unwrap();
+        let manifest = temp.path().join("manifest.json");
+        std::os::unix::fs::symlink(actual, &manifest).unwrap();
+        assert_eq!(
+            installed_id_at(&manifest, &root, "mail"),
+            Err(AuthError("plugin_auth_invalid_package"))
+        );
+    }
 
     #[derive(Clone, Default)]
     struct Transport(Arc<Mutex<Vec<Value>>>);
@@ -237,11 +308,17 @@ mod tests {
         }}}).to_string()
         };
         fs::write(capabilities.join("manifest.json"), manifest(true)).unwrap();
-        assert_eq!(installed_id(home.path(), &root, "mail"), Ok(Some(42)));
-        assert_eq!(installed_id(home.path(), &root, "legacy"), Ok(None));
+        assert_eq!(
+            installed_id_at(&capabilities.join("manifest.json"), &root, "mail"),
+            Ok(Some(42))
+        );
+        assert_eq!(
+            installed_id_at(&capabilities.join("manifest.json"), &root, "legacy"),
+            Ok(None)
+        );
         fs::write(capabilities.join("manifest.json"), manifest(false)).unwrap();
         assert_eq!(
-            installed_id(home.path(), &root, "mail"),
+            installed_id_at(&capabilities.join("manifest.json"), &root, "mail"),
             Err(AuthError("plugin_auth_invalid_package"))
         );
     }

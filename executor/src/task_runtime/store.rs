@@ -4,7 +4,6 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    env,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -4258,12 +4257,7 @@ fn validate_priority(value: &str) -> Result<(), TaskRuntimeError> {
 }
 
 fn local_database_path() -> PathBuf {
-    let home = env::var_os("WEGENT_EXECUTOR_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"));
-    home.join("data").join("tasks.sqlite")
+    crate::config::paths::executor_home().join("data/tasks.sqlite")
 }
 
 pub(crate) fn now() -> String {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { hooksApi } from './hooksApi'
 import { subscribeLocalExecutorEvents } from '@/desktop/localExecutor'
-import type { HookDraft, ResolvedHookPlugin } from './hooksTypes'
+import type { HookDraft, HookRunSummary, ResolvedHookPlugin } from './hooksTypes'
 import { track } from '@/telemetry/client'
 
 export function useHooksSettings() {
@@ -10,7 +10,6 @@ export function useHooksSettings() {
   const [error, setError] = useState<string | null>(null)
   const mutations = useRef(new Map<string, Promise<unknown>>())
   const load = useCallback(async () => {
-    setLoading(true)
     setError(null)
     try {
       setData(await hooksApi.list())
@@ -25,11 +24,24 @@ export function useHooksSettings() {
     let disposed = false
     let unsubscribe: (() => void) | undefined
     void subscribeLocalExecutorEvents(message => {
-      if (
-        message.event === 'runtime.hooks.changed' ||
-        message.event === 'runtime.hooks.run_completed'
-      ) {
+      if (disposed) return
+      if (message.event === 'runtime.hooks.changed') {
         void load()
+      } else if (message.event === 'runtime.hooks.run_completed') {
+        const run = message.payload.run as HookRunSummary
+        setData(items =>
+          items.map(plugin =>
+            plugin.manifest.id === run.pluginId
+              ? {
+                  ...plugin,
+                  recentRuns: [
+                    ...plugin.recentRuns.filter(previous => previous.handlerId !== run.handlerId),
+                    run,
+                  ].sort((a, b) => b.startedAtMs - a.startedAtMs),
+                }
+              : plugin
+          )
+        )
       }
     }).then(value => {
       if (disposed) value()
