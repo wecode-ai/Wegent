@@ -973,6 +973,7 @@ impl GlobalCapabilityStore {
                     "checksum",
                     spec.checksum.as_deref(),
                 );
+                shared_packages::remember_plugin_runtime_owner(manifest, &spec.key, &entry);
             }
             ensure_object_field(manifest, "plugins").insert(spec.key.clone(), entry);
             if self.shared_packages {
@@ -1893,6 +1894,10 @@ where
                 }
                 if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
                     self.remove_personal_shared_marketplace_plugin(&spec)?;
+                }
+                if self.store.shared_packages {
+                    // Retained native caches remain ours after the active install is removed.
+                    shared_packages::remember_plugin_runtime_owner(manifest, &key, &plugin);
                 }
                 ensure_object_field(manifest, "plugins").remove(&key);
             }

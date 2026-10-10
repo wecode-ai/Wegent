@@ -100,6 +100,35 @@ fn same_entry(left: &Path, right: &Path) -> bool {
         })
 }
 
+pub(super) fn remember_plugin_runtime_owner(manifest: &mut Value, key: &str, plugin: &Value) {
+    if plugin.get("managed").and_then(Value::as_bool) != Some(true) {
+        return;
+    }
+    let owners = ensure_object_field(manifest, "plugin_runtime_owners");
+    for entry in [Some(plugin), plugin.get("previous")].into_iter().flatten() {
+        for field in ["claude_link", "codex_link"] {
+            if let Some(path) = entry
+                .get("runtime")
+                .and_then(|runtime| runtime.get(field))
+                .and_then(Value::as_str)
+            {
+                owners.insert(path.to_owned(), json!(key));
+            }
+        }
+    }
+}
+
+fn owns_retained_plugin_runtime(manifest: &Value, key: &str, path: &Path) -> bool {
+    manifest
+        .get("plugin_runtime_owners")
+        .and_then(Value::as_object)
+        .is_some_and(|owners| {
+            owners.iter().any(|(owned_path, owner)| {
+                owner.as_str() == Some(key) && same_entry(Path::new(owned_path), path)
+            })
+        })
+}
+
 pub(super) fn managed_descendant(root: &Path, path: &Path) -> bool {
     if path.starts_with(root) {
         return true;
@@ -446,7 +475,9 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             ),
             (self.store.plugin_codex_link(&installed_spec), "codex_link"),
         ] {
-            if occupied_unmanaged(&path, previous.as_ref(), field) {
+            if occupied_unmanaged(&path, previous.as_ref(), field)
+                && !owns_retained_plugin_runtime(manifest, &spec.key, &path)
+            {
                 return Err(PluginSyncFailure::runtime_metadata(
                     CapabilitySyncError::invalid_payload(
                         "Plugin path is occupied by an unmanaged item",
@@ -671,7 +702,10 @@ mod tests {
         assert!(!shared.join("native-cache-only.txt").exists());
         let updated =
             CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v2"));
-        assert_eq!(updated.apply_sync(payload).await.unwrap()["success"], true);
+        assert_eq!(
+            updated.apply_sync(payload.clone()).await.unwrap()["success"],
+            true
+        );
         let current = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
         assert_eq!(
             old["runtime"]["codex_link"],
@@ -696,6 +730,90 @@ mod tests {
             .as_object()
             .unwrap()
             .is_empty());
+        // A fresh handler must recover ownership from disk after uninstall/restart.
+        let reinstalled =
+            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v2"));
+        assert_eq!(
+            reinstalled.apply_sync(payload).await.unwrap()["success"],
+            true
+        );
+        assert_eq!(
+            fs::read_to_string(native.join("payload.txt")).unwrap(),
+            "v2"
+        );
+        assert_eq!(
+            fs::read_to_string(shared.join("payload.txt")).unwrap(),
+            "v1"
+        );
+    }
+
+    #[tokio::test]
+    async fn uninstall_remembers_runtime_ownership_from_existing_manifest() {
+        let root = tempfile::tempdir().unwrap();
+        let store = store(root.path());
+        let handler =
+            CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
+        let payload = json!({"scope":"plugins", "plugins":[{"name":"demo", "installed_plugin_id":1,
+            "marketplace":"wegent", "version":"1.0", "download_path":"/package"}]});
+        assert_eq!(
+            handler.apply_sync(payload.clone()).await.unwrap()["success"],
+            true
+        );
+        let mut manifest = store.manifest.load().unwrap();
+        manifest
+            .as_object_mut()
+            .unwrap()
+            .remove("plugin_runtime_owners");
+        store.manifest.save(manifest).unwrap();
+        assert_eq!(
+            handler
+                .apply_sync(json!({"scope":"plugins", "plugins":[]}))
+                .await
+                .unwrap()["success"],
+            true
+        );
+        assert_eq!(handler.apply_sync(payload).await.unwrap()["success"], true);
+    }
+
+    #[tokio::test]
+    async fn unmanaged_plugin_cache_is_not_adopted_from_another_owner() {
+        for runtime in ["claude", "codex"] {
+            let root = tempfile::tempdir().unwrap();
+            let store = store(root.path());
+            let packages = packages("v1");
+            let package =
+                publish_plugin_archive(&root.path().join("workbench"), &packages.plugin, None)
+                    .unwrap();
+            let spec = PluginSyncSpec::from_value(&json!({"name":"demo", "installed_plugin_id":1,
+                "marketplace":"wegent", "version":"1.0", "download_path":"/package", "checksum":package.archive_hash})).unwrap();
+            let path = if runtime == "claude" {
+                store.plugin_runtime_link(&spec)
+            } else {
+                store.plugin_codex_link(&spec)
+            };
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("personal.txt"), "keep").unwrap();
+            let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), packages);
+            for owner in [None, Some("another@wegent")] {
+                let mut manifest = default_manifest();
+                if let Some(owner) = owner {
+                    ensure_object_field(&mut manifest, "plugin_runtime_owners")
+                        .insert(path.to_string_lossy().into_owned(), json!(owner));
+                }
+                store.manifest.save(manifest).unwrap();
+                let result = handler.apply_sync(json!({"scope":"plugins", "plugins":[{"name":"demo",
+                    "installed_plugin_id":1, "marketplace":"wegent", "version":"1.0", "download_path":"/package"}]})).await.unwrap();
+                assert_eq!(result["success"], false);
+                assert_eq!(
+                    result["plugins"][0]["error_code"],
+                    "PLUGIN_RUNTIME_METADATA_FAILED"
+                );
+                assert_eq!(
+                    fs::read_to_string(path.join("personal.txt")).unwrap(),
+                    "keep"
+                );
+            }
+        }
     }
 
     #[tokio::test]
