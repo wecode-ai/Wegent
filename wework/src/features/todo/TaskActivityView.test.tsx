@@ -3859,7 +3859,7 @@ describe('TaskActivityView', () => {
         dispose: vi.fn(),
       } satisfies ProjectChatClient
 
-      render(
+      const { rerender } = render(
         <TaskActivityView
           client={client}
           currentUserId={1}
@@ -3888,6 +3888,26 @@ describe('TaskActivityView', () => {
         await vi.advanceTimersByTimeAsync(2500)
       })
       expect(comment).not.toHaveAttribute('data-flash')
+
+      rerender(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          focusedCommentId="message-1"
+          focusedCommentRequestKey="second-open"
+          project={{ id: '11', name: 'Wework' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Inspect changes',
+              description: 'Review the current diff',
+              status: 'inbox',
+              version: 1,
+            } as never
+          }
+        />
+      )
+      await waitFor(() => expect(comment).toHaveAttribute('data-flash', 'true'))
     } finally {
       vi.useRealTimers()
     }

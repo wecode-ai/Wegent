@@ -1242,6 +1242,7 @@ export function IssueComposer({
             </div>
             {creationMode === 'task' && workbench?.selectProject && selectedLocalProject ? (
               <ConnectedIssueProjectWork
+                projects={runtimeTaskProjects}
                 project={selectedLocalProject}
                 selectedDeviceWorkspaceId={localDeviceWorkspaceId}
                 onSelectProject={selectLocalProject}

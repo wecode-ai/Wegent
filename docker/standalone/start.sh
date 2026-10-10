@@ -39,6 +39,10 @@ FRONTEND_PORT=${FRONTEND_PORT:-3002}
 STANDALONE_EXECUTOR_ENABLED="${STANDALONE_EXECUTOR_ENABLED:-true}"
 STANDALONE_EXECUTOR_DEVICE_ID="${STANDALONE_EXECUTOR_DEVICE_ID:-standalone-admin-device}"
 
+# Internal services share the standalone database and authentication environment.
+export KNOWLEDGE_RUNTIME_URL=http://127.0.0.1:8200
+export BACKEND_INTERNAL_URL="http://127.0.0.1:${BACKEND_PORT}"
+
 # Set Redis URL to localhost (embedded Redis).
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 export WEGENT_WORKSPACE_ROOT="${WEGENT_WORKSPACE_ROOT:-/workspace}"
@@ -104,6 +108,10 @@ wait_for_http() {
 
     echo "      Waiting for ${service_name} to be ready..."
     for i in $(seq 1 "$retries"); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "      ERROR: ${service_name} exited before becoming ready"
+            return 1
+        fi
         if [ -n "$credentials" ]; then
             if curl -fsS --connect-timeout 2 --max-time 5 -u "$credentials" "$url" > /dev/null 2>&1; then
                 echo "      ${service_name} is ready (PID: ${pid})"
@@ -208,6 +216,53 @@ report_process() {
     fi
 }
 
+check_required_processes() {
+    local pid
+    for pid in "${WAIT_PIDS[@]}"; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "      ERROR: Required service (PID: ${pid}) exited during startup"
+            return 1
+        fi
+    done
+}
+
+shutdown() {
+    local exit_code="${1:-0}"
+    trap - EXIT SIGTERM SIGINT SIGQUIT
+
+    echo ""
+    echo "Received shutdown signal, stopping services..."
+
+    stop_pid "Nginx" "${NGINX_PID:-}"
+    stop_pid "Frontend" "${FRONTEND_PID:-}"
+    stop_pid "Standalone Executor" "${EXECUTOR_PID:-}"
+    stop_pid "Backend" "${BACKEND_PID:-}"
+    stop_pid "Python Backend" "${PYTHON_BACKEND_PID:-}"
+    stop_pid "Knowledge Runtime" "${KNOWLEDGE_RUNTIME_PID:-}"
+    stop_pid "MySQL" "${MYSQL_PID:-}"
+
+    if [ -n "${REDIS_PID:-}" ]; then
+        echo "  Stopping Redis (PID: ${REDIS_PID})..."
+        redis-cli shutdown nosave 2>/dev/null || kill -TERM "$REDIS_PID" 2>/dev/null || true
+    fi
+
+    echo "  Waiting for services to stop..."
+    wait "${NGINX_PID:-}" 2>/dev/null || true
+    wait "${FRONTEND_PID:-}" 2>/dev/null || true
+    wait "${EXECUTOR_PID:-}" 2>/dev/null || true
+    wait "${BACKEND_PID:-}" 2>/dev/null || true
+    wait "${PYTHON_BACKEND_PID:-}" 2>/dev/null || true
+    wait "${KNOWLEDGE_RUNTIME_PID:-}" 2>/dev/null || true
+    wait "${MYSQL_PID:-}" 2>/dev/null || true
+    wait "${REDIS_PID:-}" 2>/dev/null || true
+
+    echo "  All services stopped"
+    exit "$exit_code"
+}
+
+trap shutdown SIGTERM SIGINT SIGQUIT
+trap 'shutdown $?' EXIT
+
 ensure_internal_service_token
 
 # ========================================
@@ -280,6 +335,17 @@ mysql --protocol=tcp --host=127.0.0.1 --port="$MYSQL_PORT" --user=root \
 echo "      Applying MySQL schema migrations..."
 alembic upgrade head
 echo "      MySQL schema is ready"
+
+# ========================================
+# Start the required retrieval service after schema migration.
+# ========================================
+echo "      Starting Knowledge Runtime (port 8200)..."
+(
+    cd /app/knowledge_runtime
+    exec uvicorn knowledge_runtime.main:app --host 127.0.0.1 --port 8200
+) &
+KNOWLEDGE_RUNTIME_PID=$!
+wait_for_http "Knowledge Runtime" "$KNOWLEDGE_RUNTIME_URL/internal/rag/health" 60 "$KNOWLEDGE_RUNTIME_PID" true
 
 # ========================================
 # Step 3: Start Backend
@@ -387,6 +453,11 @@ start_nginx
 # ========================================
 # Step 7: All Services Started
 # ========================================
+WAIT_PIDS=("$REDIS_PID" "$MYSQL_PID" "$KNOWLEDGE_RUNTIME_PID" "$PYTHON_BACKEND_PID" "$BACKEND_PID" "$FRONTEND_PID" "$NGINX_PID")
+if [ -n "${EXECUTOR_PID:-}" ]; then
+    WAIT_PIDS+=("$EXECUTOR_PID")
+fi
+check_required_processes
 echo "[7/8] All services started!"
 echo ""
 echo "=========================================="
@@ -408,49 +479,10 @@ echo "=========================================="
 echo ""
 
 # ========================================
-# Signal Handling for Graceful Shutdown
-# ========================================
-shutdown() {
-    local exit_code="${1:-0}"
-
-    echo ""
-    echo "Received shutdown signal, stopping services..."
-
-    stop_pid "Nginx" "${NGINX_PID:-}"
-    stop_pid "Frontend" "${FRONTEND_PID:-}"
-    stop_pid "Standalone Executor" "${EXECUTOR_PID:-}"
-    stop_pid "Backend" "${BACKEND_PID:-}"
-    stop_pid "Python Backend" "${PYTHON_BACKEND_PID:-}"
-    stop_pid "MySQL" "${MYSQL_PID:-}"
-
-    if [ -n "${REDIS_PID:-}" ]; then
-        echo "  Stopping Redis (PID: ${REDIS_PID})..."
-        redis-cli shutdown nosave 2>/dev/null || kill -TERM "$REDIS_PID" 2>/dev/null || true
-    fi
-
-    echo "  Waiting for services to stop..."
-    wait "${NGINX_PID:-}" 2>/dev/null || true
-    wait "${FRONTEND_PID:-}" 2>/dev/null || true
-    wait "${EXECUTOR_PID:-}" 2>/dev/null || true
-    wait "${BACKEND_PID:-}" 2>/dev/null || true
-    wait "${PYTHON_BACKEND_PID:-}" 2>/dev/null || true
-    wait "${MYSQL_PID:-}" 2>/dev/null || true
-    wait "${REDIS_PID:-}" 2>/dev/null || true
-
-    echo "  All services stopped"
-    exit "$exit_code"
-}
-
-trap shutdown SIGTERM SIGINT SIGQUIT
-
-# ========================================
 # Keep Container Running
 # ========================================
+check_required_processes
 set +e
-WAIT_PIDS=("$REDIS_PID" "$MYSQL_PID" "$PYTHON_BACKEND_PID" "$BACKEND_PID" "$FRONTEND_PID" "$NGINX_PID")
-if [ -n "${EXECUTOR_PID:-}" ]; then
-    WAIT_PIDS+=("$EXECUTOR_PID")
-fi
 wait -n "${WAIT_PIDS[@]}"
 EXIT_CODE=$?
 set -e
@@ -460,9 +492,13 @@ echo "WARNING: A service has exited unexpectedly (exit code: ${EXIT_CODE})"
 
 report_process "Redis" "$REDIS_PID"
 report_process "MySQL" "$MYSQL_PID"
+report_process "Knowledge Runtime" "$KNOWLEDGE_RUNTIME_PID"
 report_process "Backend" "$BACKEND_PID"
 report_process "Python Backend" "$PYTHON_BACKEND_PID"
-report_process "Standalone Executor" "$EXECUTOR_PID"
+report_process "Standalone Executor" "${EXECUTOR_PID:-}"
 report_process "Frontend" "$FRONTEND_PID"
 report_process "Nginx" "$NGINX_PID"
+if [ "$EXIT_CODE" -eq 0 ]; then
+    EXIT_CODE=1
+fi
 shutdown "$EXIT_CODE"

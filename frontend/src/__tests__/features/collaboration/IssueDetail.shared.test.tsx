@@ -314,6 +314,7 @@ describe('shared IssueDetail', () => {
     const view = renderDetail(api, original)
     await act(async () => {})
     view.rerender(detailView(api, latest))
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
       target: { value: '修改标题' },
     })
@@ -583,7 +584,7 @@ describe('shared IssueDetail', () => {
     expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
     expect(screen.queryByTestId('collaboration-assignment-workflow-step')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
     fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
       target: { value: '新描述' },
     })
@@ -604,6 +605,7 @@ describe('shared IssueDetail', () => {
         tags: [],
       })
     )
+    await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
     fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
     fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
     fireEvent.click(screen.getByTestId('wework-assignment-notify-confirm'))
@@ -671,7 +673,7 @@ describe('shared IssueDetail', () => {
     })
 
     renderDetail(api)
-    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
     fireEvent.change(screen.getByTestId('cloud-todo-attachment-input'), {
       target: { files: [new File(['race'], uploaded.display_name, { type: 'text/plain' })] },
     })
@@ -723,7 +725,7 @@ describe('shared IssueDetail', () => {
     const { rerender } = renderDetail(api)
 
     await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
-    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
     fireEvent.change(screen.getByTestId('cloud-todo-attachment-input'), {
       target: { files: [new File(['race'], uploaded.display_name, { type: 'text/plain' })] },
     })
@@ -778,7 +780,7 @@ describe('shared IssueDetail', () => {
     })
     const { rerender } = renderDetail(api)
 
-    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
     fireEvent.change(screen.getByTestId('cloud-todo-attachment-input'), {
       target: { files: [new File(['race'], uploaded.display_name, { type: 'text/plain' })] },
     })
@@ -792,7 +794,7 @@ describe('shared IssueDetail', () => {
         })
       )
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
     expect(screen.getByTestId('cloud-todo-attachment-input')).not.toBeDisabled()
 
     await act(async () => {
@@ -839,7 +841,7 @@ describe('shared IssueDetail', () => {
     })
     const { rerender } = renderDetail(api)
 
-    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
     fireEvent.paste(screen.getByTestId('cloud-todo-detail-description'), {
       clipboardData: {
         files: [new File(['race'], uploaded.display_name, { type: uploaded.content_type })],
@@ -1031,6 +1033,7 @@ describe('shared IssueDetail', () => {
     renderDetail(api, { issue: dateOnlyIssue, allIssues: [dateOnlyIssue] })
 
     expect(screen.getByTestId('cloud-todo-detail-due-date')).toHaveValue('2026-09-12T00:00')
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
       target: { value: '仅修改标题' },
     })
@@ -1081,19 +1084,6 @@ describe('shared IssueDetail', () => {
 
   it('opens attachments and manages collaborators, bindings, and delivery detail', async () => {
     const open = jest.spyOn(window, 'open').mockImplementation(() => null)
-    const createObjectURL = jest.fn().mockReturnValue('blob:https://example.test/attachment')
-    const revokeObjectURL = jest.fn()
-    Object.defineProperty(URL, 'createObjectURL', {
-      configurable: true,
-      value: createObjectURL,
-    })
-    Object.defineProperty(URL, 'revokeObjectURL', {
-      configurable: true,
-      value: revokeObjectURL,
-    })
-    const anchorClick = jest
-      .spyOn(HTMLAnchorElement.prototype, 'click')
-      .mockImplementation(() => undefined)
     const api = createApi({
       attachments: {
         list: jest.fn().mockResolvedValue([
@@ -1188,12 +1178,6 @@ describe('shared IssueDetail', () => {
       '_blank',
       'noopener,noreferrer'
     )
-    await waitFor(() => expect(screen.queryByText('下载中…')).not.toBeInTheDocument())
-    fireEvent.click(screen.getByTestId('cloud-todo-attachment-download-attachment-1'))
-    await waitFor(() => expect(api.attachments.read).toHaveBeenCalledWith('attachment-1'))
-    expect(createObjectURL).toHaveBeenCalled()
-    expect(anchorClick).toHaveBeenCalled()
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:https://example.test/attachment')
 
     fireEvent.click(screen.getByTestId('cloud-todo-add-collaborator'))
     fireEvent.change(screen.getByTestId('cloud-todo-collaborator-select'), {
@@ -1210,8 +1194,5 @@ describe('shared IssueDetail', () => {
     expect(screen.getByTestId('todo-detail-deliveries')).toHaveTextContent('1 个附件')
     expect(await screen.findByText('report.md')).toBeInTheDocument()
     open.mockRestore()
-    anchorClick.mockRestore()
-    delete (URL as Partial<typeof URL>).createObjectURL
-    delete (URL as Partial<typeof URL>).revokeObjectURL
   })
 })

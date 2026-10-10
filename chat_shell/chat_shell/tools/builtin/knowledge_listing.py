@@ -1089,6 +1089,7 @@ class KbHeadTool(BaseTool):
         backend_url = _get_backend_url()
         request_data: dict[str, Any] = {
             "document_ids": document_ids,
+            "user_id": self.user_id,
             "offset": offset,
             "limit": limit,
         }
@@ -1098,11 +1099,9 @@ class KbHeadTool(BaseTool):
             request_data["knowledge_base_scopes"] = _scope_payloads(
                 self.knowledge_base_scopes
             )
-        if self.user_subtask_id and self.user_id > 0:
+        if self.user_subtask_id:
             request_data["persistence_context"] = {
                 "user_subtask_id": self.user_subtask_id,
-                "user_id": self.user_id,
-                "restricted_mode": False,
             }
 
         add_span_event("http_request_started")

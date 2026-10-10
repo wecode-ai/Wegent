@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  useEffect,
   useState,
   type ChangeEvent,
   type DragEvent,
@@ -98,6 +99,7 @@ export function IssueDetailActivity({
 export interface IssueDetailAttachment {
   id: string;
   displayName: string;
+  contentType?: string | null;
   sizeBytes: number;
 }
 
@@ -116,6 +118,7 @@ export interface IssueDetailAttachmentsProps {
   error: string | null;
   editable: boolean;
   compact?: boolean;
+  totalCount?: number;
   downloadingId?: string | null;
   labels: {
     title: string;
@@ -137,6 +140,7 @@ export interface IssueDetailAttachmentsProps {
   removeTestId?: (id: string) => string;
   icons?: IssueDetailAttachmentIcons;
   onAdd: (files: FileList | null) => Promise<void>;
+  loadPreview?: (attachmentId: string) => Promise<Blob>;
   onOpen?: (attachment: IssueDetailAttachment) => Promise<void>;
   onDownload?: (attachment: IssueDetailAttachment) => Promise<void>;
   onRemove: (attachment: IssueDetailAttachment) => Promise<void>;
@@ -148,12 +152,66 @@ export function formatIssueAttachmentSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function isImageAttachment(attachment: IssueDetailAttachment): boolean {
+  if (attachment.contentType?.startsWith("image/")) return true;
+  return /\.(avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/i.test(
+    attachment.displayName,
+  );
+}
+
+function IssueDetailAttachmentPreview({
+  attachment,
+  fallback,
+  loadPreview,
+}: {
+  attachment: IssueDetailAttachment;
+  fallback: ReactNode;
+  loadPreview?: (attachmentId: string) => Promise<Blob>;
+}) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const imageAttachment = isImageAttachment(attachment);
+
+  useEffect(() => {
+    if (!loadPreview || !imageAttachment) return undefined;
+
+    let active = true;
+    let objectUrl: string | null = null;
+    void loadPreview(attachment.id)
+      .then((blob) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPreviewUrl(objectUrl);
+      })
+      .catch(() => {
+        if (active) setPreviewUrl(null);
+      });
+
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [attachment.id, imageAttachment, loadPreview]);
+
+  return previewUrl ? (
+    <img
+      data-testid={`issue-detail-attachment-thumbnail-${attachment.id}`}
+      className="issue-detail-attachment-thumbnail"
+      src={previewUrl}
+      alt=""
+      loading="lazy"
+    />
+  ) : (
+    <span className="issue-detail-attachment-fallback">{fallback}</span>
+  );
+}
+
 export function IssueDetailAttachments({
   attachments,
   busy,
   error,
   editable,
   compact = false,
+  totalCount,
   downloadingId,
   labels,
   testIdPrefix,
@@ -163,15 +221,12 @@ export function IssueDetailAttachments({
   removeTestId = (id) => `${testIdPrefix}-delete-${id}`,
   icons,
   onAdd,
+  loadPreview,
   onOpen,
   onDownload,
   onRemove,
 }: IssueDetailAttachmentsProps) {
-  const [expanded, setExpanded] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const visibleRows =
-    compact && !expanded ? attachments.slice(0, 2) : attachments;
-  const hasOverflow = compact && attachments.length > 2;
 
   const upload = (event: ChangeEvent<HTMLInputElement>) => {
     void onAdd(event.target.files);
@@ -218,9 +273,11 @@ export function IssueDetailAttachments({
           {icons?.section}
           {labels.title}
         </h3>
-        <span className={compact ? "count" : undefined}>
-          {attachments.length}
-        </span>
+        {(totalCount ?? attachments.length) > 0 ? (
+          <span className={compact ? "count" : undefined}>
+            {totalCount ?? attachments.length}
+          </span>
+        ) : null}
         {editable && compact ? (
           <label className="add">
             {busy ? labels.uploading : labels.upload}
@@ -250,7 +307,6 @@ export function IssueDetailAttachments({
           compact
             ? "task-detail-attachment-body"
             : "shared-issue-detail-attachment-body",
-          expanded && "expanded-scroll",
         )}
         {...dropHandlers}
       >
@@ -274,7 +330,7 @@ export function IssueDetailAttachments({
                 : "shared-issue-detail-attachment-list"
             }
           >
-            {visibleRows.map((attachment) => (
+            {attachments.map((attachment) => (
               <div
                 key={attachment.id}
                 className={
@@ -286,7 +342,7 @@ export function IssueDetailAttachments({
                 <button
                   type="button"
                   data-testid={
-                    onDownload
+                    onOpen
                       ? openTestId(attachment.id)
                       : downloadTestId(attachment.id)
                   }
@@ -301,7 +357,7 @@ export function IssueDetailAttachments({
                   }
                   title={attachment.displayName}
                   aria-label={
-                    onDownload
+                    onOpen
                       ? (labels.open?.(attachment.displayName) ??
                         labels.download(attachment.displayName))
                       : labels.download(attachment.displayName)
@@ -310,33 +366,41 @@ export function IssueDetailAttachments({
                   <span
                     className={
                       compact
-                        ? "task-detail-rail-icon"
+                        ? "task-detail-rail-preview"
                         : "shared-issue-detail-attachment-icon"
                     }
                   >
-                    {downloadingId === attachment.id
-                      ? (icons?.loading ?? icons?.file)
-                      : (icons?.file ?? icons?.download)}
+                    <IssueDetailAttachmentPreview
+                      attachment={attachment}
+                      loadPreview={loadPreview}
+                      fallback={
+                        downloadingId === attachment.id
+                          ? (icons?.loading ?? icons?.file)
+                          : (icons?.file ?? icons?.download)
+                      }
+                    />
                   </span>
-                  <span
-                    className={
-                      compact
-                        ? "task-detail-rail-name"
-                        : "shared-issue-detail-attachment-name"
-                    }
-                  >
-                    {attachment.displayName}
-                  </span>
-                  <span
-                    className={
-                      compact
-                        ? "task-detail-rail-meta"
-                        : "shared-issue-detail-attachment-meta"
-                    }
-                  >
-                    {downloadingId === attachment.id
-                      ? labels.downloading
-                      : formatIssueAttachmentSize(attachment.sizeBytes)}
+                  <span className="issue-detail-attachment-caption">
+                    <span
+                      className={
+                        compact
+                          ? "task-detail-rail-name"
+                          : "shared-issue-detail-attachment-name"
+                      }
+                    >
+                      {attachment.displayName}
+                    </span>
+                    {downloadingId === attachment.id ? (
+                      <span
+                        className={
+                          compact
+                            ? "task-detail-rail-meta"
+                            : "shared-issue-detail-attachment-meta"
+                        }
+                      >
+                        {labels.downloading}
+                      </span>
+                    ) : null}
                   </span>
                 </button>
                 {onDownload ? (
@@ -392,15 +456,6 @@ export function IssueDetailAttachments({
           </label>
         ) : null}
       </div>
-      {hasOverflow ? (
-        <button
-          type="button"
-          className="task-detail-rail-more"
-          onClick={() => setExpanded((current) => !current)}
-        >
-          {expanded ? labels.collapse : labels.expand(attachments.length)}
-        </button>
-      ) : null}
     </section>
   );
 }

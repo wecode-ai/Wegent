@@ -147,7 +147,6 @@ class SummaryService:
             .update(
                 {
                     KnowledgeDocument.summary: summary_data,
-                    KnowledgeDocument.updated_at: datetime.now(),
                 },
                 synchronize_session=False,
             )

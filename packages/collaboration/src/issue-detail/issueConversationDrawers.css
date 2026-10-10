@@ -29,6 +29,13 @@
   pointer-events: none;
 }
 
+.issue-drawer-viewport:has(.task-detail-workspace-panel-shell.is-expanded) {
+  --issue-drawer-width: min(
+    860px,
+    calc((100cqw - var(--issue-drawer-gap) - 24px) / 2)
+  );
+}
+
 .issue-conversation-drawers {
   position: absolute;
   inset-block: 0;
@@ -37,7 +44,9 @@
   display: flex;
   gap: var(--issue-drawer-gap);
   transform: translateX(0);
-  transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    width 180ms ease,
+    transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .issue-conversation-drawers[data-has-conversation="true"] {
@@ -106,6 +115,10 @@
     --issue-drawer-width: min(560px, 100cqw);
     left: auto;
     width: var(--issue-drawer-width);
+  }
+
+  .issue-drawer-viewport:has(.task-detail-workspace-panel-shell.is-expanded) {
+    --issue-drawer-width: min(640px, calc(100cqw - 24px));
   }
 }
 
