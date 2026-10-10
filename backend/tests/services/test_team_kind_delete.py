@@ -405,3 +405,30 @@ def test_reference_prefilter_handles_like_wildcards(test_db):
 
     # Assert: the shared Bot is kept despite the underscores in its name
     assert "bot_shared_v2" in _bot_names(test_db)
+
+
+def test_reference_prefilter_handles_json_escaped_names(test_db):
+    """Names needing JSON escaping (quotes) and non-ASCII names must still be
+    matched by the SQL prefilter on every database dialect."""
+    # Arrange
+    team = _add_team(
+        test_db,
+        name="agent-a",
+        bot_refs=[{"name": 'bot "quoted"'}, {"name": "值班-bot"}],
+    )
+    _add_team(
+        test_db,
+        name="agent-b",
+        bot_refs=[{"name": 'bot "quoted"'}, {"name": "值班-bot"}],
+    )
+    _add_kind(test_db, kind="Bot", name='bot "quoted"')
+    _add_kind(test_db, kind="Bot", name="值班-bot")
+    service = TeamKindService()
+
+    # Act
+    service._pre_delete_side_effects(test_db, team.user_id, team)
+    test_db.commit()
+
+    # Assert: both shared Bots are kept
+    assert 'bot "quoted"' in _bot_names(test_db)
+    assert "值班-bot" in _bot_names(test_db)

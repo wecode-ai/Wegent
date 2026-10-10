@@ -6,6 +6,7 @@
 Implementation of specific Kind services
 """
 
+import json as jsonlib
 import logging
 from typing import Any, Dict
 
@@ -37,16 +38,27 @@ def _escape_like(value: str) -> str:
 def _json_text_mentions_any(names: list[str]):
     """SQL prefilter: rows whose serialized JSON mentions any given name.
 
+    Names are JSON-serialized first so quotes and backslashes match their
+    escaped representation inside the stored JSON document. Both the
+    ASCII-escaped and raw-unicode serializations are matched because JSON
+    text serialization differs by driver/dialect (e.g. SQLite stores
+    \\uXXXX escapes while MySQL keeps raw UTF-8 characters).
+
     This is only a coarse filter to avoid scanning and parsing every row;
     callers must still verify references precisely in Python. Over-matching
     (e.g. substring collisions) is therefore safe.
     """
-    return or_(
-        *[
-            cast(Kind.json, String).like(f'%"{_escape_like(name)}"%', escape="\\")
-            for name in names
-        ]
-    )
+    patterns = []
+    for name in names:
+        serialized_variants = {
+            jsonlib.dumps(name, ensure_ascii=False),
+            jsonlib.dumps(name, ensure_ascii=True),
+        }
+        for variant in serialized_variants:
+            patterns.append(
+                cast(Kind.json, String).like(f"%{_escape_like(variant)}%", escape="\\")
+            )
+    return or_(*patterns)
 
 
 class GhostKindService(KindBaseService):
