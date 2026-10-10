@@ -33,6 +33,7 @@ class LoopItemCreate(BaseModel):
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
+    start_at: datetime | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
@@ -55,6 +56,8 @@ class LoopItemCreate(BaseModel):
         )
         if selected > 1:
             raise ValueError("Only one assignee may be selected")
+        if self.start_at and self.due_at and self.start_at > self.due_at:
+            raise ValueError("start_at cannot be after due_at")
         return self
 
 
@@ -70,6 +73,7 @@ class LoopItemUpdate(BaseModel):
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
+    start_at: datetime | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
@@ -157,6 +161,7 @@ class LoopItemResponse(BaseModel):
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
     priority: str
+    start_at: datetime | None = None
     due_at: datetime | None
     sort_order: int
     tags: list[str] = []
@@ -289,7 +294,7 @@ class LoopItemResponse(BaseModel):
     def normalize_empty_numeric_assignee_id(cls, value: object) -> object:
         return None if value == 0 else value
 
-    @field_validator("due_at", "completed_at", mode="before")
+    @field_validator("start_at", "due_at", "completed_at", mode="before")
     @classmethod
     def normalize_unset_datetime(cls, value: object) -> object:
         if isinstance(value, datetime) and value == datetime(1970, 1, 1, 0, 0, 1):

@@ -140,6 +140,7 @@ export interface WorkspaceIssueCreateInput {
   description?: string;
   status?: string;
   priority?: CollaborationPriority;
+  startAt?: string;
   dueAt?: string;
   parentId?: string | null;
   tags?: string[];
@@ -163,6 +164,7 @@ export interface WorkspaceIssueUpdateInput {
   assigneeGroupId?: string | null;
   assigneeAgentId?: string | null;
   assigneeTeamId?: number | null;
+  startAt?: string | null;
   dueAt?: string | null;
   tags?: string[];
 }

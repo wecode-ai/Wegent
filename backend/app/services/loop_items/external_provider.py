@@ -1846,6 +1846,7 @@ class ExternalLoopItemProvider:
             "assignee_group_id": assignee_group_id,
             "assignee_group_name": assignee_group_name,
             "priority": self._priority(labels),
+            "start_at": None,
             "due_at": None,
             "sort_order": number,
             "tags": self._public_tags(labels),

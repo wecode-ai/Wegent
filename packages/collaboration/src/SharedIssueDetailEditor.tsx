@@ -1,4 +1,5 @@
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
+import * as Popover from "@radix-ui/react-popover";
 import {
   useCallback,
   useEffect,
@@ -81,6 +82,7 @@ import { TagEditor } from "./issue-detail/TagEditor";
 import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { localizeStandardStatuses } from "./i18n";
 import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
+import { useCollaborationPortalTheme } from "./theme";
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -115,6 +117,7 @@ export interface SharedEditorProject extends CollaborationProject {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;
     statuses: CollaborationStatus[];
+    schedule_view?: import("./types").CollaborationScheduleViewConfig;
   };
 }
 
@@ -141,6 +144,8 @@ export interface SharedIssueDetailExtensionContext {
 export interface SharedIssueDetailExtensions {
   normalizeDescription?(value: string): string;
   dueDateInputType?: "date" | "datetime-local";
+  startDateFromSource?(value: string | null): string;
+  startDateToSource?(value: string, context: DueDateSourceContext): string;
   dueDateFromSource?(value: string | null): string;
   dueDateToSource?(value: string, context: DueDateSourceContext): string;
   isExecutionActive?(item: SharedEditorIssue): boolean;
@@ -236,6 +241,7 @@ type TodoDraft = {
   markdown: string;
   priority: CloudLoopItem["priority"];
   parentId: string;
+  startDate: string;
   dueDate: string;
   assigneeTarget: IssueAssigneeTarget;
   notifyAssignee: boolean;
@@ -293,6 +299,7 @@ function readTodoDraft(key: string): TodoDraft | null {
         ? (parsed.priority as CloudLoopItem["priority"])
         : "none",
       parentId: typeof parsed.parentId === "string" ? parsed.parentId : "",
+      startDate: typeof parsed.startDate === "string" ? parsed.startDate : "",
       dueDate: typeof parsed.dueDate === "string" ? parsed.dueDate : "",
       assigneeTarget: isIssueAssigneeTarget(parsed.assigneeTarget)
         ? parsed.assigneeTarget
@@ -340,6 +347,123 @@ const avatarPalette = [
   "bg-zinc-600",
   "bg-rose-500",
 ];
+
+function scheduleRangeLabel(
+  startDate: string,
+  dueDate: string,
+  notSetLabel: string,
+): string {
+  const compact = (value: string) => value.replace("T", " ").slice(5);
+  if (startDate && dueDate) {
+    return `${compact(startDate)} → ${compact(dueDate)}`;
+  }
+  if (startDate) return `${compact(startDate)} →`;
+  if (dueDate) return `→ ${compact(dueDate)}`;
+  return notSetLabel;
+}
+
+function ScheduleRangeControl({
+  startDate,
+  dueDate,
+  inputType,
+  editable,
+  invalid,
+  triggerClassName,
+  startTestId,
+  dueTestId,
+  onStartDateChange,
+  onDueDateChange,
+  translate,
+}: {
+  startDate: string;
+  dueDate: string;
+  inputType: "date" | "datetime-local";
+  editable: boolean;
+  invalid: boolean;
+  triggerClassName: string;
+  startTestId: string;
+  dueTestId: string;
+  onStartDateChange(value: string): void;
+  onDueDateChange(value: string): void;
+  translate: NonNullable<TodoEditorProps["translate"]>;
+}) {
+  const portalTheme = useCollaborationPortalTheme();
+  const notSetLabel = translate("todo.add_date", "添加时间");
+  const label = scheduleRangeLabel(startDate, dueDate, notSetLabel);
+
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          className={triggerClassName}
+          disabled={!editable}
+          aria-label={translate("todo.schedule_range", "时间范围")}
+        >
+          <Calendar className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+          <span className="text-text-muted">
+            {translate("todo.schedule_range", "时间范围")}
+          </span>
+          <span
+            className={cn(
+              "max-w-64 truncate text-text-primary",
+              !startDate && !dueDate && "text-text-muted",
+              invalid && "text-destructive",
+            )}
+          >
+            {label}
+          </span>
+          {editable ? (
+            <ChevronDown className="h-3 w-3 shrink-0 text-text-muted" />
+          ) : null}
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          {...portalTheme}
+          sideOffset={4}
+          collisionPadding={8}
+          align="start"
+          className={`z-critical w-80 rounded-xl border border-border bg-popover p-3 shadow-xl outline-none ${portalTheme.className}`}
+          style={portalTheme.style}
+        >
+          <div className="grid gap-3">
+            <label className="grid gap-1.5 text-xs text-text-muted">
+              {translate("todo.start_date", "开始时间")}
+              <input
+                data-testid={startTestId}
+                type={inputType}
+                value={startDate}
+                onClick={(event) => event.currentTarget.showPicker?.()}
+                onChange={(event) => onStartDateChange(event.target.value)}
+                className="h-9 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted"
+              />
+            </label>
+            <label className="grid gap-1.5 text-xs text-text-muted">
+              {translate("todo.due_date", "结束时间")}
+              <input
+                data-testid={dueTestId}
+                type={inputType}
+                value={dueDate}
+                onClick={(event) => event.currentTarget.showPicker?.()}
+                onChange={(event) => onDueDateChange(event.target.value)}
+                className="h-9 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted"
+              />
+            </label>
+            {invalid ? (
+              <p className="text-xs text-destructive">
+                {translate(
+                  "todo.schedule_range_invalid",
+                  "开始时间不能晚于结束时间",
+                )}
+              </p>
+            ) : null}
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
 
 function sourceCellText(
   cells: Record<string, unknown> | undefined,
@@ -732,11 +856,14 @@ export function TodoEditor(props: TodoEditorProps) {
       status: createProps?.initialStatus ?? "inbox",
       priority: draft?.priority ?? "none",
       parentId: draft?.parentId ?? createProps?.initialParent?.id ?? "",
+      startDate: draft?.startDate ?? "",
       dueDate: draft?.dueDate ?? "",
       assigneeTarget: draft?.assigneeTarget ?? "",
       tags: draft?.tags ?? [],
     },
     normalizeDescription: extensions?.normalizeDescription,
+    startDateFromSource:
+      extensions?.startDateFromSource ?? todoDueDateFromSource,
     dueDateFromSource: extensions?.dueDateFromSource ?? todoDueDateFromSource,
   });
   const {
@@ -745,6 +872,7 @@ export function TodoEditor(props: TodoEditorProps) {
     status,
     priority,
     parentId,
+    startDate,
     dueDate,
     assigneeTarget,
     tags,
@@ -772,6 +900,13 @@ export function TodoEditor(props: TodoEditorProps) {
     setIssueDraftField("dueDate", value);
     if (readFirst) setEditingContent(true);
   };
+  const setStartDate = (value: SetStateAction<string>) => {
+    setIssueDraftField("startDate", value);
+    if (readFirst) setEditingContent(true);
+  };
+  const scheduleRangeInvalid = Boolean(
+    startDate && dueDate && startDate > dueDate,
+  );
   const setAssigneeTarget = (value: SetStateAction<IssueAssigneeTarget>) =>
     setIssueDraftField("assigneeTarget", value);
   const setTags = (value: SetStateAction<string[]>) => {
@@ -1233,6 +1368,7 @@ export function TodoEditor(props: TodoEditorProps) {
       !description &&
       priority === "none" &&
       !parentId &&
+      !startDate &&
       !dueDate &&
       !assigneeTarget &&
       !tags.length
@@ -1245,6 +1381,7 @@ export function TodoEditor(props: TodoEditorProps) {
       markdown: description,
       priority,
       parentId,
+      startDate,
       dueDate,
       assigneeTarget,
       notifyAssignee,
@@ -1259,6 +1396,7 @@ export function TodoEditor(props: TodoEditorProps) {
     notifyAssignee,
     parentId,
     priority,
+    startDate,
     tags,
     title,
   ]);
@@ -1351,6 +1489,7 @@ export function TodoEditor(props: TodoEditorProps) {
     description ||
     priority !== "none" ||
     parentId ||
+    startDate ||
     dueDate ||
     assigneeTarget ||
     tags.length > 0 ||
@@ -1454,6 +1593,7 @@ export function TodoEditor(props: TodoEditorProps) {
       props.mode !== "create" ||
       !createTitle ||
       saving ||
+      scheduleRangeInvalid ||
       createBlockedByExecutionEnvironment
     )
       return;
@@ -1466,6 +1606,12 @@ export function TodoEditor(props: TodoEditorProps) {
       status,
       tags,
     };
+    const startAt = startDate
+      ? (extensions?.startDateToSource?.(startDate, {
+          sourceValue: null,
+          sourceInputValue: "",
+        }) ?? startDate)
+      : "";
     const dueAt = dueDate
       ? (extensions?.dueDateToSource?.(dueDate, {
           sourceValue: null,
@@ -1479,6 +1625,7 @@ export function TodoEditor(props: TodoEditorProps) {
     const hasHumanAssignee = assigneeTarget.startsWith("user:");
     Object.assign(createInput, {
       ...(parentId ? { parent_id: parentId } : {}),
+      ...(startAt ? { start_at: startAt } : {}),
       ...(dueAt ? { due_at: dueAt } : {}),
       ...(creatorName ? { creator_name: creatorName } : {}),
       ...(hasHumanAssignee
@@ -1592,6 +1739,7 @@ export function TodoEditor(props: TodoEditorProps) {
       (!editable && !canAssign) ||
       !dirty ||
       !title.trim() ||
+      scheduleRangeInvalid ||
       saving
     )
       return;
@@ -1612,6 +1760,15 @@ export function TodoEditor(props: TodoEditorProps) {
       const sourceDueDate = (
         extensions?.dueDateFromSource ?? todoDueDateFromSource
       )(current.due_at);
+      const sourceStartDate = (
+        extensions?.startDateFromSource ?? todoDueDateFromSource
+      )(current.start_at ?? null);
+      const startAt = startDate
+        ? (extensions?.startDateToSource?.(startDate, {
+            sourceValue: current.start_at ?? null,
+            sourceInputValue: sourceStartDate,
+          }) ?? startDate)
+        : null;
       const dueAt = dueDate
         ? (extensions?.dueDateToSource?.(dueDate, {
             sourceValue: current.due_at,
@@ -1632,6 +1789,7 @@ export function TodoEditor(props: TodoEditorProps) {
               status: values.status,
               priority: values.priority,
               parent_id: values.parentId || null,
+              start_at: startAt,
               due_at: dueAt,
               tags: values.tags,
             }),
@@ -1671,6 +1829,9 @@ export function TodoEditor(props: TodoEditorProps) {
       status: item.status,
       priority: item.priority,
       parentId: item.parent_id ?? "",
+      startDate: (extensions?.startDateFromSource ?? todoDueDateFromSource)(
+        item.start_at ?? null,
+      ),
       dueDate: (extensions?.dueDateFromSource ?? todoDueDateFromSource)(
         item.due_at,
       ),
@@ -2213,18 +2374,25 @@ export function TodoEditor(props: TodoEditorProps) {
       ]}
     />
   );
-  const dueInput = (
-    <input
-      data-testid={
+  const scheduleRangeControl = (triggerClassName: string) => (
+    <ScheduleRangeControl
+      startDate={startDate}
+      dueDate={dueDate}
+      inputType={extensions?.dueDateInputType ?? "date"}
+      editable={editable}
+      invalid={scheduleRangeInvalid}
+      triggerClassName={triggerClassName}
+      startTestId={
+        isCreate
+          ? "cloud-todo-create-start-date"
+          : "cloud-todo-detail-start-date"
+      }
+      dueTestId={
         isCreate ? "cloud-todo-create-due-date" : "cloud-todo-detail-due-date"
       }
-      aria-label={t("todo.due_date", "截止时间")}
-      type={extensions?.dueDateInputType ?? "date"}
-      value={dueDate}
-      onClick={(event) => event.currentTarget.showPicker?.()}
-      onChange={(event) => setDueDate(event.target.value)}
-      disabled={!editable}
-      className={overlayControlClass}
+      onStartDateChange={setStartDate}
+      onDueDateChange={setDueDate}
+      translate={t}
     />
   );
   const statusValue = (
@@ -2410,14 +2578,9 @@ export function TodoEditor(props: TodoEditorProps) {
         <ChevronDown className="h-3 w-3 text-text-muted" />
         {parentSelect}
       </span>
-      <span className={cn(propChipClass, !dueDate && "text-text-muted")}>
-        <Calendar className="h-3.5 w-3.5 text-text-muted" />
-        <span className="text-text-muted">
-          {t("todo.due_date", "截止时间")}
-        </span>
-        {dueDate ? dueDate.slice(5) : t("todo.add_date", "添加日期")}
-        {dueInput}
-      </span>
+      {scheduleRangeControl(
+        cn(propChipClass, !startDate && !dueDate && "text-text-muted"),
+      )}
     </>
   );
   // Two-column layout keeps secondary metadata in the expandable rail.
@@ -2937,15 +3100,9 @@ export function TodoEditor(props: TodoEditorProps) {
                     </span>
                   ) : null}
                   {assigneeSaveButton}
-                  <span className="task-detail-meta-item relative cursor-pointer">
-                    <Calendar className="h-3.5 w-3.5" />
-                    {t("todo.due_date", "截止时间")}
-                    <span className="text-text-primary">
-                      {dueDate ? dueDate.slice(5) : t("todo.not_set", "未设置")}
-                    </span>
-                    <ChevronDown className="h-3 w-3" />
-                    {dueInput}
-                  </span>
+                  {scheduleRangeControl(
+                    "task-detail-meta-item relative cursor-pointer",
+                  )}
                 </div>
               ) : null}
 
@@ -3068,7 +3225,12 @@ export function TodoEditor(props: TodoEditorProps) {
                         <button
                           type="button"
                           data-testid="cloud-todo-save"
-                          disabled={!dirty || !title.trim() || saving}
+                          disabled={
+                            !dirty ||
+                            !title.trim() ||
+                            saving ||
+                            scheduleRangeInvalid
+                          }
                           onClick={() => void saveDetails()}
                         >
                           {saving
@@ -3221,35 +3383,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         </Tooltip>
                       ) : null}
                       {assigneeSaveButton}
-                      <Tooltip
-                        label={t(
-                          "todo.due_date_help",
-                          "截止时间：{{value}}。",
-                          {
-                            value: dueDate
-                              ? dueDate.slice(0, 10)
-                              : t("todo.not_set", "未设置"),
-                          },
-                        )}
-                        side="bottom"
-                        align="start"
-                      >
-                        <span
-                          className="task-detail-state-due relative"
-                          data-testid="cloud-todo-state-due-date"
-                        >
-                          <Calendar aria-hidden="true" size={15} />
-                          <strong>
-                            {dueDate
-                              ? dueDate.slice(0, 10)
-                              : t("todo.not_set", "未设置")}
-                          </strong>
-                          {editable ? (
-                            <ChevronDown aria-hidden="true" size={13} />
-                          ) : null}
-                          {dueInput}
-                        </span>
-                      </Tooltip>
+                      {scheduleRangeControl("task-detail-state-due relative")}
                       {item &&
                       project?.project_store === "backend" &&
                       canAssign ? (
@@ -4237,7 +4371,8 @@ export function TodoEditor(props: TodoEditorProps) {
                     disabled={
                       !createTitle ||
                       saving ||
-                      createBlockedByExecutionEnvironment
+                      createBlockedByExecutionEnvironment ||
+                      scheduleRangeInvalid
                     }
                     onClick={() => void submitCreate()}
                     className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
@@ -4253,7 +4388,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     <button
                       type="button"
                       data-testid="cloud-todo-save"
-                      disabled={!title.trim() || saving}
+                      disabled={!title.trim() || saving || scheduleRangeInvalid}
                       onClick={() => void saveDetails()}
                       className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                     >

@@ -15,7 +15,11 @@ from app.models.delivery import (
     adapt_loop_node_values_for_dialect,
     loop_unset_datetime_for_connection,
 )
-from app.schemas.delivery import CollaborationMessageImportResponse, LoopItemResponse
+from app.schemas.delivery import (
+    CollaborationMessageImportResponse,
+    LoopItemCreate,
+    LoopItemResponse,
+)
 
 
 def test_collaboration_message_import_response_requires_typed_issue() -> None:
@@ -38,6 +42,7 @@ def test_loop_item_response_normalizes_mysql_sentinel_values() -> None:
             "assignee_user_id": 0,
             "assignee_team_id": 0,
             "priority": "none",
+            "start_at": datetime(1970, 1, 1, 0, 0, 1),
             "due_at": datetime(1970, 1, 1, 0, 0, 1),
             "sort_order": 0,
             "created_by_user_id": 52,
@@ -52,6 +57,7 @@ def test_loop_item_response_normalizes_mysql_sentinel_values() -> None:
     assert response.parent_id is None
     assert response.assignee_user_id is None
     assert response.assignee_team_id is None
+    assert response.start_at is None
     assert response.due_at is None
     assert response.current_delivery_id is None
     assert response.completed_at is None
@@ -61,6 +67,7 @@ def test_loop_item_update_adapts_nulls_only_for_mysql() -> None:
     values = {
         "parent_id": None,
         "assignee_team_id": None,
+        "start_at": None,
         "due_at": None,
         "completed_at": None,
     }
@@ -71,6 +78,7 @@ def test_loop_item_update_adapts_nulls_only_for_mysql() -> None:
     assert mysql_values == {
         "parent_id": "",
         "assignee_team_id": 0,
+        "start_at": datetime(1970, 1, 1, 0, 0, 1),
         "due_at": datetime(1970, 1, 1, 0, 0, 1),
         "completed_at": datetime(1970, 1, 1, 0, 0, 1),
     }
@@ -91,6 +99,15 @@ def test_loop_item_update_preserves_nullable_mysql_columns() -> None:
         "due_at": None,
         "completed_at": datetime(1970, 1, 1, 0, 0, 1),
     }
+
+
+def test_loop_item_create_rejects_an_inverted_schedule_range() -> None:
+    with pytest.raises(ValueError, match="start_at cannot be after due_at"):
+        LoopItemCreate(
+            title="Invalid schedule",
+            start_at=datetime(2026, 10, 12),
+            due_at=datetime(2026, 10, 11),
+        )
 
 
 @pytest.mark.parametrize(

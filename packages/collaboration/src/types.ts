@@ -37,6 +37,27 @@ export interface CollaborationStatus {
   color: CollaborationStatusColor;
 }
 
+export type CollaborationScheduleGroupBy =
+  | "none"
+  | "status"
+  | "priority"
+  | "assignee"
+  | "tag";
+
+export type CollaborationScheduleSortBy =
+  | "start_asc"
+  | "due_asc"
+  | "updated_desc"
+  | "priority_desc";
+
+export interface CollaborationScheduleViewConfig {
+  status_filter: string | null;
+  assignee_filter: string | null;
+  tag_filter: string | null;
+  group_by: CollaborationScheduleGroupBy;
+  sort_by: CollaborationScheduleSortBy;
+}
+
 export interface CollaborationProject {
   id: CollaborationProjectId;
   workspace_id?: string | null;
@@ -56,6 +77,7 @@ export interface CollaborationProject {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;
     statuses: CollaborationStatus[];
+    schedule_view?: CollaborationScheduleViewConfig;
   };
   card_display?: {
     show_assignee: boolean;
@@ -140,6 +162,7 @@ export interface CollaborationIssue {
   description: string;
   status: string;
   priority: CollaborationPriority;
+  start_at?: string | null;
   due_at: string | null;
   tags: string[];
   sort_order: number;
@@ -453,7 +476,13 @@ export interface CollaborationDefaultAssistant {
   capabilitySummary?: string;
 }
 
-export type CollaborationView = "board" | "table" | "files" | "manage";
+export type CollaborationView =
+  | "board"
+  | "calendar"
+  | "gantt"
+  | "table"
+  | "files"
+  | "manage";
 export type CollaborationRootView = "home" | "my-work";
 export type ProjectSettingsSectionId =
   | "project"
