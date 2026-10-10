@@ -664,10 +664,13 @@ class RealCloudEnvironment {
         '2.0.0',
         `Plugin ${slug} kept stale local runtime metadata after update`
       )
+      const capabilities = JSON.parse(
+        await readFile(join(dirname(codexHome), 'capabilities/manifest-v2.json'), 'utf8')
+      )
       assert.equal(
-        await pathExists(join(codexHome, 'plugins', 'cache', 'wegent', slug, '1.0.0')),
-        false,
-        `Plugin ${slug} kept its old local runtime after update`
+        capabilities.plugins[`${slug}@wegent`].runtime.codex_link,
+        dirname(dirname(currentManifest)),
+        `Plugin ${slug} did not activate its updated native cache`
       )
     }
   }

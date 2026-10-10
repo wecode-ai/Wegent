@@ -285,6 +285,7 @@ pub use standard_engine::CodexAppServerEngine;
 #[derive(Clone)]
 pub struct CodexAppServerClient {
     binary: String,
+    home: Option<PathBuf>,
     state: Arc<Mutex<CodexAppServerSharedState>>,
 }
 
@@ -303,7 +304,34 @@ impl CodexAppServerClient {
         Self {
             state: shared_codex_app_server_state(&binary),
             binary,
+            home: None,
         }
+    }
+
+    pub(crate) fn for_request(&self, request: &ExecutionRequest) -> Result<Self, String> {
+        let Some(home) = super::instance_home::request_home(request) else {
+            return Ok(self.clone());
+        };
+        if !home.is_absolute() {
+            return Err("Named Agent Home identity is incomplete".to_owned());
+        }
+        Ok(Self {
+            state: codex_app_server_state(&self.binary, Some(home.clone())),
+            binary: self.binary.clone(),
+            home: Some(home),
+        })
+    }
+
+    fn process_environment(
+        &self,
+        runtime: &BTreeMap<String, String>,
+        launch: &BTreeMap<String, String>,
+    ) -> BTreeMap<String, String> {
+        let mut environment = codex_process_environment(runtime, launch);
+        if let Some(home) = &self.home {
+            environment.insert(CODEX_HOME_ENV.to_owned(), home.display().to_string());
+        }
+        environment
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
@@ -636,7 +664,7 @@ impl CodexAppServerClient {
             .map(|config| &config.env)
             .unwrap_or(&empty_launch_environment);
         let process_environment =
-            codex_process_environment(&state.runtime_proxy_env, launch_environment);
+            self.process_environment(&state.runtime_proxy_env, launch_environment);
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
@@ -966,7 +994,7 @@ impl CodexAppServerClient {
         }
         let mut initialize_elapsed = None;
         let process_environment =
-            codex_process_environment(&state.runtime_proxy_env, &BTreeMap::new());
+            self.process_environment(&state.runtime_proxy_env, &BTreeMap::new());
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
@@ -1021,7 +1049,7 @@ impl CodexAppServerClient {
             state.process_environment.clear();
         }
         let process_environment =
-            codex_process_environment(&state.runtime_proxy_env, &launch_config.env);
+            self.process_environment(&state.runtime_proxy_env, &launch_config.env);
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
@@ -1124,20 +1152,28 @@ impl Drop for CodexThreadUnsubscribeObservation {
     }
 }
 
-fn shared_codex_app_server_states(
-) -> &'static StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>> {
-    static STATES: OnceLock<StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>>> =
-        OnceLock::new();
+type CodexAppServerStates =
+    HashMap<(String, Option<PathBuf>), Arc<Mutex<CodexAppServerSharedState>>>;
+
+fn shared_codex_app_server_states() -> &'static StdMutex<CodexAppServerStates> {
+    static STATES: OnceLock<StdMutex<CodexAppServerStates>> = OnceLock::new();
     STATES.get_or_init(|| StdMutex::new(HashMap::new()))
 }
 
 fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerSharedState>> {
+    codex_app_server_state(binary, None)
+}
+
+fn codex_app_server_state(
+    binary: &str,
+    home: Option<PathBuf>,
+) -> Arc<Mutex<CodexAppServerSharedState>> {
     let states = shared_codex_app_server_states();
     let mut states = states
         .lock()
         .expect("Codex app-server shared state registry should not be poisoned");
     states
-        .entry(binary.to_owned())
+        .entry((binary.to_owned(), home))
         .or_insert_with(|| Arc::new(Mutex::new(CodexAppServerSharedState::default())))
         .clone()
 }

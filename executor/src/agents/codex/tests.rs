@@ -6,6 +6,38 @@ use serde_json::json;
 
 use super::*;
 
+#[test]
+fn named_home_rpc_clients_preserve_process_isolation() {
+    let _environment = environment::LaunchEnvironment::new();
+    let root = PathBuf::from(env::var("WEGENT_WORKBENCH_HOME").unwrap());
+    let client = CodexAppServerClient::new("synthetic-home-rpc-client");
+    let mut request: ExecutionRequest = serde_json::from_value(json!({
+        "user_name":"synthetic", "team_namespace":"default", "team_name":"agent-a",
+        "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}]
+    }))
+    .unwrap();
+    let first = client.for_request(&request).unwrap();
+    let repeated = client.for_request(&request).unwrap();
+    assert!(Arc::ptr_eq(&first.state, &repeated.state));
+    assert!(!Arc::ptr_eq(&client.state, &first.state));
+    request
+        .extra
+        .insert("team_name".to_owned(), json!("agent-b"));
+    let second = client.for_request(&request).unwrap();
+    assert!(!Arc::ptr_eq(&first.state, &second.state));
+    assert_eq!(
+        first.process_environment(&BTreeMap::new(), &BTreeMap::new())["CODEX_HOME"],
+        root.join("agents/synthetic/default/agent-a")
+            .display()
+            .to_string()
+    );
+    request.extra.insert("team_id".to_owned(), json!(0));
+    assert!(Arc::ptr_eq(
+        &client.state,
+        &client.for_request(&request).unwrap().state
+    ));
+}
+
 #[path = "tests/environment.rs"]
 mod environment;
 

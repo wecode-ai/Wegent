@@ -1730,11 +1730,13 @@ impl RuntimeWorkRpcHandler {
             params.insert("path".to_owned(), Value::String(thread_path));
         }
 
-        let response = self
-            .call_codex_thread_method_without_list_invalidation(
-                "thread/resume",
-                Value::Object(params),
-            )
+        self.register_thread_event_route_from_store(thread_id);
+        self.ensure_notification_router().await;
+        let client = self
+            .codex_app_server
+            .for_request(&runtime_event_request_from_link(link))?;
+        let response = client
+            .request("thread/resume", Value::Object(params))
             .await?;
         Ok(response
             .get("thread")

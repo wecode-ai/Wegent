@@ -435,6 +435,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "cloudProjectId"
                 | "cloud_project_id"
                 | "collaboration_mode"
+                | "collaboration_model"
                 | "modelSelection"
                 | "model_selection"
                 | "origin"
@@ -447,6 +448,9 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "skill_names"
                 | "standaloneChatWorkspace"
                 | "team_id"
+                | "team_name"
+                | "team_owner"
+                | "user_id"
                 | "user_selected_skills"
         )
     });
