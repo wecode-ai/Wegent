@@ -369,12 +369,25 @@ class TeamKindService(KindBaseService):
         referenced = self._find_bots_referenced_by_other_teams(
             db, exclude_team_id=db_resource.id
         )
+        bots_to_delete: list[Kind] = []
         for bot in bots:
             if bot.user_id != db_resource.user_id:
                 continue
-            if (bot.name, bot.namespace) in referenced:
+            # In the default namespace resources are per-user: a reference
+            # from another user's Team points at that user's Bot, not this one.
+            if bot.namespace == "default":
+                key = (bot.name, bot.namespace, bot.user_id)
+            else:
+                key = (bot.name, bot.namespace, None)
+            if key in referenced:
                 continue
-            self._delete_orphaned_bot_ghost(db, team=db_resource, bot=bot)
+            bots_to_delete.append(bot)
+
+        if not bots_to_delete:
+            return
+
+        self._delete_orphaned_ghosts(db, team=db_resource, bots=bots_to_delete)
+        for bot in bots_to_delete:
             db.delete(bot)
             logger.info(
                 "Deleted orphaned Bot '%s' in namespace '%s' while deleting Team '%s' "
@@ -386,71 +399,98 @@ class TeamKindService(KindBaseService):
                 bot.id,
             )
 
-    def _delete_orphaned_bot_ghost(self, db: Session, *, team: Kind, bot: Kind) -> None:
-        """Delete the Bot's Ghost when it is exclusive to the deleted Bot.
+    def _delete_orphaned_ghosts(
+        self, db: Session, *, team: Kind, bots: list[Kind]
+    ) -> None:
+        """Delete Ghosts that are exclusive to the Bots being deleted.
 
-        The Ghost is only removed when it belongs to the Team owner and no
-        other active Bot references it.
+        A Ghost is only removed when it belongs to the Team owner and no other
+        active Bot references it. Ghost references in the default namespace are
+        per-user: a reference from another user's Bot points at that user's
+        Ghost and does not block deletion.
         """
-        ghost_ref = ((bot.json or {}).get("spec") or {}).get("ghostRef") or {}
-        ghost_name = ghost_ref.get("name")
-        if not ghost_name:
-            return
-        ghost_namespace = ghost_ref.get("namespace") or "default"
-
-        ghost = (
-            db.query(Kind)
-            .filter(
+        ghosts: dict[tuple[str, str], Kind] = {}
+        for bot in bots:
+            ghost_ref = ((bot.json or {}).get("spec") or {}).get("ghostRef") or {}
+            ghost_name = ghost_ref.get("name")
+            if not ghost_name:
+                continue
+            ghost_namespace = ghost_ref.get("namespace") or "default"
+            if (ghost_name, ghost_namespace) in ghosts:
+                continue
+            query = db.query(Kind).filter(
                 Kind.kind == "Ghost",
                 Kind.namespace == ghost_namespace,
                 Kind.name == ghost_name,
                 Kind.is_active == True,
             )
-            .first()
-        )
-        if ghost is None or ghost.user_id != team.user_id:
+            if ghost_namespace == "default":
+                query = query.filter(Kind.user_id == team.user_id)
+            ghost = query.first()
+            if ghost is None or ghost.user_id != team.user_id:
+                continue
+            ghosts[(ghost_name, ghost_namespace)] = ghost
+
+        if not ghosts:
             return
 
+        deleted_bot_ids = {bot.id for bot in bots}
+        referenced: set[tuple[str, str, int | None]] = set()
         other_bots = (
             db.query(Kind)
             .filter(
                 Kind.kind == "Bot",
                 Kind.is_active == True,
-                Kind.id != bot.id,
+                Kind.id.notin_(deleted_bot_ids),
             )
             .yield_per(100)
         )
         for other in other_bots:
             other_ref = ((other.json or {}).get("spec") or {}).get("ghostRef") or {}
-            if (
-                other_ref.get("name") == ghost_name
-                and (other_ref.get("namespace") or "default") == ghost_namespace
-            ):
-                return
+            other_name = other_ref.get("name")
+            if not other_name:
+                continue
+            other_namespace = other_ref.get("namespace") or "default"
+            if other_namespace == "default":
+                referenced.add((other_name, other_namespace, other.user_id))
+            else:
+                referenced.add((other_name, other_namespace, None))
 
-        db.delete(ghost)
-        logger.info(
-            "Deleted orphaned Ghost '%s' in namespace '%s' while deleting Bot '%s' "
-            "(ghost_id=%s, bot_id=%s)",
-            ghost_name,
-            ghost_namespace,
-            bot.name,
-            ghost.id,
-            bot.id,
-        )
+        for (ghost_name, ghost_namespace), ghost in ghosts.items():
+            if ghost_namespace == "default":
+                key = (ghost_name, ghost_namespace, ghost.user_id)
+            else:
+                key = (ghost_name, ghost_namespace, None)
+            if key in referenced:
+                continue
+            db.delete(ghost)
+            logger.info(
+                "Deleted orphaned Ghost '%s' in namespace '%s' while deleting Team "
+                "'%s' (ghost_id=%s, team_id=%s)",
+                ghost_name,
+                ghost_namespace,
+                team.name,
+                ghost.id,
+                team.id,
+            )
 
     @staticmethod
     def _find_bots_referenced_by_other_teams(
         db: Session, *, exclude_team_id: int
-    ) -> set[tuple[str, str]]:
-        """Collect (name, namespace) of Bots referenced by other active Teams.
+    ) -> set[tuple[str, str, int | None]]:
+        """Collect references to Bots from other active Teams.
+
+        Returns (name, namespace, user_id) keys. ``user_id`` is set for
+        references into the default namespace, because default-namespace
+        resources are per-user; group-namespace references use ``None`` as a
+        wildcard since they resolve namespace-wide.
 
         The scan cannot be narrowed by ``Kind.namespace``: a Team in any
         namespace may reference this Bot through an explicit cross-namespace
         ``botRef``. Results are streamed to keep memory bounded on large
         installations.
         """
-        referenced: set[tuple[str, str]] = set()
+        referenced: set[tuple[str, str, int | None]] = set()
         other_teams = (
             db.query(Kind)
             .filter(
@@ -465,8 +505,13 @@ class TeamKindService(KindBaseService):
             for member in members:
                 bot_ref = member.get("botRef", {}) if isinstance(member, dict) else {}
                 bot_name = bot_ref.get("name")
-                if bot_name:
-                    referenced.add((bot_name, bot_ref.get("namespace") or "default"))
+                if not bot_name:
+                    continue
+                bot_namespace = bot_ref.get("namespace") or "default"
+                if bot_namespace == "default":
+                    referenced.add((bot_name, bot_namespace, other.user_id))
+                else:
+                    referenced.add((bot_name, bot_namespace, None))
         return referenced
 
     def _validate_references(

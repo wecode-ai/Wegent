@@ -77,11 +77,37 @@ def test_delete_team_removes_orphaned_bot(test_db):
 
 
 def test_delete_team_keeps_bot_referenced_by_other_team(test_db):
-    """A Bot referenced by another active Team is kept."""
-    # Arrange
+    """A Bot referenced by another active Team of the same owner is kept."""
+    # Arrange: in the default namespace references are per-user, so the
+    # blocking Team must belong to the same user
     team = _add_team(test_db, name="agent-a", bot_refs=[{"name": "bot-shared"}])
-    _add_team(test_db, name="agent-b", bot_refs=[{"name": "bot-shared"}], user_id=2)
+    _add_team(test_db, name="agent-b", bot_refs=[{"name": "bot-shared"}])
     _add_kind(test_db, kind="Bot", name="bot-shared")
+    service = TeamKindService()
+
+    # Act
+    service._pre_delete_side_effects(test_db, team.user_id, team)
+    test_db.commit()
+
+    # Assert
+    assert "bot-shared" in _bot_names(test_db)
+
+
+def test_delete_team_keeps_bot_referenced_by_group_team_of_other_user(test_db):
+    """Group-namespace references resolve namespace-wide, so a group Team of
+    another user referencing the Bot blocks cleanup."""
+    # Arrange
+    team = _add_team(
+        test_db, name="agent-a", namespace="group-a", bot_refs=[{"name": "bot-shared"}]
+    )
+    _add_team(
+        test_db,
+        name="agent-b",
+        namespace="group-a",
+        bot_refs=[{"name": "bot-shared"}],
+        user_id=2,
+    )
+    _add_kind(test_db, kind="Bot", name="bot-shared", namespace="group-a")
     service = TeamKindService()
 
     # Act
@@ -160,11 +186,10 @@ def test_delete_group_team_removes_group_bot(test_db):
 
 def test_delete_team_ignores_inactive_team_references(test_db):
     """An inactive Team referencing the Bot does not block cleanup."""
-    # Arrange
+    # Arrange: the referencing Team belongs to the same owner so that, if it
+    # were active, it would block the cleanup
     team = _add_team(test_db, name="agent-a", bot_refs=[{"name": "bot-stale"}])
-    stale_team = _add_team(
-        test_db, name="agent-old", bot_refs=[{"name": "bot-stale"}], user_id=2
-    )
+    stale_team = _add_team(test_db, name="agent-old", bot_refs=[{"name": "bot-stale"}])
     stale_team.is_active = False
     test_db.commit()
     _add_kind(test_db, kind="Bot", name="bot-stale")
@@ -307,3 +332,59 @@ def test_delete_with_user_removes_orphaned_bot(test_db):
         .count()
     )
     assert remaining_teams == 0
+
+
+def test_default_namespace_references_are_owner_scoped(test_db):
+    """Another user's Team referencing the same default-namespace Bot name
+    points at that user's Bot and must not block this owner's cleanup."""
+    # Arrange: user 2 has a Team referencing "bot-x" (their own default Bot)
+    team = _add_team(test_db, name="agent-a", bot_refs=[{"name": "bot-x"}])
+    _add_team(test_db, name="agent-b", bot_refs=[{"name": "bot-x"}], user_id=2)
+    _add_kind(test_db, kind="Bot", name="bot-x")
+    _add_kind(test_db, kind="Bot", name="bot-x", user_id=2)
+    service = TeamKindService()
+
+    # Act
+    service._pre_delete_side_effects(test_db, team.user_id, team)
+    test_db.commit()
+
+    # Assert: user 1's Bot is deleted, user 2's same-named Bot survives
+    remaining = {
+        (bot.user_id, bot.name)
+        for bot in test_db.query(Kind).filter(
+            Kind.kind == "Bot", Kind.is_active == True
+        )
+    }
+    assert remaining == {(2, "bot-x")}
+
+
+def test_default_namespace_ghost_references_are_owner_scoped(test_db):
+    """Another user's Bot referencing the same default-namespace Ghost name
+    must not block this owner's Ghost cleanup."""
+    # Arrange
+    team = _add_team(test_db, name="agent-a", bot_refs=[{"name": "bot-a"}])
+    _add_kind(test_db, kind="Bot", name="bot-a", spec={"ghostRef": {"name": "ghost-x"}})
+    _add_kind(test_db, kind="Ghost", name="ghost-x")
+    _add_kind(
+        test_db,
+        kind="Bot",
+        name="bot-b",
+        user_id=2,
+        spec={"ghostRef": {"name": "ghost-x"}},
+    )
+    _add_kind(test_db, kind="Ghost", name="ghost-x", user_id=2)
+    service = TeamKindService()
+
+    # Act
+    service._pre_delete_side_effects(test_db, team.user_id, team)
+    test_db.commit()
+
+    # Assert: user 1's Bot and Ghost are deleted, user 2's survive
+    remaining = {
+        (kind.kind, kind.user_id, kind.name)
+        for kind in test_db.query(Kind).filter(Kind.is_active == True)
+    }
+    assert ("Bot", 1, "bot-a") not in remaining
+    assert ("Ghost", 1, "ghost-x") not in remaining
+    assert ("Bot", 2, "bot-b") in remaining
+    assert ("Ghost", 2, "ghost-x") in remaining
