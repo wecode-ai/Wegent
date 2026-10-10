@@ -1,6 +1,7 @@
 import { getRuntimeConfig } from '@/config/runtime'
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { getPlatform } from '@/lib/platform'
+import { telemetryPolicy } from '@extensions/telemetry-policy'
 import type { CommonTelemetryProperties } from './events'
 
 const SESSION_ID_KEY = 'wework.telemetry.session-id.v1'
@@ -64,7 +65,7 @@ function architecture(): CommonTelemetryProperties['arch'] {
 export function getCommonTelemetryProperties(): CommonTelemetryProperties {
   const config = getTelemetryConfig()
   return {
-    $geoip_disable: true,
+    $geoip_disable: !telemetryPolicy.sendClientIp,
     app_version: __WEWORK_APP_VERSION__,
     arch: architecture(),
     locale: navigator.language || 'unknown',
