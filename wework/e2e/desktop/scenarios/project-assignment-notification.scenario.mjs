@@ -362,7 +362,12 @@ async function verifyManualReviewCycle(control, request, projectId, owner, uiTim
   assert.equal(Number(await control.command('getElementCount', '[data-testid="ai-chat-modal"]')), 0)
   await control.command('fill', resultSelector, { value: MANUAL_RESULT })
   await control.command('click', '[data-testid="human-issue-submit"]', { visible: true })
-  await control.command('click', '[data-testid="human-issue-work-cancel"]', { visible: true })
+  await control.command('press', '[data-testid="human-issue-work-cancel"]', { key: 'Escape' })
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="human-issue-work-dialog"]')),
+    0
+  )
+  await control.command('waitFor', resultSelector, { visible: true })
   assert.equal((await request(`/api/v1/loop-items/${manualIssue.id}`)).status, 'in_progress')
   assert.equal(await control.command('getValue', resultSelector), MANUAL_RESULT)
   await control.command('click', '[data-testid="human-issue-submit"]', { visible: true })
@@ -393,6 +398,15 @@ async function verifyManualReviewCycle(control, request, projectId, owner, uiTim
   await control.command('fill', '[data-testid="human-issue-return-reason-input"]', {
     value: RETURN_REASON,
   })
+  await control.command('press', '[data-testid="human-issue-return-reason-input"]', {
+    key: 'Escape',
+  })
+  await control.command('waitFor', '[data-testid="human-issue-request-changes"]', { visible: true })
+  await control.command('click', '[data-testid="human-issue-request-changes"]', { visible: true })
+  assert.equal(
+    await control.command('getValue', '[data-testid="human-issue-return-reason-input"]'),
+    RETURN_REASON
+  )
   await control.command('click', '[data-testid="human-issue-work-confirm"]', { visible: true })
   await waitForValue(
     () => request(`/api/v1/loop-items/${manualIssue.id}`),

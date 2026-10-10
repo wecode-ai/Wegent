@@ -78,6 +78,51 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('keeps the real Issue editor open when a nested human dialog handles Escape', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const item: CloudLoopItem = {
+      ...baseItem,
+      assignee_user_id: 7,
+      assignee_agent_id: null,
+      human_work: {
+        assignment_id: 'assignment-1',
+        assignee_user_id: 7,
+        reviewer_user_id: 1,
+        submission_message_id: null,
+        submitted_by_user_id: null,
+        state: 'none',
+        result: '',
+        return_reason: '',
+        ai_draft_delivery_id: null,
+        can_start: false,
+        can_submit: true,
+        can_review: false,
+      },
+    }
+    render(
+      <TodoEditor
+        mode="edit"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={onClose}
+        api={api}
+        currentUserId={7}
+      />
+    )
+    await user.type(screen.getByTestId('human-issue-result'), 'Evidence')
+    await user.click(screen.getByTestId('human-issue-submit'))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('human-issue-work-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('human-issue-result')).toHaveValue('Evidence')
+    expect(screen.getByTestId('human-issue-submit')).toHaveFocus()
+    expect(onClose).not.toHaveBeenCalled()
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('retains the archive label and outside-click dismissal in the properties menu', async () => {
     const user = userEvent.setup()
     const onArchive = vi.fn()

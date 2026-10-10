@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@/i18n'
 import type { CloudLoopItem } from '@/api/deliveries'
@@ -37,6 +37,108 @@ function workApi() {
 }
 
 describe('HumanIssueWorkPanel', () => {
+  async function openNestedDialog(mode: 'submit' | 'return', api = workApi()) {
+    const user = userEvent.setup()
+    const parentShortcut = vi.fn()
+    const item =
+      mode === 'submit'
+        ? baseItem
+        : {
+            ...baseItem,
+            status: 'in_review',
+            human_work: {
+              ...baseItem.human_work!,
+              state: 'submitted' as const,
+              can_submit: false,
+              can_review: true,
+            },
+          }
+    render(
+      <div
+        onKeyDown={event => {
+          if (event.key === 'Escape' || (event.ctrlKey && event.key === 'Enter')) {
+            event.stopPropagation()
+            parentShortcut()
+          }
+        }}
+      >
+        <HumanIssueWorkPanel item={item} api={api} onUpdated={vi.fn()} />
+      </div>
+    )
+    if (mode === 'submit') await user.type(screen.getByTestId('human-issue-result'), 'Result')
+    const trigger = screen.getByTestId(
+      mode === 'submit' ? 'human-issue-submit' : 'human-issue-request-changes'
+    )
+    await user.click(trigger)
+    return { user, trigger, parentShortcut }
+  }
+
+  it.each(['submit', 'return'] as const)(
+    'traps focus and handles Escape within the %s dialog',
+    async mode => {
+      const { user, trigger, parentShortcut } = await openNestedDialog(mode)
+      const cancel = screen.getByTestId('human-issue-work-cancel')
+      const first =
+        mode === 'submit' ? cancel : screen.getByTestId('human-issue-return-reason-input')
+      expect(first).toHaveFocus()
+      if (mode === 'return') await user.type(first, 'Revision needed')
+      await user.tab({ shift: true })
+      expect(screen.getByTestId('human-issue-work-confirm')).toHaveFocus()
+      await user.tab()
+      expect(first).toHaveFocus()
+      await user.keyboard('{Control>}{Enter}{/Control}')
+      expect(parentShortcut).not.toHaveBeenCalled()
+      await user.keyboard('{Escape}')
+      expect(screen.queryByTestId('human-issue-work-dialog')).not.toBeInTheDocument()
+      expect(trigger).toHaveFocus()
+      expect(parentShortcut).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['submit', 'return'] as const)(
+    'protects the %s dialog while a request is busy and preserves failures',
+    async mode => {
+      const api = workApi()
+      let rejectRequest!: (error: Error) => void
+      const pending = () =>
+        new Promise<{ issue: CloudLoopItem }>((_resolve, reject) => {
+          rejectRequest = reject
+        })
+      if (mode === 'submit') api.submitHumanIssueWork.mockImplementation(pending)
+      else api.reviewHumanIssueWork.mockImplementation(pending)
+      const { user, parentShortcut } = await openNestedDialog(mode, api)
+      if (mode === 'return')
+        await user.type(screen.getByTestId('human-issue-return-reason-input'), 'Keep evidence')
+      await user.click(screen.getByTestId('human-issue-work-confirm'))
+      expect(screen.getByTestId('human-issue-work-cancel')).toBeDisabled()
+      await user.keyboard('{Escape}')
+      await user.tab()
+      expect(screen.getByTestId('human-issue-work-dialog')).toHaveFocus()
+      expect(parentShortcut).not.toHaveBeenCalled()
+      await act(async () => rejectRequest(new Error('Try again')))
+      expect(screen.getByTestId('human-issue-work-dialog')).toBeInTheDocument()
+      if (mode === 'return')
+        expect(screen.getByTestId('human-issue-return-reason-input')).toHaveValue('Keep evidence')
+      else expect(screen.getByTestId('human-issue-work-dialog')).toHaveTextContent('Result')
+      await user.click(screen.getByTestId('human-issue-work-cancel'))
+    }
+  )
+
+  it.each([{ isComposing: true }, { keyCode: 229 }])(
+    'keeps IME Escape and Enter inside the dialog (%j)',
+    async ime => {
+      const api = workApi()
+      const { user, parentShortcut } = await openNestedDialog('return', api)
+      const input = screen.getByTestId('human-issue-return-reason-input')
+      await user.type(input, '输入法候选')
+      fireEvent.keyDown(input, { key: 'Escape', ...ime })
+      fireEvent.keyDown(screen.getByTestId('human-issue-work-confirm'), { key: 'Enter', ...ime })
+      expect(screen.getByTestId('human-issue-work-dialog')).toBeInTheDocument()
+      expect(api.reviewHumanIssueWork).not.toHaveBeenCalled()
+      expect(parentShortcut).not.toHaveBeenCalled()
+    }
+  )
+
   it('collects one result, shows a read-only confirmation, and leaves AI assist optional', async () => {
     const api = workApi()
     const onUpdated = vi.fn()

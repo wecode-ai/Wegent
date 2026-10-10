@@ -368,7 +368,11 @@ export function ProjectExecutionEnvironments({
         // A previously auto-filled branch is unlikely to exist on the new
         // repository; the fetched default branch replaces it.
         const ref = !draft.ref || draft.ref === derived?.ref ? "" : draft.ref;
-        derivedDefaults.current.set(id, { name, path, ref });
+        derivedDefaults.current.set(id, {
+          name: derivedName,
+          path: shortName,
+          ref: "",
+        });
         return { ...draft, url: option.cloneUrl, name, path, ref };
       }),
     );
@@ -499,8 +503,8 @@ export function ProjectExecutionEnvironments({
             ? shortName
             : repository.path;
         derivedDefaults.current.set(id, {
-          name,
-          path,
+          name: shortName,
+          path: shortName,
           ref: derived?.ref ?? "",
         });
         return { ...repository, url, name, path };
