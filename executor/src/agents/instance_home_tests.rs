@@ -536,6 +536,7 @@ fn shell_only_desktop_request_does_not_create_an_agent_instance() {
     };
     assert!(request_home(&request).is_none());
     request.extra.insert("team_id".to_owned(), json!(0));
+    request.bot[0]["id"] = json!(23);
     request
         .extra
         .insert("team_name".to_owned(), json!("Wework"));
@@ -543,4 +544,5 @@ fn shell_only_desktop_request_does_not_create_an_agent_instance() {
         .extra
         .insert("skill_names".to_owned(), json!(["interactive"]));
     assert!(request_home(&request).is_none());
+    assert!(acquire(&request).unwrap().is_none());
 }

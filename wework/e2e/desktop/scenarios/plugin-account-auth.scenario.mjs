@@ -38,7 +38,7 @@ async function waitForValue(read, accept, timeoutMs, message) {
 }
 
 async function managedRoot(home, installedId) {
-  const manifestPath = join(home, 'capabilities/manifest.json')
+  const manifestPath = join(home, 'capabilities/manifest-v2.json')
   const manifest = await readFile(manifestPath, 'utf8')
     .then(JSON.parse)
     .catch(error => {

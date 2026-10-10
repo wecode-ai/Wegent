@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { ToolBlock } from '@/features/tasks/components/message/thinking/components/ToolBlock'
 import type { ToolPair } from '@/features/tasks/components/message/thinking/types'
 

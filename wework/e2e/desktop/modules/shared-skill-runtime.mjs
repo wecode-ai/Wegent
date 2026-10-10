@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto'
 import { lstat, readFile, readlink, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import JSZip from 'jszip'
 
 import { CLOUD_DEVICE_ID, CLOUD_PUBLIC_MODEL_NAME, CLOUD_PUBLIC_MODEL_OPTIONS } from './shared.mjs'
+import { createZipFixture } from './zip-fixtures.mjs'
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 
@@ -87,7 +87,7 @@ export function createSharedSkillRuntime({
       return response
     }
     const upload = async (version, id) => {
-      const zip = new JSZip()
+      const archivePath = join(resultDir, `${NAME}-${version}.zip`)
       const mcps =
         !isCodex && version === 'V1'
           ? {
@@ -105,11 +105,10 @@ export function createSharedSkillRuntime({
               },
             }
           : {}
-      zip.file(
-        `${NAME}/SKILL.md`,
-        `---\nname: ${NAME}\ndescription: Shared skill ${version}\nmcpServers: ${JSON.stringify(mcps)}\n---\nWEWORK_SHARED_SKILL_${version}\n`
-      )
-      const bytes = await zip.generateAsync({ type: 'nodebuffer' })
+      await createZipFixture(archivePath, {
+        [`${NAME}/SKILL.md`]: `---\nname: ${NAME}\ndescription: Shared skill ${version}\nmcpServers: ${JSON.stringify(mcps)}\n---\nWEWORK_SHARED_SKILL_${version}\n`,
+      })
+      const bytes = await readFile(archivePath)
       const form = new FormData()
       form.set('file', new Blob([bytes], { type: 'application/zip' }), `${NAME}.zip`)
       form.set('name', NAME)

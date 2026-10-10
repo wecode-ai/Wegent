@@ -9,17 +9,8 @@ import shlex
 import subprocess
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[3]
 DEVICE_DOCKERFILE = ROOT / "docker" / "device" / "Dockerfile"
-
-
-@pytest.fixture(
-    autouse=True, params=["docker/device/Dockerfile", "wecode/docker/device/Dockerfile"]
-)
-def device_image(request, monkeypatch):
-    monkeypatch.setitem(globals(), "DEVICE_DOCKERFILE", ROOT / request.param)
 
 
 def _device_entrypoint() -> str:

@@ -30,6 +30,10 @@ impl Drop for HomeLease {
 /// Backend Bot requests use the executing user's named agent Home.
 /// Shell-only requests retain the application's managed native Home.
 pub(super) fn request_home(request: &ExecutionRequest) -> Option<PathBuf> {
+    // Direct Wework profiles carry runtime Bot IDs but do not own a backend Team.
+    if request.extra.get("team_id") == Some(&json!(0)) {
+        return None;
+    }
     let bot = match &request.bot {
         Value::Array(bots) => bots.first()?,
         Value::Object(_) => &request.bot,

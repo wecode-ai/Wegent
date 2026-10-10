@@ -304,7 +304,10 @@ async function verifyCapability(context) {
   ]) {
     assert.equal(env.WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED, undefined)
   }
-  const initialWorktreeRoot = join(resultDir, 'cloud-executor-home', 'workspace', 'worktrees')
+  const initialWorktreeRoot = join(
+    cloudEnvironment.remoteExecutorEnv.LOCAL_WORKSPACE_ROOT,
+    'worktrees'
+  )
   const rootExistedBeforeProbe = await pathExists(initialWorktreeRoot)
   const ref = commandOutput('git', ['branch', '--show-current'], { cwd: workspacePath })
   const capabilities = await cloudEnvironment.worktreeCapabilities()
@@ -346,9 +349,10 @@ async function verifyCapability(context) {
     /^sha256:/,
     'Preflight omitted the repository identity fingerprint'
   )
-  assert.ok(
-    preflight.resolvedWorktreeRoot.startsWith(join(resultDir, 'cloud-executor-home')),
-    'Preflight resolved the managed root outside the cloud Executor home'
+  assert.equal(
+    preflight.resolvedWorktreeRoot,
+    initialWorktreeRoot,
+    'Preflight did not use the configured persistent workspace root'
   )
   if (!rootExistedBeforeProbe) {
     assert.equal(

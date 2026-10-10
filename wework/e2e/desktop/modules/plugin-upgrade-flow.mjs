@@ -48,9 +48,9 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     )
     return { item, snapshot }
   }
-  const cacheRoot = join(codexHome, 'plugins/cache/wegent', pluginKey)
-  const oldRoot = join(cacheRoot, oldVersion)
-  const newRoot = join(cacheRoot, newVersion)
+  const capabilityManifestPath = join(dirname(codexHome), 'capabilities/manifest-v2.json')
+  const readCapabilities = async () => JSON.parse(await readFile(capabilityManifestPath, 'utf8'))
+  const managedKey = `${pluginKey}@wegent`
   setPhase('plugin-upgrade-old-install')
   const old = await env.publishPluginRelease({
     slug: pluginKey,
@@ -65,6 +65,11 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await request(`/plugins/installed/${installedId}?device_id=${deviceId}`, 'PUT', {
     updatePolicy: 'manual',
   })
+  const beforeRepair = await readCapabilities()
+  const managed = beforeRepair.plugins[managedKey]
+  assert.ok(managed?.store_path, 'Managed package must have an authoritative store path')
+  const oldRoot = managed.runtime.codex_link
+  assert.equal(typeof oldRoot, 'string', 'Managed package must expose its native cache path')
   assert.equal(
     JSON.parse(await readFile(join(oldRoot, '.codex-plugin/plugin.json'), 'utf8')).version,
     oldVersion
@@ -80,12 +85,6 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await control.command('click', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)
   await capture('01-old-installed')
   setPhase('plugin-refresh-restores-missing-package')
-  const capabilityManifestPath = join(dirname(codexHome), 'capabilities/manifest.json')
-  const readCapabilities = async () => JSON.parse(await readFile(capabilityManifestPath, 'utf8'))
-  const managedKey = `${pluginKey}@wegent`
-  const beforeRepair = await readCapabilities()
-  const managed = beforeRepair.plugins[managedKey]
-  assert.ok(managed?.store_path, 'Managed package must have an authoritative store path')
   const personalRoot = join(codexHome, 'plugins/cache/wework-personal/reconcile-keep/1.0.0')
   await mkdir(personalRoot, { recursive: true })
   await writeFile(join(personalRoot, 'marker'), 'Keep personal plugin')
@@ -148,6 +147,8 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   console.log('[plugin-upgrade] Observing update and its next catalog refresh')
   await new Promise(resolve => setTimeout(resolve, E2E_CATALOG_REFRESH_OBSERVATION_MS))
   const refreshed = await capture('04-after-refresh')
+  const newRoot = (await readCapabilities()).plugins[managedKey].runtime.codex_link
+  assert.notEqual(newRoot, oldRoot, 'Updated content must use a distinct native cache path')
   const currentManifestPath = join(newRoot, '.codex-plugin/plugin.json')
   const currentManifest = JSON.parse(await readFile(currentManifestPath, 'utf8'))
   assert.equal(currentManifest.version, newVersion)
@@ -156,7 +157,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   assert.ok(!updatedSkill.includes(oldContent))
   await access(join(newRoot, 'skills', addedSkill, 'SKILL.md'))
   await assert.rejects(access(join(newRoot, 'skills', retiredSkill)), { code: 'ENOENT' })
-  await assert.rejects(access(oldRoot), { code: 'ENOENT' })
+  await access(oldRoot)
   await writeFile(
     join(resultDir, 'plugin-upgrade-actual-manifest-after-update.json'),
     JSON.stringify(currentManifest, null, 2)
@@ -183,12 +184,14 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     false,
     'Uninstall left the cloud install active'
   )
-  await assert.rejects(access(currentManifestPath), { code: 'ENOENT' })
-  await assert.rejects(access(newRoot), { code: 'ENOENT' })
+  assert.equal((await readCapabilities()).plugins[managedKey], undefined)
+  // Shared packages and native caches may still be used by running agents.
+  await access(currentManifestPath)
+  await access(newRoot)
   setPhase('plugin-refresh-cleans-cloud-uninstall-residue')
   // Reproduce a missed device cleanup after a successful cloud uninstall.
-  await cp(residueBackup, removedEntry.store_path, { recursive: true })
-  await cp(residueBackup, newRoot, { recursive: true })
+  await access(removedEntry.store_path)
+  await access(newRoot)
   const stale = await readCapabilities()
   stale.plugins[managedKey] = removedEntry
   const sharedPluginKey = `${pluginKey}-shared`
@@ -226,11 +229,11 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await refreshAndVerify()
   assert.equal((await readCapabilities()).plugins[managedKey], undefined)
   assert.equal((await readCapabilities()).plugins[sharedManagedKey], undefined)
-  await assert.rejects(access(removedEntry.store_path), { code: 'ENOENT' })
-  await assert.rejects(access(newRoot), { code: 'ENOENT' })
-  await assert.rejects(access(sharedStorePath), { code: 'ENOENT' })
-  await assert.rejects(access(sharedClaudeRoot), { code: 'ENOENT' })
-  await assert.rejects(access(sharedCodexRoot), { code: 'ENOENT' })
+  await access(removedEntry.store_path)
+  await access(newRoot)
+  await access(sharedStorePath)
+  await access(sharedClaudeRoot)
+  await access(sharedCodexRoot)
   await capture('05b-refresh-cleared-uninstalled-residue')
   await control.command('click', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)
   setPhase('plugin-upgrade-reinstall')

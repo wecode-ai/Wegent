@@ -785,6 +785,10 @@ fn claude_command_rejects_unsafe_string_bot_id_for_session_filename() {
 fn claude_command_uses_workspace_task_dir_for_chat_turn_state() {
     let _lock = env_lock();
     let home = unique_dir("claude-chat-home");
+    let _workbench = EnvGuard::set(
+        "WEGENT_WORKBENCH_HOME",
+        &home.join(".wegent/workbench").display().to_string(),
+    );
     let workspace_root = unique_dir("claude-chat-workspace-root");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
@@ -844,6 +848,10 @@ fn claude_project_task_uses_global_capability_dirs() {
 fn claude_project_task_with_agent_skills_uses_named_home_skill_dir() {
     let _lock = env_lock();
     let home = unique_dir("claude-project-skill-home");
+    let _workbench = EnvGuard::set(
+        "WEGENT_WORKBENCH_HOME",
+        &home.join(".wegent/workbench").display().to_string(),
+    );
     let project_dir = unique_dir("claude-project-skill-workspace");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let request = ExecutionRequest {
@@ -980,6 +988,10 @@ fn claude_standalone_project_zero_keeps_global_capabilities_and_project_header()
 fn claude_standalone_project_zero_with_task_skills_uses_named_home() {
     let _lock = env_lock();
     let home = unique_dir("claude-standalone-skill-home");
+    let _workbench = EnvGuard::set(
+        "WEGENT_WORKBENCH_HOME",
+        &home.join(".wegent/workbench").display().to_string(),
+    );
     let workspace_root = unique_dir("claude-standalone-skill-workspace");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
@@ -1011,6 +1023,7 @@ fn claude_standalone_project_zero_with_task_skills_uses_named_home() {
 }
 
 fn named_claude_request(mut request: ExecutionRequest) -> ExecutionRequest {
+    request.user_name = Some("alice".into());
     request.team_namespace = Some("default".into());
     request.extra.insert("team_id".into(), json!(10));
     request.extra.insert("team_name".into(), json!("Claude"));
