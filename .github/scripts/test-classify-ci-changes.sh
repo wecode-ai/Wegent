@@ -1270,6 +1270,17 @@ if ! grep -Fq -- '--shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}' \
   exit 1
 fi
 
+# Fork pull requests cannot pull the executor E2E image from GHCR: the Wework
+# desktop build downloads executor-e2e-binary from this job instead, so the
+# job must also run when a fork PR selects wework_e2e without platform_e2e.
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! grep -Fq "needs.changes.outputs.wework_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository" \
+  "$platform_e2e_workflow"; then
+  printf 'e2e-tests.yml must build the executor E2E runtime for fork wework-only PRs\n' >&2
+  exit 1
+fi
+
 for workflow in test.yml lint.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
   if ! grep -q "merge_group:" "$workflow_path"; then
