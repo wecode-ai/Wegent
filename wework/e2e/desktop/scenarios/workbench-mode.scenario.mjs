@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 
+import { createWorkbenchHomeMigrationScenario } from '../modules/workbench-home-migration.mjs'
+
 const WORKBENCH_READY_TIMEOUT_MS = 120_000
 
 async function openGeneralSettings(control) {
@@ -24,6 +26,13 @@ async function switchMode(control, mode) {
   } finally {
     clearTimeout(timeout)
   }
+  // Restart returns to the Home route. The control channel reconnects before
+  // its plugin surface loads, so wait for the selected mode before navigating.
+  await control.command(
+    'waitFor',
+    mode === 'focus' ? '[data-testid="focus-home"]' : '[data-testid="task-suggestion-categories"]',
+    { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+  )
 }
 
 async function assertMode(control, mode) {
@@ -56,9 +65,13 @@ async function assertHome(control, mode) {
   )
 }
 
-export async function createDesktopScenario() {
+export async function createDesktopScenario(options) {
+  const homeMigration = createWorkbenchHomeMigrationScenario(options)
   return {
+    ...homeMigration,
+
     async verify(control) {
+      await homeMigration.verify(control)
       await openGeneralSettings(control)
       await assertMode(control, 'developer')
       assert.equal(
@@ -106,7 +119,7 @@ export async function createDesktopScenario() {
     },
 
     diagnostics() {
-      return { workbenchMode: true }
+      return { workbenchMode: true, homeMigration: homeMigration.diagnostics() }
     },
   }
 }

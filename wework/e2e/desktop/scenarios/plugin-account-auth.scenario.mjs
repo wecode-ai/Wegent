@@ -53,7 +53,7 @@ async function waitForValue(read, accept, timeoutMs, message) {
 }
 
 async function managedRoot(home, installedId) {
-  const manifestPath = join(home, 'capabilities/manifest.json')
+  const manifestPath = join(home, 'capabilities/manifest-v2.json')
   const manifest = await readFile(manifestPath, 'utf8')
     .then(JSON.parse)
     .catch(error => {
@@ -435,6 +435,18 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       value => value !== null,
       workbenchReadyTimeoutMs,
       'Cloud task did not execute the public plugin command'
+    )
+    const redactedOutput = [
+      secret,
+      oauthSecret,
+      transferSecret,
+      'synthetic-desktop-dws-access',
+      'synthetic-desktop-dws-refresh',
+      'synthetic-refreshed-access',
+    ].reduce((output, credential) => output.replaceAll(credential, '[redacted]'), toolResult)
+    await writeFile(
+      join(resultDir, `plugin-account-command-${encodeURIComponent(expected)}.json`),
+      JSON.stringify({ expected, output: redactedOutput }, null, 2)
     )
     assert.ok(
       toolResult.includes(expected),
@@ -838,7 +850,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         homePath,
         pluginRoots: await (async () => {
           const manifest = JSON.parse(
-            await readFile(join(executorHome, 'capabilities/manifest.json'), 'utf8')
+            await readFile(join(executorHome, 'capabilities/manifest-v2.json'), 'utf8')
           )
           const item = Object.values(manifest.plugins).find(
             item => item.installed_plugin_id === installedId

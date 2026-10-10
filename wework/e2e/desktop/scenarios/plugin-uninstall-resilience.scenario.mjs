@@ -169,13 +169,15 @@ export async function createDesktopScenario({
     await until(
       async () => ({
         plugin: await materializedPlugin(remoteHome, item.installedId),
-        exists: await pathExists(runtimePath),
         rows: await pendingRows(item),
       }),
-      value => !value.plugin && !value.exists && value.rows.length === 0,
-      'Reconnect/heartbeat did not finish persisted cleanup and remove runtime files',
+      value => !value.plugin && value.rows.length === 0,
+      'Reconnect/heartbeat did not finish persisted removal from the active manifest',
       workbenchReadyTimeoutMs
     )
+    assert.ok(await pathExists(runtimePath), 'Cleanup must preserve caches used by running agents')
+    const config = await readFile(resolve(remoteHome, 'codex/config.toml'), 'utf8')
+    assert.ok(!config.includes(`${item.slug}@wegent`), 'Removed plugin remains enabled in Codex')
     assert.equal(deletes(item).length, 1, 'Recovery sent another DELETE')
     await openPlugin(control, item)
     await assertInstallButton(control, item)

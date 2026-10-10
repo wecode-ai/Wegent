@@ -4420,6 +4420,8 @@
     "assignee_add_agent": "添加智能体",
     "search_parent_issue": "搜索父任务",
     "no_matching_parent_issue": "没有匹配的父任务",
+    "start_date": "开始时间",
+    "end_date": "结束时间",
     "due_date": "截止时间",
     "attachments": "附件",
     "add_attachment": "添加附件",

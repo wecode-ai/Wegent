@@ -289,6 +289,109 @@ def test_external_loop_items_forward_assignee_filters(
     assert captured == {"assignee_type": "user", "assignee_id": str(test_user.id)}
 
 
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_external_loop_items_reject_unsupported_schedule_changes(
+    operation: str,
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+) -> None:
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="EXTSCHEDULE",
+        name="External schedule",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/example"},
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    if operation == "create":
+        response = test_client.post(
+            f"/api/v1/cloud-projects/{project.id}/loop-items",
+            headers=_auth(test_token),
+            json={"title": "Scheduled issue", "start_at": "2026-10-11T00:00:00Z"},
+        )
+    else:
+        response = test_client.patch(
+            "/api/v1/loop-items/EXTSCHEDULE-7",
+            headers=_auth(test_token),
+            json={"version": 1, "due_at": "2026-10-12T00:00:00Z"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Scheduling is not supported by this Issue provider"
+    )
+
+
+def test_external_loop_item_update_allows_unchanged_null_schedule_fields(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.schemas.delivery import LoopItemUpdate
+    from app.services.loop_items.external_provider import external_loop_item_provider
+
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="EXTNULLSCHEDULE",
+        name="External null schedule",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/example"},
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    issue = {"number": 7, "title": "Old title"}
+    response = {
+        "can_edit": True,
+        "start_at": None,
+        "due_at": None,
+        "assignee_user_id": None,
+    }
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_get_issue",
+        MagicMock(return_value=issue),
+    )
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_response",
+        MagicMock(return_value=response),
+    )
+    update_issue = MagicMock(return_value={**issue, "title": "New title"})
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+
+    result = external_loop_item_provider.update(
+        test_db,
+        "EXTNULLSCHEDULE-7",
+        test_user.id,
+        LoopItemUpdate(
+            version=1,
+            title="New title",
+            start_at=None,
+            due_at=None,
+        ),
+    )
+
+    assert result == response
+    update_issue.assert_called_once_with(project, 7, {"title": "New title"})
+
+
 def test_external_loop_item_comments_reject_unauthorized_private_project_access(
     test_client: TestClient,
     test_db: Session,

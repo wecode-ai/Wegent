@@ -312,9 +312,5 @@ fn remove_managed_auth_marker(codex_home: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn executor_home() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
+    crate::config::paths::executor_home()
 }

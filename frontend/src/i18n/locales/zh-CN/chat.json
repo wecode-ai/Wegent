@@ -238,6 +238,7 @@
     "model_reasoning": "💭 模型思考",
     "text_response": "文本响应",
     "expand": "展开",
+    "file_diff": "修改内容",
     "collapse": "折叠",
     "result_message": "结果消息",
     "scroll_to_bottom": "滚动到底部",

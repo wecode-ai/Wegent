@@ -3559,6 +3559,7 @@ export function CloudTodoWorkspace({
     setBoardError(null)
     try {
       const boardConfig = {
+        ...selectedProject.board_config,
         group_by: nativeGroupBy,
         processing_start_status_id: processingStartStatusId,
         statuses: nativeStatuses,
@@ -4505,7 +4506,8 @@ export function CloudTodoWorkspace({
                         issueLabel={t('todo.issue_column', 'Issue')}
                         statusLabel={t('todo.status', '状态')}
                         assignmentsLabel={t('todo.assignments', '分配')}
-                        assignmentSourceLabel={t('todo.assignment_source', '分配来源')}
+                        startAtLabel={t('todo.start_date', '开始时间')}
+                        dueAtLabel={t('todo.end_date', '结束时间')}
                         executionLabel={t('todo.execution_status', '执行状态')}
                         updatedLabel={t('todo.updated_at', '更新时间')}
                         projectKey={selectedProject.project_key}

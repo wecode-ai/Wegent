@@ -4,6 +4,7 @@ import {
   miniProgramMarketplacePlugin,
   sitesMarketplacePlugin,
 } from './preferences-automation-flows.mjs'
+import { accountCommandResult } from './account-auth-command.mjs'
 
 import {
   assistantMessage,
@@ -2263,8 +2264,22 @@ class DesktopE2EServer {
     }
 
     const publishCommand = pluginWorkspacePublishCommand(body)
-    if (requestContainsToolOutput(body, PLUGIN_WORKSPACE_PUBLISH_CALL_ID)) {
-      const publishedResult = publishedPluginWorkspaceResult(body)
+    const publishResult = accountCommandResult(body.input, PLUGIN_WORKSPACE_PUBLISH_CALL_ID)
+    if (publishResult?.sessionId) {
+      const tool = selectTool(body, 'write_stdin', {
+        session_id: publishResult.sessionId,
+        chars: '',
+        yield_time_ms: 1000,
+      })
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(publishResult.pollId, tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (publishResult) {
+      const publishedResult = publishedPluginWorkspaceResult(publishResult.output)
       assert.ok(
         publishedResult,
         'The Plugin Creator publish command did not return a result marker'

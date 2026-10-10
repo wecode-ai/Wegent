@@ -365,6 +365,9 @@ impl LiveTurn {
         }
         // Mapping is synchronous; drain every notification before accepting the next one.
         let (events, mut receiver) = broadcast::channel(256);
+        let file_notification = (notification["method"] == "item/fileChange/patchUpdated"
+            || notification["params"]["item"]["type"] == "fileChange")
+            .then(|| notification.clone());
         self.mapper
             .map(&Some(events), "", &request.task_id, request, notification);
         let mut interaction = None;
@@ -410,7 +413,10 @@ impl LiveTurn {
                     continue;
                 }
             }
-            if let Some(event) = self.projection.project(event_type, data, builder)? {
+            if let Some(notification) = &file_notification {
+                StandardEventProjection::include_file_details(&mut data, notification);
+            }
+            for event in self.projection.project_events(event_type, data, builder)? {
                 sink.send(event).await?;
             }
         }

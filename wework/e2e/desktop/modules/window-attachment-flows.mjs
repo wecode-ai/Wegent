@@ -1290,18 +1290,28 @@ async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
   throw new Error('The attachment-only tasks did not persist durable attachment previews')
 }
 
-async function waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, expectedCount) {
+async function waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, expectedCount) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const attachments = await findAttachmentFiles(runtimeAttachmentRoot)
+    const entries = await readdir(runtimeWorkspaceRoot, { withFileTypes: true })
+    const attachments = (
+      await Promise.all(
+        entries
+          .filter(entry => entry.isDirectory())
+          .map(entry => findAttachmentFiles(join(runtimeWorkspaceRoot, entry.name, 'attachments')))
+      )
+    ).flat()
     if (attachments.length >= expectedCount) return attachments
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error('The remote device did not persist attachments in its private runtime root')
+  throw new Error('The remote device did not persist attachments in its task workspace directories')
 }
 
 async function findAttachmentFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  const entries = await readdir(directory, { withFileTypes: true }).catch(error => {
+    if (error.code === 'ENOENT') return []
+    throw error
+  })
   const files = await Promise.all(
     entries.map(entry => {
       const path = join(directory, entry.name)
@@ -1324,7 +1334,7 @@ async function verifyAttachmentOnlySidebarLifecycle({
   composerSelector,
   control,
   executorHome,
-  runtimeAttachmentRoot,
+  runtimeWorkspaceRoot,
   workspacePath,
 }) {
   const gitStatusBefore = workspacePath ? readGitStatus(workspacePath) : null
@@ -1369,8 +1379,8 @@ async function verifyAttachmentOnlySidebarLifecycle({
   if (executorHome) {
     await waitForDurableAttachmentPreviews(executorHome, 2)
   }
-  if (runtimeAttachmentRoot) {
-    await waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, 2)
+  if (runtimeWorkspaceRoot) {
+    await waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, 2)
   }
   if (workspacePath) {
     assert.equal(

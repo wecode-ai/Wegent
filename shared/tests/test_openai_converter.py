@@ -12,6 +12,60 @@ from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessM
 from shared.models.openai_converter import OpenAIRequestConverter
 
 
+def test_resource_owner_and_namespace_survive_both_wire_formats():
+    owner = {"kind": "group", "id": 5, "name": "wecode-ai"}
+    request = ExecutionRequest(
+        team_owner=owner,
+        team_namespace="wecode-ai/design",
+        team_name="designer",
+        user_name="executor-not-owner",
+    )
+
+    wire = OpenAIRequestConverter.from_execution_request(request)
+    restored = OpenAIRequestConverter.to_execution_request(wire)
+
+    assert wire["metadata"]["team_owner"] == owner
+    assert restored.team_owner == owner
+    assert restored.team_namespace == "wecode-ai/design"
+    assert ExecutionRequest.from_dict(request.to_dict()).team_owner == owner
+    assert ExecutionRequest().team_owner == {}
+
+
+def test_legacy_session_bindings_round_trip_without_seeding_inherited_sessions():
+    bindings = [
+        {
+            "task_id": 123,
+            "user_id": 7,
+            "agent": "Codex",
+            "botId": 23,
+            "threadId": "old-thread",
+        }
+    ]
+    request = ExecutionRequest(legacy_session_bindings=bindings)
+
+    wire = OpenAIRequestConverter.from_execution_request(request)
+    restored = OpenAIRequestConverter.to_execution_request(wire)
+
+    assert wire["metadata"]["legacy_session_bindings"] == bindings
+    assert restored.legacy_session_bindings == bindings
+    assert restored.inherited_sessions == []
+    assert (
+        ExecutionRequest.from_dict(request.to_dict()).legacy_session_bindings
+        == bindings
+    )
+
+
+def test_legacy_session_bindings_default_is_empty_and_not_shared():
+    first = ExecutionRequest()
+    second = ExecutionRequest()
+    first.legacy_session_bindings.append({"task_id": 1})
+    assert second.legacy_session_bindings == []
+    restored = OpenAIRequestConverter.to_execution_request(
+        {"model": "test", "input": "hello", "metadata": {}}
+    )
+    assert restored.legacy_session_bindings == []
+
+
 def test_from_execution_request_normalizes_null_kb_tool_access_mode():
     request = ExecutionRequest(kb_tool_access_mode=None)
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { verifyCollaborationScheduleViews } from '../modules/collaboration-schedule-views.mjs'
 import {
   captureVerificationScreenshot,
   completeLocalCollaborationFolderImport,
@@ -270,9 +271,12 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         ISSUE_NAME,
         'The newly created local Issue did not open in the shared Issue detail'
       )
-      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-      await control.command('waitFor', scoped('[data-testid^="collaboration-issue-"]'), {
-        text: ISSUE_NAME,
+      await verifyCollaborationScheduleViews({
+        capture: (targetControl, name) =>
+          captureVerificationScreenshot(targetControl, name, ACTIVE_WORKBENCH_SELECTOR),
+        control,
+        issueTitle: ISSUE_NAME,
+        scoped,
         timeoutMs: uiTimeoutMs,
       })
       assertLocalIsolation()
@@ -360,7 +364,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       await captureVerificationScreenshot(
         control,
-        'offline-local-project-space-02-local-project-settings.png',
+        'offline-local-project-space-05-local-project-settings.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
       assertLocalIsolation()

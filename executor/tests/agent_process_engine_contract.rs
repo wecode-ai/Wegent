@@ -23,9 +23,70 @@ use wegent_executor::{
     runner::{AgentEngine, ExecutionOutcome},
 };
 
+#[path = "agent_process_engine_contract/claude_capabilities.rs"]
+mod claude_capabilities;
+
 fn env_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+// Every native path is isolated before any process planning or preparation.
+fn isolated_environment() -> Vec<EnvGuard> {
+    let root = unique_dir("claude-process-contract-environment");
+    fs::create_dir_all(&root).unwrap();
+    let mut guards = Vec::new();
+    for key in [
+        "WEGENT_CLAUDE_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "SKILLS_DIR",
+        "WEGENT_EXECUTOR_PROJECTS_DIR",
+        "WORKSPACE_ROOT",
+        "WEGENT_WORKSPACE_ROOT",
+        "LOCAL_WORKSPACE_ROOT",
+        "WEGENT_BACKEND_URL",
+        "TASK_API_DOMAIN",
+    ] {
+        guards.push(EnvGuard::remove(key));
+    }
+    for (key, suffix) in [
+        ("HOME", "home"),
+        ("WEGENT_EXECUTOR_HOME", "executor"),
+        ("WEGENT_WORKBENCH_HOME", "workbench"),
+    ] {
+        let path = root.join(suffix);
+        fs::create_dir_all(&path).unwrap();
+        guards.push(EnvGuard::set(key, path.to_str().unwrap()));
+    }
+    guards
+}
+
+fn fixture_agent_home() -> PathBuf {
+    PathBuf::from(std::env::var_os("WEGENT_WORKBENCH_HOME").unwrap())
+        .join("agents/test-user/default/test-agent")
+}
+
+fn with_backend_identity(mut request: ExecutionRequest) -> ExecutionRequest {
+    if request.bot[0]["id"].is_null() || request.extra.get("team_id") == Some(&json!(0)) {
+        return request;
+    }
+    request
+        .backend_url
+        .get_or_insert_with(|| "https://backend.example".to_owned());
+    request
+        .user_name
+        .get_or_insert_with(|| "test-user".to_owned());
+    request
+        .team_namespace
+        .get_or_insert_with(|| "default".to_owned());
+    for (key, value) in [
+        ("user_id", json!(7)),
+        ("team_id", json!(12)),
+        ("team_name", json!("test-agent")),
+    ] {
+        request.extra.entry(key.to_owned()).or_insert(value);
+    }
+    request
 }
 
 struct EnvGuard {
@@ -61,6 +122,7 @@ impl Drop for EnvGuard {
 #[tokio::test]
 async fn agent_process_engine_runs_planned_claude_command_and_parses_stream_output() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let workspace_dir = unique_dir("claude-planned-command-workspace");
     let fake_claude = write_fake_executable(
         "fake-claude",
@@ -78,7 +140,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(with_backend_identity(request)).await;
 
     assert_eq!(
         outcome,
@@ -92,6 +154,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 #[tokio::test]
 async fn agent_process_engine_does_not_inject_project_space_mcp_into_claude_runs() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let workspace_dir = unique_dir("claude-no-space-mcp-workspace");
     let args_dir = unique_dir("claude-no-space-mcp");
     fs::create_dir_all(&args_dir).unwrap();
@@ -117,7 +180,7 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(with_backend_identity(request)).await;
 
     assert_eq!(
         outcome,
@@ -143,6 +206,7 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
 #[tokio::test]
 async fn agent_process_engine_applies_claude_specific_process_timeout() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let workspace_dir = unique_dir("claude-timeout-workspace");
     let _legacy_timeout = EnvGuard::remove("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS");
     let _timeout = EnvGuard::set("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS", "1");
@@ -162,7 +226,7 @@ sleep 5
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(with_backend_identity(request)).await;
 
     assert_eq!(
         outcome,
@@ -176,6 +240,7 @@ sleep 5
 #[tokio::test]
 async fn agent_process_engine_saves_claude_session_id_for_follow_up_turns() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let executor_home = unique_dir("claude-session-save-home");
     let workspace_root = unique_dir("claude-session-save-workspace-root");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -199,7 +264,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(with_backend_identity(request)).await;
 
     assert_eq!(
         outcome,
@@ -218,6 +283,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 #[tokio::test]
 async fn agent_process_engine_creates_workspace_task_dir_before_running_claude() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let workspace_root = unique_dir("claude-created-workspace-root");
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let fake_claude = write_fake_executable(
@@ -236,7 +302,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(with_backend_identity(request)).await;
     let expected_cwd = fs::canonicalize(workspace_root.join("82")).unwrap();
 
     assert_eq!(
@@ -249,8 +315,9 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_uses_executor_home_workspace_for_local_task_dir() {
+async fn agent_process_engine_uses_unified_workspace_for_local_task_dir() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let executor_home = unique_dir("claude-local-executor-home");
     let _executor_home =
         EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -274,8 +341,11 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
-    let expected_cwd = fs::canonicalize(executor_home.join("workspace/2149")).unwrap();
+    let outcome = engine.run(with_backend_identity(request)).await;
+    let expected_cwd = fs::canonicalize(
+        PathBuf::from(std::env::var_os("HOME").unwrap()).join(".wegent/workspace/2149"),
+    )
+    .unwrap();
 
     assert_eq!(
         outcome,
@@ -289,20 +359,18 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
 #[tokio::test]
 async fn agent_process_engine_clones_git_workspace_before_running_claude() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let workspace_root = unique_dir("claude-git-workspace-root");
     let executor_home = unique_dir("claude-git-executor-home");
-    let bin_dir = unique_dir("claude-git-bin");
-    let marker = unique_dir("claude-git-marker").join("git-args.txt");
-    fs::create_dir_all(&bin_dir).unwrap();
-    write_fake_git(&bin_dir, &marker);
+    let source = unique_dir("claude-git-source").join("Wegent");
     let fake_claude = write_fake_executable(
         "fake-claude-git-cwd",
         r#"#!/bin/sh
 if [ ! -d ".git" ]; then exit 30; fi
 if [ ! -f "source.txt" ]; then exit 31; fi
 if [ ! -x "$GIT_ASKPASS" ]; then exit 32; fi
-if [ "$(cat "$WEGENT_GIT_USERNAME_FILE")" != "octocat" ]; then exit 33; fi
-if [ "$(cat "$WEGENT_GIT_TOKEN_FILE")" != "ghp_test_token" ]; then exit 34; fi
+if [ "$("$GIT_ASKPASS" Username)" != "octocat" ]; then exit 33; fi
+if [ "$("$GIT_ASKPASS" Password)" != "ghp_test_token" ]; then exit 34; fi
 if [ "$GH_TOKEN" != "ghp_test_token" ]; then exit 35; fi
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}\n' "$(pwd)"
 "#,
@@ -311,12 +379,32 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
     let _home = EnvGuard::set("HOME", &executor_home.display().to_string());
     let _aes_key = EnvGuard::set("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012");
     let _aes_iv = EnvGuard::set("GIT_TOKEN_AES_IV", "1234567890123456");
-    let path_value = format!(
-        "{}:{}",
-        bin_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let _path = EnvGuard::set("PATH", &path_value);
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("source.txt"), "synthetic repository").unwrap();
+    for args in [
+        vec!["init", "-b", "feature/test"],
+        vec!["add", "source.txt"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+    ] {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&source)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "synthetic Git fixture setup failed"
+        );
+    }
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
@@ -325,11 +413,18 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
         prompt: json!("run in cloned repo"),
         bot: json!([{"id": 325, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        backend_url: Some("https://backend.example".into()),
+        user_name: Some("test-user".into()),
+        team_namespace: Some("default".into()),
         extra: serde_json::Map::from_iter([
+            ("user_id".into(), json!(7)),
+            ("team_id".into(), json!(12)),
+            ("team_name".into(), json!("test-agent")),
             (
-                "git_url".to_owned(),
-                json!("https://github.com/wecode-ai/Wegent.git"),
+                "team_owner".into(),
+                json!({"kind":"user", "id":7, "name":"test-user"}),
             ),
+            ("git_url".to_owned(), json!(source.display().to_string())),
             ("branch_name".to_owned(), json!("feature/test")),
             ("git_domain".to_owned(), json!("github.com")),
             (
@@ -348,29 +443,41 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
-    let expected_cwd = fs::canonicalize(workspace_root.join("85/Wegent")).unwrap();
-
+    let outcome = engine.run(with_backend_identity(request)).await;
+    let ExecutionOutcome::Completed { content } = outcome else {
+        panic!("Git/Claude execution did not complete: {outcome:?}");
+    };
+    let expected_cwd = PathBuf::from(content);
     assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: expected_cwd.display().to_string()
-        }
+        expected_cwd.parent().unwrap(),
+        fs::canonicalize(&workspace_root).unwrap()
     );
-    let git_args = fs::read_to_string(marker).unwrap();
-    assert!(git_args.contains("clone --branch feature/test --single-branch"));
-    assert!(git_args.contains("https://github.com/wecode-ai/Wegent.git"));
-    assert!(!git_args.contains("ghp_test_token"));
-    assert!(!git_args.contains("iOuoSwc/HrF6ZhttvtSNeQ=="));
+    assert_eq!(
+        fs::read_to_string(expected_cwd.join("source.txt")).unwrap(),
+        "synthetic repository"
+    );
+    let branch = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&expected_cwd)
+        .args(["branch", "--show-current"])
+        .output()
+        .unwrap();
+    assert!(branch.status.success());
+    assert_eq!(
+        String::from_utf8(branch.stdout).unwrap().trim(),
+        "feature/test"
+    );
     let git_config = fs::read_to_string(expected_cwd.join(".git/config")).unwrap();
-    assert!(git_config.contains("url = https://github.com/wecode-ai/Wegent.git"));
+    assert!(git_config.contains(&format!("url = {}", source.display())));
     assert!(!git_config.contains("ghp_test_token"));
+    assert!(!executor_home.join(".wegent/git-auth").exists());
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn agent_process_engine_times_out_git_clone_and_cleans_partial_workspace() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let workspace_root = unique_dir("claude-git-timeout-workspace-root");
     let bin_dir = unique_dir("claude-git-timeout-bin");
     let git_environment = unique_dir("claude-git-timeout-marker").join("git-env.txt");
@@ -434,7 +541,7 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(with_backend_identity(request)).await;
 
     assert!(
         matches!(
@@ -451,18 +558,35 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_reclones_incomplete_existing_git_workspace() {
+async fn agent_process_engine_preserves_incomplete_existing_git_workspace() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let workspace_root = unique_dir("claude-incomplete-git-workspace-root");
-    let bin_dir = unique_dir("claude-incomplete-git-bin");
-    let git_marker = unique_dir("claude-incomplete-git-marker").join("git-args.txt");
     let claude_marker = unique_dir("claude-incomplete-git-claude").join("ran.txt");
     let project_path = workspace_root.join("88/Wegent");
     // An interrupted clone leaves a `.git` that cannot resolve HEAD^{commit}.
-    fs::create_dir_all(project_path.join(".git")).unwrap();
+    fs::create_dir_all(&project_path).unwrap();
+    for args in [
+        vec!["init"],
+        vec![
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/wecode-ai/Wegent.git",
+        ],
+    ] {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&project_path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "synthetic Git fixture setup failed"
+        );
+    }
     fs::write(project_path.join("partial.txt"), "interrupted clone").unwrap();
-    fs::create_dir_all(&bin_dir).unwrap();
-    write_fake_git(&bin_dir, &git_marker);
     let fake_claude = write_fake_executable(
         "fake-claude-after-incomplete-git",
         &format!(
@@ -475,12 +599,6 @@ touch '{}'
         ),
     );
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let path_value = format!(
-        "{}:{}",
-        bin_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let _path = EnvGuard::set("PATH", &path_value);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
@@ -495,27 +613,25 @@ touch '{}'
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(with_backend_identity(request)).await;
 
     assert!(
-        matches!(outcome, ExecutionOutcome::Completed { .. }),
+        matches!(outcome, ExecutionOutcome::Failed { ref message } if message.contains("incomplete or invalid repository")),
         "{outcome:?}"
     );
-    assert!(claude_marker.exists());
-    // The interrupted clone is discarded and replaced by a fresh clone.
-    assert!(!project_path.join("partial.txt").exists());
-    assert!(fs::read_to_string(project_path.join("source.txt"))
-        .unwrap()
-        .contains("https://github.com/wecode-ai/Wegent.git"));
-    let git_args = fs::read_to_string(git_marker).unwrap();
-    assert!(git_args.contains("clone"));
-    assert!(git_args.contains("https://github.com/wecode-ai/Wegent.git"));
+    assert!(!claude_marker.exists());
+    assert_eq!(
+        fs::read_to_string(project_path.join("partial.txt")).unwrap(),
+        "interrupted clone"
+    );
+    assert!(!project_path.join("source.txt").exists());
 }
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_downloads_claude_attachments_to_device_private_workspace() {
+async fn agent_process_engine_downloads_claude_attachments_to_device_task_workspace() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let executor_home = unique_dir("claude-local-attachment-home");
     let requests = Arc::new(Mutex::new(Vec::new()));
     let backend_url = serve_one_http_response(b"fake-image".to_vec(), Arc::clone(&requests)).await;
@@ -531,7 +647,8 @@ printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tex
     );
     let _executor_home =
         EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
-    let _workspace_root = EnvGuard::remove("WORKSPACE_ROOT");
+    let workspace_root = unique_dir("claude-local-attachment-workspace");
+    let _workspace_root = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _wegent_workspace_root = EnvGuard::remove("WEGENT_WORKSPACE_ROOT");
     let _local_workspace_root = EnvGuard::remove("LOCAL_WORKSPACE_ROOT");
     let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
@@ -565,20 +682,20 @@ printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tex
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(with_backend_identity(request)).await;
     let content = match outcome {
         ExecutionOutcome::Completed { content } => content,
         other => panic!("unexpected outcome: {other:?}"),
     };
-    let local_path = executor_home
-        .join("workspace/attachments/runtime/2201/3212/image.png")
+    let local_path = workspace_root
+        .join("2201/attachments/3212/image.png")
         .display()
         .to_string();
 
     assert!(content.contains(&local_path), "{content}");
     assert!(!content.contains("/home/user/2201:executor:attachments/3212/image.png"));
     assert_eq!(
-        fs::read(executor_home.join("workspace/attachments/runtime/2201/3212/image.png")).unwrap(),
+        fs::read(workspace_root.join("2201/attachments/3212/image.png")).unwrap(),
         b"fake-image"
     );
     let request = requests.lock().unwrap().first().cloned().unwrap();
@@ -596,684 +713,9 @@ printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tex
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_deploys_standalone_task_skills_before_claude() {
-    let _lock = env_lock().lock().await;
-    let home = unique_dir("claude-standalone-task-skill-home");
-    let workspace_root = unique_dir("claude-standalone-task-skill-workspace");
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let backend_url =
-        serve_one_http_response(skill_zip_bytes("task-skill"), Arc::clone(&requests)).await;
-    let fake_claude = write_fake_executable(
-        "fake-claude-task-skill",
-        r#"#!/bin/sh
-global_config=false
-task_skill=false
-if [ "$CLAUDE_CONFIG_DIR" = "$HOME/.claude" ]; then global_config=true; fi
-if [ -f "$SKILLS_DIR/task-skill/SKILL.md" ]; then task_skill=true; fi
-printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=%s skill=%s"}]}}\n' "$global_config" "$task_skill"
-"#,
-    );
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
-    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
-    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
-    let engine = AgentProcessEngine::new(planner);
-    let request = ExecutionRequest {
-        task_id: "86".to_owned(),
-        backend_url: Some("http://payload-backend.invalid".to_owned()),
-        auth_token: Some("task-token".to_owned()),
-        prompt: json!("run with task skill"),
-        bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
-        extra: serde_json::Map::from_iter([
-            ("project_id".to_owned(), json!(0)),
-            ("standalone_chat_workspace".to_owned(), json!(true)),
-            ("skill_names".to_owned(), json!(["task-skill"])),
-            (
-                "skill_refs".to_owned(),
-                json!({
-                    "task-skill": {
-                        "skill_id": 42,
-                        "namespace": "default",
-                        "is_public": false,
-                    }
-                }),
-            ),
-        ]),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "global=true skill=true".to_owned()
-        }
-    );
-    let request = requests.lock().unwrap().first().cloned().unwrap();
-    assert!(
-        request.starts_with(
-            "GET /api/v1/kinds/skills/42/download?namespace=default&task_id=86 HTTP/1.1"
-        ),
-        "{request}"
-    );
-    assert!(
-        request
-            .to_ascii_lowercase()
-            .contains("authorization: bearer task-token"),
-        "{request}"
-    );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn agent_process_engine_deploys_bot_skills_for_regular_claude_tasks() {
-    let _lock = env_lock().lock().await;
-    let home = unique_dir("claude-regular-bot-skill-home");
-    let workspace_root = unique_dir("claude-regular-bot-skill-workspace");
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let backend_url =
-        serve_one_http_response(skill_zip_bytes("agent-skill"), Arc::clone(&requests)).await;
-    let fake_claude = write_fake_executable(
-        "fake-claude-regular-bot-skill",
-        r#"#!/bin/sh
-global_config=false
-agent_skill=false
-if [ "$CLAUDE_CONFIG_DIR" = "$HOME/.claude" ]; then global_config=true; fi
-if [ -f "$SKILLS_DIR/agent-skill/SKILL.md" ]; then agent_skill=true; fi
-printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=%s skill=%s"}]}}\n' "$global_config" "$agent_skill"
-"#,
-    );
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
-    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
-    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
-    let engine = AgentProcessEngine::new(planner);
-    let request = ExecutionRequest {
-        task_id: "87".to_owned(),
-        backend_url: Some("http://payload-backend.invalid".to_owned()),
-        auth_token: Some("task-token".to_owned()),
-        prompt: json!("run with bot skill"),
-        bot: json!([{
-            "id": 327,
-            "shell_type": "ClaudeCode",
-            "skills": ["agent-skill"],
-            "skill_refs": {
-                "agent-skill": {
-                    "skill_id": 43,
-                    "namespace": "default",
-                    "is_public": false,
-                }
-            }
-        }]),
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "global=true skill=true".to_owned()
-        }
-    );
-    let request = requests.lock().unwrap().first().cloned().unwrap();
-    assert!(
-        request.starts_with(
-            "GET /api/v1/kinds/skills/43/download?namespace=default&task_id=87 HTTP/1.1"
-        ),
-        "{request}"
-    );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn agent_process_engine_isolates_bot_skills_for_regular_claude_tasks() {
-    let _lock = env_lock().lock().await;
-    let home = unique_dir("claude-refresh-bot-skill-home");
-    let workspace_root = unique_dir("claude-refresh-bot-skill-workspace");
-    let existing_skill = home.join(".claude/skills/agent-skill");
-    fs::create_dir_all(&existing_skill).unwrap();
-    fs::write(existing_skill.join("SKILL.md"), "# Old Agent Skill\n").unwrap();
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let backend_url =
-        serve_one_http_response(skill_zip_bytes("agent-skill"), Arc::clone(&requests)).await;
-    let fake_claude = write_fake_executable(
-        "fake-claude-refresh-bot-skill",
-        r#"#!/bin/sh
-cat >/dev/null
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
-"#,
-    );
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
-    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
-    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
-    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
-    let engine = AgentProcessEngine::new(planner);
-    let request = ExecutionRequest {
-        task_id: "88".to_owned(),
-        backend_url: Some(backend_url),
-        auth_token: Some("task-token".to_owned()),
-        prompt: json!("run with refreshed bot skill"),
-        bot: json!([{
-            "id": 328,
-            "shell_type": "ClaudeCode",
-            "skills": ["agent-skill"],
-            "skill_refs": {
-                "agent-skill": {
-                    "skill_id": 44,
-                    "namespace": "default",
-                    "is_public": false,
-                    "content_hash": "sha256:new",
-                }
-            }
-        }]),
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "done".to_owned()
-        }
-    );
-    assert_eq!(
-        fs::read_to_string(existing_skill.join("SKILL.md")).unwrap(),
-        "# Old Agent Skill\n"
-    );
-    assert_eq!(
-        fs::read_to_string(workspace_root.join("88/.claude/skills/agent-skill/SKILL.md")).unwrap(),
-        "# Task Skill"
-    );
-    assert_eq!(requests.lock().unwrap().len(), 1);
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn agent_process_engine_skips_claude_fallback_when_skill_hash_is_missing() {
-    let _lock = env_lock().lock().await;
-    let home = unique_dir("claude-skip-fallback-no-hash-home");
-    let workspace_root = unique_dir("claude-skip-fallback-no-hash-workspace");
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let backend_url =
-        serve_one_http_response(skill_zip_bytes("agent-skill"), Arc::clone(&requests)).await;
-    let fake_claude = write_fake_executable(
-        "fake-claude-skip-fallback-no-hash",
-        r#"#!/bin/sh
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
-"#,
-    );
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
-    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
-    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
-    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
-    let engine = AgentProcessEngine::new(planner);
-    let request = ExecutionRequest {
-        task_id: "89".to_owned(),
-        backend_url: Some(backend_url),
-        auth_token: Some("task-token".to_owned()),
-        prompt: json!("run with bot skill"),
-        bot: json!([{
-            "id": 329,
-            "shell_type": "ClaudeCode",
-            "skills": ["agent-skill"],
-            "skill_refs": {
-                "agent-skill": {
-                    "skill_id": 44,
-                    "namespace": "default",
-                    "is_public": false
-                }
-            }
-        }]),
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "done".to_owned()
-        }
-    );
-    assert_eq!(requests.lock().unwrap().len(), 1);
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn agent_process_engine_restores_enabled_claude_plugin_zip_before_claude() {
-    let _lock = env_lock().lock().await;
-    let home = unique_dir("claude-plugin-zip-home");
-    let workspace_root = unique_dir("claude-plugin-zip-workspace");
-    let claude_dir = home.join(".claude");
-    let plugins_dir = claude_dir.join("plugins");
-    let install_path = plugins_dir.join("cache/wegent/superpowers/5.0.7");
-    fs::create_dir_all(plugins_dir.join("cache/claude-plugins-official")).unwrap();
-    fs::write(
-        claude_dir.join("settings.json"),
-        json!({"enabledPlugins": {"superpowers@wegent": true}}).to_string(),
-    )
-    .unwrap();
-    fs::write(
-        plugins_dir.join("installed_plugins.json"),
-        json!({
-            "version": 2,
-            "plugins": {
-                "superpowers@wegent": [{
-                    "installPath": install_path.display().to_string(),
-                    "version": "5.0.7"
-                }]
-            }
-        })
-        .to_string(),
-    )
-    .unwrap();
-    fs::write(
-        plugins_dir.join("cache/claude-plugins-official/superpowers.zip"),
-        plugin_zip_bytes("superpowers", "5.0.7", "systematic-debugging"),
-    )
-    .unwrap();
-    let fake_claude = write_fake_executable(
-        "fake-claude-plugin-zip",
-        r#"#!/bin/sh
-plugin_skill=false
-if [ -f "$HOME/.claude/plugins/cache/wegent/superpowers/5.0.7/skills/systematic-debugging/SKILL.md" ]; then plugin_skill=true; fi
-printf '{"type":"assistant","message":{"content":[{"type":"text","text":"plugin=%s"}]}}\n' "$plugin_skill"
-"#,
-    );
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
-    let engine = AgentProcessEngine::new(planner);
-    let request = ExecutionRequest {
-        task_id: "88".to_owned(),
-        prompt: json!("run with global plugin skill"),
-        bot: json!([{"id": 328, "shell_type": "ClaudeCode"}]),
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "plugin=true".to_owned()
-        }
-    );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn agent_process_engine_runs_pre_execute_hook_before_claude() {
-    let _lock = env_lock().lock().await;
-    let workspace_root = unique_dir("claude-hook-workspace-root");
-    let marker_dir = unique_dir("claude-hook-marker");
-    fs::create_dir_all(&marker_dir).unwrap();
-    let marker = marker_dir.join("hook-ran");
-    let hook_script = write_fake_executable(
-        "pre-execute-hook",
-        &format!(
-            r#"#!/bin/sh
-if [ ! -d "$WEGENT_TASK_DIR" ]; then exit 10; fi
-if [ "$WEGENT_TASK_ID" != "83" ]; then exit 11; fi
-if [ "$WEGENT_GIT_URL" != "https://github.com/wecode-ai/Wegent.git" ]; then exit 12; fi
-printf hook > "{}"
-exit 0
-"#,
-            marker.display()
-        ),
-    );
-    let fake_claude = write_fake_executable(
-        "fake-claude-hook",
-        &format!(
-            r#"#!/bin/sh
-if [ ! -f "{}" ]; then exit 13; fi
-printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hook first"}}]}}}}'
-"#,
-            marker.display()
-        ),
-    );
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let _hook = EnvGuard::set(
-        "WEGENT_HOOK_PRE_EXECUTE",
-        &hook_script.display().to_string(),
-    );
-    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
-    let engine = AgentProcessEngine::new(planner);
-    let request = ExecutionRequest {
-        task_id: "83".to_owned(),
-        skip_git_clone: true,
-        prompt: json!("run with hook"),
-        bot: json!([{"id": 323, "shell_type": "ClaudeCode"}]),
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
-        extra: serde_json::Map::from_iter([(
-            "git_url".to_owned(),
-            json!("https://github.com/wecode-ai/Wegent.git"),
-        )]),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "hook first".to_owned()
-        }
-    );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn agent_process_engine_writes_file_edit_hooks_before_claude() {
-    let _lock = env_lock().lock().await;
-    let home = unique_dir("claude-file-edit-hook-home");
-    let workspace_root = unique_dir("claude-file-edit-hook-workspace-root");
-    let hook_command = "curl -s -X POST http://127.0.0.1:3456/api/file-edit-log --data-binary @-";
-    let fake_claude = write_fake_executable(
-        "fake-claude-file-edit-hook",
-        r#"#!/bin/sh
-settings="$CLAUDE_CONFIG_DIR/settings.json"
-python3 - "$settings" <<'PY'
-import json
-import sys
-
-settings_path = sys.argv[1]
-with open(settings_path, "r", encoding="utf-8") as handle:
-    settings = json.load(handle)
-hooks = settings.get("hooks", {})
-pre = hooks.get("PreToolUse", [])
-post = hooks.get("PostToolUse", [])
-file_edit_groups = [
-    group
-    for group in pre + post
-    if group.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit"
-]
-commands = [
-    hook.get("command")
-    for group in file_edit_groups
-    for hook in group.get("hooks", [])
-]
-payload = {
-    "has_pre": any(group.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit" for group in pre),
-    "has_post": any(group.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit" for group in post),
-    "commands": commands,
-    "matchers": [group.get("matcher") for group in file_edit_groups],
-}
-print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": json.dumps(payload, sort_keys=True)}]}}))
-PY
-"#,
-    );
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let _file_edit_hook = EnvGuard::set("WEGENT_FILE_EDIT_HOOK_COMMAND", hook_command);
-    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
-    let engine = AgentProcessEngine::new(planner);
-    let request = ExecutionRequest {
-        task_id: "85".to_owned(),
-        prompt: json!("inspect file edit hooks"),
-        bot: json!([{"id": 325, "shell_type": "ClaudeCode"}]),
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-    let content = match outcome {
-        ExecutionOutcome::Completed { content } => content,
-        other => panic!("unexpected outcome: {other:?}"),
-    };
-    let payload: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    assert_eq!(payload["has_pre"], true);
-    assert_eq!(payload["has_post"], true);
-    assert!(payload["commands"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|command| command == hook_command));
-    assert!(payload["matchers"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|matcher| matcher == "Write|Edit|MultiEdit|NotebookEdit"));
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn agent_process_engine_writes_default_claude_settings_before_claude() {
-    let _lock = env_lock().lock().await;
-    let home = unique_dir("claude-default-settings-home");
-    let workspace_root = unique_dir("claude-default-settings-workspace-root");
-    let fake_claude = write_fake_executable(
-        "fake-claude-default-settings",
-        r#"#!/bin/sh
-settings="$CLAUDE_CONFIG_DIR/settings.json"
-python3 - "$settings" <<'PY'
-import json
-import os
-import sys
-
-settings_path = sys.argv[1]
-with open(settings_path, "r", encoding="utf-8") as handle:
-    settings = json.load(handle)
-payload = {
-    "includeCoAuthoredBy": settings.get("includeCoAuthoredBy"),
-    "skipDangerousModePermissionPrompt": settings.get("skipDangerousModePermissionPrompt"),
-    "env": settings.get("env", {}),
-    "maxContextTokens": os.environ.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
-}
-print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": json.dumps(payload, sort_keys=True)}]}}))
-PY
-"#,
-    );
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
-    let engine = AgentProcessEngine::new(planner);
-    let request = ExecutionRequest {
-        task_id: "86".to_owned(),
-        prompt: json!("inspect default settings"),
-        bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
-        model_config: json!({
-            "model": "anthropic",
-            "model_id": "claude-sonnet-4",
-            "context_window": 1_000_000
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-    let content = match outcome {
-        ExecutionOutcome::Completed { content } => content,
-        other => panic!("unexpected outcome: {other:?}"),
-    };
-    let payload: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    assert_eq!(payload["includeCoAuthoredBy"], true);
-    assert_eq!(payload["skipDangerousModePermissionPrompt"], false);
-    assert_eq!(
-        payload["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
-        "0"
-    );
-    assert_eq!(payload["env"]["CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY"], "0");
-    assert_eq!(
-        payload["env"]["CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"],
-        "0"
-    );
-    assert_eq!(payload["env"]["ENABLE_TOOL_SEARCH"], "false");
-    assert_eq!(payload["maxContextTokens"], "1000000");
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn agent_process_engine_uses_process_env_for_claude_settings_env() {
-    let _lock = env_lock().lock().await;
-    let home = unique_dir("claude-settings-env-home");
-    let workspace_root = unique_dir("claude-settings-env-workspace-root");
-    let fake_claude = write_fake_executable(
-        "fake-claude-settings-env",
-        r#"#!/bin/sh
-settings="$CLAUDE_CONFIG_DIR/settings.json"
-python3 - "$settings" <<'PY'
-import json
-import os
-import sys
-
-settings_path = sys.argv[1]
-with open(settings_path, "r", encoding="utf-8") as handle:
-    settings = json.load(handle)
-print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": json.dumps(settings.get("env", {}), sort_keys=True)}]}}))
-PY
-"#,
-    );
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let _disable_traffic = EnvGuard::set("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
-    let _disable_survey = EnvGuard::set("CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY", "1");
-    let _disable_fallback = EnvGuard::set("CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK", "1");
-    let _tool_search = EnvGuard::set("ENABLE_TOOL_SEARCH", "false");
-    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
-    let engine = AgentProcessEngine::new(planner);
-    let request = ExecutionRequest {
-        task_id: "87".to_owned(),
-        prompt: json!("inspect process env settings"),
-        bot: json!([{"id": 327, "shell_type": "ClaudeCode"}]),
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-    let content = match outcome {
-        ExecutionOutcome::Completed { content } => content,
-        other => panic!("unexpected outcome: {other:?}"),
-    };
-    let env: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    assert_eq!(env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"], "1");
-    assert_eq!(env["CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY"], "1");
-    assert_eq!(env["CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"], "1");
-    assert_eq!(env["ENABLE_TOOL_SEARCH"], "false");
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn agent_process_engine_replaces_stale_file_edit_hooks_before_claude() {
-    let _lock = env_lock().lock().await;
-    let workspace_root = unique_dir("claude-stale-file-edit-hook-workspace-root");
-    let task_dir = workspace_root.join("86");
-    let settings_path = task_dir.join(".claude/settings.json");
-    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
-    fs::write(
-        &settings_path,
-        r#"{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "tee -a /tmp/hook-debug.log | curl -sS -X POST http://127.0.0.1:3456/api/file-edit-log --data-binary @-"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "tee -a /tmp/hook-debug.log | curl -sS -X POST http://127.0.0.1:3456/api/file-edit-log --data-binary @-"
-          }
-        ]
-      }
-    ]
-  }
-}
-"#,
-    )
-    .unwrap();
-    let hook_command = "curl -s -X POST http://127.0.0.1:3456/api/file-edit-log --data-binary @-";
-    let fake_claude = write_fake_executable(
-        "fake-claude-stale-file-edit-hook",
-        r#"#!/bin/sh
-settings="$CLAUDE_CONFIG_DIR/settings.json"
-python3 - "$settings" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    settings = json.load(handle)
-hooks = settings.get("hooks", {})
-pre = [
-    group
-    for group in hooks.get("PreToolUse", [])
-    if group.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit"
-]
-post = [
-    group
-    for group in hooks.get("PostToolUse", [])
-    if group.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit"
-]
-payload = {
-    "pre_count": len(pre),
-    "post_count": len(post),
-    "commands": [
-        hook.get("command")
-        for group in pre + post
-        for hook in group.get("hooks", [])
-    ],
-}
-print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": json.dumps(payload, sort_keys=True)}]}}))
-PY
-"#,
-    );
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
-    let _file_edit_hook = EnvGuard::set("WEGENT_FILE_EDIT_HOOK_COMMAND", hook_command);
-    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
-    let engine = AgentProcessEngine::new(planner);
-    let request = ExecutionRequest {
-        task_id: "86".to_owned(),
-        prompt: json!("replace stale file edit hooks"),
-        bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-    let content = match outcome {
-        ExecutionOutcome::Completed { content } => content,
-        other => panic!("unexpected outcome: {other:?}"),
-    };
-    let payload: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    assert_eq!(payload["pre_count"], 1);
-    assert_eq!(payload["post_count"], 1);
-    assert!(payload["commands"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|command| command == hook_command));
-}
-
-#[cfg(unix)]
-#[tokio::test]
 async fn agent_process_engine_keeps_running_when_pre_execute_hook_is_nonzero() {
     let _lock = env_lock().lock().await;
+    let _environment = isolated_environment();
     let workspace_root = unique_dir("claude-hook-nonzero-workspace-root");
     let hook_script = write_fake_executable(
         "pre-execute-hook-nonzero",
@@ -1302,7 +744,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(with_backend_identity(request)).await;
 
     assert_eq!(
         outcome,
@@ -1329,42 +771,6 @@ fn write_fake_executable(name: &str, content: &str) -> PathBuf {
         fs::set_permissions(&path, permissions).unwrap();
     }
     path
-}
-
-#[cfg(unix)]
-fn write_fake_git(bin_dir: &std::path::Path, marker: &std::path::Path) {
-    if let Some(parent) = marker.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    let path = bin_dir.join("git");
-    let content = format!(
-        r#"#!/bin/sh
-printf '%s\n' "$*" >> '{}'
-if [ "$1" = "clone" ]; then
-  shift
-  BRANCH=""
-  if [ "$1" = "--branch" ]; then
-    BRANCH="$2"
-    shift 3
-  fi
-  URL="$1"
-  DEST="$2"
-  mkdir -p "$DEST/.git"
-  printf '%s\n%s\n' "$URL" "$BRANCH" > "$DEST/source.txt"
-  printf '[remote "origin"]\n\turl = %s\n' "$URL" > "$DEST/.git/config"
-  exit 0
-fi
-if [ "$1" = "-C" ] && [ "$3" = "config" ]; then
-  exit 0
-fi
-exit 21
-"#,
-        marker.display()
-    );
-    fs::write(&path, content).unwrap();
-    let mut permissions = fs::metadata(&path).unwrap().permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&path, permissions).unwrap();
 }
 
 fn unique_dir(name: &str) -> PathBuf {

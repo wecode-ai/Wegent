@@ -4,16 +4,12 @@
 
 use serde_json::Value;
 
-use super::diagnostics::{
-    json_object_keys, json_scalar_field, json_string_field, nested_json_string_field,
-    raw_log_preview, serialized_json_len, truncate_text,
-};
+use super::diagnostics::{json_string_field, serialized_json_len};
 use super::{codex_error_message, extract_text, message_params, CodexResponseValueOrigin};
 use crate::{
     codex_phase::{codex_phase_is_final, codex_phase_is_process, CodexAgentMessagePhaseTracker},
     logging::log_executor_event,
     runner::ExecutionOutcome,
-    runtime_work::codex_stream_debug_enabled,
 };
 
 /// Reduces Codex app-server notifications into the visible root-turn outcome.
@@ -212,17 +208,9 @@ impl CodexRunState {
     }
 
     fn append_delta(&mut self, params: &Value) {
-        let phase = self.agent_message_phases.phase_for_delta(params);
+        self.agent_message_phases.phase_for_delta(params);
         if let Some(delta) = params.get("delta").and_then(Value::as_str) {
             self.begin_pending_message(codex_item_id(params), true);
-            log_codex_run_state_text(
-                "delta",
-                "append_pending",
-                phase.as_deref(),
-                params,
-                params,
-                delta,
-            );
             self.pending_text.push_str(delta);
             self.pending_message_saw_delta = true;
         }
@@ -238,32 +226,14 @@ impl CodexRunState {
             .replace('_', "")
             .to_ascii_lowercase();
         if item_type == "plan" {
-            let text = extract_text(item).unwrap_or_default();
-            log_codex_run_state_text(
-                "completed",
-                "skip_plan",
-                phase.as_deref(),
-                params,
-                item,
-                &text,
-            );
             return;
         }
         if !matches!(item_type.as_str(), "agentmessage" | "message") {
-            log_codex_run_state_text("completed", "skip_non_message", None, params, item, "");
             return;
         }
         if codex_phase_is_process(phase.as_deref()) {
             let text = extract_text(item).unwrap_or_default();
             self.begin_pending_message(codex_item_id(params), false);
-            log_codex_run_state_text(
-                "completed",
-                "set_pending",
-                phase.as_deref(),
-                params,
-                item,
-                &text,
-            );
             self.pending_text = text;
             self.pending_message_saw_delta = false;
             return;
@@ -273,14 +243,6 @@ impl CodexRunState {
             .and_then(Value::as_str)
             .is_some_and(|role| role != "assistant")
         {
-            log_codex_run_state_text(
-                "completed",
-                "skip_non_assistant",
-                phase.as_deref(),
-                params,
-                item,
-                "",
-            );
             return;
         }
         if let Some(text) = extract_text(item) {
@@ -289,25 +251,9 @@ impl CodexRunState {
                 if self.pending_message_saw_delta
                     && final_message_ids_match(self.pending_message_id.as_deref(), item_id)
                 {
-                    log_codex_run_state_text(
-                        "completed",
-                        "skip_pending_after_delta",
-                        phase.as_deref(),
-                        params,
-                        item,
-                        &text,
-                    );
                     return;
                 }
                 self.begin_pending_message(item_id, false);
-                log_codex_run_state_text(
-                    "completed",
-                    "set_pending",
-                    phase.as_deref(),
-                    params,
-                    item,
-                    &text,
-                );
                 self.pending_text = text;
                 self.pending_message_saw_delta = false;
                 return;
@@ -315,25 +261,9 @@ impl CodexRunState {
             if self.final_message_saw_delta
                 && final_message_ids_match(self.final_message_id.as_deref(), item_id)
             {
-                log_codex_run_state_text(
-                    "completed",
-                    "skip_after_delta",
-                    phase.as_deref(),
-                    params,
-                    item,
-                    &text,
-                );
                 return;
             }
             self.begin_final_message(item_id, false);
-            log_codex_run_state_text(
-                "completed",
-                "set_final",
-                phase.as_deref(),
-                params,
-                item,
-                &text,
-            );
             self.final_text = text;
             self.final_message_saw_delta = false;
         }
@@ -465,55 +395,8 @@ fn final_message_ids_match(current_id: Option<&str>, completed_id: Option<&str>)
     }
 }
 
-fn log_codex_run_state_text(
-    source: &str,
-    action: &str,
-    resolved_phase: Option<&str>,
-    params: &Value,
-    item: &Value,
-    text: &str,
-) {
-    if source == "delta" && !codex_stream_debug_enabled() {
-        return;
-    }
-
-    log_executor_event(
-        "codex run state text classification",
-        &[
-            ("source", source.to_owned()),
-            ("action", action.to_owned()),
-            (
-                "resolved_phase",
-                resolved_phase.unwrap_or("<none>").to_owned(),
-            ),
-            ("item_id", json_string_field(params, "itemId")),
-            ("params_type", json_string_field(params, "type")),
-            ("params_phase", json_string_field(params, "phase")),
-            ("params_channel", json_string_field(params, "channel")),
-            ("item_type", json_string_field(item, "type")),
-            ("item_phase", json_string_field(item, "phase")),
-            ("item_channel", json_string_field(item, "channel")),
-            (
-                "payload_type",
-                nested_json_string_field(item, "payload", "type"),
-            ),
-            (
-                "payload_phase",
-                nested_json_string_field(item, "payload", "phase"),
-            ),
-            (
-                "payload_channel",
-                nested_json_string_field(item, "payload", "channel"),
-            ),
-            ("text_len", text.len().to_string()),
-            ("text_preview", truncate_text(text, 160)),
-        ],
-    );
-}
-
 fn log_codex_run_state_error(params: &Value) {
     let message = codex_error_message(params);
-    let params_preview = raw_log_preview(params);
     log_executor_event(
         "codex run state error",
         &[
@@ -527,77 +410,6 @@ fn log_codex_run_state_error(params: &Value) {
                         format!("failed to measure codex error params: {error}")
                     }),
             ),
-            ("params_preview", truncate_text(&params_preview, 500)),
-        ],
-    );
-}
-
-/// Records a sanitized diagnostic summary for selected turn notifications.
-pub(super) fn log_codex_raw_turn_message(message: &Value) {
-    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
-    if matches!(
-        method,
-        "item/agentMessage/delta" | "item/reasoning/delta" | "item/reasoningSummary/delta"
-    ) && !codex_stream_debug_enabled()
-    {
-        return;
-    }
-
-    if !matches!(
-        method,
-        "item/agentMessage/delta"
-            | "item/reasoning/delta"
-            | "item/reasoningSummary/delta"
-            | "item/fileChange/patchUpdated"
-            | "turn/plan/updated"
-            | "item/started"
-            | "item/completed"
-            | "turn/completed"
-            | "error"
-    ) {
-        return;
-    }
-
-    let params = message_params(message);
-    let item = params.get("item").unwrap_or(params);
-    let raw_len = serialized_json_len(message)
-        .map(|length| length.to_string())
-        .unwrap_or_else(|error| format!("failed to measure codex raw message: {error}"));
-    let raw_preview = raw_log_preview(message);
-    log_executor_event(
-        "codex raw turn message",
-        &[
-            ("method", method.to_owned()),
-            ("message_id", json_string_field(message, "id")),
-            ("params_keys", json_object_keys(params)),
-            ("params_type", json_string_field(params, "type")),
-            ("params_phase", json_string_field(params, "phase")),
-            ("params_channel", json_string_field(params, "channel")),
-            ("params_item_id", json_string_field(params, "item_id")),
-            ("params_message_id", json_string_field(params, "message_id")),
-            (
-                "params_output_index",
-                json_scalar_field(params, "output_index"),
-            ),
-            (
-                "params_content_index",
-                json_scalar_field(params, "content_index"),
-            ),
-            ("item_keys", json_object_keys(item)),
-            ("item_type", json_string_field(item, "type")),
-            ("item_id", json_string_field(item, "id")),
-            ("item_phase", json_string_field(item, "phase")),
-            ("item_channel", json_string_field(item, "channel")),
-            (
-                "item_turn_id",
-                nested_json_string_field(
-                    item,
-                    "internal_chat_message_metadata_passthrough",
-                    "turn_id",
-                ),
-            ),
-            ("raw_len", raw_len),
-            ("raw_preview", raw_preview),
         ],
     );
 }

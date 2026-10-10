@@ -378,6 +378,10 @@ jobs:
         with:
           setup-toolchain: "false"
 
+      - name: Install Electron for workbench schema verification
+        if: contains(matrix.segments, 'workbench-mode')
+        run: pnpm --dir wework/electron install --frozen-lockfile
+
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true

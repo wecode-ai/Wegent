@@ -398,16 +398,16 @@ Wework 与 Web 使用相同状态投影：MR、评审中、需修改、CI 运行
 
 ## 7. 删除、撤回与失败边界
 
-| 场景                       | 必须行为                                                                       |
+| 场景                       | 必须行为                                                                 |
 | -------------------------- | ------------------------------------------------------------------------------ |
-| 上传或快照未完成           | 可取消临时 revision，并清理未引用对象                                          |
-| 已提交、未创建 MR          | 可撤回申请，保留审计事件；`materializing` 期间禁止撤回                         |
-| MR 未合并            | 撤回时先关闭 MR；关闭失败则撤回失败                                            |
-| 删除个人原件且有未合并申请 | 同一确认中先撤回/关 MR；任何一步失败均阻止删除                                 |
-| 已合并或已发布             | 不允许通过删除个人原件回滚企业版                                               |
-| 管理员退回                 | 旧 revision 只读；修复后新建 revision                                          |
+| 上传或快照未完成           | 可取消临时 revision，并清理未引用对象                                    |
+| 已提交、未创建 MR          | 可撤回申请，保留审计事件；`materializing` 期间禁止撤回                   |
+| MR 未合并                  | 撤回时先关闭 MR；关闭失败则撤回失败                                      |
+| 删除个人原件且有未合并申请 | 同一确认中先撤回/关 MR；任何一步失败均阻止删除                           |
+| 已合并或已发布             | 不允许通过删除个人原件回滚企业版                                         |
+| 管理员退回                 | 旧 revision 只读；修复后新建 revision                                    |
 | CI/代码评审失败            | 开发者在同一受控分支/MR 修复并生成新 commit，不由非技术作者创建 revision |
-| 发布失败                   | 重试相同 version/SHA；保留当前企业 latest release                              |
+| 发布失败                   | 重试相同 version/SHA；保留当前企业 latest release                        |
 
 ## 8. 视觉与响应式规范
 
@@ -513,7 +513,7 @@ Wework 与 Web 使用相同状态投影：MR、评审中、需修改、CI 运行
 | `PluginWorkspaceConversationResult.tsx` / `executor/src/plugin_workspace_cli.rs` | Task 工作区入口透传真实版本；定向分享继续走旧 submission，企业全员必须走新 publication request + immutable revision API                     |
 | `frontend/src/app/admin/page.tsx`                                                | 新增管理员审核 Tab                                                                                                                          |
 | `frontend/src/features/admin/`                                                   | 新增队列、详情、退回与接受组件                                                                                                              |
-| Backend publication domain                                                       | 新表、新状态机、自动检查、GitLab 物化、Webhook 对账和专用 release endpoint                                                                   |
+| Backend publication domain                                                       | 新表、新状态机、自动检查、GitLab 物化、Webhook 对账和专用 release endpoint                                                                  |
 
 新增交互元素必须有稳定 `data-testid`；已有详情页选择器保持不变，除非同一变更同步更新单测和桌面 E2E。
 
@@ -554,4 +554,4 @@ Wework 与 Web 使用相同状态投影：MR、评审中、需修改、CI 运行
 5. S7 管理员审核中与 S8 退回/CI/发布状态；
 6. 企业版详情与个人/企业互链。
 
-实现截图必须与总体流程图和对应页面设计稿在相同视口、主题和状态下合并比对。存在 P0/P1/P2 差异时继续修复并复拍；把本功能的证据和结论作为标题明确的独立章节追加到仓库根目录 `design-qa.md`，不得另建 QA 文件或路径，不得覆盖其他功能已有的 QA 记录，也不得在章节内写独立总结果。整个文件只能在末尾保留一个最终 `final result: passed` 或 `final result: blocked`，并且该结果必须综合文件内全部仍有效的阻断项。
+实现截图必须与总体流程图和对应页面设计稿在相同视口、主题和状态下合并比对。存在 P0/P1/P2 差异时继续修复并复拍；把本功能的证据和结论作为标题明确的独立章节追加到 `wework/design-qa.md`，不得另建 QA 文件或路径，不得覆盖其他功能已有的 QA 记录，也不得在章节内写独立总结果。整个文件只能在末尾保留一个最终 `final result: passed` 或 `final result: blocked`，并且该结果必须综合文件内全部仍有效的阻断项。

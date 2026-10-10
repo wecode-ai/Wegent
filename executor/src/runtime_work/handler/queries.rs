@@ -381,6 +381,13 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| bool_field(&payload, "forceRefresh"))
             .unwrap_or(false);
         let local_link = self.local_task_link(&local_task_id);
+        let codex_client = match local_link.as_ref() {
+            Some(link) => self
+                .codex_app_server
+                .for_request(&runtime_event_request_from_link(link)),
+            None => Ok(self.codex_app_server.clone()),
+        }
+        .map_err(|error| AppIpcError::new("codex_error", error))?;
         let linked_session_id = local_link.as_ref().and_then(runtime_session_id_from_link);
         let requested_session_id = runtime_session_id_from_payload(&payload);
         let direct_thread_override = requested_session_id
@@ -427,8 +434,7 @@ impl RuntimeWorkRpcHandler {
                     ));
                 }
             }
-            let metadata_response = self
-                .codex_app_server
+            let metadata_response = codex_client
                 .request(
                     "thread/read",
                     json!({"threadId": thread_id, "includeTurns": false}),
@@ -458,7 +464,13 @@ impl RuntimeWorkRpcHandler {
                     .is_some_and(Value::is_object)
             });
             let navigation = self
-                .codex_transcript_navigation(&thread, &thread_id, prefer_rollout_history, refresh)
+                .codex_transcript_navigation(
+                    &codex_client,
+                    &thread,
+                    &thread_id,
+                    prefer_rollout_history,
+                    refresh,
+                )
                 .await?;
             return Ok(transcript_navigation_response(
                 local_task_id,
@@ -607,7 +619,13 @@ impl RuntimeWorkRpcHandler {
             return Ok(response);
         };
 
-        if refresh && !local_execution_running && !direct_thread_override {
+        // Named Homes execute in a separate per-turn process. Resuming in the
+        // reader would retain the native writer lock and block the next turn.
+        if refresh
+            && !local_execution_running
+            && !direct_thread_override
+            && !codex_client.has_dedicated_home()
+        {
             if let Some(link) = local_link.as_ref().filter(|link| !link.ephemeral) {
                 thread_id = self
                     .resume_codex_thread_for_action(link, &thread_id)
@@ -624,7 +642,7 @@ impl RuntimeWorkRpcHandler {
         }
 
         let transcript_page = load_codex_transcript(
-            &self.codex_app_server,
+            &codex_client,
             CodexTranscriptRequest {
                 thread_id: &thread_id,
                 cursor: before_cursor.as_deref().or(after_cursor.as_deref()),
@@ -853,6 +871,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn codex_transcript_navigation(
         &self,
+        client: &CodexAppServerClient,
         thread: &Value,
         thread_id: &str,
         prefer_rollout_history: bool,
@@ -864,14 +883,10 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        let navigation = load_codex_transcript_navigation(
-            &self.codex_app_server,
-            thread,
-            thread_id,
-            prefer_rollout_history,
-        )
-        .await
-        .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let navigation =
+            load_codex_transcript_navigation(client, thread, thread_id, prefer_rollout_history)
+                .await
+                .map_err(|error| AppIpcError::new("codex_error", error))?;
         let mut cache = self
             .codex_transcript_navigation_cache
             .lock()

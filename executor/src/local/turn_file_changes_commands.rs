@@ -28,7 +28,6 @@ use crate::{
 
 const MAX_PATCH_BYTES: usize = 20 * 1024 * 1024;
 const GIT_APPLY_TIMEOUT: Duration = Duration::from_secs(30);
-const DEFAULT_EXECUTOR_HOME: &str = ".wegent-executor";
 
 /// Run `turn_file_changes_review` / `turn_file_changes_revert` natively.
 pub async fn turn_file_changes(
@@ -143,11 +142,7 @@ fn artifact_root(env: &HashMap<String, String>) -> Option<PathBuf> {
         .get("WEGENT_EXECUTOR_HOME")
         .filter(|value| !value.trim().is_empty())
         .cloned()
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .map(|home| home.join(DEFAULT_EXECUTOR_HOME).display().to_string())
-                .unwrap_or_else(|| DEFAULT_EXECUTOR_HOME.to_owned())
-        });
+        .unwrap_or_else(|| crate::config::paths::executor_home().display().to_string());
     let root = PathBuf::from(home).join("artifacts");
     if root.file_name().is_some() {
         Some(root)

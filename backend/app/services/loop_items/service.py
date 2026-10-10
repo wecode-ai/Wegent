@@ -95,6 +95,7 @@ from app.services.loop_items.access import (
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
+from app.utils.schedule_time import normalize_schedule_datetime
 from shared.telemetry.decorators import trace_sync
 
 TASK_AI_STATE_KEY = "ai_state"
@@ -1469,6 +1470,7 @@ class LoopItemService:
                 "assignee_agent_id",
                 "assignee_team_id",
                 "priority",
+                "start_at",
                 "due_at",
                 "parent_id",
                 "tags",
@@ -1503,6 +1505,22 @@ class LoopItemService:
             updates["assignee_team_id"] = None
         if "parent_id" in values.model_fields_set:
             self._validate_parent_change(db, item, values.parent_id)
+        effective_start_at = (
+            values.start_at if "start_at" in values.model_fields_set else item.start_at
+        )
+        effective_due_at = (
+            values.due_at if "due_at" in values.model_fields_set else item.due_at
+        )
+        if (
+            effective_start_at is not None
+            and effective_due_at is not None
+            and normalize_schedule_datetime(effective_start_at)
+            > normalize_schedule_datetime(effective_due_at)
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "start_at cannot be after due_at",
+            )
         if (
             "tags" in values.model_fields_set
             or "workflow" in values.model_fields_set

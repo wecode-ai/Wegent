@@ -10,6 +10,7 @@ import shlex
 import shutil
 import stat
 import subprocess
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.device import git_credentials
+from app.services.device.git_credential_paths import managed_git_cli_command
 from app.services.device.git_credentials_command import (
     GIT_CREDENTIALS_SECRET_ENV,
     SYNC_GIT_CREDENTIALS_COMMAND,
@@ -39,15 +41,26 @@ def _account(domain, token, *, account_id, provider="gitea"):
     }
 
 
+def _command_environment(home: Path) -> dict[str, str]:
+    return {
+        "HOME": str(home),
+        "PATH": os.pathsep.join([str(Path(sys.executable).parent), os.defpath]),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+    }
+
+
 def _run_sync_command(
     home: Path,
     accounts: list[dict],
     *,
     command_path: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
-    environment = os.environ.copy()
-    environment["HOME"] = str(home)
-    environment["GIT_CONFIG_NOSYSTEM"] = "1"
+    environment = _command_environment(home)
+    environment.update(extra_env or {})
     if command_path is not None:
         environment["PATH"] = command_path
     environment[GIT_CREDENTIALS_SECRET_ENV] = json.dumps(
@@ -335,16 +348,14 @@ def test_device_command_reconciles_credentials_and_preserves_user_config(tmp_pat
     assert applied.returncode == 0, applied.stderr
     assert first_token not in applied.stdout
     assert json.loads(applied.stdout)["synced_domains"] == ["git.example.com"]
-    current = home / ".wecode" / "git-auth" / "current"
+    current = home / ".wegent/workbench/git-auth/current"
     assert current.is_symlink()
     token_file = next((current / "tokens").iterdir())
     helper_file = current / "credential-helper"
     assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
     assert stat.S_IMODE(helper_file.stat().st_mode) == 0o700
 
-    environment = os.environ.copy()
-    environment["HOME"] = str(home)
-    environment["GIT_CONFIG_NOSYSTEM"] = "1"
+    environment = _command_environment(home)
     credential = subprocess.run(
         ["git", "credential", "fill"],
         env=environment,
@@ -395,7 +406,7 @@ def test_device_command_reconciles_credentials_and_preserves_user_config(tmp_pat
     assert json.loads(reconciled.stdout)["removed_domains"] == ["git.example.com"]
     managed_contents = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")
-        for path in (home / ".wecode" / "git-auth").rglob("*")
+        for path in (home / ".wegent/workbench/git-auth").rglob("*")
         if path.is_file()
     )
     assert first_token not in managed_contents
@@ -403,7 +414,8 @@ def test_device_command_reconciles_credentials_and_preserves_user_config(tmp_pat
     cleared = _run_sync_command(home, [])
 
     assert cleared.returncode == 0, cleared.stderr
-    assert not (home / ".wecode" / "git-auth").exists()
+    assert not (home / ".wegent/workbench/git-auth").exists()
+    assert not (home / ".wecode").exists()
     assert "user-owned-key" in global_config.read_text(encoding="utf-8")
     assert "git-auth/current/gitconfig" not in global_config.read_text(encoding="utf-8")
 
@@ -464,9 +476,7 @@ def test_device_command_reports_cli_outcome_without_affecting_git_auth(
         expected_cli_result["detail"] = f"exit={tool_exit_code}"
     assert result["cli"] == [expected_cli_result]
 
-    environment = os.environ.copy()
-    environment["HOME"] = str(home)
-    environment["GIT_CONFIG_NOSYSTEM"] = "1"
+    environment = _command_environment(home)
     environment["PATH"] = command_path
     credential = subprocess.run(
         ["git", "credential", "fill"],
@@ -479,7 +489,7 @@ def test_device_command_reports_cli_outcome_without_affecting_git_auth(
     )
     assert credential.returncode == 0
     assert f"password={token}" in credential.stdout
-    env_file = home / ".wecode" / "git-auth" / "env.sh"
+    env_file = home / ".wegent/workbench/git-auth/env.sh"
     assert env_file.exists() is (expected_status == "configured")
 
 
@@ -512,6 +522,231 @@ def _recording_tool_path(
     executable.write_text(script, encoding="utf-8")
     executable.chmod(0o700)
     return str(bin_path), args_log
+
+
+def _synthetic_account():
+    return {
+        "domain": "git.example.invalid",
+        "host": "git.example.invalid",
+        "provider": "gitea",
+        "token": "synthetic-device-secret",
+        "username": "alice",
+        "identity_name": "Alice",
+        "identity_email": "alice@example.invalid",
+    }
+
+
+def _legacy_store(home):
+    root = home / ".wecode/git-auth"
+    revision = root / "revisions/old"
+    revision.mkdir(parents=True)
+    (revision / "token").write_text("synthetic-old-secret")
+    (revision / "manifest.json").write_text(
+        json.dumps({"version": 1, "domains": ["old.invalid"], "credentials": {}})
+    )
+    (revision / "gitconfig").write_text("# old managed config\n")
+    (root / "current").symlink_to("revisions/old")
+    (home / ".gitconfig").write_text(
+        '[user]\n\tname = User Owned\n[include]\n\tpath = "'
+        + str(root / "current/gitconfig")
+        + '"\n'
+    )
+    (home / ".profile").write_text(
+        "# user profile\n# >>> Wegent managed Git authentication >>>\n"
+        '. "$HOME/.wecode/git-auth/env.sh"\n'
+        "# <<< Wegent managed Git authentication <<<\n"
+    )
+    return root
+
+
+def test_sync_migrates_only_managed_credentials_and_is_repeatable(tmp_path):
+    home = tmp_path / "home"
+    legacy = _legacy_store(home)
+    other = home / ".wecode/user-owned"
+    other.write_text("preserve")
+    helper = home / ".wegent/workbench/runtime/git-auth/askpass.sh"
+    helper.parent.mkdir(parents=True)
+    helper.write_text("# no secret")
+
+    applied = _run_sync_command(home, [_synthetic_account()])
+    assert applied.returncode == 0, applied.stdout
+    assert json.loads(applied.stdout)["removed_domains"] == ["old.invalid"]
+    assert not legacy.exists()
+    assert other.read_text() == "preserve"
+    assert ".wecode/git-auth" not in (home / ".gitconfig").read_text()
+    assert (home / ".profile").read_text() == "# user profile\n"
+    repeated = _run_sync_command(home, [_synthetic_account()])
+    assert repeated.returncode == 0, repeated.stdout
+    revisions = home / ".wegent/workbench/git-auth/revisions"
+    assert len(list(revisions.iterdir())) == 1
+    cleared = _run_sync_command(home, [])
+    assert cleared.returncode == 0, cleared.stdout
+    assert helper.read_text() == "# no secret"
+    assert "User Owned" in (home / ".gitconfig").read_text()
+
+
+def test_failed_publication_restores_legacy_config_and_can_resume(
+    tmp_path, monkeypatch
+):
+    import app.services.device.git_credentials_command as commands
+
+    home = tmp_path / "home"
+    legacy = _legacy_store(home)
+    before = (home / ".gitconfig").read_bytes()
+    profile = (home / ".profile").read_bytes()
+    script = commands.GIT_CREDENTIAL_SYNC_SCRIPT.replace(
+        "os.replace(next_link, current)", 'raise OSError("synthetic publish failure")'
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            sys.modules[__name__],
+            "SYNC_GIT_CREDENTIALS_COMMAND",
+            "python3 -c " + shlex.quote(script),
+        )
+        result = _run_sync_command(home, [_synthetic_account()])
+    assert result.returncode == 1
+    assert (home / ".gitconfig").read_bytes() == before
+    assert (home / ".profile").read_bytes() == profile
+    assert (legacy / "current/token").read_text() == "synthetic-old-secret"
+    result = _run_sync_command(home, [_synthetic_account()])
+    assert result.returncode == 0, result.stdout
+    assert not legacy.exists()
+
+
+@pytest.mark.parametrize("key", ["WEGENT_WORKBENCH_HOME", "WEGENT_EXECUTOR_HOME"])
+def test_custom_root_sync_and_cli_do_not_use_or_modify_production_home(tmp_path, key):
+    home = tmp_path / "home"
+    legacy = _legacy_store(home)
+    global_before = (home / ".gitconfig").read_bytes()
+    profile_before = (home / ".profile").read_bytes()
+    configured = tmp_path / "development space's root"
+    workbench = (
+        configured / "workbench" if key == "WEGENT_EXECUTOR_HOME" else configured
+    )
+    extra = {key: str(configured), "DEVICE_TYPE": "remote"}
+    result = _run_sync_command(home, [_synthetic_account()], extra_env=extra)
+    assert result.returncode == 0, result.stdout
+    assert json.loads(result.stdout)["removed_domains"] == []
+
+    environment = _command_environment(home) | extra
+    credential = subprocess.run(
+        ["sh", "-c", managed_git_cli_command("git credential fill")],
+        env=environment,
+        input="protocol=https\nhost=git.example.invalid\n\n",
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert credential.returncode == 0, credential.stderr
+    assert "password=synthetic-device-secret" in credential.stdout
+    probe = "python3 -c " + shlex.quote(
+        "import os,json; print(json.dumps([os.environ[k] for k in "
+        "['GH_CONFIG_DIR','GLAB_CONFIG_DIR','GIT_CONFIG_GLOBAL']]))"
+    )
+    for accounts in (None, []):
+        if accounts is not None:
+            cleared = _run_sync_command(home, accounts, extra_env=extra)
+            assert cleared.returncode == 0, cleared.stdout
+        read = subprocess.run(
+            ["sh", "-c", managed_git_cli_command(probe)],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert read.returncode == 0, read.stderr
+        assert all(
+            Path(path).is_relative_to(workbench) for path in json.loads(read.stdout)
+        )
+    assert (home / ".gitconfig").read_bytes() == global_before
+    assert (home / ".profile").read_bytes() == profile_before
+    assert (legacy / "current/token").read_text() == "synthetic-old-secret"
+    assert not (home / ".wegent").exists()
+
+
+@pytest.mark.parametrize("legacy_lock", [True, False])
+def test_sync_refuses_active_lock_without_changing_accounts(tmp_path, legacy_lock):
+    import fcntl
+
+    home = tmp_path / "home"
+    legacy = _legacy_store(home)
+    lock_path = home / (
+        ".wecode/git-auth-sync.lock"
+        if legacy_lock
+        else ".wegent/workbench/runtime/git-auth/sync.lock"
+    )
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        result = _run_sync_command(home, [_synthetic_account()])
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["error"] == "sync_in_progress"
+    assert (legacy / "current/token").read_text() == "synthetic-old-secret"
+    assert not (home / ".wegent/workbench/git-auth/current").exists()
+
+
+def test_sync_rejects_linked_store_without_touching_target(tmp_path):
+    home = tmp_path / "home"
+    root = home / ".wegent/workbench"
+    root.mkdir(parents=True)
+    target = tmp_path / "unmanaged"
+    target.mkdir()
+    marker = target / "keep"
+    marker.write_text("preserve")
+    (root / "git-auth").symlink_to(target, target_is_directory=True)
+    result = _run_sync_command(home, [_synthetic_account()])
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["error"] == "credential_directory_invalid"
+    assert marker.read_text() == "preserve"
+    assert list(target.iterdir()) == [marker]
+
+
+def test_sync_preserves_unmanaged_legacy_directory(tmp_path):
+    home = tmp_path / "home"
+    legacy = _legacy_store(home)
+    marker = legacy / "user-owned"
+    marker.write_text("preserve")
+    result = _run_sync_command(home, [_synthetic_account()])
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["error"] == "legacy_credentials_unmanaged"
+    assert marker.read_text() == "preserve"
+    assert (legacy / "current/token").read_text() == "synthetic-old-secret"
+
+
+@pytest.mark.parametrize("accounts", [[], [_synthetic_account()]])
+def test_sync_does_not_replace_or_clear_unmanaged_current_file(tmp_path, accounts):
+    home = tmp_path / "home"
+    root = home / ".wegent/workbench/git-auth"
+    root.mkdir(parents=True)
+    current = root / "current"
+    current.write_text("user-owned")
+    result = _run_sync_command(home, accounts)
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["error"] == "credential_directory_invalid"
+    assert current.read_text() == "user-owned"
+
+
+def test_cli_reader_preserves_desktop_native_configuration_without_device_store(
+    tmp_path,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    native = str(home / "native-cli")
+    environment = _command_environment(home) | {
+        "WEGENT_WORKBENCH_HOME": str(tmp_path / "desktop/workbench"),
+        "DEVICE_TYPE": "local",
+        "GH_CONFIG_DIR": native,
+    }
+    probe = "python3 -c " + shlex.quote("import os; print(os.environ['GH_CONFIG_DIR'])")
+    result = subprocess.run(
+        ["sh", "-c", managed_git_cli_command(probe)],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == native
 
 
 def test_device_command_redacts_token_from_cli_failure_detail(tmp_path):

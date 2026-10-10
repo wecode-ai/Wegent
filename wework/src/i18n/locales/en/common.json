@@ -4423,6 +4423,8 @@
     "assignee_add_agent": "Add agent",
     "search_parent_issue": "Search parent issues",
     "no_matching_parent_issue": "No matching parent issues",
+    "start_date": "Start time",
+    "end_date": "End time",
     "due_date": "Due date",
     "attachments": "Attachments",
     "add_attachment": "Add attachment",

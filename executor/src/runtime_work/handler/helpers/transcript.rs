@@ -734,8 +734,7 @@ fn attach_user_message_presentations_for_page(
                     timestamp_ms_field(&presentation, "createdAt").unwrap_or_else(now_ms);
                 let turn_id = string_field(&presentation, "turnId")
                     .or_else(|| string_field(&presentation, "turn_id"));
-                let index = match turn_id.as_deref() {
-                    Some(turn_id) => messages
+                let index = turn_id.as_deref().and_then(|turn_id| messages
                         .iter()
                         .position(|message| {
                             string_field(message, "turnId")
@@ -744,9 +743,8 @@ fn attach_user_message_presentations_for_page(
                                 .or_else(|| string_field(message, "subtask_id"))
                                 .as_deref()
                                 == Some(turn_id)
-                        })
-                        .unwrap_or(messages.len()),
-                    None => messages
+                        }))
+                    .or_else(|| messages
                         .iter()
                         .position(|message| {
                             timestamp_ms_field(message, "createdAt").is_some_and(|message_at| {
@@ -754,9 +752,8 @@ fn attach_user_message_presentations_for_page(
                                     || (message_at == created_at
                                         && string_field(message, "role").as_deref() != Some("user"))
                             })
-                        })
-                        .unwrap_or(messages.len()),
-                };
+                        }))
+                    .unwrap_or(messages.len());
                 let turn_id = turn_id.or_else(|| {
                     messages[index..].iter().find_map(|message| {
                         string_field(message, "turnId")

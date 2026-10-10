@@ -54,7 +54,11 @@ export function parseCliArgs(argv) {
 function registryDirectory() {
   return (
     process.env.WEWORK_DESKTOP_CONTROL_REGISTRY_DIR?.trim() ||
-    join(homedir(), '.wework', 'runtime', 'desktop-instances')
+    join(
+      process.env.WEGENT_WORKBENCH_HOME?.trim() || join(homedir(), '.wegent', 'workbench'),
+      'shared',
+      'desktop-instances'
+    )
   )
 }
 
