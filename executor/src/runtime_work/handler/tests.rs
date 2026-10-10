@@ -2490,37 +2490,44 @@ fn finishing_execution_removes_its_codex_turn_context() {
     assert!(handler.active_codex_turn("task-1").is_none());
 }
 
-#[tokio::test]
-async fn side_source_waits_for_the_running_source_turn_before_forking() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    let mut source = RuntimeTaskLink::new_pending(
-        "source-task".to_owned(),
-        "/tmp/project".to_owned(),
-        "Source task".to_owned(),
-    );
-    source.thread_id = Some("source-thread".to_owned());
-    handler.upsert_local_task(source);
-    let execution_id = start_test_execution(&handler, "source-task");
-    let waiting_handler = handler.clone();
-    let wait = tokio::spawn(async move {
-        waiting_handler
-            .wait_for_running_side_source_turn("source-thread")
-            .await;
-    });
+#[test]
+fn side_source_waits_for_the_running_source_turn_before_forking() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _executor_home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _workbench_home = ScalarEnv::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+            // Keep the source index private even when other handlers use default storage.
+            handler.store = RuntimeWorkStore::new(root.path().join("source/index.json"));
+            let mut source = RuntimeTaskLink::new_pending(
+                "source-task".to_owned(),
+                root.path().join("project").to_string_lossy().into_owned(),
+                "Source task".to_owned(),
+            );
+            source.thread_id = Some("source-thread".to_owned());
+            handler.upsert_local_task(source);
+            let execution_id = start_test_execution(&handler, "source-task");
+            let wait = handler.wait_for_running_side_source_turn("source-thread");
+            tokio::pin!(wait);
 
-    tokio::task::yield_now().await;
-    assert!(!wait.is_finished());
-    handler.record_active_codex_turn(
-        "source-task",
-        execution_id,
-        "source-thread".to_owned(),
-        "source-turn".to_owned(),
-    );
+            // Poll the wait itself so the assertion cannot pass before it starts.
+            assert!(futures_util::poll!(wait.as_mut()).is_pending());
+            handler.record_active_codex_turn(
+                "source-task",
+                execution_id,
+                "source-thread".to_owned(),
+                "source-turn".to_owned(),
+            );
 
-    tokio::time::timeout(Duration::from_secs(1), wait)
-        .await
-        .expect("side source readiness should unblock after turn/start")
-        .expect("side source readiness task should not panic");
+            tokio::time::timeout(Duration::from_secs(1), wait)
+                .await
+                .expect("side source readiness should unblock after turn/start");
+        });
 }
 
 #[test]
