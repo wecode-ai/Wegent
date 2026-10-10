@@ -92,6 +92,7 @@ from app.services.loop_items.access import (
     related_item_filter,
     visible_item_filter,
 )
+from app.services.loop_items.my_work_review import include_review_items
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
@@ -2842,35 +2843,7 @@ class LoopItemService:
         )
         from app.services.human_issue_work import human_issue_work_service
 
-        known_item_ids = {item.id for item in items}
-        review_candidates = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id.in_(project_by_id),
-                LoopItem.status == "in_review",
-                LoopItem.metadata_json["human_work"]["state"].as_string()
-                == "submitted",
-                loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .order_by(LoopItem.updated_at.desc(), LoopItem.id.desc())
-            .all()
-        )
-        for candidate in review_candidates:
-            if candidate.id in known_item_ids:
-                continue
-            metadata = (
-                candidate.metadata_json
-                if isinstance(candidate.metadata_json, dict)
-                else {}
-            )
-            work = metadata.get("human_work")
-            if not isinstance(work, dict) or work.get("state") != "submitted":
-                continue
-            view = human_issue_work_service.view(db, candidate, user_id)
-            if view is not None and view["can_review"]:
-                items.append(candidate)
-        items.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
-        items = items[:limit]
+        items = include_review_items(db, user_id, list(project_by_id), items, limit)
         result: list[dict[str, object]] = []
         item_ids = [item.id for item in items]
         active_task_items = (

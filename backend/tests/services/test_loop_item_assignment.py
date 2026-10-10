@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
@@ -22,7 +23,9 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.service import loop_item_execution_service
+from app.services.loop_items.my_work_review import REVIEW_BATCH_SIZE
 from app.services.loop_items.service import loop_item_service
 from tests.utils.agent_resources import create_runnable_wegent_team
 
@@ -1345,3 +1348,73 @@ def test_my_work_limits_results_before_loading_item_details(
     assert [row["id"] for row in rows] == list(reversed(item_ids[5:]))
     with pytest.raises(ValueError, match="limit must be between 1 and 100"):
         loop_item_service.list_my_work(test_db, test_user.id, limit=101)
+
+
+def test_my_work_scans_multiple_review_batches_with_stable_ties(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    reviewer = _make_member(test_db, project, "reviewer", BaseRole.Maintainer)
+    assignee = _make_member(test_db, project, "assignee", BaseRole.Developer)
+    timestamp = datetime(2026, 1, 1)
+    for index in range(REVIEW_BATCH_SIZE * 2 + 3):
+        item = LoopItem(
+            id=f"REVIEW-{index:03d}",
+            cloud_project_id=project.id,
+            title="Review candidate",
+            description="",
+            status="in_review",
+            created_by_user_id=test_user.id,
+            assignee_user_id=assignee.id,
+            metadata_json={},
+        )
+        test_db.add(item)
+        test_db.flush()
+        assignment, _ = issue_assignment_service.record(
+            test_db,
+            project_id=project.id,
+            issue_id=item.id,
+            member_type="human",
+            member_id=str(assignee.id),
+            assigned_by_user_id=reviewer.id if index < 3 else test_user.id,
+            workflow_step=None,
+            notify=False,
+            trigger="manual",
+        )
+        item.metadata_json = {
+            "human_work": {
+                "state": "submitted",
+                "assignment_id": assignment.id,
+                # Eligibility must come from live assignment and permission data.
+                "reviewer_user_id": test_user.id,
+            }
+        }
+        item.updated_at = timestamp
+    test_db.add(
+        LoopItem(
+            id="ZZ-OWNED",
+            cloud_project_id=project.id,
+            title="Owned",
+            description="",
+            status="pending",
+            created_by_user_id=reviewer.id,
+            metadata_json={},
+            updated_at=timestamp,
+        )
+    )
+    test_db.commit()
+    queries: list[str] = []
+
+    def record_query(_connection, _cursor, statement, _parameters, _context, _many):
+        if "ORDER BY loop_items.updated_at DESC, loop_items.id DESC" in statement:
+            queries.append(statement)
+
+    event.listen(test_db.bind, "before_cursor_execute", record_query)
+    try:
+        rows = loop_item_service.list_my_work(test_db, reviewer.id, limit=2)
+    finally:
+        event.remove(test_db.bind, "before_cursor_execute", record_query)
+    assert [row["id"] for row in rows] == ["ZZ-OWNED", "REVIEW-002"]
+    assert rows[1]["human_work"]["can_review"] is True
+    assert len(queries) == 4  # Related items plus three review batches.
+    assert all("LIMIT" in query for query in queries)

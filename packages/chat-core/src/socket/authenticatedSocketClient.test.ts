@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 const mockIo = vi.hoisted(() => vi.fn())
 
@@ -53,6 +53,7 @@ function createMockSocket() {
 }
 
 describe('createAuthenticatedSocketClient', () => {
+  afterEach(() => vi.useRealTimers())
   beforeEach(() => {
     vi.useRealTimers()
     mockIo.mockReset()
@@ -255,5 +256,104 @@ describe('createAuthenticatedSocketClient', () => {
     rawSocket.trigger('connect_error', new Error('WebSocket handshake failed'))
 
     await expect(connection).rejects.toThrow('WebSocket handshake failed')
+    client.dispose()
+  })
+
+  test('rejects immediately without a token and can recover after login', async () => {
+    vi.useFakeTimers()
+    let token: string | null = null
+    const raw = createMockSocket()
+    mockIo.mockReturnValue(raw.socket)
+    const socketBaseUrl = vi.fn(() => 'http://socket')
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl,
+      getToken: () => token,
+    })
+
+    await expect(client.ensureConnected()).rejects.toThrow('authentication token')
+    expect(vi.getTimerCount()).toBe(0)
+    expect(socketBaseUrl).not.toHaveBeenCalled()
+    expect(mockIo).not.toHaveBeenCalled()
+    token = 'token'
+    const recovery = client.ensureConnected()
+    await Promise.resolve()
+    await Promise.resolve()
+    raw.trigger('connect')
+    await recovery
+    client.dispose()
+  })
+
+  test.each(['connect', 'connect_error', 'resolver_error'])(
+    'shares an async recovery attempt and observes its own %s result',
+    async outcome => {
+      vi.useFakeTimers()
+      const first = createMockSocket()
+      const recovered = createMockSocket()
+      mockIo.mockReturnValueOnce(first.socket).mockReturnValueOnce(recovered.socket)
+      let resolveUrl!: (value: string) => void
+      let rejectUrl!: (reason: Error) => void
+      const socketBaseUrl = vi
+        .fn()
+        .mockResolvedValueOnce('http://socket')
+        .mockImplementationOnce(
+          () =>
+            new Promise<string>((resolve, reject) => {
+              resolveUrl = resolve
+              rejectUrl = reject
+            })
+        )
+      const client = createAuthenticatedSocketClient({
+        socketBaseUrl,
+        getToken: () => 'token',
+      })
+      await client.connect()
+      first.trigger('connect_error', new Error('old failure'))
+
+      const firstWait = client.ensureConnected()
+      const secondWait = client.ensureConnected()
+      const waits = Promise.allSettled([firstWait, secondWait])
+      await Promise.resolve()
+      expect(client.getState().connectionError).toBeNull()
+      expect(socketBaseUrl).toHaveBeenCalledTimes(2)
+      // Events from the retired socket cannot fail the URL resolution.
+      first.trigger('connect_error', new Error('late old failure'))
+      if (outcome === 'resolver_error') {
+        rejectUrl(new Error('new resolver failure'))
+      } else {
+        resolveUrl('http://recovered')
+        await Promise.resolve()
+        recovered.trigger(outcome, new Error('new handshake failure'))
+      }
+      const results = await waits
+      for (const result of results) {
+        if (outcome === 'connect') expect(result.status).toBe('fulfilled')
+        else {
+          expect(result.status).toBe('rejected')
+          if (result.status === 'rejected') {
+            expect(result.reason.message).toBe(
+              outcome === 'resolver_error' ? 'new resolver failure' : 'new handshake failure'
+            )
+          }
+        }
+      }
+      client.dispose()
+      expect(vi.getTimerCount()).toBe(0)
+    }
+  )
+
+  test('times out an unresolved URL and cancels waiters on disconnect', async () => {
+    vi.useFakeTimers()
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => new Promise<string>(() => {}),
+      getToken: () => 'token',
+      timeout: 25,
+    })
+    const timeout = expect(client.ensureConnected()).rejects.toThrow('timed out after 25ms')
+    await vi.advanceTimersByTimeAsync(25)
+    await timeout
+    const cancelled = expect(client.ensureConnected()).rejects.toThrow('cancelled')
+    client.disconnect()
+    await cancelled
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

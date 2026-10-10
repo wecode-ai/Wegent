@@ -970,12 +970,15 @@ describe("ProjectExecutionEnvironments", () => {
     // A customized name survives switching repositories while the derived
     // directory follows the new repository.
     await change("-repository-name-0", "Custom name");
+    await change("-repository-path-0", "custom/path");
+    await change("-repository-url-0", repositoryKey(repositoryOptions[1]));
+    await change("-repository-url-0", repositoryKey(repositoryOptions[0]));
     await change("-repository-url-0", repositoryKey(repositoryOptions[1]));
     expect(element<HTMLInputElement>("-repository-name-0").value).toBe(
       "Custom name",
     );
     expect(element<HTMLInputElement>("-repository-path-0").value).toBe(
-      "internal-sdk",
+      "custom/path",
     );
 
     await change("-repository-ref-0", "develop");
@@ -990,7 +993,7 @@ describe("ProjectExecutionEnvironments", () => {
             name: "Custom name",
             url: "https://git.example.com/wecode-ai/internal-sdk.git",
             ref: "develop",
-            path: "internal-sdk",
+            path: "custom/path",
             primary: true,
           },
         ],
@@ -998,6 +1001,36 @@ describe("ProjectExecutionEnvironments", () => {
       },
     });
   });
+
+  it.each([false, true])(
+    "preserves manual defaults through consecutive URL edits (custom: %s)",
+    async (custom) => {
+      const api = await render();
+      await addRepositoryDraft();
+      await change("-repository-url-0", "https://example.com/first.git");
+      if (custom) {
+        await change("-repository-name-0", "My repository");
+        await change("-repository-path-0", "sources/custom");
+      }
+      await change("-repository-url-0", "https://example.com/second.git");
+      await change("-repository-url-0", "https://example.com/third.git");
+      await saveConfiguration();
+      expect(api.projects.update).toHaveBeenCalledWith(
+        "project-1",
+        expect.objectContaining({
+          executionEnvironment: expect.objectContaining({
+            repositories: [
+              expect.objectContaining({
+                url: "https://example.com/third.git",
+                name: custom ? "My repository" : "third",
+                path: custom ? "sources/custom" : "third",
+              }),
+            ],
+          }),
+        }),
+      );
+    },
+  );
 
   it("keeps free-text entry and offers a retry when the repository catalog fails to load", async () => {
     const list = vi.fn(async () => {
