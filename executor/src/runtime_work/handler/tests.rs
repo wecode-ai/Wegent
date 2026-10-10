@@ -3307,7 +3307,7 @@ fn user_message_presentation_matches_shared_reference_fixtures() {
         }))
         .unwrap();
         let expected = match fixture["kind"].as_str() {
-            Some("skill") => json!([{
+            Some("skill" | "app") => json!([{
                 "token": format!("${}", fixture["name"].as_str().unwrap()),
                 "href": fixture["href"],
             }]),

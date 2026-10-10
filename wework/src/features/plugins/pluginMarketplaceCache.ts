@@ -1,12 +1,33 @@
-import type { PluginInterface, PluginMarketplaceItem } from '@/types/api'
+import type {
+  InstalledPlugin,
+  InstalledPluginComponents,
+  LocalDeviceApp,
+  PluginInterface,
+  PluginMarketplaceItem,
+} from '@/types/api'
 import type { InstalledPluginItem } from '@/components/plugins/PluginManagementRows'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
+import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugins'
+import { isOpenAiOfficialRemoteMarketplaceId } from './marketplaceIdentity'
+import { reconcileCodexInstallations } from '@/api/local/codexPluginInstallation'
 
 export interface PluginMarketplaceCacheSnapshot {
+  /** Confirmed mutations invalidate reads started before this revision. */
+  mutationRevision?: number
   cacheKey: string
   marketplaceItems: PluginMarketplaceItem[]
-  installedPlugins: InstalledPluginItem[]
+  /** Full domain records; presentation fields are derived by each consumer. */
+  installedPlugins: InstalledPlugin[]
+  /** A complete installed-only refresh succeeded, including an empty inventory. */
+  installedPluginsFetchedAt?: number
+  /** Only a successful remote catalog read updates this timestamp, including empty results. */
+  openAiCatalogFetchedAt?: number
+  /** App authorization is separate from package installation and enablement. */
+  apps?: LocalDeviceApp[]
+  connectorApps?: LocalDeviceApp[]
+  appsFetchedAt?: number
+  connectorAppsFetchedAt?: number
   marketplaces: Array<{
     key: string
     id: string
@@ -26,8 +47,9 @@ export interface PluginMarketplaceCacheSnapshot {
 }
 
 /** Canonical renderer inventory. Older marketplace snapshots are rebuildable and not migrated. */
-const STORAGE_KEY = 'wework.plugins.inventory.v1'
+const STORAGE_KEY = 'wework.plugins.inventory.v2'
 const LEGACY_STORAGE_KEYS = [
+  'wework.plugins.inventory.v1',
   'wework.plugins.marketplaceCache.v2',
   'wework.plugins.marketplaceCache.v1',
 ] as const
@@ -79,6 +101,7 @@ function slimLogoField(value?: string | null): string | null | undefined {
 function slimInterface(interfaceData?: PluginInterface | null): PluginInterface | null {
   if (!interfaceData) return null
   return {
+    defaultPrompt: interfaceData.defaultPrompt,
     displayName: interfaceData.displayName ?? null,
     shortDescription: interfaceData.shortDescription ?? null,
     developerName: interfaceData.developerName ?? null,
@@ -122,29 +145,44 @@ function hasOversizedLogo(interfaceData?: PluginInterface | null): boolean {
   )
 }
 
+function persistableComponents(components: InstalledPluginComponents): InstalledPluginComponents {
+  // Preserve invocation and presentation metadata across restart. Runtime MCP
+  // server configuration remains outside durable browser storage.
+  return {
+    ...slimPluginComponentsForCache(components),
+    skills: components.skills,
+    commands: components.commands,
+    templates: components.templates,
+    apps: components.apps,
+    agents: components.agents,
+    hooks: components.hooks,
+    lsps: components.lsps,
+    monitors: components.monitors,
+    bins: components.bins,
+    mcps: components.mcps.map(mcp => ({ name: mcp.name, server: {} })),
+  }
+}
+
 function toPersistedSnapshot(next: PluginMarketplaceCacheSnapshot): PluginMarketplaceCacheSnapshot {
   const logosStripped =
     next.logosStripped === true ||
     next.marketplaceItems.some(item => hasOversizedLogo(item.interface)) ||
-    next.installedPlugins.some(plugin => hasOversizedLogo(plugin.raw.spec.interface))
+    next.installedPlugins.some(plugin => hasOversizedLogo(plugin.spec.interface))
   return {
     ...next,
     logosStripped,
     marketplaceItems: next.marketplaceItems.map(item => ({
       ...item,
       interface: slimInterface(item.interface),
-      components: slimPluginComponentsForCache(item.components),
+      components: persistableComponents(item.components),
       manifest: slimManifest(item.manifest),
     })),
     installedPlugins: next.installedPlugins.map(plugin => ({
       ...plugin,
-      raw: {
-        ...plugin.raw,
-        spec: {
-          ...plugin.raw.spec,
-          interface: slimInterface(plugin.raw.spec.interface),
-          components: slimPluginComponentsForCache(plugin.raw.spec.components),
-        },
+      spec: {
+        ...plugin.spec,
+        interface: slimInterface(plugin.spec.interface),
+        components: persistableComponents(plugin.spec.components),
       },
     })),
   }
@@ -259,8 +297,12 @@ function snapshotPersistSignature(next: PluginMarketplaceCacheSnapshot): string 
     next.deviceId,
     next.selectedMarketplaceKey,
     next.marketplaces.map(entry => `${entry.key}:${entry.id}:${entry.path ?? ''}`).join(','),
-    marketplaceItemsSignature(next.marketplaceItems),
-    installedPluginsSignature(next.installedPlugins),
+    JSON.stringify(next.marketplaceItems),
+    JSON.stringify(next.installedPlugins),
+    String(Boolean(next.installedPluginsFetchedAt)),
+    String(next.openAiCatalogFetchedAt ?? ''),
+    JSON.stringify(next.apps ?? []),
+    JSON.stringify(next.connectorApps ?? []),
   ].join('|')
 }
 
@@ -372,11 +414,77 @@ export function getPluginMarketplaceCache(cacheKey: string): PluginMarketplaceCa
   return null
 }
 
+/** Read-only diagnostics omit account keys, tokens and component configuration. */
+export function getPluginInventoryDiagnostics() {
+  return {
+    deviceId: snapshot?.deviceId ?? null,
+    installedPlugins: (snapshot?.installedPlugins ?? []).map(plugin => ({
+      pluginKey: plugin.spec.source.pluginKey,
+      enabled: plugin.spec.enabled,
+      installState: plugin.spec.installState,
+    })),
+  }
+}
+
 export function setPluginMarketplaceCache(
   next: PluginMarketplaceCacheSnapshot,
-  options?: { persistImmediately?: boolean }
+  options?: { persistImmediately?: boolean; mutation?: boolean; remoteCatalog?: boolean }
 ): void {
-  // Memory always keeps full-fidelity logos for the current session.
+  // Catalog refreshes do not own app authorization. Preserve that source only
+  // within the same account and device; explicit empty arrays clear it.
+  const previous = getPluginMarketplaceCache(next.cacheKey)
+  const sameDevice = previous?.deviceId === next.deviceId
+  if (sameDevice && previous && !options?.mutation) {
+    const installedPlugins = reconcileCodexInstallations(
+      previous.installedPlugins,
+      next.installedPlugins
+    )
+    if (installedPlugins !== next.installedPlugins) {
+      next = {
+        ...next,
+        installedPlugins,
+        marketplaceItems: applyInstalledPluginsToMarketplaceItems(
+          next.marketplaceItems,
+          installedPlugins
+        ),
+      }
+    }
+  }
+  // Local/catalog readers never own the remote slice. Overlay current membership
+  // on the retained metadata so late reads cannot undo remote refreshes or installs.
+  if (sameDevice && previous?.openAiCatalogFetchedAt && !options?.remoteCatalog) {
+    const isRemote = (item: PluginMarketplaceItem) =>
+      isOpenAiOfficialRemoteMarketplaceId(
+        typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : null
+      )
+    next = {
+      ...next,
+      marketplaceItems: [
+        ...next.marketplaceItems.filter(item => !isRemote(item)),
+        ...applyInstalledPluginsToMarketplaceItems(
+          previous.marketplaceItems.filter(isRemote),
+          next.installedPlugins
+        ),
+      ],
+    }
+  }
+  next = {
+    ...next,
+    mutationRevision: (previous?.mutationRevision ?? 0) + (options?.mutation ? 1 : 0),
+    apps: next.apps ?? (sameDevice ? previous?.apps : undefined) ?? [],
+    connectorApps: next.connectorApps ?? (sameDevice ? previous?.connectorApps : undefined) ?? [],
+    appsFetchedAt: next.appsFetchedAt ?? (sameDevice ? previous?.appsFetchedAt : undefined),
+    installedPluginsFetchedAt:
+      next.installedPluginsFetchedAt ??
+      (sameDevice ? previous?.installedPluginsFetchedAt : undefined),
+    openAiCatalogFetchedAt: options?.remoteCatalog
+      ? next.openAiCatalogFetchedAt
+      : sameDevice
+        ? previous?.openAiCatalogFetchedAt
+        : undefined,
+    connectorAppsFetchedAt:
+      next.connectorAppsFetchedAt ?? (sameDevice ? previous?.connectorAppsFetchedAt : undefined),
+  }
   snapshot = { ...next, logosStripped: false }
   if (options?.persistImmediately) {
     clearPersistTimer()
@@ -433,30 +541,29 @@ export function removePluginMarketplaceInstallation(
   const pluginKeys = normalizedInventoryIdentities(identity.pluginKeys)
   const marketplaceId = normalizedMarketplaceIdentity(identity.marketplaceId)
   const installedPlugins = current.installedPlugins.filter(item => {
-    const labels = item.raw.metadata.labels
+    const labels = item.metadata.labels
     const labelId =
       labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
-    const payload = item.raw.spec.sourcePayload
+    const payload = item.spec.sourcePayload
     const itemIds = normalizedInventoryIdentities([
-      item.id,
       labelId as string | number | null,
-      item.raw.spec.pluginId,
+      item.spec.pluginId,
       payload?.cloudInstalledPluginId as string | number | null,
       payload?.cloudPluginId as string | number | null,
       payload?.remotePluginId as string | number | null,
     ])
     const itemKeys = normalizedInventoryIdentities([
-      item.raw.spec.source.pluginKey,
-      typeof item.raw.metadata.name === 'string' ? item.raw.metadata.name : null,
-      item.name,
+      item.spec.source.pluginKey,
+      typeof item.metadata.name === 'string' ? item.metadata.name : null,
+      item.spec.displayName,
     ])
     const itemMarketplaceId = normalizedMarketplaceIdentity(
-      item.raw.spec.source.marketplace ||
-        (typeof item.raw.spec.sourcePayload?.marketplaceName === 'string'
-          ? item.raw.spec.sourcePayload.marketplaceName
+      item.spec.source.marketplace ||
+        (typeof item.spec.sourcePayload?.marketplaceName === 'string'
+          ? item.spec.sourcePayload.marketplaceName
           : null) ||
-        item.raw.spec.source.providerKey ||
-        (typeof item.raw.metadata.namespace === 'string' ? item.raw.metadata.namespace : null)
+        item.spec.source.providerKey ||
+        (typeof item.metadata.namespace === 'string' ? item.metadata.namespace : null)
     )
     const keyMatches =
       intersects(itemKeys, pluginKeys) && (!marketplaceId || itemMarketplaceId === marketplaceId)
@@ -498,7 +605,7 @@ export function removePluginMarketplaceInstallation(
     marketplaceItems,
     fetchedAt: Date.now(),
   }
-  setPluginMarketplaceCache(next, { persistImmediately: true })
+  setPluginMarketplaceCache(next, { persistImmediately: true, mutation: true })
   return next
 }
 
@@ -519,7 +626,7 @@ export function clearPluginMarketplaceCache(): void {
   for (const listener of listeners) listener(null)
 }
 
-/** Notify when the marketplace cache changes so composer can reuse package logos. */
+/** All views subscribe to the same domain inventory, including empty snapshots. */
 export function subscribePluginMarketplaceCache(listener: MarketplaceCacheListener): () => void {
   listeners.add(listener)
   return () => {
@@ -534,7 +641,7 @@ export function resetPluginMarketplaceCacheMemory(): void {
 }
 
 function pluginComponentsSignature(components: PluginMarketplaceItem['components']): string {
-  return JSON.stringify(slimPluginComponentsForCache(components))
+  return JSON.stringify(persistableComponents(components))
 }
 
 export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): string {
@@ -586,6 +693,10 @@ export function installedPluginsSignature(items: InstalledPluginItem[]): string 
         item.origin,
         item.sourceLabel,
         item.distribution,
+        item.raw.spec.installState,
+        JSON.stringify(item.raw.spec.interface),
+        JSON.stringify(item.raw.spec.componentStates),
+        item.raw.spec.sourcePayload?.localPresent,
         pluginComponentsSignature(item.raw.spec.components),
       ].join(':')
     )

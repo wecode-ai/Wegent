@@ -145,6 +145,10 @@ def _patch_namespace(
         "app.tasks.robot_queue_tasks.reconcile_device_executions",
         reconcile,
     )
+    monkeypatch.setattr(
+        "app.services.device.plugin_removal_sync.sync_pending_plugin_removals",
+        AsyncMock(),
+    )
     return reconcile
 
 
@@ -264,6 +268,7 @@ async def test_app_heartbeat_reconciles_wegent_tasks(
     namespace = DeviceNamespace()
     session = {"user_id": test_user.id, "client_ip": "198.51.100.40"}
     reconcile = _patch_namespace(monkeypatch, namespace, session)
+    from app.services.device import plugin_removal_sync
 
     registered = await namespace.on_device_register(
         "socket-app",
@@ -299,6 +304,9 @@ async def test_app_heartbeat_reconciles_wegent_tasks(
         user_id=test_user.id,
         device_id=device_id,
         needs_confirmation_only=True,
+    )
+    plugin_removal_sync.sync_pending_plugin_removals.assert_awaited_once_with(
+        test_user.id, device_id
     )
 
 

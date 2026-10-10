@@ -1,3 +1,10 @@
+import { toInstalledPluginItem } from './installedPluginPresentation'
+import {
+  updatePluginInventoryInstallation,
+  hasLoadedPluginInventory,
+  refreshInstalledPluginInventory,
+  commitPluginInventoryInstallation,
+} from '@/features/plugins/pluginInventory'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { createHttpClient } from '@/api/http'
@@ -15,7 +22,6 @@ import {
   removePluginMarketplaceInstallation,
   sameInstalledPlugins,
   sameMarketplaceItems,
-  setPluginMarketplaceCache,
   subscribePluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -27,11 +33,9 @@ import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagementRows'
 import {
-  installedPluginSourceLabel,
   isCloudManagedInstalledPlugin,
   linkedCloudInstalledPluginId,
   linkedCloudPluginId,
-  mergeInstalledPlugins,
 } from './installedPluginMerge'
 import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './pluginUninstall'
 import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
@@ -45,47 +49,12 @@ import {
   resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
-import {
-  installedPluginDistribution,
-  installedPluginMarketplaceId,
-  marketplaceItemMarketplaceId,
-} from './pluginDistribution'
+import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { getRuntimeConfig } from '@/config/runtime'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
-
-function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
-  const labels = item.metadata['labels']
-  const id =
-    labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : undefined
-  const components = item.spec.components
-  return {
-    id: typeof id === 'string' || typeof id === 'number' ? id : '',
-    name: item.spec.displayName || item.spec.source.pluginKey,
-    description: item.spec.description,
-    enabled: item.spec.enabled,
-    version: item.spec.version,
-    origin: item.spec.origin ?? (item.spec.source.type === 'local' ? 'created' : 'market'),
-    sourceLabel: installedPluginSourceLabel(item),
-    distribution: installedPluginDistribution(item),
-    updateAvailable: item.spec.installState === 'update_available',
-    componentCounts: {
-      skills: components.skills.length,
-      apps: components.apps?.length ?? 0,
-      commands: components.commands.length,
-      agents: components.agents.length,
-      mcp: components.mcps.length,
-      connectors: components.connectors?.length ?? 0,
-      hooks: components.hooks.length,
-      lsp: components.lsps.length,
-      monitors: components.monitors.length,
-      bin: components.bins.length,
-    },
-    raw: item,
-  }
-}
 
 function tryPluginInChat(plugin: InstalledPlugin) {
   queuePluginTrial(plugin, { openInNewChat: true })
@@ -102,7 +71,15 @@ interface PluginManagementWorkspaceProps {
 
 type PluginManagementTab = 'codex' | 'core-dsh'
 
-export function PluginManagementWorkspace({
+export function PluginManagementWorkspace(props: PluginManagementWorkspaceProps) {
+  const cacheKey = pluginMarketplaceCacheKey(
+    props.cloudApiBaseUrl || getRuntimeConfig().apiBaseUrl,
+    props.cloudToken
+  )
+  return <PluginManagementWorkspaceContent key={cacheKey} {...props} />
+}
+
+function PluginManagementWorkspaceContent({
   sidebarCollapsed = false,
   topBarLeftActions,
   cloudApiBaseUrl,
@@ -117,13 +94,15 @@ export function PluginManagementWorkspace({
     [cloudToken, resolvedCloudApiBaseUrl]
   )
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(() => {
-    return getPluginMarketplaceCache(marketplaceCacheKeyValue)?.installedPlugins ?? []
+    return (getPluginMarketplaceCache(marketplaceCacheKeyValue)?.installedPlugins ?? []).map(
+      toInstalledPluginItem
+    )
   })
   const [marketplaceItems, setMarketplaceItems] = useState<PluginMarketplaceItem[]>(() => {
     return getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? []
   })
   const [isLoadingPlugins, setIsLoadingPlugins] = useState(() => {
-    return !getPluginMarketplaceCache(marketplaceCacheKeyValue)?.installedPlugins.length
+    return !hasLoadedPluginInventory(getPluginMarketplaceCache(marketplaceCacheKeyValue))
   })
   const [currentDeviceId, setCurrentDeviceId] = useState(
     () => getPluginMarketplaceCache(marketplaceCacheKeyValue)?.deviceId ?? ''
@@ -165,9 +144,9 @@ export function PluginManagementWorkspace({
     return subscribePluginMarketplaceCache(snapshot => {
       if (!snapshot || snapshot.cacheKey !== marketplaceCacheKeyValue) return
       setInstalledPlugins(previous =>
-        sameInstalledPlugins(previous, snapshot.installedPlugins)
+        sameInstalledPlugins(previous, snapshot.installedPlugins.map(toInstalledPluginItem))
           ? previous
-          : snapshot.installedPlugins
+          : snapshot.installedPlugins.map(toInstalledPluginItem)
       )
       setMarketplaceItems(previous =>
         sameMarketplaceItems(previous, snapshot.marketplaceItems)
@@ -175,6 +154,7 @@ export function PluginManagementWorkspace({
           : snapshot.marketplaceItems
       )
       if (snapshot.deviceId) setCurrentDeviceId(snapshot.deviceId)
+      if (hasLoadedPluginInventory(snapshot)) setIsLoadingPlugins(false)
     })
   }, [marketplaceCacheKeyValue])
 
@@ -187,100 +167,29 @@ export function PluginManagementWorkspace({
 
   useEffect(() => {
     let current = true
-    const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-    const hasCachedList = Boolean(cached?.installedPlugins.length)
-    const deviceIdHint = cached?.deviceId || undefined
-    // Bypass the short-lived readState cache so management reflects packages
-    // recently materialised by marketplace / capability sync.
-    const localPromise = localPluginApi.readState({ refresh: true })
-    const cloudInstalledPromise = cloudPluginApi
-      .listInstalledPlugins(deviceIdHint)
-      .then(value => ({ ok: true as const, value }))
-      .catch(() => ({ ok: false as const, value: { items: [] as InstalledPlugin[] } }))
-    const marketplacePromise = cloudPluginApi
-      .listMarketplacePlugins({ deviceId: deviceIdHint })
-      .catch(() => ({ items: [] as PluginMarketplaceItem[] }))
-
-    const applySnapshot = (
-      localState: Awaited<ReturnType<typeof localPluginApi.readState>> | null,
-      cloudInstalled: InstalledPlugin[],
-      marketplace: PluginMarketplaceItem[]
-    ) => {
-      const deviceId = localState?.deviceId || deviceIdHint || ''
-      if (localState?.deviceId) {
-        setCurrentDeviceId(localState.deviceId)
-      }
-      const nextInstalled = mergeInstalledPlugins(
-        cloudInstalled,
-        localState?.installedPlugins ?? [],
-        deviceId
-      ).map(toInstalledPluginItem)
-
-      setInstalledPlugins(previous =>
-        sameInstalledPlugins(previous, nextInstalled) ? previous : nextInstalled
-      )
-      setMarketplaceItems(previous =>
-        sameMarketplaceItems(previous, marketplace) ? previous : marketplace
-      )
-
-      const previousCache = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-      setPluginMarketplaceCache({
-        cacheKey: marketplaceCacheKeyValue,
-        marketplaceItems: marketplace,
-        installedPlugins: nextInstalled,
-        marketplaces: previousCache?.marketplaces ?? [],
-        selectedMarketplaceKey: previousCache?.selectedMarketplaceKey ?? '',
-        deviceId,
-        fetchedAt: Date.now(),
-      })
-    }
-
-    void Promise.allSettled([localPromise, cloudInstalledPromise, marketplacePromise]).then(
-      ([localResult, cloudInstalledResult, marketplaceResult]) => {
+    void refreshInstalledPluginInventory({
+      cacheKey: marketplaceCacheKeyValue,
+      readLocal: () =>
+        localPluginApi.listInstalledPlugins({ requireComplete: true, shareInflight: true }),
+      readCloud: deviceId => cloudPluginApi.listInstalledPlugins(deviceId),
+      isCurrent: () => current,
+    })
+      .catch(error => {
         if (!current) return
-        setIsLoadingPlugins(false)
-
-        const localState = localResult.status === 'fulfilled' ? localResult.value : null
-        const cloudInstalledResultValue =
-          cloudInstalledResult.status === 'fulfilled'
-            ? cloudInstalledResult.value
-            : { ok: false as const, value: { items: [] as InstalledPlugin[] } }
-        const cloudInstalled = cloudInstalledResultValue.value.items
-        const marketplace =
-          marketplaceResult.status === 'fulfilled' ? marketplaceResult.value.items : []
-        if (localResult.status === 'rejected' && !cloudInstalledResultValue.ok) {
-          if (!hasCachedList) {
-            setInstalledPlugins([])
-            setMarketplaceItems([])
-          }
-          return
-        }
-
-        applySnapshot(localState, cloudInstalled, marketplace)
-
-        const resolvedDeviceId = localState?.deviceId || ''
-        if (resolvedDeviceId && resolvedDeviceId !== deviceIdHint) {
-          void Promise.all([
-            cloudPluginApi
-              .listInstalledPlugins(resolvedDeviceId)
-              .catch(() => ({ items: [] as InstalledPlugin[] })),
-            cloudPluginApi
-              .listMarketplacePlugins({ deviceId: resolvedDeviceId })
-              .catch(() => ({ items: [] as PluginMarketplaceItem[] })),
-          ])
-            .then(([deviceInstalled, deviceMarketplace]) => {
-              if (!current) return
-              applySnapshot(localState, deviceInstalled.items, deviceMarketplace.items)
-            })
-            .catch(() => undefined)
-        }
-      }
-    )
+        setPluginOperationNotice({
+          id: 'inventory-load-failed',
+          kind: 'error',
+          message: getErrorMessage(error, t('workbench.plugins_load_failed', '加载插件失败')),
+        })
+      })
+      .finally(() => {
+        if (current) setIsLoadingPlugins(false)
+      })
 
     return () => {
       current = false
     }
-  }, [cloudPluginApi, localPluginApi, marketplaceCacheKeyValue])
+  }, [cloudPluginApi, localPluginApi, marketplaceCacheKeyValue, t])
 
   const marketplaceById = useMemo(
     () => new Map(marketplaceItems.map(item => [String(item.id), item])),
@@ -300,9 +209,12 @@ export function PluginManagementWorkspace({
   ) => {
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) return Promise.reject(new Error('Installed plugin not found'))
-    return isCloudManagedInstalledPlugin(plugin.raw)
+    const requestPromise = isCloudManagedInstalledPlugin(plugin.raw)
       ? cloudPluginApi.updateInstalledPlugin(id, request, currentDeviceId || undefined)
       : localPluginApi.updateInstalledPlugin(id, request)
+    return requestPromise.then(updated => {
+      updatePluginInventoryInstallation(marketplaceCacheKeyValue, id, updated, request)
+    })
   }
 
   const toggleInstalledPlugin = (id: string | number) => {
@@ -314,12 +226,7 @@ export function PluginManagementWorkspace({
       )
     )
     void updateInstalledPlugin(id, { enabled: !plugin.enabled })
-      .then(updated => {
-        setInstalledPlugins(previous =>
-          previous.map(item =>
-            String(item.id) === String(id) ? toInstalledPluginItem(updated) : item
-          )
-        )
+      .then(() => {
         notifyLocalPluginSkillsChanged()
         track('plugin_enabled_changed', {
           enabled: !plugin.enabled,
@@ -359,12 +266,7 @@ export function PluginManagementWorkspace({
       )
     )
     void updateInstalledPlugin(id, { componentStates: { [componentKey]: enabled } })
-      .then(updated => {
-        setInstalledPlugins(previous =>
-          previous.map(item =>
-            String(item.id) === String(id) ? toInstalledPluginItem(updated) : item
-          )
-        )
+      .then(() => {
         track('plugin_enabled_changed', {
           enabled,
           scope: 'component',
@@ -418,7 +320,7 @@ export function PluginManagementWorkspace({
       )
       .then(outcome => {
         const marketplaceItem = findMarketplaceItemForInstalled(plugin, marketplaceItems)
-        const nextInventory = removePluginMarketplaceInstallation(marketplaceCacheKeyValue, {
+        removePluginMarketplaceInstallation(marketplaceCacheKeyValue, {
           installedIds: [id, plugin.id, linkedCloudInstalledPluginId(plugin.raw)],
           marketplaceItemIds: [
             marketplaceItem?.id,
@@ -435,14 +337,8 @@ export function PluginManagementWorkspace({
             pluginName,
           ],
         })
-        if (nextInventory) {
-          setInstalledPlugins(nextInventory.installedPlugins)
-          setMarketplaceItems(nextInventory.marketplaceItems)
-        } else {
-          setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
-        }
         setSelectedPluginId(current => (String(current) === String(id) ? null : current))
-        notifyLocalPluginSkillsChanged([String(id), pluginName, plugin.raw.spec.source.pluginKey])
+        notifyLocalPluginSkillsChanged()
         const warningDetails = pluginUninstallWarningDetails(outcome)
         setPluginOperationNotice({
           id: `uninstalled-${id}`,
@@ -592,10 +488,7 @@ export function PluginManagementWorkspace({
       return localPluginApi.importMarketplaceCopy(descriptor)
     })
     const item = toInstalledPluginItem(installed)
-    setInstalledPlugins(previous => [
-      item,
-      ...previous.filter(candidate => String(candidate.id) !== String(item.id)),
-    ])
+    commitPluginInventoryInstallation(marketplaceCacheKeyValue, currentDeviceId, installed)
     notifyLocalPluginSkillsChanged()
     setSelectedPluginId(item.id)
   }

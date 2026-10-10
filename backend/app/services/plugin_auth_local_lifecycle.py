@@ -92,16 +92,23 @@ class PluginAuthLocalLifecycleService:
         }:
             raise PluginAccountAuthError("plugin_auth_local_device_required", 403)
         self.connections._lock_owner(db, user_id)
-        plugin, _ = self.connections._plugin(
-            db, user_id, request.installed_plugin_id, request.connector_slug
-        )
-        connector = next(
-            item
-            for item in plugin.json["spec"]["components"]["connectors"]
-            if item["slug"] == request.connector_slug
-        )
-        if not connector.get("localAuth"):
-            raise PluginAccountAuthError("plugin_auth_not_supported", 422)
+        if request.action == "logout":
+            # Removing access does not require a currently usable auth adapter.
+            # Keep ownership checks so stale definitions can never grant access.
+            plugin = self.connections._installed_plugin(
+                db, user_id, request.installed_plugin_id
+            )
+        else:
+            plugin, _ = self.connections._plugin(
+                db, user_id, request.installed_plugin_id, request.connector_slug
+            )
+            connector = next(
+                item
+                for item in plugin.json["spec"]["components"]["connectors"]
+                if item["slug"] == request.connector_slug
+            )
+            if not connector.get("localAuth"):
+                raise PluginAccountAuthError("plugin_auth_not_supported", 422)
         source = self.connections._source_identity(plugin.json["spec"]["source"])
         rows = (
             self.connections._query(db, user_id)

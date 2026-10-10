@@ -5460,6 +5460,30 @@ mod tests {
     }
 
     #[test]
+    fn maps_mcp_url_elicitation_with_zero_request_id_to_interactive_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest::default();
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({"id": 0, "method": "mcpServer/elicitation/request", "params": {
+                "mode": "url", "serverName": "codex_apps", "threadId": "thread-1",
+                "turnId": "turn-1", "message": "Connect GitHub", "elicitationId": "auth-1",
+                "url": "https://chatgpt.com/connect/github"
+            }}),
+        );
+        let event = event_rx.try_recv().unwrap();
+        let payload = &event["payload"]["data"]["block"]["render_payload"];
+        assert_eq!(payload["requestId"], 0);
+        assert_eq!(payload["interactionKind"], "mcp_url");
+        assert_eq!(payload["elicitationId"], "auth-1");
+        assert_eq!(payload["url"], "https://chatgpt.com/connect/github");
+        assert_eq!(payload["questions"], json!([]));
+    }
+
+    #[test]
     fn maps_codex_command_approval_to_interactive_tool_block() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {

@@ -71,6 +71,13 @@ impl InteractionAnswerRouter {
         router
     }
 
+    /// Removes the waiter when an interaction expires.
+    pub(super) async fn expire(&self, key: &str) {
+        let mut state = self.state.lock().await;
+        state.pending.remove(key);
+        state.buffered.remove(key);
+    }
+
     /// Waits for exactly one answer associated with a correlation key.
     pub(super) async fn receive(&self, key: String) -> Result<Option<Value>, String> {
         let receiver = {

@@ -12,6 +12,12 @@ import {
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
+import {
+  clearPluginMarketplaceCache,
+  pluginMarketplaceCacheKey,
+} from '@/features/plugins/pluginMarketplaceCache'
+import { writePluginInventory } from '@/features/plugins/pluginInventory'
+import { emptyPluginComponents } from '@/features/plugins/slimPluginComponents'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
 import i18n from '@/i18n'
@@ -2825,6 +2831,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     clearElectronRuntime()
     window.history.pushState({}, '', '/')
     localStorage.clear()
+    clearPluginMarketplaceCache()
     sessionStorage.clear()
     vi.clearAllMocks()
     resetLocalRuntimeChatStreamsForTests()
@@ -3539,6 +3546,88 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toHaveLength(0)
   })
 
+  test('projects marketplace inventory changes into the composer without another list request', async () => {
+    setElectronRuntime()
+    const cacheKey = pluginMarketplaceCacheKey('https://cloud.example/api', 'test-token')
+    const plugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'dingtalk', namespace: 'wework', labels: { id: 'ding' } },
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'wework',
+          pluginKey: 'dingtalk',
+          marketplace: 'wework',
+        },
+        displayName: '钉钉',
+        description: 'DingTalk',
+        enabled: true,
+        installState: 'installed',
+        components: emptyPluginComponents(),
+      },
+      status: { state: 'enabled' },
+    }
+    writePluginInventory(cacheKey, 'local-device', {
+      installedPlugins: [plugin],
+      installedPluginsFetchedAt: Date.now(),
+    })
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.personal.list')
+          return { marketplacePath: '/personal', plugins: [] }
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [] }
+        if (method === 'executor.plugins.links.list') return []
+        if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'app/list'
+        )
+          return { data: [], nextCursor: null }
+        return {}
+      }
+    )
+    renderWorkbench(<RuntimeTaskSkillsProbe />, createWorkbenchServices(), {
+      status: 'connected',
+      isConnected: true,
+      apiBaseUrl: 'https://cloud.example/api',
+      token: 'test-token',
+    })
+    await userEvent.click(screen.getByText('list local apps'))
+    await waitFor(() => expect(getComposerApps().map(app => app.pluginKey)).toEqual(['dingtalk']))
+    // Marketplace membership is already warm, but app authorization is a separate
+    // source within that inventory and still needs its first hydration.
+    await waitFor(() =>
+      expect(
+        localExecutorMocks.requestLocalExecutor.mock.calls.some(
+          ([method, params]) =>
+            method === 'codex.app_server_request' &&
+            (params as { method?: string }).method === 'app/list'
+        )
+      ).toBe(true)
+    )
+    expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
+
+    act(() => {
+      writePluginInventory(cacheKey, 'local-device', {
+        installedPlugins: [{ ...plugin, spec: { ...plugin.spec, enabled: false } }],
+      })
+    })
+    expect(getComposerApps()).toEqual([])
+    act(() => {
+      writePluginInventory(cacheKey, 'local-device', {
+        installedPlugins: [{ ...plugin, spec: { ...plugin.spec, displayName: '钉钉新版' } }],
+      })
+    })
+    expect(getComposerApps()[0]?.name).toBe('钉钉新版')
+    act(() => {
+      writePluginInventory(cacheKey, 'local-device', { installedPlugins: [] })
+    })
+    expect(getComposerApps()).toEqual([])
+    expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
+  })
+
   test('clears a stale composer snapshot on a successful empty read while offline', async () => {
     setElectronRuntime()
     replaceComposerApps([{ id: 'old-plugin', name: 'Old plugin', isAccessible: true }])
@@ -3564,6 +3653,47 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(/^loaded:$/)
     )
     expect(getComposerApps()).toEqual([])
+    expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
+  })
+
+  test('reads a new disk import even when shared membership was recently refreshed', async () => {
+    setElectronRuntime()
+    const cacheKey = pluginMarketplaceCacheKey('', '')
+    writePluginInventory(cacheKey, 'local-device', {
+      installedPlugins: [],
+      installedPluginsFetchedAt: Date.now(),
+    })
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'executor.plugins.personal.list')
+          return {
+            marketplacePath: '/personal',
+            plugins: [{ name: 'new-import', pluginPath: '/personal/plugins/new-import' }],
+          }
+        if (method === 'executor.codex_home.config.read')
+          return { enabledPluginKeys: ['new-import@wework-personal'] }
+        if (method === 'executor.plugins.links.list') return []
+        if (
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'app/list'
+        )
+          return new Promise(() => {})
+        return {}
+      }
+    )
+    renderWorkbench(<RuntimeTaskSkillsProbe />)
+    await userEvent.click(screen.getByText('list local apps'))
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+        'loaded:plugin:new-import'
+      )
+    )
+    expect(getComposerApps().map(app => app.id)).toEqual(['plugin:new-import'])
+    expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.codex_home.config.read'
+    )
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
   })
 
@@ -3943,9 +4073,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginInstalledRequestCount()).toBe(1)
   })
 
-  test('ignores a superseded project plugin load after switching projects', async () => {
+  test('loads missing project packages despite fresh membership and projects them after switching', async () => {
+    writePluginInventory(pluginMarketplaceCacheKey('', ''), 'local-device', {
+      installedPlugins: [],
+      installedPluginsFetchedAt: Date.now(),
+    })
     const alphaLoad = deferred<{ marketplaces: unknown[] }>()
-    let pluginLoadScope: 'alpha' | 'beta' = 'alpha'
+    const appsLoad = deferred<{ data: LocalDeviceApp[]; nextCursor: null }>()
     const installedMarketplace = {
       name: 'team-market',
       path: '/tmp/team-market',
@@ -3969,6 +4103,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     }
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.personal.list')
+          return { marketplacePath: '/personal', plugins: [] }
+        if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [] }
+        if (method === 'executor.plugins.links.list') return []
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
@@ -3979,11 +4117,10 @@ describe('WorkbenchProvider runtime tasks', () => {
             return { marketplaces: [installedMarketplace] }
           }
           if (request.method === 'app/list') {
-            return { data: [], nextCursor: null }
+            return appsLoad.promise
           }
           if (request.method === 'plugin/installed') {
-            if (pluginLoadScope === 'alpha') return alphaLoad.promise
-            return { marketplaces: [installedMarketplace] }
+            return alphaLoad.promise
           }
         }
         return {}
@@ -4080,19 +4217,27 @@ describe('WorkbenchProvider runtime tasks', () => {
       ).toBe(true)
     )
 
-    pluginLoadScope = 'beta'
     await userEvent.click(screen.getByText('select project 8'))
+    await act(async () => {
+      alphaLoad.resolve({ marketplaces: [installedMarketplace] })
+      await alphaLoad.promise
+    })
 
     await waitFor(() =>
       expect(getComposerApps().map(app => app.id)).toEqual(['plugin:beta-plugin'])
     )
-
-    alphaLoad.resolve({ marketplaces: [installedMarketplace] })
+    expect(
+      localExecutorMocks.requestLocalExecutor.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'plugin/installed'
+      )
+    ).toHaveLength(1)
+    // Membership must publish before the independent authorization directory settles.
     await act(async () => {
-      await alphaLoad.promise
-      await Promise.resolve()
+      appsLoad.resolve({ data: [], nextCursor: null })
+      await appsLoad.promise
     })
-
     expect(getComposerApps().map(app => app.id)).toEqual(['plugin:beta-plugin'])
   })
 

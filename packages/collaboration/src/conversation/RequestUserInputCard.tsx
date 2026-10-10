@@ -17,6 +17,7 @@ import type {
 } from "@wegent/chat-core/runtime";
 export type { RequestUserInputPayload } from "@wegent/chat-core/runtime";
 import { hasImplementationPlanText } from "@wegent/chat-core/runtime-user-input";
+import { McpUrlAuthorizationCard } from "./McpUrlAuthorizationCard";
 
 interface RequestUserInputCardProps {
   payload: RequestUserInputPayload;
@@ -25,9 +26,17 @@ interface RequestUserInputCardProps {
     response: RequestUserInputResponse,
   ) => boolean | void | Promise<boolean | void>;
   onIgnore?: () => void;
+  onOpenAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>;
 }
 
-export function RequestUserInputCard({
+export function RequestUserInputCard(props: RequestUserInputCardProps) {
+  if (props.payload.interactionKind === "mcp_url") {
+    return <McpUrlAuthorizationCard {...props} />;
+  }
+  return <RequestUserInputForm {...props} />;
+}
+
+function RequestUserInputForm({
   payload,
   disabled = false,
   onSubmit,
@@ -304,6 +313,16 @@ export function RequestUserInputSummary({
     };
   });
 
+  if (payload.interactionKind === "mcp_url") {
+    return (
+      <div
+        data-testid="request-user-input-summary"
+        className="text-sm text-text-secondary"
+      >
+        {t("request_user_input.url_summary")}
+      </div>
+    );
+  }
   if (rows.length === 0) return null;
 
   return (

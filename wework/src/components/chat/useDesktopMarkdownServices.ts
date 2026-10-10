@@ -43,6 +43,7 @@ export function useDesktopMarkdownServices(): MarkdownServices {
       copyText: copyTextToClipboard,
       onCopy,
       openExternalUrl,
+      openAuthorizationUrl: (url: string) => openExternalUrl(url, { target: 'system' }),
       navigateTo,
       openHtmlFile: requestEmbeddedBrowserOpen,
       fetchAttachmentBlob,

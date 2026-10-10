@@ -66,7 +66,11 @@ pub fn list_wegent_store_plugins() -> Result<WegentStoreListResult, String> {
 }
 
 pub fn read_plugin_manifest(request: ReadPluginManifestRequest) -> Result<Value, String> {
-    read_local_plugin_manifest(Path::new(&request.marketplace_path), &request.plugin_name)
+    read_local_plugin_manifest(
+        Path::new(&request.marketplace_path),
+        &request.plugin_name,
+        &executor_home_path()?,
+    )
 }
 
 pub fn save_plugin_example(request: SavePluginExampleRequest) -> Result<String, String> {
@@ -194,7 +198,11 @@ fn wegent_store_plugin_summary(
     })
 }
 
-fn read_local_plugin_manifest(marketplace_path: &Path, plugin_name: &str) -> Result<Value, String> {
+fn read_local_plugin_manifest(
+    marketplace_path: &Path,
+    plugin_name: &str,
+    executor_home: &Path,
+) -> Result<Value, String> {
     let plugin_name = validate_plugin_name(plugin_name)?;
     let marketplace_path = marketplace_path
         .canonicalize()
@@ -202,7 +210,14 @@ fn read_local_plugin_manifest(marketplace_path: &Path, plugin_name: &str) -> Res
     let marketplace_root = marketplace_root_from_path(&marketplace_path)
         .canonicalize()
         .map_err(|error| format!("Failed to resolve local marketplace root: {error}"))?;
-    let plugin_root = resolve_local_plugin_root(&marketplace_path, &marketplace_root, plugin_name)?;
+    let registered_roots =
+        registered_store_plugin_roots(&marketplace_root, plugin_name, executor_home)?;
+    let plugin_root = resolve_local_plugin_root(
+        &marketplace_path,
+        &marketplace_root,
+        plugin_name,
+        &registered_roots,
+    )?;
     let manifest_path = local_plugin_manifest_path(&plugin_root)?;
     let manifest = read_json_file(&manifest_path, MAX_PLUGIN_MANIFEST_BYTES)?;
     Ok(json!({
@@ -213,10 +228,40 @@ fn read_local_plugin_manifest(marketplace_path: &Path, plugin_name: &str) -> Res
     }))
 }
 
+fn registered_store_plugin_roots(
+    marketplace_root: &Path,
+    plugin_name: &str,
+    executor_home: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let Some(marketplace) = marketplace_root.file_name().and_then(|name| name.to_str()) else {
+        return Ok(Vec::new());
+    };
+    let expected_root = executor_home
+        .join("codex/plugins/marketplaces")
+        .join(marketplace)
+        .canonicalize();
+    if expected_root.ok().as_deref() != Some(marketplace_root) {
+        return Ok(Vec::new());
+    }
+    // Capability reconciliation links marketplace entries to the managed store.
+    // Permit only the same installed name/marketplace, not arbitrary symlink targets.
+    Ok(list_wegent_store_plugins_at(executor_home)?
+        .plugins
+        .into_iter()
+        .filter(|plugin| {
+            plugin.name == plugin_name
+                && plugin.marketplace == marketplace
+                && plugin.installed_plugin_id.is_some()
+        })
+        .map(|plugin| PathBuf::from(plugin.plugin_path))
+        .collect())
+}
+
 fn resolve_local_plugin_root(
     marketplace_path: &Path,
     marketplace_root: &Path,
     plugin_name: &str,
+    registered_roots: &[PathBuf],
 ) -> Result<PathBuf, String> {
     let mut candidates = vec![
         marketplace_root.join("plugins").join(plugin_name),
@@ -236,7 +281,7 @@ fn resolve_local_plugin_root(
             continue;
         };
         if !candidate.is_dir()
-            || !candidate.starts_with(marketplace_root)
+            || (!candidate.starts_with(marketplace_root) && !registered_roots.contains(&candidate))
             || !seen.insert(candidate.clone())
         {
             continue;
@@ -750,10 +795,14 @@ mod tests {
             }),
         );
 
-        let manifest = read_local_plugin_manifest(&marketplace_manifest, "example-plugin").unwrap();
+        let manifest =
+            read_local_plugin_manifest(&marketplace_manifest, "example-plugin", temp.path())
+                .unwrap();
 
         assert_eq!(manifest["connectors"][0]["id"], "example");
-        assert!(read_local_plugin_manifest(&marketplace_manifest, "../outside").is_err());
+        assert!(
+            read_local_plugin_manifest(&marketplace_manifest, "../outside", temp.path()).is_err()
+        );
     }
 
     #[test]
@@ -770,9 +819,90 @@ mod tests {
             }),
         );
 
-        let error = read_local_plugin_manifest(&marketplace_manifest, "outside").unwrap_err();
+        let error =
+            read_local_plugin_manifest(&marketplace_manifest, "outside", temp.path()).unwrap_err();
 
         assert_eq!(error, "Local plugin manifest is unavailable");
+    }
+
+    #[test]
+    fn registered_store_roots_require_matching_runtime_marketplace_and_plugin() {
+        let temp = tempfile::tempdir().unwrap();
+        let marketplace = temp.path().join("codex/plugins/marketplaces/wegent");
+        fs::create_dir_all(&marketplace).unwrap();
+        let plugin = temp.path().join("capabilities/store/plugins/wiki-1.0.0");
+        write_plugin(&plugin, "wiki", json!([]));
+        write_json(
+            &temp.path().join("capabilities/manifest.json"),
+            &json!({"plugins": {"wiki@wegent": {
+                "name": "wiki", "marketplace": "wegent", "installed_plugin_id": 60,
+                "store_path": "store/plugins/wiki-1.0.0"
+            }}}),
+        );
+        let marketplace = marketplace.canonicalize().unwrap();
+        let roots = registered_store_plugin_roots(&marketplace, "wiki", temp.path()).unwrap();
+        assert_eq!(roots, vec![plugin.canonicalize().unwrap()]);
+        assert!(
+            registered_store_plugin_roots(&marketplace, "other", temp.path())
+                .unwrap()
+                .is_empty()
+        );
+        let foreign = temp.path().join("foreign/wegent");
+        fs::create_dir_all(&foreign).unwrap();
+        assert!(registered_store_plugin_roots(
+            &foreign.canonicalize().unwrap(),
+            "wiki",
+            temp.path()
+        )
+        .unwrap()
+        .is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_registered_store_symlinks_but_rejects_unregistered_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let marketplace = temp.path().join("codex/plugins/marketplaces/wegent");
+        let market_manifest = marketplace.join(".agents/plugins/marketplace.json");
+        let plugin = temp.path().join("capabilities/store/plugins/wiki-1.0.0");
+        let outside = temp.path().join("outside-plugin");
+        let connector = json!([{"slug": "wiki", "authPolicy": "on_use", "localAuth": {
+            "kind": "local_qr", "health": ["health"], "start": ["start"], "poll": ["poll"]
+        }}]);
+        write_plugin(&plugin, "wiki", connector.clone());
+        write_plugin(&outside, "wiki", connector);
+        write_json(
+            &market_manifest,
+            &json!({"name": "wegent", "plugins": [{
+                "name": "wiki", "source": {"source": "local", "path": "./plugins/wiki"}
+            }]}),
+        );
+        let registry = temp.path().join("capabilities/manifest.json");
+        let entry = json!({"plugins": {"wiki@wegent": {
+            "name": "wiki", "marketplace": "wegent", "installed_plugin_id": 60,
+            "store_path": "store/plugins/wiki-1.0.0"
+        }}});
+        write_json(&registry, &entry);
+        let link = marketplace.join("plugins/wiki");
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&plugin, &link).unwrap();
+
+        for path in [&marketplace, &market_manifest] {
+            let manifest = read_local_plugin_manifest(path, "wiki", temp.path()).unwrap();
+            assert_eq!(manifest["connectors"][0]["localAuth"]["kind"], "local_qr");
+        }
+        let mut wrong_market = entry.clone();
+        wrong_market["plugins"]["wiki@wegent"]["marketplace"] = json!("other");
+        write_json(&registry, &wrong_market);
+        assert!(read_local_plugin_manifest(&market_manifest, "wiki", temp.path()).is_err());
+        write_json(&registry, &entry);
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        assert!(read_local_plugin_manifest(&market_manifest, "wiki", temp.path()).is_err());
+        let mut escaped_store = entry;
+        escaped_store["plugins"]["wiki@wegent"]["store_path"] = json!(outside);
+        write_json(&registry, &escaped_store);
+        assert!(read_local_plugin_manifest(&market_manifest, "wiki", temp.path()).is_err());
     }
 
     #[test]
