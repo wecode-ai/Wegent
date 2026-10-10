@@ -21,6 +21,7 @@ from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionC
 from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
 from app.schemas.tagging import normalize_tags as _normalize_tags
+from app.utils.schedule_time import normalize_schedule_datetime
 
 
 class LoopItemCreate(BaseModel):
@@ -56,7 +57,12 @@ class LoopItemCreate(BaseModel):
         )
         if selected > 1:
             raise ValueError("Only one assignee may be selected")
-        if self.start_at and self.due_at and self.start_at > self.due_at:
+        if (
+            self.start_at
+            and self.due_at
+            and normalize_schedule_datetime(self.start_at)
+            > normalize_schedule_datetime(self.due_at)
+        ):
             raise ValueError("start_at cannot be after due_at")
         return self
 

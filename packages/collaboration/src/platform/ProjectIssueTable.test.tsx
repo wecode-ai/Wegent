@@ -381,6 +381,63 @@ describe("ProjectIssueTable", () => {
     ).toBeNull();
   });
 
+  it("limits batch actions to selected issues that remain visible", async () => {
+    const onBulkStatusChange = vi.fn().mockResolvedValue(undefined);
+    act(() => {
+      root.render(
+        <ProjectIssueTable
+          issues={[issue, secondIssue]}
+          assignmentsByIssueId={{
+            [issue.id]: [assignment],
+            [secondIssue.id]: [secondAssignment],
+          }}
+          emptyLabel="Empty"
+          issueLabel="Issue"
+          statusLabel="Status"
+          assignmentsLabel="Assignments"
+          updatedLabel="Updated"
+          availableStatuses={["inbox", "in_progress"]}
+          onBulkStatusChange={onBulkStatusChange}
+          onOpen={vi.fn()}
+        />,
+      );
+    });
+
+    act(() => {
+      (
+        container.querySelector(
+          '[data-testid="collaboration-issue-table-select-all"]',
+        ) as HTMLInputElement
+      ).click();
+    });
+    act(() => {
+      const filter = container.querySelector(
+        '[data-testid="collaboration-issue-table-status-filter"]',
+      ) as HTMLSelectElement;
+      filter.value = "in_progress";
+      filter.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    act(() => {
+      const status = container.querySelector(
+        '[data-testid="collaboration-issue-table-batch-status"]',
+      ) as HTMLSelectElement;
+      status.value = "in_progress";
+      status.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      (
+        container.querySelector(
+          '[data-testid="collaboration-issue-table-batch-apply"]',
+        ) as HTMLButtonElement
+      ).click();
+    });
+
+    expect(onBulkStatusChange).toHaveBeenCalledWith(
+      [secondIssue],
+      "in_progress",
+    );
+  });
+
   it("uses an archive icon and archives all eligible selected issues", () => {
     const completedIssue = {
       ...issue,

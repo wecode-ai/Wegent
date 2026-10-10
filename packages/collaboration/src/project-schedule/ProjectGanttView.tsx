@@ -325,8 +325,8 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
                   style={{ width: gridWidth }}
                 >
                   {locale === "zh-CN"
-                    ? "当前时间范围内没有已设置截止日期的 Issue"
-                    : "No issues with due dates in this range"}
+                    ? "当前时间范围内没有已安排时间的 Issue"
+                    : "No scheduled issues in this range"}
                 </div>
               </div>
             ) : (

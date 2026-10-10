@@ -484,9 +484,19 @@ impl TaskRuntime {
                 .local_store
                 .create_task_with_schedule(project_id, input, start_at, due_at),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
+                if start_at.is_some() || due_at.is_some() {
+                    return Err(TaskRuntimeError::UnsupportedProvider(format!(
+                        "{provider:?} scheduling"
+                    )));
+                }
                 self.issue_provider.create(&project, provider, input).await
             }
             TaskProviderKind::DingtalkAitable => {
+                if start_at.is_some() || due_at.is_some() {
+                    return Err(TaskRuntimeError::UnsupportedProvider(
+                        "DingtalkAitable scheduling".to_owned(),
+                    ));
+                }
                 self.aitable_provider.create_board(&project, input).await
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
@@ -519,11 +529,21 @@ impl TaskRuntime {
                 .local_store
                 .update_task_with_schedule(project_id, task_id, input, start_at, due_at),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
+                if start_at.is_some() || due_at.is_some() {
+                    return Err(TaskRuntimeError::UnsupportedProvider(format!(
+                        "{provider:?} scheduling"
+                    )));
+                }
                 self.issue_provider
                     .update(&project, provider, task_id, input)
                     .await
             }
             TaskProviderKind::DingtalkAitable => {
+                if start_at.is_some() || due_at.is_some() {
+                    return Err(TaskRuntimeError::UnsupportedProvider(
+                        "DingtalkAitable scheduling".to_owned(),
+                    ));
+                }
                 self.aitable_provider
                     .update_board(&project, task_id, input)
                     .await

@@ -220,8 +220,8 @@ function DraggableUndatedIssue({
       title={
         enabled
           ? locale === "zh-CN"
-            ? `${issue.title}\n拖到上方日期设置截止时间`
-            : `${issue.title}\nDrag onto a date above to set the due date`
+            ? `${issue.title}\n拖到上方日期设置开始和结束时间`
+            : `${issue.title}\nDrag onto a date above to set the start and end dates`
           : issue.title
       }
       {...listeners}

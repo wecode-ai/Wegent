@@ -51,10 +51,14 @@ export function writePersonalScheduleViewOptions(
   options: ScheduleViewOptions | null,
 ) {
   if (!key) return;
-  if (options) {
-    storage.setItem(key, JSON.stringify(options));
-  } else {
-    storage.removeItem(key);
+  try {
+    if (options) {
+      storage.setItem(key, JSON.stringify(options));
+    } else {
+      storage.removeItem(key);
+    }
+  } catch {
+    // Keep the current in-memory options when browser storage is unavailable.
   }
 }
 

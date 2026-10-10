@@ -95,6 +95,7 @@ from app.services.loop_items.access import (
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
+from app.utils.schedule_time import normalize_schedule_datetime
 from shared.telemetry.decorators import trace_sync
 
 TASK_AI_STATE_KEY = "ai_state"
@@ -1513,7 +1514,8 @@ class LoopItemService:
         if (
             effective_start_at is not None
             and effective_due_at is not None
-            and effective_start_at > effective_due_at
+            and normalize_schedule_datetime(effective_start_at)
+            > normalize_schedule_datetime(effective_due_at)
         ):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,

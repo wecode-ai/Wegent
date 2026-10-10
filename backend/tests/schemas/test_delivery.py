@@ -4,7 +4,7 @@
 
 """Tests for delivery API schema normalization."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import event
@@ -108,6 +108,16 @@ def test_loop_item_create_rejects_an_inverted_schedule_range() -> None:
             start_at=datetime(2026, 10, 12),
             due_at=datetime(2026, 10, 11),
         )
+
+
+def test_loop_item_create_compares_mixed_timezone_schedule_values() -> None:
+    value = LoopItemCreate(
+        title="Timezone schedule",
+        start_at=datetime(2026, 10, 11, 8, tzinfo=timezone(timedelta(hours=8))),
+        due_at=datetime(2026, 10, 11, 1),
+    )
+
+    assert value.start_at is not None
 
 
 @pytest.mark.parametrize(

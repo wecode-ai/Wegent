@@ -47,6 +47,7 @@ import {
   IssueDetailStatusSelect,
   IssueStatusHistoryList,
   issueExecutionElapsedMinutes,
+  isScheduleRangeInvalid,
   isExecutionActive as isTaskExecutionActive,
   Tooltip,
   issueAssigneeTarget,
@@ -904,9 +905,7 @@ export function TodoEditor(props: TodoEditorProps) {
     setIssueDraftField("startDate", value);
     if (readFirst) setEditingContent(true);
   };
-  const scheduleRangeInvalid = Boolean(
-    startDate && dueDate && startDate > dueDate,
-  );
+  const scheduleRangeInvalid = isScheduleRangeInvalid(startDate, dueDate);
   const setAssigneeTarget = (value: SetStateAction<IssueAssigneeTarget>) =>
     setIssueDraftField("assigneeTarget", value);
   const setTags = (value: SetStateAction<string[]>) => {

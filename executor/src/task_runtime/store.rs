@@ -4296,12 +4296,9 @@ fn validate_schedule_range(
     start_at: Option<&str>,
     due_at: Option<&str>,
 ) -> Result<(), TaskRuntimeError> {
-    let (Some(start_at), Some(due_at)) = (start_at, due_at) else {
-        return Ok(());
-    };
-    let start = schedule_timestamp(start_at)?;
-    let due = schedule_timestamp(due_at)?;
-    if start > due {
+    let start = start_at.map(schedule_timestamp).transpose()?;
+    let due = due_at.map(schedule_timestamp).transpose()?;
+    if start.zip(due).is_some_and(|(start, due)| start > due) {
         return Err(TaskRuntimeError::Invalid(
             "start_at cannot be after due_at".to_owned(),
         ));
@@ -5242,6 +5239,13 @@ mod tests {
 
     use super::*;
     use crate::task_runtime::{BinaryInput, DeliveryCreate};
+
+    #[test]
+    fn schedule_validation_checks_each_supplied_date() {
+        assert!(validate_schedule_range(Some("not-a-date"), None).is_err());
+        assert!(validate_schedule_range(None, Some("not-a-date")).is_err());
+        assert!(validate_schedule_range(Some("2026-10-11"), None).is_ok());
+    }
 
     fn chat_agent_store() -> (TempDir, LocalTaskStore, LoopItem) {
         let directory = tempfile::tempdir().unwrap();

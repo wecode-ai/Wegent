@@ -1355,6 +1355,21 @@ async fn app_ipc_encrypts_provider_credentials_and_masks_project_responses() {
         .is_none());
     assert!(!project.to_string().contains("github-secret"));
 
+    let schedule_error = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project["id"],
+                "todo": {
+                    "title": "Scheduled external task",
+                    "start_at": "2026-10-11T00:00:00Z"
+                }
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(schedule_error.code, "provider_unavailable");
+
     let connection =
         rusqlite::Connection::open(executor_home.path().join("data/tasks.sqlite")).unwrap();
     let metadata: String = connection

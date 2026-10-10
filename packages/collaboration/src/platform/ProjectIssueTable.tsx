@@ -245,7 +245,7 @@ export function ProjectIssueTable({
   const selectableVisibleIssues = visibleIssues.filter((issue) =>
     canEditCollaborationIssue(issue),
   );
-  const selectedIssues = issues.filter((issue) =>
+  const selectedIssues = visibleIssues.filter((issue) =>
     selectedIssueIds.has(issue.id),
   );
   const archivableSelectedIssues = selectedIssues.filter((issue) =>

@@ -45,4 +45,26 @@ describe("project schedule personal view options", () => {
 
     expect(readPersonalScheduleViewOptions(storage, "schedule-key")).toBeNull();
   });
+
+  it("keeps working when browser storage rejects writes", () => {
+    const storage = {
+      setItem: vi.fn(() => {
+        throw new DOMException("Storage is disabled");
+      }),
+      removeItem: vi.fn(() => {
+        throw new DOMException("Storage is disabled");
+      }),
+    };
+
+    expect(() =>
+      writePersonalScheduleViewOptions(
+        storage,
+        "schedule-key",
+        defaultScheduleViewOptions,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      writePersonalScheduleViewOptions(storage, "schedule-key", null),
+    ).not.toThrow();
+  });
 });
