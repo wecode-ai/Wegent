@@ -298,7 +298,7 @@ app.on('open-url', (event, url) => {
   mainWindow?.focus()
 })
 
-if (app.isPackaged && !process.env.WEWORK_E2E_CONTROL_URL) {
+if (packagedApplication && !pluginDevelopmentInstance && !process.env.WEWORK_E2E_CONTROL_URL) {
   app.setAsDefaultProtocolClient('wework')
 }
 const pendingWorkspaceOpenRequests: LocalWorkspaceOpenRequest[] = startupWorkspaceOpenRequest
