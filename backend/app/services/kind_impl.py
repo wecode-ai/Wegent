@@ -331,6 +331,12 @@ class TeamKindService(KindBaseService):
         unreachable from any UI. Only Bots owned by the same user and living in
         the same namespace as the Team are removed, and only when no other
         active Team still references them.
+
+        Known limitation: for group namespaces, ``Kind.user_id`` is the
+        creator rather than the namespace owner, so a Bot created by another
+        group member is never cleaned up here, even when no other Team
+        references it. This is intentional: leaving such Bots untouched is the
+        safe fallback.
         """
         members = ((db_resource.json or {}).get("spec") or {}).get("members") or []
         for member in members:
@@ -388,7 +394,13 @@ class TeamKindService(KindBaseService):
     def _is_bot_referenced_by_other_teams(
         db: Session, *, bot_name: str, bot_namespace: str, exclude_team_id: int
     ) -> bool:
-        """Check whether any other active Team references the Bot."""
+        """Check whether any other active Team references the Bot.
+
+        The scan cannot be narrowed by ``Kind.namespace``: a Team in any
+        namespace may reference this Bot through an explicit cross-namespace
+        ``botRef``. Results are streamed to keep memory bounded on large
+        installations.
+        """
         other_teams = (
             db.query(Kind)
             .filter(
@@ -396,7 +408,7 @@ class TeamKindService(KindBaseService):
                 Kind.is_active == True,
                 Kind.id != exclude_team_id,
             )
-            .all()
+            .yield_per(100)
         )
         for other in other_teams:
             members = ((other.json or {}).get("spec") or {}).get("members") or []
