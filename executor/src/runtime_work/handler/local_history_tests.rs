@@ -91,11 +91,16 @@ fn claude_missing_request_ids_are_assigned_before_recording_messages() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn named_home_transcript_refresh_does_not_acquire_a_writer() {
+#[test]
+fn named_home_transcript_refresh_does_not_acquire_a_writer() {
     use std::os::unix::fs::PermissionsExt;
 
     let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
     let root = tempfile::tempdir().unwrap();
     let _env: Vec<_> = [
         "HOME",
@@ -158,4 +163,5 @@ done
         .iter()
         .any(|call| call["method"] == "thread/turns/list"));
     assert!(!calls.iter().any(|call| call["method"] == "thread/resume"));
+        });
 }
