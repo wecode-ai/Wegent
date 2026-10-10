@@ -17,7 +17,7 @@ PR #3763 at `f124f3d2e` failed desktop Core shards 12 and 15:
   the unchanged route issues no new focus request, and the view deduplicates by
   comment ID indefinitely.
 
-Each comment navigation receives an internal `commentFocusKey` through the
+Each comment navigation receives an internal `focusRequest` through the
 existing project route. Tab matching ignores that request identifier to reuse
 the existing tab. Each request scrolls and highlights once; background message
 updates do not rehighlight. A rapid repeat ends the old animation and starts a
@@ -86,3 +86,21 @@ the human explicitly starts work. Repeated assignment without unassignment stays
 idempotent; version conflicts preserve assignments; workflow-step assignments
 are not removed. Existing review records, desktop E2E assertions and timeouts
 remain unchanged.
+
+## Main-branch merge regression on 2026-10-10
+
+Keep main's inline Issue title/description editing, attachment previews and
+personal-task workspace selection alongside human processing, AI drafts, tag
+editing and outside-click dismissal. Ordinary personal tasks do not inherit an
+agent's project environment; human AI assistance still uses the latest saved
+project device/directory and human assignment binding. Comment notifications
+use the same internal `focusRequest` parameter throughout navigation. Timestamp
+normalization uses the configurable database timezone without shifting SQLite
+or already timezone-aware values twice.
+
+Project creation/view switching and member, bot and group assignment component
+tests are separate scenarios, each establishing its own prerequisites and
+retaining the original assertions without extra timeouts or retries. Verify
+shared components, desktop editors/drawers/notifications, Web details and
+database timestamps after merging. Focused unit tests and type checks are not
+real remote-device or desktop E2E acceptance.

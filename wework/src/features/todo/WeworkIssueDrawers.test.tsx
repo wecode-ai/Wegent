@@ -332,7 +332,7 @@ describe('Wework Issue conversation drawers', () => {
     )
   })
 
-  it('opens an editable Issue without the read-first content lock', async () => {
+  it('opens an Issue in read-first mode', async () => {
     render(<Project />)
 
     await userEvent.click(screen.getByText('Open Issue'))
@@ -341,7 +341,7 @@ describe('Wework Issue conversation drawers', () => {
       '归档任务'
     )
 
-    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-read-first', 'false')
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-read-first', 'true')
   })
 
   it('keeps the assignee directory scoped to the current project', async () => {
@@ -428,7 +428,7 @@ describe('Wework Issue conversation drawers', () => {
     )
   })
 
-  it('uses the freshly initialized project instead of the stale host project', async () => {
+  it('keeps personal tasks independent of a freshly initialized agent environment', async () => {
     taskBindings = [
       {
         id: 'binding-existing',
@@ -457,14 +457,8 @@ describe('Wework Issue conversation drawers', () => {
     await userEvent.click(screen.getByText('Open Issue'))
     await userEvent.click(screen.getByRole('button', { name: 'Add task' }))
 
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-device-id',
-      'shared-runtime-device'
-    )
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-workspace-path',
-      '/srv/collaboration/fresh-environment'
-    )
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-device-id')
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-workspace-path')
   })
 
   it('can start the first task without an existing task binding', async () => {
@@ -541,6 +535,16 @@ describe('Wework Issue conversation drawers', () => {
         }}
       />
     )
+    latestExecutionEnvironment = {
+      repositories: [],
+      setup_steps: [],
+      devices: {
+        'shared-runtime-device': {
+          status: 'ready',
+          workspace_path: '/srv/collaboration/fresh-environment',
+        },
+      },
+    }
     const user = userEvent.setup()
     await user.click(screen.getByText('Save execution environment'))
     await user.click(screen.getByText('Open Issue'))
@@ -549,6 +553,10 @@ describe('Wework Issue conversation drawers', () => {
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
       'data-device-id',
       'shared-runtime-device'
+    )
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-workspace-path',
+      '/srv/collaboration/fresh-environment'
     )
     expect(JSON.parse(screen.getByTestId('ai-chat-modal').getAttribute('data-origin')!)).toEqual({
       type: 'issue_dispatch',

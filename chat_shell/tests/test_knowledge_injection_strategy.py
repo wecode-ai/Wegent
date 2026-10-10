@@ -408,12 +408,44 @@ class TestKnowledgeBaseTool:
         assert runtime_context["context_buffer_ratio"] == tool.context_buffer_ratio
         persistence_context = payload["persistence_context"]
         assert persistence_context["user_subtask_id"] == 123
-        assert persistence_context["user_id"] == 456
-        assert persistence_context["restricted_mode"] is False
+        assert persistence_context == {"user_subtask_id": 123}
+        assert payload["user_id"] == 456
+        assert payload["restricted_mode"] is False
         assert payload["mediation_context"] == {
             "current_model_name": "my-model",
             "current_model_namespace": "default",
         }
+
+    @pytest.mark.asyncio
+    async def test_retrieve_http_sends_restricted_mode_without_persistence_context(
+        self,
+    ):
+        """Restricted mode must travel on its own, without persistence metadata."""
+        tool = KnowledgeBaseTool(
+            knowledge_base_ids=[1],
+            tool_access_mode="restricted_search_only",
+        )
+        tool.user_subtask_id = None
+        tool.user_id = 456
+
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {
+            "mode": "rag_retrieval",
+            "records": [],
+            "total": 0,
+        }
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_async_client = AsyncMock()
+        mock_async_client.__aenter__.return_value = mock_client
+        mock_async_client.__aexit__.return_value = None
+
+        with patch("httpx.AsyncClient", return_value=mock_async_client):
+            await tool._retrieve_with_strategy_via_http("test query", 5)
+
+        payload = mock_client.post.await_args.kwargs["json"]
+        assert payload["restricted_mode"] is True
+        assert "persistence_context" not in payload
 
     @pytest.mark.asyncio
     async def test_format_direct_injection_result(self):

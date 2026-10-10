@@ -70,7 +70,7 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
 
 export function weworkDestinationRoute(
   destination: WeworkDestination,
-  commentFocusKey?: string
+  focusRequest?: string
 ): string {
   if (destination.kind === 'boards') return '/todo'
   if (destination.kind === 'task') {
@@ -80,7 +80,7 @@ export function weworkDestinationRoute(
   if (destination.itemId) params.set('itemId', destination.itemId)
   if (destination.commentId) {
     params.set('commentId', destination.commentId)
-    if (commentFocusKey) params.set('commentFocusKey', commentFocusKey)
+    if (focusRequest) params.set('focusRequest', focusRequest)
   }
   return `/todo?${params}`
 }

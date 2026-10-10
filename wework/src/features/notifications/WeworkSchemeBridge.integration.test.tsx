@@ -82,11 +82,11 @@ test('repeated comment notifications update real tab routing without duplicating
     expect(params.get('projectId')).toBe('12')
     expect(params.get('itemId')).toBe('WEG-1')
     expect(params.get('commentId')).toBe('comment-1')
-    expect(params.get('commentFocusKey')).toBeTruthy()
+    expect(params.get('focusRequest')).toBeTruthy()
     expect(screen.getByTestId('active-route')).toHaveTextContent(
-      `commentFocusKey=${params.get('commentFocusKey')}`
+      `focusRequest=${params.get('focusRequest')}`
     )
-    return params.get('commentFocusKey')
+    return params.get('focusRequest')
   }
   const first = open()
   const second = open()

@@ -321,7 +321,6 @@ function BrowserIssueDetail({
             workspacePanelFill
             readFirst
             showPanelControls
-            showFullscreenControl={false}
             showAssignee
             canAssign={permissions.canAssign}
             currentAssignment={currentAssignment}

@@ -128,7 +128,7 @@ describe('Wework scheme bridge', () => {
         id: 'target',
         kind: 'board',
         title: 'Target',
-        contentRoute: `${contentRoute}&commentFocusKey=previous-request`,
+        contentRoute: `${contentRoute}&focusRequest=previous-request`,
         fixed: false,
       },
     ]
@@ -150,10 +150,10 @@ describe('Wework scheme bridge', () => {
     const requests = workspaceTabs.selectTab.mock.calls.map(([tabId, updates]) => {
       expect(tabId).toBe('target')
       const route = new URL(updates.contentRoute, 'https://local')
-      const key = route.searchParams.get('commentFocusKey')
+      const key = route.searchParams.get('focusRequest')
       expect(key).toBeTruthy()
       expect(key).not.toBe('previous-request')
-      route.searchParams.delete('commentFocusKey')
+      route.searchParams.delete('focusRequest')
       expect(`${route.pathname}${route.search}`).toBe(contentRoute)
       return key
     })

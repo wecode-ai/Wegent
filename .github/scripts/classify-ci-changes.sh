@@ -99,6 +99,11 @@ classify_path() {
       ;;
     knowledge_engine/*)
       changed[knowledge_engine]=true
+      changed[platform_e2e]=true
+      ;;
+    knowledge_runtime/*)
+      changed[knowledge_engine]=true
+      changed[platform_e2e]=true
       ;;
     frontend/*)
       changed[frontend]=true

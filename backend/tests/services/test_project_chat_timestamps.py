@@ -1,10 +1,11 @@
 """Project chat timestamps must identify the same instant in every transport."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
 
+from app.db import timezone as database_timezone
 from app.models.project_chat_message import ProjectChatMessage
 from app.services.project_chat.service import project_chat_service
 
@@ -66,3 +67,20 @@ def test_aware_message_timestamp_is_not_shifted_again() -> None:
 
     assert view.created_at == "2026-10-08T12:27:23+00:00"
     assert view.updated_at == "2026-10-08T12:34:54+00:00"
+
+
+@pytest.mark.parametrize("offset_minutes", [0, 330, -330])
+def test_mysql_message_timestamp_uses_configured_database_timezone(
+    monkeypatch: pytest.MonkeyPatch, offset_minutes: int
+) -> None:
+    configured_timezone = timezone(timedelta(minutes=offset_minutes))
+    monkeypatch.setattr(
+        database_timezone, "DATABASE_DATETIME_TIMEZONE", configured_timezone
+    )
+    db = MagicMock()
+    db.get_bind.return_value.dialect.name = "mysql"
+    timestamp = datetime(2026, 10, 8, 20, 27, 23)
+
+    actual = database_timezone.database_datetime_as_utc(db, timestamp)
+
+    assert actual == timestamp.replace(tzinfo=configured_timezone).astimezone(UTC)

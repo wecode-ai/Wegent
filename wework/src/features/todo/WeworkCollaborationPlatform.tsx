@@ -101,6 +101,10 @@ import { TodoEditor } from './TodoEditor'
 import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
 import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
 import {
+  loadProjectSpaceCodeWorkspacePreference,
+  saveProjectSpaceCodeWorkspacePreference,
+} from './projectSpaceCodeWorkspacePreference'
+import {
   projectSpaceForRuntimeTask,
   publishProjectSpaceTaskBindingChanged,
   reconcileProjectSpaceTaskBindings,
@@ -698,16 +702,19 @@ export function WeworkSharedProject({
         ? issue.human_work.ai_task_binding
         : null
       const currentProject = latestProjectRef.current
-      const environmentTaskRequest = projectExecutionEnvironmentTaskRequest(currentProject)
+      const environmentTaskRequest = humanWorkBinding
+        ? projectExecutionEnvironmentTaskRequest(currentProject)
+        : null
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
         dispatch,
         humanWorkBinding,
         taskRequest: {
-          ...environmentTaskRequest,
+          schemaVersion: 2,
           runtime: 'codex',
           message: '',
+          ...environmentTaskRequest,
           ...(dispatch
             ? {
                 message: issueDispatchPersonalTaskInput(dispatch),
@@ -811,6 +818,19 @@ export function WeworkSharedProject({
     }
   )
 
+  const codeWorkspacePreference = loadProjectSpaceCodeWorkspacePreference(userId, {
+    projectStore: project.project_store,
+    projectId: String(project.id),
+  })
+  const issueLocalProjectId = taskComposer
+    ? (loopItemLocalProject(taskComposer.issue as unknown as CloudLoopItem)?.id ?? null)
+    : null
+  const initialLocalProjectId =
+    issueLocalProjectId ?? codeWorkspacePreference?.localProjectId ?? null
+  const initialDeviceWorkspaceId =
+    initialLocalProjectId === codeWorkspacePreference?.localProjectId
+      ? (codeWorkspacePreference?.deviceWorkspaceId ?? null)
+      : null
   const conversationPanel =
     taskComposer && runtimePort ? (
       <AiChatModal
@@ -818,9 +838,8 @@ export function WeworkSharedProject({
         project={project as unknown as CloudProject}
         localProjects={localProjects}
         task={taskComposer.issue as unknown as CloudLoopItem}
-        initialLocalProjectId={
-          loopItemLocalProject(taskComposer.issue as unknown as CloudLoopItem)?.id ?? null
-        }
+        initialLocalProjectId={initialLocalProjectId}
+        initialDeviceWorkspaceId={initialDeviceWorkspaceId}
         initialTaskRequest={taskComposer.taskRequest}
         taskTitle={taskComposer.dispatch?.taskTitle}
         open
@@ -882,7 +901,20 @@ export function WeworkSharedProject({
             })
           }
         }}
-        onTaskCreated={async address => {
+        onTaskCreated={async (address, localProject, deviceWorkspaceId) => {
+          if (localProject) {
+            saveProjectSpaceCodeWorkspacePreference(
+              userId,
+              {
+                projectStore: project.project_store,
+                projectId: String(project.id),
+              },
+              {
+                localProjectId: localProject.id,
+                deviceWorkspaceId,
+              }
+            )
+          }
           const statusUpdateError = await updateIssueWhenPersonalTaskStarts(
             scopedApi.issues,
             taskComposer.issue.id
@@ -952,13 +984,15 @@ export function WeworkSharedProject({
                   key={issue.id}
                   mode="edit"
                   focusedCommentId={focusedItemId === issue.id ? focusedCommentId : null}
-                  focusedCommentRequestKey={focusedCommentRequestKey}
+                  focusedCommentRequestKey={
+                    focusedItemId === issue.id ? focusedCommentRequestKey : null
+                  }
                   sharedApi={issueApi}
                   api={services.deliveryApi}
                   presentation="workspace-panel"
                   workspacePanelFill
+                  readFirst
                   showPanelControls
-                  showFullscreenControl={false}
                   item={issue as unknown as CloudLoopItem}
                   project={editorProject}
                   allItems={allIssues as unknown as CloudLoopItem[]}

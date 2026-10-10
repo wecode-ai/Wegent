@@ -108,6 +108,7 @@ interface TaskActivityViewProps {
   agents?: CollaborationAgent[]
   /** Opens the comment list on this comment and flashes it once. */
   focusedCommentId?: string | null
+  /** Changes for each navigation request, including reopening the same comment. */
   focusedCommentRequestKey?: string | null
 }
 

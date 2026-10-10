@@ -14,7 +14,7 @@ import { parseWeworkScheme, weworkDestinationRoute } from './scheme'
 function commentTargetRoute(route: string): string {
   const [path, search] = route.split('?')
   const params = new URLSearchParams(search)
-  params.delete('commentFocusKey')
+  params.delete('focusRequest')
   return `${path}${params.size ? `?${params}` : ''}`
 }
 
@@ -45,6 +45,7 @@ export function WeworkSchemeBridge() {
   const tabs = useWorkspaceTabs()
   const connection = useContext(CloudConnectionContext)
   const connectionRef = useRef(connection)
+  const focusRequestRef = useRef(0)
   const pendingUrls = useRef(new Set<string>())
   const tabsRef = useRef(tabs)
   useLayoutEffect(() => {
@@ -67,7 +68,9 @@ export function WeworkSchemeBridge() {
       destination.kind === 'task' ? 'task' : 'board',
       weworkDestinationRoute(
         destination,
-        destination.kind === 'board' && destination.commentId ? crypto.randomUUID() : undefined
+        destination.kind === 'board' && destination.commentId
+          ? `${Date.now()}-${++focusRequestRef.current}`
+          : undefined
       )
     )
     return true

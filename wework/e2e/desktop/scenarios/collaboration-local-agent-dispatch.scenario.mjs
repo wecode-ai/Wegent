@@ -112,11 +112,7 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     'click',
     `[data-testid="cloud-todo-detail-assignee-option-agent:${agentId}"]`
   )
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="cloud-todo-state-summary"] [data-testid="cloud-todo-save"]'),
-    { text: '保存分配' }
-  )
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), { text: '保存分配' })
   assert.equal(
     Number(await control.command('getElementCount', scoped('[data-testid="cloud-todo-save"]'))),
     1,
@@ -183,6 +179,7 @@ async function waitForModelRequestCount(requests, expected, timeoutMs) {
 }
 
 async function renameIssueWhileRunning(control, timeoutMs) {
+  await control.command('click', scoped('[data-testid="cloud-todo-detail-title"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-title"]'), {
     value: RENAMED_ISSUE,
   })
@@ -190,7 +187,7 @@ async function renameIssueWhileRunning(control, timeoutMs) {
     timeoutMs,
   })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'), {
-    value: RENAMED_ISSUE,
+    text: RENAMED_ISSUE,
     timeoutMs,
   })
 }
@@ -367,6 +364,11 @@ export async function createDesktopScenario({
       const activityHeader = `${activityMessage} header`
       const activityBody = `${activityMessage} .task-detail-thread-message-body`
       const openTask = `[data-testid="cloud-task-activity-open-task-${activityId}"]`
+      await control.command('scrollIntoView', openTask)
+      await control.command('waitFor', openTask, {
+        visible: true,
+        timeoutMs: modelResponseTimeoutMs,
+      })
       assert.equal(
         (await control.command('getText', activityHeader)).includes(ASSIGNED_TASK),
         false,
@@ -386,11 +388,12 @@ export async function createDesktopScenario({
         'cloud-task-activity-execution-badge-',
         modelResponseTimeoutMs
       )
-      // Issue projection and terminal transcript hydration complete independently.
-      await control.command('waitFor', `[data-testid="${executionBadgeTestId}"]`, {
-        text: '已完成',
-        timeoutMs: uiTimeoutMs,
-      })
+      // Wait for both the execution state and hydrated completion label.
+      await control.command(
+        'waitFor',
+        scoped(`[data-testid="${executionBadgeTestId}"][data-status="succeeded"]`),
+        { text: '已完成', timeoutMs: modelResponseTimeoutMs }
+      )
       const executionBadge = await control.command(
         'getText',
         `[data-testid="${executionBadgeTestId}"]`

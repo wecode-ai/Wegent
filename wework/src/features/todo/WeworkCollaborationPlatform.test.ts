@@ -27,6 +27,10 @@ import {
 } from './WeworkCollaborationPlatform'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
 import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
+import {
+  loadProjectSpaceCodeWorkspacePreference,
+  saveProjectSpaceCodeWorkspacePreference,
+} from './projectSpaceCodeWorkspacePreference'
 
 const renderedProjectApis = vi.hoisted(() => new Map<string, SharedWorkspaceApi>())
 const renderedProjectControls = vi.hoisted(
@@ -382,6 +386,7 @@ afterEach(() => {
   vi.useRealTimers()
   renderedProjectControls.clear()
   renderedProjectApis.clear()
+  localStorage.clear()
 })
 
 function createLocalDeliveryApi() {
@@ -1448,8 +1453,134 @@ describe('Wework collaboration workspace API', () => {
     })
   })
 
+  it('does not use an agent environment for a personal task', async () => {
+    const project = {
+      id: 'local-environment-project',
+      name: 'Local environment project',
+      project_store: 'local',
+    }
+    saveProjectSpaceCodeWorkspacePreference(
+      1,
+      { projectStore: 'local', projectId: project.id },
+      { localProjectId: 91, deviceWorkspaceId: 201 }
+    )
+    render(
+      createElement(WeworkSharedProject, {
+        api: {
+          projects: {
+            list: vi.fn().mockResolvedValue([project]),
+          },
+          issues: {},
+        } as unknown as SharedWorkspaceApi,
+        localProjects: [
+          { id: 91, name: 'Saved project', tasks: [] },
+          { id: 92, name: 'Changed project', tasks: [] },
+        ],
+        locale: 'zh-CN',
+        location: {
+          platformView: 'project',
+          workspaceId: 'wework-local-workspace',
+          workspaceView: 'projects',
+          projectId: project.id,
+          projectView: 'board',
+          issueId: 'ISSUE-ENV',
+        },
+        project: project as never,
+        runtimePort: {
+          bindTask: vi.fn(),
+          unbindTask: vi.fn(),
+        },
+        services: {} as never,
+        setLocation: vi.fn(),
+        userId: 1,
+        workspace: {
+          id: 'wework-local-workspace',
+          name: 'Local workspace',
+        } as never,
+      })
+    )
+    const updatedProject = {
+      ...project,
+      execution_environment: {
+        workspace_policy: 'project',
+        repositories: [],
+        setup_steps: [],
+        devices: {
+          'prepared-device': {
+            status: 'ready',
+            workspace_path: '/workspace/prepared-project',
+          },
+        },
+      },
+    }
+    const controls = renderedProjectControls.get(project.id)
+    const issue = {
+      id: 'ISSUE-ENV',
+      title: 'Use the prepared environment',
+      sequence_number: 1,
+    }
+
+    expect(controls?.onProjectChange).toBeTypeOf('function')
+    expect(controls?.onCreateTask).toBeTypeOf('function')
+    expect(controls?.renderIssueDetail).toBeTypeOf('function')
+    act(() => controls?.onProjectChange?.(updatedProject))
+    await act(async () => {
+      await controls?.onCreateTask?.(updatedProject, issue)
+    })
+    const detail = renderedProjectControls.get(project.id)?.renderIssueDetail?.({
+      api: { issues: {} },
+      issue,
+      allIssues: [issue],
+      assignments: [],
+      taskBindings: [],
+      onChange: vi.fn(),
+      onClose: vi.fn(),
+      onCreateTask: vi.fn(),
+      onDelete: vi.fn(),
+    }) as {
+      props: {
+        conversation: {
+          props: {
+            initialDeviceWorkspaceId?: number | null
+            initialLocalProjectId?: number | null
+            initialTaskRequest?: unknown
+            onTaskCreated?: (
+              address: { deviceId: string; taskId: string },
+              localProject: { id: number; name: string; tasks: [] },
+              deviceWorkspaceId: number | null
+            ) => Promise<void>
+          }
+        } | null
+      }
+    }
+
+    expect(detail.props.conversation?.props.initialLocalProjectId).toBe(91)
+    expect(detail.props.conversation?.props.initialDeviceWorkspaceId).toBe(201)
+    expect(detail.props.conversation?.props.initialTaskRequest).toMatchObject({
+      runtime: 'codex',
+      message: '',
+    })
+    expect(detail.props.conversation?.props.initialTaskRequest).not.toHaveProperty('deviceId')
+    expect(detail.props.conversation?.props.initialTaskRequest).not.toHaveProperty('workspacePath')
+
+    await detail.props.conversation?.props.onTaskCreated?.(
+      { deviceId: 'local-device', taskId: 'created-task' },
+      { id: 92, name: 'Changed project', tasks: [] },
+      202
+    )
+    expect(
+      loadProjectSpaceCodeWorkspacePreference(1, {
+        projectStore: 'local',
+        projectId: project.id,
+      })
+    ).toEqual({
+      localProjectId: 92,
+      deviceWorkspaceId: 202,
+    })
+  })
+
   it.each([false, true])(
-    'uses the latest project environment and Issue reference (human work: %s)',
+    'uses the project environment only for human AI assistance and retains the Issue reference (human work: %s)',
     async humanWork => {
       const project = {
         id: 'local-environment-project',
@@ -1547,10 +1678,17 @@ describe('Wework collaboration workspace API', () => {
         }
       }
 
-      expect(detail.props.conversation?.props.initialTaskRequest).toMatchObject({
-        deviceId: 'prepared-device',
-        workspacePath: '/workspace/prepared-project',
-      })
+      if (humanWork) {
+        expect(detail.props.conversation?.props.initialTaskRequest).toMatchObject({
+          deviceId: 'prepared-device',
+          workspacePath: '/workspace/prepared-project',
+        })
+      } else {
+        expect(detail.props.conversation?.props.initialTaskRequest).not.toHaveProperty('deviceId')
+        expect(detail.props.conversation?.props.initialTaskRequest).not.toHaveProperty(
+          'workspacePath'
+        )
+      }
       expect(detail.props.conversation?.props.initialTaskInput).toContain(
         '[$#1 · Use the prepared environment](wework-issue://local-environment-project/ISSUE-ENV)'
       )

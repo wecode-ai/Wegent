@@ -956,6 +956,7 @@ export function useWorkbenchRuntimeMessaging({
         preserveAttachments?: boolean
         launchStartedAt?: number
         taskCreateRequest?: RuntimeTaskCreateRequest | null
+        project?: ProjectWithTasks | null
       }
     ): Promise<RuntimeTaskAddress | false> => {
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
@@ -1106,6 +1107,7 @@ export function useWorkbenchRuntimeMessaging({
 
       if (requestedManagedWorkspace && !hasDirectManagedWorkspaceTarget) {
         const worktreeProject =
+          (options?.project?.id === projectId ? options.project : null) ??
           state.projects.find(project => project.id === projectId) ??
           (state.currentProject?.id === projectId ? state.currentProject : null)
         const worktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
@@ -1937,6 +1939,7 @@ export function useWorkbenchRuntimeMessaging({
         runtimeExecutablePath: taskRequest?.runtimeExecutablePath,
         runtimePermissionMode: taskRequest?.runtimePermissionMode,
         taskCreateRequest,
+        project: options.project,
         onError: options.onError,
         prepareRuntimeTask: options.prepareRuntimeTask,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,

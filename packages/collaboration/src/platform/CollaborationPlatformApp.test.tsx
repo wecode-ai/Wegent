@@ -713,6 +713,26 @@ async function chooseBlankProjectCreation(
   await click(portalByTestId(`${triggerTestId}-blank`));
 }
 
+async function renderIssueWithCollaborationGroup() {
+  const { api } = createApi({ initialGroups: [collaborationGroup] });
+  api.projects.listCollaborationGroups = vi.fn(async () => [
+    collaborationGroup,
+  ]);
+  await render(
+    <PlatformHarness
+      api={api}
+      start={{
+        ...initialLocation,
+        workspaceId: workspace.id,
+        workspaceView: "projects",
+        projectId: project.id,
+        issueId: issue.id,
+      }}
+    />,
+  );
+  return api;
+}
+
 async function change(
   element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
   value: string,
@@ -4648,7 +4668,13 @@ describe("CollaborationPlatformApp real component flow", () => {
       issue.id,
       "请先确认接口契约",
     );
+  });
 
+  it("mentions and assigns a project member with collaboration groups listed first", async () => {
+    const api = await renderIssueWithCollaborationGroup();
+    const comment = byTestId(
+      "collaboration-issue-comment",
+    ) as HTMLTextAreaElement;
     await change(comment, "@");
     await click(
       byTestId(`collaboration-issue-mention-member-${member.user_id}`),
@@ -4683,7 +4709,13 @@ describe("CollaborationPlatformApp real component flow", () => {
       assigneeId: String(member.user_id),
       notifyAssignee: true,
     });
+  });
 
+  it("mentions and assigns a project agent", async () => {
+    const api = await renderIssueWithCollaborationGroup();
+    const comment = byTestId(
+      "collaboration-issue-comment",
+    ) as HTMLTextAreaElement;
     await change(comment, "@");
     await click(byTestId(`collaboration-issue-mention-agent-${agent.id}`));
     await change(comment, `@${agent.name} 请开始实现`);
@@ -4702,7 +4734,10 @@ describe("CollaborationPlatformApp real component flow", () => {
       assigneeType: "agent",
       assigneeId: agent.id,
     });
+  });
 
+  it("assigns a collaboration group and displays its name", async () => {
+    const api = await renderIssueWithCollaborationGroup();
     await click(byTestId("cloud-todo-detail-assignee"));
     await click(
       portalByTestId(

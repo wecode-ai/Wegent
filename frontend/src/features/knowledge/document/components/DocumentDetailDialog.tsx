@@ -761,7 +761,7 @@ export function DocumentDetailDialog({
                           {document.updated_at && (
                             <span className="text-xs text-text-muted truncate">
                               {t('document.document.detail.contentUpdatedAt')}:{' '}
-                              {formatDateTime(parseUTCDate(document.updated_at)?.getTime())}
+                              {formatDateTime(new Date(document.updated_at).getTime())}
                             </span>
                           )}
                         </div>

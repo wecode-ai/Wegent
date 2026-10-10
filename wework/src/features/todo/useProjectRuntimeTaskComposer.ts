@@ -22,7 +22,8 @@ interface UseProjectRuntimeTaskComposerOptions {
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   onTaskCreated?: (
     address: RuntimeTaskAddress,
-    project: ProjectWithTasks | null
+    project: ProjectWithTasks | null,
+    deviceWorkspaceId: number | null
   ) => Promise<void> | void
 }
 
@@ -58,7 +59,7 @@ export function useProjectRuntimeTaskComposer({
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
       })
       if (address) {
-        await onTaskCreated?.(address, project)
+        await onTaskCreated?.(address, project, deviceWorkspaceId ?? null)
       }
       return address
     },
