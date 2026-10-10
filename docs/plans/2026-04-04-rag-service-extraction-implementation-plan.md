@@ -4,6 +4,14 @@ sidebar_position: 1
 
 # Knowledge Runtime Implementation Plan
 
+> **Status update (2026-10): local mode is removed.** The Backend-local RAG execution
+> path, `LocalRagGateway`, the local data plane, the `RAG_RUNTIME_MODE` switch, and the
+> fallback from a failed remote query to local execution are all deleted. Index, query and
+> delete now run only in `knowledge_runtime`, which is a required dependency of the Backend.
+> Reason: keep one implementation per behavior and remove the hidden "configured as remote,
+> actually executed in the Backend" path. Everything below is a historical record; the
+> local / remote switching steps no longer describe the current implementation.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Extract a reusable `knowledge_engine` execution kernel from Backend, make Backend and `knowledge_runtime` share it, and move real RAG index/query/delete execution behind stable remote contracts without changing Backend's control-plane ownership.

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from chat_shell.core.config import settings
 from chat_shell.tools.builtin.knowledge_listing import (
     KbHeadTool,
     KbLsTool,
@@ -16,6 +17,11 @@ from chat_shell.tools.builtin.knowledge_listing import (
     KnowledgeListDocumentsTool,
 )
 from shared.models.knowledge import KnowledgeBaseScope
+
+
+@pytest.fixture(autouse=True)
+def configure_internal_service_token(monkeypatch):
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
 
 
 class TestKbLsTool:
@@ -512,13 +518,12 @@ class TestKbHeadTool:
         assert args == ("http://backend/api/internal/rag/read-docs",)
         assert kwargs["json"] == {
             "document_ids": [101],
+            "user_id": 7,
             "offset": 12,
             "limit": 20,
             "knowledge_base_ids": [3, 4],
             "persistence_context": {
                 "user_subtask_id": 8,
-                "user_id": 7,
-                "restricted_mode": False,
             },
         }
         auth_header = kwargs["headers"]["Authorization"]
@@ -530,8 +535,8 @@ class TestKbHeadTool:
         assert data["documents"][0]["offset"] == 12
 
     @pytest.mark.asyncio
-    async def test_http_mode_skips_persistence_context_without_valid_user(self) -> None:
-        """Backend persistence metadata should be omitted when user identity is absent."""
+    async def test_http_mode_sends_identity_for_backend_validation(self) -> None:
+        """Backend must validate the reader identity even when persistence is requested."""
         tool = KbHeadTool(
             knowledge_base_ids=[3],
             user_id=0,
@@ -557,9 +562,11 @@ class TestKbHeadTool:
         payload = post.call_args.kwargs["json"]
         assert payload == {
             "document_ids": [101],
+            "user_id": 0,
             "offset": 0,
             "limit": 50,
             "knowledge_base_ids": [3],
+            "persistence_context": {"user_subtask_id": 8},
         }
 
     @pytest.mark.asyncio

@@ -76,5 +76,6 @@ export type {
 export * from './project-chat'
 
 export * from './runtime-ipc'
+export * from './runtime-transcript-transport'
 
 export * from './runtime-conversation-client'

@@ -154,6 +154,7 @@ describe('createWebSharedWorkspaceApi', () => {
           taskTitle: 'Task',
           backendTaskId: 99,
           modelSelection: { model: 'gpt' },
+          executionContext: null,
           linkedAt: '2026-09-10T00:00:00Z',
         },
       ],

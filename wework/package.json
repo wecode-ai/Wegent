@@ -103,6 +103,7 @@
     "clsx": "^2.1.1",
     "dequal": "2.0.3",
     "extract-zip": "2.0.1",
+    "highlight.js": "11.11.1",
     "html2canvas": "1.4.1",
     "i18next": "^26.2.0",
     "i18next-browser-languagedetector": "^8.2.1",

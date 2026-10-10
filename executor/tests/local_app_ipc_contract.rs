@@ -821,6 +821,31 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .unwrap_err();
     assert_eq!(conflict.code, "version_conflict");
 
+    let incomplete_archive = server
+        .dispatch(
+            "todos.archive",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(incomplete_archive.code, "bad_request");
+
+    let completed_child = server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": child["id"],
+                "todo": {
+                    "version": child["version"],
+                    "status": "completed"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(completed_child["status"], "completed");
+
     server
         .dispatch(
             "todos.archive",
@@ -833,6 +858,39 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .await
         .unwrap();
     assert!(todos.as_array().unwrap().is_empty());
+
+    let archived = server
+        .dispatch(
+            "todos.archived.list",
+            json!({"project_id": project_id, "limit": 20}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(archived["items"].as_array().unwrap().len(), 1);
+    assert_eq!(archived["items"][0]["id"], parent["id"]);
+    assert!(archived["items"][0]["archived_at"].is_string());
+
+    let restored = server
+        .dispatch(
+            "todos.restore",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored.as_array().unwrap().len(), 2);
+    let todos = server
+        .dispatch("todos.list", json!({"project_id": project_id}))
+        .await
+        .unwrap();
+    assert_eq!(todos.as_array().unwrap().len(), 2);
+
+    server
+        .dispatch(
+            "todos.archive",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap();
 
     let projects = server.dispatch("projects.list", json!({})).await.unwrap();
     let current_project = projects

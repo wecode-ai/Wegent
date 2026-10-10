@@ -65,7 +65,7 @@ function setup() {
   return { input, client, runtime };
 }
 describe("shared PC card reply dispatch", () => {
-  it("treats a persisted terminal execution as idle even while liveness is stale", () => {
+  it("uses live session state instead of a historical terminal turn", () => {
     expect(
       cardSessionActive(
         {
@@ -74,7 +74,7 @@ describe("shared PC card reply dispatch", () => {
         },
         () => true,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
   it("keeps a newly persisted active execution busy", () => {
     expect(
@@ -89,8 +89,19 @@ describe("shared PC card reply dispatch", () => {
   });
   it("continues the activity-owned session even when no runtime-work snapshot is available", async () => {
     const { input, client, runtime } = setup();
+    const sessionAddress = {
+      ...address,
+      workspacePath: "/workspace",
+      runtimeHandle: {
+        modelSelection: {
+          modelName: "bound-model",
+          modelType: "runtime",
+          options: { reasoning: "high" },
+        },
+      },
+    };
     expect(cardSessionAddress(input.card)).toEqual(address);
-    expect(await dispatchTaskCardReply(input)).toEqual({
+    expect(await dispatchTaskCardReply({ ...input, sessionAddress })).toEqual({
       ok: true,
       persisted: true,
     });
@@ -103,8 +114,9 @@ describe("shared PC card reply dispatch", () => {
     );
     expect(runtime.sendRuntimePaneMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        address: { deviceId: "device-1", taskId: "original-session" },
+        address: sessionAddress,
         message: "Continue",
+        queueIfBusy: true,
       }),
       expect.anything(),
     );
@@ -130,7 +142,7 @@ describe("shared PC card reply dispatch", () => {
     );
     expect(runtime.sendRuntimePaneMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        address: { deviceId: address.deviceId, taskId: address.taskId },
+        address,
         message: "Continue",
       }),
       expect.anything(),

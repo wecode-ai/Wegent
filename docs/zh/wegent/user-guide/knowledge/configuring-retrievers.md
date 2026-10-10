@@ -9,7 +9,7 @@ sidebar_position: 10
 ## 前置条件
 
 - 已安装并运行 Wegent 平台
-- 已启用 Elasticsearch 服务（可选，仅在使用 RAG 功能时需要）
+- 仅当检索器使用 Elasticsearch 存储时，才需要启用内置 Elasticsearch 服务（可选）：
   ```bash
   docker compose --profile rag up -d
   ```

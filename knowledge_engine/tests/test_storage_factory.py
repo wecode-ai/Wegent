@@ -2,32 +2,34 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from importlib import import_module
+
 import pytest
 
+from knowledge_engine.storage import factory
 from shared.models import RuntimeRetrieverConfig
 
 
-def test_create_storage_backend_from_runtime_config_uses_registered_backend(
+def test_create_storage_backend_from_runtime_config_builds_backend_config(
     monkeypatch,
 ) -> None:
-    from knowledge_engine.storage.factory import (
-        STORAGE_BACKEND_REGISTRY,
-        create_storage_backend_from_runtime_config,
-    )
-
     captured: dict[str, object] = {}
 
     class FakeBackend:
         def __init__(self, config):
             captured["config"] = config
 
-    monkeypatch.setitem(STORAGE_BACKEND_REGISTRY, "fake", FakeBackend)
+    monkeypatch.setattr(
+        factory,
+        "_load_backend_class",
+        lambda storage_type: FakeBackend,
+    )
 
-    backend = create_storage_backend_from_runtime_config(
+    backend = factory.create_storage_backend_from_runtime_config(
         RuntimeRetrieverConfig(
             name="retriever-a",
             storage_config={
-                "type": "fake",
+                "type": "qdrant",
                 "url": "http://vector-store:1234",
                 "username": "tester",
                 "apiKey": "secret",
@@ -48,31 +50,36 @@ def test_create_storage_backend_from_runtime_config_uses_registered_backend(
     }
 
 
-def test_get_storage_retrieval_methods_uses_registered_backends(monkeypatch) -> None:
-    from knowledge_engine.storage.factory import (
-        STORAGE_BACKEND_REGISTRY,
+def test_capability_registry_matches_backend_declarations() -> None:
+    from knowledge_engine.storage.capabilities import (
+        STORAGE_BACKEND_SPECS,
         get_all_storage_retrieval_methods,
         get_supported_retrieval_methods,
+        get_supported_storage_types,
     )
 
-    class FakeBackend:
-        @classmethod
-        def get_supported_retrieval_methods(cls):
-            return ["vector", "hybrid"]
+    assert get_supported_storage_types() == list(STORAGE_BACKEND_SPECS.keys())
 
-    monkeypatch.setitem(STORAGE_BACKEND_REGISTRY, "fake", FakeBackend)
+    for storage_type, spec in STORAGE_BACKEND_SPECS.items():
+        backend_class = getattr(import_module(spec.module), spec.class_name)
+        assert get_supported_retrieval_methods(storage_type) == list(
+            backend_class.get_supported_retrieval_methods()
+        )
+        assert get_all_storage_retrieval_methods()[storage_type] == list(
+            backend_class.get_supported_retrieval_methods()
+        )
 
-    assert get_supported_retrieval_methods("fake") == ["vector", "hybrid"]
-    assert get_all_storage_retrieval_methods()["fake"] == ["vector", "hybrid"]
+
+def test_get_supported_retrieval_methods_rejects_unknown_type() -> None:
+    from knowledge_engine.storage.capabilities import get_supported_retrieval_methods
+
+    with pytest.raises(ValueError, match="Unsupported storage type: unknown"):
+        get_supported_retrieval_methods("unknown")
 
 
 def test_create_storage_backend_from_runtime_config_requires_url() -> None:
-    from knowledge_engine.storage.factory import (
-        create_storage_backend_from_runtime_config,
-    )
-
     with pytest.raises(ValueError, match="storage url must be provided"):
-        create_storage_backend_from_runtime_config(
+        factory.create_storage_backend_from_runtime_config(
             RuntimeRetrieverConfig(
                 name="retriever-a",
                 storage_config={

@@ -118,6 +118,7 @@ interface TemporaryChatPanelProps {
   expanded?: boolean
   wideComposer?: boolean
   collapseComposerWhenIdle?: boolean
+  readOnly?: boolean
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
   projectWorkBarMiddleContext?: ReactNode
@@ -146,6 +147,7 @@ export function TemporaryChatPanel({
   expanded = false,
   wideComposer = false,
   collapseComposerWhenIdle = false,
+  readOnly = false,
   projectWork,
   showProjectWorkBar = false,
   projectWorkBarMiddleContext,
@@ -856,43 +858,45 @@ export function TemporaryChatPanel({
       onRestoreConversation={onRestoreConversation}
       translate={conversationTranslate}
       composer={
-        <ComposerCatalogContext.Provider value={composerCatalog}>
-          <BufferedChatInput
-            value={input}
-            replaceDraftKey={replaceDraftKey}
-            onChange={setInput}
-            onDraftEdit={() => setError(null)}
-            onSubmit={send}
-            disabled={taskModelIdentityPending}
-            pluginPickerIconOnly
-            requireText
-            error={error}
-            placeholder={placeholder}
-            variant="desktop"
-            collapseWhenIdle={collapseComposerWhenIdle}
-            projectChat={sideChatProjectChat}
-            projectWork={projectWork}
-            showProjectWorkBar={showProjectWorkBar}
-            projectWorkBarMiddleContext={projectWorkBarMiddleContext}
-            projectWorkBarTrailingContext={projectWorkBarTrailingContext}
-            queuedMessages={queuedMessages}
-            onCancelQueuedMessage={cancelQueuedMessage}
-            onSendQueuedAsGuidance={guideQueuedMessage}
-            onEditQueuedMessage={editQueuedMessage}
-            isStreaming={busy}
-            onPause={pause}
-            goalDraftActive={goalDraftActive}
-            onSetGoal={
-              allowInitialGoal && createTask && !address
-                ? () => {
-                    setGoalDraftActive(true)
-                    setError(null)
-                  }
-                : undefined
-            }
-            onCancelGoalDraft={() => setGoalDraftActive(false)}
-          />
-        </ComposerCatalogContext.Provider>
+        readOnly ? null : (
+          <ComposerCatalogContext.Provider value={composerCatalog}>
+            <BufferedChatInput
+              value={input}
+              replaceDraftKey={replaceDraftKey}
+              onChange={setInput}
+              onDraftEdit={() => setError(null)}
+              onSubmit={send}
+              disabled={taskModelIdentityPending}
+              pluginPickerIconOnly
+              requireText
+              error={error}
+              placeholder={placeholder}
+              variant="desktop"
+              collapseWhenIdle={collapseComposerWhenIdle}
+              projectChat={sideChatProjectChat}
+              projectWork={projectWork}
+              showProjectWorkBar={showProjectWorkBar}
+              projectWorkBarMiddleContext={projectWorkBarMiddleContext}
+              projectWorkBarTrailingContext={projectWorkBarTrailingContext}
+              queuedMessages={queuedMessages}
+              onCancelQueuedMessage={cancelQueuedMessage}
+              onSendQueuedAsGuidance={guideQueuedMessage}
+              onEditQueuedMessage={editQueuedMessage}
+              isStreaming={busy}
+              onPause={pause}
+              goalDraftActive={goalDraftActive}
+              onSetGoal={
+                allowInitialGoal && createTask && !address
+                  ? () => {
+                      setGoalDraftActive(true)
+                      setError(null)
+                    }
+                  : undefined
+              }
+              onCancelGoalDraft={() => setGoalDraftActive(false)}
+            />
+          </ComposerCatalogContext.Provider>
+        )
       }
     >
       <ScrollableMessageArea
@@ -906,7 +910,7 @@ export function TemporaryChatPanel({
         messageListClassName={`${DESKTOP_MESSAGE_LIST_CLASS} pb-4 pt-5`}
         scrollTestId="right-workspace-chat-scroll-area"
         onRetryFailedMessage={
-          address
+          address && !readOnly
             ? message => {
                 void retryFailedMessage(message)
               }
@@ -920,7 +924,7 @@ export function TemporaryChatPanel({
             : undefined
         }
         onRevertFileChanges={
-          address
+          address && !readOnly
             ? (subtaskId, fileChanges) =>
                 revertTurnFileChanges(subtaskId, messages, fileChanges, address)
             : undefined
@@ -928,8 +932,8 @@ export function TemporaryChatPanel({
         onOpenFileChangesReview={onOpenRuntimeTask ? openRuntimeTask : undefined}
         onOpenWorkspaceFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
         onOpenLocalSkillFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
-        onRequestUserInputSubmit={address ? submitRequestUserInput : undefined}
-        onRequestUserInputIgnore={address ? ignoreRequestUserInput : undefined}
+        onRequestUserInputSubmit={address && !readOnly ? submitRequestUserInput : undefined}
+        onRequestUserInputIgnore={address && !readOnly ? ignoreRequestUserInput : undefined}
         onOpenAssistantPlan={onOpenRuntimeTask ? openRuntimeTask : undefined}
         hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         initialScrollPosition={initialScrollPosition}

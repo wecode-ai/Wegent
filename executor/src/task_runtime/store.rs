@@ -21,10 +21,11 @@ mod execution_workspace;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
-    ChatAgent, ChatAgentCreate, ChatAgentUpdate, LocalComment, LocalCommentCreate, LocalExecution,
-    LocalExecutionClaim, LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor,
-    ProjectStoreKind, ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind,
-    TaskReorder, TaskUpdate,
+    ArchivedLoopItem, ArchivedLoopItemPage, ChatAgent, ChatAgentCreate, ChatAgentUpdate,
+    LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
+    LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor, ProjectStoreKind,
+    ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
+    TaskUpdate,
 };
 
 #[path = "local_automation.rs"]
@@ -1186,10 +1187,11 @@ impl LocalTaskStore {
             prompt,
             model,
         } = *input;
-        let connection = self.connection()?;
-        if let Some(message_id) = connection
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some((message_id, status)) = transaction
             .query_row(
-                "SELECT message_id FROM loop_item_comments
+                "SELECT message_id, status FROM loop_item_comments
                  WHERE project_id=?1 AND task_id=?2 AND sender_type='agent'
                    AND reply_to_message_id=?3
                    AND json_extract(metadata,'$.runtime_address.deviceId')=?4
@@ -1202,17 +1204,22 @@ impl LocalTaskStore {
                     runtime_device_id,
                     runtime_task_id
                 ],
-                |row| row.get::<_, String>(0),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()?
         {
-            return comment_row(&connection, &message_id);
+            if matches!(status.as_str(), "pending" | "streaming") {
+                move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+            }
+            let comment = comment_row(&transaction, &message_id)?;
+            transaction.commit()?;
+            return Ok(comment);
         }
-        let agent = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
+        let agent = get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
             TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
         })?;
-        insert_comment(
-            &connection,
+        let comment = insert_comment(
+            &transaction,
             &LocalCommentCreate {
                 project_id: project_id.to_owned(),
                 task_id: task_id.to_owned(),
@@ -1235,7 +1242,10 @@ impl LocalTaskStore {
                 reply_to_message_id: Some(trigger_message_id.to_owned()),
             },
             "streaming",
-        )
+        )?;
+        move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+        transaction.commit()?;
+        Ok(comment)
     }
 
     pub fn fail_runtime_comment(
@@ -1963,7 +1973,21 @@ impl LocalTaskStore {
                  SET status = 'in_review',
                      metadata = json_set(metadata, '$.is_unread', json('true')),
                      version = version + 1, updated_at = ?1
-                 WHERE id = ?2 AND status != 'completed'",
+                 WHERE id = ?2 AND status != 'completed'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM loop_item_comments pending_comment
+                       WHERE pending_comment.task_id=?2
+                         AND pending_comment.deleted_at IS NULL
+                         AND pending_comment.status IN ('pending','streaming')
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM loop_item_executions active_execution
+                       WHERE active_execution.loop_item_id=?2
+                         AND active_execution.status IN (
+                             'queued','pending_approval','claimed','running',
+                             'cancel_requested'
+                         )
+                   )",
                 params![timestamp, current.loop_item_id],
             )?;
         }
@@ -2225,10 +2249,41 @@ impl LocalTaskStore {
     }
 
     pub fn archive_task(&self, project_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
-        let parent_id = self.get_task(project_id, task_id)?.parent_id;
-        let connection = self.connection()?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let parent_id: Option<String> = transaction
+            .query_row(
+                "SELECT parent_id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at IS NULL",
+                params![task_id, project_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let incomplete_count: i64 = transaction.query_row(
+            "WITH RECURSIVE task_tree(id) AS (
+                 SELECT id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at IS NULL
+                 UNION ALL
+                 SELECT child.id FROM loop_items child
+                 JOIN task_tree parent ON child.parent_id = parent.id
+                 WHERE child.resource_type = 'task'
+                   AND child.cloud_project_id = ?2 AND child.deleted_at IS NULL
+             )
+             SELECT COUNT(*) FROM loop_items
+             WHERE id IN (SELECT id FROM task_tree) AND status != 'completed'",
+            params![task_id, project_id],
+            |row| row.get(0),
+        )?;
+        if incomplete_count > 0 {
+            return Err(TaskRuntimeError::Invalid(
+                "Only completed task subtrees can be archived".to_owned(),
+            ));
+        }
         let archived_at = now();
-        let updated = connection.execute(
+        let updated = transaction.execute(
             "WITH RECURSIVE task_tree(id) AS (
                  SELECT id FROM loop_items
                  WHERE id = ?1 AND resource_type = 'task'
@@ -2248,9 +2303,132 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::TaskNotFound);
         }
         if let Some(parent_id) = parent_id.as_deref() {
-            refresh_runtime_projection_additional_context(&connection, parent_id)?;
+            refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
+        transaction.commit()?;
         Ok(())
+    }
+
+    pub fn list_archived_tasks(
+        &self,
+        project_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ArchivedLoopItemPage, TaskRuntimeError> {
+        self.get_project(project_id)?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT item.id, item.resource_type, item.project_space, item.cloud_project_id,
+                    item.parent_id, item.public_id, item.project_key, item.name, item.title,
+                    item.description, item.sequence_number, item.next_item_number, item.status,
+                    item.priority, item.sort_order, item.current_delivery_id, item.metadata,
+                    item.version, item.created_at, item.updated_at, item.completed_at,
+                    item.assignee_agent_id, item.created_by_user_id, item.assignee_user_id,
+                    item.deleted_at
+             FROM loop_items item
+             LEFT JOIN loop_items parent ON parent.id = item.parent_id
+             WHERE item.resource_type = 'task' AND item.cloud_project_id = ?1
+               AND item.deleted_at IS NOT NULL
+               AND (
+                   item.parent_id IS NULL OR item.parent_id = '' OR parent.id IS NULL
+                   OR parent.deleted_at IS NULL OR parent.deleted_at != item.deleted_at
+               )
+             ORDER BY item.deleted_at DESC, item.id DESC
+             LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = statement.query_map(
+            params![project_id, limit.saturating_add(1), offset],
+            |row| {
+                Ok(ArchivedLoopItem {
+                    item: map_loop_item(row)?,
+                    archived_at: row.get(24)?,
+                })
+            },
+        )?;
+        let mut items = rows.collect::<Result<Vec<_>, _>>()?;
+        let has_more = items.len() > limit;
+        items.truncate(limit);
+        Ok(ArchivedLoopItemPage {
+            items,
+            next_cursor: has_more.then(|| offset.saturating_add(limit).to_string()),
+        })
+    }
+
+    pub fn restore_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
+        self.get_project(project_id)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (archived_at, parent_id): (String, Option<String>) = transaction
+            .query_row(
+                "SELECT item.deleted_at, item.parent_id
+                 FROM loop_items item
+                 LEFT JOIN loop_items parent ON parent.id = item.parent_id
+                 WHERE item.id = ?1 AND item.resource_type = 'task'
+                   AND item.cloud_project_id = ?2 AND item.deleted_at IS NOT NULL
+                   AND (
+                       item.parent_id IS NULL OR item.parent_id = '' OR parent.id IS NULL
+                       OR parent.deleted_at IS NULL OR parent.deleted_at != item.deleted_at
+                   )",
+                params![task_id, project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let restored_ids = {
+            let mut statement = transaction.prepare(
+                "WITH RECURSIVE task_tree(id) AS (
+                     SELECT id FROM loop_items
+                     WHERE id = ?1 AND resource_type = 'task'
+                       AND cloud_project_id = ?2 AND deleted_at = ?3
+                     UNION ALL
+                     SELECT child.id FROM loop_items child
+                     JOIN task_tree parent ON child.parent_id = parent.id
+                     WHERE child.resource_type = 'task'
+                       AND child.cloud_project_id = ?2 AND child.deleted_at = ?3
+                 )
+                 SELECT id FROM task_tree",
+            )?;
+            let restored_ids = statement
+                .query_map(params![task_id, project_id, archived_at], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<Result<HashSet<_>, _>>()?;
+            restored_ids
+        };
+        let updated = transaction.execute(
+            "WITH RECURSIVE task_tree(id) AS (
+                 SELECT id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at = ?3
+                 UNION ALL
+                 SELECT child.id FROM loop_items child
+                 JOIN task_tree parent ON child.parent_id = parent.id
+                 WHERE child.resource_type = 'task'
+                   AND child.cloud_project_id = ?2 AND child.deleted_at = ?3
+             )
+             UPDATE loop_items
+             SET deleted_at = NULL, updated_at = ?4, version = version + 1
+             WHERE id IN (SELECT id FROM task_tree)",
+            params![task_id, project_id, archived_at, now()],
+        )?;
+        if updated == 0 {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        if let Some(parent_id) = parent_id.as_deref() {
+            refresh_runtime_projection_additional_context(&transaction, parent_id)?;
+        }
+        transaction.commit()?;
+        drop(connection);
+        self.list_tasks(project_id).map(|items| {
+            items
+                .into_iter()
+                .filter(|item| restored_ids.contains(&item.id))
+                .collect()
+        })
     }
 
     pub fn reorder_tasks(
@@ -2383,6 +2561,9 @@ impl LocalTaskStore {
         });
         if let Some(model_selection) = input.model_selection.as_ref() {
             metadata["model_selection"] = model_selection.clone();
+        }
+        if let Some(execution_context) = input.execution_context.as_ref() {
+            metadata["execution_context"] = execution_context.clone();
         }
         if let Some(active) = active {
             let target_item_id = item_id.or(external_item_id);
@@ -2657,7 +2838,8 @@ impl LocalTaskStore {
                         ELSE 'user'
                     END,
                     linked_at,
-                    json_extract(metadata, '$.model_selection')
+                    json_extract(metadata, '$.model_selection'),
+                    json_extract(metadata, '$.execution_context')
              FROM loop_items
              WHERE resource_type = 'execution' AND unlinked_at IS NULL
                AND (
@@ -2753,7 +2935,8 @@ impl LocalTaskStore {
                             ELSE 'user'
                         END,
                         linked_at,
-                        json_extract(metadata, '$.model_selection')
+                        json_extract(metadata, '$.model_selection'),
+                        json_extract(metadata, '$.execution_context')
                  FROM loop_items WHERE id = ?1 AND resource_type = 'execution'",
                 [id],
                 map_task_binding,
@@ -2892,7 +3075,8 @@ fn get_effective_binding(
                         ELSE 'user'
                     END,
                     linked_at,
-                    json_extract(metadata, '$.model_selection')
+                    json_extract(metadata, '$.model_selection'),
+                    json_extract(metadata, '$.execution_context')
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -2933,7 +3117,8 @@ fn get_binding_by_kind(
                         ELSE 'user'
                     END,
                     linked_at,
-                    json_extract(metadata, '$.model_selection')
+                    json_extract(metadata, '$.model_selection'),
+                    json_extract(metadata, '$.execution_context')
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -3015,6 +3200,9 @@ fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
         linked_at: row.get(11)?,
         model_selection: row
             .get::<_, Option<String>>(12)?
+            .and_then(|value| serde_json::from_str(&value).ok()),
+        execution_context: row
+            .get::<_, Option<String>>(13)?
             .and_then(|value| serde_json::from_str(&value).ok()),
     })
 }
@@ -4254,6 +4442,21 @@ fn insert_comment(
     )?;
     refresh_runtime_projection_additional_context(connection, &create.task_id)?;
     comment_row(connection, &message_id)
+}
+
+fn move_runtime_comment_task_to_in_progress(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<(), TaskRuntimeError> {
+    connection.execute(
+        "UPDATE loop_items
+         SET status='in_progress', completed_at=NULL,
+             version=version+1, updated_at=?1
+         WHERE id=?2 AND resource_type='task'
+           AND status IN ('inbox', 'pending', 'in_review')",
+        params![now(), task_id],
+    )?;
+    Ok(())
 }
 
 fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
@@ -5509,8 +5712,38 @@ mod tests {
             .update_agent_comment_for_execution(execution.id, "completed", "搞定")
             .unwrap()
             .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_item_executions SET status='completed' WHERE id=?1",
+                params![execution.id],
+            )
+            .unwrap();
         assert_eq!(updated.status, "completed");
         assert_eq!(updated.content, "搞定");
+        let task = store.get_task(&project.id, &task.id).unwrap();
+        let task = store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
+                    version: task.version,
+                    title: None,
+                    description: None,
+                    status: Some("in_review".to_owned()),
+                    priority: None,
+                    parent_id: None,
+                    tags: None,
+                    assignee_agent_id: None,
+                    execution_payload: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(task.status.as_deref(), Some("in_review"));
 
         let after = store
             .list_comments(&project.id, &task.id, user_comment.sequence_number)
@@ -5545,6 +5778,14 @@ mod tests {
             .unwrap();
         assert_eq!(continuation.status, "streaming");
         assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+        assert_eq!(
             continuation.thread_root_message_id,
             user_comment.thread_root_message_id
         );
@@ -5560,6 +5801,174 @@ mod tests {
         assert_eq!(continued.status, "completed");
         assert_eq!(continued.content, "你之前让我看一下");
         assert_eq!(continued.metadata["runtime_address"]["taskId"], "session-1");
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
+        let duplicate = store
+            .start_runtime_comment(&LocalRuntimeCommentStart {
+                project_id: &project.id,
+                task_id: &task.id,
+                agent_id: &agent.id,
+                trigger_message_id: &follow_up.message_id,
+                runtime_device_id: "local-device",
+                runtime_task_id: "session-1",
+                prompt: Some("我之前说了什么"),
+                model: None,
+            })
+            .unwrap();
+        assert_eq!(duplicate.message_id, continuation.message_id);
+        assert_eq!(duplicate.status, "completed");
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
+    }
+
+    #[test]
+    fn collaboration_runtime_comment_does_not_move_parent_issue_to_review() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Coordinate work".to_owned(),
+                    description: String::new(),
+                    status: "in_progress".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let comment = store
+            .create_comment(&LocalCommentCreate {
+                project_id: project.id.clone(),
+                task_id: task.id.clone(),
+                client_message_id: None,
+                sender_type: "agent".to_owned(),
+                sender_id: "manager-agent".to_owned(),
+                sender_name: "Manager".to_owned(),
+                content: String::new(),
+                metadata: json!({
+                    "dispatch_role": "manager",
+                    "runtime_address": {
+                        "deviceId": "local-device",
+                        "taskId": "manager-runtime",
+                    },
+                }),
+                reply_to_message_id: None,
+            })
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_item_comments SET status='streaming' WHERE message_id=?1",
+                params![comment.message_id],
+            )
+            .unwrap();
+
+        store
+            .finish_runtime_comment("manager-runtime", "completed", "Dispatched")
+            .unwrap();
+
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+    }
+
+    #[test]
+    fn runtime_comment_keeps_issue_in_progress_while_followup_is_pending() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Continue work".to_owned(),
+                    description: String::new(),
+                    status: "in_progress".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        for runtime_task_id in ["runtime-1", "runtime-2"] {
+            let comment = store
+                .create_comment(&LocalCommentCreate {
+                    project_id: project.id.clone(),
+                    task_id: task.id.clone(),
+                    client_message_id: None,
+                    sender_type: "agent".to_owned(),
+                    sender_id: "agent-1".to_owned(),
+                    sender_name: "Agent".to_owned(),
+                    content: String::new(),
+                    metadata: json!({
+                        "runtime_address": {
+                            "deviceId": "local-device",
+                            "taskId": runtime_task_id,
+                        },
+                    }),
+                    reply_to_message_id: None,
+                })
+                .unwrap();
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE loop_item_comments SET status='streaming' WHERE message_id=?1",
+                    params![comment.message_id],
+                )
+                .unwrap();
+        }
+
+        store
+            .finish_runtime_comment("runtime-1", "completed", "First result")
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+
+        store
+            .finish_runtime_comment("runtime-2", "completed", "Follow-up result")
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
     }
 
     #[test]
@@ -7590,6 +7999,51 @@ mod tests {
         store
             .request_runtime_start(claimed.id, device_id, task_id, 300)
             .unwrap();
+        store
+            .update_execution_binding_runtime(
+                claimed.id,
+                Some(&json!({
+                    "runtime": "codex",
+                    "threadId": "thread-1",
+                    "workspacePath": "/tmp/wegent/worktrees/codex-queue-1",
+                    "workspaceKind": "worktree",
+                    "worktreeId": "codex-queue-1",
+                })),
+                Some(&json!({
+                    "modelName": "gpt-5.6-sol",
+                    "modelType": "runtime",
+                    "options": {
+                        "codexProviderType": "official"
+                    }
+                })),
+            )
+            .unwrap();
+        let binding = store
+            .list_task_bindings(&task.id)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("Runtime start must create an Issue task binding");
+        assert_eq!(
+            binding.execution_context,
+            Some(json!({
+                "runtime": "codex",
+                "threadId": "thread-1",
+                "workspacePath": "/tmp/wegent/worktrees/codex-queue-1",
+                "workspaceKind": "worktree",
+                "worktreeId": "codex-queue-1",
+            }))
+        );
+        assert_eq!(
+            binding.model_selection,
+            Some(json!({
+                "modelName": "gpt-5.6-sol",
+                "modelType": "runtime",
+                "options": {
+                    "codexProviderType": "official"
+                }
+            }))
+        );
 
         let connection = rusqlite::Connection::open(directory.path().join("tasks.sqlite")).unwrap();
         connection
@@ -8943,6 +9397,11 @@ mod tests {
                         "modelType": "public",
                         "options": {"reasoning": "high"},
                     })),
+                    execution_context: Some(json!({
+                        "workspacePath": "/tmp/wegent",
+                        "workspaceKind": "worktree",
+                        "worktreeId": "runtime-1",
+                    })),
                     workflow_node_id: None,
                 },
             )
@@ -8955,6 +9414,14 @@ mod tests {
                 "modelName": "gpt-5.6-sol",
                 "modelType": "public",
                 "options": {"reasoning": "high"},
+            }))
+        );
+        assert_eq!(
+            binding.execution_context,
+            Some(json!({
+                "workspacePath": "/tmp/wegent",
+                "workspaceKind": "worktree",
+                "worktreeId": "runtime-1",
             }))
         );
         assert_eq!(store.list_task_bindings(&task.id).unwrap().len(), 1);
@@ -9006,6 +9473,7 @@ mod tests {
                     task_title: task.title.clone(),
                     backend_task_id: None,
                     model_selection: None,
+                    execution_context: None,
                     workflow_node_id: None,
                 },
             )
@@ -9242,7 +9710,7 @@ mod tests {
                 TaskCreate {
                     title: "Temporary child context".to_owned(),
                     description: String::new(),
-                    status: "inbox".to_owned(),
+                    status: "completed".to_owned(),
                     priority: "none".to_owned(),
                     parent_id: Some(parent_id.clone()),
                     tags: vec![],
@@ -9270,6 +9738,24 @@ mod tests {
                 .unwrap()
                 .metadata["has_additional_context"],
             json!(false)
+        );
+
+        let restored = store
+            .restore_task(DEFAULT_WORK_ITEM_PROJECT_ID, &child.id)
+            .unwrap();
+        assert_eq!(
+            restored
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![child.id.as_str()]
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &parent_id)
+                .unwrap()
+                .metadata["has_additional_context"],
+            json!(true)
         );
     }
 
@@ -9323,6 +9809,7 @@ mod tests {
                         task_title: item.title.clone(),
                         backend_task_id: None,
                         model_selection: None,
+                        execution_context: None,
                         workflow_node_id: None,
                     },
                 )
@@ -9391,6 +9878,7 @@ mod tests {
             task_title: Some("Runtime".to_owned()),
             backend_task_id: None,
             model_selection: None,
+            execution_context: None,
             workflow_node_id: None,
         };
 
@@ -9664,6 +10152,7 @@ mod tests {
             task_title: Some("Implement".to_owned()),
             backend_task_id: None,
             model_selection: None,
+            execution_context: None,
             workflow_node_id: Some("develop".to_owned()),
         };
         store

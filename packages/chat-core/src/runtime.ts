@@ -9,6 +9,8 @@ export interface RuntimeTaskAddress {
   workspaceKind?: "workspace" | "worktree" | "chat" | string | null;
   worktreeId?: string | null;
   runtimeHandle?: Record<string, unknown> | null;
+  /** Presentation context for an execution opened from an Issue. */
+  issueExecution?: { projectId: string; issueId: string };
   /** Read authority is resolved server-side from this Issue's durable binding. */
   projectSession?: { projectId: string; issueId: string };
 }

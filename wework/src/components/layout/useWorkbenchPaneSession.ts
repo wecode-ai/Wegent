@@ -193,7 +193,7 @@ interface PendingRuntimeGoalState {
 }
 
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
-const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
+const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 5
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 export { RUNTIME_RETRY_CONTINUATION_PROMPT } from './runtimeRetry'
 const EMPTY_ATTACHMENT_STATE = {
@@ -936,6 +936,7 @@ export function useWorkbenchPaneSession({
             transcript.turns
           )
           loadedRuntimeTranscriptKeyRef.current = target.key
+          setTranscriptError(null)
           setTranscriptFullContent(transcript.fullContent === true)
           setTranscriptHasMoreBefore(runtimeTranscriptHasMoreBefore(transcript))
           setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
@@ -953,6 +954,7 @@ export function useWorkbenchPaneSession({
         .catch(error => {
           abortRuntimeConversationHydration(address, hydrationToken)
           if (runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) return
+          setTranscriptError(error instanceof Error ? error.message : String(error))
           console.error('[Wework] Runtime replacement transcript recovery failed', {
             address: runtimeAddressDebug(address),
             error,
@@ -984,6 +986,7 @@ export function useWorkbenchPaneSession({
         beforeCursor,
       })
       if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
+      setTranscriptError(null)
       const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
@@ -999,6 +1002,8 @@ export function useWorkbenchPaneSession({
       )
       dispatchMessages({ type: 'reset', messages: nextMessages })
     } catch (error) {
+      if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
+      setTranscriptError(error instanceof Error ? error.message : String(error))
       console.error('[Wework] Runtime pane older transcript load failed', {
         key: loadKey,
         address,

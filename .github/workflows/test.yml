@@ -77,6 +77,9 @@ jobs:
         working-directory: ./backend
         run: uv sync --dev
 
+      - name: Install runtime dependencies for index-to-query contract tests
+        run: uv sync --project knowledge_runtime --frozen
+
       - name: Run backend tests
         working-directory: ./backend
         env:
@@ -306,7 +309,7 @@ jobs:
           name: shared-coverage
 
   test-knowledge-engine:
-    name: Test Knowledge Engine
+    name: Test Knowledge Engine and Runtime
     needs: changes
     if: needs.changes.outputs.knowledge_engine == 'true'
     runs-on: ubuntu-latest
@@ -338,6 +341,14 @@ jobs:
           files: ./knowledge_engine/coverage.xml
           flags: knowledge-engine
           name: knowledge-engine-coverage
+
+      - name: Install knowledge runtime test dependencies
+        working-directory: ./knowledge_runtime
+        run: uv sync --dev --frozen
+
+      - name: Run knowledge runtime tests
+        working-directory: ./knowledge_runtime
+        run: uv run --no-sync pytest tests/ -v
 
   test-frontend:
     name: Test Frontend

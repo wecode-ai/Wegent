@@ -924,7 +924,7 @@ class ProjectAutomationService:
             None,
         )
         last_run = rule_metadata.get("last_run_at")
-        database_timezone = database_datetime_timezone(db)
+        database_timezone = database_datetime_timezone()
         dispatch_target = rule_metadata.get("dispatch_target")
         if not isinstance(dispatch_target, dict):
             raise ValueError("Automation dispatch target is missing")
