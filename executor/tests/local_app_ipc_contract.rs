@@ -749,13 +749,20 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
                 "todo": {
                     "title": "Parent",
                     "status": "inbox",
-                    "priority": "high"
+                    "priority": "high",
+                    "start_at": "2026-10-10T01:00:00Z",
+                    "due_at": "2026-10-12T09:00:00Z"
                 }
             }),
         )
         .await
         .unwrap();
     let parent_id = parent["id"].as_str().unwrap();
+    assert_eq!(
+        parent["metadata"]["start_at"],
+        json!("2026-10-10T01:00:00Z")
+    );
+    assert_eq!(parent["metadata"]["due_at"], json!("2026-10-12T09:00:00Z"));
 
     let child = server
         .dispatch(
@@ -804,6 +811,27 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .unwrap();
     assert_eq!(updated["status"], "completed");
     assert!(updated["completed_at"].is_string());
+
+    let rescheduled = server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": parent_id,
+                "todo": {
+                    "version": updated["version"],
+                    "start_at": null,
+                    "due_at": "2026-10-15T09:00:00Z"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(rescheduled["metadata"]["start_at"].is_null());
+    assert_eq!(
+        rescheduled["metadata"]["due_at"],
+        json!("2026-10-15T09:00:00Z")
+    );
 
     let conflict = server
         .dispatch(
@@ -1326,6 +1354,21 @@ async fn app_ipc_encrypts_provider_credentials_and_masks_project_responses() {
         .get("credential")
         .is_none());
     assert!(!project.to_string().contains("github-secret"));
+
+    let schedule_error = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project["id"],
+                "todo": {
+                    "title": "Scheduled external task",
+                    "start_at": "2026-10-11T00:00:00Z"
+                }
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(schedule_error.code, "provider_unavailable");
 
     let connection =
         rusqlite::Connection::open(executor_home.path().join("data/tasks.sqlite")).unwrap();

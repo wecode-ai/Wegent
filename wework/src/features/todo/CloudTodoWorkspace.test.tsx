@@ -3555,6 +3555,7 @@ describe('CloudTodoWorkspace', () => {
         priority: item.priority,
         status: item.status,
         parent_id: 'WEG-2',
+        start_at: null,
         due_at: null,
         tags: [],
       })
@@ -4986,6 +4987,7 @@ describe('CloudTodoWorkspace', () => {
         parent_id: null,
         priority: 'high',
         status: 'in_progress',
+        start_at: null,
         due_at: null,
         tags: [],
       })

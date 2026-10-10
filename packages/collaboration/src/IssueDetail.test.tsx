@@ -145,6 +145,9 @@ describe("IssueDetail browser due date boundary", () => {
       expect(extensions.dueDateFromSource(issue.due_at)).toBe(
         "2026-09-12T10:30",
       );
+      expect(extensions.startDateFromSource(issue.due_at)).toBe(
+        "2026-09-12T10:30",
+      );
       expect(extensions.dueDateToSource("2026-09-12T10:30")).toBe(
         "2026-09-12T02:30:00.000Z",
       );

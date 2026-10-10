@@ -191,7 +191,11 @@ export function CollaborationProjectViewShell({
   return (
     <ProjectShell
       {...shellProps}
-      boardView={resolved.view === "board"}
+      boardView={
+        resolved.view === "board" ||
+        resolved.view === "calendar" ||
+        resolved.view === "gantt"
+      }
       renderViewSwitcher={({ compact, containerRef }) =>
         options.length > 1 ? (
           <ProjectViewSwitcher

@@ -27,6 +27,7 @@ export interface IssueDetailDraftSource<TWorkflow = unknown> {
   status: string;
   priority: CollaborationPriority;
   parent_id: string | null;
+  start_at?: string | null;
   due_at: string | null;
   tags: string[];
   assignee_user_id?: number | null;
@@ -42,6 +43,7 @@ export interface IssueDetailDraftValue<TWorkflow = unknown> {
   status: string;
   priority: CollaborationPriority;
   parentId: string;
+  startDate: string;
   dueDate: string;
   tags: string[];
   assigneeTarget: IssueAssigneeTarget;
@@ -61,6 +63,7 @@ export interface IssueDetailDraftOptions<TWorkflow = unknown> {
   source: IssueDetailDraftSource<TWorkflow> | null;
   initial: IssueDetailDraftInitial<TWorkflow>;
   normalizeDescription?: (description: string) => string;
+  startDateFromSource?: (startAt: string | null) => string;
   dueDateFromSource?: (dueAt: string | null) => string;
 }
 
@@ -114,6 +117,7 @@ function identityDescription(description: string): string {
 function draftFromSource<TWorkflow>(
   source: IssueDetailDraftSource<TWorkflow>,
   normalizeDescription: (description: string) => string,
+  startDateFromSource: (startAt: string | null) => string,
   dueDateFromSource: (dueAt: string | null) => string,
 ): IssueDetailDraftValue<TWorkflow> {
   return {
@@ -122,6 +126,7 @@ function draftFromSource<TWorkflow>(
     status: source.status ?? "",
     priority: source.priority ?? "none",
     parentId: source.parent_id ?? "",
+    startDate: startDateFromSource(source.start_at ?? null),
     dueDate: dueDateFromSource(source.due_at),
     tags: source.tags ?? [],
     assigneeTarget: issueAssigneeTarget(source),
@@ -133,6 +138,7 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
   source,
   initial,
   normalizeDescription = identityDescription,
+  startDateFromSource = defaultDueDate,
   dueDateFromSource = defaultDueDate,
 }: IssueDetailDraftOptions<TWorkflow>) {
   const initialValue: IssueDetailDraftValue<TWorkflow> = {
@@ -141,6 +147,7 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
     status: initial.status,
     priority: initial.priority,
     parentId: initial.parentId ?? "",
+    startDate: initial.startDate ?? "",
     dueDate: initial.dueDate ?? "",
     tags: initial.tags ?? [],
     assigneeTarget: initial.assigneeTarget ?? "",
@@ -148,7 +155,12 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
   };
   const [draft, setDraft] = useState<IssueDetailDraftValue<TWorkflow>>(() =>
     source
-      ? draftFromSource(source, normalizeDescription, dueDateFromSource)
+      ? draftFromSource(
+          source,
+          normalizeDescription,
+          startDateFromSource,
+          dueDateFromSource,
+        )
       : initialValue,
   );
   const syncedSourceRef = useRef<IssueDetailDraftSource<TWorkflow> | null>(
@@ -162,11 +174,17 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
 
     const sameIssue = previous?.id === source.id;
     const previousDraft = previous
-      ? draftFromSource(previous, normalizeDescription, dueDateFromSource)
+      ? draftFromSource(
+          previous,
+          normalizeDescription,
+          startDateFromSource,
+          dueDateFromSource,
+        )
       : null;
     const nextDraft = draftFromSource(
       source,
       normalizeDescription,
+      startDateFromSource,
       dueDateFromSource,
     );
     setDraft((current) => ({
@@ -190,6 +208,10 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
         !sameIssue || current.parentId === previousDraft?.parentId
           ? nextDraft.parentId
           : current.parentId,
+      startDate:
+        !sameIssue || current.startDate === previousDraft?.startDate
+          ? nextDraft.startDate
+          : current.startDate,
       dueDate:
         !sameIssue || current.dueDate === previousDraft?.dueDate
           ? nextDraft.dueDate
@@ -208,10 +230,15 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
           : current.workflow,
     }));
     syncedSourceRef.current = source;
-  }, [dueDateFromSource, normalizeDescription, source]);
+  }, [dueDateFromSource, normalizeDescription, source, startDateFromSource]);
 
   const sourceDraft = source
-    ? draftFromSource(source, normalizeDescription, dueDateFromSource)
+    ? draftFromSource(
+        source,
+        normalizeDescription,
+        startDateFromSource,
+        dueDateFromSource,
+      )
     : null;
   const dirty = sourceDraft
     ? draft.title.trim() !== sourceDraft.title ||
@@ -219,6 +246,7 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
       draft.status !== sourceDraft.status ||
       draft.priority !== sourceDraft.priority ||
       draft.parentId !== sourceDraft.parentId ||
+      draft.startDate !== sourceDraft.startDate ||
       draft.dueDate !== sourceDraft.dueDate ||
       !equalTags(draft.tags, sourceDraft.tags) ||
       draft.assigneeTarget !== sourceDraft.assigneeTarget ||

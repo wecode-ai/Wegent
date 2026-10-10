@@ -221,10 +221,11 @@ impl<'a> TurnTranscriptProjector<'a> {
                 }
                 self.assistant.blocks.push(block);
             }
-            "agentmessage" | "agentmessageevent" if !self.project_subagent_message(item) => {
-                if !self.project_async_request_user_input(item) {
-                    self.project_assistant_message(item, has_later_process);
-                }
+            "agentmessage" | "agentmessageevent"
+                if !self.project_subagent_message(item)
+                    && !self.project_async_request_user_input(item) =>
+            {
+                self.project_assistant_message(item, has_later_process);
             }
             "agentmessage" | "agentmessageevent" => {}
             "message" => self.project_role_message(item, has_later_process),

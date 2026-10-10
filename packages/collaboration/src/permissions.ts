@@ -73,7 +73,13 @@ export function canAccessCollaborationProjectView(
   const accessRole =
     project.access_role ??
     (project.project_store === "local" ? "Owner" : "Viewer");
-  if (view === "board" || view === "table") return true;
+  if (
+    view === "board" ||
+    view === "calendar" ||
+    view === "gantt" ||
+    view === "table"
+  )
+    return true;
   if (view === "files")
     return (
       accessRole === "Owner" ||

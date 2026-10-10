@@ -2177,16 +2177,17 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         }
         "todos.create" => {
             let project_id = required_task_string(&params, "project_id")?;
-            let input = serde_json::from_value::<TaskCreate>(
-                params
-                    .get("todo")
-                    .cloned()
-                    .unwrap_or_else(|| params.clone()),
-            )
-            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let todo = params.get("todo").unwrap_or(&params);
+            let input = serde_json::from_value::<TaskCreate>(todo.clone())
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .create_task(project_id, input)
+                    .create_task_with_schedule(
+                        project_id,
+                        input,
+                        optional_nullable_task_string(todo, "start_at")?.flatten(),
+                        optional_nullable_task_string(todo, "due_at")?.flatten(),
+                    )
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -2194,16 +2195,18 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         "todos.update" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;
-            let input = serde_json::from_value::<TaskUpdate>(
-                params
-                    .get("todo")
-                    .cloned()
-                    .unwrap_or_else(|| params.clone()),
-            )
-            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let todo = params.get("todo").unwrap_or(&params);
+            let input = serde_json::from_value::<TaskUpdate>(todo.clone())
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .update_task(project_id, task_id, input)
+                    .update_task_with_schedule(
+                        project_id,
+                        task_id,
+                        input,
+                        optional_nullable_task_string(todo, "start_at")?,
+                        optional_nullable_task_string(todo, "due_at")?,
+                    )
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -2793,6 +2796,22 @@ fn required_task_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, App
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| AppIpcError::new("bad_request", format!("{key} is required")))
+}
+
+fn optional_nullable_task_string(
+    params: &Value,
+    key: &str,
+) -> Result<Option<Option<String>>, AppIpcError> {
+    match params.get(key) {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(Some(value.to_owned()))),
+        Some(Value::String(_)) => Ok(Some(None)),
+        Some(_) => Err(AppIpcError::new(
+            "bad_request",
+            format!("{key} must be a string or null"),
+        )),
+    }
 }
 
 fn required_task_i64(params: &Value, key: &str) -> Result<i64, AppIpcError> {

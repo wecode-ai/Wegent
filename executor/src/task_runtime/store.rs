@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use chrono::Utc;
+use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row, TransactionBehavior};
 use serde_json::{json, Value};
 use thiserror::Error;
@@ -474,9 +474,20 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_with_schedule(project_id, input, None, None)
+    }
+
+    pub fn create_task_with_schedule(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        start_at: Option<String>,
+        due_at: Option<String>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         validate_name(&input.title, "task title")?;
         validate_status(&input.status)?;
         validate_priority(&input.priority)?;
+        validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let project = get_item_from(&transaction, project_id, "project")?
@@ -522,6 +533,12 @@ impl LocalTaskStore {
         };
         let completed_at = (status == "completed").then(|| now.clone());
         let mut metadata = json!({"tags": input.tags});
+        if let Some(start_at) = start_at {
+            metadata["start_at"] = json!(start_at);
+        }
+        if let Some(due_at) = due_at {
+            metadata["due_at"] = json!(due_at);
+        }
         if let Some(workflow) = input.workflow {
             metadata["workflow"] = workflow;
         }
@@ -624,6 +641,17 @@ impl LocalTaskStore {
         task_id: &str,
         input: TaskUpdate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.update_task_with_schedule(project_id, task_id, input, None, None)
+    }
+
+    pub fn update_task_with_schedule(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        start_at: Option<Option<String>>,
+        due_at: Option<Option<String>>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current =
@@ -712,6 +740,13 @@ impl LocalTaskStore {
         if let Some(workflow) = input.workflow {
             metadata["workflow"] = workflow.unwrap_or(Value::Null);
         }
+        if let Some(start_at) = start_at {
+            metadata["start_at"] = start_at.map_or(Value::Null, Value::String);
+        }
+        if let Some(due_at) = due_at {
+            metadata["due_at"] = due_at.map_or(Value::Null, Value::String);
+        }
+        validate_schedule_range(metadata["start_at"].as_str(), metadata["due_at"].as_str())?;
         if collaboration_group_changed {
             if let (Some(group_id), Some(group)) = (
                 requested_group_id.as_deref(),
@@ -4256,6 +4291,35 @@ fn validate_priority(value: &str) -> Result<(), TaskRuntimeError> {
         .ok_or_else(|| TaskRuntimeError::Invalid("invalid task priority".to_owned()))
 }
 
+fn validate_schedule_range(
+    start_at: Option<&str>,
+    due_at: Option<&str>,
+) -> Result<(), TaskRuntimeError> {
+    let start = start_at.map(schedule_datetime).transpose()?;
+    let due = due_at.map(schedule_datetime).transpose()?;
+    if start.zip(due).is_some_and(|(start, due)| start > due) {
+        return Err(TaskRuntimeError::Invalid(
+            "start_at cannot be after due_at".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn schedule_datetime(value: &str) -> Result<DateTime<Utc>, TaskRuntimeError> {
+    if let Ok(value) = DateTime::parse_from_rfc3339(value) {
+        return Ok(value.with_timezone(&Utc));
+    }
+    if let Ok(value) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        return Ok(value
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is a valid time")
+            .and_utc());
+    }
+    Err(TaskRuntimeError::Invalid(
+        "schedule dates must be ISO 8601 values".to_owned(),
+    ))
+}
+
 fn local_database_path() -> PathBuf {
     crate::config::paths::executor_home().join("data/tasks.sqlite")
 }
@@ -5168,6 +5232,18 @@ mod tests {
 
     use super::*;
     use crate::task_runtime::{BinaryInput, DeliveryCreate};
+
+    #[test]
+    fn schedule_validation_checks_each_supplied_date() {
+        assert!(validate_schedule_range(Some("not-a-date"), None).is_err());
+        assert!(validate_schedule_range(None, Some("not-a-date")).is_err());
+        assert!(validate_schedule_range(Some("2026-10-11"), None).is_ok());
+        assert!(validate_schedule_range(
+            Some("2026-10-11T00:00:00.900Z"),
+            Some("2026-10-11T00:00:00.100Z"),
+        )
+        .is_err());
+    }
 
     fn chat_agent_store() -> (TempDir, LocalTaskStore, LoopItem) {
         let directory = tempfile::tempdir().unwrap();

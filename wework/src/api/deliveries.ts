@@ -229,6 +229,7 @@ export interface CloudLoopItem {
   description: string
   status: string
   priority: 'none' | 'low' | 'medium' | 'high' | 'urgent'
+  start_at?: string | null
   due_at: string | null
   tags: string[]
   sort_order: number
@@ -352,6 +353,7 @@ export interface CloudProject {
       name: string
       color: 'gray' | 'blue' | 'orange' | 'purple' | 'green' | 'red'
     }>
+    schedule_view?: import('@wegent/collaboration').CollaborationScheduleViewConfig
   }
   ai_automation?: {
     auto_retry_on_failure: boolean
@@ -921,6 +923,7 @@ export function createDeliveryApi(client: HttpClient) {
         description?: string
         status?: CloudLoopItem['status']
         priority?: CloudLoopItem['priority']
+        start_at?: string
         due_at?: string
         parent_id?: string | null
         tags?: string[]
@@ -948,6 +951,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'assignee_user_id'
           | 'assignee_agent_id'
           | 'assignee_team_id'
+          | 'start_at'
           | 'due_at'
           | 'tags'
           | 'security_level'
