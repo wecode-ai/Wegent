@@ -191,7 +191,8 @@ if configured_home:
     codex_home = Path(configured_home)
 else:
     executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
-    base = Path(executor_home) if executor_home else Path.home() / ".wegent-executor"
+    workbench = os.environ.get("WEGENT_WORKBENCH_HOME", "").strip()
+    base = Path(executor_home).expanduser() if executor_home else (Path(workbench) if workbench else Path.home() / ".wegent/workbench") / "executor"
     codex_home = base / "codex"
 target = codex_home / "auth.json"
 result = {
@@ -2176,16 +2177,17 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         }
         "todos.create" => {
             let project_id = required_task_string(&params, "project_id")?;
-            let input = serde_json::from_value::<TaskCreate>(
-                params
-                    .get("todo")
-                    .cloned()
-                    .unwrap_or_else(|| params.clone()),
-            )
-            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let todo = params.get("todo").unwrap_or(&params);
+            let input = serde_json::from_value::<TaskCreate>(todo.clone())
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .create_task(project_id, input)
+                    .create_task_with_schedule(
+                        project_id,
+                        input,
+                        optional_nullable_task_string(todo, "start_at")?.flatten(),
+                        optional_nullable_task_string(todo, "due_at")?.flatten(),
+                    )
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -2193,16 +2195,18 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         "todos.update" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;
-            let input = serde_json::from_value::<TaskUpdate>(
-                params
-                    .get("todo")
-                    .cloned()
-                    .unwrap_or_else(|| params.clone()),
-            )
-            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let todo = params.get("todo").unwrap_or(&params);
+            let input = serde_json::from_value::<TaskUpdate>(todo.clone())
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .update_task(project_id, task_id, input)
+                    .update_task_with_schedule(
+                        project_id,
+                        task_id,
+                        input,
+                        optional_nullable_task_string(todo, "start_at")?,
+                        optional_nullable_task_string(todo, "due_at")?,
+                    )
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -2215,6 +2219,36 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .await
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
+        }
+        "todos.archived.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let offset = params
+                .get("cursor")
+                .and_then(Value::as_str)
+                .unwrap_or("0")
+                .parse::<usize>()
+                .map_err(|_| AppIpcError::new("bad_request", "invalid archive cursor"))?;
+            let limit = params
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(50)
+                .clamp(1, 100) as usize;
+            serialize_task_value(
+                runtime
+                    .list_archived_tasks(project_id, offset, limit)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.restore" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .restore_task(project_id, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
         }
         "todos.comment" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -2764,6 +2798,22 @@ fn required_task_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, App
         .ok_or_else(|| AppIpcError::new("bad_request", format!("{key} is required")))
 }
 
+fn optional_nullable_task_string(
+    params: &Value,
+    key: &str,
+) -> Result<Option<Option<String>>, AppIpcError> {
+    match params.get(key) {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(Some(value.to_owned()))),
+        Some(Value::String(_)) => Ok(Some(None)),
+        Some(_) => Err(AppIpcError::new(
+            "bad_request",
+            format!("{key} must be a string or null"),
+        )),
+    }
+}
+
 fn required_task_i64(params: &Value, key: &str) -> Result<i64, AppIpcError> {
     params
         .get(key)
@@ -3172,12 +3222,8 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         "pwd" => Some(command_definition("pwd", &["pwd"], None)),
         "home_dir" => Some(command_definition("printenv HOME", &["printenv", "HOME"], None)),
         "project_workspace_root" => Some(command_definition(
-            "sh -c 'printf %s \"${WEGENT_EXECUTOR_PROJECTS_DIR:-${WECODE_HOME:-$HOME/.wecode}/wegent-executor/workspace/projects}\"'",
-            &[
-                "sh",
-                "-c",
-                "printf %s \"${WEGENT_EXECUTOR_PROJECTS_DIR:-${WECODE_HOME:-$HOME/.wecode}/wegent-executor/workspace/projects}\"",
-            ],
+            "project_workspace_root",
+            &[],
             None,
         )),
         "ls_dirs" => Some(command_definition(
@@ -3349,7 +3395,7 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &[
                 "sh",
                 "-lc",
-                "exec \"$HOME/.wegent-executor/bin/cdp-relay-server\" --restart",
+                "exec \"${WEGENT_EXECUTOR_HOME:-${WEGENT_WORKBENCH_HOME:-$HOME/.wegent/workbench}/executor}/bin/cdp-relay-server\" --restart",
             ],
             None,
         )),
@@ -3358,7 +3404,7 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &[
                 "sh",
                 "-lc",
-                "payload=${1:?browser tool payload is required}; exec \"$HOME/.wegent-executor/bin/browser-tool\" \"$payload\"",
+                "payload=${1:?browser tool payload is required}; exec \"${WEGENT_EXECUTOR_HOME:-${WEGENT_WORKBENCH_HOME:-$HOME/.wegent/workbench}/executor}/bin/browser-tool\" \"$payload\"",
                 "--",
             ],
             Some(PostProcessor::Json),

@@ -1425,6 +1425,50 @@ def test_alive_execution_keeps_task_ai_state_running(
     assert message.status == "streaming"
 
 
+@pytest.mark.parametrize("event_owner", ["owner", "other_user"])
+def test_app_record_terminal_event_matches_owned_local_device_alias(
+    test_db: Session, test_user: User, event_owner: str
+) -> None:
+    project = create_project(test_db, test_user)
+    task, message = _running_ai_task(test_db, test_user, project)
+    device = Kind(
+        user_id=test_user.id,
+        kind="Device",
+        name="app-installation",
+        namespace="default",
+        is_active=True,
+        json={
+            "spec": {
+                "deviceType": "app",
+                "deviceId": "app-installation",
+                "appDeviceId": "device-1",
+            }
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id=f"app-record-{device.id}",
+        runtime_task_id=message.runtime_task_id,
+        event_name="response.completed",
+        payload={"data": {"value": "MODEL_INHERITANCE_OK"}},
+        owner_user_id=test_user.id if event_owner == "owner" else test_user.id + 100,
+    )
+
+    test_db.refresh(message)
+    test_db.refresh(task)
+    if event_owner == "other_user":
+        assert projected is None
+        assert message.status == "streaming"
+    else:
+        assert projected is not None
+        assert message.status == "completed"
+        assert message.content == "MODEL_INHERITANCE_OK"
+        assert task.metadata_json["ai_state"]["status"] == "completed"
+
+
 def test_runtime_activity_key_unique_index_blocks_duplicate_activity(
     test_db: Session, test_user: User
 ) -> None:
@@ -1544,19 +1588,21 @@ def _running_ai_task(
     return task, message
 
 
+@pytest.mark.parametrize("initial_status", ["todo", "in_review"])
 @pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
 def test_running_ai_state_clears_completed_at_using_schema_contract(
     test_db: Session,
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
+    initial_status: str,
     unset_value: datetime | None,
 ) -> None:
     project = create_project(test_db, test_user)
     task = LoopItem(
         cloud_project_id=project.id,
-        title="Restart completed task",
+        title="Start or continue task",
         description="",
-        status="todo",
+        status=initial_status,
         completed_at=datetime(2026, 9, 10, 12),
         assignee_agent_id="12",
         created_by_user_id=test_user.id,
@@ -1593,8 +1639,51 @@ def test_running_ai_state_clears_completed_at_using_schema_contract(
 
     assert task.status == "in_progress"
     assert task.completed_at == unset_value
+    latest_change = task.metadata_json["status_history"][-1]
+    assert latest_change["from_status"] == initial_status
+    assert latest_change["to_status"] == "in_progress"
+    assert latest_change["trigger"] == "ai_started"
     assert len(contract_calls) == 1
     assert contract_calls[0][1] == "completed_at"
+
+
+def test_running_ai_state_does_not_reopen_completed_task(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = create_project(test_db, test_user)
+    completed_at = datetime(2026, 9, 10, 12)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Keep accepted task completed",
+        description="",
+        status="completed",
+        completed_at=completed_at,
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+        sender_name="Code Reviewer",
+        metadata_json={"run_id": str(uuid.uuid4())},
+    )
+
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=row,
+        trigger=None,
+        agent=None,
+        status_value="running",
+    )
+
+    assert task.status == "completed"
+    assert task.completed_at == completed_at
 
 
 @pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
@@ -1640,6 +1729,73 @@ def test_advance_to_review_clears_completed_at_using_schema_contract(
     assert task.completed_at == unset_value
     assert len(contract_calls) == 1
     assert contract_calls[0][1] == "completed_at"
+
+
+def test_older_run_completion_does_not_hide_a_newer_queued_follow_up(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Queued follow-up",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    older = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="12",
+        sender_name="Code Reviewer",
+        agent_id="12",
+        metadata_json={"run_id": "older-run"},
+    )
+    newer = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="12",
+        sender_name="Code Reviewer",
+        agent_id="12",
+        metadata_json={"run_id": "newer-run"},
+    )
+
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=older,
+        trigger=None,
+        agent=None,
+        status_value="running",
+    )
+    test_db.commit()
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=newer,
+        trigger=None,
+        agent=None,
+        status_value="running",
+    )
+    test_db.commit()
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=older,
+        trigger=None,
+        agent=None,
+        status_value="completed",
+    )
+    project_chat_service._advance_task_to_review(test_db, older)
+
+    assert task.status == "in_progress"
+    assert task.metadata_json["ai_state"]["run_id"] == "newer-run"
+    assert task.metadata_json["ai_state"]["status"] == "running"
 
 
 @pytest.mark.parametrize("dispatch_role", ["manager", "member"])
@@ -1931,6 +2087,58 @@ def test_task_agent_failure_updates_task_ai_state(
     assert ai_state["last_error"] == "Runtime failed"
 
 
+def test_task_agent_failure_without_comment_authorizes_only_run_initiator(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    member = _make_member(test_db, project, "other-run-initiator", BaseRole.Developer)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Run assigned task without a comment",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=task.id,
+            agentId="12",
+            runtimeDeviceId="device-1",
+            runtimeTaskId="runtime-task-1",
+        ),
+    )
+    failure = ProjectChatAgentFailure(
+        projectId=project.id,
+        taskId=task.id,
+        messageId=response.message_id,
+        error="Runtime failed",
+    )
+
+    assert response.trigger_message_id is None
+    assert response.metadata["started_by_user_id"] == test_user.id
+    with pytest.raises(HTTPException) as denied:
+        project_chat_service.fail_agent_response(
+            test_db, user_id=member.id, request=failure
+        )
+    assert denied.value.status_code == 403
+    failed = project_chat_service.fail_agent_response(
+        test_db, user_id=test_user.id, request=failure
+    )
+
+    test_db.refresh(task)
+    assert failed.status == "failed"
+    assert failed.metadata["run_status"] == "failed"
+    assert task.metadata_json["ai_state"]["status"] == "failed"
+    assert task.metadata_json["ai_state"]["last_error"] == "Runtime failed"
+
+
 def test_auto_retry_failure_increments_budget_but_manual_rerun_does_not(
     test_db: Session, test_user: User
 ) -> None:
@@ -2134,7 +2342,7 @@ def test_local_runtime_completion_persists_the_agent_response(
     assert completed[0].type == "text"
 
 
-def test_runtime_completion_advances_assigned_task_to_review(
+def test_runtime_completion_advances_assigned_agent_issue_to_review(
     test_db: Session, test_user: User
 ) -> None:
     project = create_project(test_db, test_user)
@@ -2191,6 +2399,36 @@ def test_runtime_completion_advances_assigned_task_to_review(
     test_db.refresh(task)
     assert task.status == "in_review"
     assert task.metadata_json["ai_state"]["status"] == "completed"
+
+
+def test_runtime_completion_preserves_human_assigned_issue_status(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-HUMAN-1",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Human-owned private AI task",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        assignee_user_id=test_user.id,
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id=None,
+    )
+
+    project_chat_service._advance_task_to_review(test_db, row)
+
+    assert task.status == "in_progress"
 
 
 def test_runtime_completion_waits_for_reported_workflow_outcome(

@@ -977,6 +977,7 @@ def _project_chat_runtime_event_sync(
             runtime_task_id=runtime_task_id,
             event_name=event_name,
             payload=payload,
+            owner_user_id=user_id,
         )
         if projected is None:
             return {
@@ -2094,6 +2095,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 needs_confirmation_only=True,
             ),
             "reconcile unconfirmed executions after device heartbeat",
+        )
+        from app.services.device.plugin_removal_sync import sync_pending_plugin_removals
+
+        self._schedule_background_task(
+            sync_pending_plugin_removals(int(user_id), payload.device_id),
+            "reconcile persisted plugin removals after device heartbeat",
         )
 
         return {"success": True}

@@ -130,7 +130,7 @@ fn project_attachment_downloads_to_device_private_layout() {
     let project_workspace = PathBuf::from("/tmp/chats/2026-06-12/hello");
     let executor_workspace = PathBuf::from("/tmp/executor/workspace");
     let local_image = executor_workspace
-        .join("attachments/runtime/31/45/image.png")
+        .join("31/attachments/45/image.png")
         .display()
         .to_string();
     let sandbox_path = "/home/user/31:executor:attachments/45/image.png";

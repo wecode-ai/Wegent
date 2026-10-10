@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.execution.request_builder import TaskRequestBuilder
+from shared.models.db import User
 
 
 @pytest.mark.parametrize("shell_type", ["ClaudeCode", "Codex"])
@@ -16,6 +17,8 @@ def test_coordinate_request_preserves_member_capabilities_after_late_preload(
     test_db, mocker, shell_type
 ):
     builder = TaskRequestBuilder(test_db)
+    test_db.add(User(id=7, user_name="alice", password_hash="unused"))
+    test_db.flush()
     member_skill = SimpleNamespace(
         id=42,
         user_id=7,
@@ -71,7 +74,7 @@ def test_coordinate_request_preserves_member_capabilities_after_late_preload(
 
     result = builder.build(
         subtask=SimpleNamespace(id=2, message_id=33),
-        task=SimpleNamespace(id=1, json={"spec": {}}, project_id=None),
+        task=SimpleNamespace(id=1, user_id=7, json={"spec": {}}, project_id=None),
         user=user,
         team=team,
         message="Review the changes",

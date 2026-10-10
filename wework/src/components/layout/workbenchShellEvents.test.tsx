@@ -30,7 +30,7 @@ test('only the active mounted workbench handles shell requests after switching t
     requestOpenCloudDeviceSettings()
   }
   requestActions()
-  expect(task.onCreateProjectMode).toHaveBeenCalledWith('existing')
+  expect(task.onCreateProjectMode).toHaveBeenCalledWith('existing', undefined)
   expect(task.onBindProjectWorkspace).toHaveBeenCalledWith(42)
   for (const callback of Object.values(task)) expect(callback).toHaveBeenCalledTimes(1)
   for (const callback of Object.values(board)) expect(callback).not.toHaveBeenCalled()

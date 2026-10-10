@@ -182,6 +182,9 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
       Object.prototype.hasOwnProperty.call(
         {
           app_started: true,
+          app_startup_attempted: true,
+          app_startup_failed: true,
+          app_startup_succeeded: true,
           feature_opened: true,
           telemetry_preference_changed: true,
         },
@@ -790,10 +793,10 @@ async function verifySitesPluginAutoInstall(control, executorHome) {
         interface: plugin.spec.interface,
       })
     )
-    const manifestPath = join(capabilities, 'manifest.json')
+    const manifestPath = join(capabilities, 'manifest-v2.json')
     const manifest = (await pathExists(manifestPath))
       ? JSON.parse(await readFile(manifestPath, 'utf8'))
-      : { plugins: {} }
+      : { version: 2, plugins: {} }
     manifest.plugins[name + '@wegent'] = {
       name,
       marketplace: 'wegent',

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ArrowRight } from "lucide-react";
+import { formatIssueTimestamp } from "./issueTimestamp";
 
 export interface IssueAssignmentHistoryEntry {
   by_user_id: number;
@@ -61,7 +62,7 @@ export function IssueAssignmentHistoryList({
           <span className="truncate">{toName ?? labels.unassigned}</span>
         </div>
         <p className="mt-0.5 text-xs text-text-muted">
-          {labels.actions[entry.action]} · {new Date(entry.at).toLocaleString()}
+          {labels.actions[entry.action]} · {formatIssueTimestamp(entry.at)}
         </p>
       </div>
     );
@@ -118,7 +119,7 @@ export function IssueStatusHistoryList({
         </div>
         <p className="mt-0.5 text-xs text-text-muted">
           {isAccept ? labels.accept : labels.action(entry.trigger)} ·{" "}
-          {new Date(entry.at).toLocaleString()}
+          {formatIssueTimestamp(entry.at)}
         </p>
       </div>
     );

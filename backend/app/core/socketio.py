@@ -38,8 +38,17 @@ def create_socketio_server() -> socketio.AsyncServer:
     redis_url = settings.REDIS_URL
 
     try:
-        mgr = socketio.AsyncRedisManager(redis_url)
-        logger.info(f"Socket.IO Redis manager initialized with {redis_url}")
+        # A half-open subscription must time out so redis-py can resubscribe.
+        mgr = socketio.AsyncRedisManager(
+            redis_url,
+            redis_options={
+                "socket_timeout": settings.SOCKETIO_REDIS_SOCKET_TIMEOUT,
+                "socket_connect_timeout": settings.SOCKETIO_REDIS_CONNECT_TIMEOUT,
+                "socket_keepalive": True,
+                "health_check_interval": settings.SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL,
+            },
+        )
+        logger.info("Socket.IO Redis manager initialized with bounded timeouts")
     except Exception as e:
         logger.warning(
             f"Failed to create Redis manager: {e}, falling back to in-memory"

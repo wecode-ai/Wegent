@@ -197,7 +197,6 @@ async def test_old_thread_survives_reassignment(scenario):
         "other_issue",
         "binding",
         "inactive",
-        "busy",
     ],
 )
 async def test_rejects_invalid_collaboration_without_runtime_dispatch(
@@ -219,12 +218,30 @@ async def test_rejects_invalid_collaboration_without_runtime_dispatch(
         s.execution.cloud_project_id = "different-project"
     elif boundary == "inactive":
         s.agent.status = "archived"
-    elif boundary == "busy":
-        s.root.status = "streaming"
     s.db.commit()
     with pytest.raises(HTTPException):
         await execute_comment(s.db, user_id=s.member.id, request=request)
     s.rpc.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_busy_session_accepts_follow_up_into_runtime_queue(scenario):
+    s = scenario
+    s.root.status = "streaming"
+    s.rpc.return_value = {
+        "accepted": True,
+        "status": "queued",
+        "queuePosition": 2,
+    }
+    s.db.commit()
+
+    result = await execute_comment(s.db, user_id=s.member.id, request=comment(s))
+
+    assert result[0].status == "pending"
+    assert result[0].metadata["run_status"] == "queued"
+    assert result[0].metadata["queue_position"] == 2
+    assert s.issue.status == "in_progress"
+    assert s.rpc.call_args.kwargs["payload"]["queueIfBusy"] is True
 
 
 @pytest.mark.asyncio
@@ -377,6 +394,42 @@ async def test_manually_bound_session_uses_the_binding_owner(scenario):
     assert s.compiler.call_args.kwargs["user_id"] == s.owner.id
     assert s.compiler.call_args.kwargs["request"].model_id == "original-model"
     assert s.rpc.call_args.kwargs["payload"]["taskId"] == s.root.runtime_task_id
+
+
+@pytest.mark.asyncio
+async def test_manually_bound_team_session_keeps_its_model_on_reply(scenario):
+    from app.models.delivery import LoopItemTaskBinding
+
+    s = scenario
+    s.db.delete(s.execution)
+    s.root.metadata_json = {}
+    s.db.add(
+        LoopItemTaskBinding(
+            cloud_project_id=str(s.project.id),
+            loop_item_id=s.issue.id,
+            device_id=s.root.runtime_device_id,
+            task_id=s.root.runtime_task_id,
+            task_user_id=s.owner.id,
+            linked_by_user_id=s.owner.id,
+            metadata_json={"wegent_team_id": 1880},
+        )
+    )
+    s.db.commit()
+
+    await execute_comment(s.db, user_id=s.member.id, request=comment(s))
+
+    intent = s.compiler.call_args.kwargs["request"]
+    assert intent.schema_version == 3
+    assert intent.wegent_team_id == 1880
+    assert intent.model_id is None
+    assert intent.new_session is False
+    assert intent.origin == {
+        "type": "board_comment",
+        "dispatchRole": "executor",
+        "cloudProjectId": s.project.id,
+        "loopItemId": s.issue.id,
+    }
+    assert s.compiler.call_args.kwargs["user_id"] == s.owner.id
 
 
 @pytest.mark.asyncio

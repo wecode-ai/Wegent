@@ -200,7 +200,7 @@ test('builds the macOS installer without unused DMG update metadata', () => {
   expect(config.dmg.writeUpdateInfo).toBe(false)
 })
 
-test('builds a slim Host update without managed components', () => {
+test('builds a compressed slim Host update without managed components', () => {
   const config = JSON.parse(
     execFileSync(
       process.execPath,
@@ -231,7 +231,7 @@ process.stdout.write(JSON.stringify({
   )
 
   expect(config.output).toBe('release-online-update')
-  expect(config.compression).toBe('store')
+  expect(config.compression).toBe('normal')
   expect(config.resources).toEqual([
     { from: 'resources/components.json', to: 'components.json' },
     { from: '../resources/licenses', to: 'licenses' },

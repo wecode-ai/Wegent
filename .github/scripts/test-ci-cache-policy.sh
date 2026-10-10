@@ -517,6 +517,24 @@ if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   fail "Wework E2E must consume its immutable dependency image without runtime installs"
 fi
 
+if ! ruby -ryaml - "$wework_workflow" "$workflow_dir/plugin-auth-sdk.yml" <<'RUBY'
+desktop = YAML.load_file(ARGV[0])['jobs']['wework-desktop-cloud-e2e']['steps']
+prepare = desktop.index { |step| step['name'] == 'Prepare real GitHub CLI for account authentication E2E' }
+run = desktop.index { |step| step['name'] == 'Run Wework desktop Cloud E2E checkpoints' }
+abort 'Account auth E2E must prepare the real gh binary before checkpoints' unless prepare && run && prepare < run
+step = desktop[prepare]
+abort 'GitHub CLI preparation must be scoped to account auth checkpoints' unless step['if'] == "contains(matrix.segments, 'plugin-account-auth')"
+abort 'GitHub CLI preparation must install and verify the real binary' unless step['run'].include?('find_missing_apt_packages gh') && step['run'].include?('gh --version')
+
+native = YAML.load_file(ARGV[1])['jobs']['native']['steps']
+prepare = native.index { |item| item['name'] == 'Resolve the native adapter Python interpreter' }
+run = native.index { |item| item['name'] == 'Test native transport, OAuth lifecycle, and process cleanup' }
+abort 'Native auth tests must pin the uv interpreter before invoking adapters' unless prepare && run && prepare < run && native[prepare]['run'].include?('uv python find') && native[prepare]['run'].include?('WEGENT_TEST_PYTHON=')
+RUBY
+then
+  fail "Plugin auth CI must prepare real executables before its integration tests"
+fi
+
 if ! grep -Fq 'libmagic1' "$wework_browser_image" ||
   ! grep -Fq 'zstd' \
   "$wework_browser_image" ||
@@ -552,7 +570,7 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   [[ "$desktop_build_section" != *'restore-wework-core-e2e-build-oci.sh'* ]] ||
   [[ "$desktop_build_section" != *'uses: ./.github/actions/build-wework-core-e2e'* ]] ||
   [[ "$desktop_build_section" != *'uses: actions/upload-artifact@v4'* ]] ||
-  grep -Fq 'cargo build' "$desktop_build_action" ||
+  ! grep -Fq 'BUILD_RUNTIMES_FROM_SOURCE:' "$desktop_build_action" ||
   ! grep -Fq 'restore-oci-runtime-binary.sh' "$desktop_build_action" ||
   ! grep -Fq 'ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml' "$desktop_build_action" ||
   ! grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA="$EXECUTOR_HEAD_SHA"' "$desktop_build_action" ||
@@ -577,6 +595,8 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
     "$script_dir/archive-wework-core-e2e-build.sh"; then
   fail "Wework desktop builds must reuse content-addressed artifacts and shared Rust runtimes"
 fi
+
+bash "$script_dir/test-wework-core-e2e-runtimes.sh"
 
 bash "$script_dir/test-build-macos-e2e-runtimes.sh"
 bash "$script_dir/test-macos-e2e-runtime-oci.sh"

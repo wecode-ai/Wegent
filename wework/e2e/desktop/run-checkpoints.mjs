@@ -20,6 +20,10 @@ import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_RESOURCES = new Map([
+  // These macOS checkpoints move native windows and require a foreground renderer for cursor arrival.
+  ['browser-toolbar-actions', ['macos-inspector-foreground']],
+  ['tray-lifecycle', ['macos-inspector-foreground']],
+  ['browser-annotation-design', ['macos-inspector-foreground']],
   // Fresh packaged runtime extraction contends when these cloud checkpoints share a runner.
   ['plugin-account-auth', ['desktop-runtime-intensive']],
   ['cloud-device-lifecycle', ['desktop-runtime-intensive']],
@@ -38,11 +42,14 @@ const CHECKPOINT_RESOURCES = new Map([
     ['collaboration-runtime', 'desktop-runtime-intensive'],
   ],
   ['collaboration-issue-comment-notification', ['collaboration-runtime']],
+  ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-uninstall-resilience': './scenarios/plugin-uninstall-resilience.scenario.mjs',
+  'plugin-composer-long-list': './scenarios/plugin-composer-long-list.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
@@ -100,6 +107,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
   'collaboration-issue-comment-notification':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
+  'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'drawing-attachment': './scenarios/drawing-attachment.scenario.mjs',
@@ -115,6 +123,8 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-worktree-policy',
   'cloud-model-recovery',
   'plugin-account-auth',
+  'plugin-uninstall-resilience',
+  'plugin-composer-long-list',
   'codex-account-login',
   'cloud-space-mention',
   'change-request-status',
@@ -136,6 +146,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
   'collaboration-issue-comment-notification',
+  'collaboration-issue-archive',
   'plugin-development',
   'task-attachments',
   'drawing-attachment',

@@ -15,6 +15,7 @@ from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
     LoopItem,
@@ -42,6 +43,11 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBindingView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.identity import (
+    device_identity_ids,
+    record_id_from_route,
+    resolve_owned_device_alias,
+)
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.ghost_capabilities import (
     load_ghost_chain,
@@ -749,7 +755,7 @@ class ProjectChatService:
             self._commit(db)
             for row in rows:
                 db.refresh(row)
-        return [self.to_view(row) for row in rows]
+        return [self.to_view(row, db=db) for row in rows]
 
     def send(
         self,
@@ -782,7 +788,7 @@ class ProjectChatService:
                     status.HTTP_409_CONFLICT,
                     "client_message_id already belongs to another project",
                 )
-            return ProjectChatWriteResult(self.to_view(existing), created=False)
+            return ProjectChatWriteResult(self.to_view(existing, db=db), created=False)
 
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         metadata = {
@@ -838,7 +844,7 @@ class ProjectChatService:
                 self._queue_loop_item_change(db, item)
         self._commit(db)
         db.refresh(row)
-        return ProjectChatWriteResult(self.to_view(row), created=True)
+        return ProjectChatWriteResult(self.to_view(row, db=db), created=True)
 
     def _resolve_reply_context(
         self,
@@ -939,13 +945,14 @@ class ProjectChatService:
                 )
                 self._commit(db)
             db.refresh(existing)
-            return self.to_view(existing)
+            return self.to_view(existing, db=db)
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         run_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         metadata = {
             "run_id": run_id,
             "run_status": "running",
             "auto_retry": request.auto_retry,
+            "started_by_user_id": user_id,
         }
         if request.model is not None:
             metadata["model"] = request.model
@@ -1008,9 +1015,9 @@ class ProjectChatService:
             if existing is None:
                 raise
             db.refresh(existing)
-            return self.to_view(existing)
+            return self.to_view(existing, db=db)
         db.refresh(row)
-        return self.to_view(row)
+        return self.to_view(row, db=db)
 
     @staticmethod
     def _runtime_activity_key(
@@ -1033,8 +1040,43 @@ class ProjectChatService:
         runtime_task_id: str,
         event_name: str,
         payload: dict,
+        owner_user_id: int | None = None,
     ) -> tuple[ProjectChatMessageView, str] | None:
-        row = self._streaming_activity_for_runtime(db, device_id, runtime_task_id)
+        identities = [device_id]
+        if owner_user_id is not None and record_id_from_route(device_id):
+            device = resolve_owned_device_alias(
+                db, user_id=owner_user_id, device_id=device_id
+            )
+            if device is None:
+                return None
+            # App events use the record route while local TaskBindings use the
+            # installation's appDeviceId. Both identify this owned Runtime.
+            identities = device_identity_ids(device)
+        data = payload.get("data")
+        data = data if isinstance(data, dict) else {}
+        if event_name == "response.completed":
+            from app.services.project_chat.execution_snapshot import (
+                completed_activity_for_turn,
+            )
+
+            completed = completed_activity_for_turn(
+                db,
+                device_ids=identities,
+                task_id=runtime_task_id,
+                turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+            )
+            if completed is not None:
+                # History reports outcomes without text. A delayed final event
+                # must still save its full content without replaying workflow.
+                content = self._project_chat_final_text(data, payload)
+                if content is not None:
+                    completed.content = content
+                self._commit(db)
+                db.refresh(completed)
+                return self.to_view(completed, db=db), "snapshot"
+        row = self._streaming_activity_for_runtime(
+            db, device_id, runtime_task_id, device_ids=identities
+        )
         if row is None:
             row = self._open_activity_from_execution(
                 db,
@@ -1053,8 +1095,6 @@ class ProjectChatService:
                 runtime_task_id,
             )
             return None
-        data = payload.get("data")
-        data = data if isinstance(data, dict) else {}
         subagent_result = self._handle_subagent_runtime_event(
             db, parent=row, event_name=event_name, data=data
         )
@@ -1092,7 +1132,7 @@ class ProjectChatService:
             self._commit(db)
             db.refresh(row)
             return (
-                self.to_view(row).model_copy(
+                self.to_view(row, db=db).model_copy(
                     update={
                         "content": delta,
                         "metadata": {"contentMode": "delta"},
@@ -1139,7 +1179,7 @@ class ProjectChatService:
             return None
         self._commit(db)
         db.refresh(row)
-        return self.to_view(row), "snapshot"
+        return self.to_view(row, db=db), "snapshot"
 
     @staticmethod
     def _project_automation_activity_is_terminal(
@@ -1191,13 +1231,17 @@ class ProjectChatService:
         db: Session,
         runtime_device_id: str,
         runtime_task_id: str,
+        *,
+        device_ids: list[str] | None = None,
     ) -> ProjectChatMessage | None:
         """Return the open streaming AI message for one runtime task."""
 
         return (
             db.query(ProjectChatMessage)
             .filter(
-                ProjectChatMessage.runtime_device_id == runtime_device_id,
+                ProjectChatMessage.runtime_device_id.in_(
+                    device_ids or [runtime_device_id]
+                ),
                 ProjectChatMessage.runtime_task_id == runtime_task_id,
                 ProjectChatMessage.sender_type == "agent",
                 ProjectChatMessage.status.in_(["pending", "streaming"]),
@@ -1277,7 +1321,7 @@ class ProjectChatService:
         )
         self._commit(db)
         db.refresh(row)
-        return self.to_view(row)
+        return self.to_view(row, db=db)
 
     def _finish_activity(
         self,
@@ -1317,6 +1361,7 @@ class ProjectChatService:
                 status_value="cancelled",
                 error=error or content,
             )
+            self._advance_task_to_review(db, row)
             return
         if not row.content and isinstance(content, str) and content:
             row.content = content
@@ -1329,6 +1374,7 @@ class ProjectChatService:
             status_value="failed",
             error=error or content,
         )
+        self._advance_task_to_review(db, row)
 
     @staticmethod
     def _project_chat_terminal_status(
@@ -1489,7 +1535,7 @@ class ProjectChatService:
             existing.message_type = "text"
         self._commit(db)
         db.refresh(existing)
-        return self.to_view(existing), "snapshot"
+        return self.to_view(existing, db=db), "snapshot"
 
     @staticmethod
     def _subagent_name(data: dict) -> str | None:
@@ -1638,6 +1684,25 @@ class ProjectChatService:
         )
         previous_state = task_metadata.get(TASK_AI_STATE_KEY)
         previous_state = previous_state if isinstance(previous_state, dict) else {}
+        previous_run_id = previous_state.get("run_id")
+        previous_status = previous_state.get("status")
+        if (
+            status_value in PROJECT_CHAT_TERMINAL_RUN_STATUSES
+            and isinstance(previous_run_id, str)
+            and previous_run_id
+            and previous_run_id != run_id
+            and previous_status not in PROJECT_CHAT_TERMINAL_RUN_STATUSES
+        ):
+            logger.info(
+                "[ProjectChat] Ignored stale terminal task AI state: "
+                "project_id=%s task_id=%s message_id=%s run_id=%s current_run_id=%s",
+                row.project_id,
+                row.task_id,
+                row.message_id,
+                run_id,
+                previous_run_id,
+            )
+            return
         next_state = {
             **previous_state,
             "run_id": run_id,
@@ -1672,7 +1737,6 @@ class ProjectChatService:
                 and task.status
                 not in {
                     "in_progress",
-                    "in_review",
                     "completed",
                 }
             ):
@@ -1780,8 +1844,7 @@ class ProjectChatService:
         row.status = status_value
         row.message_type = "text"
         row.metadata_json = {**metadata, "run_status": status_value}
-        if status_value == "completed":
-            self._advance_task_to_review(db, row)
+        self._advance_task_to_review(db, row)
         logger.warning(
             "[ProjectChat] Reconciled streaming AI message from loop_item AI state: "
             "project_id=%s task_id=%s message_id=%s run_status=%s",
@@ -1801,7 +1864,7 @@ class ProjectChatService:
 
     @staticmethod
     def _advance_task_to_review(db: Session, row: ProjectChatMessage) -> None:
-        """Move the work item to human review when its assigned AI finishes."""
+        """Move an Issue assigned to this project agent into human review."""
 
         if not row.task_id:
             return
@@ -1817,24 +1880,29 @@ class ProjectChatService:
             or not loop_datetime_value_is_unset(task.deleted_at)
         ):
             return
-        if row.agent_id:
-            if task.assignee_agent_id != row.agent_id:
-                return
-        else:
-            # AI managers are audit-only comments. Only an assigned project
-            # robot can complete work and advance the task to review.
+        if not row.agent_id or task.assignee_agent_id != row.agent_id:
             return
         task_metadata = (
             dict(task.metadata_json) if isinstance(task.metadata_json, dict) else {}
         )
+        current_ai_state = task_metadata.get(TASK_AI_STATE_KEY)
+        current_ai_state = (
+            current_ai_state if isinstance(current_ai_state, dict) else {}
+        )
+        current_message_id = current_ai_state.get("project_chat_message_id")
+        if (
+            isinstance(current_message_id, str)
+            and current_message_id
+            and current_message_id != row.message_id
+            and current_ai_state.get("status") not in PROJECT_CHAT_TERMINAL_RUN_STATUSES
+        ):
+            return
         if (
             task_metadata.get("external_index") is True
             or task_metadata.get("external_shadow") is True
             or task_metadata.get("dispatch_child") is True
             or isinstance(task_metadata.get("workflow_plan"), dict)
         ):
-            # External providers and dispatch/workflow tasks own their status
-            # transitions outside Runtime chat projection.
             return
         project = db.get(CloudProject, task.cloud_project_id)
         if project is not None:
@@ -1873,14 +1941,14 @@ class ProjectChatService:
                 ProjectChatMessage.project_id == request.project_id,
                 _task_id_filter(ProjectChatMessage.task_id, request.task_id),
                 ProjectChatMessage.sender_type == "agent",
-                ProjectChatMessage.status == "streaming",
+                ProjectChatMessage.status.in_(("pending", "streaming")),
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .first()
         )
         if row is None:
             raise HTTPException(
-                status.HTTP_404_NOT_FOUND, "Streaming AI response not found"
+                status.HTTP_404_NOT_FOUND, "Active AI response not found"
             )
         trigger = (
             db.query(ProjectChatMessage)
@@ -1892,7 +1960,11 @@ class ProjectChatService:
             )
             .first()
         )
-        if trigger is None:
+        started_by_user = (
+            not row.trigger_message_id
+            and (row.metadata_json or {}).get("started_by_user_id") == user_id
+        )
+        if trigger is None and not started_by_user:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN, "Only the sender can fail this AI response"
             )
@@ -1908,9 +1980,10 @@ class ProjectChatService:
             status_value="failed",
             error=request.error,
         )
+        self._advance_task_to_review(db, row)
         self._commit(db)
         db.refresh(row)
-        return self.to_view(row)
+        return self.to_view(row, db=db)
 
     def _require_scope(
         self,
@@ -2184,7 +2257,7 @@ class ProjectChatService:
         )
 
     @staticmethod
-    def to_view(row: ProjectChatMessage) -> ProjectChatMessageView:
+    def to_view(row: ProjectChatMessage, *, db: Session) -> ProjectChatMessageView:
         runtime_address = None
         if row.runtime_device_id and row.runtime_task_id:
             runtime_address = {
@@ -2211,8 +2284,8 @@ class ProjectChatService:
             agent_id=row.agent_id or None,
             runtime_address=runtime_address,
             status=row.status,
-            created_at=row.created_at.isoformat(),
-            updated_at=row.updated_at.isoformat(),
+            created_at=database_datetime_as_utc(db, row.created_at).isoformat(),
+            updated_at=database_datetime_as_utc(db, row.updated_at).isoformat(),
         )
 
 

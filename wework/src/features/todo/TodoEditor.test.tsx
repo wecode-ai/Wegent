@@ -78,7 +78,36 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
-  it('labels compact Issue properties and explains the current status in a tooltip', async () => {
+  it('retains the archive label and outside-click dismissal in the properties menu', async () => {
+    const user = userEvent.setup()
+    const onArchive = vi.fn()
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onDelete={onArchive}
+        deleteLabel="归档任务"
+        api={api}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-more-properties'))
+    expect(screen.getByTestId('cloud-todo-detail-delete')).toHaveTextContent('归档任务')
+    await user.click(document.body)
+    expect(screen.queryByTestId('cloud-todo-more-properties-popover')).not.toBeInTheDocument()
+    expect(onArchive).not.toHaveBeenCalled()
+
+    await user.click(screen.getByTestId('cloud-todo-more-properties'))
+    await user.click(screen.getByTestId('cloud-todo-detail-delete'))
+    expect(onArchive).toHaveBeenCalledOnce()
+  })
+
+  it('keeps compact Issue properties unlabeled and explains the current status in a tooltip', async () => {
     const user = userEvent.setup()
     render(
       <TodoEditor
@@ -96,13 +125,162 @@ describe('TodoEditor external item sync', () => {
     )
 
     const summary = screen.getByTestId('cloud-todo-state-summary')
-    expect(summary).toHaveTextContent('负责人')
+    expect(summary).not.toHaveTextContent('负责人')
+    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('agent-1')
+    expect(screen.getByRole('button', { name: '时间范围' })).toHaveTextContent('添加日期')
 
     await user.hover(screen.getByTestId('cloud-todo-detail-status').parentElement!)
 
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       '状态：进行中。表示 Issue 当前所处的处理阶段。'
     )
+  })
+
+  it('opens the due date picker from the bottom property row and saves the date', async () => {
+    const user = userEvent.setup()
+    const updateLoopItem = vi.fn(async (_itemId: string, values: Record<string, unknown>) => ({
+      ...baseItem,
+      ...values,
+      version: 2,
+    }))
+    const editableApi = {
+      ...api,
+      updateLoopItem,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={editableApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: '时间范围' }))
+    const dueDateInput = await screen.findByTestId('cloud-todo-detail-due-date')
+    const showPicker = vi.fn()
+    Object.defineProperty(dueDateInput, 'showPicker', {
+      configurable: true,
+      value: showPicker,
+    })
+
+    await user.click(dueDateInput)
+    expect(showPicker).toHaveBeenCalledOnce()
+
+    await user.type(dueDateInput, '2026-10-31')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+
+    await vi.waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        baseItem.id,
+        expect.objectContaining({ due_at: '2026-10-31' })
+      )
+    )
+  })
+
+  it('edits priority and tags from the more-properties menu and saves them', async () => {
+    const user = userEvent.setup()
+    const updateLoopItem = vi.fn(async (_itemId: string, values: Record<string, unknown>) => ({
+      ...baseItem,
+      ...values,
+      version: 2,
+    }))
+    const editableApi = {
+      ...api,
+      updateLoopItem,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={editableApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-more-properties'))
+    await user.selectOptions(screen.getByTestId('cloud-todo-detail-priority'), 'urgent')
+    const tagInput = screen.getByTestId('cloud-todo-detail-tag-input')
+    await user.click(tagInput)
+    expect(tagInput).toHaveFocus()
+    await user.type(tagInput, 'release{Enter}')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+
+    await vi.waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        baseItem.id,
+        expect.objectContaining({
+          priority: 'urgent',
+          tags: ['release'],
+        })
+      )
+    )
+  })
+
+  it('keeps the more-properties menu actions operable', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn()
+    const addLoopItemCollaborator = vi.fn(async () => ({
+      id: 'collaborator-7',
+      loop_item_id: baseItem.id,
+      user_id: 7,
+      user_name: '张三',
+      email: null,
+      source: 'manual',
+      added_by_user_id: 1,
+      created_at: '2026-10-09T00:00:00Z',
+    }))
+    const menuApi = {
+      ...api,
+      listCloudProjectMembers: vi.fn(async () => [
+        {
+          id: 7,
+          user_id: 7,
+          user_name: '张三',
+          email: null,
+          role: 'Developer',
+        },
+      ]),
+      addLoopItemCollaborator,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onDelete={onDelete}
+        api={menuApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-more-properties'))
+    await user.click(screen.getByTestId('cloud-todo-add-collaborator'))
+    await user.selectOptions(screen.getByTestId('cloud-todo-collaborator-select'), '7')
+    await user.click(screen.getByTestId('cloud-todo-confirm-collaborator'))
+
+    await vi.waitFor(() => expect(addLoopItemCollaborator).toHaveBeenCalledWith(baseItem.id, 7))
+    expect(await screen.findByRole('button', { name: '移除参与者 张三' })).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('cloud-todo-detail-delete'))
+    expect(onDelete).toHaveBeenCalledOnce()
   })
 
   it('uses collaboration translations for runtime configuration notices', async () => {
@@ -241,6 +419,155 @@ describe('TodoEditor external item sync', () => {
     expect(onCreateTask).not.toHaveBeenCalled()
   })
 
+  it('shows a private task action for an Issue assigned to the current user', async () => {
+    const onCreateTask = vi.fn()
+    const assignedToCurrentUser = {
+      ...baseItem,
+      can_view_detail: true,
+      can_edit: false,
+      assignee_user_id: 1,
+      assignee_agent_id: null,
+      project_store: 'backend' as const,
+    }
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={assignedToCurrentUser}
+        project={{ ...project, project_store: 'backend' }}
+        allItems={[assignedToCurrentUser]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
+      '让 AI 帮我处理'
+    )
+    expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
+      '基于当前 Issue 创建任务，并在当前电脑上运行'
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(onCreateTask).toHaveBeenCalledOnce()
+  })
+
+  it('shows running and recent tasks directly and uses expand only for the remaining tasks', async () => {
+    const onCreateTask = vi.fn()
+    const assignedToCurrentUser = {
+      ...baseItem,
+      can_view_detail: true,
+      can_edit: false,
+      assignee_user_id: 1,
+      assignee_agent_id: null,
+      project_store: 'backend' as const,
+    }
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={assignedToCurrentUser}
+        project={{ ...project, project_store: 'backend' }}
+        allItems={[assignedToCurrentUser]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        initialTaskBindings={[
+          {
+            id: 1,
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'running-task',
+            task_title: '仍在运行的任务',
+            linked_at: '2026-10-08T08:00:00Z',
+          },
+          {
+            id: 2,
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'older-task',
+            task_title: '较早完成的任务',
+            linked_at: '2026-10-08T09:00:00Z',
+          },
+          {
+            id: 3,
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'recent-task',
+            task_title: '最近完成的任务',
+            linked_at: '2026-10-08T10:00:00Z',
+          },
+        ]}
+        taskExecutionStates={{
+          '1': { status: 'running' },
+          '2': { status: 'succeeded' },
+          '3': { status: 'succeeded' },
+        }}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(await screen.findByText('仍在运行的任务')).toBeInTheDocument()
+    expect(screen.getByText('最近完成的任务')).toBeInTheDocument()
+    expect(screen.queryByText('较早完成的任务')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-personal-task-action')).not.toBeInTheDocument()
+
+    const toggle = screen.getByTestId('cloud-todo-toggle-tasks')
+    expect(toggle).toHaveTextContent('展开')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    await userEvent.click(toggle)
+
+    expect(screen.getByText('较早完成的任务')).toBeInTheDocument()
+    expect(toggle).toHaveTextContent('收起')
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(onCreateTask).toHaveBeenCalledOnce()
+  })
+
+  it('uses the Issue assignee when older active assignment records still exist', () => {
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={{
+          ...baseItem,
+          assignee_user_id: 1,
+          assignee_agent_id: null,
+          project_store: 'backend',
+        }}
+        project={{ ...project, project_store: 'backend' }}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={vi.fn()}
+        currentAssignment={{
+          id: 'assignment-agent',
+          issue_id: baseItem.id,
+          target_type: 'agent',
+          target_id: 'agent-1',
+          target_name: 'Agent',
+          body: null,
+          comment_id: null,
+          created_by_user_id: 2,
+          created_by_user_name: 'Manager',
+          status: 'active',
+          created_at: '2026-10-08T10:00:00Z',
+          updated_at: '2026-10-08T10:00:00Z',
+        }}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-personal-task-action')).toBeInTheDocument()
+  })
+
   it('does not add a default-assistant execution entry to the Issue drawer', async () => {
     const onCreateTask = vi.fn()
 
@@ -359,8 +686,8 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     const taskRow = await screen.findByTestId('cloud-todo-open-task-conversation-7')
+    expect(screen.queryByTestId('cloud-todo-toggle-tasks')).not.toBeInTheDocument()
     expect(taskRow).toHaveTextContent('立即显示的本地任务')
     expect(taskRow).toHaveTextContent('开发设备')
     expect(taskRow).toHaveTextContent('执行中')
@@ -429,16 +756,72 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    expect(await screen.findByTestId('cloud-todo-toggle-tasks')).toBeInTheDocument()
+    expect(await screen.findByTestId('cloud-todo-open-task-conversation-8')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-toggle-tasks')).not.toBeInTheDocument()
 
     await act(async () => {
       pendingBindings.resolve([])
       await pendingBindings.promise
     })
 
-    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
     expect(screen.getByTestId('cloud-todo-open-task-conversation-8')).toHaveTextContent(
       '看板已加载的任务'
+    )
+  })
+
+  it('uses refreshed board binding context instead of the stale detail copy', async () => {
+    const never = new Promise<never>(() => undefined)
+    const onOpenTaskConversation = vi.fn()
+    const pendingBindingsApi = {
+      listDeliveries: vi.fn(() => never),
+      listTaskBindings: vi.fn(() => never),
+      listLoopItemAttachments: vi.fn(() => never),
+      listLoopItemCollaborators: vi.fn(() => never),
+      listCloudProjectMembers: vi.fn(() => never),
+    } as never
+    const initialBinding = {
+      id: 8,
+      device_id: 'local-device',
+      task_id: 'board-task',
+      task_title: '看板任务',
+    }
+    const renderEditor = (executionContext?: { workspacePath: string; workspaceKind: string }) => (
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={pendingBindingsApi}
+        initialTaskBindings={[
+          {
+            ...initialBinding,
+            executionContext,
+          },
+        ]}
+        onOpenTaskConversation={onOpenTaskConversation}
+        currentUserId={1}
+      />
+    )
+    const view = render(renderEditor())
+
+    view.rerender(
+      renderEditor({
+        workspacePath: '/tmp/issue-worktree',
+        workspaceKind: 'worktree',
+      })
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-open-task-conversation-8'))
+
+    expect(onOpenTaskConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionContext: {
+          workspacePath: '/tmp/issue-worktree',
+          workspaceKind: 'worktree',
+        },
+      })
     )
   })
 
@@ -491,14 +874,12 @@ describe('TodoEditor external item sync', () => {
     )
     const view = render(renderEditor(baseItem, 0))
 
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByText('第一个 Issue 的任务')).toBeInTheDocument()
 
     view.rerender(renderEditor(baseItem, 1))
     expect(screen.getByText('第一个 Issue 的任务')).toBeInTheDocument()
 
     view.rerender(renderEditor(secondItem, 1))
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByText('第二个 Issue 的任务')).toBeInTheDocument()
     expect(screen.queryByText('第一个 Issue 的任务')).not.toBeInTheDocument()
 
@@ -1880,7 +2261,7 @@ describe('TodoEditor shared attachments', () => {
     expect(sharedApi.collaborators.list).toHaveBeenCalledWith('WEG-1')
     expect(sharedApi.members.list).toHaveBeenCalledWith('11')
     expect(sharedApi.agents.list).toHaveBeenCalledWith('11')
-    expect(screen.getByText('1.5 KB')).toBeInTheDocument()
+    expect(screen.queryByText('1.5 KB')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-attachment-input')).toBeInTheDocument()
 
     await user.click(screen.getByTestId('cloud-todo-attachment-delete-attachment-1'))

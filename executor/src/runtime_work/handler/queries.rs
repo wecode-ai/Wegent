@@ -277,15 +277,68 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({"success": true, "items": items}))
     }
 
-    pub(super) async fn transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let task_id = runtime_task_id(&payload);
+    pub(super) async fn transcript(&self, mut payload: Value) -> Result<Value, AppIpcError> {
+        use crate::runtime_work::transcript_transport;
+        let task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let versioned = transcript_transport::requested(&payload)?;
+        let runtime_directory = self
+            .store
+            .index_path()
+            .parent()
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "transcript_transport_failed",
+                    "Missing Runtime storage directory",
+                )
+            })?
+            .to_owned();
+        let requested_session_id = runtime_session_id_from_payload(&payload);
+        let snapshot_directory = || {
+            let session_id = requested_session_id.clone().or_else(|| {
+                self.local_task_link(&task_id)
+                    .and_then(|link| runtime_session_id_from_link(&link))
+            });
+            transcript_transport::snapshot_directory(
+                &runtime_directory,
+                &json!({"taskId": task_id, "threadId": session_id}),
+            )
+        };
+        if let Some(transfer) = payload.get("transcriptTransfer").cloned() {
+            if !versioned {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "Transcript transfer requires protocol 2",
+                ));
+            }
+            let directory = snapshot_directory();
+            return tokio::task::spawn_blocking(move || {
+                transcript_transport::read_chunk(&directory, &transfer)
+            })
+            .await
+            .map_err(|error| AppIpcError::new("transcript_transport_failed", error.to_string()))?;
+        }
+        if versioned && transcript_limit(&payload).is_none() {
+            let limit = 5;
+            payload["limit"] = json!(limit);
+        }
         let mut response = self.read_transcript(payload).await?;
-        if let Some(link) = task_id.as_deref().and_then(|id| self.local_task_link(id)) {
+        if let Some(link) = self.local_task_link(&task_id) {
             if let Some(origin) = link.runtime_handle.get("origin") {
                 response["origin"] = origin.clone();
             }
         }
-        Ok(response)
+        if !versioned {
+            return Ok(response);
+        }
+        // A refresh can replace the linked provider session before publishing.
+        let directory = snapshot_directory();
+        tokio::task::spawn_blocking(move || {
+            transcript_transport::remove_expired_transfers(&runtime_directory)?;
+            transcript_transport::encode(&directory, response)
+        })
+        .await
+        .map_err(|error| AppIpcError::new("transcript_transport_failed", error.to_string()))?
     }
 
     async fn read_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -307,6 +360,11 @@ impl RuntimeWorkRpcHandler {
         let include_full_content = bool_field(&payload, "includeFullContent")
             .or_else(|| bool_field(&payload, "include_full_content"))
             .unwrap_or(false);
+        let full_item_content = include_full_content
+            || payload
+                .get("transcriptProtocolVersion")
+                .and_then(Value::as_u64)
+                == Some(2);
         let conversation_context_only = bool_field(&payload, "conversationContextOnly")
             .or_else(|| bool_field(&payload, "conversation_context_only"))
             .unwrap_or(false);
@@ -323,6 +381,13 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| bool_field(&payload, "forceRefresh"))
             .unwrap_or(false);
         let local_link = self.local_task_link(&local_task_id);
+        let codex_client = match local_link.as_ref() {
+            Some(link) => self
+                .codex_app_server
+                .for_request(&runtime_event_request_from_link(link)),
+            None => Ok(self.codex_app_server.clone()),
+        }
+        .map_err(|error| AppIpcError::new("codex_error", error))?;
         let linked_session_id = local_link.as_ref().and_then(runtime_session_id_from_link);
         let requested_session_id = runtime_session_id_from_payload(&payload);
         let direct_thread_override = requested_session_id
@@ -369,8 +434,7 @@ impl RuntimeWorkRpcHandler {
                     ));
                 }
             }
-            let metadata_response = self
-                .codex_app_server
+            let metadata_response = codex_client
                 .request(
                     "thread/read",
                     json!({"threadId": thread_id, "includeTurns": false}),
@@ -400,7 +464,13 @@ impl RuntimeWorkRpcHandler {
                     .is_some_and(Value::is_object)
             });
             let navigation = self
-                .codex_transcript_navigation(&thread, &thread_id, prefer_rollout_history, refresh)
+                .codex_transcript_navigation(
+                    &codex_client,
+                    &thread,
+                    &thread_id,
+                    prefer_rollout_history,
+                    refresh,
+                )
                 .await?;
             return Ok(transcript_navigation_response(
                 local_task_id,
@@ -549,7 +619,13 @@ impl RuntimeWorkRpcHandler {
             return Ok(response);
         };
 
-        if refresh && !local_execution_running && !direct_thread_override {
+        // Named Homes execute in a separate per-turn process. Resuming in the
+        // reader would retain the native writer lock and block the next turn.
+        if refresh
+            && !local_execution_running
+            && !direct_thread_override
+            && !codex_client.has_dedicated_home()
+        {
             if let Some(link) = local_link.as_ref().filter(|link| !link.ephemeral) {
                 thread_id = self
                     .resume_codex_thread_for_action(link, &thread_id)
@@ -566,7 +642,7 @@ impl RuntimeWorkRpcHandler {
         }
 
         let transcript_page = load_codex_transcript(
-            &self.codex_app_server,
+            &codex_client,
             CodexTranscriptRequest {
                 thread_id: &thread_id,
                 cursor: before_cursor.as_deref().or(after_cursor.as_deref()),
@@ -680,7 +756,7 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .filter(|_| !direct_thread_override)
             .map(|_| {
-                if include_full_content {
+                if full_item_content {
                     full_transcript_messages(&thread, &self.device_id)
                 } else {
                     transcript_messages(&thread, &self.device_id)
@@ -700,7 +776,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_default();
 
         let context_usage = transcript_context_usage(&thread);
-        let transcript_messages = if include_full_content {
+        let transcript_messages = if full_item_content {
             full_transcript_messages(&thread, &self.device_id)
         } else {
             transcript_messages(&thread, &self.device_id)
@@ -795,6 +871,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn codex_transcript_navigation(
         &self,
+        client: &CodexAppServerClient,
         thread: &Value,
         thread_id: &str,
         prefer_rollout_history: bool,
@@ -806,14 +883,10 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        let navigation = load_codex_transcript_navigation(
-            &self.codex_app_server,
-            thread,
-            thread_id,
-            prefer_rollout_history,
-        )
-        .await
-        .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let navigation =
+            load_codex_transcript_navigation(client, thread, thread_id, prefer_rollout_history)
+                .await
+                .map_err(|error| AppIpcError::new("codex_error", error))?;
         let mut cache = self
             .codex_transcript_navigation_cache
             .lock()

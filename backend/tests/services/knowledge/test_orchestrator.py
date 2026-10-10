@@ -24,6 +24,30 @@ from app.services.knowledge.orchestrator import (
     _build_filename,
     _normalize_file_extension,
 )
+from shared.knowledge_module import (
+    KnowledgeConfigError,
+    RetrievalProfileRecord,
+    RetrievalResource,
+)
+
+
+def _authorized_profile_record(profile: dict) -> RetrievalProfileRecord:
+    """Build the profile record Wegent resolves for an authorized profile."""
+    embedding_config = profile.get("embedding_config") or {}
+    return RetrievalProfileRecord(
+        configured=profile,
+        retriever=RetrievalResource(
+            name=profile["retriever_name"],
+            kind="Retriever",
+            namespace=profile.get("retriever_namespace") or "default",
+        ),
+        embedding_model=RetrievalResource(
+            name=embedding_config["model_name"],
+            kind="Model",
+            namespace=embedding_config.get("model_namespace") or "default",
+            category="embedding",
+        ),
+    )
 
 
 class TestFileExtensionHelpers:
@@ -87,6 +111,30 @@ class TestKnowledgeOrchestrator:
         user.id = 1
         user.user_name = "testuser"
         return user
+
+    @pytest.fixture(autouse=True)
+    def authorize_resolved_resources(self, orchestrator):
+        """Stand in for the DB-backed resolver: a reference resolves to itself."""
+
+        def _retriever(db, *, user_id, name, namespace="default"):
+            return RetrievalResource(name=name, kind="Retriever", namespace=namespace)
+
+        def _embedding(db, *, user_id, name, namespace="default"):
+            return RetrievalResource(
+                name=name, kind="Model", category="embedding", namespace=namespace
+            )
+
+        with (
+            patch(
+                "app.services.knowledge.orchestrator.resolve_retriever_resource",
+                side_effect=_retriever,
+            ),
+            patch(
+                "app.services.knowledge.orchestrator.resolve_embedding_model_resource",
+                side_effect=_embedding,
+            ),
+        ):
+            yield
 
     def test_get_default_retriever_returns_first(self, orchestrator, mock_db):
         """Test get_default_retriever returns first available retriever."""
@@ -345,8 +393,8 @@ class TestKnowledgeOrchestrator:
 
         with (
             patch(
-                "app.services.knowledge.orchestrator.get_profile",
-                return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
+                "app.services.knowledge.orchestrator.load_profile",
+                return_value=(profile, 1, _authorized_profile_record(profile)),
             ),
             patch.object(orchestrator, "get_default_retriever") as mock_get_retriever,
             patch.object(
@@ -380,8 +428,8 @@ class TestKnowledgeOrchestrator:
         }
 
         with patch(
-            "app.services.knowledge.orchestrator.get_profile",
-            return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
+            "app.services.knowledge.orchestrator.load_profile",
+            return_value=(profile, 1, _authorized_profile_record(profile)),
         ):
             result = orchestrator._resolve_retrieval_config(
                 db=mock_db,
@@ -420,8 +468,8 @@ class TestKnowledgeOrchestrator:
         }
 
         with patch(
-            "app.services.knowledge.orchestrator.get_profile",
-            return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
+            "app.services.knowledge.orchestrator.load_profile",
+            return_value=(profile, 1, _authorized_profile_record(profile)),
         ):
             result = orchestrator._resolve_retrieval_config(
                 db=mock_db,
@@ -444,11 +492,11 @@ class TestKnowledgeOrchestrator:
     ) -> None:
         with (
             patch(
-                "app.services.knowledge.orchestrator.get_profile",
+                "app.services.knowledge.orchestrator.load_profile",
                 return_value=(
                     {"retriever_name": "inactive"},
                     1,
-                    {"status": "invalid", "fallback_reason": "retriever_unavailable"},
+                    RetrievalProfileRecord(configured={"retriever_name": "inactive"}),
                 ),
             ),
             patch.object(
@@ -558,6 +606,137 @@ class TestKnowledgeOrchestrator:
         }
         mock_get_retriever.assert_not_called()
         mock_get_embedding.assert_not_called()
+
+    def test_resolve_retrieval_config_rejects_unsupported_mode(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """The module's validation applies to configs written at creation."""
+        with pytest.raises(KnowledgeConfigError, match="retrieval_mode"):
+            orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config={
+                    "retriever_name": "retriever-1",
+                    "embedding_config": {"model_name": "embedding-1"},
+                    "retrieval_mode": "unsupported",
+                },
+            )
+
+    def test_resolve_retrieval_config_rejects_top_k_outside_creation_limit(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        with pytest.raises(KnowledgeConfigError, match="top_k"):
+            orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config={
+                    "retriever_name": "retriever-1",
+                    "embedding_config": {"model_name": "embedding-1"},
+                    "top_k": 20,
+                },
+            )
+
+    def test_resolve_retrieval_config_rejects_an_unauthorized_reference(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """A reference the caller cannot use is rejected, not stored."""
+        with patch(
+            "app.services.knowledge.orchestrator.resolve_retriever_resource",
+            return_value=None,
+        ):
+            with pytest.raises(KnowledgeConfigError, match="not-mine"):
+                orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config={
+                        "retriever_name": "not-mine",
+                        "embedding_config": {"model_name": "embedding-1"},
+                    },
+                )
+
+    def test_resolve_retrieval_config_rejects_a_non_embedding_model_reference(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        with patch(
+            "app.services.knowledge.orchestrator.resolve_embedding_model_resource",
+            return_value=RetrievalResource(name="chat-1", kind="Model", category="llm"),
+        ):
+            with pytest.raises(KnowledgeConfigError, match="chat-1"):
+                orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config={
+                        "retriever_name": "retriever-1",
+                        "embedding_config": {"model_name": "chat-1"},
+                    },
+                )
+
+    def test_resolve_retrieval_config_accepts_a_public_retriever_fallback(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """A group reference resolved to the public retriever stays usable."""
+        with patch(
+            "app.services.knowledge.orchestrator.resolve_retriever_resource",
+            return_value=RetrievalResource(
+                name="public-retriever", kind="Retriever", namespace="default"
+            ),
+        ):
+            result = orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="team-a",
+                retrieval_config={
+                    "retriever_name": "public-retriever",
+                    "retriever_namespace": "team-a",
+                    "embedding_config": {"model_name": "embedding-1"},
+                },
+            )
+
+        assert result is not None
+        assert result["retriever_name"] == "public-retriever"
+        assert result["retriever_namespace"] == "team-a"
+
+    def test_update_knowledge_base_rejects_unsupported_retrieval_mode(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """Editing a knowledge base validates the fields it writes."""
+        with pytest.raises(KnowledgeConfigError, match="retrieval_mode"):
+            orchestrator.update_knowledge_base(
+                db=mock_db,
+                user=mock_user,
+                knowledge_base_id=1,
+                retrieval_config={"retrieval_mode": "unsupported"},
+            )
+
+    def test_update_knowledge_base_does_not_revalidate_untouched_fields(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """An edit only validates the fields the caller sent."""
+        response = MagicMock()
+        with (
+            patch("app.services.knowledge.orchestrator.KnowledgeService") as service,
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeBaseResponse"
+            ) as response_cls,
+        ):
+            service.update_knowledge_base.return_value = MagicMock()
+            response_cls.from_kind.return_value = response
+
+            result = orchestrator.update_knowledge_base(
+                db=mock_db,
+                user=mock_user,
+                knowledge_base_id=1,
+                retrieval_config={"retrieval_mode": "keyword"},
+            )
+
+        assert result is response
+        data = service.update_knowledge_base.call_args.kwargs["data"]
+        assert data.retrieval_config.retrieval_mode == "keyword"
+        assert data.retrieval_config.top_k is None
 
     def test_get_task_model_returns_none_when_task_not_found(
         self, orchestrator, mock_db
@@ -692,6 +871,7 @@ class TestKnowledgeOrchestrator:
             offset=2,
             limit=4,
             knowledge_base_ids=[77],
+            searchable_only=False,
         )
 
     @pytest.mark.parametrize(
@@ -1190,53 +1370,81 @@ class TestKnowledgeOrchestrator:
                 )
 
     def test_create_document_from_attachment_skips_large_excel_indexing(
-        self, orchestrator, mock_db, mock_user
+        self, orchestrator, test_db, test_user, monkeypatch
     ):
-        """Test large Excel documents (>2MB) are created without scheduling RAG indexing."""
-        mock_kb = MagicMock()
-        mock_kb.id = 1
-        mock_kb.json = {"spec": {}}
+        """Large Excel imports keep a private body without enqueueing indexing."""
+        from app.models.kind import Kind
+        from app.models.subtask_context import SubtaskContext
+        from app.tasks.knowledge_tasks import index_document_task
+        from tests.utils.retrieval_resources import embedding_model_kind, retriever_kind
 
-        mock_doc = MagicMock()
-        mock_doc.id = 99
-        mock_doc.attachment_id = 123
-
-        # File size > 2MB (3MB)
         large_file_size = 3 * 1024 * 1024
-
-        data = KnowledgeDocumentCreate(
-            attachment_id=123,
+        kb = Kind(
+            user_id=test_user.id,
+            kind="KnowledgeBase",
+            name="large-excel",
+            namespace="default",
+            is_active=True,
+            json={
+                "spec": {
+                    "retrievalConfig": {
+                        "retriever_name": "retriever",
+                        "embedding_config": {"model_name": "embedding"},
+                    }
+                }
+            },
+        )
+        source = SubtaskContext(
+            user_id=test_user.id,
+            subtask_id=0,
+            context_type="attachment",
             name="report.xlsx",
-            file_extension="xlsx",
-            file_size=large_file_size,
-            source_type=DocumentSourceType.FILE,
+            status="ready",
+            type_data={
+                "storage_key": "source",
+                "storage_backend": "mysql",
+                "original_filename": "report.xlsx",
+                "file_extension": "xlsx",
+                "mime_type": "application/octet-stream",
+                "file_size": large_file_size,
+            },
+        )
+        test_db.add_all(
+            [
+                kb,
+                source,
+                retriever_kind(test_user.id, "retriever"),
+                embedding_model_kind(test_user.id, "embedding"),
+            ]
+        )
+        test_db.commit()
+        storage = MagicMock(backend_type="mysql")
+        storage.get.return_value = b"x" * large_file_size
+        monkeypatch.setitem(
+            context_service.get_attachment_binary_data.__globals__,
+            "get_storage_backend",
+            lambda db: storage,
+        )
+        enqueue = MagicMock()
+        monkeypatch.setattr(index_document_task, "delay", enqueue)
+
+        created = orchestrator.create_document_from_attachment(
+            test_db,
+            test_user,
+            kb.id,
+            KnowledgeDocumentCreate(
+                attachment_id=source.id,
+                name="report.xlsx",
+                file_extension="xlsx",
+                file_size=large_file_size,
+            ),
+            trigger_indexing=True,
+            trigger_summary=False,
         )
 
-        with patch(
-            "app.services.knowledge.orchestrator.KnowledgeService"
-        ) as mock_service:
-            mock_service.get_knowledge_base.return_value = (mock_kb, True)
-            mock_service.can_manage_knowledge_base_documents.return_value = True
-            mock_service.create_document.return_value = mock_doc
-
-            with patch.object(
-                orchestrator, "_schedule_indexing_celery"
-            ) as mock_schedule:
-                with patch(
-                    "app.services.knowledge.orchestrator.KnowledgeDocumentResponse"
-                ) as mock_response:
-                    mock_response.model_validate.return_value = MagicMock()
-
-                    orchestrator.create_document_from_attachment(
-                        db=mock_db,
-                        user=mock_user,
-                        knowledge_base_id=1,
-                        data=data,
-                        trigger_indexing=True,
-                        trigger_summary=False,
-                    )
-
-        mock_schedule.assert_not_called()
+        assert created.attachment_id != source.id
+        assert created.file_size == large_file_size
+        enqueue.assert_not_called()
 
     def test_create_document_from_attachment_requires_manage_permission(
         self,

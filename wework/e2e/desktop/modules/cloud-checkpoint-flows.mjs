@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
-import { basename } from 'node:path'
+import { basename, dirname } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
 
@@ -194,7 +194,9 @@ async function verifyCloudProjectCreationSources(control, workspacePath) {
     await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
       value: CLOUD_DEVICE_ID,
     })
-    await control.command('click', `[data-testid="${sourceTestId}"]`)
+    await control.command('clickWhenEnabled', `[data-testid="${sourceTestId}"]`, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     return previousMenus
   }
 
@@ -592,7 +594,7 @@ async function verifyCloudCheckpoint({
 
   if (checkpoint === 'workspace-tabs') {
     setPhase('cloud-workspace-tab-isolation')
-    await verifyWorkspaceTabIsolation(control)
+    await verifyWorkspaceTabIsolation(control, restartDesktopApp)
     return
   }
 
@@ -708,6 +710,7 @@ async function verifyCloudCheckpoint({
         composerSelector,
         control,
         newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+        readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
         screenshotPrefix: 'cloud-model-routing',
         setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
         workspacePath,
@@ -791,13 +794,7 @@ async function verifyCloudCheckpoint({
         appIdentifier,
         composerSelector,
         control,
-        runtimeAttachmentRoot: join(
-          resultDir,
-          'cloud-executor-home',
-          'workspace',
-          'attachments',
-          'runtime'
-        ),
+        runtimeWorkspaceRoot: dirname(workspacePath),
         workspacePath,
       })
       setPhase('cloud-pasted-zip')

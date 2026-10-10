@@ -433,7 +433,85 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/cloud-model-recovery.mjs" \
   "wework/e2e/desktop/scenarios/cloud-model-recovery.scenario.mjs"
 
-assert_desktop_case "official DWS source fixture selects account authentication" \
+assert_desktop_case "uninstall transport faults select real cloud recovery" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-uninstall-resilience"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs" \
+  "wework/e2e/desktop/modules/plugin-fault-proxy.mjs" \
+  "wework/scripts/plugin-fault-proxy.test.mjs"
+
+assert_desktop_case "long plugin list selects its independent cloud checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-composer-long-list"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs" \
+  "wework/e2e/desktop/modules/plugin-inventory-state.mjs"
+
+assert_desktop_case "shared plugin regression fixture selects both checkpoints" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-uninstall-resilience,plugin-composer-long-list"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/plugin-regression-fixture.mjs"
+
+assert_desktop_case "conversation auth changes select managed login regression" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+  "wework/src/features/plugins/localConnectorAuthGate.ts" \
+  "wework/src/features/plugins/useLocalConnectorAuthGate.ts" \
+  "wework/src/components/layout/DesktopEmptyTaskLauncher.tsx" \
+  "wework/src/components/chat/ConnectorAuthCard.tsx" \
+  "wework/src/api/local/githubCli.ts" \
+  "wework/src/features/plugins/githubCliAuthGate.test.tsx"
+
+# Check each path independently: a broad executor change must not hide missing
+# authorization routing for a later frontend-only pull request.
+for auth_path in \
+  "wework/src/features/plugins/codexConnectorAuthorization.ts" \
+  "wework/src/components/plugins/GithubCliAuthDialog.tsx" \
+  "wework/src/components/plugins/PluginConnectorSection.tsx" \
+  "wework/src/components/plugins/LocalConnectorAuthDialog.tsx"; do
+  assert_desktop_case "provider authorization selects account regression: $auth_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+    "$auth_path"
+done
+
+assert_desktop_case "remote catalog changes invoke the network isolation checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"},{"id":"plugins-plugin-composer-network-isolation","name":"Plugins / plugin-composer-network-isolation","command":"e2e:desktop:plugins","segment":"plugin-composer-network-isolation"}]}' \
+  "wework/src/features/plugins/useOpenAiPluginCatalog.ts"
+
+for account_fixture in \
+  "wework/e2e/desktop/fixtures/dws-store/main.go" \
+  "wework/e2e/desktop/modules/plugin-conversation-auth.mjs" \
+  "wework/e2e/desktop/modules/github-manage-connection.mjs"; do
+  assert_desktop_case "account authentication fixture selects its regression: $account_fixture" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
@@ -441,15 +519,36 @@ wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/fixtures/dws-store/main.go"
+    "$account_fixture"
+done
 
 assert_desktop_case "shared collaboration package selects its desktop checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,collaboration-issue-comment-mention"},{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-comment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,collaboration-issue-comment-mention"},{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-comment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/CollaborationApp.tsx"
+
+for consent_path in \
+  "packages/collaboration/src/conversation/McpUrlAuthorizationCard.tsx" \
+  "packages/collaboration/src/conversation/RequestUserInputCard.tsx" \
+  "wework/src/components/chat/RequestUserInputCard.tsx" \
+  "wework/scripts/mcp-elicitation-server.test.mjs"; do
+  consent_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$consent_path")"
+  if [[ "$consent_output" != *permission-modes* ]]; then
+    printf 'MCP consent path did not select permission-modes: %s\n' "$consent_path" >&2
+    exit 1
+  fi
+done
+
+assert_desktop_case "Issue archive scenario selects its own checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-issue-archive"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs"
 
 assert_desktop_case "issue comment mention scenario selects its own checkpoint" \
   'wework_desktop_e2e=true
@@ -462,7 +561,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "collaboration execution environment changes select onboarding and lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"cloud-device-lifecycle"}]}
 wework_desktop_other_e2e=false
@@ -594,11 +693,11 @@ full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"harness-apps,browser-annotation-design"},{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle,remote-device-onboarding,core-task-flow"},{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat,local-file-preview,conversation-state"},{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture"},{"id":"core-5","name":"Core / shard 5","segments":"send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime,workspace-tabs,task-attachments"},{"id":"core-7","name":"Core / shard 7","segments":"task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction"},{"id":"core-8","name":"Core / shard 8","segments":"window-lifecycle,browser-toolbar-actions,browser-annotation-anchors"},{"id":"core-9","name":"Core / shard 9","segments":"project-automation"},{"id":"core-10","name":"Core / shard 10","segments":"resilience"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments,automation-lifecycle,drawing-attachment"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,split-workbench,priority-filter"},{"id":"core-13","name":"Core / shard 13","segments":"rendering-extensions,transcript-sync"},{"id":"core-14","name":"Core / shard 14","segments":"runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import"},{"id":"core-15","name":"Core / shard 15","segments":"local-harness,running-conversation-history,running-plan-history,native-window-chrome"},{"id":"core-16","name":"Core / shard 16","segments":"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate"}]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing,cloud-model-recovery"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,cloud-device-lifecycle"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing,cloud-model-recovery"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
 wework_desktop_macos_inspector_e2e=true'
-full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll,collaboration-shared-core,collaboration-local-group-cancellation\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"local-harness,running-conversation-history,running-plan-history,native-window-chrome\"/\"segments\":\"local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification\"}"
@@ -652,6 +751,18 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "executor/src/local/codex_home.rs" \
   "wework/e2e/desktop/scenarios/external-content-import.scenario.mjs"
+
+assert_desktop_case "native plugin installation selects lifecycle and project coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-14","name":"Core / shard 14","segments":"external-content-import"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"},{"id":"plugins-plugin-composer-network-isolation","name":"Plugins / plugin-composer-network-isolation","command":"e2e:desktop:plugins","segment":"plugin-composer-network-isolation"}]}' \
+  "wework/src/api/local/codexPlugins.ts" \
+  "wework/src/api/local/codexPlugins.install.test.ts" \
+  "wework/src/api/local/codexPluginInstallation.ts"
 
 assert_desktop_case "embedded browser files select browser coverage" \
   'wework_desktop_e2e=true
@@ -739,6 +850,8 @@ assert_desktop_case "composer plugin files select project plugin coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-composer-long-list"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/chat/composer/PluginPickerMenu.tsx"
@@ -764,7 +877,7 @@ assert_desktop_case "project automation E2E changes select core and cloud covera
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"project-automation"},{"id":"core-11","name":"Core / shard 11","segments":"automation-lifecycle"}]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing,cloud-model-recovery"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,cloud-device-lifecycle"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing,cloud-model-recovery"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/project-automation.scenario.mjs"
@@ -830,7 +943,7 @@ assert_desktop_case "cloud files select only the cloud suite" \
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing,cloud-model-recovery"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,cloud-device-lifecycle"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing,cloud-model-recovery"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/cloud-connection/CloudConnectionProvider.tsx"
@@ -1025,6 +1138,8 @@ assert_desktop_case "plugin files select plugin lifecycle and project plugin cov
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,plugin-uninstall-resilience"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
   "wework/src/components/plugins/PluginsWorkspace.tsx"
@@ -1152,6 +1267,21 @@ if ! grep -Fq -- '--shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}' \
   <<<"$provider_native_step" ||
   ! grep -Fq -- '--workers=1' <<<"$provider_native_step"; then
   printf 'Provider-native E2E must preserve serial execution while sharing all platform shards\n' >&2
+  exit 1
+fi
+
+# Fork pull requests cannot pull the executor E2E image from GHCR: the Wework
+# desktop build downloads executor-e2e-binary from this job instead, so the
+# job must also run when a fork PR selects desktop E2E without platform_e2e.
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! grep -Fq '.github/scripts/classify-wework-desktop-e2e.sh' \
+  "$platform_e2e_workflow" ||
+  ! grep -Fq 'wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}' \
+    "$platform_e2e_workflow" ||
+  ! grep -Fq "needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository" \
+  "$platform_e2e_workflow"; then
+  printf 'e2e-tests.yml must build the executor E2E runtime for fork desktop E2E PRs\n' >&2
   exit 1
 fi
 
@@ -1285,7 +1415,7 @@ if [[ "$core_build_job" != *"restore-wework-core-e2e-build-oci.sh"* ]] ||
     "$wework_core_build_action" ||
   ! grep -Fq "resources/bin/wegent-executor" "$wework_core_build_action" ||
   ! grep -Fq "restore-oci-runtime-binary.sh" "$wework_core_build_action" ||
-  grep -Fq "cargo build" "$wework_core_build_action"; then
+  ! grep -Fq "BUILD_RUNTIMES_FROM_SOURCE:" "$wework_core_build_action"; then
   printf 'The shared desktop E2E artifact must be built from the Electron package\n' >&2
   exit 1
 fi

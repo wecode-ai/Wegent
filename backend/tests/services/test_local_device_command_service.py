@@ -768,11 +768,11 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert "per_page=100" in git_github_pull_requests_batch_definition.command
     assert "--jq" in git_github_pull_requests_batch_definition.command
     assert git_github_pull_request_merge_queue_batch_definition is not None
-    assert "$HOME/.wecode/git-auth/env.sh" in (
+    assert "credential_paths()" in (
         git_github_pull_request_merge_queue_batch_definition.command
     )
     assert git_github_pull_request_merge_queue_batch_definition.command.endswith(
-        "-- gh api graphql"
+        "gh api graphql"
     )
     assert git_gitlab_merge_requests_definition is not None
     assert "glab mr list --all" in git_gitlab_merge_requests_definition.command

@@ -25,6 +25,7 @@ from app.schemas.knowledge import (
 from app.services.knowledge.code_wiki.runner import CodeWikiRunError
 from app.services.knowledge.code_wiki.source import SourceAccessDenied
 from app.services.knowledge.knowledge_service import KnowledgeService
+from tests.utils.retrieval_resources import embedding_model_kind, retriever_kind
 
 CREATE_URL = "/api/knowledge-bases/code-wikis"
 STRATEGIES_URL = f"{CREATE_URL}/generation-strategies"
@@ -1099,13 +1100,21 @@ def test_a_code_wiki_keeps_the_retrieval_config_it_was_created_with(
     test_client: TestClient,
     auth_headers: dict[str, str],
     test_db: Session,
+    test_user: User,
     kind_services_use_test_db,
 ):
     """A code wiki is an ordinary knowledge base with a repository attached, so the
     whole create payload applies to it. Listing only the fields it "needs" left this
     one to be auto-resolved, which looked like it worked — a config was stored, just
-    not the one the form collected."""
-    from app.models.kind import Kind
+    not the one the form collected. The chosen resources exist, because the create
+    path now rejects a configuration whose references cannot be resolved."""
+    test_db.add_all(
+        [
+            retriever_kind(test_user.id, "chosen-by-the-user"),
+            embedding_model_kind(test_user.id, "chosen-embedding"),
+        ]
+    )
+    test_db.commit()
 
     with patch(
         "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",

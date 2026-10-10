@@ -6,6 +6,7 @@ core_segments=(
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
+  collaboration-issue-archive
   collaboration-first-use
   collaboration-worktree-policy
   collaboration-group-onboarding
@@ -84,6 +85,7 @@ plugin_segments=(
   core-dsh-ui-plugin-composition
   plugin-marketplace-lifecycle
   plugin-lifecycle
+  plugin-composer-network-isolation
   skill-mention-rendering
   sites-plugin-auto-install
 )
@@ -121,6 +123,8 @@ cloud_segments=(
   project-automation
   plugin-auto-update
   plugin-account-auth
+  plugin-uninstall-resilience
+  plugin-composer-long-list
   plugin-workspace-publication
 )
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
@@ -140,7 +144,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing,cloud-model-recovery
-  plugin-account-auth,cloud-device-lifecycle
+  plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
@@ -158,7 +162,7 @@ core_shards=(
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-local-group-cancellation
+  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
   rendering-extensions,transcript-sync
@@ -356,6 +360,8 @@ classify_wework_path() {
       wework/src/api/cloud/pluginAccountConnections* | \
       wework/e2e/desktop/modules/dws-account-auth.mjs | \
       wework/e2e/desktop/modules/account-auth-command.mjs | \
+      wework/e2e/desktop/modules/github-manage-connection.mjs | \
+      wework/e2e/desktop/modules/plugin-conversation-auth.mjs | \
       wework/e2e/desktop/fixtures/dws-account-auth.py | \
       wework/e2e/desktop/fixtures/dws-store/* | \
       wework/e2e/desktop/scenarios/plugin-account-auth.scenario.mjs)
@@ -403,13 +409,22 @@ classify_wework_path() {
       desktop_runner_changed=true
       return
       ;;
-    wework/e2e/utils/mcp-elicitation-server.mjs)
+    wework/e2e/utils/mcp-elicitation-server.mjs | \
+      wework/scripts/mcp-elicitation-server.test.mjs)
       select_target "core:permission-modes"
       return
       ;;
 
-    # Workbench mode owns the managed Git plugin state and settings flow.
+    # Workbench mode covers Home migration before the managed Git/settings flow.
     wework/e2e/desktop/scenarios/workbench-mode.scenario.mjs | \
+      wework/e2e/desktop/modules/native-agent-mcp.mjs | \
+      wework/e2e/desktop/modules/workbench-home-migration.mjs | \
+      wework/e2e/desktop/modules/workbench-schema-compatibility.mjs | \
+      wework/electron/src/runtime/workbench-environment* | \
+      wework/electron/src/runtime/development-isolation* | \
+      wework/electron/src/runtime/workbench-executor-schema* | \
+      wework/electron/src/runtime/workbench-migration-lock* | \
+      wework/electron/src/runtime/workbench-home-migration* | \
       wework/electron/src/runtime/workbench-mode* | \
       wework/src/features/workbench-mode/*)
       select_target "core:workbench-mode"
@@ -418,9 +433,15 @@ classify_wework_path() {
 
     # External content import crosses the settings UI and local Executor IPC.
     wework/src/api/local/codexPlugins.ts | \
+      wework/src/api/local/codexPlugins.install.test.ts | \
+      wework/src/api/local/codexPluginInstallation.ts | \
       wework/src/components/settings/ExternalContentImportDialog.tsx | \
       wework/e2e/desktop/scenarios/external-content-import.scenario.mjs)
       select_target "core:external-content-import"
+      if [[ "$path" == wework/src/api/local/codexPlugin* ]]; then
+        select_target "plugins:plugin-lifecycle"
+        select_target "core:project-ai-settings"
+      fi
       return
       ;;
 
@@ -466,6 +487,27 @@ classify_wework_path() {
       select_target "core:plugin-development"
       select_target "core:project-ai-settings"
       select_target "plugins:plugin-lifecycle"
+      return
+      ;;
+
+    # Conversation authorization requires real managed membership and local auth.
+    wework/src/features/plugins/localConnectorAuthGate* | \
+      wework/src/features/plugins/codexConnectorAuthorization* | \
+      wework/src/components/plugins/GithubCliAuthDialog* | \
+      wework/src/components/plugins/PluginConnectorSection* | \
+      wework/src/components/plugins/LocalConnectorAuthDialog* | \
+      wework/src/components/plugins/PluginsWorkspace* | \
+      wework/src/components/layout/DesktopEmptyTaskLauncher* | \
+      wework/src/features/plugins/useLocalConnectorAuthGate* | \
+      wework/src/features/plugins/prefetchLocalConnectorAuth* | \
+      wework/src/components/chat/ConnectorAuthCard* | \
+      wework/src/features/plugins/useLocalConnectorAuthSession* | \
+      wework/src/features/plugins/githubCliAuthGate* | \
+      wework/src/api/local/githubCli* | \
+      wework/src/api/local/localConnectorAuth*)
+      select_target "cloud:plugin-account-auth"
+      select_target "plugins:plugin-lifecycle"
+      select_target "core:project-ai-settings"
       return
       ;;
 
@@ -562,6 +604,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs)
       select_target "core:collaboration-shared-core"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs)
+      select_target "core:collaboration-issue-archive"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-worktree-policy.scenario.mjs)
@@ -830,6 +876,11 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/modules/shared-skill-runtime.mjs)
+      select_target "core:claude-runtime"
+      return
+      ;;
+
     # Local PTY-backed coding harnesses have dedicated desktop scenarios.
     wework/electron/src/host/local-terminal* | \
       wework/src/lib/local-harness* | \
@@ -936,10 +987,69 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    packages/collaboration/src/conversation/McpUrlAuthorizationCard* | \
+      packages/collaboration/src/conversation/RequestUserInputCard* | \
+      wework/src/components/chat/RequestUserInputCard*)
+      select_target "core:permission-modes"
+      ;;
+  esac
+  case "$path" in
+    backend/app/api/endpoints/installed_plugins.py | \
+      backend/app/api/ws/device_namespace.py | \
+      backend/app/services/device/plugin_removal_sync.py | \
+      backend/app/services/plugin_device_installation_service.py | \
+      backend/app/services/plugin_marketplace_service.py | \
+      wework/src/api/pluginUninstall* | wework/src/api/plugins.ts | \
+      wework/src/features/plugins/pluginInventory* | \
+      wework/src/features/plugins/pluginMarketplaceCache* | \
+      wework/src/components/plugins/PluginsWorkspace* | \
+      wework/src/components/plugins/PluginManagementWorkspace* | \
+      packages/chat-core/src/installed-plugin-merge.ts)
+      select_target "cloud:plugin-uninstall-resilience"
+      ;;
+  esac
+  case "$path" in
+    wework/src/features/plugins/useOpenAiPluginCatalog* | \
+      wework/src/features/plugins/remotePluginError* | \
+      wework/src/api/local/codexPlugins* | \
+      wework/e2e/desktop/modules/plugin-flows.mjs)
+      select_target "plugins:plugin-composer-network-isolation"
+      ;;
+  esac
+  case "$path" in
+    packages/collaboration/src/composer/PluginPickerMenu.tsx | \
+      wework/src/components/chat/composer/PluginPickerMenu* | \
+      wework/src/components/chat/composer/composerAppsSnapshot* | \
+      wework/src/components/plugins/PluginManagementWorkspace* | \
+      wework/src/features/plugins/pluginInventory*)
+      select_target "cloud:plugin-composer-long-list"
+      ;;
+    wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \
+      wework/scripts/plugin-fault-proxy.test.mjs | \
+      wework/e2e/desktop/modules/plugin-fault-proxy*)
+      select_target "cloud:plugin-uninstall-resilience"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-inventory-state.mjs)
+      select_target "cloud:plugin-composer-long-list"
+      return
+      ;;
+    wework/e2e/desktop/modules/plugin-regression-fixture.mjs)
+      select_target "cloud:plugin-uninstall-resilience"
+      select_target "cloud:plugin-composer-long-list"
+      return
+      ;;
+  esac
+
+  case "$path" in
     sdk/plugin-creator/* | sdk/plugin-auth/* | executor/src/local/plugin_creator.rs | \
       wework/src/components/plugins/PluginCreateWorkspace* | \
       wework/e2e/desktop/modules/plugin-flows.mjs)
       select_target "plugins:plugin-marketplace-lifecycle"
+      if [[ "$path" == wework/e2e/desktop/modules/plugin-flows.mjs ]]; then
+        select_target "plugins:plugin-lifecycle"
+      fi
       select_target "cloud:plugin-workspace-publication"
       ;;
     backend/app/schemas/issue_workflow.py | \
@@ -1040,6 +1150,7 @@ classify_path() {
       packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-issue-archive"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
@@ -1050,6 +1161,7 @@ classify_path() {
         select_target "core:drawing-attachment"
       fi
       select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-issue-archive"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints

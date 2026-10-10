@@ -148,6 +148,7 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
             local_task_id: "queued-1".to_owned(),
             runtime: "codex".to_owned(),
             request: ExecutionRequest::default(),
+            send_payload: None,
             direct_thread_id: None,
             fork_thread_id: None,
             fork_thread_path: None,
@@ -268,6 +269,7 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request: ExecutionRequest::default(),
+        send_payload: None,
         direct_thread_id: None,
         fork_thread_id: None,
         fork_thread_path: None,
@@ -301,6 +303,7 @@ async fn archive_stop_waits_for_worktree_preparation_ack() {
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request: ExecutionRequest::default(),
+        send_payload: None,
         direct_thread_id: None,
         fork_thread_id: None,
         fork_thread_path: None,
@@ -367,6 +370,7 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request,
+        send_payload: None,
         direct_thread_id: None,
         fork_thread_id: None,
         fork_thread_path: None,
@@ -1054,6 +1058,7 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
         local_task_id: "task-queued".to_owned(),
         runtime: "codex".to_owned(),
         request,
+        send_payload: None,
         direct_thread_id: None,
         fork_thread_id: None,
         fork_thread_path: None,
@@ -2485,37 +2490,44 @@ fn finishing_execution_removes_its_codex_turn_context() {
     assert!(handler.active_codex_turn("task-1").is_none());
 }
 
-#[tokio::test]
-async fn side_source_waits_for_the_running_source_turn_before_forking() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    let mut source = RuntimeTaskLink::new_pending(
-        "source-task".to_owned(),
-        "/tmp/project".to_owned(),
-        "Source task".to_owned(),
-    );
-    source.thread_id = Some("source-thread".to_owned());
-    handler.upsert_local_task(source);
-    let execution_id = start_test_execution(&handler, "source-task");
-    let waiting_handler = handler.clone();
-    let wait = tokio::spawn(async move {
-        waiting_handler
-            .wait_for_running_side_source_turn("source-thread")
-            .await;
-    });
+#[test]
+fn side_source_waits_for_the_running_source_turn_before_forking() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _executor_home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _workbench_home = ScalarEnv::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+            // Keep the source index private even when other handlers use default storage.
+            handler.store = RuntimeWorkStore::new(root.path().join("source/index.json"));
+            let mut source = RuntimeTaskLink::new_pending(
+                "source-task".to_owned(),
+                root.path().join("project").to_string_lossy().into_owned(),
+                "Source task".to_owned(),
+            );
+            source.thread_id = Some("source-thread".to_owned());
+            handler.upsert_local_task(source);
+            let execution_id = start_test_execution(&handler, "source-task");
+            let wait = handler.wait_for_running_side_source_turn("source-thread");
+            tokio::pin!(wait);
 
-    tokio::task::yield_now().await;
-    assert!(!wait.is_finished());
-    handler.record_active_codex_turn(
-        "source-task",
-        execution_id,
-        "source-thread".to_owned(),
-        "source-turn".to_owned(),
-    );
+            // Poll the wait itself so the assertion cannot pass before it starts.
+            assert!(futures_util::poll!(wait.as_mut()).is_pending());
+            handler.record_active_codex_turn(
+                "source-task",
+                execution_id,
+                "source-thread".to_owned(),
+                "source-turn".to_owned(),
+            );
 
-    tokio::time::timeout(Duration::from_secs(1), wait)
-        .await
-        .expect("side source readiness should unblock after turn/start")
-        .expect("side source readiness task should not panic");
+            tokio::time::timeout(Duration::from_secs(1), wait)
+                .await
+                .expect("side source readiness should unblock after turn/start");
+        });
 }
 
 #[test]
@@ -3302,7 +3314,7 @@ fn user_message_presentation_matches_shared_reference_fixtures() {
         }))
         .unwrap();
         let expected = match fixture["kind"].as_str() {
-            Some("skill") => json!([{
+            Some("skill" | "app") => json!([{
                 "token": format!("${}", fixture["name"].as_str().unwrap()),
                 "href": fixture["href"],
             }]),
@@ -3685,6 +3697,39 @@ fn transcript_restores_a_missing_supervisor_generated_user_message() {
     assert_eq!(turns.len(), 1);
     assert_eq!(turns[0]["items"][0]["type"], "user_message");
     assert_eq!(turns[0]["items"][0]["message"]["content"], "Use Japanese");
+}
+
+#[test]
+fn transcript_restores_missing_historical_turns_in_chronological_order() {
+    let mut messages = vec![json!({
+        "id": "latest-answer", "turnId": "latest-turn", "role": "assistant",
+        "content": "Latest response", "createdAt": 300
+    })];
+    let presentations = vec![
+        json!({
+            "clientUserMessageId": "old-user-2", "turnId": "old-turn-2",
+            "content": "Second historical instruction", "createdAt": 200,
+            "ensureVisible": true
+        }),
+        json!({
+            "clientUserMessageId": "old-user-1", "turnId": "old-turn-1",
+            "content": "First historical instruction", "createdAt": 100,
+            "ensureVisible": true
+        }),
+    ];
+    attach_user_message_presentations(&mut messages, presentations.clone());
+    assert_eq!(
+        messages
+            .iter()
+            .map(|m| m["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["old-user-1", "old-user-2", "latest-answer"]
+    );
+    assert_eq!(messages[0]["turnId"], "old-turn-1");
+    assert_eq!(messages[1]["turnId"], "old-turn-2");
+    let before = messages.clone();
+    attach_user_message_presentations(&mut messages, presentations);
+    assert_eq!(messages, before);
 }
 
 #[test]
@@ -6435,6 +6480,16 @@ fn codex_guidance_turn_mismatch_exposes_the_actual_turn_id() {
 
 #[test]
 fn archived_cleanup_targets_do_not_delete_regular_project_root() {
+    let _lock = crate::test_env::lock();
+    let temp = tempfile::tempdir().unwrap();
+    let _workspace = ScalarEnv::set(
+        "WORKSPACE_ROOT",
+        temp.path().join("workspace").to_str().unwrap(),
+    );
+    let _home = ScalarEnv::set(
+        "WEGENT_EXECUTOR_HOME",
+        temp.path().join("executor").to_str().unwrap(),
+    );
     let root =
         temp_runtime_work_index_path("archived-cleanup-regular-root").with_extension("directory");
     let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
@@ -6451,6 +6506,13 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
         .collect::<Vec<_>>();
 
     assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
+    assert!(target_paths.contains(
+        &temp
+            .path()
+            .join("workspace/task-1/attachments")
+            .to_string_lossy()
+            .to_string()
+    ));
     assert!(target_paths.iter().any(|path| {
         path.ends_with("/workspace/attachments/runtime/task-1")
             || path.ends_with("\\workspace\\attachments\\runtime\\task-1")

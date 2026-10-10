@@ -105,7 +105,9 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - An explicit click request requires `browser_click` or `browser_click_coordinates`; filling, pressing Enter, page auto-update, JavaScript submission, or a screenshot does not count as a click.
 - Use `browser_take_screenshot` only when the user explicitly requests a screenshot. Use `browser_evaluate` only for read-only diagnostics, never as a substitute for open/fill/click/press actions.
 - On a transient action error, inspect the existing page and retry that action once with a fresh target. Do not reopen a page that is still available.
-- Do not narrate plans or progress between browser tools. After the requested actions and any needed final inspect, give one concise result based on the final page.
+- Report progress in one short line when each requested subtask starts and finishes (for example "第 2/4 项完成：搜索结果已获取，开始第 3 项"), so the user can follow along and intervene in time. Keep progress lines brief. After all requested actions and any needed final inspect, give one concise result based on the final page.
+- If a page redirects to a login or sign-in page (the URL or page content shows authentication is required), stop all further browser actions immediately. Tell the user the page requires login, ask them to log in inside the Wework built-in browser panel, and wait for their confirmation. Do not continue executing later steps while logged out. After the user confirms they have logged in, resume from the step that failed: reopen the target page, retry that step, and then continue the remaining steps.
+- To upload a local file into a page upload control, use `browser_upload_file` with the absolute local file path; target the file input with a CSS selector, or omit the selector to use the first file input on the page. To clear browser data, use `browser_clear_data` with `kinds` chosen from cookies, cache, storage, and history; omitting `kinds` clears cookies, cache, and storage. Clearing cookies signs the user out of websites, so only clear what the user asked for.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
 pub(crate) const WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 电脑操控 routing:
@@ -155,6 +157,7 @@ pub(crate) use home::{
 };
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
+mod github_cli;
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
@@ -283,6 +286,7 @@ pub use standard_engine::CodexAppServerEngine;
 #[derive(Clone)]
 pub struct CodexAppServerClient {
     binary: String,
+    home: Option<PathBuf>,
     state: Arc<Mutex<CodexAppServerSharedState>>,
 }
 
@@ -301,7 +305,38 @@ impl CodexAppServerClient {
         Self {
             state: shared_codex_app_server_state(&binary),
             binary,
+            home: None,
         }
+    }
+
+    pub(crate) fn for_request(&self, request: &ExecutionRequest) -> Result<Self, String> {
+        let Some(home) = super::instance_home::request_home(request) else {
+            return Ok(self.clone());
+        };
+        if !home.is_absolute() {
+            return Err("Named Agent Home identity is incomplete".to_owned());
+        }
+        Ok(Self {
+            state: codex_app_server_state(&self.binary, Some(home.clone())),
+            binary: self.binary.clone(),
+            home: Some(home),
+        })
+    }
+
+    pub(crate) fn has_dedicated_home(&self) -> bool {
+        self.home.is_some()
+    }
+
+    fn process_environment(
+        &self,
+        runtime: &BTreeMap<String, String>,
+        launch: &BTreeMap<String, String>,
+    ) -> BTreeMap<String, String> {
+        let mut environment = codex_process_environment(runtime, launch);
+        if let Some(home) = &self.home {
+            environment.insert(CODEX_HOME_ENV.to_owned(), home.display().to_string());
+        }
+        environment
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
@@ -634,13 +669,18 @@ impl CodexAppServerClient {
             .map(|config| &config.env)
             .unwrap_or(&empty_launch_environment);
         let process_environment =
-            codex_process_environment(&state.runtime_proxy_env, launch_environment);
+            self.process_environment(&state.runtime_proxy_env, launch_environment);
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
+        };
         if state.process.is_some()
             && codex_process_environment_requires_restart(
                 "rpc_request",
                 &state.process_environment,
                 &process_environment,
                 &state.active_threads,
+                pending_request_count,
             )
         {
             state.process = None;
@@ -683,7 +723,7 @@ impl CodexAppServerClient {
         request: &ExecutionRequest,
     ) -> Result<Value, String> {
         let request = request.clone();
-        let launch_config = build_codex_launch_config_for_fork(&request, thread_id)?;
+        let launch_config = prepare_codex_fork_launch_config(&request, thread_id).await?;
         let mut params = thread_fork_params(thread_id, thread_path, &request, &launch_config);
         params["lastTurnId"] = Value::String(last_turn_id.to_owned());
         let response = self
@@ -959,13 +999,18 @@ impl CodexAppServerClient {
         }
         let mut initialize_elapsed = None;
         let process_environment =
-            codex_process_environment(&state.runtime_proxy_env, &BTreeMap::new());
+            self.process_environment(&state.runtime_proxy_env, &BTreeMap::new());
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
+        };
         if state.process.is_some()
             && codex_process_environment_requires_restart(
                 "startup",
                 &state.process_environment,
                 &process_environment,
                 &state.active_threads,
+                pending_request_count,
             )
         {
             state.process = None;
@@ -1009,13 +1054,18 @@ impl CodexAppServerClient {
             state.process_environment.clear();
         }
         let process_environment =
-            codex_process_environment(&state.runtime_proxy_env, &launch_config.env);
+            self.process_environment(&state.runtime_proxy_env, &launch_config.env);
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
+        };
         if state.process.is_some()
             && codex_process_environment_requires_restart(
                 "turn_start",
                 &state.process_environment,
                 &process_environment,
                 &state.active_threads,
+                pending_request_count,
             )
         {
             state.process = None;
@@ -1107,20 +1157,28 @@ impl Drop for CodexThreadUnsubscribeObservation {
     }
 }
 
-fn shared_codex_app_server_states(
-) -> &'static StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>> {
-    static STATES: OnceLock<StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>>> =
-        OnceLock::new();
+type CodexAppServerStates =
+    HashMap<(String, Option<PathBuf>), Arc<Mutex<CodexAppServerSharedState>>>;
+
+fn shared_codex_app_server_states() -> &'static StdMutex<CodexAppServerStates> {
+    static STATES: OnceLock<StdMutex<CodexAppServerStates>> = OnceLock::new();
     STATES.get_or_init(|| StdMutex::new(HashMap::new()))
 }
 
 fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerSharedState>> {
+    codex_app_server_state(binary, None)
+}
+
+fn codex_app_server_state(
+    binary: &str,
+    home: Option<PathBuf>,
+) -> Arc<Mutex<CodexAppServerSharedState>> {
     let states = shared_codex_app_server_states();
     let mut states = states
         .lock()
         .expect("Codex app-server shared state registry should not be poisoned");
     states
-        .entry(binary.to_owned())
+        .entry((binary.to_owned(), home))
         .or_insert_with(|| Arc::new(Mutex::new(CodexAppServerSharedState::default())))
         .clone()
 }
@@ -1719,6 +1777,14 @@ async fn run_codex_app_server_turn_on_shared_client(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
+    if super::instance_home::request_home(&request).is_some() {
+        let mut options = options;
+        if let Some(thread_id) = options.direct_thread_id.take() {
+            options.resume_thread_id = Some(thread_id);
+        }
+        return run_codex_app_server_turn_with_cancel(&client.binary, request, options).await;
+    }
+    let _capability_lease = crate::services::capability_activation::begin_execution().await;
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -2067,6 +2133,10 @@ pub async fn run_codex_app_server_turn_with_cancel(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
+    let _capability_lease = crate::services::capability_activation::begin_execution().await;
+    let _home_lease = super::instance_home::acquire(&request)?;
+    super::environment_setup::prepare_execution_environment(&request).await?;
+    super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -2441,7 +2511,6 @@ async fn read_shared_turn_notifications(
         if !notification_belongs_to_thread(client, &message, thread_id).await {
             continue;
         }
-        log_codex_raw_turn_message(&message);
         if let Some(error) = required_mcp_startup_failure(&message) {
             if let Some(sender) = &options.notifications {
                 let _ = sender.send(message);
@@ -3028,20 +3097,17 @@ fn spawn_shared_mcp_server_elicitation_response(
     let message = message.clone();
     tokio::spawn(async move {
         let result = async {
-            if auto_approve_mcp_tool_calls && is_mcp_tool_call_approval(message_params(&message)) {
-                let result = mcp_server_tool_call_approval_response(&message)?;
-                return client.send_response(request_id, result).await;
+            if let Some(result) = url_elicitation::shared_response(
+                &message,
+                request_user_input_answers,
+                correlation_key,
+                auto_approve_mcp_tool_calls,
+            )
+            .await?
+            {
+                client.send_response(request_id, result).await?;
             }
-            let has_response_router = request_user_input_answers.is_some();
-            let response = match request_user_input_answers {
-                Some(receiver) => receiver.receive(correlation_key).await?,
-                None => None,
-            };
-            if response.is_none() && has_response_router {
-                return Ok(());
-            }
-            let result = mcp_server_elicitation_response(&message, response.as_ref())?;
-            client.send_response(request_id, result).await
+            Ok::<(), String>(())
         }
         .await;
         if let Err(error) = result {
@@ -3143,8 +3209,17 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
 ) -> Result<tokio::process::Child, String> {
     let resolved_binary = resolve_codex_binary(binary);
-    let codex_home = wework_codex_home();
-    prepare_wework_codex_home(&codex_home)?;
+    let codex_home = launch_config
+        .env
+        .get(CODEX_HOME_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(wework_codex_home);
+    if launch_config.env.contains_key(CODEX_HOME_ENV) {
+        fs::create_dir_all(&codex_home)
+            .map_err(|error| format!("create agent Codex Home: {error}"))?;
+    } else {
+        prepare_wework_codex_home(&codex_home)?;
+    }
     codex_app_server_command(&resolved_binary, &codex_home, launch_config)
         .spawn()
         .map_err(|error| format!("failed to start codex app-server: {error}"))
@@ -3169,7 +3244,13 @@ fn codex_app_server_command(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
+    // Use the native Codex desktop HTTP identity. Authentication and the actual
+    // runtime version remain owned by Codex; never synthesize browser cookies.
+    command.env("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "Codex");
     command.env(CODEX_HOME_ENV, codex_home);
+    if launch_config.env.contains_key(CODEX_HOME_ENV) {
+        command.env("CODEX_SQLITE_HOME", codex_home);
+    }
     command.current_dir(codex_home);
     command.env(
         "PATH",
@@ -3194,6 +3275,7 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
         WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
+        github_cli::INSTRUCTIONS,
     ]
     .into_iter()
     .filter(|instructions| !instructions.is_empty())
@@ -3338,12 +3420,15 @@ mod json_rpc;
 #[path = "codex/mcp_form.rs"]
 mod mcp_form;
 
+#[path = "codex/url_elicitation.rs"]
+mod url_elicitation;
+
 use json_rpc::JsonRpcConnection;
 
 #[path = "codex/run_state.rs"]
 mod run_state;
 
-use run_state::{log_codex_raw_turn_message, stream_thread_id, CodexRunState};
+use run_state::{stream_thread_id, CodexRunState};
 
 fn initialize_params() -> Value {
     json!({
@@ -3468,6 +3553,14 @@ fn build_codex_launch_config_for_fork(
     build_codex_launch_config_with_route_scope(request, &route_scope)
 }
 
+async fn prepare_codex_fork_launch_config(
+    request: &ExecutionRequest,
+    source_thread_id: &str,
+) -> Result<CodexLaunchConfig, String> {
+    ensure_codex_mcp_endpoints().await?;
+    build_codex_launch_config_for_fork(request, source_thread_id)
+}
+
 fn build_codex_launch_config_with_route_scope(
     request: &ExecutionRequest,
     route_scope: &str,
@@ -3479,20 +3572,36 @@ fn build_codex_launch_config_with_route_scope(
     let reasoning = normalize_reasoning(codex_reasoning_config(&request.model_config));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
+    let instance_home = super::instance_home::request_home(request);
+    let codex_home = instance_home.clone().unwrap_or_else(wework_codex_home);
     let mut launch_config = CodexLaunchConfig {
         thread_config,
-        user_developer_instructions: read_wework_codex_user_instructions(&wework_codex_home())?,
+        user_developer_instructions: read_wework_codex_user_instructions(&codex_home)?,
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
         env: runtime_proxy_env(&request.model_config),
         ..CodexLaunchConfig::default()
     };
+    if let Some(home) = instance_home {
+        launch_config
+            .env
+            .insert(CODEX_HOME_ENV.to_owned(), home.display().to_string());
+    }
     launch_config
         .config_overrides
         .push(shell_path_config_override());
+    // Native authorization and agent tools must use the same gh profile.
+    if let Ok(config_dir) = env::var("GH_CONFIG_DIR") {
+        if !config_dir.is_empty() {
+            launch_config.config_overrides.push(format!(
+                "shell_environment_policy.set.GH_CONFIG_DIR={}",
+                toml_value(&config_dir)
+            ));
+        }
+    }
     launch_config
-        .config_overrides
-        .extend(task_identity_config_overrides(request));
+        .thread_config
+        .extend(task_identity_thread_config(request));
     if let Some(cargo_target_override) = super::cargo_cache::codex_config_override(request) {
         launch_config.config_overrides.push(cargo_target_override);
     }
@@ -3625,9 +3734,10 @@ fn build_codex_launch_config_with_route_scope(
         ));
     }
 
-    launch_config
-        .config_overrides
-        .extend(global_mcp_config_overrides());
+    if super::instance_home::request_home(request).is_none() {
+        let overrides = global_mcp_config_overrides(&mut launch_config.thread_config)?;
+        launch_config.config_overrides.extend(overrides);
+    }
     let (browser_overrides, browser_env) = cdp_browser_mcp_config_overrides(request)?;
     launch_config.config_overrides.extend(browser_overrides);
     launch_config.env.extend(browser_env);
@@ -3642,9 +3752,13 @@ fn build_codex_launch_config_with_route_scope(
         .config_overrides
         .extend(project_space_overrides);
     launch_config.env.extend(project_space_env);
-    launch_config
-        .config_overrides
-        .extend(runtime_capabilities::request_mcp_config_overrides(request));
+    let (request_mcp_overrides, request_mcp_environment) =
+        runtime_capabilities::request_mcp_config_overrides(
+            request,
+            &mut launch_config.thread_config,
+        )?;
+    launch_config.config_overrides.extend(request_mcp_overrides);
+    launch_config.env.extend(request_mcp_environment);
 
     Ok(launch_config)
 }
@@ -3813,14 +3927,13 @@ fn explicit_codex_upstream(
         .expect("explicit model config should produce an upstream")
 }
 
-fn task_identity_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
     task_identity_env(request)
         .into_iter()
         .map(|(key, value)| {
-            format!(
-                "shell_environment_policy.set.{}={}",
-                toml_key_segment(&key),
-                toml_value(&value)
+            (
+                toml_key_path(&["shell_environment_policy", "set", &key]),
+                Value::String(value),
             )
         })
         .collect()
@@ -4156,6 +4269,10 @@ fn codex_process_environment(
     launch_env: &BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
     let mut environment = codex_base_process_environment();
+    environment.insert(
+        "WEGENT_CAPABILITY_REVISION".to_owned(),
+        crate::services::capability_activation::revision().to_string(),
+    );
     environment.extend(launch_env.clone());
     replace_proxy_environment(&mut environment, runtime_proxy_env.clone());
     environment
@@ -4166,11 +4283,12 @@ fn codex_process_environment_requires_restart(
     current: &BTreeMap<String, String>,
     requested: &BTreeMap<String, String>,
     active_threads: &HashMap<String, usize>,
+    pending_request_count: usize,
 ) -> bool {
     if current == requested {
         return false;
     }
-    let (event, restart) = if active_threads.is_empty() {
+    let (event, restart) = if active_threads.is_empty() && pending_request_count == 0 {
         (
             "codex shared app-server environment restart scheduled",
             true,
@@ -4596,17 +4714,10 @@ fn normalize_service_tier(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn global_mcp_config_overrides() -> Vec<String> {
-    let manifest_path = executor_home().join("capabilities/manifest.json");
-    let Ok(manifest) = fs::read_to_string(manifest_path) else {
-        return Vec::new();
-    };
-    let Ok(manifest) = serde_json::from_str::<Value>(&manifest) else {
-        return Vec::new();
-    };
-    let Some(mcps) = manifest.get("mcps").and_then(Value::as_object) else {
-        return Vec::new();
-    };
+fn global_mcp_config_overrides(
+    thread_config: &mut Map<String, Value>,
+) -> Result<Vec<String>, String> {
+    let mcps = runtime_capabilities::load_global_mcp_records()?;
 
     let mut overrides = Vec::new();
     let mut names = mcps.keys().collect::<Vec<_>>();
@@ -4619,9 +4730,17 @@ fn global_mcp_config_overrides() -> Vec<String> {
         else {
             continue;
         };
-        overrides.extend(mcp_server_overrides(name, server));
+        let server = Value::Object(server.clone());
+        runtime_capabilities::mcp_environment::append_stdio_environment(
+            name,
+            &server,
+            thread_config,
+        )?;
+        if let Some(server) = server.as_object() {
+            overrides.extend(mcp_server_overrides(name, server));
+        }
     }
-    overrides
+    Ok(overrides)
 }
 
 fn cdp_browser_mcp_config_overrides(
@@ -4705,6 +4824,7 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
         );
     }
     environment.extend(computer_use_mcp_config_overrides().1);
+    environment.extend(crate::services::git_credentials::environment());
     environment
 }
 
@@ -4918,18 +5038,8 @@ fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> 
                 toml_json_value(&Value::Array(args))
             ));
         }
-        if let Some(env) = server.get("env").and_then(Value::as_object) {
-            let mut env_keys = env.keys().collect::<Vec<_>>();
-            env_keys.sort();
-            for env_key in env_keys {
-                if let Some(env_value) = env.get(env_key).and_then(value_string) {
-                    overrides.push(format!(
-                        "{key}.env.{}={}",
-                        toml_key_segment(env_key),
-                        toml_value(&env_value)
-                    ));
-                }
-            }
+        if let Some(names) = server.get("env_vars") {
+            overrides.push(format!("{key}.env_vars={}", toml_json_value(names)));
         }
         return overrides;
     }
@@ -5748,6 +5858,9 @@ fn thread_resume_params(
 ) -> Value {
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+    if let Some(path) = super::instance_home::migrated_codex_rollout(request, thread_id) {
+        params.insert("path".to_owned(), json!(path));
+    }
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
@@ -5974,6 +6087,9 @@ fn turn_input_item(item: &Value, plugin_skills: &PluginSkillResolver) -> Vec<Val
             item.get("name").and_then(Value::as_str),
             item.get("path").and_then(Value::as_str),
         ) {
+            (Some(name), Some(path)) if github_cli::is_mention(name, path) => {
+                Some(vec![text_input("GitHub (gh)".to_owned())])
+            }
             (Some(name), Some(path)) => Some(vec![mention_input(name, path)]),
             _ => None,
         },
@@ -6040,6 +6156,13 @@ fn extract_structured_mentions(
         let start = reference.start;
         let uri_end = reference.end - 1;
         let uri = reference.href.as_str();
+        if github_cli::is_mention(name, uri) {
+            // Do not activate the official plugin/apps skill alongside CLI mode.
+            output.push_str(&text[cursor..start]);
+            output.push_str("GitHub (gh)");
+            cursor = reference.end;
+            continue;
+        }
         if let Some(path) = composer_file_reference_path(uri) {
             output.push_str(&text[cursor..start]);
             if path.chars().any(char::is_whitespace) && !path.contains('"') {
@@ -6233,10 +6356,15 @@ async fn receive_mcp_server_elicitation_response(
     let Some(receiver) = request_user_input_answers else {
         return mcp_server_elicitation_response(message, None);
     };
-    let response = receiver
-        .recv()
-        .await
-        .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
+    let response = if message_params(message).get("mode").and_then(Value::as_str) == Some("url") {
+        match timeout(Duration::from_secs(600), receiver.recv()).await {
+            Ok(response) => response,
+            Err(_) => return Ok(json!({"action": "cancel"})),
+        }
+    } else {
+        receiver.recv().await
+    }
+    .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
     mcp_server_elicitation_response(message, Some(&response))
 }
 
@@ -6252,6 +6380,9 @@ fn mcp_server_tool_call_approval_response(message: &Value) -> Result<Value, Stri
 }
 
 fn is_mcp_tool_call_approval(params: &Value) -> bool {
+    if params.get("mode").and_then(Value::as_str) == Some("url") {
+        return false;
+    }
     params
         .get("_meta")
         .and_then(Value::as_object)
@@ -6274,14 +6405,9 @@ fn mcp_server_elicitation_response(
             ("turn_id", json_string_field(params, "turnId")),
             ("server_name", json_string_field(params, "serverName")),
             ("mode", mode.to_owned()),
-            (
-                "raw",
-                serde_json::to_string(message)
-                    .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>")),
-            ),
         ],
     );
-    if !matches!(mode, "form" | "openai/form") {
+    if !matches!(mode, "form" | "openai/form" | "url") {
         log_executor_event(
             "codex mcp elicitation declined",
             &[
@@ -6315,11 +6441,6 @@ fn mcp_server_elicitation_response(
             ("request_id", json_scalar_field(message, "id")),
             ("server_name", json_string_field(params, "serverName")),
             ("action", json_string_field(&result, "action")),
-            (
-                "raw",
-                serde_json::to_string(&result)
-                    .unwrap_or_else(|error| format!("<failed to serialize response: {error}>")),
-            ),
         ],
     );
     Ok(result)
@@ -6327,6 +6448,9 @@ fn mcp_server_elicitation_response(
 
 pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -> Option<Value> {
     let mode = params.get("mode").and_then(Value::as_str)?;
+    if mode == "url" {
+        return url_elicitation::request_params(params);
+    }
     if !matches!(mode, "form" | "openai/form") {
         return None;
     }
@@ -6452,6 +6576,9 @@ fn mcp_elicitation_property_options(property: &Value) -> Vec<Value> {
 }
 
 fn mcp_server_elicitation_result(params: &Value, response: &Value) -> Value {
+    if params.get("mode").and_then(Value::as_str) == Some("url") {
+        return url_elicitation::response_result(response);
+    }
     let answers = response.get("answers").and_then(Value::as_object);
     if answers.map_or(true, serde_json::Map::is_empty) {
         return mcp_server_elicitation_cancel_result();

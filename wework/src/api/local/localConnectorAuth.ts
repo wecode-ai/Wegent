@@ -1,6 +1,8 @@
 import { observeOperation } from '@/telemetry/observeOperation'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
-import type { PluginLocalAuthDefinition } from '@/types/api'
+import type { InstalledPluginComponents, PluginLocalAuthDefinition } from '@/types/api'
+import { isOpenAiOfficialMarketplaceId } from '@/features/plugins/marketplaceIdentity'
+import { GITHUB_CLI_TARGET, isGithubCliTarget } from './githubCli'
 
 export type LocalConnectorAuthStatus =
   | 'ok'
@@ -29,6 +31,23 @@ export interface LocalConnectorAuthResult {
   title?: string | null
   finalUrl?: string | null
   sessionId?: string | null
+  accountRevoked?: boolean
+  connected?: boolean
+  errorCode?: string
+  verificationUrl?: string | null
+  userCode?: string | null
+}
+
+export class LocalConnectorAuthLogoutError extends Error {
+  readonly accountRevoked: boolean
+  readonly errorCode?: string
+
+  constructor(result: LocalConnectorAuthResult) {
+    super('local_auth_logout_failed')
+    this.name = 'LocalConnectorAuthLogoutError'
+    this.accountRevoked = result.accountRevoked === true
+    this.errorCode = result.errorCode
+  }
 }
 
 export interface LocalConnectorAuthTarget {
@@ -36,6 +55,24 @@ export interface LocalConnectorAuthTarget {
   connectorSlug: string
   localAuth?: PluginLocalAuthDefinition | null
   pluginRoot?: string | null
+}
+
+/** Resolve host-owned authentication without changing the cached plugin manifest. */
+export function pluginLocalConnectorAuthTarget(
+  pluginKey: string,
+  marketplaceId: string,
+  connector: NonNullable<InstalledPluginComponents['connectors']>[number]
+): LocalConnectorAuthTarget | null {
+  if (
+    isOpenAiOfficialMarketplaceId(marketplaceId) &&
+    pluginKey.toLowerCase() === 'github' &&
+    connector.slug.toLowerCase() === 'github'
+  ) {
+    return GITHUB_CLI_TARGET
+  }
+  return isLocalConnector(connector)
+    ? { pluginKey, connectorSlug: connector.slug, localAuth: connector.localAuth ?? null }
+    : null
 }
 
 interface LocalConnectorAuthHealthOptions {
@@ -71,14 +108,19 @@ async function callLocalConnectorAuth(
 export function localConnectorAuthHealth(
   target: LocalConnectorAuthTarget,
   options: LocalConnectorAuthHealthOptions = {}
-) {
+): Promise<LocalConnectorAuthResult> {
   const key = healthCacheKey(target)
   const cachedAt = okHealthCache.get(key)
-  if (!options.bypassCache && cachedAt != null && Date.now() - cachedAt < OK_HEALTH_TTL_MS) {
+  if (
+    !isGithubCliTarget(target) &&
+    !options.bypassCache &&
+    cachedAt != null &&
+    Date.now() - cachedAt < OK_HEALTH_TTL_MS
+  ) {
     return Promise.resolve({ status: 'ok' as const satisfies LocalConnectorAuthStatus })
   }
   return callLocalConnectorAuth('health', target).then(result => {
-    if (result.status === 'ok') okHealthCache.set(key, Date.now())
+    if (result.status === 'ok' && !isGithubCliTarget(target)) okHealthCache.set(key, Date.now())
     else okHealthCache.delete(key)
     return result
   })
@@ -103,7 +145,12 @@ export function localConnectorAuthLogout(target: LocalConnectorAuthTarget) {
   okHealthCache.delete(healthCacheKey(target))
   return observeOperation(
     'plugin.disconnect',
-    () => callLocalConnectorAuth('logout', target),
+    async () => {
+      const result = await callLocalConnectorAuth('logout', target)
+      if (result?.status !== 'ok')
+        throw new LocalConnectorAuthLogoutError(result ?? { status: 'error' })
+      return result
+    },
     result => result.status === 'ok'
   )
 }

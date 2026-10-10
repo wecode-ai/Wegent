@@ -87,6 +87,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn list_codex_models(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let query_id = uuid::Uuid::new_v4().to_string();
         let include_hidden = bool_field(&payload, "includeHidden")
             .or_else(|| bool_field(&payload, "include_hidden"));
         let limit = integer_field(&payload, "limit")
@@ -99,8 +100,8 @@ impl RuntimeWorkRpcHandler {
             "includeHidden": include_hidden,
         });
         let config = self
-            .codex_app_server
-            .request(
+            .request_model_discovery(
+                &query_id,
                 "config/read",
                 json!({
                     "includeLayers": false,
@@ -111,8 +112,7 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("codex_models_unavailable", error))?;
         let provider = current_codex_model_provider_from_config(&config);
         let (available, error, models) = match self
-            .codex_app_server
-            .request("model/list", model_list_params)
+            .request_model_discovery(&query_id, "model/list", model_list_params)
             .await
         {
             Ok(response) => (
@@ -135,6 +135,43 @@ impl RuntimeWorkRpcHandler {
             "data": models,
             "providers": provider_results,
         }))
+    }
+
+    async fn request_model_discovery(
+        &self,
+        query_id: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let started = std::time::Instant::now();
+        log_executor_event(
+            "runtime model discovery started",
+            &[
+                ("query_id", query_id.to_owned()),
+                ("stage", method.to_owned()),
+            ],
+        );
+        let result = self.codex_app_server.request(method, params).await;
+        let mut fields = vec![
+            ("query_id", query_id.to_owned()),
+            ("stage", method.to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+            ("ok", result.is_ok().to_string()),
+        ];
+        if method == "model/list" {
+            if let Ok(response) = &result {
+                fields.push((
+                    "model_count",
+                    response
+                        .get("data")
+                        .and_then(Value::as_array)
+                        .map_or(0, Vec::len)
+                        .to_string(),
+                ));
+            }
+        }
+        log_executor_event("runtime model discovery finished", &fields);
+        result
     }
 
     pub(super) async fn read_codex_model_overrides(

@@ -72,6 +72,7 @@ class ExecutionRequest:
     team_id: int = 0
     team_name: str = ""
     team_namespace: Optional[str] = None  # From Task: Team namespace for skill lookup
+    team_owner: dict = field(default_factory=dict)  # Resource owner: kind, id, name
     subtask_title: Optional[str] = None  # From Task
     task_title: Optional[str] = None  # From Task
 
@@ -173,6 +174,8 @@ class ExecutionRequest:
     ephemeral: bool = False
     fork_runtime: Optional[dict] = None
     inherited_sessions: list[dict] = field(default_factory=list)
+    # Owner-filtered legacy bindings validate remembered sessions, never seed them.
+    legacy_session_bindings: list[dict] = field(default_factory=list)
     collaboration_model: str = "single"
     mode: Optional[str] = (
         None  # From Task: Collaboration mode (e.g., "coordinate", "collaborate")

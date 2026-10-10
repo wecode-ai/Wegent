@@ -25,7 +25,7 @@ describe('resolveRuntimeTranscriptPageSize', () => {
   test.each([0, -1, Number.NaN, 10.5])(
     'falls back to the production page size for invalid value %s',
     configuredPageSize => {
-      expect(resolveRuntimeTranscriptPageSize(configuredPageSize)).toBe(50)
+      expect(resolveRuntimeTranscriptPageSize(configuredPageSize)).toBe(5)
     }
   )
 })

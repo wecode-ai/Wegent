@@ -98,13 +98,15 @@ export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
 export type AppearanceModePreference = 'light' | 'dark' | 'system'
 export type BrowserLinkTarget = 'system' | 'wework'
 export type WorkbenchMode = 'focus' | 'developer'
-export type FixedWorkspaceTabKind = 'task' | 'board' | 'agent' | 'smart_app'
+export type FixedWorkspaceTabKind = 'task' | 'board' | 'agent' | 'auxiliary' | 'smart_app'
 
 export interface FixedWorkspaceTabPreference {
   id: string
   kind: FixedWorkspaceTabKind
   installationId?: string
   title?: string
+  contentRoute?: string
+  windowLabel?: string
 }
 
 export interface AppPreferencesPatch {
@@ -203,6 +205,7 @@ const supportedFixedWorkspaceTabKinds = new Set<FixedWorkspaceTabKind>([
   'task',
   'board',
   'agent',
+  'auxiliary',
   'smart_app',
 ])
 
@@ -220,7 +223,21 @@ function normalizeFixedWorkspaceTabs(value: unknown): FixedWorkspaceTabPreferenc
         : null
     const installationId =
       typeof record.installationId === 'string' ? record.installationId.trim() : ''
-    if (!id || ids.has(id) || !kind || (kind === 'smart_app' && !installationId)) return []
+    const contentRoute = typeof record.contentRoute === 'string' ? record.contentRoute.trim() : ''
+    const windowLabel =
+      typeof record.windowLabel === 'string' &&
+      /^workspace-[a-zA-Z0-9_-]+$/.test(record.windowLabel.trim())
+        ? record.windowLabel.trim()
+        : ''
+    if (
+      !id ||
+      ids.has(id) ||
+      !kind ||
+      (kind === 'smart_app' && !installationId) ||
+      (kind === 'auxiliary' && !contentRoute)
+    ) {
+      return []
+    }
     ids.add(id)
     const title = typeof record.title === 'string' ? record.title.trim() : ''
     return [
@@ -229,6 +246,8 @@ function normalizeFixedWorkspaceTabs(value: unknown): FixedWorkspaceTabPreferenc
         kind,
         ...(installationId && { installationId }),
         ...(title && { title }),
+        ...(contentRoute && { contentRoute }),
+        ...(windowLabel && { windowLabel }),
       },
     ]
   })
@@ -245,10 +264,9 @@ function mergeAppPreferences(value: unknown): AppPreferences {
     typeof (record as Record<string, unknown>).defaultWorkspaceTab === 'string'
       ? String((record as Record<string, unknown>).defaultWorkspaceTab)
       : 'task'
-  const fixedWorkspaceTabs =
-    storedFixedWorkspaceTabs.length > 0
-      ? storedFixedWorkspaceTabs
-      : defaultAppPreferences.fixedWorkspaceTabs
+  const fixedWorkspaceTabs = Array.isArray(record.fixedWorkspaceTabs)
+    ? storedFixedWorkspaceTabs
+    : defaultAppPreferences.fixedWorkspaceTabs
   return {
     workbenchMode:
       typeof record.workbenchMode === 'string' &&
@@ -270,13 +288,14 @@ function mergeAppPreferences(value: unknown): AppPreferences {
         : defaultAppPreferences.showMainWindowOnLaunch,
     fixedWorkspaceTabs,
     startupWorkspaceTabId: (() => {
+      if (fixedWorkspaceTabs.length === 0) return ''
       const requested =
         typeof record.startupWorkspaceTabId === 'string' ? record.startupWorkspaceTabId.trim() : ''
       if (fixedWorkspaceTabs.some(tab => tab.id === requested)) return requested
       return (
         fixedWorkspaceTabs.find(tab => tab.kind === legacyDefaultWorkspaceTab)?.id ??
         fixedWorkspaceTabs[0]?.id ??
-        'fixed-task'
+        ''
       )
     })(),
     systemDragEnabled:

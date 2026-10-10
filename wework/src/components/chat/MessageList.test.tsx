@@ -12,6 +12,7 @@ import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
 import { ComposerCatalogContext } from './composer/ComposerCatalogContext'
 import { desktopComposerCatalogStore } from './composer/desktopComposerCatalog'
+import { registerComposerMentionIcon } from './composer/composerMentions'
 import references from '../../../../packages/chat-core/test-fixtures/prompt-mentions.json'
 import '@/i18n'
 
@@ -1275,6 +1276,9 @@ describe('MessageList', () => {
     expect(
       chunks.every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
     ).toBe(true)
+
+    // Intersection callbacks recheck the current chunk geometry before rendering.
+    vi.spyOn(chunks.at(-1)!, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 100, 736, 360))
 
     act(() => {
       intersectionCallbacks.at(-1)?.(
@@ -6912,6 +6916,35 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
   })
 
+  test('renders a restored GitHub app reference with its brand icon', () => {
+    const reference = '[$GitHub](app://connector_github_sent_icon_test)'
+    registerComposerMentionIcon(reference, 'https://example.com/github.png')
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'github-user-message',
+            role: 'user',
+            content: `${reference} 查看项目列表`,
+            status: 'done',
+            createdAt: '2026-10-08T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('sent-app-token-GitHub')).toHaveAttribute(
+      'href',
+      'app://connector_github_sent_icon_test'
+    )
+    expect(screen.getByTestId('sent-app-icon-GitHub')).toHaveAttribute(
+      'src',
+      'https://example.com/github.png'
+    )
+    expect(screen.getByTestId('message-user')).toHaveTextContent('GitHub 查看项目列表')
+    expect(screen.getByTestId('message-user')).not.toHaveTextContent('$GitHub')
+  })
+
   test('renders plugin markdown links in user messages', () => {
     render(
       <MessageList
@@ -6972,6 +7005,32 @@ describe('MessageList', () => {
       'WEG0001-1 结合代码分析，这个问题可能是因为什么'
     )
     expect(screen.queryByText(/cloud:\/\/projects\/3\/todos/)).not.toBeInTheDocument()
+  })
+
+  test('keeps sent issue references styled as native context chips', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '[$LL-1 · 看看cpu](wework-issue://project/LL-1) 处理一下',
+            status: 'done',
+            createdAt: '2026-10-08T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const issueChip = screen.getByTestId(/^sent-issue-token-/)
+
+    expect(issueChip).toHaveAttribute('href', 'wework-issue://project/LL-1')
+    expect(issueChip).toHaveClass('composer-mention-node', 'composer-mention-link')
+    expect(issueChip).toHaveTextContent('LL-1 · 看看cpu')
+    expect(screen.getByTestId(/^sent-issue-icon-/)).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent('LL-1 · 看看cpu 处理一下')
+    expect(screen.queryByText('[blocked]')).not.toBeInTheDocument()
+    expect(screen.queryByText(/wework-issue:\/\//)).not.toBeInTheDocument()
   })
 
   test('renders conversation references in user messages without exposing the internal URI', () => {

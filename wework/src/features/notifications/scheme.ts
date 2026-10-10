@@ -3,6 +3,14 @@ export type WeworkDestination =
   | { kind: 'board'; projectId: string; itemId?: string; commentId?: string }
   | { kind: 'task'; deviceId: string; taskId: string }
 
+export function weworkTaskScheme(address: { deviceId: string; taskId: string }): string {
+  return `wework://tasks/${encodeURIComponent(address.deviceId)}/${encodeURIComponent(address.taskId)}`
+}
+
+export function weworkIssueScheme(projectId: string, itemId: string): string {
+  return `wework://boards/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(itemId)}`
+}
+
 function segment(value: string): string | null {
   const decoded = decodeURIComponent(value)
   return decoded &&
@@ -60,13 +68,19 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
   }
 }
 
-export function weworkDestinationRoute(destination: WeworkDestination): string {
+export function weworkDestinationRoute(
+  destination: WeworkDestination,
+  focusRequest?: string
+): string {
   if (destination.kind === 'boards') return '/todo'
   if (destination.kind === 'task') {
     return `/runtime-tasks?${new URLSearchParams({ deviceId: destination.deviceId, taskId: destination.taskId })}`
   }
   const params = new URLSearchParams({ projectStore: 'backend', projectId: destination.projectId })
   if (destination.itemId) params.set('itemId', destination.itemId)
-  if (destination.commentId) params.set('commentId', destination.commentId)
+  if (destination.commentId) {
+    params.set('commentId', destination.commentId)
+    if (focusRequest) params.set('focusRequest', focusRequest)
+  }
   return `/todo?${params}`
 }

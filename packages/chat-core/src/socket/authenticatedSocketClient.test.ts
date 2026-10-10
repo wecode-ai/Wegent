@@ -219,4 +219,41 @@ describe('createAuthenticatedSocketClient', () => {
 
     expect(client.getState().connectionError).toBeNull()
   })
+
+  test('waits for the namespace connection before allowing a request', async () => {
+    const rawSocket = createMockSocket()
+    mockIo.mockReturnValue(rawSocket.socket)
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => 'http://socket',
+      path: '/socket.io',
+      getToken: () => 'token',
+    })
+    let settled = false
+
+    const connection = client.ensureConnected().then(() => {
+      settled = true
+    })
+    await vi.waitFor(() => expect(rawSocket.socket.connect).toHaveBeenCalledTimes(1))
+    expect(settled).toBe(false)
+
+    rawSocket.trigger('connect')
+    await connection
+    expect(settled).toBe(true)
+  })
+
+  test('reports a connection error instead of waiting for an RPC acknowledgement', async () => {
+    const rawSocket = createMockSocket()
+    mockIo.mockReturnValue(rawSocket.socket)
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => 'http://socket',
+      path: '/socket.io',
+      getToken: () => 'token',
+    })
+
+    const connection = client.ensureConnected()
+    await vi.waitFor(() => expect(rawSocket.socket.connect).toHaveBeenCalledTimes(1))
+    rawSocket.trigger('connect_error', new Error('WebSocket handshake failed'))
+
+    await expect(connection).rejects.toThrow('WebSocket handshake failed')
+  })
 })

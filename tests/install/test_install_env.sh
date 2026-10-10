@@ -109,7 +109,7 @@ if services_with_build:
 PY
 }
 
-test_default_standard_compose_keeps_rag_services_optional() {
+test_default_standard_compose_includes_required_knowledge_runtime() {
     local compose_json
 
     compose_json="$(
@@ -123,17 +123,13 @@ import sys
 
 config = json.loads(sys.argv[1])
 services = config.get("services", {})
-default_rag_services = sorted(
-    name
-    for name in ("knowledge_runtime", "knowledge_doc_converter")
-    if name in services
-)
 
-if default_rag_services:
-    print(
-        "default standard compose should keep RAG services behind a profile: "
-        + ", ".join(default_rag_services)
-    )
+if "knowledge_runtime" not in services:
+    print("default standard compose must start knowledge_runtime: the Backend requires it")
+    sys.exit(1)
+
+if "knowledge_runtime" not in (services["backend"].get("depends_on") or {}):
+    print("backend must depend on knowledge_runtime in the default standard compose")
     sys.exit(1)
 PY
 }
@@ -646,8 +642,8 @@ run_test "existing standard .env backfills internal service token" \
     test_existing_standard_env_backfills_internal_service_token
 run_test "standard compose uses prebuilt images only" \
     test_standard_compose_uses_prebuilt_images_only
-run_test "default standard compose keeps RAG services optional" \
-    test_default_standard_compose_keeps_rag_services_optional
+run_test "default standard compose includes required knowledge_runtime" \
+    test_default_standard_compose_includes_required_knowledge_runtime
 run_test "standard compose accepts WEGENT_IMAGE_TAG" \
     test_standard_compose_accepts_wegent_image_tag
 run_test "standalone accepts WEGENT_IMAGE_TAG" \

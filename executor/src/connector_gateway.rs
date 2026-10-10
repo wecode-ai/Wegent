@@ -5,7 +5,7 @@
 //! Short-lived, local authorization used by the Connector MCP child process.
 
 use std::{
-    env, fs,
+    fs,
     io::Write,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -128,10 +128,7 @@ pub(crate) fn clear_connector_gateway_config() -> Result<(), String> {
 }
 
 fn connector_gateway_config_path() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(env::temp_dir)
+    crate::config::paths::executor_home()
         .join(CONFIG_DIR)
         .join(CONFIG_FILE)
 }

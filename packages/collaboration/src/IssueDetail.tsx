@@ -79,7 +79,7 @@ interface IssueDetailProps {
   messages: Messages;
   translate?: CollaborationTranslate;
   onClose(): void;
-  /** Present only when the host enabled Issue deletion. */
+  /** Present only when the host enables this Issue lifecycle action. */
   onDelete?(): void;
   onChange(issue: CollaborationIssue): void;
   onCommentsChange(comments: CollaborationComment[]): void;
@@ -103,6 +103,8 @@ interface IssueCreateProps {
 
 const browserDueDateExtensions = {
   dueDateInputType: "datetime-local" as const,
+  startDateFromSource: dueDateTimeLocalFromSource,
+  startDateToSource: dueDateTimeLocalToSource,
   dueDateFromSource: dueDateTimeLocalFromSource,
   dueDateToSource: dueDateTimeLocalToSource,
 };
@@ -315,12 +317,12 @@ function BrowserIssueDetail({
                   : closeDrawers
             }
             onDelete={onDelete}
+            deleteLabel={editorTranslate("todo.archive_issue", "归档任务")}
             onUpdated={(updated) => onChange(updated)}
             presentation="workspace-panel"
             workspacePanelFill
             readFirst
             showPanelControls
-            showFullscreenControl={false}
             showAssignee
             canAssign={permissions.canAssign}
             currentAssignment={currentAssignment}

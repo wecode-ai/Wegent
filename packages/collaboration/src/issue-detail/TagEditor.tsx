@@ -9,6 +9,7 @@ interface TagEditorProps {
   onChange: (tags: string[]) => void;
   disabled?: boolean;
   placeholder?: string;
+  removeLabel?: (tag: string) => string;
   // Existing project tags offered as autocomplete candidates.
   suggestions?: string[];
   // Prefix for data-testid values so multiple editors never collide.
@@ -22,6 +23,7 @@ export function TagEditor({
   onChange,
   disabled = false,
   placeholder = "添加标签",
+  removeLabel = (tag) => `移除标签 ${tag}`,
   suggestions = [],
   testIdPrefix,
 }: TagEditorProps) {
@@ -42,7 +44,6 @@ export function TagEditor({
     if (!tags.includes(tag)) onChange([...tags, tag]);
     setDraft("");
     setHighlight(0);
-    inputRef.current?.focus();
   }
 
   function commit(raw: string) {
@@ -51,6 +52,7 @@ export function TagEditor({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "ArrowDown" && showSuggestions) {
       event.preventDefault();
       setHighlight((current) => (current + 1) % candidates.length);
@@ -81,7 +83,7 @@ export function TagEditor({
 
   return (
     <span
-      className="relative flex min-w-0 flex-wrap items-center gap-1.5"
+      className="task-detail-tag-editor relative flex min-w-0 flex-1 flex-wrap items-center gap-1.5"
       onClick={() => inputRef.current?.focus()}
     >
       {tags.map((tag) => (
@@ -94,7 +96,7 @@ export function TagEditor({
           {!disabled && (
             <button
               type="button"
-              aria-label={`移除标签 ${tag}`}
+              aria-label={removeLabel(tag)}
               data-testid={`${testIdPrefix}-tag-remove-${tag}`}
               onClick={() =>
                 onChange(tags.filter((candidate) => candidate !== tag))
@@ -110,6 +112,7 @@ export function TagEditor({
         <input
           ref={inputRef}
           data-testid={`${testIdPrefix}-input`}
+          aria-label={placeholder}
           value={draft}
           disabled={disabled}
           onChange={(event) => {

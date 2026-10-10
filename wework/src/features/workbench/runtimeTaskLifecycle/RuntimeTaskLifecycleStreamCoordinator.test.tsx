@@ -759,6 +759,71 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     ])
   })
 
+  test.each(['submitting', 'awaiting'] as const)(
+    'preserves a %s compaction when the previous terminal transcript returns',
+    async phase => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-08-21T00:00:01.000Z'))
+      const store = new RuntimeTaskLifecycleStore('test')
+      const address = runtimeTaskAddress()
+      store.syncRuntimeWork(runtimeWork(true))
+      store.turnStarted(address, 'turn-1')
+      let streamHandlers: ChatStreamHandlers = {}
+      let resolveTranscript!: (value: RuntimeTranscriptResponse) => void
+      const getRuntimeTranscript = vi.fn(
+        () =>
+          new Promise<RuntimeTranscriptResponse>(resolve => {
+            resolveTranscript = resolve
+          })
+      )
+      const services = {
+        chatStream: {
+          subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+            streamHandlers = handlers
+            return vi.fn()
+          }),
+        },
+        executorClient: { runtime: { getRuntimeTranscript } },
+      } as unknown as WorkbenchServices
+      render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+      await act(async () => {
+        streamHandlers.onChatDone?.({
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          subtaskId: 'turn-1',
+          result: {},
+        } as never)
+      })
+      expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+      const subtaskId = `${address.taskId}-context-compact`
+      act(() => {
+        store.sendRequested(address)
+        if (phase === 'awaiting') store.sendAccepted(address)
+        applyRuntimeConversationAction(address, { type: 'assistant_started', subtaskId })
+        applyRuntimeConversationAction(address, {
+          type: 'block_created',
+          subtaskId,
+          block: {
+            id: 'compact-pending',
+            type: 'tool',
+            toolName: 'context_compaction',
+            status: 'pending',
+            createdAt: Date.now(),
+          },
+        })
+      })
+      await act(async () => {
+        vi.setSystemTime(new Date('2026-08-21T00:00:02.000Z'))
+        resolveTranscript({ ...runtimeTranscript(false), fullContent: true })
+      })
+      expect(store.getTask(address)?.turn.phase).toBe(phase)
+      expect(store.getTask(address)?.derived.isBusy).toBe(true)
+      expect(getRuntimeConversationMessages(address).at(-1)?.blocks).toEqual([
+        expect.objectContaining({ id: 'compact-pending', status: 'pending' }),
+      ])
+    }
+  )
+
   test('settles a terminal turn recovered by an older transcript request', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
@@ -1080,12 +1145,14 @@ function runtimeTranscript(running: boolean): RuntimeTranscriptResponse {
               role: 'user',
               content: '之前的请求',
               status: 'done',
+              createdAt: '2026-08-21T00:00:00.000Z',
             },
           },
           {
             id: 'assistant-1',
             type: 'assistant_text',
             content: '已恢复的 AI 输出',
+            createdAt: '2026-08-21T00:00:00.500Z',
           },
         ],
       },

@@ -51,6 +51,7 @@ export interface ProjectManageProject {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;
     statuses: ProjectManageStatus[];
+    schedule_view?: import("../types").CollaborationScheduleViewConfig;
   };
   visibility?: ProjectManageVisibility;
   public_access?: { role: "Developer" | "Viewer" } | null;
@@ -95,6 +96,7 @@ export interface ProjectManageUpdate {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;
     statuses: ProjectManageStatus[];
+    schedule_view?: import("../types").CollaborationScheduleViewConfig;
   };
   provider_config?: Record<string, unknown>;
 }

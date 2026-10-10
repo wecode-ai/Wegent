@@ -324,7 +324,7 @@ async fn app_ipc_lists_store_reads_manifest_and_saves_plugin_example() {
     )
     .unwrap();
     fs::write(
-        capabilities.join("manifest.json"),
+        capabilities.join("manifest-v2.json"),
         r#"{"plugins":{"example@wegent":{"name":"example","marketplace":"wegent","store_path":"store/plugins/example@wegent"}}}"#,
     )
     .unwrap();
@@ -749,13 +749,20 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
                 "todo": {
                     "title": "Parent",
                     "status": "inbox",
-                    "priority": "high"
+                    "priority": "high",
+                    "start_at": "2026-10-10T01:00:00Z",
+                    "due_at": "2026-10-12T09:00:00Z"
                 }
             }),
         )
         .await
         .unwrap();
     let parent_id = parent["id"].as_str().unwrap();
+    assert_eq!(
+        parent["metadata"]["start_at"],
+        json!("2026-10-10T01:00:00Z")
+    );
+    assert_eq!(parent["metadata"]["due_at"], json!("2026-10-12T09:00:00Z"));
 
     let child = server
         .dispatch(
@@ -805,6 +812,27 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
     assert_eq!(updated["status"], "completed");
     assert!(updated["completed_at"].is_string());
 
+    let rescheduled = server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": parent_id,
+                "todo": {
+                    "version": updated["version"],
+                    "start_at": null,
+                    "due_at": "2026-10-15T09:00:00Z"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(rescheduled["metadata"]["start_at"].is_null());
+    assert_eq!(
+        rescheduled["metadata"]["due_at"],
+        json!("2026-10-15T09:00:00Z")
+    );
+
     let conflict = server
         .dispatch(
             "todos.update",
@@ -821,6 +849,31 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .unwrap_err();
     assert_eq!(conflict.code, "version_conflict");
 
+    let incomplete_archive = server
+        .dispatch(
+            "todos.archive",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(incomplete_archive.code, "bad_request");
+
+    let completed_child = server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": child["id"],
+                "todo": {
+                    "version": child["version"],
+                    "status": "completed"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(completed_child["status"], "completed");
+
     server
         .dispatch(
             "todos.archive",
@@ -833,6 +886,39 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .await
         .unwrap();
     assert!(todos.as_array().unwrap().is_empty());
+
+    let archived = server
+        .dispatch(
+            "todos.archived.list",
+            json!({"project_id": project_id, "limit": 20}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(archived["items"].as_array().unwrap().len(), 1);
+    assert_eq!(archived["items"][0]["id"], parent["id"]);
+    assert!(archived["items"][0]["archived_at"].is_string());
+
+    let restored = server
+        .dispatch(
+            "todos.restore",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored.as_array().unwrap().len(), 2);
+    let todos = server
+        .dispatch("todos.list", json!({"project_id": project_id}))
+        .await
+        .unwrap();
+    assert_eq!(todos.as_array().unwrap().len(), 2);
+
+    server
+        .dispatch(
+            "todos.archive",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap();
 
     let projects = server.dispatch("projects.list", json!({})).await.unwrap();
     let current_project = projects
@@ -1268,6 +1354,21 @@ async fn app_ipc_encrypts_provider_credentials_and_masks_project_responses() {
         .get("credential")
         .is_none());
     assert!(!project.to_string().contains("github-secret"));
+
+    let schedule_error = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project["id"],
+                "todo": {
+                    "title": "Scheduled external task",
+                    "start_at": "2026-10-11T00:00:00Z"
+                }
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(schedule_error.code, "provider_unavailable");
 
     let connection =
         rusqlite::Connection::open(executor_home.path().join("data/tasks.sqlite")).unwrap();

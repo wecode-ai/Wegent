@@ -9,6 +9,87 @@ use wegent_executor::{runner::BackgroundTaskRunner, server::TaskRunner};
 
 use super::*;
 
+#[tokio::test]
+async fn codex_file_edits_are_visible_before_turn_completion_without_duplicate_tools() {
+    let _lock = env_lock().await;
+    let first = json!({"path":"index.html", "kind":{"type":"add"}, "diff":"<h1>Shop</h1>\n"});
+    let second = json!({"path":"styles.css", "kind":{"type":"update"},
+        "diff":"@@ -1 +1 @@\n-body { color: red; }\n+body { color: black; }\n"});
+    let notifications = [
+        notification(
+            "item/started",
+            json!({"item": {
+                "id":"patch", "type":"fileChange", "status":"inProgress", "changes":[first]
+            }}),
+        ),
+        notification(
+            "item/fileChange/patchUpdated",
+            json!({
+                "itemId":"patch", "changes":[first, second]
+            }),
+        ),
+        notification(
+            "item/completed",
+            json!({"item": {
+                "id":"patch", "type":"fileChange", "status":"completed", "changes":[first, second]
+            }}),
+        ),
+        notification(
+            "item/agentMessage/delta",
+            json!({"itemId":"final", "phase":"finalAnswer", "delta":"done"}),
+        ),
+    ];
+    let fixture = Fixture::with_notifications(&notifications);
+    let request = fixture.request("edits");
+    let (sink, mut receiver) = event_channel();
+    let engine = fixture.engine();
+    let mut run = engine.run_with_events(request.clone(), sink, builder(&request));
+    let mut blocks = std::collections::BTreeMap::<String, Value>::new();
+    tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let event = tokio::select! {
+                outcome = &mut run => panic!("turn completed before visible edits: {outcome:?}"),
+                event = receiver.recv() => event.unwrap(),
+            };
+            if event.event_type == "response.block.created" {
+                let block = event.data["block"].clone();
+                assert_eq!(block["type"], "tool");
+                assert!(block["tool_name"] == "Edit" || block["tool_name"] == "Write");
+                assert!(blocks
+                    .insert(block["id"].as_str().unwrap().into(), block)
+                    .is_none());
+            } else if event.event_type == "response.block.updated" {
+                blocks
+                    .get_mut(event.data["block_id"].as_str().unwrap())
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap()
+                    .extend(event.data["updates"].as_object().unwrap().clone());
+            }
+            if event.event_type == "response.output_text.delta" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("file edits must be published while the model process is still running");
+    assert_eq!(blocks.len(), 2);
+    assert!(blocks.values().all(|b| b["status"] == "done"));
+    assert!(blocks
+        .values()
+        .any(|b| b["tool_input"]["file_path"] == "index.html"));
+    assert!(blocks
+        .values()
+        .any(|b| b["tool_input"]["file_path"] == "styles.css"));
+    let written = blocks.values().find(|b| b["tool_name"] == "Write").unwrap();
+    assert_eq!(written["tool_input"]["content"], first["diff"]);
+    let edited = blocks.values().find(|b| b["tool_name"] == "Edit").unwrap();
+    assert_eq!(edited["tool_input"]["diff"], second["diff"]);
+    assert!(edited["tool_input"].get("old_string").is_none());
+    fs::write(fixture.root.path().join("release"), "complete").unwrap();
+    assert_completed(tokio::time::timeout(TIMEOUT, run).await.unwrap());
+}
+
 #[derive(Clone)]
 struct GatedSink {
     started: Arc<Notify>,

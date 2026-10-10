@@ -54,6 +54,7 @@ export interface WeworkDesktopService {
     show(options: {
       readonly title: string
       readonly body: string
+      readonly url?: string
       readonly taskAddressId?: string
     }): Promise<void>
   }

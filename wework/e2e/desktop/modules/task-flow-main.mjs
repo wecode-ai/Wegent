@@ -277,6 +277,7 @@ import {
 } from './shared.mjs'
 
 import {
+  verifyAsyncRequestUserInput,
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
   verifyForkProviderModelPreservation,
@@ -1070,7 +1071,14 @@ async function main() {
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
     mkdir(codexSqliteHome, { recursive: true }),
+    mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  // Exercise consent explicitly; the product default already marks it as asked.
+  await writeFile(
+    join(electronUserDataDirectory, 'app-preferences.json'),
+    `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
+    { flag: 'wx', mode: 0o600 }
+  )
   await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
   await Promise.all([
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
@@ -1334,6 +1342,10 @@ async function main() {
       'WEGENT_RUNTIME_AUTH_TOKEN',
       'WEGENT_TASK_ID',
       'WEGENT_TASK_WORKSPACE',
+      'WEGENT_WORKBENCH_HOME',
+      'WEGENT_CAPABILITIES_HOME',
+      'WEGENT_CLAUDE_HOME',
+      'CLAUDE_CONFIG_DIR',
       'WEWORK_CORE_DSH_COMMAND',
       'WEWORK_CORE_DSH_URL',
       'WEWORK_CORE_PLUGIN_ROOT',
@@ -1356,6 +1368,7 @@ async function main() {
       delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
     }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
+    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: desktopScenario?.electronLaunchArguments ?? [],
     })
@@ -2173,7 +2186,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'workspace-issue-creation'
       await verifyWorkspaceIssueCreation(control)
       phase = 'workspace-tab-isolation'
-      await verifyWorkspaceTabIsolation(control)
+      await verifyWorkspaceTabIsolation(control, restartDesktopApp)
       if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
         console.log(`Wework desktop workspace-tabs checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -2183,6 +2196,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (shouldRunDesktopCheckpoint('priority-filter')) {
       phase = 'priority-filter'
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      phase = 'request-user-input-async'
+      await verifyAsyncRequestUserInput({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
       phase = 'runtime-task-order-unread'
       await verifyRuntimeTaskOrderAndUnreadVisibility({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
@@ -4426,6 +4445,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           matrixCase: control.matrixCase ? matrixCaseId(control.matrixCase) : null,
           matrixStage: control.matrixState?.stage ?? null,
           matrixRequestCount: control.matrixState?.requests.length ?? 0,
+          matrixExecutionDiagnostics: control.matrixState?.executionDiagnostics ?? null,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,
@@ -4663,6 +4683,17 @@ async function verifyMcpElicitationInFullAccess(control) {
     MCP_ELICITATION_PROMPT,
     'mcp_elicitation'
   )
+  await control.command('waitFor', '[data-testid="mcp-url-authorization-card"]', {
+    text: 'example.com',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await pathExists(evidencePath),
+    false,
+    'The URL elicitation was acknowledged without user consent'
+  )
+  await control.command('click', '[data-testid="mcp-url-authorization-cancel"]')
   await control.command('waitFor', '[data-testid="request-user-input-card"]', {
     text: '访问范围',
     visible: true,
@@ -4679,10 +4710,14 @@ async function verifyMcpElicitationInFullAccess(control) {
     false,
     'The MCP tool call displayed an execution approval card instead of the business form'
   )
-  assert.equal(
-    await pathExists(evidencePath),
-    false,
-    'Codex resolved the MCP elicitation before the user answered the visible form'
+  const urlRecords = (await readFile(evidencePath, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line))
+  assert.deepEqual(
+    urlRecords,
+    [{ event: 'url_elicitation_result', result: { action: 'cancel' } }],
+    'The real MCP server must receive only cancellation before the business form is answered'
   )
   await captureVerificationScreenshot(control, 'permission-07-mcp-elicitation-form.png')
 

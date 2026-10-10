@@ -226,6 +226,7 @@ impl RuntimeWorkRpcHandler {
             local_task_id,
             runtime: "claude_code".to_owned(),
             request,
+            send_payload: None,
             direct_thread_id: None,
             fork_thread_id: None,
             fork_thread_path: None,
@@ -237,6 +238,25 @@ impl RuntimeWorkRpcHandler {
         } else {
             self.spawn_turn(turn).await
         }
+    }
+
+    pub(super) async fn queue_claude_turn(
+        &self,
+        local_task_id: String,
+        request: ExecutionRequest,
+    ) -> Result<(), AppIpcError> {
+        self.queue_turn(SpawnTurnRequest {
+            local_task_id,
+            runtime: "claude_code".to_owned(),
+            request,
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_goal: None,
+        })
+        .await
     }
 
     pub(super) fn start_claude_turn(

@@ -337,6 +337,23 @@ function runtimeTaskForkModelOptions(
   }
 }
 
+function hasResolvedExecutionAddress(
+  current: RuntimeTaskAddress,
+  resolved: RuntimeTaskAddress
+): boolean {
+  return (
+    current.deviceId === resolved.deviceId &&
+    current.taskId === resolved.taskId &&
+    current.runtime === resolved.runtime &&
+    current.threadId === resolved.threadId &&
+    current.workspacePath === resolved.workspacePath &&
+    current.workspaceKind === resolved.workspaceKind &&
+    current.worktreeId === resolved.worktreeId &&
+    JSON.stringify(current.runtimeHandle?.modelSelection ?? null) ===
+      JSON.stringify(resolved.runtimeHandle?.modelSelection ?? null)
+  )
+}
+
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
 const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
@@ -1309,6 +1326,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     associateRuntimeTaskWithNewItem,
     boundCloudItem,
     boundCloudProject,
+    boundRuntimeTaskAddress,
     boundProjectSpaceApi,
     clearCloudActionNotice,
     clearPendingProjectContext,
@@ -1341,9 +1359,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services,
     userId: state.user?.id,
   })
+  useEffect(() => {
+    if (
+      !currentRuntimeTask ||
+      !boundRuntimeTaskAddress ||
+      hasResolvedExecutionAddress(currentRuntimeTask, boundRuntimeTaskAddress)
+    ) {
+      return
+    }
+    void openRuntimeTask(boundRuntimeTaskAddress)
+  }, [boundRuntimeTaskAddress, currentRuntimeTask, openRuntimeTask])
   const workItemContextAvailable = Boolean(
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
   )
+  const issueExecutionReadOnly = Boolean(currentProjectSpaceRuntimeTask?.issueExecution)
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
@@ -1421,12 +1450,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
 
   const connectorAuthGate = useLocalConnectorAuthGate({
+    onError: message => paneSession.setError(message),
     messages: paneSession.messages,
     onResumeSend: async input => {
       await sendPaneInputWithContext(input)
     },
     onRetryMessage: message => paneSession.retryFailedMessage(message),
   })
+
+  const connectorAuthCard = connectorAuthGate.pending ? (
+    <ConnectorAuthCard
+      target={connectorAuthGate.pending.target}
+      title={connectorAuthGate.pending.title}
+      onSuccess={() => {
+        void connectorAuthGate.completePending()
+      }}
+      onCancel={connectorAuthGate.clearPending}
+    />
+  ) : null
 
   const submitPaneInput = useCallback(
     async (
@@ -3219,7 +3260,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [openRightPanelTab, t]
   )
   const currentWorkItemGuideProject =
-    boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
+    boundCloudProject ??
+    pendingCloudProject ??
+    defaultProject ??
+    (defaultProjectSpace ? null : defaultWorkItemPreviewProject)
   const availableWorkItemProjects =
     cloudProjects.length > 0
       ? cloudProjects.filter(project => !isDefaultWorkItemProject(project))
@@ -4644,10 +4688,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       supervisor={supervisorFeatureAvailable ? supervisor : null}
       onConfigureSupervisor={
-        supervisorFeatureAvailable && supervisor ? openSupervisorDialog : undefined
+        !issueExecutionReadOnly && supervisorFeatureAvailable && supervisor
+          ? openSupervisorDialog
+          : undefined
       }
       onRunSupervisorNow={
-        supervisorFeatureAvailable && supervisor ? runTaskSupervisorNow : undefined
+        !issueExecutionReadOnly && supervisorFeatureAvailable && supervisor
+          ? runTaskSupervisorNow
+          : undefined
       }
       rightPanelOpen={displayedRightPanelOpen}
       rightPanelExpanded={displayedRightPanelExpanded}
@@ -4728,6 +4776,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !isDesktop &&
     (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
   const canForkCurrentRuntimeTask = Boolean(
+    !issueExecutionReadOnly &&
     experimentalFeaturesEnabled &&
     currentRuntimeTask &&
     currentRuntimeUsesCodex &&
@@ -4746,7 +4795,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       </button>
     </Tooltip>
   ) : undefined
-  const canContinueInIm = Boolean(currentRuntimeTask)
+  const canContinueInIm = Boolean(currentRuntimeTask && !issueExecutionReadOnly)
   const continueInImButton = canContinueInIm ? (
     <Tooltip label={t('workbench.continue_im_title')} side="bottom" align="end">
       <button
@@ -5123,6 +5172,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     messages={paneMessages}
                     turns={paneSession.turns}
                     loading={paneSession.transcriptLoading}
+                    transcriptError={paneSession.transcriptError}
+                    onRetryTranscript={paneSession.reloadRuntimeTranscript}
                     isWaitingForAssistant={
                       !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
                     }
@@ -5153,7 +5204,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     contentFooter={
                       isCreatingWorktree ? (
                         <WorktreeCreationStatus className="py-8" />
-                      ) : (
+                      ) : issueExecutionReadOnly ? null : (
                         <PluginWorkspaceConversationResult
                           taskId={currentRuntimeTask?.taskId}
                           workspacePath={
@@ -5212,15 +5263,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
                                 </button>
                               )}
-                              {connectorAuthGate.pending ? (
-                                <ConnectorAuthCard
-                                  target={connectorAuthGate.pending.target}
-                                  title={connectorAuthGate.pending.title}
-                                  onSuccess={() => {
-                                    void connectorAuthGate.completePending()
-                                  }}
-                                  onCancel={connectorAuthGate.clearPending}
-                                />
+                              {connectorAuthCard}
+                              {issueExecutionReadOnly ? (
+                                <div
+                                  data-testid="project-execution-reply-in-issue"
+                                  className="flex items-center gap-3 rounded-2xl border border-border/50 bg-background/95 px-4 py-3 shadow-sm"
+                                >
+                                  <MessageCircle
+                                    className="h-4 w-4 shrink-0 text-text-muted"
+                                    aria-hidden="true"
+                                  />
+                                  <span className="min-w-0 flex-1 text-sm text-text-secondary">
+                                    {t(
+                                      'workbench.project_execution_reply_in_issue',
+                                      '此执行属于 Issue，请在 Issue 中追问或补充要求'
+                                    )}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    data-testid="project-execution-open-issue"
+                                    onClick={openBoundProjectSpaceTask}
+                                    className="flex h-8 shrink-0 items-center rounded-lg bg-foreground px-3 text-sm font-medium text-background hover:opacity-90"
+                                  >
+                                    {t('workbench.back_to_work_item', '返回 Issue')}
+                                  </button>
+                                </div>
                               ) : !displayedRightPanelExpanded ? (
                                 <>
                                   {showConversationDeviceBanner ? (
@@ -5381,13 +5448,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     }
                     scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
                     devices={devices}
-                    onRetryFailedMessage={message => {
-                      void paneSession.retryFailedMessage(message)
-                    }}
-                    onSwitchModelForFailedMessage={message => {
-                      pendingModelRetryRef.current = message
-                      setModelSelectorOpenSignal(signal => signal + 1)
-                    }}
+                    onRetryFailedMessage={
+                      issueExecutionReadOnly
+                        ? undefined
+                        : message => {
+                            void paneSession.retryFailedMessage(message)
+                          }
+                    }
+                    onSwitchModelForFailedMessage={
+                      issueExecutionReadOnly
+                        ? undefined
+                        : message => {
+                            pendingModelRetryRef.current = message
+                            setModelSelectorOpenSignal(signal => signal + 1)
+                          }
+                    }
                     onLoadFileChangesDiff={(subtaskId, fileChanges) =>
                       loadTurnFileChangesDiff(
                         subtaskId,
@@ -5396,13 +5471,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                         currentRuntimeTask
                       )
                     }
-                    onRevertFileChanges={(subtaskId, fileChanges) =>
-                      revertTurnFileChanges(
-                        subtaskId,
-                        paneMessages,
-                        fileChanges,
-                        currentRuntimeTask
-                      )
+                    onRevertFileChanges={
+                      issueExecutionReadOnly
+                        ? undefined
+                        : (subtaskId, fileChanges) =>
+                            revertTurnFileChanges(
+                              subtaskId,
+                              paneMessages,
+                              fileChanges,
+                              currentRuntimeTask
+                            )
                     }
                     onOpenFileChangesReview={({
                       subtaskId,
@@ -5430,12 +5508,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     }
                     onOpenWorkspaceFile={openWorkspaceFileFromMessage}
                     onOpenLocalSkillFile={openLocalSkillFile}
-                    onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
-                    onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
+                    onRequestUserInputSubmit={
+                      issueExecutionReadOnly ? undefined : paneSession.sendRequestUserInputResponse
+                    }
+                    onRequestUserInputIgnore={
+                      issueExecutionReadOnly ? undefined : paneSession.ignoreRequestUserInput
+                    }
                     onOpenAssistantPlan={openAssistantPlan}
-                    onEditLastUserMessage={paneSession.editLastUserMessage}
-                    canEditLastUserMessage={canEditLastUserMessage}
+                    onEditLastUserMessage={
+                      issueExecutionReadOnly ? undefined : paneSession.editLastUserMessage
+                    }
+                    canEditLastUserMessage={issueExecutionReadOnly ? false : canEditLastUserMessage}
                     onForkMessage={
+                      !issueExecutionReadOnly &&
                       currentRuntimeUsesCodex &&
                       currentRuntimeTask &&
                       (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
@@ -5473,6 +5558,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 </div>
               ) : displayedRightPanelExpanded ? null : (
                 <DesktopEmptyTaskLauncher
+                  connectorAuthCard={connectorAuthCard}
                   compact={presentation === 'popout'}
                   projectName={currentProject?.name}
                   onOpenProjectSelector={anchorElement => {
@@ -5922,14 +6008,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }}
         />
         <TaskSupervisorControl
-          open={supervisorDialogOpen}
+          open={supervisorDialogOpen && !issueExecutionReadOnly}
           supervisor={supervisor}
           initialConfig={pendingSupervisorConfig}
           defaultModelSelection={appPreferences?.preferences.supervisorModelSelection ?? null}
           defaultIntervalSeconds={appPreferences?.preferences.supervisorIntervalSeconds ?? 30}
           defaultInstructions={appPreferences?.preferences.supervisorPrinciples ?? ''}
           models={projectChat.models}
-          onOpenChange={open => setSupervisorDialogTaskKey(open ? supervisorDialogScopeKey : null)}
+          onOpenChange={open =>
+            setSupervisorDialogTaskKey(
+              open && !issueExecutionReadOnly ? supervisorDialogScopeKey : null
+            )
+          }
           onSet={setTaskSupervisor}
           onClear={clearTaskSupervisor}
           onRunNow={currentRuntimeTask ? runTaskSupervisorNow : undefined}

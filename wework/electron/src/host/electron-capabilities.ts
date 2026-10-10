@@ -57,6 +57,10 @@ import { RotatingLog } from '../runtime/rotating-log.js'
 import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
 import { readMacosMicrophoneChecks } from './macos-microphone-diagnostics.js'
 import type { WeworkSyncRequest } from './wework-sync-request.js'
+import {
+  showRetainedNotification,
+  type ElectronNotificationHandle,
+} from './notification-lifecycle.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -107,6 +111,7 @@ export function coreGrantedCapabilities(
 }
 
 export interface ElectronDesktopServices {
+  executorHome: string
   appUpdates?: AppUpdateService
   browserAnnotations?: BrowserAnnotationController
   events: DesktopHostEventBroker
@@ -125,34 +130,49 @@ export interface ElectronDesktopServices {
   weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
-interface ElectronNotificationHandle {
-  once(event: 'click', listener: () => void): void
-  show(): void
-}
-
 interface ElectronNotificationInput {
   title: string
   body: string
+  url?: string
   taskAddressId?: string
+}
+
+export function activateElectronNotification(
+  input: ElectronNotificationInput,
+  navigation: Pick<ElectronDesktopServices, 'openScheme' | 'openRuntimeTask'>
+): void {
+  if (input.url) {
+    console.info('[notification] opening notification destination')
+    navigation.openScheme(input.url)
+  } else if (input.taskAddressId) {
+    navigation.openRuntimeTask(input.taskAddressId)
+  }
 }
 
 export function showElectronNotification(
   input: ElectronNotificationInput,
-  openRuntimeTask: (taskAddressId: string) => void,
+  navigation: Pick<ElectronDesktopServices, 'openScheme' | 'openRuntimeTask'>,
   createNotification: (options: {
     title: string
     body: string
   }) => ElectronNotificationHandle = options => new Notification(options)
 ): void {
+  if (input.url && !input.url.startsWith('wework://')) {
+    throw new HostCapabilityError(
+      'invalid_notification_url',
+      'Notification links must use wework://'
+    )
+  }
   const notification = createNotification({
     title: input.title,
     body: input.body,
   })
-  const taskAddressId = input.taskAddressId
-  if (taskAddressId) {
-    notification.once('click', () => openRuntimeTask(taskAddressId))
-  }
-  notification.show()
+  showRetainedNotification(
+    notification,
+    input.url || input.taskAddressId
+      ? () => activateElectronNotification(input, navigation)
+      : undefined
+  )
 }
 
 export interface CoreDshPluginService {
@@ -293,9 +313,16 @@ export function createElectronCapabilityRouter(
   }
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
-  const attachments = new LocalAttachmentStore(localAttachmentRoot())
+  const attachments = new LocalAttachmentStore(
+    join(desktopServices.executorHome, 'workspace', 'attachments', 'draft')
+  )
   const filePreviewLog = new RotatingLog({
     path: join(app.getPath('logs'), 'file-preview.log'),
+    maxBytes: 2 * 1024 * 1024,
+    retainedFiles: 2,
+  })
+  const modelLoadingLog = new RotatingLog({
+    path: join(app.getPath('logs'), 'model-loading.log'),
     maxBytes: 2 * 1024 * 1024,
     retainedFiles: 2,
   })
@@ -333,6 +360,11 @@ export function createElectronCapabilityRouter(
   router.register('diagnostics.filePreview', params => {
     const event = recordParam(params, 'event')
     return filePreviewLog.write('supervisor', JSON.stringify(event))
+  })
+  router.register('diagnostics.modelLoading', params => {
+    const events = params.events
+    if (!Array.isArray(events) || events.length > 200) invalidParam('events')
+    return modelLoadingLog.write('supervisor', JSON.stringify({ events }))
   })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
@@ -596,8 +628,11 @@ export function createElectronCapabilityRouter(
     return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.closeMainWindow', () => requiredWindow(window).close())
-  router.register('e2e.activateRuntimeTaskNotification', params => {
-    desktopServices.openRuntimeTask(stringParam(params, 'taskAddressId'))
+  router.register('e2e.activateNotification', params => {
+    activateElectronNotification(
+      { title: '', body: '', url: stringParam(params, 'url') },
+      desktopServices
+    )
   })
   router.register('e2e.focusMainWindow', async () => {
     await e2eHost.focusMainWindow()
@@ -778,9 +813,10 @@ export function createElectronCapabilityRouter(
       {
         title,
         body,
+        url: optionalStringParam(params, 'url')?.trim() || undefined,
         taskAddressId: optionalStringParam(params, 'taskAddressId')?.trim() || undefined,
       },
-      desktopServices.openRuntimeTask
+      desktopServices
     )
   })
   router.register('preferences.get', () => preferences.read())
@@ -1287,6 +1323,7 @@ function feedbackRequestParam(params: Record<string, unknown>): FeedbackExportRe
     taskContext: request.taskContext ?? null,
     screenshotDataUrl: nullableStringValue(request.screenshotDataUrl, 'request.screenshotDataUrl'),
     composerDiagnostics: request.composerDiagnostics ?? null,
+    conversationDiagnostics: request.conversationDiagnostics ?? null,
     attachments: attachments.map((attachment, index) => {
       const record = objectValue(attachment, `request.attachments[${index}]`)
       return {
@@ -1344,16 +1381,6 @@ export function registerBrowserHistoryCapabilities(
   )
   router.register('browser.historyRemove', params =>
     browser.removeHistory(stringArrayParam(params, 'ids') ?? [])
-  )
-}
-
-function localAttachmentRoot(): string {
-  const executorHome = process.env.WEGENT_EXECUTOR_HOME?.trim()
-  return join(
-    executorHome || join(app.getPath('home'), '.wework'),
-    'workspace',
-    'attachments',
-    'draft'
   )
 }
 

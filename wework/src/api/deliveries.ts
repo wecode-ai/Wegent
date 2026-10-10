@@ -2,6 +2,7 @@ import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
+import type { CollaborationHumanWork } from '@wegent/collaboration'
 import type {
   Attachment,
   ModelSelectionConfig,
@@ -110,6 +111,7 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  human_work?: CollaborationHumanWork | null
   assignee_group_id?: string | null
   assignee_group_name?: string | null
   id: string
@@ -227,6 +229,7 @@ export interface CloudLoopItem {
   description: string
   status: string
   priority: 'none' | 'low' | 'medium' | 'high' | 'urgent'
+  start_at?: string | null
   due_at: string | null
   tags: string[]
   sort_order: number
@@ -235,6 +238,7 @@ export interface CloudLoopItem {
   created_at: string
   updated_at: string
   completed_at: string | null
+  archived_at?: string | null
   source_status?: string | null
   source_record_id?: string | null
   source_cells?: Record<string, unknown>
@@ -349,6 +353,7 @@ export interface CloudProject {
       name: string
       color: 'gray' | 'blue' | 'orange' | 'purple' | 'green' | 'red'
     }>
+    schedule_view?: import('@wegent/collaboration').CollaborationScheduleViewConfig
   }
   ai_automation?: {
     auto_retry_on_failure: boolean
@@ -398,6 +403,8 @@ export interface CloudTaskContext {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  modelSelection?: ModelSelectionConfig | null
+  executionContext?: LoopItemTaskBinding['executionContext']
   project: CloudProject
   loop_item: CloudLoopItem | null
   linked_at: string
@@ -547,6 +554,13 @@ export interface LoopItemTaskBinding {
   task_title: string | null
   backend_task_id: number | null
   modelSelection?: ModelSelectionConfig | null
+  executionContext?: {
+    runtime?: string | null
+    threadId?: string | null
+    workspacePath?: string | null
+    workspaceKind?: string | null
+    worktreeId?: string | null
+  } | null
   binding_type?: 'system' | 'user'
   human_assignment_id?: string | null
   dispatch_id?: string | null
@@ -860,6 +874,35 @@ export function createDeliveryApi(client: HttpClient) {
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
     },
+    startHumanIssueWork(itemId: string, version: number): Promise<{ issue: CloudLoopItem }> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/work/start`, { version })
+    },
+    submitHumanIssueWork(
+      itemId: string,
+      version: number,
+      summary: string,
+      requestId: string
+    ): Promise<{ issue: CloudLoopItem }> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/work/submit`, {
+        version,
+        summary,
+        request_id: requestId,
+      })
+    },
+    reviewHumanIssueWork(
+      itemId: string,
+      version: number,
+      decision: 'accept' | 'request_changes',
+      requestId: string,
+      reason?: string
+    ): Promise<{ issue: CloudLoopItem }> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/work/review`, {
+        version,
+        decision,
+        request_id: requestId,
+        ...(reason ? { reason } : {}),
+      })
+    },
     markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`, {
         activity_sequence: activitySequence ?? null,
@@ -880,6 +923,7 @@ export function createDeliveryApi(client: HttpClient) {
         description?: string
         status?: CloudLoopItem['status']
         priority?: CloudLoopItem['priority']
+        start_at?: string
         due_at?: string
         parent_id?: string | null
         tags?: string[]
@@ -907,6 +951,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'assignee_user_id'
           | 'assignee_agent_id'
           | 'assignee_team_id'
+          | 'start_at'
           | 'due_at'
           | 'tags'
           | 'security_level'
@@ -956,6 +1001,17 @@ export function createDeliveryApi(client: HttpClient) {
     },
     archiveLoopItem(itemId: string): Promise<void> {
       return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}`)
+    },
+    listArchivedLoopItems(
+      projectId: CloudProjectIdInput,
+      options: { cursor?: string | null; limit?: number } = {}
+    ): Promise<{ items: CloudLoopItem[]; next_cursor: string | null }> {
+      const query = new URLSearchParams({ limit: String(options.limit ?? 50) })
+      if (options.cursor) query.set('cursor', options.cursor)
+      return client.get(`/v1/cloud-projects/${projectId}/archived-loop-items?${query.toString()}`)
+    },
+    restoreLoopItem(itemId: string): Promise<{ items: CloudLoopItem[] }> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/restore`, {})
     },
     reorderLoopItems(
       projectId: CloudProjectIdInput,

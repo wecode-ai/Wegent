@@ -8,6 +8,10 @@ import {
   getConversationScrollSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
+import {
+  getConversationDiagnosticsSnapshot,
+  resetConversationDiagnosticsForTest,
+} from '@wegent/collaboration/conversation/conversationDiagnostics'
 
 function mockRect(element: Element, top: number, bottom: number) {
   element.getBoundingClientRect = vi.fn(
@@ -270,6 +274,7 @@ describe('ScrollableMessageArea', () => {
   let cancelAnimationFrameSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
+    resetConversationDiagnosticsForTest()
     vi.useFakeTimers()
     requestAnimationFrameSpy = vi
       .spyOn(window, 'requestAnimationFrame')
@@ -300,6 +305,25 @@ describe('ScrollableMessageArea', () => {
 
     expect(screen.getByTestId('chat-loading-state')).toHaveTextContent('正在加载会话')
     expect(screen.queryByTestId('chat-empty-state')).not.toBeInTheDocument()
+  })
+
+  test('shows history failure and retries instead of displaying a new conversation', () => {
+    const retry = vi.fn()
+    const { rerender } = render(
+      <ScrollableMessageArea
+        messages={[]}
+        transcriptError="Transfer interrupted"
+        onRetryTranscript={retry}
+      />
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('会话历史加载失败')
+    expect(screen.getByRole('alert')).toHaveTextContent('Transfer interrupted')
+    expect(screen.queryByTestId('chat-empty-state')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('runtime-transcript-retry'))
+    expect(retry).toHaveBeenCalledOnce()
+    rerender(<ScrollableMessageArea messages={[]} loading />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-loading-state')).toBeInTheDocument()
   })
 
   test('top-aligns short conversations below the workspace header', () => {
@@ -884,6 +908,14 @@ describe('ScrollableMessageArea', () => {
 
       expect(model.anchorTopPx()).toBe(anchorBefore)
       expect(scroller.scrollTop).toBe(scrollBefore - 400)
+      expect(getConversationDiagnosticsSnapshot()?.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'anchor-correction',
+            details: expect.objectContaining({ correction: -400, appliedCorrection: -400 }),
+          }),
+        ])
+      )
     } finally {
       harness.dispose()
     }
@@ -902,6 +934,9 @@ describe('ScrollableMessageArea', () => {
 
       // Without a surviving anchor, keep the native offset instead of inventing a correction.
       expect(scroller.scrollTop).toBe(scrollBefore)
+      expect(getConversationDiagnosticsSnapshot()?.events).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'anchor-lost' })])
+      )
     } finally {
       harness.dispose()
     }

@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       platform_e2e: ${{ steps.classify.outputs.platform_e2e }}
+      wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
 
     steps:
       - name: Checkout code
@@ -43,9 +44,12 @@ jobs:
         run: |
           if [[ "$FORCE_ALL" == "true" ]]; then
             .github/scripts/classify-ci-changes.sh --all
+            .github/scripts/classify-wework-desktop-e2e.sh --all
           else
-            git diff --name-only "$BASE_SHA...$HEAD_SHA" |
-              .github/scripts/classify-ci-changes.sh
+            changed_files="$(mktemp)"
+            git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$changed_files"
+            .github/scripts/classify-ci-changes.sh < "$changed_files"
+            .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
           fi
 
   build-frontend-e2e:
@@ -248,7 +252,7 @@ jobs:
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Publish content-addressed Backend Rust E2E image
-        if: steps.image-check.outputs.exists != 'true'
+        if: steps.image-check.outputs.exists != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         env:
           IMAGE: ${{ steps.runtime.outputs.image }}
         run: |
@@ -300,7 +304,11 @@ jobs:
   build-executor-e2e-runtime:
     name: Prepare Executor E2E Runtime
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    # Fork pull requests cannot pull the executor E2E image from GHCR, so the
+    # Wework desktop E2E build downloads the executor-e2e-binary artifact from
+    # this job instead. That artifact must exist whenever a fork PR selects
+    # desktop E2E, even when platform_e2e itself is not selected.
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || (needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository)))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -469,6 +477,28 @@ jobs:
           --health-timeout=5s
           --health-retries=15
 
+      etcd:
+        image: quay.io/coreos/etcd:v3.5.16
+        env:
+          ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
+          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+          ETCD_DATA_DIR: /etcd
+
+      milvus:
+        image: milvusdb/milvus:v2.5.4
+        command: milvus run standalone
+        env:
+          ETCD_ENDPOINTS: etcd:2379
+          MINIO_ADDRESS: minio:9000
+          MINIO_ACCESS_KEY_ID: wegent-e2e
+          MINIO_SECRET_ACCESS_KEY: wegent-e2e-secret
+        options: >-
+          --health-cmd="curl -f http://localhost:9091/healthz"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-start-period=30s
+          --health-retries=30
+
       qdrant:
         image: qdrant/qdrant:v1.15.4
 
@@ -572,6 +602,9 @@ jobs:
       - name: Install Knowledge Runtime dependencies
         run: uv sync --project knowledge_runtime --frozen
 
+      - name: Install Knowledge Doc Converter dependencies
+        run: uv sync --project knowledge_doc_converter --frozen
+
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
 
@@ -593,6 +626,8 @@ jobs:
 
       - name: Start backend server
         env:
+          EXTERNAL_KNOWLEDGE_MCP_ENABLED: "true"
+          EMBEDDED_CELERY_ENABLED: "false"
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           RS_DATABASE_URL_COLLATION: utf8mb4_0900_ai_ci
           REDIS_URL: redis://redis:6379/0
@@ -603,8 +638,9 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
-          RAG_RUNTIME_MODE: remote
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          KNOWLEDGE_CONVERSION_ENABLED: "true"
+          KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"
           CHUNK_STORAGE_ENABLED: "true"
           ATTACHMENT_S3_ENDPOINT: minio:9000
           ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
@@ -618,6 +654,41 @@ jobs:
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend.log 2>&1 &
           echo $! > backend/backend.pid
+
+      - name: Start parallel Backend index worker
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "false"
+          EMBEDDED_CELERY_ENABLED: "false"
+          RAG_RUNTIME_MODE: remote
+          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          KNOWLEDGE_CONVERSION_ENABLED: "true"
+          KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"
+          CHUNK_STORAGE_ENABLED: "true"
+          ATTACHMENT_S3_ENDPOINT: minio:9000
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+          ATTACHMENT_S3_USE_SSL: "false"
+          PYTHONPATH: ..:.
+        run: |
+          uv run --no-sync celery -A app.core.celery_app worker \
+            --pool=threads --concurrency=4 --queues=wegent_online --beat \
+            --hostname=e2e-index@%h --loglevel=INFO > index-worker.log 2>&1 &
+          echo $! > index-worker.pid
+          for i in {1..60}; do
+            if grep -q ' ready.' index-worker.log; then
+              exit 0
+            fi
+            kill -0 "$(cat index-worker.pid)" || { cat index-worker.log; exit 1; }
+            sleep 1
+          done
+          cat index-worker.log
+          exit 1
 
       - name: Start Knowledge Runtime
         env:
@@ -654,6 +725,25 @@ jobs:
         run: |
           pnpm exec tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
+
+      - name: Start Knowledge Doc Converter
+        env:
+          BACKEND_BASE_URL: http://localhost:8000
+          BACKEND_INTERNAL_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
+          CELERY_BROKER_URL: redis://redis:6379/0
+          CELERY_RESULT_BACKEND: redis://redis:6379/1
+          REDIS_URL: redis://redis:6379/0
+          MINERU_API_BASE_URL: http://localhost:9999/mineru
+          MINERU_POLL_INTERVAL_SECONDS: "1"
+          KNOWLEDGE_CONVERSION_QUEUE: knowledge_conversion
+          LOG_FILE_ENABLED: "false"
+        run: |
+          nohup uv run --project knowledge_doc_converter --no-sync celery \
+            -A knowledge_doc_converter.celery_app worker \
+            --queues=knowledge_conversion \
+            --concurrency=1 \
+            --loglevel=INFO > knowledge_doc_converter/ci.log 2>&1 &
+          echo $! > knowledge_doc_converter/ci.pid
 
       - name: Wait for services
         run: |
@@ -714,6 +804,27 @@ jobs:
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
 
+      - name: Run knowledge remote index E2E
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "true"
+          RAG_RUNTIME_MODE: remote
+          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          E2E_QDRANT_URL: http://qdrant:6333
+          E2E_MILVUS_URL: http://milvus:19530
+          MOCK_MODEL_SERVER_URL: http://localhost:9999
+          E2E_BOOTSTRAP_ADMIN_USER: admin
+          PYTHONPATH: ..:.
+        run: |
+          uv run --no-sync python tests/e2e/knowledge_remote_index.py
+          uv run --no-sync python tests/e2e/knowledge_milvus_e2e.py
+
       - name: Verify Chat Shell is running
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
@@ -751,11 +862,28 @@ jobs:
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} \
             --no-deps
 
+      - name: Stop Backend index worker
+        if: always()
+        working-directory: ./backend
+        run: |
+          if [ -f index-worker.pid ]; then
+            kill "$(cat index-worker.pid)" 2>/dev/null || true
+            rm -f index-worker.pid
+          fi
+
       - name: Stop Knowledge Runtime
         if: always()
         run: |
           if [ -f knowledge_runtime/ci.pid ]; then
             kill "$(cat knowledge_runtime/ci.pid)"
+          fi
+
+      - name: Stop Knowledge Doc Converter
+        if: always()
+        run: |
+          if [ -f knowledge_doc_converter/ci.pid ]; then
+            kill "$(cat knowledge_doc_converter/ci.pid)" 2>/dev/null || true
+            rm -f knowledge_doc_converter/ci.pid
           fi
 
       - name: Stop Mock Model Server
@@ -816,6 +944,7 @@ jobs:
           name: backend-logs-${{ matrix.shardIndex }}
           path: |
             backend/backend.log
+            backend/index-worker.log
             logs/backend/rust/
             backend/chat_shell.log
             knowledge_runtime/ci.log

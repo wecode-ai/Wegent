@@ -617,6 +617,8 @@ describe('local delivery API', () => {
         description: '',
         status: 'inbox',
         priority: 'none',
+        start_at: null,
+        due_at: null,
         parent_id: null,
         tags: ['customer', 'wegent:creator:7:Micro66'],
       },
@@ -741,6 +743,70 @@ describe('local delivery API', () => {
     })
   })
 
+  test('persists and reads the local task schedule through executor IPC', async () => {
+    const startAt = '2026-10-10T01:00:00.000Z'
+    const dueAt = '2026-10-12T09:00:00.000Z'
+    const movedDueAt = '2026-10-15T09:00:00.000Z'
+    const scheduledRecord = {
+      ...taskRecord,
+      metadata: { ...taskRecord.metadata, start_at: startAt, due_at: dueAt },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.create') return scheduledRecord
+      if (method === 'todos.update') {
+        return {
+          ...scheduledRecord,
+          version: 2,
+          metadata: {
+            ...scheduledRecord.metadata,
+            start_at: null,
+            due_at: movedDueAt,
+          },
+        }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.createLoopItem('project-1', {
+        title: 'Scheduled task',
+        start_at: startAt,
+        due_at: dueAt,
+      })
+    ).resolves.toMatchObject({ start_at: startAt, due_at: dueAt })
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      project_id: 'project-1',
+      todo: {
+        title: 'Scheduled task',
+        description: '',
+        status: 'inbox',
+        priority: 'none',
+        start_at: startAt,
+        due_at: dueAt,
+        parent_id: null,
+        tags: [],
+      },
+    })
+
+    await expect(
+      api.updateLoopItem('LOCAL-1', {
+        version: 1,
+        start_at: null,
+        due_at: movedDueAt,
+      })
+    ).resolves.toMatchObject({ start_at: null, due_at: movedDueAt })
+    expect(request).toHaveBeenCalledWith('todos.update', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+      todo: {
+        version: 1,
+        start_at: null,
+        due_at: movedDueAt,
+      },
+    })
+  })
+
   test('passes the initial human assignee when creating a local task', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'todos.create') {
@@ -786,6 +852,13 @@ describe('local delivery API', () => {
           group_by: 'priority',
           processing_start_status_id: 'pending',
           statuses: [],
+          schedule_view: {
+            status_filter: 'pending',
+            assignee_filter: null,
+            tag_filter: 'frontend',
+            group_by: 'tag',
+            sort_by: 'updated_desc',
+          },
         },
       })
     ).rejects.toBe(conflict)
@@ -798,6 +871,13 @@ describe('local delivery API', () => {
           group_by: 'priority',
           processing_start_status_id: 'pending',
           statuses: [],
+          schedule_view: {
+            status_filter: 'pending',
+            assignee_filter: null,
+            tag_filter: 'frontend',
+            group_by: 'tag',
+            sort_by: 'updated_desc',
+          },
         },
       },
     })
@@ -973,6 +1053,11 @@ describe('local delivery API', () => {
     const runtimeTask = {
       deviceId: 'local-device',
       taskId: 'runtime-1',
+      runtime: 'codex',
+      threadId: 'thread-1',
+      workspacePath: '/workspace/runtime-1',
+      workspaceKind: 'worktree',
+      worktreeId: 'runtime-1',
       runtimeHandle: {
         modelSelection: {
           modelName: 'gpt-5.6-sol',
@@ -993,8 +1078,20 @@ describe('local delivery API', () => {
         deviceId: 'local-device',
         taskId: 'runtime-1',
         runtimeHandle: runtimeTask.runtimeHandle,
+        runtime: 'codex',
+        threadId: 'thread-1',
+        workspacePath: '/workspace/runtime-1',
+        workspaceKind: 'worktree',
+        worktreeId: 'runtime-1',
         taskTitle: 'Runtime',
         modelSelection: runtimeTask.runtimeHandle.modelSelection,
+        executionContext: {
+          runtime: 'codex',
+          threadId: 'thread-1',
+          workspacePath: '/workspace/runtime-1',
+          workspaceKind: 'worktree',
+          worktreeId: 'runtime-1',
+        },
       },
     })
   })

@@ -37,6 +37,27 @@ export interface CollaborationStatus {
   color: CollaborationStatusColor;
 }
 
+export type CollaborationScheduleGroupBy =
+  | "none"
+  | "status"
+  | "priority"
+  | "assignee"
+  | "tag";
+
+export type CollaborationScheduleSortBy =
+  | "start_asc"
+  | "due_asc"
+  | "updated_desc"
+  | "priority_desc";
+
+export interface CollaborationScheduleViewConfig {
+  status_filter: string | null;
+  assignee_filter: string | null;
+  tag_filter: string | null;
+  group_by: CollaborationScheduleGroupBy;
+  sort_by: CollaborationScheduleSortBy;
+}
+
 export interface CollaborationProject {
   id: CollaborationProjectId;
   workspace_id?: string | null;
@@ -56,6 +77,7 @@ export interface CollaborationProject {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;
     statuses: CollaborationStatus[];
+    schedule_view?: CollaborationScheduleViewConfig;
   };
   card_display?: {
     show_assignee: boolean;
@@ -89,6 +111,27 @@ export type BackendCollaborationProject = CollaborationProject & {
   access_role: CollaborationRole;
 };
 
+export interface CollaborationHumanWork {
+  assignment_id: string;
+  ai_task_binding?: {
+    humanAssignmentId: string;
+    dispatchId: string;
+    dispatchRoundId: string;
+    assignmentId: string;
+  } | null;
+  assignee_user_id: number;
+  reviewer_user_id: number | null;
+  submission_message_id: string | null;
+  submitted_by_user_id: number | null;
+  state: "none" | "submitted" | "accepted" | "changes_requested";
+  result: string;
+  return_reason: string;
+  ai_draft_delivery_id: string | null;
+  can_start: boolean;
+  can_submit: boolean;
+  can_review: boolean;
+}
+
 export interface CollaborationIssue {
   id: string;
   cloud_project_id: CollaborationProjectId;
@@ -108,11 +151,18 @@ export interface CollaborationIssue {
   execution_state?: string | null;
   execution_note?: string | null;
   can_approve?: boolean;
-  ai_state?: { status?: string | null; last_error?: string | null } | null;
+  human_work?: CollaborationHumanWork | null;
+  ai_state?: {
+    status?: string | null;
+    last_error?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+  } | null;
   title: string;
   description: string;
   status: string;
   priority: CollaborationPriority;
+  start_at?: string | null;
   due_at: string | null;
   tags: string[];
   sort_order: number;
@@ -124,6 +174,7 @@ export interface CollaborationIssue {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  archived_at?: string | null;
   can_view_detail?: boolean;
   can_edit?: boolean;
   security_level?: "open" | "related";
@@ -425,7 +476,13 @@ export interface CollaborationDefaultAssistant {
   capabilitySummary?: string;
 }
 
-export type CollaborationView = "board" | "table" | "files" | "manage";
+export type CollaborationView =
+  | "board"
+  | "calendar"
+  | "gantt"
+  | "table"
+  | "files"
+  | "manage";
 export type CollaborationRootView = "home" | "my-work";
 export type ProjectSettingsSectionId =
   | "project"

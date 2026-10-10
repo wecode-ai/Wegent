@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Any, Mapping, TypeVar
+
+from sqlalchemy.orm import Session, sessionmaker
 
 from knowledge_runtime.services.config_resolver import (
     AdminResolvedConfig,
@@ -16,9 +18,12 @@ from knowledge_runtime.services.config_resolver import (
     IndexConfig,
     QueryConfig,
 )
-from sqlalchemy.orm import Session, sessionmaker
-
 from shared.db.sync_session import get_session_factory
+from shared.models import (
+    RemoteAuthorizedIndexResources,
+    RemoteAuthorizedRetrievalResources,
+    RetrievalScope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +47,7 @@ class RuntimeConfigLoader:
         knowledge_base_id: int,
         user_id: int,
         document_id: int | None = None,
+        authorized: RemoteAuthorizedRetrievalResources | None = None,
     ) -> IndexConfig:
         """Resolve all configs needed for document indexing."""
         return self._resolve_with_session(
@@ -50,6 +56,7 @@ class RuntimeConfigLoader:
                 knowledge_base_id=knowledge_base_id,
                 user_id=user_id,
                 document_id=document_id,
+                authorized=authorized,
             )
         )
 
@@ -58,6 +65,9 @@ class RuntimeConfigLoader:
         *,
         knowledge_base_id: int,
         user_id: int,
+        authorized: RemoteAuthorizedRetrievalResources | None = None,
+        retrieval_override: Mapping[str, Any] | None = None,
+        scope: RetrievalScope | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base."""
         return self._resolve_with_session(
@@ -65,6 +75,9 @@ class RuntimeConfigLoader:
                 db=db,
                 knowledge_base_id=knowledge_base_id,
                 user_id=user_id,
+                authorized=authorized,
+                retrieval_override=retrieval_override,
+                scope=scope,
             )
         )
 
@@ -73,14 +86,26 @@ class RuntimeConfigLoader:
         *,
         knowledge_base_ids: list[int],
         user_id: int,
+        authorized: dict[int, RemoteAuthorizedRetrievalResources] | None = None,
+        retrieval_overrides: Mapping[int, Mapping[str, Any]] | None = None,
+        scope: RetrievalScope | None = None,
     ) -> dict[int, QueryConfig]:
-        """Resolve query configs for multiple knowledge bases in one session."""
+        """Resolve query configs for multiple knowledge bases in one session.
+
+        Each knowledge base must have an authorized-resources entry; the runtime
+        only loads the retrieval resources Backend authorized for this call.
+        """
+        authorized = authorized or {}
+        retrieval_overrides = retrieval_overrides or {}
         return self._resolve_with_session(
             lambda db: {
                 knowledge_base_id: self._resolver.resolve_query_config(
                     db=db,
                     knowledge_base_id=knowledge_base_id,
                     user_id=user_id,
+                    authorized=authorized.get(knowledge_base_id),
+                    retrieval_override=retrieval_overrides.get(knowledge_base_id),
+                    scope=scope,
                 )
                 for knowledge_base_id in knowledge_base_ids
             }
@@ -90,12 +115,16 @@ class RuntimeConfigLoader:
         self,
         *,
         knowledge_base_id: int,
+        operation: str,
+        authorized: RemoteAuthorizedIndexResources | None = None,
     ) -> AdminResolvedConfig:
         """Resolve config for admin operations."""
         return self._resolve_with_session(
             lambda db: self._resolver.resolve_admin_config(
                 db=db,
                 knowledge_base_id=knowledge_base_id,
+                operation=operation,
+                authorized=authorized,
             )
         )
 

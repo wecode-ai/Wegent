@@ -116,6 +116,13 @@ export interface WorkspaceTaskBinding {
   taskTitle: string | null;
   backendTaskId: number | null;
   modelSelection?: ModelSelectionConfig | null;
+  executionContext?: {
+    runtime?: string | null;
+    threadId?: string | null;
+    workspacePath?: string | null;
+    workspaceKind?: string | null;
+    worktreeId?: string | null;
+  } | null;
   bindingType?: "system" | "user";
   humanAssignmentId?: string | null;
   dispatchId?: string | null;
@@ -133,6 +140,7 @@ export interface WorkspaceIssueCreateInput {
   description?: string;
   status?: string;
   priority?: CollaborationPriority;
+  startAt?: string;
   dueAt?: string;
   parentId?: string | null;
   tags?: string[];
@@ -156,6 +164,7 @@ export interface WorkspaceIssueUpdateInput {
   assigneeGroupId?: string | null;
   assigneeAgentId?: string | null;
   assigneeTeamId?: number | null;
+  startAt?: string | null;
   dueAt?: string | null;
   tags?: string[];
 }
@@ -502,6 +511,11 @@ export interface SharedWorkspaceIssuesApi {
     reason?: string,
   ): Promise<CollaborationIssue>;
   archive(issueId: string): Promise<void>;
+  listArchived(
+    projectId: string,
+    input?: { cursor?: string | null; limit?: number },
+  ): Promise<WorkspacePage<CollaborationIssue>>;
+  restore(issueId: string): Promise<CollaborationIssue[]>;
   reorder(
     projectId: string,
     input: { parentId: string | null; status: string; issueIds: string[] },
@@ -911,6 +925,7 @@ export interface WorkspaceRuntimeTaskAddress {
   deviceId: string;
   taskId: string;
   backendTaskId?: number | null;
+  wegentTeamId?: number | null;
   modelSelection?: ModelSelectionConfig | null;
 }
 

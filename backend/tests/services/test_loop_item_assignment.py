@@ -4,7 +4,7 @@
 """Focused contracts for task assignment, robot approval, and queue state."""
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -117,6 +118,56 @@ def _make_item(db: Session, project: CloudProject, user: User) -> LoopItem:
     db.commit()
     db.refresh(item)
     return item
+
+
+def test_response_marks_issue_timestamps_as_utc(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    created_at = datetime(2026, 10, 8, 12, 27, 21)
+    updated_at = datetime(2026, 10, 8, 12, 34, 54)
+    item.created_at = created_at
+    item.updated_at = updated_at
+    test_db.commit()
+
+    values = loop_item_service.response_values(test_db, item, test_user.id)
+
+    assert values["created_at"] == created_at.replace(tzinfo=UTC)
+    assert values["updated_at"] == updated_at.replace(tzinfo=UTC)
+
+
+def test_cached_execution_end_uses_message_database_timezone(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    message = ProjectChatMessage(
+        message_id="timestamp-completion",
+        project_id=project.public_id,
+        task_id=item.id,
+        sender_type="agent",
+        sender_id="bot",
+        sender_name="Bot",
+        message_type="text",
+        content="Completed",
+        metadata_json={},
+        status="completed",
+        created_at=datetime(2026, 10, 8, 12, 27, 23),
+        updated_at=datetime(2026, 10, 8, 12, 34, 54),
+    )
+    test_db.add(message)
+    test_db.commit()
+
+    state = loop_item_service._present_cached_ai_state(
+        test_db,
+        item,
+        {"status": "running", "project_chat_message_id": message.message_id},
+    )
+
+    assert state["status"] == "succeeded"
+    assert state["completed_at"] == "2026-10-08T12:34:54+00:00"
+    assert state["updated_at"] == state["completed_at"]
 
 
 def _compiled_runtime_payload(*, request, **_kwargs):
@@ -811,6 +862,36 @@ def test_assign_to_member_records_chain(test_db: Session, test_user: User) -> No
     assert _active_execution(test_db, updated) is None
 
 
+@pytest.mark.parametrize("initial_status", ["in_progress", "in_review", "completed"])
+def test_assign_to_member_preserves_issue_status(
+    test_db: Session,
+    test_user: User,
+    initial_status: str,
+) -> None:
+    project = _make_project(test_db, test_user)
+    member = _make_member(test_db, project, "status-owner", BaseRole.Developer)
+    item = _make_item(test_db, project, test_user)
+    item.status = initial_status
+    item.completed_at = datetime(2026, 10, 1) if initial_status == "completed" else None
+    test_db.commit()
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="user",
+            assignee_id=str(member.id),
+        ),
+    )
+
+    assert updated.status == initial_status
+    if initial_status == "completed":
+        assert updated.completed_at == datetime(2026, 10, 1)
+
+
 def test_assign_to_other_member_sends_notification(
     test_db: Session, test_user: User
 ) -> None:
@@ -1191,6 +1272,8 @@ def test_queue_listing_is_a_projection_of_assigned_tasks(
         assignee_id=str(member.id),
     )
     assert [item.id for item in member_queue] == [completed_item.id]
+    test_db.refresh(completed_item)
+    assert completed_item.status == "completed"
 
 
 def test_my_work_uses_latest_execution_truth_instead_of_task_binding(
