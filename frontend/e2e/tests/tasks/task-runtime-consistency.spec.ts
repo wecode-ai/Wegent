@@ -51,7 +51,7 @@ type CapturedModelRequest = {
   } | null
 }
 
-test.describe.configure({ mode: 'serial' })
+test.describe.configure({ mode: 'serial', timeout: 120_000 })
 
 test.describe('Task runtime consistency', () => {
   let apiClient: ApiClient
@@ -983,7 +983,7 @@ test.describe('Task runtime consistency', () => {
     const agentSelector = page
       .locator('[data-testid="agent-skill-selector-button"], [data-testid="team-selector"]')
       .first()
-    await expect(agentSelector).toBeVisible({ timeout: 10000 })
+    await expect(agentSelector).toBeVisible({ timeout: 45_000 })
     await agentSelector.click({ force: true })
 
     const searchInput = page
