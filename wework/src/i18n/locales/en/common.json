@@ -2678,6 +2678,7 @@
     "plugins_local_auth_logout_failed": "Failed to log out",
     "plugins_local_auth_logout_cleanup_failed": "Account access was revoked, but local credentials could not be cleared. Click Log out again to retry cleanup.",
     "plugins_local_auth_poll_failed": "Failed to check authorization status",
+    "plugins_local_auth_health_failed": "Could not check the plugin connection. Your message was not sent. Refresh the plugin and try again; this does not mean you need to sign in again.",
     "plugins_local_browser_install_title": "Authorize {{name}}",
     "plugins_local_browser_login_title": "Authorize {{name}}",
     "plugins_local_browser_title": "Authorize in your browser",

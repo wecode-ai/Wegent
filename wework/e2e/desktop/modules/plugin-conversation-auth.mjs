@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { rm, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ACTIVE_COMPOSER_SELECTOR } from './shared.mjs'
 import { testId } from './plugin-regression-fixture.mjs'
@@ -14,6 +14,7 @@ export async function verifyConversationQrAuthorization({
   qrApproval,
   captureScreenshot,
   homePath,
+  pluginRoots,
 }) {
   // Use the real installed membership, manifest reader, packaged auth CLI,
   // and native QR session. Only the model response is controlled here.
@@ -145,6 +146,71 @@ export async function verifyConversationQrAuthorization({
     await captureScreenshot(control, 'plugin-auth-failure-navigation-recovery.png', 'body')
   } finally {
     await rm(failurePath, { force: true })
+    await control.command('localConnectorAuth', 'body', {
+      value: JSON.stringify({
+        pluginKey: slug,
+        connectorSlug: 'conversation-qr',
+        action: 'logout',
+      }),
+    })
+  }
+
+  // Replace connector metadata in the real isolated package, while the same
+  // composer retains its draft. Never replace the IPC/provider response.
+  const healthFailure = join(homePath, 'conversation-qr-health-fail')
+  const manifests = []
+  for (const root of new Set(pluginRoots)) {
+    const path = join(root, '.codex-plugin/plugin.json')
+    manifests.push({ path, original: await readFile(path, 'utf8') })
+  }
+  try {
+    await writeFile(healthFailure, 'fail')
+    const draft = await beginPreflight()
+    await control.command('waitFor', testId('chat-input-error'), {
+      text: '检查插件连接失败',
+    })
+    assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), draft)
+    const failed = JSON.parse(await control.command('snapshot', 'body'))
+    assert.ok(
+      !failed.testIds.includes('connector-auth-card'),
+      'Health errors were treated as logout'
+    )
+    assert.deepEqual(qrRequests, baseline, 'Failed health sent the draft')
+    for (const { path, original } of manifests) {
+      const manifest = JSON.parse(original)
+      const connector = manifest.connectors.find(item => item.slug === 'conversation-qr')
+      assert.ok(connector, 'Expected the original local connector')
+      connector.slug = 'conversation-qr-local'
+      await writeFile(path, JSON.stringify(manifest))
+    }
+    await rm(healthFailure)
+    await writeFile(qrApproval, 'approved')
+    const connected = JSON.parse(
+      await control.command('localConnectorAuth', 'body', {
+        value: JSON.stringify({
+          pluginKey: slug,
+          connectorSlug: 'conversation-qr-local',
+          action: 'health',
+        }),
+      })
+    )
+    assert.equal(connected.status, 'ok', 'Replacement connector is not connected')
+    await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command('waitFor', 'body', { text: `${qrPrompt} preflight completed` })
+    assert.equal(
+      qrRequests.preflight,
+      baseline.preflight + 1,
+      'Replacement connector did not send exactly once'
+    )
+    const connectedPage = JSON.parse(await control.command('snapshot', 'body'))
+    assert.ok(
+      !connectedPage.testIds.includes('connector-auth-card'),
+      'Connected replacement reopened login'
+    )
+    await captureScreenshot(control, 'plugin-auth-replaced-connector-connected.png', 'body')
+  } finally {
+    for (const { path, original } of manifests) await writeFile(path, original)
+    await rm(healthFailure, { force: true })
     await control.command('localConnectorAuth', 'body', {
       value: JSON.stringify({
         pluginKey: slug,

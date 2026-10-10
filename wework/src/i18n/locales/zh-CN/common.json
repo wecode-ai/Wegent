@@ -2676,6 +2676,7 @@
     "plugins_local_auth_logout_failed": "退出登录失败",
     "plugins_local_auth_logout_cleanup_failed": "账户授权已撤销，但本机登录凭据清理失败。请再次点击退出登录重试清理。",
     "plugins_local_auth_poll_failed": "检查授权状态失败",
+    "plugins_local_auth_health_failed": "检查插件连接失败，未发送消息。请刷新插件后重试；这不代表需要重新登录。",
     "plugins_local_browser_install_title": "授权 {{name}}",
     "plugins_local_browser_login_title": "授权 {{name}}",
     "plugins_local_browser_title": "在浏览器中授权",

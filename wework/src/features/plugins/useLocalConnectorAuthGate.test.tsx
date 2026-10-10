@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import {
@@ -24,10 +24,6 @@ vi.mock('@/desktop/localExecutor', () => ({
   getInitializedBundledPluginMarketplace: () => null,
   getKnownLocalExecutorDeviceId: () => 'test-device',
   requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
-}))
-
-vi.mock('./prefetchLocalConnectorAuth', () => ({
-  peekWarmedLocalConnectorAuthPlugins: () => null,
 }))
 
 const marketplacePath =
@@ -135,6 +131,88 @@ describe('managed Wiki conversation authorization', () => {
     clearLocalCodexPluginsReadStateCache()
     clearLocalConnectorAuthHealthCache()
   })
+
+  test('uses the new connector after a release replaces an already-known localAuth stub', async () => {
+    let connectorSlug = 'wiki-old'
+    mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+      if (method === 'executor.plugins.store.list') return { plugins: [] }
+      if (method === 'codex.app_server_request') {
+        if (params.method === 'plugin/installed') {
+          return { marketplaces: [{ name: 'wegent', path: marketplacePath, plugins: [summary] }] }
+        }
+        if (params.method === 'plugin/read') return { plugin: { summary, connectors: [] } }
+      }
+      if (method === 'executor.plugins.manifest.read') {
+        return { connectors: [{ slug: connectorSlug, authPolicy: 'on_use', localAuth }] }
+      }
+      if (method === 'runtime.local_connector_auth.health') {
+        expect(params.connectorSlug).toBe(connectorSlug)
+        return { status: 'ok' }
+      }
+      throw new Error(`Unexpected executor method: ${method}`)
+    })
+    const { result } = renderHook(() =>
+      useLocalConnectorAuthGate({ messages: [], onResumeSend: vi.fn(), onRetryMessage: vi.fn() })
+    )
+    expect(await result.current.gateBeforeSend(input)).toBe('send')
+    connectorSlug = 'wiki-local'
+    expect(await result.current.gateBeforeSend(input)).toBe('send')
+    expect(result.current.pending).toBeNull()
+    const probes = mocks.requestLocalExecutor.mock.calls.filter(
+      ([method]) => method === 'runtime.local_connector_auth.health'
+    )
+    expect(probes.map(([, params]) => params.connectorSlug)).toEqual(['wiki-old', 'wiki-local'])
+    expect(
+      mocks.requestLocalExecutor.mock.calls.filter(
+        ([method]) => method === 'executor.plugins.manifest.read'
+      )
+    ).toHaveLength(2)
+  })
+
+  test.each(['transport', 'health-result', 'manifest'])(
+    'does not show login or send a plugin draft when connection detection fails: %s',
+    async failure => {
+      mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+        if (method === 'executor.plugins.store.list') return { plugins: [] }
+        if (method === 'codex.app_server_request') {
+          if (params.method === 'plugin/installed') {
+            return { marketplaces: [{ name: 'wegent', path: marketplacePath, plugins: [summary] }] }
+          }
+          if (params.method === 'plugin/read') {
+            if (failure === 'manifest') throw new Error('plugin/read failed')
+            return { plugin: { summary, connectors: [] } }
+          }
+        }
+        if (method === 'executor.plugins.manifest.read') {
+          return { connectors: [{ slug: 'weibo-wiki', authPolicy: 'on_use', localAuth }] }
+        }
+        if (method === 'runtime.local_connector_auth.health') {
+          if (failure === 'transport')
+            throw new Error('Plugin does not declare a localAuth connector')
+          return { status: 'error', hint: 'Provider unavailable' }
+        }
+        throw new Error(`Unexpected executor method: ${method}`)
+      })
+      const onError = vi.fn()
+      const { result } = renderHook(() =>
+        useLocalConnectorAuthGate({
+          messages: [],
+          onResumeSend: vi.fn(),
+          onRetryMessage: vi.fn(),
+          onError,
+        })
+      )
+      expect(await result.current.gateBeforeSend(input)).toBe('blocked')
+      expect(onError).toHaveBeenCalledOnce()
+      expect(result.current.pending).toBeNull()
+      expect(await result.current.gateBeforeSend('ordinary message')).toBe('send')
+      expect(
+        mocks.requestLocalExecutor.mock.calls.some(
+          ([method]) => method === 'runtime.local_connector_auth.start'
+        )
+      ).toBe(false)
+    }
+  )
 
   test.each([
     { accountManaged: false, mode: 'preflight' },

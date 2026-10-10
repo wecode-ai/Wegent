@@ -160,13 +160,14 @@ export async function findFirstLocalNeedingLogin(
   requirements: LocalConnectorRequirement[]
 ): Promise<LocalConnectorRequirement | null> {
   for (const requirement of requirements) {
-    try {
-      const health = await localConnectorAuthHealth(toLocalConnectorAuthTarget(requirement))
-      if (health.status === 'ok') continue
-      return requirement
-    } catch {
-      return requirement
+    const health = await localConnectorAuthHealth(toLocalConnectorAuthTarget(requirement), {
+      bypassCache: true,
+    })
+    if (health.status === 'ok') continue
+    if (health.status === 'error') {
+      throw new Error(health.hint || 'local_auth_health_failed')
     }
+    return requirement
   }
   return null
 }
@@ -296,10 +297,6 @@ export function resolveLocalConnectorAuthHint(
   return null
 }
 
-function pluginHasLocalConnector(plugin: InstalledPlugin): boolean {
-  return (plugin.spec.components.connectors ?? []).some(connector => isLocalConnector(connector))
-}
-
 /**
  * `plugin/installed` summaries omit connector localAuth. Enrich from plugin/read
  * so mid-task QR resume can resolve health/start/poll commands.
@@ -316,14 +313,10 @@ export async function enrichInstalledPluginsForLocalAuth(
   const shouldEnrich = options?.shouldEnrich
   return Promise.all(
     plugins.map(async plugin => {
-      if (pluginHasLocalConnector(plugin)) return plugin
       if (shouldEnrich && !shouldEnrich(plugin)) return plugin
-      try {
-        const detailed = await readDetail(plugin)
-        return pluginHasLocalConnector(detailed) ? detailed : plugin
-      } catch {
-        return plugin
-      }
+      // The installed manifest owns connector identity. A cached localAuth stub
+      // may belong to the release that was replaced during an upgrade.
+      return readDetail(plugin)
     })
   )
 }

@@ -19,24 +19,25 @@ vi.mock('@/api/local/localConnectorAuth', async original => ({
   localConnectorAuthPoll: mocks.poll,
   localConnectorAuthCancel: mocks.cancel,
 }))
-vi.mock('./prefetchLocalConnectorAuth', () => ({ peekWarmedLocalConnectorAuthPlugins: () => null }))
-
 const input = '[$GitHub](plugin://github@openai-curated-remote) 查看项目列表'
 function Conversation({
   onSend,
   messages = [],
   onRetry = () => true,
   taskInput = input,
+  onError,
 }: {
   onSend: (text: string) => void
   messages?: WorkbenchMessage[]
   onRetry?: (message: WorkbenchMessage) => boolean
   taskInput?: string
+  onError?: (message: string) => void
 }) {
   const gate = useLocalConnectorAuthGate({
     messages,
     onResumeSend: onSend,
     onRetryMessage: onRetry,
+    onError,
   })
   return (
     <>
@@ -117,9 +118,11 @@ test.each(['cancel', 'ordinary'])(
 test('gh health transport failure does not silently send through the official connector', async () => {
   mocks.health.mockRejectedValue(new Error('offline'))
   const onSend = vi.fn()
-  render(<Conversation onSend={onSend} />)
+  const onError = vi.fn()
+  render(<Conversation onSend={onSend} onError={onError} />)
   fireEvent.click(screen.getByText('GitHub task'))
-  expect(await screen.findByTestId('github-cli-login')).toBeInTheDocument()
+  await waitFor(() => expect(onError).toHaveBeenCalledOnce())
+  expect(screen.queryByTestId('github-cli-login')).not.toBeInTheDocument()
   expect(onSend).not.toHaveBeenCalled()
 })
 

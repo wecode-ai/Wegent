@@ -124,7 +124,7 @@ from pathlib import Path
 approval = Path.home() / "conversation-qr-approved"
 action = sys.argv[1]
 if action == "health":
-    result = {"status": "ok" if approval.exists() else "need_login"}
+    result = {"status": "error", "hint": "E2E_QR_HEALTH_FAILED"} if (Path.home() / "conversation-qr-health-fail").exists() else {"status": "ok" if approval.exists() else "need_login"}
 elif action == "logout":
     approval.unlink(missing_ok=True)
     result = {"status": "ok"}
@@ -829,6 +829,19 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         qrApproval,
         captureScreenshot,
         homePath,
+        pluginRoots: await (async () => {
+          const manifest = JSON.parse(
+            await readFile(join(executorHome, 'capabilities/manifest.json'), 'utf8')
+          )
+          const item = Object.values(manifest.plugins).find(
+            item => item.installed_plugin_id === installedId
+          )
+          assert.ok(item, 'Local installed plugin is missing')
+          return [
+            await managedRoot(executorHome, installedId),
+            resolve(executorHome, 'capabilities', item.store_path),
+          ]
+        })(),
       })
       // Real gh with an empty configuration establishes the unauthenticated
       // path without replacing a provider or minting CI account credentials.
@@ -943,6 +956,8 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
             originalLoginReconnectsCloud: true,
             managedConversationQrPreflight: true,
             managedConversationQrResume: true,
+            conversationAuthMetadataReplacement: true,
+            conversationAuthHealthErrorPreservesDraft: true,
             dwsOfficialSourceStoreAutomaticMigration: true,
             dwsUnrelatedAccountPreserved: true,
             dwsCloudExecution: true,
