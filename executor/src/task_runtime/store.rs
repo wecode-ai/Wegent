@@ -4296,8 +4296,8 @@ fn validate_schedule_range(
     start_at: Option<&str>,
     due_at: Option<&str>,
 ) -> Result<(), TaskRuntimeError> {
-    let start = start_at.map(schedule_timestamp).transpose()?;
-    let due = due_at.map(schedule_timestamp).transpose()?;
+    let start = start_at.map(schedule_datetime).transpose()?;
+    let due = due_at.map(schedule_datetime).transpose()?;
     if start.zip(due).is_some_and(|(start, due)| start > due) {
         return Err(TaskRuntimeError::Invalid(
             "start_at cannot be after due_at".to_owned(),
@@ -4306,16 +4306,15 @@ fn validate_schedule_range(
     Ok(())
 }
 
-fn schedule_timestamp(value: &str) -> Result<i64, TaskRuntimeError> {
+fn schedule_datetime(value: &str) -> Result<DateTime<Utc>, TaskRuntimeError> {
     if let Ok(value) = DateTime::parse_from_rfc3339(value) {
-        return Ok(value.timestamp());
+        return Ok(value.with_timezone(&Utc));
     }
     if let Ok(value) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
         return Ok(value
             .and_hms_opt(0, 0, 0)
             .expect("midnight is a valid time")
-            .and_utc()
-            .timestamp());
+            .and_utc());
     }
     Err(TaskRuntimeError::Invalid(
         "schedule dates must be ISO 8601 values".to_owned(),
@@ -5245,6 +5244,11 @@ mod tests {
         assert!(validate_schedule_range(Some("not-a-date"), None).is_err());
         assert!(validate_schedule_range(None, Some("not-a-date")).is_err());
         assert!(validate_schedule_range(Some("2026-10-11"), None).is_ok());
+        assert!(validate_schedule_range(
+            Some("2026-10-11T00:00:00.900Z"),
+            Some("2026-10-11T00:00:00.100Z"),
+        )
+        .is_err());
     }
 
     fn chat_agent_store() -> (TempDir, LocalTaskStore, LoopItem) {

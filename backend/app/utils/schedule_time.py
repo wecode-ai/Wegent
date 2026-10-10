@@ -4,11 +4,11 @@
 
 """Helpers for comparing schedule timestamps across API and database formats."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 
 def normalize_schedule_datetime(value: datetime) -> datetime:
     """Return a timezone-naive UTC value suitable for schedule comparisons."""
     if value.tzinfo is None:
         return value
-    return value.astimezone(UTC).replace(tzinfo=None)
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
