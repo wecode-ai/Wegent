@@ -1788,6 +1788,7 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   trayNativeStatus = new TrayNativeStatusController({
     preferences,
+    codexSubscriptionActiveAtStartup: codexSubscriptionEnabled,
     requestExecutor: (method, params) => {
       if (!desktopRuntime) return Promise.reject(new Error('Desktop runtime is unavailable'))
       return desktopRuntime.requestExecutor(method, params)
