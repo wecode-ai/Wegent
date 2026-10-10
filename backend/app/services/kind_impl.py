@@ -6,9 +6,11 @@
 Implementation of specific Kind services
 """
 
+import json as jsonlib
 import logging
 from typing import Any, Dict
 
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundException
@@ -26,6 +28,37 @@ from app.utils.client_payload_sanitizer import sanitize_client_payload
 from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 
 logger = logging.getLogger(__name__)
+
+
+def _escape_like(value: str) -> str:
+    """Escape LIKE wildcards in a resource name."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _json_text_mentions_any(names: list[str]):
+    """SQL prefilter: rows whose serialized JSON mentions any given name.
+
+    Names are JSON-serialized first so quotes and backslashes match their
+    escaped representation inside the stored JSON document. Both the
+    ASCII-escaped and raw-unicode serializations are matched because JSON
+    text serialization differs by driver/dialect (e.g. SQLite stores
+    \\uXXXX escapes while MySQL keeps raw UTF-8 characters).
+
+    This is only a coarse filter to avoid scanning and parsing every row;
+    callers must still verify references precisely in Python. Over-matching
+    (e.g. substring collisions) is therefore safe.
+    """
+    patterns = []
+    for name in names:
+        serialized_variants = {
+            jsonlib.dumps(name, ensure_ascii=False),
+            jsonlib.dumps(name, ensure_ascii=True),
+        }
+        for variant in serialized_variants:
+            patterns.append(
+                cast(Kind.json, String).like(f"%{_escape_like(variant)}%", escape="\\")
+            )
+    return or_(*patterns)
 
 
 class GhostKindService(KindBaseService):
@@ -320,6 +353,204 @@ class TeamKindService(KindBaseService):
 
     def __init__(self):
         super().__init__("Team")
+
+    def _pre_delete_side_effects(
+        self, db: Session, user_id: int, db_resource: Kind
+    ) -> None:
+        """Delete member Bots that would be orphaned by this Team deletion.
+
+        Bots hold the modelRef/shellRef/ghostRef bindings, so a deleted Team
+        leaves Bots that keep blocking capability unbind operations while being
+        unreachable from any UI. Only Bots owned by the same user and living in
+        the same namespace as the Team are removed, and only when no other
+        active Team still references them.
+
+        Known limitation: for group namespaces, ``Kind.user_id`` is the
+        creator rather than the namespace owner, so a Bot created by another
+        group member is never cleaned up here, even when no other Team
+        references it. This is intentional: leaving such Bots untouched is the
+        safe fallback.
+        """
+        members = ((db_resource.json or {}).get("spec") or {}).get("members") or []
+        candidates: set[tuple[str, str]] = set()
+        for member in members:
+            bot_ref = member.get("botRef", {}) if isinstance(member, dict) else {}
+            bot_name = bot_ref.get("name")
+            if not bot_name:
+                continue
+            bot_namespace = bot_ref.get("namespace") or "default"
+            if bot_namespace != db_resource.namespace:
+                continue
+            candidates.add((bot_name, bot_namespace))
+
+        if not candidates:
+            return
+
+        bots = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Bot",
+                Kind.namespace == db_resource.namespace,
+                Kind.name.in_([name for name, _ in candidates]),
+                Kind.is_active == True,
+            )
+            .all()
+        )
+        if not bots:
+            return
+
+        referenced = self._find_bots_referenced_by_other_teams(
+            db,
+            exclude_team_id=db_resource.id,
+            candidate_names=[name for name, _ in candidates],
+        )
+        bots_to_delete: list[Kind] = []
+        for bot in bots:
+            if bot.user_id != db_resource.user_id:
+                continue
+            # In the default namespace resources are per-user: a reference
+            # from another user's Team points at that user's Bot, not this one.
+            if bot.namespace == "default":
+                key = (bot.name, bot.namespace, bot.user_id)
+            else:
+                key = (bot.name, bot.namespace, None)
+            if key in referenced:
+                continue
+            bots_to_delete.append(bot)
+
+        if not bots_to_delete:
+            return
+
+        self._delete_orphaned_ghosts(db, team=db_resource, bots=bots_to_delete)
+        for bot in bots_to_delete:
+            db.delete(bot)
+            logger.info(
+                "Deleted orphaned Bot '%s' in namespace '%s' while deleting Team '%s' "
+                "(team_id=%s, bot_id=%s)",
+                bot.name,
+                bot.namespace,
+                db_resource.name,
+                db_resource.id,
+                bot.id,
+            )
+
+    def _delete_orphaned_ghosts(
+        self, db: Session, *, team: Kind, bots: list[Kind]
+    ) -> None:
+        """Delete Ghosts that are exclusive to the Bots being deleted.
+
+        A Ghost is only removed when it belongs to the Team owner and no other
+        active Bot references it. Ghost references in the default namespace are
+        per-user: a reference from another user's Bot points at that user's
+        Ghost and does not block deletion.
+        """
+        ghosts: dict[tuple[str, str], Kind] = {}
+        for bot in bots:
+            ghost_ref = ((bot.json or {}).get("spec") or {}).get("ghostRef") or {}
+            ghost_name = ghost_ref.get("name")
+            if not ghost_name:
+                continue
+            ghost_namespace = ghost_ref.get("namespace") or "default"
+            if (ghost_name, ghost_namespace) in ghosts:
+                continue
+            query = db.query(Kind).filter(
+                Kind.kind == "Ghost",
+                Kind.namespace == ghost_namespace,
+                Kind.name == ghost_name,
+                Kind.is_active == True,
+            )
+            if ghost_namespace == "default":
+                query = query.filter(Kind.user_id == team.user_id)
+            ghost = query.first()
+            if ghost is None or ghost.user_id != team.user_id:
+                continue
+            ghosts[(ghost_name, ghost_namespace)] = ghost
+
+        if not ghosts:
+            return
+
+        deleted_bot_ids = {bot.id for bot in bots}
+        referenced: set[tuple[str, str, int | None]] = set()
+        other_bots = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Bot",
+                Kind.is_active == True,
+                Kind.id.notin_(deleted_bot_ids),
+                _json_text_mentions_any([name for name, _ in ghosts]),
+            )
+            .yield_per(100)
+        )
+        for other in other_bots:
+            other_ref = ((other.json or {}).get("spec") or {}).get("ghostRef") or {}
+            other_name = other_ref.get("name")
+            if not other_name:
+                continue
+            other_namespace = other_ref.get("namespace") or "default"
+            if other_namespace == "default":
+                referenced.add((other_name, other_namespace, other.user_id))
+            else:
+                referenced.add((other_name, other_namespace, None))
+
+        for (ghost_name, ghost_namespace), ghost in ghosts.items():
+            if ghost_namespace == "default":
+                key = (ghost_name, ghost_namespace, ghost.user_id)
+            else:
+                key = (ghost_name, ghost_namespace, None)
+            if key in referenced:
+                continue
+            db.delete(ghost)
+            logger.info(
+                "Deleted orphaned Ghost '%s' in namespace '%s' while deleting Team "
+                "'%s' (ghost_id=%s, team_id=%s)",
+                ghost_name,
+                ghost_namespace,
+                team.name,
+                ghost.id,
+                team.id,
+            )
+
+    @staticmethod
+    def _find_bots_referenced_by_other_teams(
+        db: Session, *, exclude_team_id: int, candidate_names: list[str]
+    ) -> set[tuple[str, str, int | None]]:
+        """Collect references to Bots from other active Teams.
+
+        Returns (name, namespace, user_id) keys. ``user_id`` is set for
+        references into the default namespace, because default-namespace
+        resources are per-user; group-namespace references use ``None`` as a
+        wildcard since they resolve namespace-wide.
+
+        The scan cannot be narrowed by ``Kind.namespace``: a Team in any
+        namespace may reference this Bot through an explicit cross-namespace
+        ``botRef``. A coarse SQL text filter on the candidate Bot names keeps
+        the scan small; matches are verified precisely in Python. Results are
+        streamed to keep memory bounded on large installations.
+        """
+        referenced: set[tuple[str, str, int | None]] = set()
+        other_teams = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Team",
+                Kind.is_active == True,
+                Kind.id != exclude_team_id,
+                _json_text_mentions_any(candidate_names),
+            )
+            .yield_per(100)
+        )
+        for other in other_teams:
+            members = ((other.json or {}).get("spec") or {}).get("members") or []
+            for member in members:
+                bot_ref = member.get("botRef", {}) if isinstance(member, dict) else {}
+                bot_name = bot_ref.get("name")
+                if not bot_name:
+                    continue
+                bot_namespace = bot_ref.get("namespace") or "default"
+                if bot_namespace == "default":
+                    referenced.add((bot_name, bot_namespace, other.user_id))
+                else:
+                    referenced.add((bot_name, bot_namespace, None))
+        return referenced
 
     def _validate_references(
         self, db: Session, user_id: int, resource: Dict[str, Any]
