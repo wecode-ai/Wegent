@@ -9,6 +9,7 @@ Implementation of specific Kind services
 import logging
 from typing import Any, Dict
 
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundException
@@ -26,6 +27,23 @@ from app.utils.client_payload_sanitizer import sanitize_client_payload
 from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 
 logger = logging.getLogger(__name__)
+
+
+def _escape_like(value: str) -> str:
+    """Escape LIKE wildcards in a resource name."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _json_text_mentions_any(names: list[str]):
+    """SQL prefilter: rows whose serialized JSON mentions any given name.
+
+    This is only a coarse filter to avoid scanning and parsing every row;
+    callers must still verify references precisely in Python. Over-matching
+    (e.g. substring collisions) is therefore safe.
+    """
+    return or_(
+        *[cast(Kind.json, String).like(f'%"{_escape_like(name)}"%') for name in names]
+    )
 
 
 class GhostKindService(KindBaseService):
@@ -367,7 +385,9 @@ class TeamKindService(KindBaseService):
             return
 
         referenced = self._find_bots_referenced_by_other_teams(
-            db, exclude_team_id=db_resource.id
+            db,
+            exclude_team_id=db_resource.id,
+            candidate_names=[name for name, _ in candidates],
         )
         bots_to_delete: list[Kind] = []
         for bot in bots:
@@ -442,6 +462,7 @@ class TeamKindService(KindBaseService):
                 Kind.kind == "Bot",
                 Kind.is_active == True,
                 Kind.id.notin_(deleted_bot_ids),
+                _json_text_mentions_any([name for name, _ in ghosts]),
             )
             .yield_per(100)
         )
@@ -476,7 +497,7 @@ class TeamKindService(KindBaseService):
 
     @staticmethod
     def _find_bots_referenced_by_other_teams(
-        db: Session, *, exclude_team_id: int
+        db: Session, *, exclude_team_id: int, candidate_names: list[str]
     ) -> set[tuple[str, str, int | None]]:
         """Collect references to Bots from other active Teams.
 
@@ -487,8 +508,9 @@ class TeamKindService(KindBaseService):
 
         The scan cannot be narrowed by ``Kind.namespace``: a Team in any
         namespace may reference this Bot through an explicit cross-namespace
-        ``botRef``. Results are streamed to keep memory bounded on large
-        installations.
+        ``botRef``. A coarse SQL text filter on the candidate Bot names keeps
+        the scan small; matches are verified precisely in Python. Results are
+        streamed to keep memory bounded on large installations.
         """
         referenced: set[tuple[str, str, int | None]] = set()
         other_teams = (
@@ -497,6 +519,7 @@ class TeamKindService(KindBaseService):
                 Kind.kind == "Team",
                 Kind.is_active == True,
                 Kind.id != exclude_team_id,
+                _json_text_mentions_any(candidate_names),
             )
             .yield_per(100)
         )
