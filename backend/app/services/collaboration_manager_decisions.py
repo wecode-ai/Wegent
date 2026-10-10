@@ -189,7 +189,7 @@ def apply_collaboration_manager_decision(
         db.refresh(message)
     if message is not None and existing_comment is None:
         push_project_chat_message(
-            project_chat_service.to_view(message).model_dump(by_alias=True)
+            project_chat_service.to_view(message, db=db).model_dump(by_alias=True)
         )
     logger.info(
         "[CollaborationManagerDecision] persisted project_id=%s item_id=%s "

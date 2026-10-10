@@ -38,7 +38,7 @@ def direct_human_project(test_db: Session, test_user: User) -> CloudProject:
     return project
 
 
-def test_direct_human_assignment_notifies_personal_task_action(
+def test_direct_human_assignment_notification_opens_original_issue(
     test_client: TestClient,
     test_token: str,
     test_db: Session,
@@ -90,9 +90,12 @@ def test_direct_human_assignment_notifies_personal_task_action(
         .one()
     )
     payload = notification.payload
-    assert payload["action"] == "create_personal_task"
+    assert payload["action"] == "open_issue"
     assert payload["itemId"] == created.json()["id"]
     assert payload["taskTitle"] == "Prepare release notes"
     assert payload["instructions"] == "Summarize the verified release changes."
     assert payload["roundId"] == "direct"
     assert payload["humanAssignmentId"]
+    assert notification.url == (
+        f"wework://boards/{direct_human_project.id}/issues/{created.json()['id']}"
+    )

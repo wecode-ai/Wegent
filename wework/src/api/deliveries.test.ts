@@ -133,6 +133,36 @@ describe('createDeliveryApi queue and assignment routes', () => {
     )
   })
 
+  it('persists the immutable Team identity of a manually started agent session', async () => {
+    const post = vi.fn(async () => undefined)
+    const api = createDeliveryApi(clientWith({ post }))
+    const modelSelection = {
+      modelName: 'agent-model',
+      modelType: 'public',
+      options: {},
+    }
+    await api.bindTask('WEG-1', {
+      deviceId: 'local-device',
+      taskId: 'runtime-team',
+      runtime: 'codex',
+      threadId: 'team-thread',
+      workspacePath: '/tmp/team-worktree',
+      runtimeHandle: { wegentTeam: { id: 1880 }, modelSelection },
+    })
+    expect(post).toHaveBeenCalledWith(
+      '/v1/loop-items/WEG-1/tasks',
+      expect.objectContaining({
+        wegentTeamId: 1880,
+        modelSelection,
+        executionContext: expect.objectContaining({
+          runtime: 'codex',
+          threadId: 'team-thread',
+          workspacePath: '/tmp/team-worktree',
+        }),
+      })
+    )
+  })
+
   it('lists robot executions through the cloud executions route', async () => {
     const client = {
       get: vi.fn(async () => ({

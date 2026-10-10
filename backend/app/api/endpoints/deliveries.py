@@ -35,6 +35,7 @@ from app.models.delivery import (
     ProjectChatAgent,
     loop_datetime_is_unset,
 )
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import (
@@ -68,6 +69,12 @@ from app.schemas.delivery import (
     MyWorkItemResponse,
     MyWorkListResponse,
 )
+from app.schemas.human_issue_work import (
+    HumanWorkActionResponse,
+    HumanWorkReview,
+    HumanWorkStart,
+    HumanWorkSubmit,
+)
 from app.schemas.issue_assignment import (
     IssueAssignmentCreate,
     IssueAssignmentCreateResponse,
@@ -86,6 +93,7 @@ from app.services.cloud_projects.access import (
     require_issue_action,
 )
 from app.services.delivery import delivery_service
+from app.services.human_issue_work import human_issue_work_service
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import (
@@ -122,6 +130,83 @@ def _loop_item_response(
     return LoopItemResponse.model_validate(
         loop_item_service.response_values(db, item, current_user.id)
     )
+
+
+async def _human_work_response(
+    db: Session,
+    item: LoopItem,
+    user: User,
+    message: ProjectChatMessage | None = None,
+    *,
+    created: bool = False,
+) -> HumanWorkActionResponse:
+    from app.api.ws.wework_runtime_namespace import (
+        PROJECT_CHAT_CREATED_EVENT,
+        WEWORK_RUNTIME_NAMESPACE,
+        project_chat_room,
+    )
+    from app.core.socketio import get_sio
+    from app.services.project_chat.service import ProjectChatService
+
+    message_view = (
+        ProjectChatService.to_view(message, db=db) if message is not None else None
+    )
+    if created and message_view is not None:
+        try:
+            await get_sio().emit(
+                PROJECT_CHAT_CREATED_EVENT,
+                message_view.model_dump(mode="json", by_alias=True),
+                room=project_chat_room(str(item.cloud_project_id), item.id),
+                namespace=WEWORK_RUNTIME_NAMESPACE,
+            )
+        except Exception:
+            logger.exception(
+                "Human Issue activity broadcast failed: item_id=%s", item.id
+            )
+    return HumanWorkActionResponse(
+        issue=_loop_item_response(db, item, user), message=message_view
+    )
+
+
+@router.post("/loop-items/{item_id}/work/start", response_model=HumanWorkActionResponse)
+async def start_human_issue_work(
+    item_id: str,
+    values: HumanWorkStart,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> HumanWorkActionResponse:
+    item = human_issue_work_service.start(db, item_id, current_user.id, values)
+    return await _human_work_response(db, item, current_user)
+
+
+@router.post(
+    "/loop-items/{item_id}/work/submit", response_model=HumanWorkActionResponse
+)
+async def submit_human_issue_work(
+    item_id: str,
+    values: HumanWorkSubmit,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> HumanWorkActionResponse:
+    item, message, created = human_issue_work_service.submit(
+        db, item_id, current_user.id, values
+    )
+    return await _human_work_response(db, item, current_user, message, created=created)
+
+
+@router.post(
+    "/loop-items/{item_id}/work/review", response_model=HumanWorkActionResponse
+)
+async def review_human_issue_work(
+    item_id: str,
+    values: HumanWorkReview,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> HumanWorkActionResponse:
+    item, message, created = human_issue_work_service.review(
+        db, item_id, current_user.id, values
+    )
+    return await _human_work_response(db, item, current_user, message, created=created)
 
 
 def _automation_selection_error(

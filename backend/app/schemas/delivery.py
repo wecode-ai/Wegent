@@ -149,6 +149,7 @@ class LoopItemResponse(BaseModel):
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
     status_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
+    human_work: dict[str, Any] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
     execution_error: str | None = None
@@ -415,6 +416,7 @@ class LoopItemTaskBind(BaseModel):
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)
     task_title: str | None = Field(default=None, alias="taskTitle", max_length=255)
     backend_task_id: int | None = Field(default=None, alias="backendTaskId")
+    wegent_team_id: int | None = Field(default=None, alias="wegentTeamId", gt=0)
     model_selection: RuntimeModelSelection | None = Field(
         default=None,
         alias="modelSelection",

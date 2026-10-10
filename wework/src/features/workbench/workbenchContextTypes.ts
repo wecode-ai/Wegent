@@ -134,6 +134,7 @@ export interface CreateTemporaryRuntimeTaskOptions {
 }
 
 export interface CreateProjectRuntimeTaskOptions {
+  wegentTeamId?: number
   project?: ProjectWithTasks | null
   /** Select a project workspace without mutating the global workbench
    * selection, for embedded project-space composers. */

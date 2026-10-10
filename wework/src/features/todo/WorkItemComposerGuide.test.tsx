@@ -53,6 +53,21 @@ const taskBindings = [
 ]
 
 describe('WorkItemComposerGuide', () => {
+  test('shows project context without an empty menu when no project choices are available', async () => {
+    const user = userEvent.setup()
+    render(<WorkItemComposerGuide integrated toolbar project={project} />)
+
+    const context = screen.getByTestId('project-space-context-pill')
+    expect(context).toHaveTextContent('我的任务')
+    expect(context).not.toHaveAttribute('aria-haspopup')
+    expect(context).not.toHaveAttribute('aria-expanded')
+    expect(context.tagName).toBe('DIV')
+
+    await user.click(context)
+
+    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+  })
+
   test('shows the default workspace as the selected destination for a new task', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()

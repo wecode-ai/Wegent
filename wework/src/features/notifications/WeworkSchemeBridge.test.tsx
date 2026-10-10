@@ -120,6 +120,47 @@ describe('Wework scheme bridge', () => {
     expect(openTab).not.toHaveBeenCalled()
   })
 
+  it('gives repeated comment notifications distinct focus requests on the existing board', () => {
+    const contentRoute = '/todo?projectStore=backend&projectId=12&itemId=WEG-1&commentId=c-1'
+    workspaceTabs.tabs = [
+      { id: 'other', kind: 'board', title: 'Other', contentRoute: '/todo', fixed: true },
+      {
+        id: 'target',
+        kind: 'board',
+        title: 'Target',
+        contentRoute: `${contentRoute}&focusRequest=previous-request`,
+        fixed: false,
+      },
+    ]
+    workspaceTabs.activeTabId = 'other'
+    render(
+      <CloudConnectionContext.Provider
+        value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
+      >
+        <WeworkSchemeBridge />
+      </CloudConnectionContext.Provider>
+    )
+
+    act(() => {
+      openWeworkScheme('wework://boards/12/issues/WEG-1/comments/c-1')
+      openWeworkScheme('wework://boards/12/issues/WEG-1/comments/c-1')
+    })
+
+    expect(workspaceTabs.selectTab).toHaveBeenCalledTimes(2)
+    const requests = workspaceTabs.selectTab.mock.calls.map(([tabId, updates]) => {
+      expect(tabId).toBe('target')
+      const route = new URL(updates.contentRoute, 'https://local')
+      const key = route.searchParams.get('focusRequest')
+      expect(key).toBeTruthy()
+      expect(key).not.toBe('previous-request')
+      route.searchParams.delete('focusRequest')
+      expect(`${route.pathname}${route.search}`).toBe(contentRoute)
+      return key
+    })
+    expect(requests[0]).not.toBe(requests[1])
+    expect(openTab).not.toHaveBeenCalled()
+  })
+
   it('reuses the fixed task tab while another app is active', () => {
     workspaceTabs.tabs = [
       { id: 'other-task', kind: 'task', title: 'Other', contentRoute: '/', fixed: false },

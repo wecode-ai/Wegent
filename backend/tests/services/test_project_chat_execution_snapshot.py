@@ -140,6 +140,84 @@ def test_old_turn_does_not_overwrite_new_run(test_db, test_user, run):
     assert task.metadata_json["ai_state"]["run_id"] == "run-2"
 
 
+@pytest.mark.parametrize("turn_key", ["subtaskId", "subtask_id"])
+def test_final_event_restores_content_after_outcome_only_snapshot(
+    test_db, test_user, run, turn_key
+):
+    _, task, row = run
+    row.content = "MODEL_CONT"
+    test_db.commit()
+    reconcile_execution_snapshot(test_db, user_id=test_user.id, snapshot=report())
+
+    with patch.object(project_chat_service, "_advance_task_to_review") as advance:
+        projected = project_chat_service.project_runtime_event(
+            test_db,
+            device_id="snapshot-device",
+            runtime_task_id="runtime-1",
+            event_name="response.completed",
+            payload={turn_key: "turn-1", "data": {"text": "MODEL_CONTINUATION_OK"}},
+        )
+        assert projected is not None
+        assert projected[0].content == "MODEL_CONTINUATION_OK"
+        assert projected[0].status == "completed"
+        advance.assert_not_called()
+    test_db.expire_all()
+    assert row.content == "MODEL_CONTINUATION_OK"
+    assert task.status == "in_progress"
+
+
+def test_late_final_content_does_not_complete_another_turn(test_db, test_user, run):
+    _, task, row = run
+    reconcile_execution_snapshot(test_db, user_id=test_user.id, snapshot=report())
+    new = ProjectChatMessage(
+        message_id="next-turn",
+        project_id=row.project_id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="12",
+        sender_name="Agent",
+        agent_id="12",
+        status="streaming",
+        runtime_device_id=row.runtime_device_id,
+        runtime_task_id=row.runtime_task_id,
+        trigger_message_id="trigger-2",
+        metadata_json={"run_id": "run-2", "run_status": "running"},
+    )
+    test_db.add(new)
+    test_db.commit()
+
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        event_name="response.completed",
+        payload={"subtaskId": "turn-1", "data": {"text": "Final first turn"}},
+    )
+
+    assert projected[0].message_id == row.message_id
+    assert row.content == "Final first turn"
+    assert new.status == "streaming"
+    assert new.content == ""
+
+
+def test_final_content_requires_the_reconciled_turn_identity(test_db, test_user, run):
+    _, _, row = run
+    row.content = "Partial"
+    test_db.commit()
+    reconcile_execution_snapshot(test_db, user_id=test_user.id, snapshot=report())
+
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        event_name="response.completed",
+        payload={"subtaskId": "another-turn", "data": {"text": "Wrong turn"}},
+    )
+
+    assert projected is None
+    assert row.content == "Partial"
+
+
 @pytest.mark.parametrize(
     "change",
     ["partial", "running", "empty", "unknown", "duplicate", "old", "bound_elsewhere"],

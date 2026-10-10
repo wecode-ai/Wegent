@@ -1,3 +1,5 @@
+import { isExecutionTerminal } from "./executionStatus";
+
 const EXPLICIT_TIME_ZONE_PATTERN = /(?:Z|[+-]\d{2}:?\d{2})$/i;
 
 function parseBackendTimestamp(value: string): Date | null {
@@ -9,26 +11,6 @@ function parseBackendTimestamp(value: string): Date | null {
     : `${trimmed}Z`;
   const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
-}
-
-export function issueExecutionElapsedMinutes(
-  timestamps: Iterable<string | null | undefined>,
-  nowMs = Date.now(),
-): number | null {
-  let startedAtMs: number | null = null;
-
-  for (const timestamp of timestamps) {
-    if (!timestamp) continue;
-    const timestampMs = parseBackendTimestamp(timestamp)?.getTime();
-    if (timestampMs === undefined) continue;
-    if (startedAtMs === null || timestampMs < startedAtMs) {
-      startedAtMs = timestampMs;
-    }
-  }
-
-  return startedAtMs === null
-    ? null
-    : Math.max(1, Math.floor((nowMs - startedAtMs) / 60_000));
 }
 
 export function formatIssueTimestamp(value: string, timeZone?: string): string {
@@ -57,4 +39,34 @@ export function compareIssueTimestamps(left: string, right: string): number {
   if (leftTime === undefined) return rightTime === undefined ? 0 : -1;
   if (rightTime === undefined) return 1;
   return leftTime - rightTime;
+}
+
+export function issueExecutionElapsedMinutes(
+  state:
+    | {
+        status?: string | null;
+        started_at?: string | null;
+        completed_at?: string | null;
+      }
+    | null
+    | undefined,
+  now = Date.now(),
+): number | null {
+  const startedAt = state?.started_at
+    ? parseBackendTimestamp(state.started_at)?.getTime()
+    : undefined;
+  if (startedAt === undefined) return null;
+  if (!state?.completed_at && isExecutionTerminal(state?.status)) return null;
+
+  const endedAt = state?.completed_at
+    ? parseBackendTimestamp(state.completed_at)?.getTime()
+    : now;
+  if (
+    endedAt === undefined ||
+    !Number.isFinite(endedAt) ||
+    endedAt < startedAt
+  ) {
+    return null;
+  }
+  return Math.max(1, Math.floor((endedAt - startedAt) / 60_000));
 }

@@ -27,12 +27,14 @@ function previewKind(filename: string, contentType: string | null): PreviewKind 
 export function CloudFilePreviewDialog({
   filename,
   contentType,
+  sizeLabel,
   loadFile,
   onDownload,
   onClose,
 }: {
   filename: string
   contentType: string | null
+  sizeLabel?: string | null
   loadFile: () => Promise<Blob>
   onDownload: () => Promise<void>
   onClose: () => void
@@ -103,9 +105,14 @@ export function CloudFilePreviewDialog({
         className="flex h-[calc(100vh-72px)] w-[min(960px,calc(100vw-48px))] flex-col overflow-hidden rounded-2xl bg-background shadow-2xl"
       >
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
-          <h2 className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
-            {filename}
-          </h2>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-sm font-medium text-text-primary">{filename}</h2>
+            {sizeLabel ? (
+              <span data-testid="cloud-file-preview-size" className="text-xs text-text-muted">
+                {sizeLabel}
+              </span>
+            ) : null}
+          </div>
           <button
             type="button"
             data-testid="cloud-file-preview-download"

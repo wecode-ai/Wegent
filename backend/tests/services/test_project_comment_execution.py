@@ -397,6 +397,42 @@ async def test_manually_bound_session_uses_the_binding_owner(scenario):
 
 
 @pytest.mark.asyncio
+async def test_manually_bound_team_session_keeps_its_model_on_reply(scenario):
+    from app.models.delivery import LoopItemTaskBinding
+
+    s = scenario
+    s.db.delete(s.execution)
+    s.root.metadata_json = {}
+    s.db.add(
+        LoopItemTaskBinding(
+            cloud_project_id=str(s.project.id),
+            loop_item_id=s.issue.id,
+            device_id=s.root.runtime_device_id,
+            task_id=s.root.runtime_task_id,
+            task_user_id=s.owner.id,
+            linked_by_user_id=s.owner.id,
+            metadata_json={"wegent_team_id": 1880},
+        )
+    )
+    s.db.commit()
+
+    await execute_comment(s.db, user_id=s.member.id, request=comment(s))
+
+    intent = s.compiler.call_args.kwargs["request"]
+    assert intent.schema_version == 3
+    assert intent.wegent_team_id == 1880
+    assert intent.model_id is None
+    assert intent.new_session is False
+    assert intent.origin == {
+        "type": "board_comment",
+        "dispatchRole": "executor",
+        "cloudProjectId": s.project.id,
+        "loopItemId": s.issue.id,
+    }
+    assert s.compiler.call_args.kwargs["user_id"] == s.owner.id
+
+
+@pytest.mark.asyncio
 async def test_plain_comment_ack_retry_does_not_acquire_a_new_assignee(scenario):
     s = scenario
     s.issue.assignee_agent_id = ""

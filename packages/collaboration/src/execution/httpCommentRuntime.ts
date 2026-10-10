@@ -38,7 +38,7 @@ export function createHttpCommentRuntime(
       }
       const request: RuntimeTaskCreateIntent = {
         ...target,
-        schemaVersion: 2,
+        schemaVersion: options.wegentTeamId ? 3 : 2,
         taskId: createRuntimeTaskIdFromSeed(createRuntimeTaskId(target.runtime)),
         message: prompt,
         clientUserMessageId: options.optimisticUserMessage?.id,
@@ -46,6 +46,7 @@ export function createHttpCommentRuntime(
           !target.projectId && !target.workspacePath && !target.runtimeProjectKey,
         ...options.executionModel,
         modelSelection: options.modelSelection,
+        wegentTeamId: options.wegentTeamId,
         cloudProjectId: options.cloudProjectId,
         origin: options.origin,
         additionalContext: options.additionalContext,
@@ -57,9 +58,13 @@ export function createHttpCommentRuntime(
         taskId: request.taskId!,
         runtime: target.runtime,
         workspacePath: target.workspacePath,
-        runtimeHandle: options.modelSelection
-          ? { modelSelection: options.modelSelection }
-          : undefined,
+        runtimeHandle:
+          options.modelSelection || options.wegentTeamId
+            ? {
+                ...(options.modelSelection ? { modelSelection: options.modelSelection } : {}),
+                ...(options.wegentTeamId ? { wegentTeam: { id: options.wegentTeamId } } : {}),
+              }
+            : undefined,
       }
       let rollback: (() => Promise<void>) | undefined
       let dispatched = false
@@ -79,6 +84,7 @@ export function createHttpCommentRuntime(
           throw new Error('Runtime created a different task from the bound comment')
         return {
           ...address,
+          runtime: response.runtime ?? address.runtime,
           workspacePath: response.workspacePath,
           runtimeHandle: response.runtimeHandle ?? address.runtimeHandle,
         }

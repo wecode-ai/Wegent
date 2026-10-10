@@ -344,7 +344,12 @@ async def test_manager_mcp_assignment_to_human_returns_plain_issue(
     )
 
     assert assigned["assignee_user_id"] == test_user.id
-    assert "human_work" not in assigned
+    assert assigned["human_work"]["assignee_user_id"] == test_user.id
+    assert assigned["human_work"]["state"] == "none"
+    assert assigned["human_work"]["can_start"] is True
+    assert assigned["human_work"]["ai_task_binding"]["assignmentId"] == (
+        assigned["human_work"]["assignment_id"]
+    )
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(
