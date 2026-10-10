@@ -876,27 +876,27 @@ describe('TaskActivityView', () => {
       return address
     })
 
-    render(
-      <TaskActivityView
-        client={client}
-        currentUserId={1}
-        project={{ id: '11', name: 'Wework' } as never}
-        task={
-          {
-            id: 'WEG-1',
-            title: 'Inspect changes',
-            description: 'Review the current diff',
-            status: 'inbox',
-            version: 1,
-            assignee_agent_id: '12',
-          } as never
-        }
-      />
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5 Codex')
+    // Flush roster/model initialization before checking the inherited selection.
+    await act(async () => {
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Inspect changes',
+              description: 'Review the current diff',
+              status: 'inbox',
+              version: 1,
+              assignee_agent_id: '12',
+            } as never
+          }
+        />
+      )
     })
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5 Codex')
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
 
@@ -1338,13 +1338,13 @@ describe('TaskActivityView', () => {
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
-  it('interleaves Issue status changes with complete comment threads and keeps execution status inside the comment', async () => {
+  it('interleaves UTC-naive comments and offset-aware status changes and keeps execution status inside the comment', async () => {
     const user = userEvent.setup()
     const openTaskConversation = vi.fn()
     const root = {
       ...userMessage,
       content: '请完成接入',
-      createdAt: '2026-08-03T10:00:00Z',
+      createdAt: '2026-08-03T10:00:00',
     }
     const execution = {
       ...agentMessage,
@@ -1414,7 +1414,7 @@ describe('TaskActivityView', () => {
             to_status_name: '进行中',
             trigger: 'user_update',
             by_user_id: 1,
-            at: '2026-08-03T09:00:00Z',
+            at: '2026-08-03T17:00:00+08:00',
           },
           {
             from_status: 'in_progress',
@@ -1469,7 +1469,7 @@ describe('TaskActivityView', () => {
     expect(screen.queryByTestId('runtime-execution-detail-overlay')).toBeNull()
     const replyToggle = within(card).getByTestId('cloud-task-activity-reply-toggle-message-1')
     const actions = replyToggle.closest('.task-detail-thread-actions') as HTMLElement
-    expect(actions.querySelector('time')).toHaveAttribute('datetime', '2026-08-03T10:00:00Z')
+    expect(actions.querySelector('time')).toHaveAttribute('datetime', root.createdAt)
     expect(
       within(card).getByTestId('cloud-task-activity-message-message-1').querySelector('header time')
     ).toBeNull()
@@ -3484,6 +3484,7 @@ describe('TaskActivityView', () => {
         cloudProjectId: '11',
         origin: {
           type: 'board_comment',
+          dispatchRole: 'executor',
           cloudProjectId: '11',
           loopItemId: 'WEG-1',
           rootCommentId: userMessage.messageId,
@@ -3859,11 +3860,12 @@ describe('TaskActivityView', () => {
         dispose: vi.fn(),
       } satisfies ProjectChatClient
 
-      const { rerender } = render(
+      const activity = (requestKey: string) => (
         <TaskActivityView
           client={client}
           currentUserId={1}
           focusedCommentId="message-1"
+          focusedCommentRequestKey={requestKey}
           project={{ id: '11', name: 'Wework' } as never}
           task={
             {
@@ -3876,6 +3878,7 @@ describe('TaskActivityView', () => {
           }
         />
       )
+      const { rerender } = render(activity('first-notification'))
 
       const comment = await screen.findByTestId('cloud-task-activity-message-message-1')
       expect(comment).toHaveAttribute('data-message-id', 'message-1')
@@ -3889,25 +3892,19 @@ describe('TaskActivityView', () => {
       })
       expect(comment).not.toHaveAttribute('data-flash')
 
-      rerender(
-        <TaskActivityView
-          client={client}
-          currentUserId={1}
-          focusedCommentId="message-1"
-          focusedCommentRequestKey="second-open"
-          project={{ id: '11', name: 'Wework' } as never}
-          task={
-            {
-              id: 'WEG-1',
-              title: 'Inspect changes',
-              description: 'Review the current diff',
-              status: 'inbox',
-              version: 1,
-            } as never
-          }
-        />
-      )
+      // Restoring the same route must not flash again without a new navigation.
+      rerender(activity('first-notification'))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50)
+      })
+      expect(comment).not.toHaveAttribute('data-flash')
+
+      rerender(activity('second-notification'))
       await waitFor(() => expect(comment).toHaveAttribute('data-flash', 'true'))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500)
+      })
+      expect(comment).not.toHaveAttribute('data-flash')
     } finally {
       vi.useRealTimers()
     }

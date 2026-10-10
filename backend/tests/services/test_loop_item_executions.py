@@ -108,13 +108,20 @@ def test_project_automation_activity_push_commits_before_network(
         "_activity",
         staticmethod(lambda _db, _run: events.append("read") or row),
     )
+
+    def message_view(message: object, *, db: Session) -> MagicMock:
+        assert message is row
+        assert db is session
+        return MagicMock(
+            model_dump=lambda **_kwargs: events.append("serialize")
+            or {"id": "message-1"}
+        )
+
+    session = db
     monkeypatch.setattr(
         project_automation_execution_module.project_chat_service,
         "to_view",
-        lambda _row: MagicMock(
-            model_dump=lambda **_kwargs: events.append("serialize")
-            or {"id": "message-1"}
-        ),
+        message_view,
     )
     monkeypatch.setattr(
         project_automation_execution_module,

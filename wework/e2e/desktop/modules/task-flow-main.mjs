@@ -4433,6 +4433,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           matrixCase: control.matrixCase ? matrixCaseId(control.matrixCase) : null,
           matrixStage: control.matrixState?.stage ?? null,
           matrixRequestCount: control.matrixState?.requests.length ?? 0,
+          matrixExecutionDiagnostics: control.matrixState?.executionDiagnostics ?? null,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,
