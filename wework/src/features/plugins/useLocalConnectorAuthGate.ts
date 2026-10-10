@@ -100,8 +100,10 @@ export function useLocalConnectorAuthGate(options: {
   }, [])
 
   useEffect(() => {
+    if (active) return
+    preflightVersionRef.current += 1
     const current = pendingRef.current
-    if (active || !current) return
+    if (!current) return
     if (current.mode === 'resume' && current.retryMessage) {
       handledResumeKeysRef.current.delete(current.retryMessage.id)
     }
