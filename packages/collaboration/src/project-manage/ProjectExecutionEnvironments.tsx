@@ -75,6 +75,16 @@ function repositoryShortName(repository: WorkspaceGitRepository) {
   return segment.replace(/\.git$/, "") || repository.name;
 }
 
+function repositoryShortNameFromUrl(url: string) {
+  return (
+    url
+      .split(/[/:]/)
+      .filter(Boolean)
+      .pop()
+      ?.replace(/\.git$/, "") ?? ""
+  );
+}
+
 type BranchState = {
   status: "loading" | "ready" | "error";
   branches: WorkspaceGitBranch[];
@@ -141,6 +151,8 @@ export function ProjectExecutionEnvironments({
     CollaborationExecutionEnvironment[]
   >([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [showAdvancedRepositories, setShowAdvancedRepositories] =
+    useState(false);
   const initialConfig =
     workspace?.execution_environment ?? project?.execution_environment;
   const [workspacePolicy, setWorkspacePolicy] = useState<
@@ -465,6 +477,33 @@ export function ProjectExecutionEnvironments({
           };
         }
         return repository.id === id ? { ...repository, ...patch } : repository;
+      }),
+    );
+    setConfigurationDirty(true);
+    setConfigurationSaved(false);
+    setConfigurationError("");
+  }
+
+  function updateRepositoryUrl(id: string, url: string) {
+    const shortName = repositoryShortNameFromUrl(url);
+    setRepositories((current) =>
+      current.map((repository) => {
+        if (repository.id !== id) return repository;
+        const derived = derivedDefaults.current.get(id);
+        const name =
+          !repository.name || repository.name === derived?.name
+            ? shortName
+            : repository.name;
+        const path =
+          !repository.path || repository.path === derived?.path
+            ? shortName
+            : repository.path;
+        derivedDefaults.current.set(id, {
+          name,
+          path,
+          ref: derived?.ref ?? "",
+        });
+        return { ...repository, url, name, path };
       }),
     );
     setConfigurationDirty(true);
@@ -822,6 +861,21 @@ export function ProjectExecutionEnvironments({
                   "添加仓库后，主仓库是智能体默认工作目录；不添加则创建空白工作目录。",
                 )}
               </p>
+              {repositories.length > 0 ? (
+                <button
+                  className="collaboration-link-button mt-2"
+                  data-testid={`${testIdPrefix}-advanced-repositories`}
+                  aria-expanded={showAdvancedRepositories}
+                  type="button"
+                  onClick={() =>
+                    setShowAdvancedRepositories((current) => !current)
+                  }
+                >
+                  {showAdvancedRepositories
+                    ? translate("todo.hide_advanced_options", "收起高级选项")
+                    : translate("todo.show_advanced_options", "高级选项")}
+                </button>
+              ) : null}
               {repositories.length > 0 && repositoriesLoadFailed ? (
                 <p className="mt-2 text-xs text-red-600" role="alert">
                   {translate(
@@ -912,7 +966,9 @@ export function ProjectExecutionEnvironments({
                           </button>
                         ) : null}
                       </div>
-                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <div
+                        className={`mt-3 grid gap-3 md:grid-cols-2 ${showAdvancedRepositories ? "" : "hidden"}`}
+                      >
                         <label className="text-sm">
                           <span className="mb-1 block">
                             {translate("todo.repository_name", "名称")}
@@ -952,7 +1008,9 @@ export function ProjectExecutionEnvironments({
                           />
                         </label>
                       </div>
-                      <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
+                      <div
+                        className={`mt-3 grid gap-3 ${showAdvancedRepositories ? "md:grid-cols-[minmax(0,1fr)_180px]" : ""}`}
+                      >
                         <label className="text-sm">
                           <span className="mb-1 block">
                             {translate("todo.repository_url", "Git 仓库")}
@@ -1003,14 +1061,17 @@ export function ProjectExecutionEnvironments({
                               placeholder="https://github.com/org/repository.git"
                               value={repository.url}
                               onChange={(event) =>
-                                updateRepository(repository.id, {
-                                  url: event.target.value,
-                                })
+                                updateRepositoryUrl(
+                                  repository.id,
+                                  event.target.value,
+                                )
                               }
                             />
                           )}
                         </label>
-                        <label className="text-sm">
+                        <label
+                          className={`text-sm ${showAdvancedRepositories ? "" : "hidden"}`}
+                        >
                           <span className="mb-1 block">
                             {translate(
                               "todo.execution_environment_repository_ref",

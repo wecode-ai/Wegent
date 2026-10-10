@@ -460,6 +460,11 @@ def test_board_snapshot_returns_first_screen_dependencies(
         "modelType": "public",
         "options": {"reasoning": "high"},
     }
+    bindings = test_client.get(
+        f"/api/v1/loop-items/{item['id']}/tasks", headers=headers
+    )
+    assert bindings.status_code == 200
+    assert bindings.json() == [binding.json()]
 
     response = test_client.get(
         f"/api/v1/cloud-projects/{delivery_project.id}/board-snapshot",
@@ -777,7 +782,7 @@ def test_collaboration_human_delivery_closes_assignment_without_completing_issue
     assert item.current_delivery_id == delivery_id
 
 
-def test_direct_human_delivery_preserves_shared_issue_status(
+def test_direct_human_ai_delivery_stays_a_draft_until_person_submits(
     test_client: TestClient,
     test_token: str,
     test_db: Session,
@@ -834,6 +839,7 @@ def test_direct_human_delivery_preserves_shared_issue_status(
     assert item.completed_at is None
     assert item.current_delivery_id == delivery_id
     assert (item.metadata_json or {}).get("status_history", []) == initial_history
+    assert item.metadata_json["human_work"]["ai_draft_delivery_id"] == delivery_id
 
 
 def test_delivery_response_reads_expired_orm_fields(

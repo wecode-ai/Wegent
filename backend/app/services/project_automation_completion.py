@@ -218,9 +218,9 @@ async def handle_project_automation_task_completed(
         if refreshed is None:
             return
         db.refresh(refreshed.message)
-        message_view = project_chat_service.to_view(refreshed.message).model_dump(
-            by_alias=True
-        )
+        message_view = project_chat_service.to_view(
+            refreshed.message, db=db
+        ).model_dump(by_alias=True)
 
     if message_view is not None:
         push_project_chat_message(message_view)
@@ -277,7 +277,7 @@ def mark_project_automation_dispatch_started(*, task_id: int) -> bool:
 
         db.commit()
         db.refresh(activity.message)
-        message_view = project_chat_service.to_view(activity.message).model_dump(
+        message_view = project_chat_service.to_view(activity.message, db=db).model_dump(
             by_alias=True
         )
     if message_view is not None:
@@ -304,7 +304,7 @@ def fail_project_automation_dispatch(*, task_id: int, error: str) -> None:
             return
         db.commit()
         db.refresh(activity.message)
-        message_view = project_chat_service.to_view(activity.message).model_dump(
+        message_view = project_chat_service.to_view(activity.message, db=db).model_dump(
             by_alias=True
         )
     if message_view is not None:

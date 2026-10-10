@@ -246,6 +246,7 @@ async def _continue_runtime(
     intent = intent.model_copy(
         update={
             "message": trigger.content,
+            "new_session": False,
             "device_id": execution.runtime_device_id,
             "attachment_ids": [],
             "attachments": attachments,
@@ -272,7 +273,7 @@ async def _continue_runtime(
     )
     db.commit()
     push_project_chat_message(
-        project_chat_service.to_view(response).model_dump(by_alias=True)
+        project_chat_service.to_view(response, db=db).model_dump(by_alias=True)
     )
     try:
         payload = {
@@ -314,7 +315,7 @@ async def _continue_runtime(
         }
         db.commit()
         push_project_chat_message(
-            project_chat_service.to_view(response).model_dump(by_alias=True)
+            project_chat_service.to_view(response, db=db).model_dump(by_alias=True)
         )
     except Exception as exc:
         error = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
@@ -372,11 +373,11 @@ async def execute_comment(
     if existing is not None:
         if existing.status == "failed":
             raise HTTPException(409, existing.content or "The comment execution failed")
-        return [project_chat_service.to_view(existing)]
+        return [project_chat_service.to_view(existing, db=db)]
     attachments = _attachments(db, user_id, request.attachment_ids)
     if target is None:
         response = _new_execution(db, user_id, request, trigger, attachments)
-        return [project_chat_service.to_view(response)] if response else []
+        return [project_chat_service.to_view(response, db=db)] if response else []
     execution = _execution(db, request, target)
     if execution.agent_id:
         project_chat_service._agent_row(
@@ -388,4 +389,4 @@ async def execute_comment(
     response = await _continue_runtime(
         db, request, trigger, target, execution, attachments
     )
-    return [project_chat_service.to_view(response)]
+    return [project_chat_service.to_view(response, db=db)]

@@ -65,9 +65,29 @@ const ACCESS_TOKEN_REFRESH_LEAD_MS = 5 * 60 * 1000
 const ACCESS_TOKEN_REFRESH_RETRY_MS = 60 * 1000
 const ACCESS_TOKEN_REFRESH_TIMEOUT_MS = 45 * 1000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 /** Stable code the main process reports when a cloud credential call times out. */
 const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_CODE = 'request_timeout'
 
+function isLocalBackendSocketMirror(backendUrl: string, socketUrl: string): boolean {
+  try {
+    const backend = new URL(backendUrl)
+    const socket = new URL(socketUrl)
+    const sameTransportSecurity =
+      backend.protocol === 'http:'
+        ? socket.protocol === 'http:' || socket.protocol === 'ws:'
+        : socket.protocol === 'https:' || socket.protocol === 'wss:'
+    return (
+      LOOPBACK_HOSTS.has(backend.hostname) &&
+      backend.hostname !== socket.hostname &&
+      backend.port === socket.port &&
+      backend.pathname.replace(/\/+$/, '') === socket.pathname.replace(/\/+$/, '') &&
+      sameTransportSecurity
+    )
+  } catch {
+    return false
+  }
+}
 /**
  * Refresh the desktop access token with a bound.
  *
@@ -130,9 +150,13 @@ function resolveCloudRuntimeConfig(
       return normalizeCloudBackendUrl(backendUrl, configuredSocketBaseUrl)
     }
   }
-  return backendSocketUrl?.trim()
-    ? normalizeCloudBackendUrl(backendUrl, backendSocketUrl)
-    : normalized
+  if (
+    !backendSocketUrl?.trim() ||
+    isLocalBackendSocketMirror(normalized.backendUrl, backendSocketUrl)
+  ) {
+    return normalized
+  }
+  return normalizeCloudBackendUrl(backendUrl, backendSocketUrl)
 }
 
 function delay(ms: number): Promise<void> {

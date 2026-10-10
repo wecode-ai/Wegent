@@ -493,11 +493,11 @@ docker-compose exec backend python -m alembic upgrade head
 ### Deprecated Environment Variables (Upgrade Note)
 
 `RAG_RUNTIME_MODE` is deprecated; delete it from `.env` after upgrading. RAG now has exactly one
-execution path: index, query and delete all run in the `knowledge_runtime` service. That service is
-a required Backend dependency and starts together with the Backend in standard mode and start.sh deployments.
+execution path: index, query and delete all run in the `knowledge_runtime` service. Backend knowledge
+features require an accessible Knowledge Runtime service.
 
 - Docker Compose deployments: `docker compose up -d` starts the Backend and knowledge_runtime together; no extra profile is needed for knowledge_runtime.
-- start.sh deployments: starting the Backend also starts Knowledge Runtime.
+- start.sh deployments: omitting service names starts all services, including Knowledge Runtime. Explicit service selections apply independently to start, stop, and restart. `./start.sh --restart fe be` restarts only the frontend and Backend, keeping an existing Runtime running; use `./start.sh --restart fe be kr` to restart Runtime too. If Runtime is not running, start it with `./start.sh kr` or configure an existing service through `KNOWLEDGE_RUNTIME_URL`. Knowledge operations fail when no Runtime is available.
 - If an existing environment still sets `RAG_RUNTIME_MODE`, the variable is ignored and does not make the Backend fail to start.
 
 ---

@@ -1156,6 +1156,12 @@
   cursor: pointer;
 }
 
+.collaboration-platform-secondary-button[aria-pressed="true"] {
+  color: rgb(var(--color-bg-base));
+  background: rgb(var(--color-text-primary));
+  border-color: rgb(var(--color-text-primary));
+}
+
 .collaboration-platform-secondary-button:hover {
   background: rgb(var(--color-bg-hover));
 }

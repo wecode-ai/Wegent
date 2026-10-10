@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Personal runtime tasks created from human Issue dispatch notifications."""
+"""Human Issue dispatch notifications and optional runtime task bindings."""
 
 from __future__ import annotations
 
@@ -80,7 +80,8 @@ def notify_direct_human_assignment(
         task_title=resolved_title,
         instructions=resolved_instructions or resolved_title,
         workflow_stage_id=None,
-        body="这个 Issue 已分配给你。打开通知可创建个人任务并提交交付。",
+        body="这个 Issue 已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
+        action="open_issue",
     )
 
 
@@ -99,6 +100,7 @@ def notify_collaboration_human_assignment(
     instructions: str,
     workflow_stage_id: str | None,
     body: str = "负责人向你分配了协作任务。",
+    action: str = "create_personal_task",
 ) -> None:
     """Notify the person without creating a board child Issue."""
 
@@ -126,7 +128,7 @@ def notify_collaboration_human_assignment(
         project_id=str(project.id),
         item_id=issue.id,
         payload={
-            "action": "create_personal_task",
+            "action": action,
             "projectId": str(project.id),
             "itemId": issue.id,
             "issueId": issue.id,
