@@ -445,7 +445,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       'synthetic-refreshed-access',
     ].reduce((output, credential) => output.replaceAll(credential, '[redacted]'), toolResult)
     await writeFile(
-      join(resultDir, `plugin-account-command-${expected}.json`),
+      join(resultDir, `plugin-account-command-${encodeURIComponent(expected)}.json`),
       JSON.stringify({ expected, output: redactedOutput }, null, 2)
     )
     assert.ok(

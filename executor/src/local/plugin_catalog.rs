@@ -284,20 +284,64 @@ fn registered_store_plugin_roots(
     if expected_root.ok().as_deref() != Some(marketplace_root) {
         return Ok(Vec::new());
     }
-    // Capability reconciliation links marketplace entries to the managed store.
-    // Permit only the same installed name/marketplace, not arbitrary symlink targets.
-    Ok(
-        list_wegent_store_plugins_from_roots(manifest_path, shared_plugins)?
-            .plugins
-            .into_iter()
-            .filter(|plugin| {
-                plugin.name == plugin_name
-                    && plugin.marketplace == marketplace
-                    && plugin.installed_plugin_id.is_some()
-            })
-            .map(|plugin| PathBuf::from(plugin.plugin_path))
-            .collect(),
-    )
+    if !manifest_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let manifest = read_json_file(manifest_path, MAX_PLUGIN_MANIFEST_BYTES)?;
+    let capabilities_root = manifest_path
+        .parent()
+        .ok_or("Invalid capability manifest path")?;
+    let mut roots = Vec::new();
+    for entry in manifest["plugins"]
+        .as_object()
+        .into_iter()
+        .flat_map(|entries| entries.values())
+    {
+        if entry["name"] != plugin_name
+            || entry["marketplace"] != marketplace
+            || entry["installed_plugin_id"].as_i64().is_none()
+            || entry["managed"] == false
+        {
+            continue;
+        }
+        let Ok(store) = managed_plugin_root(capabilities_root, shared_plugins, entry) else {
+            continue;
+        };
+        roots.push(store);
+        // Native marketplaces point at writable caches, not the immutable package.
+        if let Some(runtime) = registered_codex_cache(codex_home, marketplace, plugin_name, entry) {
+            roots.push(runtime);
+        }
+    }
+    Ok(roots)
+}
+
+fn registered_codex_cache(
+    codex_home: &Path,
+    marketplace: &str,
+    plugin_name: &str,
+    entry: &Value,
+) -> Option<PathBuf> {
+    let version = entry["version"].as_str()?;
+    let version_path = Path::new(version);
+    if version_path.components().count() != 1
+        || !matches!(version_path.components().next(), Some(Component::Normal(_)))
+    {
+        return None;
+    }
+    let cache = codex_home.join("plugins/cache");
+    let plugin = cache.join(marketplace).join(plugin_name);
+    let expected = plugin.join(version);
+    for path in [&cache, &cache.join(marketplace), &plugin, &expected] {
+        reject_symbolic_link(path, "Managed Codex plugin cache").ok()?;
+    }
+    let expected = expected.canonicalize().ok()?;
+    if !expected.starts_with(codex_home.canonicalize().ok()?) {
+        return None;
+    }
+    let recorded = Path::new(entry["runtime"]["codex_link"].as_str()?);
+    reject_symbolic_link(recorded, "Managed Codex plugin cache").ok()?;
+    (recorded.canonicalize().ok()? == expected).then_some(expected)
 }
 
 fn resolve_local_plugin_root(
@@ -1014,7 +1058,9 @@ mod tests {
             "kind": "local_qr", "health": ["health"], "start": ["start"], "poll": ["poll"]
         }}]);
         write_plugin(&plugin, "wiki", connector.clone());
-        write_plugin(&outside, "wiki", connector);
+        write_plugin(&outside, "wiki", connector.clone());
+        let native = temp.path().join("codex/plugins/cache/wegent/wiki/1.0.0");
+        write_plugin(&native, "wiki", connector);
         write_json(
             &market_manifest,
             &json!({"name": "wegent", "plugins": [{
@@ -1024,17 +1070,21 @@ mod tests {
         let registry = temp.path().join("capabilities/manifest-v2.json");
         let entry = json!({"plugins": {"wiki@wegent": {
             "name": "wiki", "marketplace": "wegent", "installed_plugin_id": 60,
-            "store_path": plugin, "checksum": format!("sha256:{}", "a".repeat(64))
+            "store_path": plugin, "checksum": format!("sha256:{}", "a".repeat(64)),
+            "version": "1.0.0", "runtime": {"codex_link": native}
         }}});
         write_json(&registry, &entry);
         let link = marketplace.join("plugins/wiki");
         fs::create_dir_all(link.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&plugin, &link).unwrap();
-
-        for path in [&marketplace, &market_manifest] {
-            let manifest = read_local_plugin_manifest(path, "wiki", temp.path()).unwrap();
-            assert_eq!(manifest["connectors"][0]["localAuth"]["kind"], "local_qr");
+        for target in [&plugin, &native] {
+            std::os::unix::fs::symlink(target, &link).unwrap();
+            for path in [&marketplace, &market_manifest] {
+                let manifest = read_local_plugin_manifest(path, "wiki", temp.path()).unwrap();
+                assert_eq!(manifest["connectors"][0]["localAuth"]["kind"], "local_qr");
+            }
+            fs::remove_file(&link).unwrap();
         }
+        std::os::unix::fs::symlink(&native, &link).unwrap();
         let mut wrong_market = entry.clone();
         wrong_market["plugins"]["wiki@wegent"]["marketplace"] = json!("other");
         write_json(&registry, &wrong_market);
@@ -1042,6 +1092,10 @@ mod tests {
         write_json(&registry, &entry);
         fs::remove_file(&link).unwrap();
         std::os::unix::fs::symlink(&outside, &link).unwrap();
+        assert!(read_local_plugin_manifest(&market_manifest, "wiki", temp.path()).is_err());
+        let mut escaped_runtime = entry.clone();
+        escaped_runtime["plugins"]["wiki@wegent"]["runtime"]["codex_link"] = json!(outside);
+        write_json(&registry, &escaped_runtime);
         assert!(read_local_plugin_manifest(&market_manifest, "wiki", temp.path()).is_err());
         let mut escaped_store = entry;
         escaped_store["plugins"]["wiki@wegent"]["store_path"] = json!(outside);
