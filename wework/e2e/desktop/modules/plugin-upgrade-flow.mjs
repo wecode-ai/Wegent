@@ -13,6 +13,21 @@ const addedSkill = 'added-check'
 const oldContent = 'Old release upgrade marker'
 const newContent = 'New release upgrade marker'
 const E2E_CATALOG_REFRESH_OBSERVATION_MS = 15_000
+const PLUGIN_SYNC_TIMEOUT_MS = 30_000
+
+async function waitForFile(path, timeoutMs = PLUGIN_SYNC_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      await access(path)
+      return
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Timed out waiting for plugin sync: ${path}`)
+}
 
 export async function verifyPluginUpgrade({ cloudEnvironment: env, control, codexHome, setPhase }) {
   const deviceId = (
@@ -65,6 +80,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await request(`/plugins/installed/${installedId}?device_id=${deviceId}`, 'PUT', {
     updatePolicy: 'manual',
   })
+  await waitForFile(join(oldRoot, '.codex-plugin/plugin.json'))
   assert.equal(
     JSON.parse(await readFile(join(oldRoot, '.codex-plugin/plugin.json'), 'utf8')).version,
     oldVersion
