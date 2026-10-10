@@ -98,6 +98,7 @@ describe('WorkspaceTabStrip', () => {
     listHarnessApps.mockResolvedValue([])
     window.history.replaceState({}, '', '/')
     delete window.__WEWORK_DSH_UI__
+    delete window.__WEWORK_RUNTIME_CONFIG__
   })
 
   test('opens project spaces as a real tab and switches between tabs', async () => {
@@ -383,6 +384,31 @@ describe('WorkspaceTabStrip', () => {
           kind: 'task',
           title: '任务',
           contentRoute: '/',
+        }),
+      ],
+      startupWorkspaceTabId: defaultAppPreferences.startupWorkspaceTabId,
+    })
+  })
+
+  test('keeps a pinned tab assigned to its detached workspace window', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
+      desktopWindowLabel: 'workspace-detached-task',
+    }
+    const user = userEvent.setup()
+    renderStrip()
+
+    fireEvent.contextMenu(screen.getByText('任务').closest('[role="tab"]')!)
+    await user.click(screen.getByTestId('workspace-tab-pin'))
+
+    expect(updateAppPreferences).toHaveBeenCalledWith({
+      fixedWorkspaceTabs: [
+        ...defaultAppPreferences.fixedWorkspaceTabs,
+        expect.objectContaining({
+          kind: 'task',
+          title: '任务',
+          contentRoute: '/',
+          windowLabel: 'workspace-detached-task',
         }),
       ],
       startupWorkspaceTabId: defaultAppPreferences.startupWorkspaceTabId,

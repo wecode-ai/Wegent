@@ -41,12 +41,16 @@ export function fixedWorkspaceWindowDescriptors(
     if (!id || !contentRoute || !/^workspace-[a-zA-Z0-9_-]+$/.test(label)) {
       return []
     }
-    return [
-      {
-        label,
-        route: workspaceTabRoute(contentRoute, id, title),
-        title,
-      },
-    ]
+    try {
+      return [
+        {
+          label,
+          route: workspaceTabRoute(contentRoute, id, title),
+          title,
+        },
+      ]
+    } catch {
+      return []
+    }
   })
 }

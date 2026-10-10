@@ -57,4 +57,33 @@ describe('fixedWorkspaceWindowDescriptors', () => {
       })
     ).toEqual([])
   })
+
+  test('skips malformed routes without blocking other workspace windows', () => {
+    expect(
+      fixedWorkspaceWindowDescriptors({
+        fixedWorkspaceTabs: [
+          {
+            id: 'broken',
+            kind: 'auxiliary',
+            title: 'Broken',
+            contentRoute: 'http://[',
+            windowLabel: 'workspace-broken',
+          },
+          {
+            id: 'plugins',
+            kind: 'auxiliary',
+            title: 'Plugins',
+            contentRoute: '/plugins',
+            windowLabel: 'workspace-plugins',
+          },
+        ],
+      })
+    ).toEqual([
+      {
+        label: 'workspace-plugins',
+        route: '/plugins?workspaceTab=plugins&workspaceTabTitle=Plugins',
+        title: 'Plugins',
+      },
+    ])
+  })
 })

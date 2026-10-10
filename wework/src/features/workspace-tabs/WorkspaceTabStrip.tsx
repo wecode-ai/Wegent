@@ -17,6 +17,7 @@ import { useExperimentalFeaturesEnabled } from '@/features/experimental-features
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { openWorkspaceTabWindow } from './workspaceWindow'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
@@ -364,9 +365,14 @@ export function WorkspaceTabStrip({
   const pinContextTab = async () => {
     if (!contextTab || contextTab.fixed || !appPreferences?.loaded) return
     setContextMenu(null)
+    const preference = fixedWorkspaceTabPreference(contextTab)
+    const windowLabel = getDesktopWindowLabel()
     try {
       await saveFixedWorkspaceTabs(
-        [...appPreferences.preferences.fixedWorkspaceTabs, fixedWorkspaceTabPreference(contextTab)],
+        [
+          ...appPreferences.preferences.fixedWorkspaceTabs,
+          windowLabel.startsWith('workspace-') ? { ...preference, windowLabel } : preference,
+        ],
         appPreferences.preferences.startupWorkspaceTabId
       )
     } catch (error) {

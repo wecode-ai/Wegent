@@ -594,7 +594,7 @@ async function verifyCloudCheckpoint({
 
   if (checkpoint === 'workspace-tabs') {
     setPhase('cloud-workspace-tab-isolation')
-    await verifyWorkspaceTabIsolation(control)
+    await verifyWorkspaceTabIsolation(control, restartDesktopApp)
     return
   }
 
