@@ -321,6 +321,94 @@ class TeamKindService(KindBaseService):
     def __init__(self):
         super().__init__("Team")
 
+    def _pre_delete_side_effects(
+        self, db: Session, user_id: int, db_resource: Kind
+    ) -> None:
+        """Delete member Bots that would be orphaned by this Team deletion.
+
+        Bots hold the modelRef/shellRef/ghostRef bindings, so a deleted Team
+        leaves Bots that keep blocking capability unbind operations while being
+        unreachable from any UI. Only Bots owned by the same user and living in
+        the same namespace as the Team are removed, and only when no other
+        active Team still references them.
+        """
+        members = ((db_resource.json or {}).get("spec") or {}).get("members") or []
+        for member in members:
+            bot_ref = member.get("botRef", {}) if isinstance(member, dict) else {}
+            bot_name = bot_ref.get("name")
+            if not bot_name:
+                continue
+            bot_namespace = bot_ref.get("namespace") or "default"
+            if bot_namespace != db_resource.namespace:
+                continue
+            self._delete_orphaned_bot(
+                db,
+                team=db_resource,
+                bot_name=bot_name,
+                bot_namespace=bot_namespace,
+            )
+
+    def _delete_orphaned_bot(
+        self,
+        db: Session,
+        *,
+        team: Kind,
+        bot_name: str,
+        bot_namespace: str,
+    ) -> None:
+        """Delete a member Bot when it is exclusive to the deleted Team."""
+        bot = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Bot",
+                Kind.namespace == bot_namespace,
+                Kind.name == bot_name,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if bot is None or bot.user_id != team.user_id:
+            return
+        if self._is_bot_referenced_by_other_teams(
+            db, bot_name=bot_name, bot_namespace=bot_namespace, exclude_team_id=team.id
+        ):
+            return
+        db.delete(bot)
+        logger.info(
+            "Deleted orphaned Bot '%s' in namespace '%s' while deleting Team '%s' "
+            "(team_id=%s, bot_id=%s)",
+            bot_name,
+            bot_namespace,
+            team.name,
+            team.id,
+            bot.id,
+        )
+
+    @staticmethod
+    def _is_bot_referenced_by_other_teams(
+        db: Session, *, bot_name: str, bot_namespace: str, exclude_team_id: int
+    ) -> bool:
+        """Check whether any other active Team references the Bot."""
+        other_teams = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Team",
+                Kind.is_active == True,
+                Kind.id != exclude_team_id,
+            )
+            .all()
+        )
+        for other in other_teams:
+            members = ((other.json or {}).get("spec") or {}).get("members") or []
+            for member in members:
+                bot_ref = member.get("botRef", {}) if isinstance(member, dict) else {}
+                if (
+                    bot_ref.get("name") == bot_name
+                    and (bot_ref.get("namespace") or "default") == bot_namespace
+                ):
+                    return True
+        return False
+
     def _validate_references(
         self, db: Session, user_id: int, resource: Dict[str, Any]
     ) -> None:
