@@ -36,6 +36,10 @@ import {
   type FixedWorkspaceTabPreference,
   type WorkbenchMode,
 } from '@/desktop/appPreferences'
+import {
+  fixedWorkspaceTabsPatch,
+  saveFixedWorkspaceTabs as persistFixedWorkspaceTabs,
+} from '@/features/workspace-tabs/fixedWorkspaceTabs'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -404,24 +408,16 @@ export function GeneralSettingsPage() {
     startupWorkspaceTabId = preferences.startupWorkspaceTabId ??
       defaultAppPreferences.startupWorkspaceTabId
   ) => {
-    const nextStartupId = fixedWorkspaceTabs.some(tab => tab.id === startupWorkspaceTabId)
-      ? startupWorkspaceTabId
-      : (fixedWorkspaceTabs[0]?.id ?? '')
+    const patch = fixedWorkspaceTabsPatch(fixedWorkspaceTabs, startupWorkspaceTabId)
     const previousPreferences = preferences
     setPreferences(current => ({
       ...current,
-      fixedWorkspaceTabs,
-      startupWorkspaceTabId: nextStartupId,
+      ...patch,
     }))
     setSaving(true)
     setError(null)
     try {
-      setPreferences(
-        await updateAppPreferences({
-          fixedWorkspaceTabs,
-          startupWorkspaceTabId: nextStartupId,
-        })
-      )
+      setPreferences(await persistFixedWorkspaceTabs(fixedWorkspaceTabs, startupWorkspaceTabId))
     } catch (saveError) {
       console.error('[Wework] Failed to update fixed workspace tabs', saveError)
       setPreferences(previousPreferences)
@@ -676,7 +672,10 @@ export function GeneralSettingsPage() {
                   const label =
                     tab.kind === 'smart_app'
                       ? (tab.title ?? t('workbench.smart_apps_title', '智能工作台'))
-                      : t(`workbench.general_settings_default_workspace_tab_${tab.kind}`)
+                      : tab.kind === 'auxiliary'
+                        ? (tab.title ?? t('workbench.workspace_tab_auxiliary', '工作区'))
+                        : (tab.title ??
+                          t(`workbench.general_settings_default_workspace_tab_${tab.kind}`))
                   return (
                     <div
                       key={tab.id}

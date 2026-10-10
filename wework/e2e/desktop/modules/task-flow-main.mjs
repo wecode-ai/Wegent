@@ -2174,7 +2174,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'workspace-issue-creation'
       await verifyWorkspaceIssueCreation(control)
       phase = 'workspace-tab-isolation'
-      await verifyWorkspaceTabIsolation(control)
+      await verifyWorkspaceTabIsolation(control, restartDesktopApp)
       if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
         console.log(`Wework desktop workspace-tabs checkpoint passed. Evidence: ${resultDir}`)
         return
