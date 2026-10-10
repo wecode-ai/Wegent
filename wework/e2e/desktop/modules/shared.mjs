@@ -1276,15 +1276,35 @@ function modelProviderSelector(providerId) {
 
 async function visibleModelOptionId(control, targetOptionIds, providerId) {
   for (const targetOptionId of targetOptionIds) {
-    const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`
-    await control.command('scrollIntoView', targetSelector).catch(() => undefined)
+    const targetSelectors = [
+      `[data-testid="model-selector-menu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+      `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+    ]
+    for (const targetSelector of targetSelectors) {
+      await control.command('scrollIntoView', targetSelector).catch(() => undefined)
+      const visibleCount = await control
+        .command('getElementCount', targetSelector, { visible: true })
+        .then(value => Number(value))
+        .catch(() => 0)
+      if (visibleCount > 0) {
+        return targetOptionId
+      }
+    }
+  }
+  return null
+}
+
+async function visibleModelOptionSelector(control, targetOptionId, providerId) {
+  const selectors = [
+    `[data-testid="model-selector-menu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+    `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+  ]
+  for (const selector of selectors) {
     const visibleCount = await control
-      .command('getElementCount', targetSelector, { visible: true })
+      .command('getElementCount', selector, { visible: true })
       .then(value => Number(value))
       .catch(() => 0)
-    if (visibleCount > 0) {
-      return targetOptionId
-    }
+    if (visibleCount > 0) return selector
   }
   return null
 }
@@ -1323,7 +1343,7 @@ function hasModelOption(menu, targetOptionIds) {
 }
 
 async function hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId) {
-  if (!expectedProviderId) return hasModelOption(menu, targetOptionIds)
+  if (!hasModelOption(menu, targetOptionIds)) return false
   return Boolean(await visibleModelOptionId(control, targetOptionIds, expectedProviderId))
 }
 
@@ -1339,7 +1359,14 @@ async function ensureModelOptionVisible(
     let menu = JSON.parse(await control.command('snapshot', 'body'))
     if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
       return menu
-    if (menu.testIds.includes('model-control-menu-model')) {
+    if (menu.testIds.includes('model-advanced-toggle')) {
+      await control
+        .command('clickWhenEnabled', '[data-testid="model-advanced-toggle"]', {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
+        })
+        .catch(() => undefined)
+    } else if (menu.testIds.includes('model-control-menu-model')) {
       await control
         .command('hover', '[data-testid="model-control-menu-model"]', {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1480,7 +1507,12 @@ async function selectE2EModel(
     targetOptionId = await visibleModelOptionId(control, targetOptionIds, expectedProviderId)
   }
   assert.ok(targetOptionId, `No visible model option matched ${modelOptionIdCandidates(modelIds)}`)
-  const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(expectedProviderId)}`
+  const targetSelector = await visibleModelOptionSelector(
+    control,
+    targetOptionId,
+    expectedProviderId
+  )
+  assert.ok(targetSelector, `No visible selector matched ${targetOptionId}`)
   await control.command('waitFor', targetSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

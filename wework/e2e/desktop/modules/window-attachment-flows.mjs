@@ -177,10 +177,10 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
-  const modelSubmenuMetrics = await getSingleElementMetrics(
+  const modelPickerMetrics = await getSingleElementMetrics(
     control,
-    '[data-testid="model-selector-submenu"]',
-    'The narrow-pane model submenu'
+    '[data-testid="model-selector-menu"]',
+    'The narrow-pane model picker'
   )
   const viewportMetrics = await getSingleElementMetrics(
     control,
@@ -198,25 +198,25 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     'The embedded browser host'
   )
   assert.ok(
-    modelSubmenuMetrics.top >= 64 && modelSubmenuMetrics.bottom <= viewportMetrics.bottom - 16,
-    `The narrow-pane model submenu exceeded the desktop viewport: ${JSON.stringify({
-      modelSubmenuMetrics,
+    modelPickerMetrics.top >= 64 && modelPickerMetrics.bottom <= viewportMetrics.bottom - 16,
+    `The narrow-pane model picker exceeded the desktop viewport: ${JSON.stringify({
+      modelPickerMetrics,
       viewportMetrics,
     })}`
   )
   assert.ok(
-    modelSubmenuMetrics.width >= 280 &&
-      modelSubmenuMetrics.left >= 16 &&
-      modelSubmenuMetrics.right <= viewportMetrics.right - 16 &&
-      modelSubmenuMetrics.right > rightPanelMetrics.left &&
-      modelSubmenuMetrics.right > browserHostMetrics.left &&
-      modelSubmenuMetrics.left < browserHostMetrics.right &&
-      modelSubmenuMetrics.bottom > browserHostMetrics.top &&
-      modelSubmenuMetrics.top < browserHostMetrics.bottom,
-    `The narrow-pane model submenu was compressed instead of using the browser overlay: ${JSON.stringify(
+    modelPickerMetrics.width >= 240 &&
+      modelPickerMetrics.left >= 16 &&
+      modelPickerMetrics.right <= viewportMetrics.right - 16 &&
+      modelPickerMetrics.right > rightPanelMetrics.left &&
+      modelPickerMetrics.right > browserHostMetrics.left &&
+      modelPickerMetrics.left < browserHostMetrics.right &&
+      modelPickerMetrics.bottom > browserHostMetrics.top &&
+      modelPickerMetrics.top < browserHostMetrics.bottom,
+    `The narrow-pane model picker was compressed instead of using the browser overlay: ${JSON.stringify(
       {
         browserHostMetrics,
-        modelSubmenuMetrics,
+        modelPickerMetrics,
         rightPanelMetrics,
       }
     )}`

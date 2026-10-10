@@ -327,7 +327,7 @@ const PROJECT_AI_UPSTREAM_MODEL_ID = 'deepseek-v4-pro'
 const REMEMBERED_TASK_MODEL_ID = 'gpt-5.6-sol'
 const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
 const REMEMBERED_TASK_REASONING = 'high'
-const GPT_6_SOL_MODEL_ID = 'gpt-6-sol'
+const GPT_6_1_SOL_MODEL_ID = 'gpt-6.1-sol'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
 const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
@@ -849,11 +849,38 @@ async function verifyLocalModelRouting({
     'The model selector did not expose its selected model before refresh'
   )
 
-  setPhase('model-catalog-gpt-6-sol')
-  const gpt6SolMenu = await ensureModelOptionVisible(control, GPT_6_SOL_MODEL_ID, modelSelector)
+  setPhase('model-catalog-chatgpt-picker')
+  await control.command('clickWhenEnabled', modelSelector, {
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="model-simple-header"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="model-simple-source"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
   assert.ok(
-    gpt6SolMenu.testIds.includes(`model-option-${GPT_6_SOL_MODEL_ID}`),
-    'The Codex model selector did not expose GPT-6 Sol'
+    (await control.command('getText', '[data-testid="model-simple-source"]')).trim(),
+    'The compact model picker did not identify the selected model source'
+  )
+  const compactPicker = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    compactPicker.testIds.includes('model-advanced-panel'),
+    'The ChatGPT-style compact model picker did not expose its model power slider'
+  )
+
+  const gpt61SolMenu = await ensureModelOptionVisible(control, GPT_6_1_SOL_MODEL_ID, modelSelector)
+  assert.ok(
+    gpt61SolMenu.testIds.includes(`model-option-${GPT_6_1_SOL_MODEL_ID}`),
+    'The Codex model selector did not expose GPT-6.1 Sol'
+  )
+  assert.ok(
+    gpt61SolMenu.testIds.includes('model-source-local-chatgpt'),
+    'The advanced model picker did not expose the local ChatGPT account source'
   )
   await control.command('press', 'body', { key: 'Escape' })
   await control.command('waitFor', modelSelector, {

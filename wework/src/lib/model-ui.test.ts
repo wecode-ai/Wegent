@@ -201,11 +201,67 @@ describe('model-ui', () => {
       'gpt',
     ])
     expect(groups.map(group => group.config.label)).toEqual([
-      '我的CodeX',
+      '本机 ChatGPT 账户',
       'wecode openai',
       '自定义模型',
       'GPT',
     ])
+  })
+
+  test('matches the ChatGPT picker order for official models and preserves provider order', () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'gpt-6-luna',
+        type: 'runtime',
+        displayName: 'GPT-6-Luna',
+        config: {
+          ui: { family: 'codex-official', modelLabel: 'GPT-6-Luna' },
+        },
+      },
+      {
+        name: 'gpt-6.1-sol',
+        type: 'runtime',
+        displayName: 'GPT-6.1-Sol',
+        config: {
+          ui: { family: 'codex-official', modelLabel: 'GPT-6.1-Sol' },
+        },
+      },
+      {
+        name: 'provider-zeta',
+        type: 'runtime',
+        displayName: 'Provider Zeta',
+        config: {
+          ui: {
+            family: 'codex-provider:custom',
+            familyLabel: 'Custom',
+            modelLabel: 'Provider Zeta',
+          },
+        },
+      },
+      {
+        name: 'provider-alpha',
+        type: 'runtime',
+        displayName: 'Provider Alpha',
+        config: {
+          ui: {
+            family: 'codex-provider:custom',
+            familyLabel: 'Custom',
+            modelLabel: 'Provider Alpha',
+          },
+        },
+      },
+    ]
+
+    const groups = groupModelsByFamily(models)
+
+    expect(
+      groups.find(group => group.config.id === 'codex-official')?.models.map(model => model.name)
+    ).toEqual(['gpt-6.1-sol', 'gpt-6-luna'])
+    expect(
+      groups
+        .find(group => group.config.id === 'codex-provider:custom')
+        ?.models.map(model => model.name)
+    ).toEqual(['provider-zeta', 'provider-alpha'])
   })
 
   test('uses custom group labels for local interface model families', () => {
@@ -648,6 +704,27 @@ describe('model-ui', () => {
     }
 
     expect(getControlsForModel(model).map(control => control.id)).not.toContain('reasoning')
+  })
+
+  test('creates a reasoning control for a cloud family that advertises efforts', () => {
+    const model: UnifiedModel = {
+      name: 'cloud-reasoning-model',
+      type: 'public',
+      provider: 'cloud',
+      displayName: 'Cloud Reasoning',
+      config: {
+        ui: {
+          family: 'cloud-custom',
+          reasoningEfforts: ['minimal', 'high', 'xhigh'],
+          defaultReasoningEffort: 'high',
+        },
+      },
+    }
+
+    expect(getControlsForModel(model).find(control => control.id === 'reasoning')).toMatchObject({
+      defaultValue: 'high',
+      options: [{ value: 'minimal' }, { value: 'high' }, { value: 'xhigh' }],
+    })
   })
 
   test('keeps same-id API and Codex Auth models as distinct selections', () => {

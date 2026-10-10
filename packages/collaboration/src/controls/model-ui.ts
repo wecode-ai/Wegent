@@ -1,8 +1,8 @@
 import {
   builtinCodexCatalogModel,
   codexCatalogModelIdForUpstream,
-} from '@wegent/chat-core/codex-catalog'
-import { getCloudModelUpstreamApiFormat } from '@wegent/chat-core/model-execution'
+} from "@wegent/chat-core/codex-catalog";
+import { getCloudModelUpstreamApiFormat } from "@wegent/chat-core/model-execution";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 
 export interface ModelControlOption {
@@ -68,10 +68,10 @@ const REGION_LABELS: Record<string, string> = {
 };
 
 const FAMILY_ORDER = [
-  "claude",
   "codex-official",
   "codex-provider",
   "model-interface",
+  "claude",
   "gpt",
   "gemini",
   "kimi",
@@ -122,58 +122,56 @@ const MODEL_INTERFACE_REASONING_OPTIONS: Record<
   },
 };
 
-const REASONING_CONTROL: ModelControlConfig = {
-  id: 'reasoning',
-  label: 'Reasoning',
-  labelKey: 'workbench.reasoning_level',
-  defaultValue: 'high',
-  placement: 'aboveModels',
-  scope: 'family',
-  includeInLabel: 'never',
-  options: [
-    {
-      value: 'low',
-      label: 'Low',
-      labelKey: 'workbench.intelligence_low',
-      order: 10,
-    },
-    {
-      value: 'medium',
-      label: 'Medium',
-      labelKey: 'workbench.intelligence_medium',
-      order: 20,
-    },
-    {
-      value: 'high',
-      label: 'High',
-      labelKey: 'workbench.intelligence_high',
-      order: 30,
-    },
-    {
-      value: 'xhigh',
-      label: 'Extra High',
-      labelKey: 'workbench.intelligence_ultra',
-      order: 40,
-    },
-    {
-      value: 'max',
-      label: 'Maximum',
-      labelKey: 'workbench.intelligence_max',
-      order: 50,
-    },
-    {
-      value: 'ultra',
-      label: 'Extra High',
-      labelKey: 'workbench.intelligence_ultra',
-      description: 'Faster, uses more quota',
-      descriptionKey: 'workbench.reasoning_ultra_description',
-      order: 60,
-    },
-  ],
-}
-
 const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
-  REASONING_CONTROL,
+  {
+    id: "reasoning",
+    label: "Reasoning",
+    labelKey: "workbench.reasoning_level",
+    defaultValue: "high",
+    placement: "aboveModels",
+    scope: "family",
+    includeInLabel: "never",
+    options: [
+      {
+        value: "low",
+        label: "Low",
+        labelKey: "workbench.intelligence_low",
+        order: 10,
+      },
+      {
+        value: "medium",
+        label: "Medium",
+        labelKey: "workbench.intelligence_medium",
+        order: 20,
+      },
+      {
+        value: "high",
+        label: "High",
+        labelKey: "workbench.intelligence_high",
+        order: 30,
+      },
+      {
+        value: "xhigh",
+        label: "Extra High",
+        labelKey: "workbench.intelligence_ultra",
+        order: 40,
+      },
+      {
+        value: "max",
+        label: "Maximum",
+        labelKey: "workbench.intelligence_max",
+        order: 50,
+      },
+      {
+        value: "ultra",
+        label: "Extra High",
+        labelKey: "workbench.intelligence_ultra",
+        description: "Faster, uses more quota",
+        descriptionKey: "workbench.reasoning_ultra_description",
+        order: 60,
+      },
+    ],
+  },
   {
     id: "collaborationMode",
     label: "Mode",
@@ -235,7 +233,7 @@ export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
   { id: "claude", label: "Claude", order: 10, controls: [] },
   {
     id: "codex-official",
-    label: "我的CodeX",
+    label: "本机 ChatGPT 账户",
     order: 20,
     controls: OPENAI_RESPONSES_CONTROLS,
   },
@@ -271,6 +269,17 @@ function getConfigUi(model: UnifiedModel): Record<string, unknown> {
   return ui && typeof ui === "object" && !Array.isArray(ui)
     ? (ui as Record<string, unknown>)
     : {};
+}
+
+export function isModelPickerDefault(model: UnifiedModel | null): boolean {
+  if (!model) return false;
+  const ui = getConfigUi(model);
+  return (
+    model.config?.codexIsDefault === true ||
+    model.config?.modelPickerDefault === true ||
+    ui.defaultModel === true ||
+    ui.isDefault === true
+  );
 }
 
 export function getWeworkModelKind(model: UnifiedModel): string {
@@ -492,90 +501,84 @@ function modelInterfaceReasoningOptions(
 }
 
 export interface CatalogReasoningLevels {
-  efforts: string[]
-  defaultEffort?: string
+  efforts: string[];
+  defaultEffort?: string;
 }
 
-function rawConfigString(config: Record<string, unknown> | null | undefined, key: string): string {
-  const value = config?.[key]
-  return typeof value === 'string' ? value.trim() : ''
+function rawConfigString(
+  config: Record<string, unknown> | null | undefined,
+  key: string,
+): string {
+  const value = config?.[key];
+  return typeof value === "string" ? value.trim() : "";
 }
 
-/**
- * Resolve the built-in Codex catalog id for a model.
- *
- * Cloud models usually only identify their upstream through `modelId`, and the
- * runtime already resolves that identity into a catalog id before sending the
- * task to the executor. UI capabilities must use the same resolution so the
- * picker and the executor agree on the model's reasoning levels.
- */
 export function resolveCodexCatalogModelId(model: UnifiedModel): string | null {
   const explicit =
-    rawConfigString(model.config, 'codex_catalog_model_id') ||
-    rawConfigString(model.config, 'codexCatalogModelId')
-  if (explicit) return explicit
+    rawConfigString(model.config, "codex_catalog_model_id") ||
+    rawConfigString(model.config, "codexCatalogModelId");
+  if (explicit) return explicit;
 
   const upstreamCandidates = [
     model.modelId,
-    rawConfigString(model.config, 'model_id'),
-    rawConfigString(model.config, 'modelId'),
-    rawConfigString(model.config, 'model'),
-  ]
-  const candidates = upstreamCandidates.some(candidate => candidate?.trim())
+    rawConfigString(model.config, "model_id"),
+    rawConfigString(model.config, "modelId"),
+    rawConfigString(model.config, "model"),
+  ];
+  const candidates = upstreamCandidates.some((candidate) => candidate?.trim())
     ? upstreamCandidates
-    : [model.name]
-  return codexCatalogModelIdForUpstream(candidates, getCloudModelUpstreamApiFormat(model) ?? '')
+    : [model.name];
+  return codexCatalogModelIdForUpstream(
+    candidates,
+    getCloudModelUpstreamApiFormat(model) ?? "",
+  );
 }
 
 function catalogReasoningLevels(
-  catalog: Record<string, unknown> | null
+  catalog: Record<string, unknown> | null,
 ): CatalogReasoningLevels | null {
-  if (!catalog) return null
-  const rawLevels = catalog.supported_reasoning_levels
-  if (!Array.isArray(rawLevels)) return null
+  if (!catalog) return null;
+  const rawLevels = catalog.supported_reasoning_levels;
+  if (!Array.isArray(rawLevels)) return null;
   const efforts = Array.from(
     new Set(
       rawLevels
-        .flatMap(level => {
-          if (typeof level === 'string') return [level]
-          if (!level || typeof level !== 'object' || Array.isArray(level)) {
-            return []
+        .flatMap((level) => {
+          if (typeof level === "string") return [level];
+          if (!level || typeof level !== "object" || Array.isArray(level)) {
+            return [];
           }
-          const effort = (level as Record<string, unknown>).effort
-          return typeof effort === 'string' ? [effort] : []
+          const effort = (level as Record<string, unknown>).effort;
+          return typeof effort === "string" ? [effort] : [];
         })
-        .map(effort => normalizeModelOptionValue('reasoning', effort) ?? effort)
-        .filter(Boolean)
-    )
-  )
-  if (efforts.length === 0) return null
-  const defaultLevel = catalog.default_reasoning_level
+        .map(
+          (effort) => normalizeModelOptionValue("reasoning", effort) ?? effort,
+        )
+        .filter(Boolean),
+    ),
+  );
+  if (efforts.length === 0) return null;
+  const defaultLevel = catalog.default_reasoning_level;
   return {
     efforts,
     defaultEffort:
-      typeof defaultLevel === 'string'
-        ? normalizeModelOptionValue('reasoning', defaultLevel)
+      typeof defaultLevel === "string"
+        ? normalizeModelOptionValue("reasoning", defaultLevel)
         : undefined,
-  }
+  };
 }
 
-/**
- * Reasoning levels declared by the built-in Codex catalog of a cloud model.
- *
- * Cloud models carry no `ui.reasoningEfforts`; their reasoning capability is
- * whatever the catalog the runtime sends to the executor declares. Local
- * models derive reasoning from their own `model-interface` metadata, so this
- * intentionally ignores them.
- */
-export function resolveModelCatalogReasoning(model: UnifiedModel): CatalogReasoningLevels | null {
-  if (model.provider === 'local') return null
-  const catalogId = resolveCodexCatalogModelId(model)
-  if (!catalogId) return null
-  return catalogReasoningLevels(builtinCodexCatalogModel(catalogId))
+export function resolveModelCatalogReasoning(
+  model: UnifiedModel,
+): CatalogReasoningLevels | null {
+  if (model.provider === "local") return null;
+  const catalogId = resolveCodexCatalogModelId(model);
+  if (!catalogId) return null;
+  return catalogReasoningLevels(builtinCodexCatalogModel(catalogId));
 }
 
 export function hasCatalogReasoningEfforts(model: UnifiedModel): boolean {
-  return resolveModelCatalogReasoning(model) !== null
+  return resolveModelCatalogReasoning(model) !== null;
 }
 
 export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
@@ -607,82 +610,108 @@ export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
   };
 }
 
-export function getControlsForModel(model: UnifiedModel | null): ModelControlConfig[] {
-  if (!model) return []
-  const metadata = getModelUiMetadata(model)
-  const familyConfig = getFamilyConfig(metadata.family, metadata.familyLabel)
-  const controls = familyConfig.controls
-    .filter(control => {
-      if ((control.scope ?? 'family') === 'family') return true
-      return metadata.supportedControls.has(control.id)
+export function getControlsForModel(
+  model: UnifiedModel | null,
+): ModelControlConfig[] {
+  if (!model) return [];
+  const metadata = getModelUiMetadata(model);
+  const familyConfig = getFamilyConfig(metadata.family, metadata.familyLabel);
+  const familyControls =
+    metadata.reasoningEffortsDeclared &&
+    !familyConfig.controls.some((control) => control.id === "reasoning")
+      ? [OPENAI_RESPONSES_CONTROLS[0], ...familyConfig.controls]
+      : familyConfig.controls;
+  const controls = familyControls
+    .filter((control) => {
+      if ((control.scope ?? "family") === "family") return true;
+      return metadata.supportedControls.has(control.id);
     })
-    .flatMap(control => {
-      if (control.id !== 'reasoning') return [control]
-      if (isModelInterfaceModel(model) && metadata.reasoningEffortsDeclared) {
-        const options = modelInterfaceReasoningOptions(metadata.supportedReasoningEfforts)
-        if (options.length === 0) return []
-        const configuredDefault = metadata.defaultReasoningEffort
+    .flatMap((control) => {
+      if (control.id !== "reasoning") return [control];
+      if (metadata.reasoningEffortsDeclared) {
+        const options = isModelInterfaceModel(model)
+          ? modelInterfaceReasoningOptions(metadata.supportedReasoningEfforts)
+          : metadata.supportedReasoningEfforts.map((value, index) => {
+              const standardOption = control.options.find(
+                (option) => option.value === value,
+              );
+              return standardOption
+                ? { ...standardOption, order: (index + 1) * 10 }
+                : modelInterfaceReasoningOptions([value])[0];
+            });
+        if (options.length === 0) return [];
+        const configuredDefault = metadata.defaultReasoningEffort;
         const defaultValue =
-          configuredDefault && options.some(option => option.value === configuredDefault)
+          configuredDefault &&
+          options.some((option) => option.value === configuredDefault)
             ? configuredDefault
-            : options.some(option => option.value === control.defaultValue)
+            : options.some((option) => option.value === control.defaultValue)
               ? control.defaultValue
-              : options[0].value
+              : options[0].value;
         return [
           {
             ...control,
             defaultValue,
             options,
           },
-        ]
+        ];
       }
 
-      const supportedValues = new Set(metadata.supportedReasoningEfforts)
-      const options = control.options.filter(option => {
-        if (supportedValues.size > 0) return supportedValues.has(option.value)
-        return !['max', 'ultra'].includes(option.value)
-      })
-      const configuredDefault = metadata.defaultReasoningEffort
-      const defaultValue = options.some(option => option.value === configuredDefault)
+      const supportedValues = new Set(metadata.supportedReasoningEfforts);
+      const options = control.options.filter((option) => {
+        if (supportedValues.size > 0) return supportedValues.has(option.value);
+        return !["max", "ultra"].includes(option.value);
+      });
+      const configuredDefault = metadata.defaultReasoningEffort;
+      const defaultValue = options.some(
+        (option) => option.value === configuredDefault,
+      )
         ? configuredDefault
-        : options.some(option => option.value === control.defaultValue)
+        : options.some((option) => option.value === control.defaultValue)
           ? control.defaultValue
-          : options[0]?.value
+          : options[0]?.value;
       return [
         {
           ...control,
           defaultValue: defaultValue ?? control.defaultValue,
           options,
         },
-      ]
-    })
+      ];
+    });
 
-  // Explicit capabilities, including an empty list, take precedence over the catalog.
-  if (metadata.reasoningEffortsDeclared) return controls
+  if (metadata.reasoningEffortsDeclared) return controls;
 
-  // Apply the cloud catalog to both existing family controls and new controls.
-  const existingReasoning = controls.find(control => control.id === 'reasoning')
-  const reasoningControl = existingReasoning ?? REASONING_CONTROL
-  const catalogReasoning = resolveModelCatalogReasoning(model)
-  if (!catalogReasoning) return controls
-  const catalogOptions = modelInterfaceReasoningOptions(catalogReasoning.efforts)
-  if (catalogOptions.length === 0) return controls
+  const existingReasoning = controls.find(
+    (control) => control.id === "reasoning",
+  );
+  const reasoningControl = existingReasoning ?? OPENAI_RESPONSES_CONTROLS[0];
+  const catalogReasoning = resolveModelCatalogReasoning(model);
+  if (!catalogReasoning) return controls;
+  const catalogOptions = modelInterfaceReasoningOptions(
+    catalogReasoning.efforts,
+  );
+  if (catalogOptions.length === 0) return controls;
   const catalogDefault =
     catalogReasoning.defaultEffort &&
-    catalogOptions.some(option => option.value === catalogReasoning.defaultEffort)
+    catalogOptions.some(
+      (option) => option.value === catalogReasoning.defaultEffort,
+    )
       ? catalogReasoning.defaultEffort
-      : catalogOptions.some(option => option.value === reasoningControl.defaultValue)
+      : catalogOptions.some(
+            (option) => option.value === reasoningControl.defaultValue,
+          )
         ? reasoningControl.defaultValue
-        : catalogOptions[0].value
-
+        : catalogOptions[0].value;
   const catalogControl = {
     ...reasoningControl,
     defaultValue: catalogDefault,
     options: catalogOptions,
-  }
+  };
   return existingReasoning
-    ? controls.map(control => (control.id === 'reasoning' ? catalogControl : control))
-    : [...controls, catalogControl]
+    ? controls.map((control) =>
+        control.id === "reasoning" ? catalogControl : control,
+      )
+    : [...controls, catalogControl];
 }
 
 export function getModelDisplayLabel(
@@ -874,6 +903,29 @@ function compareVersionDesc(leftLabel: string, rightLabel: string): number {
   return 0;
 }
 
+function codexVariantOrder(label: string): number {
+  const normalized = label.toLowerCase();
+  if (/\bastra\b/.test(normalized)) return 0;
+  if (/\bsol\b/.test(normalized)) return 1;
+  if (/\bterra\b/.test(normalized)) return 2;
+  if (/\bluna\b/.test(normalized)) return 3;
+  return 4;
+}
+
+function compareCodexPickerModels(
+  leftModel: UnifiedModel,
+  rightModel: UnifiedModel,
+): number {
+  const left = getModelUiMetadata(leftModel);
+  const right = getModelUiMetadata(rightModel);
+  return (
+    compareVersionDesc(left.modelLabel, right.modelLabel) ||
+    codexVariantOrder(left.modelLabel) - codexVariantOrder(right.modelLabel) ||
+    left.sortOrder - right.sortOrder ||
+    left.modelLabel.localeCompare(right.modelLabel)
+  );
+}
+
 export function groupModelsByFamily(models: UnifiedModel[]) {
   const groups = new Map<
     string,
@@ -893,16 +945,21 @@ export function groupModelsByFamily(models: UnifiedModel[]) {
   return [...groups.entries()]
     .map(([familyId, group]) => ({
       config: getFamilyConfig(familyId, group.familyLabel),
-      models: [...group.models].sort((a, b) => {
-        const left = getModelUiMetadata(a);
-        const right = getModelUiMetadata(b);
-        return (
-          regionPriority(left.region) - regionPriority(right.region) ||
-          compareVersionDesc(left.modelLabel, right.modelLabel) ||
-          left.sortOrder - right.sortOrder ||
-          left.modelLabel.localeCompare(right.modelLabel)
-        );
-      }),
+      models:
+        familyId === "codex-official"
+          ? [...group.models].sort(compareCodexPickerModels)
+          : familyId.startsWith("codex-provider:")
+            ? group.models
+            : [...group.models].sort((a, b) => {
+                const left = getModelUiMetadata(a);
+                const right = getModelUiMetadata(b);
+                return (
+                  regionPriority(left.region) - regionPriority(right.region) ||
+                  compareVersionDesc(left.modelLabel, right.modelLabel) ||
+                  left.sortOrder - right.sortOrder ||
+                  left.modelLabel.localeCompare(right.modelLabel)
+                );
+              }),
     }))
     .sort((a, b) => {
       const normalizedLeft = familyOrderValue(a.config.id, a.config.order);
