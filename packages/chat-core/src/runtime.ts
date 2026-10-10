@@ -339,6 +339,11 @@ export interface RequestUserInputPayload {
   itemId?: string;
   interactionKind?: string;
   interaction_kind?: string;
+  mode?: "url" | "form";
+  url?: string;
+  elicitationId?: string;
+  serverName?: string;
+  message?: string;
   approvalKind?: string;
   approval_kind?: string;
   /** `async` marks a Codex question answered by the next user message. */

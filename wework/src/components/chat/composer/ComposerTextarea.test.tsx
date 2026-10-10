@@ -194,6 +194,44 @@ describe('ComposerTextarea', () => {
     delete window.__WEWORK_DSH_EXTENSIONS__
   })
 
+  test('allows slash selection of an installed GitHub package pending authorization', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const github = {
+      ...GITHUB_PLUGIN,
+      id: 'plugin:github',
+      source: 'installed-plugin',
+      isAccessible: false,
+      skillPath: 'plugin://github@openai-curated-remote',
+    }
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          onListLocalApps={async () => [github]}
+        />
+      )
+    }
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/github'
+      editor.focus()
+    })
+    const option = await screen.findByTestId('slash-command-option-app-plugin-github')
+    expect(option).toBeEnabled()
+    expect(option).toHaveTextContent('待授权')
+    fireEvent.click(option)
+    await waitFor(() =>
+      expect(editor.value).toBe('[$GitHub](plugin://github@openai-curated-remote) ')
+    )
+    expect(github.isAccessible).toBe(false)
+  })
+
   test('inserts a picker reference only into its own editor when two drawers are mounted', async () => {
     const left = createRef<ComposerTextareaHandle>()
     const right = createRef<ComposerTextareaHandle>()

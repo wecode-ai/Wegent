@@ -265,7 +265,7 @@ function LocalProjectEditDialogContent({
     setError(null)
     try {
       if (!item.installed) {
-        const installed = await pluginApi.installAvailablePlugin(item.id, marketplaceId)
+        const installed = await pluginApi.installAvailablePlugin(item)
         const labels =
           installed.metadata.labels && typeof installed.metadata.labels === 'object'
             ? (installed.metadata.labels as Record<string, unknown>)

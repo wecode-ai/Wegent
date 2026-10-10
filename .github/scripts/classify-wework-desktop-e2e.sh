@@ -85,6 +85,7 @@ plugin_segments=(
   core-dsh-ui-plugin-composition
   plugin-marketplace-lifecycle
   plugin-lifecycle
+  plugin-composer-network-isolation
   skill-mention-rendering
   sites-plugin-auto-install
 )
@@ -122,6 +123,8 @@ cloud_segments=(
   project-automation
   plugin-auto-update
   plugin-account-auth
+  plugin-uninstall-resilience
+  plugin-composer-long-list
   plugin-workspace-publication
 )
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
@@ -141,7 +144,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing,cloud-model-recovery
-  plugin-account-auth,cloud-device-lifecycle
+  plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
@@ -357,6 +360,8 @@ classify_wework_path() {
       wework/src/api/cloud/pluginAccountConnections* | \
       wework/e2e/desktop/modules/dws-account-auth.mjs | \
       wework/e2e/desktop/modules/account-auth-command.mjs | \
+      wework/e2e/desktop/modules/github-manage-connection.mjs | \
+      wework/e2e/desktop/modules/plugin-conversation-auth.mjs | \
       wework/e2e/desktop/fixtures/dws-account-auth.py | \
       wework/e2e/desktop/fixtures/dws-store/* | \
       wework/e2e/desktop/scenarios/plugin-account-auth.scenario.mjs)
@@ -404,7 +409,8 @@ classify_wework_path() {
       desktop_runner_changed=true
       return
       ;;
-    wework/e2e/utils/mcp-elicitation-server.mjs)
+    wework/e2e/utils/mcp-elicitation-server.mjs | \
+      wework/scripts/mcp-elicitation-server.test.mjs)
       select_target "core:permission-modes"
       return
       ;;
@@ -427,9 +433,15 @@ classify_wework_path() {
 
     # External content import crosses the settings UI and local Executor IPC.
     wework/src/api/local/codexPlugins.ts | \
+      wework/src/api/local/codexPlugins.install.test.ts | \
+      wework/src/api/local/codexPluginInstallation.ts | \
       wework/src/components/settings/ExternalContentImportDialog.tsx | \
       wework/e2e/desktop/scenarios/external-content-import.scenario.mjs)
       select_target "core:external-content-import"
+      if [[ "$path" == wework/src/api/local/codexPlugin* ]]; then
+        select_target "plugins:plugin-lifecycle"
+        select_target "core:project-ai-settings"
+      fi
       return
       ;;
 
@@ -475,6 +487,27 @@ classify_wework_path() {
       select_target "core:plugin-development"
       select_target "core:project-ai-settings"
       select_target "plugins:plugin-lifecycle"
+      return
+      ;;
+
+    # Conversation authorization requires real managed membership and local auth.
+    wework/src/features/plugins/localConnectorAuthGate* | \
+      wework/src/features/plugins/codexConnectorAuthorization* | \
+      wework/src/components/plugins/GithubCliAuthDialog* | \
+      wework/src/components/plugins/PluginConnectorSection* | \
+      wework/src/components/plugins/LocalConnectorAuthDialog* | \
+      wework/src/components/plugins/PluginsWorkspace* | \
+      wework/src/components/layout/DesktopEmptyTaskLauncher* | \
+      wework/src/features/plugins/useLocalConnectorAuthGate* | \
+      wework/src/features/plugins/prefetchLocalConnectorAuth* | \
+      wework/src/components/chat/ConnectorAuthCard* | \
+      wework/src/features/plugins/useLocalConnectorAuthSession* | \
+      wework/src/features/plugins/githubCliAuthGate* | \
+      wework/src/api/local/githubCli* | \
+      wework/src/api/local/localConnectorAuth*)
+      select_target "cloud:plugin-account-auth"
+      select_target "plugins:plugin-lifecycle"
+      select_target "core:project-ai-settings"
       return
       ;;
 
@@ -954,10 +987,69 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    packages/collaboration/src/conversation/McpUrlAuthorizationCard* | \
+      packages/collaboration/src/conversation/RequestUserInputCard* | \
+      wework/src/components/chat/RequestUserInputCard*)
+      select_target "core:permission-modes"
+      ;;
+  esac
+  case "$path" in
+    backend/app/api/endpoints/installed_plugins.py | \
+      backend/app/api/ws/device_namespace.py | \
+      backend/app/services/device/plugin_removal_sync.py | \
+      backend/app/services/plugin_device_installation_service.py | \
+      backend/app/services/plugin_marketplace_service.py | \
+      wework/src/api/pluginUninstall* | wework/src/api/plugins.ts | \
+      wework/src/features/plugins/pluginInventory* | \
+      wework/src/features/plugins/pluginMarketplaceCache* | \
+      wework/src/components/plugins/PluginsWorkspace* | \
+      wework/src/components/plugins/PluginManagementWorkspace* | \
+      packages/chat-core/src/installed-plugin-merge.ts)
+      select_target "cloud:plugin-uninstall-resilience"
+      ;;
+  esac
+  case "$path" in
+    wework/src/features/plugins/useOpenAiPluginCatalog* | \
+      wework/src/features/plugins/remotePluginError* | \
+      wework/src/api/local/codexPlugins* | \
+      wework/e2e/desktop/modules/plugin-flows.mjs)
+      select_target "plugins:plugin-composer-network-isolation"
+      ;;
+  esac
+  case "$path" in
+    packages/collaboration/src/composer/PluginPickerMenu.tsx | \
+      wework/src/components/chat/composer/PluginPickerMenu* | \
+      wework/src/components/chat/composer/composerAppsSnapshot* | \
+      wework/src/components/plugins/PluginManagementWorkspace* | \
+      wework/src/features/plugins/pluginInventory*)
+      select_target "cloud:plugin-composer-long-list"
+      ;;
+    wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \
+      wework/scripts/plugin-fault-proxy.test.mjs | \
+      wework/e2e/desktop/modules/plugin-fault-proxy*)
+      select_target "cloud:plugin-uninstall-resilience"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-inventory-state.mjs)
+      select_target "cloud:plugin-composer-long-list"
+      return
+      ;;
+    wework/e2e/desktop/modules/plugin-regression-fixture.mjs)
+      select_target "cloud:plugin-uninstall-resilience"
+      select_target "cloud:plugin-composer-long-list"
+      return
+      ;;
+  esac
+
+  case "$path" in
     sdk/plugin-creator/* | sdk/plugin-auth/* | executor/src/local/plugin_creator.rs | \
       wework/src/components/plugins/PluginCreateWorkspace* | \
       wework/e2e/desktop/modules/plugin-flows.mjs)
       select_target "plugins:plugin-marketplace-lifecycle"
+      if [[ "$path" == wework/e2e/desktop/modules/plugin-flows.mjs ]]; then
+        select_target "plugins:plugin-lifecycle"
+      fi
       select_target "cloud:plugin-workspace-publication"
       ;;
     backend/app/schemas/issue_workflow.py | \

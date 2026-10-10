@@ -41,19 +41,27 @@ import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import {
-  getComposerApps,
-  publishComposerApps,
-  replaceComposerApps,
+  bindComposerAppsSource,
+  notifyComposerAppsListeners,
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
-import { overlayMarketplaceLogosOnComposerApps } from '@/features/plugins/composerPluginMetadata'
-import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
+import { mergeInstalledPlugins } from '@wegent/chat-core/installed-plugin-merge'
+import { publishPluginInvocationCatalog } from '@/features/plugins/pluginInvocationTelemetry'
+import {
+  loadPluginInventory,
+  selectComposerPluginApps,
+  writePluginInventory,
+  hydratePluginInventoryLogos,
+  samePluginInstallations,
+  pluginInventoryReadIsCurrent,
+} from '@/features/plugins/pluginInventory'
 import {
   getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
   subscribePluginMarketplaceCache,
+  type PluginMarketplaceCacheSnapshot,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import type {
@@ -316,7 +324,6 @@ export function WorkbenchProvider({
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
-  const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
   const localAppsInflightRef = useRef<Promise<LocalDeviceApp[]> | null>(null)
   const localAppsLoadGenerationRef = useRef(0)
   const localAppsRefreshTimerRef = useRef<number | null>(null)
@@ -2318,217 +2325,178 @@ export function WorkbenchProvider({
   const listLocalApps = useCallback(
     async (options?: { supersedeInstalledRequest?: boolean }) => {
       localAppsRequestedRef.current = true
-      const cached = localAppsCacheRef.current
-      if (cached && cached.expiresAt > Date.now()) {
-        return cached.apps
+      const cacheKey = pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
+      const projectSnapshot = (snapshot: PluginMarketplaceCacheSnapshot | null) => {
+        if (snapshot)
+          publishPluginInvocationCatalog(snapshot.deviceId, snapshot.installedPlugins, [])
+        const apps = snapshot
+          ? selectComposerPluginApps(snapshot, projectPluginNamesRef.current ?? undefined)
+          : []
+        notifyComposerAppsListeners()
+        return apps
       }
-      if (localAppsInflightRef.current) {
-        return localAppsInflightRef.current
-      }
+      const cached = getPluginMarketplaceCache(cacheKey)
+      if (localAppsInflightRef.current) return localAppsInflightRef.current
 
-      const loadGeneration = localAppsLoadGenerationRef.current
-      const visiblePluginKeys = projectPluginNamesRef.current
-        ? new Set(projectPluginNamesRef.current)
-        : undefined
-      const isCurrentLoad = () => loadGeneration === localAppsLoadGenerationRef.current
-      const publishCurrentComposerApps = (apps: LocalDeviceApp[]) => {
-        if (!isCurrentLoad()) return
-        replaceComposerApps(apps)
-      }
+      const generation = localAppsLoadGenerationRef.current
+      const isCurrent = () => generation === localAppsLoadGenerationRef.current
       const loadPromise = (async () => {
-        // Composer only needs installed membership on its warm path. Never await
-        // Codex app/list here — a remote directory failure can take about a minute
-        // and must not stall the rest of the plugin inventory.
-        const currentComposerDeviceId =
+        const deviceId =
           peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId?.trim() ||
           peekLocalCodexPluginsReadState()?.deviceId?.trim() ||
           (await ensureLocalExecutorStarted()).deviceId?.trim()
-        if (!currentComposerDeviceId)
-          throw new Error('Composer plugin inventory requires a device ID')
-
-        // Paint managed local packages directly from the on-disk capability
-        // manifest. Codex plugin/installed also refreshes ChatGPT membership, so
-        // it belongs in the detached enrichment pass with app/list.
-        const localInstalledSnapshot = listLocalInstalledPluginsFromDisk()
-        const cloudInstalledSnapshot = cloudConnection.isConnected
-          ? cloudPluginApi
-              .listInstalledPlugins(currentComposerDeviceId)
-              .then(response => response.items)
-          : Promise.resolve([] as InstalledPlugin[])
-        const composerPluginSources = (
-          codexApps: LocalDeviceApp[],
-          localInstalled: Promise<InstalledPlugin[]> = localInstalledSnapshot
-        ) => ({
-          deviceId: currentComposerDeviceId,
-          listCodexApps: async () => codexApps,
-          readLocalInstalledPlugins: async () => localInstalled,
-          listCloudInstalledPlugins: async () => cloudInstalledSnapshot,
-          readLocalInstalledPluginDetail: (plugin: InstalledPlugin) => {
-            const labels = plugin.metadata.labels
-            const id =
-              labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
-            return localPluginApi.readInstalledPluginForTrial(
-              typeof id === 'string' || typeof id === 'number' ? id : String(plugin.metadata.name)
-            )
-          },
-        })
-
-        const marketplaceCache = getPluginMarketplaceCache(
-          pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
-        )
-        const marketplaceItems = marketplaceCache?.marketplaceItems ?? []
-
-        // Installed membership is the primary composer inventory. Paint it before
-        // starting the remote ChatGPT app directory so a slow or failed app/list
-        // cannot hide local, enterprise, or cloud-managed plugins.
-        let apps = await loadComposerPluginApps(composerPluginSources([]), {
-          marketplaceItems,
-          visiblePluginKeys,
-        })
-        publishCurrentComposerApps(apps)
-
-        if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
-          try {
-            const installedConnectors = await listWegentInstalledConnectorApps(
-              cloudConnection.apiBaseUrl,
-              cloudConnection.token
-            )
-            const connectedApps = installedConnectors.apps.filter(
-              app => app.enabled && app.callable
-            )
-            const synced = await requestLocalExecutor<{
-              apps: Array<{ slug: string; skillPath: string }>
-            }>('runtime.connectors.apps.sync', {
-              apps: connectedApps.map(app => ({
-                slug: app.slug,
-                name: app.runtime_name ?? app.slug,
-                description: app.description ?? '',
-                tools: app.tool_summaries ?? [],
-              })),
-            })
-            const skillPathBySlug = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
-            // Sync every connected connector to MCP; only surface non-system ones in
-            // the composer plugin picker (Sites / Mini Program enter via Applications).
-            const connectorApps: LocalDeviceApp[] = connectedApps
-              .filter(app => !isSystemApplicationConnectorSlug(app.slug))
-              .map(app => ({
-                id: `wegent:${app.slug}`,
-                name: app.runtime_name ?? app.slug,
-                description: app.description ?? '',
-                logoUrl: app.icon_url ?? null,
-                isAccessible: true,
-                isEnabled: true,
-                pluginDisplayNames: ['Wegent Cloud'],
-                source: 'wegent-connector',
-                skillPath: skillPathBySlug.get(app.slug) ?? null,
-              }))
-            const existingIds = new Set(apps.map(app => app.id))
-            apps = [...apps, ...connectorApps.filter(app => !existingIds.has(app.id))]
-            publishCurrentComposerApps(apps)
-          } catch (error) {
-            console.warn('[Wework] Failed to load Wegent connector apps.', error)
-          }
-        }
-
-        // Best-effort package logo hydration after the picker is already usable.
-        if (isCurrentLoad()) {
-          void loadComposerPluginApps(
-            {
-              ...composerPluginSources([]),
-              // Reuse the warm snapshot; logo hydration must not issue another app/list.
-              listCodexApps: async () => apps,
-            },
-            {
-              enrichRelativeLogos: true,
-              marketplaceItems,
-              visiblePluginKeys,
-            }
+        if (!deviceId) throw new Error('Composer plugin inventory requires a device ID')
+        if (!isCurrent()) return []
+        const hasFreshInventory =
+          !options?.supersedeInstalledRequest &&
+          cached?.deviceId === deviceId &&
+          (cached.installedPluginsFetchedAt ?? 0) + LOCAL_SKILLS_CACHE_TTL_MS > Date.now() &&
+          [...(projectPluginNamesRef.current ?? [])].every(name =>
+            cached.installedPlugins.some(plugin => plugin.spec.source.pluginKey === name)
           )
-            .then(enriched => {
-              if (!isCurrentLoad()) return
-              const byId = new Map(enriched.map(app => [app.id, app]))
-              const merged = getComposerApps().map(app => byId.get(app.id) ?? app)
-              replaceComposerApps(merged)
-              localAppsCacheRef.current = {
-                expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
-                apps: merged,
-              }
-            })
-            .catch(error => {
-              console.warn('[Wework] Failed to enrich composer plugin logos.', error)
-            })
-        }
+        const cloudInstalled =
+          !hasFreshInventory && cloudConnection.isConnected
+            ? cloudPluginApi.listInstalledPlugins(deviceId).then(response => response.items)
+            : Promise.resolve([] as InstalledPlugin[])
+        // Disk membership is cheap and can change outside this renderer (ZIP
+        // import, CLI, restart). Presentation freshness never replaces this read.
+        const snapshot = await loadPluginInventory({
+          cacheKey,
+          deviceId,
+          readLocalInstalledPlugins: listLocalInstalledPluginsFromDisk,
+          listCloudInstalledPlugins: () => cloudInstalled,
+          isCurrent,
+          partial: true,
+          cloudMembershipAuthoritative: cloudConnection.isConnected,
+        })
+        if (!snapshot || !isCurrent()) return []
+        const apps = projectSnapshot(snapshot)
 
-        if (isCurrentLoad()) {
-          replaceComposerApps(apps)
-          localAppsCacheRef.current = {
-            expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
-            apps,
-          }
-        }
-
-        // Remote Codex apps only enrich installed membership (for example, by
-        // replacing a package row with its connector-backed app metadata). Keep
-        // this detached from the primary load and retain Wegent connector rows
-        // that may have arrived while app/list was in flight.
+        // Enrich the same domain cache asynchronously. Remote catalogs must not
+        // block locally installed plugins or overwrite a newer installation.
         window.setTimeout(() => {
-          if (!isCurrentLoad()) return
-          const remoteInstalled = localPluginApi
-            .listInstalledPlugins({
-              shareInflight: !options?.supersedeInstalledRequest,
-              requireComplete: true,
-            })
-            .then(response => response.items)
-          void Promise.all([
-            localPluginApi.listApps({ includeInaccessible: true }),
-            remoteInstalled,
-          ])
-            .then(([codexApps, installed]) =>
-              loadComposerPluginApps(composerPluginSources(codexApps, Promise.resolve(installed)), {
-                marketplaceItems,
-                visiblePluginKeys,
+          if (!isCurrent()) return
+          const installedAtStart = snapshot.installedPlugins
+          if (
+            options?.supersedeInstalledRequest ||
+            !snapshot.appsFetchedAt ||
+            snapshot.appsFetchedAt + LOCAL_SKILLS_CACHE_TTL_MS <= Date.now()
+          )
+            void localPluginApi
+              .listApps({ includeInaccessible: true })
+              .then(remoteApps => {
+                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
+                const current = getPluginMarketplaceCache(cacheKey)
+                if (!current || current.deviceId !== deviceId) return
+                writePluginInventory(cacheKey, deviceId, {
+                  apps: remoteApps,
+                })
               })
-            )
-            .then(codexComposerApps => {
-              if (!isCurrentLoad()) return
-              const currentApps = getComposerApps()
-              const currentById = new Map(currentApps.map(app => [app.id, app]))
-              const enrichedApps = codexComposerApps.map(app => {
-                const current = currentById.get(app.id)
-                if (!current) return app
-                return {
-                  ...current,
-                  ...app,
-                  logoUrl: app.logoUrl ?? current.logoUrl,
-                  logoUrlDark: app.logoUrlDark ?? current.logoUrlDark,
-                }
+              .catch(error => {
+                if (isCurrent())
+                  console.warn('[Wework] Failed to enrich composer plugins from Codex apps.', error)
               })
-              const existingIds = new Set(enrichedApps.map(app => app.id))
-              const connectorApps = currentApps.filter(
-                app => app.source === 'wegent-connector' && !existingIds.has(app.id)
+
+          if (!hasFreshInventory)
+            void Promise.all([
+              localPluginApi.listInstalledPlugins({
+                shareInflight: !options?.supersedeInstalledRequest,
+                requireComplete: true,
+              }),
+              cloudInstalled,
+            ])
+              .then(([local, cloud]) => {
+                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
+                const current = getPluginMarketplaceCache(cacheKey)
+                if (!current || current.deviceId !== deviceId) return
+                if (!samePluginInstallations(current.installedPlugins, installedAtStart)) return
+                writePluginInventory(cacheKey, deviceId, {
+                  installedPluginsFetchedAt: Date.now(),
+                  installedPlugins: mergeInstalledPlugins(
+                    cloud,
+                    local.items,
+                    deviceId,
+                    cloudConnection.isConnected
+                  ),
+                })
+              })
+              .catch(error => {
+                if (isCurrent())
+                  console.warn('[Wework] Failed to refresh complete plugin inventory.', error)
+              })
+
+          void hydratePluginInventoryLogos(
+            cacheKey,
+            snapshot,
+            plugin => {
+              const labels = plugin.metadata.labels
+              const id =
+                labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
+              return localPluginApi.readInstalledPluginForTrial(
+                typeof id === 'string' || typeof id === 'number' ? id : String(plugin.metadata.name)
               )
-              const merged = [...enrichedApps, ...connectorApps]
-              replaceComposerApps(merged)
-              localAppsCacheRef.current = {
-                expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
-                apps: merged,
-              }
-            })
-            .catch(error => {
-              if (!isCurrentLoad()) return
-              console.warn('[Wework] Failed to enrich composer plugins from Codex apps.', error)
-            })
+            },
+            isCurrent
+          ).catch(error => {
+            if (isCurrent()) console.warn('[Wework] Failed to enrich composer plugin logos.', error)
+          })
+
+          if (
+            cloudConnection.isConnected &&
+            cloudConnection.apiBaseUrl &&
+            cloudConnection.token &&
+            (options?.supersedeInstalledRequest ||
+              !snapshot.connectorAppsFetchedAt ||
+              snapshot.connectorAppsFetchedAt + LOCAL_SKILLS_CACHE_TTL_MS <= Date.now())
+          ) {
+            void listWegentInstalledConnectorApps(cloudConnection.apiBaseUrl, cloudConnection.token)
+              .then(async installedConnectors => {
+                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
+                const connected = installedConnectors.apps.filter(
+                  app => app.enabled && app.callable
+                )
+                const synced = await requestLocalExecutor<{
+                  apps: Array<{ slug: string; skillPath: string }>
+                }>('runtime.connectors.apps.sync', {
+                  apps: connected.map(app => ({
+                    slug: app.slug,
+                    name: app.runtime_name ?? app.slug,
+                    description: app.description ?? '',
+                    tools: app.tool_summaries ?? [],
+                  })),
+                })
+                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
+                const paths = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
+                if (getPluginMarketplaceCache(cacheKey)?.deviceId !== deviceId) return
+                writePluginInventory(cacheKey, deviceId, {
+                  connectorApps: connected
+                    .filter(app => !isSystemApplicationConnectorSlug(app.slug))
+                    .map(app => ({
+                      id: `wegent:${app.slug}`,
+                      name: app.runtime_name ?? app.slug,
+                      description: app.description ?? '',
+                      logoUrl: app.icon_url ?? null,
+                      isAccessible: true,
+                      isEnabled: true,
+                      pluginDisplayNames: ['Wegent Cloud'],
+                      source: 'wegent-connector',
+                      skillPath: paths.get(app.slug) ?? null,
+                    })),
+                })
+              })
+              .catch(error => {
+                if (isCurrent())
+                  console.warn('[Wework] Failed to load Wegent connector apps.', error)
+              })
+          }
         }, 0)
         return apps
       })()
-
       localAppsInflightRef.current = loadPromise
       try {
         return await loadPromise
       } finally {
-        if (localAppsInflightRef.current === loadPromise) {
-          localAppsInflightRef.current = null
-        }
+        if (localAppsInflightRef.current === loadPromise) localAppsInflightRef.current = null
       }
     },
     [
@@ -2540,43 +2508,54 @@ export function WorkbenchProvider({
     ]
   )
 
-  const previousProjectPluginNamesKeyRef = useRef(projectPluginNamesKey)
+  // The shared inventory owns membership, enablement, metadata and authorization.
+  // Project scope is a view projection and never mutates that shared snapshot.
   useEffect(() => {
-    if (previousProjectPluginNamesKeyRef.current === projectPluginNamesKey) return
-    previousProjectPluginNamesKeyRef.current = projectPluginNamesKey
-    const shouldRefreshApps = localAppsRequestedRef.current
-    if (localAppsRefreshTimerRef.current !== null) {
-      window.clearTimeout(localAppsRefreshTimerRef.current)
-      localAppsRefreshTimerRef.current = null
+    const cacheKey = pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
+    let previous: PluginMarketplaceCacheSnapshot | null | undefined
+    let projected: LocalDeviceApp[] = []
+    const unbind = bindComposerAppsSource(() => {
+      if (!localAppsRequestedRef.current) return projected
+      const snapshot = getPluginMarketplaceCache(cacheKey)
+      if (snapshot !== previous) {
+        previous = snapshot
+        projected = snapshot
+          ? selectComposerPluginApps(snapshot, projectPluginNamesRef.current ?? undefined)
+          : []
+      }
+      return projected
+    })
+    const unsubscribe = subscribePluginMarketplaceCache(snapshot => {
+      if (snapshot && snapshot.cacheKey !== cacheKey) return
+      if (snapshot) publishPluginInvocationCatalog(snapshot.deviceId, snapshot.installedPlugins, [])
+      notifyComposerAppsListeners()
+    })
+    return () => {
+      unsubscribe()
+      unbind()
     }
-    localAppsCacheRef.current = null
-    localAppsInflightRef.current = null
-    localAppsLoadGenerationRef.current += 1
-    if (!shouldRefreshApps) return
-    void listLocalApps({
-      supersedeInstalledRequest: true,
-    }).catch(error => console.error('[Wework] Failed to refresh composer plugins.', error))
-  }, [listLocalApps, projectPluginNamesKey])
+  }, [cloudConnection.apiBaseUrl, cloudConnection.token, projectPluginNamesKey])
+
+  useEffect(() => {
+    return () => {
+      localAppsLoadGenerationRef.current += 1
+      localAppsInflightRef.current = null
+    }
+  }, [cloudConnection.apiBaseUrl, cloudConnection.token, cloudConnection.isConnected])
 
   useEffect(() => {
     const clearLocalSkillCache = () => {
-      const shouldRefreshApps = localAppsRequestedRef.current
       localSkillsCacheRef.current.clear()
-      localAppsCacheRef.current = null
       localAppsLoadGenerationRef.current += 1
-      if (!shouldRefreshApps) return
-      // Keep the composer apps snapshot until a current-generation load replaces
-      // or clears it. Clearing here races install→notify and blanks the picker
-      // while the refresh is still in flight.
-      if (localAppsRefreshTimerRef.current !== null) {
+      localAppsInflightRef.current = null
+      if (!localAppsRequestedRef.current) return
+      if (localAppsRefreshTimerRef.current !== null)
         window.clearTimeout(localAppsRefreshTimerRef.current)
-      }
       localAppsRefreshTimerRef.current = window.setTimeout(() => {
         localAppsRefreshTimerRef.current = null
-        localAppsInflightRef.current = null
-        void listLocalApps({
-          supersedeInstalledRequest: true,
-        }).catch(error => console.error('[Wework] Failed to refresh composer plugins.', error))
+        void listLocalApps({ supersedeInstalledRequest: true }).catch(error =>
+          console.error('[Wework] Failed to refresh composer plugins.', error)
+        )
       }, LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS)
     }
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
@@ -2588,29 +2567,6 @@ export function WorkbenchProvider({
       }
     }
   }, [listLocalApps])
-
-  // Plugin market UI resolves package logos into the catalog cache; overlay those
-  // onto composer apps when the cache arrives after the warm path.
-  useEffect(() => {
-    const cacheKey = pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
-    return subscribePluginMarketplaceCache(snapshot => {
-      if (!snapshot || snapshot.cacheKey !== cacheKey) return
-      const current = getComposerApps()
-      if (current.length === 0) return
-      const overlayed = overlayMarketplaceLogosOnComposerApps(current, snapshot.marketplaceItems)
-      if (overlayed === current) return
-      const changed = overlayed.some(
-        (app, index) =>
-          app.logoUrl !== current[index]?.logoUrl || app.logoUrlDark !== current[index]?.logoUrlDark
-      )
-      if (!changed) return
-      publishComposerApps(overlayed)
-      const cached = localAppsCacheRef.current
-      if (cached) {
-        localAppsCacheRef.current = { ...cached, apps: overlayed }
-      }
-    })
-  }, [cloudConnection.apiBaseUrl, cloudConnection.token])
 
   const workspaceFileApi = useMemo(
     () => ({

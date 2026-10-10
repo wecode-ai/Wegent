@@ -60,6 +60,7 @@ pub async fn exchange(root: &Path, slug: &str, action: &str) -> Result<Option<Va
         &crate::local::capabilities::default_manifest_path(),
         root,
         slug,
+        action == "logout",
     )?
     else {
         return Ok(None);
@@ -84,7 +85,12 @@ pub async fn exchange(root: &Path, slug: &str, action: &str) -> Result<Option<Va
     }
 }
 
-fn installed_id_at(path: &Path, root: &Path, slug: &str) -> Result<Option<u64>, AuthError> {
+fn installed_id_at(
+    path: &Path,
+    root: &Path,
+    slug: &str,
+    revoking: bool,
+) -> Result<Option<u64>, AuthError> {
     let root = root
         .canonicalize()
         .map_err(|_| AuthError("plugin_auth_invalid_package"))?;
@@ -125,7 +131,7 @@ fn installed_id_at(path: &Path, root: &Path, slug: &str) -> Result<Option<u64>, 
         if entry["managed"] != true {
             return Ok(None);
         }
-        if entry["enabled"] != true || matched.is_some() {
+        if (!revoking && entry["enabled"] != true) || matched.is_some() {
             return Err(AuthError("plugin_auth_invalid_package"));
         }
         matched = Some(
@@ -185,9 +191,12 @@ mod tests {
             json!({"plugins":{"mail":entry}}).to_string(),
         )
         .unwrap();
-        assert_eq!(installed_id_at(&manifest_path, &root, "mail"), Ok(Some(42)));
         assert_eq!(
-            installed_id_at(&manifest_path, &runtime, "mail"),
+            installed_id_at(&manifest_path, &root, "mail", false),
+            Ok(Some(42))
+        );
+        assert_eq!(
+            installed_id_at(&manifest_path, &runtime, "mail", false),
             Ok(Some(42))
         );
         fs::write(
@@ -196,7 +205,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            installed_id_at(&manifest_path, &root, "mail"),
+            installed_id_at(&manifest_path, &root, "mail", false),
             Err(AuthError("plugin_auth_invalid_package"))
         );
     }
@@ -220,7 +229,7 @@ mod tests {
         let manifest = temp.path().join("manifest.json");
         std::os::unix::fs::symlink(actual, &manifest).unwrap();
         assert_eq!(
-            installed_id_at(&manifest, &root, "mail"),
+            installed_id_at(&manifest, &root, "mail", false),
             Err(AuthError("plugin_auth_invalid_package"))
         );
     }
@@ -288,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_target_requires_an_exact_enabled_installation_and_connector() {
+    fn managed_target_requires_exact_installation_and_only_revokes_disabled_packages() {
         let home = tempfile::tempdir().unwrap();
         let capabilities = home.path().join("capabilities");
         let root = capabilities.join("store/plugins/mail");
@@ -309,17 +318,21 @@ mod tests {
         };
         fs::write(capabilities.join("manifest.json"), manifest(true)).unwrap();
         assert_eq!(
-            installed_id_at(&capabilities.join("manifest.json"), &root, "mail"),
+            installed_id_at(&capabilities.join("manifest.json"), &root, "mail", false),
             Ok(Some(42))
         );
         assert_eq!(
-            installed_id_at(&capabilities.join("manifest.json"), &root, "legacy"),
+            installed_id_at(&capabilities.join("manifest.json"), &root, "legacy", false),
             Ok(None)
         );
         fs::write(capabilities.join("manifest.json"), manifest(false)).unwrap();
         assert_eq!(
-            installed_id_at(&capabilities.join("manifest.json"), &root, "mail"),
+            installed_id_at(&capabilities.join("manifest.json"), &root, "mail", false),
             Err(AuthError("plugin_auth_invalid_package"))
+        );
+        assert_eq!(
+            installed_id_at(&capabilities.join("manifest.json"), &root, "mail", true),
+            Ok(Some(42))
         );
     }
 }

@@ -286,6 +286,23 @@ impl<T: LocalBackendTransport> NativeAuthGateway<T> {
         if response["success"] != true {
             // Server/provider bodies are never forwarded into the model transcript.
             let code = match response["error"].as_str() {
+                Some("plugin_auth_device_not_registered") => "plugin_auth_device_not_registered",
+                Some("plugin_auth_stale_device_socket") => "plugin_auth_stale_device_socket",
+                Some("plugin_auth_local_device_required") => "plugin_auth_local_device_required",
+                Some("plugin_auth_owner_unavailable") => "plugin_auth_owner_unavailable",
+                Some("plugin_auth_plugin_not_found") => "plugin_auth_plugin_not_found",
+                Some("plugin_auth_plugin_disabled") => "plugin_auth_plugin_disabled",
+                Some("plugin_auth_not_supported") => "plugin_auth_not_supported",
+                Some("plugin_auth_definition_changed") => "plugin_auth_definition_changed",
+                Some("plugin_auth_invalid_request") => "plugin_auth_invalid_request",
+                Some("plugin_auth_invalid_operation") => "plugin_auth_invalid_operation",
+                Some("plugin_auth_exchange_failed") => "plugin_auth_exchange_failed",
+                Some("plugin_auth_device_not_found") => "plugin_auth_device_not_found",
+                Some("plugin_auth_device_upgrade_required") => {
+                    "plugin_auth_device_upgrade_required"
+                }
+                Some("plugin_auth_connection_not_found") => "plugin_auth_connection_not_found",
+                Some("plugin_auth_disconnected") => "plugin_auth_disconnected",
                 Some("plugin_auth_device_not_granted") => "plugin_auth_device_not_granted",
                 Some("plugin_auth_refresh_required") => "plugin_auth_refresh_required",
                 Some("plugin_auth_refresh_in_progress") => "plugin_auth_refresh_in_progress",
@@ -302,6 +319,10 @@ impl<T: LocalBackendTransport> NativeAuthGateway<T> {
                 Some("plugin_auth_keyring_unavailable") => "plugin_auth_keyring_unavailable",
                 _ => "plugin_auth_exchange_rejected",
             };
+            crate::logging::log_executor_event(
+                "plugin auth exchange rejected",
+                &[("operation", event.to_owned()), ("code", code.to_owned())],
+            );
             return Err(AuthError(code));
         }
         Ok(response)
@@ -408,5 +429,29 @@ mod tests {
         });
         let error = gateway.read(&connection()).await.err().unwrap();
         assert_eq!(error, AuthError("plugin_auth_exchange_rejected"));
+    }
+
+    #[tokio::test]
+    async fn local_lifecycle_preserves_safe_rejection_codes_without_provider_bodies() {
+        for code in [
+            "plugin_auth_device_not_registered",
+            "plugin_auth_stale_device_socket",
+            "plugin_auth_plugin_not_found",
+            "plugin_auth_plugin_disabled",
+            "plugin_auth_not_supported",
+            "plugin_auth_invalid_request",
+            "plugin_auth_exchange_failed",
+        ] {
+            let gateway = NativeAuthGateway::new(Transport {
+                response: json!([{"success":false,"error":code,"detail":"synthetic-secret"}]),
+                calls: Arc::new(Mutex::new(Vec::new())),
+            });
+            let error = gateway
+                .call("plugin.auth.local_lifecycle", json!({"action":"logout"}))
+                .await
+                .unwrap_err();
+            assert_eq!(error.0, code);
+            assert!(!error.0.contains("synthetic-secret"));
+        }
     }
 }

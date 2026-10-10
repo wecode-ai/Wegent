@@ -35,6 +35,12 @@ When Wework is connected to Wegent cloud, the plugin page also displays the Back
 
 Cloud synchronization commits the package replacement, both runtime caches, registries, and configuration files as one local transaction. Extraction, parsing, or write failures restore the pre-sync state so an update cannot leave a new package paired with old runtime metadata, and removal cannot stop halfway. Connector `localAuth` remains a separate Wework step after package synchronization and is not bypassed by local materialization.
 
+### Inventory Consistency and Retries
+
+The marketplace, management view, and chat picker share one plugin inventory. Memory retains details; durable snapshots retain only fields needed for presentation and recovery, including default prompts, and omit long descriptions and screenshots. Uninstall matches marketplace and plugin identity, never just a shared display name across marketplaces.
+
+When Codex accepts installation before `plugin/installed` confirms membership, the receipt keeps its original `acceptedAt` and bridges the discovery race for at most five minutes. Expired or legacy receipts without a timestamp no longer override authoritative inventory. Failed cloud removals reuse the device installation record's attempt count and sync timestamp for exponential backoff from 60 seconds to a maximum interval of one hour. Initial removal is immediate, and later heartbeats can recover cleanup. Cleanup database reads and writes run on worker threads without blocking asynchronous heartbeats.
+
 ### Install-time local authorization
 
 Plugins can declare device-side authorization under `connectors[].localAuth`. `local_qr` is used for QR login, while `browser_oauth` is used when a local CLI opens an OAuth flow in the browser. Both modes must provide `health` and `start` commands relative to the plugin root; QR mode must also provide a non-blocking `poll` command. With `authPolicy: on_install`, Wework checks the login after the plugin package is synchronized to the device and opens the authorization UI when needed. Cancellation or failure aborts that installation. First-use and mid-run checks remain recovery paths for expired credentials.

@@ -66,13 +66,28 @@ function pluginWithLocalQr(overrides?: Partial<InstalledPlugin>): InstalledPlugi
 }
 
 describe('localConnectorAuthGate', () => {
-  test('does not start local login preflight for an account-managed connector', () => {
+  test('keeps local QR login for an account-managed connector', () => {
     const plugin = pluginWithLocalQr()
     plugin.spec.components.connectors![0].accountAuth = {
       protocolVersion: 1,
       credentialType: 'oauth2',
       adapter: 'scripts/account-auth.py',
     }
+    expect(listLocalConnectors([plugin])).toHaveLength(1)
+    expect(findLocalConnectorsForMessage('plugin://weibo-api-wiki@wegent', [plugin])).toHaveLength(
+      1
+    )
+  })
+
+  test('does not create local login for an account-only connector', () => {
+    const plugin = pluginWithLocalQr()
+    const connector = plugin.spec.components.connectors![0]
+    connector.accountAuth = {
+      protocolVersion: 1,
+      credentialType: 'oauth2',
+      adapter: 'scripts/account-auth.py',
+    }
+    delete connector.localAuth
     expect(listLocalConnectors([plugin])).toEqual([])
     expect(findLocalConnectorsForMessage('plugin://weibo-api-wiki@wegent', [plugin])).toEqual([])
   })
@@ -146,6 +161,18 @@ describe('localConnectorAuthGate', () => {
       pluginKey: 'weibo-api-wiki',
       connectorSlug: 'weibo-wiki',
       displayName: 'weibo-api-wiki',
+    })
+  })
+
+  test.each([
+    '- `pluginKey`: `github`\n- `connectorSlug`: `wework-github-cli`',
+    '**pluginKey** : **github**\n**connectorSlug** : **wework-github-cli**',
+    'pluginKey = github\nconnectorSlug = wework-github-cli',
+  ])('resolves Markdown-formatted auth identity: %s', identity => {
+    expect(resolveLocalConnectorAuthHint(`connector_auth_required\n${identity}`)).toEqual({
+      pluginKey: 'github',
+      connectorSlug: 'wework-github-cli',
+      displayName: 'github',
     })
   })
 

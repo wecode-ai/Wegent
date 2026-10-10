@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -64,6 +65,10 @@ from app.services.device.capability_sync_service import (
     device_capability_sync_service,
 )
 from app.services.device.plugin_reconciliation import reconcile_device_plugins
+from app.services.device.plugin_removal_sync import (
+    prepare_plugin_removal,
+    sync_pending_plugin_removals,
+)
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.marketplace_submission_upload import (
     InvalidMarketplaceSubmissionUploadToken,
@@ -843,50 +848,31 @@ async def update_installed_plugin(
 
 
 @router.delete("/installed/{installed_id}", status_code=status.HTTP_204_NO_CONTENT)
+@trace_async(
+    tracer_name="backend.plugins", span_name="plugins.uninstall_account_plugin"
+)
 async def uninstall_installed_plugin(
     installed_id: int,
+    background_tasks: BackgroundTasks,
     device_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> None:
-    """Uninstall a user-scoped Claude Code plugin.
-
-    Account-level uninstall is authoritative. Device sync is best-effort: a
-    rejected or offline device must not leave the marketplace UI stuck on an
-    installed / sync-failed state after the Kind row is already inactive.
-    """
-    plugin_device_installation_service.mark_uninstalling(
-        db, user_id=current_user.id, installed_kind_id=installed_id
-    )
+    """Commit account removal before asynchronously reconciling devices."""
+    user_id = current_user.id
+    prepare_plugin_removal(db, user_id, installed_id)
     try:
         installed_plugin_service.uninstall_installed_plugin(
             db=db,
-            user_id=current_user.id,
+            user_id=user_id,
             installed_id=installed_id,
         )
     except HTTPException as exc:
         if exc.status_code != status.HTTP_404_NOT_FOUND:
             raise
         # Idempotent: Kind may already be inactive after a prior partial uninstall.
-    result = await _sync_global_capabilities(
-        db,
-        current_user.id,
-        required_device_id=device_id,
-        required_installed_kind_id=installed_id,
-        expect_installed=False,
-        require_device_success=False,
-    )
-    plugin_device_installation_service.record_uninstall_response(
-        db,
-        user_id=current_user.id,
-        installed_kind_id=installed_id,
-        response=result,
-    )
-    plugin_device_installation_service.clear_installations(
-        db,
-        user_id=current_user.id,
-        installed_kind_id=installed_id,
-    )
+        db.commit()
+    background_tasks.add_task(sync_pending_plugin_removals, user_id)
 
 
 @trace_async(

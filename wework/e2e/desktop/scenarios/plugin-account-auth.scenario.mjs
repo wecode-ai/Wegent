@@ -6,8 +6,18 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { verifyDwsCloudAccount } from '../modules/dws-account-auth.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import { verifyConversationQrAuthorization } from '../modules/plugin-conversation-auth.mjs'
+import {
+  createGithubManageConnectionFixture,
+  verifyGithubManageConnectionConsent,
+} from '../modules/github-manage-connection.mjs'
 
-import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID, processIsAlive } from '../modules/shared.mjs'
+import {
+  ACTIVE_COMPOSER_SELECTOR,
+  CLOUD_DEVICE_ID,
+  REMOTE_DOCKER_DEVICE_ID,
+  processIsAlive,
+} from '../modules/shared.mjs'
 import {
   assistantMessage,
   functionCall,
@@ -26,6 +36,9 @@ const oauthSecret = 'synthetic-desktop-oauth-refresh'
 const transferSecret = 'synthetic-desktop-transfer-refresh'
 const callId = 'plugin-account-auth-business'
 const prompt = 'Verify the cloud plugin account authentication business command'
+const qrPrompt = 'Verify the managed plugin conversation QR login'
+const ordinaryPrompt = 'Verify ordinary chat while plugin login is pending'
+const ghResumePrompt = 'Verify GitHub CLI Markdown authorization guidance'
 const TRANSIENT_API_RETRY_ATTEMPTS = 50
 const TRANSIENT_API_RETRY_DELAY_MS = 100
 
@@ -66,6 +79,10 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const dwsSourceRoot = join(resultDir, 'dws-source')
+  const ghConfigDir = join(resultDir, 'gh-config')
+  await mkdir(ghConfigDir, { recursive: true })
+  await run('gh', ['--version'])
+  const githubConfig = await createGithubManageConnectionFixture(resultDir)
   const reconcileMarker = join(resultDir, 'plugin-account-reconcile.log')
   const retrySignal = join(resultDir, 'plugin-account-retry.signal')
   let retrySignalGeneration = 0
@@ -78,6 +95,9 @@ export async function createDesktopScenario({
   let command
   let businessWorkspace
   let toolResult = null
+  const qrRequests = { preflight: 0, resume: 0 }
+  let ordinaryRequests = 0
+  const qrApproval = join(homePath, 'conversation-qr-approved')
   const fixtureRoot = join(resultDir, slug)
   await mkdir(join(fixtureRoot, '.codex-plugin'), { recursive: true })
   await mkdir(join(fixtureRoot, 'scripts'), { recursive: true })
@@ -90,10 +110,35 @@ assert os.environ.get("WEGENT_PLUGIN_AUTH_BROKER"), "Local auth did not receive 
 if sys.argv[1:] == ["login"]:
     source.write_text(json.dumps({"username":"alice@example.test","password":"${secret}-updated"}))
 elif sys.argv[1:] == ["logout"]:
+    if (Path.home() / "account-auth-fail-logout").exists():
+        print(json.dumps({"status":"error"}))
+        sys.exit(0)
     source.unlink(missing_ok=True)
 else:
     assert sys.argv[1:] == ["health"]
 print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() else "need_login"}))
+`
+  )
+  await writeFile(
+    join(fixtureRoot, 'scripts/conversation-qr.py'),
+    `import base64, json, sys
+from pathlib import Path
+approval = Path.home() / "conversation-qr-approved"
+action = sys.argv[1]
+if action == "health":
+    result = {"status": "error", "hint": "E2E_QR_HEALTH_FAILED"} if (Path.home() / "conversation-qr-health-fail").exists() else {"status": "ok" if approval.exists() else "need_login"}
+elif action == "logout":
+    approval.unlink(missing_ok=True)
+    result = {"status": "ok"}
+else:
+    assert action in ("start", "poll")
+    if (Path.home() / "conversation-qr-fail").exists():
+        print(json.dumps({"status": "error", "hint": "E2E_QR_START_FAILED"}))
+        sys.exit(0)
+    qr = Path.home() / "conversation-qr.png"
+    qr.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII="))
+    result = {"status": "ok" if approval.exists() else "waiting_scan", "qr_path": str(qr)}
+print(json.dumps(result))
 `
   )
   await writeFile(
@@ -107,6 +152,35 @@ print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() el
         shortDescription: 'Synthetic provider',
       },
       connectors: [
+        {
+          slug: 'conversation-qr',
+          displayName: 'Conversation QR E2E',
+          authPolicy: 'on_use',
+          localAuth: {
+            kind: 'local_qr',
+            health: [
+              process.platform === 'win32' ? 'python' : 'python3',
+              'scripts/conversation-qr.py',
+              'health',
+            ],
+            start: [
+              process.platform === 'win32' ? 'python' : 'python3',
+              'scripts/conversation-qr.py',
+              'start',
+            ],
+            poll: [
+              process.platform === 'win32' ? 'python' : 'python3',
+              'scripts/conversation-qr.py',
+              'poll',
+            ],
+            logout: [
+              process.platform === 'win32' ? 'python' : 'python3',
+              'scripts/conversation-qr.py',
+              'logout',
+            ],
+            pollIntervalSeconds: 1,
+          },
+        },
         {
           slug: 'mail',
           displayName: 'git.one.example',
@@ -389,7 +463,11 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
 
   return {
     requiresCloudEnvironment: true,
+    codexConfigToml: githubConfig,
     appEnvironment: {
+      GH_CONFIG_DIR: ghConfigDir,
+      GH_TOKEN: '',
+      GITHUB_TOKEN: '',
       DWS_CONFIG_DIR: join(dwsSourceRoot, 'config'),
       DWS_KEYCHAIN_DIR: join(dwsSourceRoot, 'keychain'),
       DWS_DISABLE_KEYCHAIN: '1',
@@ -409,7 +487,27 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       const body = await readRequestBody(request)
       const id = `account-auth-${Date.now()}`
       let events
-      if (JSON.stringify(body).includes(prompt) && command) {
+      const requestText = JSON.stringify(body)
+      if (requestText.includes(ordinaryPrompt)) {
+        ordinaryRequests += 1
+        events = [assistantMessage(`${ordinaryPrompt} completed`)]
+      } else if (requestText.includes(ghResumePrompt)) {
+        events = [
+          assistantMessage(
+            'connector_auth_required\n\n- `pluginKey`: `github`\n- `connectorSlug`: `wework-github-cli`\n\nGitHub CLI login is required.'
+          ),
+        ]
+      } else if (requestText.includes(qrPrompt)) {
+        const mode = requestText.includes(`${qrPrompt} resume`) ? 'resume' : 'preflight'
+        qrRequests[mode] += 1
+        events = [
+          assistantMessage(
+            mode === 'resume' && qrRequests.resume === 1
+              ? `connector_auth_required\npluginKey=${slug}\nconnectorSlug=conversation-qr`
+              : `${qrPrompt} ${mode} completed`
+          ),
+        ]
+      } else if (requestText.includes(prompt) && command) {
         const result = accountCommandResult(body.input, callId)
         if (result?.sessionId) {
           const tool = selectTool(body, 'write_stdin', {
@@ -521,6 +619,34 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
       await control.command('click', '[data-testid="plugin-connector-source-cancel"]')
       await captureScreenshot(control, 'plugin-auth-transparent-detail.png', 'body')
+
+      await control.command('localConnectorAuth', 'body', {
+        value: JSON.stringify({
+          pluginKey: slug,
+          connectorSlug: 'conversation-qr',
+          action: 'logout',
+        }),
+      })
+      await control.command(
+        'click',
+        '[data-testid="plugin-connection-manage-connector:conversation-qr"]'
+      )
+      await control.command('waitFor', '[data-testid="local-connector-auth-qr"]')
+      const qrDetail = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        !qrDetail.testIds.includes('plugin-github-cli-auth-dialog'),
+        'Non-GitHub connector opened GitHub login'
+      )
+      assert.ok(
+        !qrDetail.text.includes('此插件通过对话授权 GitHub'),
+        'Non-GitHub connector used GitHub authorization copy'
+      )
+      await captureScreenshot(control, 'plugin-auth-detail-native-qr.png', 'body')
+      await control.command('click', '[data-testid="local-connector-auth-cancel"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="plugin-connection-manage-connector:conversation-qr"]:not([disabled])'
+      )
 
       await waitForValue(
         () => marker(join(homePath, 'account-auth-export-attempted')),
@@ -648,7 +774,28 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         )
       // The legacy source is gone. The original entry must show the managed account.
       assert.equal((await localAuth('health')).status, 'ok')
+      // A real packaged CLI failure must not undo the account revocation or
+      // report that the retained local credentials have already been cleared.
+      await writeFile(
+        sourceAuth,
+        JSON.stringify({ username: 'alice@example.test', password: secret + '-updated' }),
+        { mode: 0o600 }
+      )
+      const failLogout = join(homePath, 'account-auth-fail-logout')
+      await writeFile(failLogout, 'fail')
+      try {
+        await assert.rejects(
+          () => localAuth('logout'),
+          /local_auth_logout_failed/,
+          'Failed local cleanup was reported as a successful logout'
+        )
+        assert.equal((await connectionFor('mail')).status, 'disconnected')
+        assert.ok(await readFile(sourceAuth), 'Failed cleanup removed the local credential')
+      } finally {
+        await rm(failLogout)
+      }
       assert.equal((await localAuth('logout')).status, 'ok')
+      assert.equal((await localAuth('logout')).status, 'ok', 'Repeated logout is not idempotent')
       assert.equal((await connectionFor('mail')).status, 'disconnected')
       command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} read`
       await invokeCloud('plugin_auth_device_not_granted')
@@ -691,8 +838,102 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
           await invokeCloud(expected)
         },
       })
+      await verifyConversationQrAuthorization({
+        control,
+        slug,
+        qrPrompt,
+        ordinaryPrompt,
+        qrRequests,
+        getOrdinaryRequests: () => ordinaryRequests,
+        qrApproval,
+        captureScreenshot,
+        homePath,
+        pluginRoots: await (async () => {
+          const manifest = JSON.parse(
+            await readFile(join(executorHome, 'capabilities/manifest-v2.json'), 'utf8')
+          )
+          const item = Object.values(manifest.plugins).find(
+            item => item.installed_plugin_id === installedId
+          )
+          assert.ok(item, 'Local installed plugin is missing')
+          return [
+            await managedRoot(executorHome, installedId),
+            resolve(executorHome, 'capabilities', item.store_path),
+          ]
+        })(),
+      })
+      // Real gh with an empty configuration establishes the unauthenticated
+      // path without replacing a provider or minting CI account credentials.
+      const ghHealth = JSON.parse(
+        await control.command('localConnectorAuth', 'body', {
+          value: JSON.stringify({
+            pluginKey: 'github',
+            connectorSlug: 'wework-github-cli',
+            action: 'health',
+          }),
+        })
+      )
+      assert.equal(
+        ghHealth.status,
+        'need_login',
+        `Isolated gh health must require login: ${JSON.stringify(ghHealth)}`
+      )
+      await verifyGithubManageConnectionConsent(control, slug, release.pluginId)
+      for (const action of ['cancel', 'ordinary', 'resume']) {
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+        const ghDraft =
+          action === 'resume'
+            ? ghResumePrompt
+            : action === 'cancel'
+              ? '[$GitHub](plugin://github@openai-curated-remote) List my repositories'
+              : '[$GitHub](app://connector_account_specific_id) List my repositories'
+        await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ghDraft })
+        await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+        await control.command('waitFor', '[data-testid="github-cli-login"]')
+        const pendingGh = JSON.parse(await control.command('snapshot', 'body'))
+        assert.ok(
+          !pendingGh.testIds.includes('github-cli-device-code'),
+          'gh login started before consent'
+        )
+        if (action === 'cancel') {
+          await control.command('click', '[data-testid="connector-auth-cancel"]')
+          const pluginChipSelector = '[data-testid="composer-plugin-chip-github"]'
+          await control.command('waitFor', pluginChipSelector)
+          // getValue returns display text; verify the serialized reference separately.
+          assert.equal(
+            await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
+            'GitHub List my repositories'
+          )
+          assert.equal(
+            await control.command('getAttribute', pluginChipSelector, {
+              value: 'data-composer-skill-reference',
+            }),
+            '[$GitHub](plugin://github@openai-curated-remote)'
+          )
+          const cancelledGh = JSON.parse(await control.command('snapshot', 'body'))
+          assert.ok(
+            !cancelledGh.testIds.includes('github-cli-auth'),
+            'gh authorization card remained open after cancellation'
+          )
+        }
+        await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ordinaryPrompt })
+        await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+        await control.command('waitFor', 'body', { text: `${ordinaryPrompt} completed` })
+        const recovered = JSON.parse(await control.command('snapshot', 'body'))
+        assert.ok(
+          !recovered.testIds.includes('github-cli-auth'),
+          'gh preflight blocked ordinary chat'
+        )
+      }
+      await captureScreenshot(control, 'github-cli-ordinary-chat-recovered.png', 'body')
       // Return to the visible plugin detail after a long background-only workflow.
       await control.command('click', '[data-testid="plugins-button"]')
+      await control.command(
+        'waitFor',
+        `[data-testid="plugins-installed-strip-item-${installedId}"]`
+      )
+      await control.command('click', `[data-testid="plugins-installed-strip-item-${installedId}"]`)
       await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
       const finalPage = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(!finalPage.testIds.some(id => id.startsWith('plugin-account-')))
@@ -732,6 +973,10 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
             legacyManagedHealth: true,
             localLogoutDisconnectsCloud: true,
             originalLoginReconnectsCloud: true,
+            managedConversationQrPreflight: true,
+            managedConversationQrResume: true,
+            conversationAuthMetadataReplacement: true,
+            conversationAuthHealthErrorPreservesDraft: true,
             dwsOfficialSourceStoreAutomaticMigration: true,
             dwsUnrelatedAccountPreserved: true,
             dwsCloudExecution: true,
