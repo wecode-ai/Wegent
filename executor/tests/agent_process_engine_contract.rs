@@ -315,7 +315,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_uses_executor_home_workspace_for_local_task_dir() {
+async fn agent_process_engine_uses_unified_workspace_for_local_task_dir() {
     let _lock = env_lock().lock().await;
     let _environment = isolated_environment();
     let executor_home = unique_dir("claude-local-executor-home");
@@ -342,7 +342,10 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
     };
 
     let outcome = engine.run(with_backend_identity(request)).await;
-    let expected_cwd = fs::canonicalize(executor_home.join("workspace/2149")).unwrap();
+    let expected_cwd = fs::canonicalize(
+        PathBuf::from(std::env::var_os("HOME").unwrap()).join(".wegent/workspace/2149"),
+    )
+    .unwrap();
 
     assert_eq!(
         outcome,
@@ -626,7 +629,7 @@ touch '{}'
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_downloads_claude_attachments_to_device_private_workspace() {
+async fn agent_process_engine_downloads_claude_attachments_to_device_task_workspace() {
     let _lock = env_lock().lock().await;
     let _environment = isolated_environment();
     let executor_home = unique_dir("claude-local-attachment-home");
@@ -644,7 +647,8 @@ printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tex
     );
     let _executor_home =
         EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
-    let _workspace_root = EnvGuard::remove("WORKSPACE_ROOT");
+    let workspace_root = unique_dir("claude-local-attachment-workspace");
+    let _workspace_root = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _wegent_workspace_root = EnvGuard::remove("WEGENT_WORKSPACE_ROOT");
     let _local_workspace_root = EnvGuard::remove("LOCAL_WORKSPACE_ROOT");
     let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
@@ -683,15 +687,15 @@ printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tex
         ExecutionOutcome::Completed { content } => content,
         other => panic!("unexpected outcome: {other:?}"),
     };
-    let local_path = executor_home
-        .join("workspace/attachments/runtime/2201/3212/image.png")
+    let local_path = workspace_root
+        .join("2201/attachments/3212/image.png")
         .display()
         .to_string();
 
     assert!(content.contains(&local_path), "{content}");
     assert!(!content.contains("/home/user/2201:executor:attachments/3212/image.png"));
     assert_eq!(
-        fs::read(executor_home.join("workspace/attachments/runtime/2201/3212/image.png")).unwrap(),
+        fs::read(workspace_root.join("2201/attachments/3212/image.png")).unwrap(),
         b"fake-image"
     );
     let request = requests.lock().unwrap().first().cloned().unwrap();

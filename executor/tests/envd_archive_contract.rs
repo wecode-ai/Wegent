@@ -83,6 +83,10 @@ fn executor_archive_includes_only_task_native_sessions_and_workspace() {
     let workspace = root.join("workspace").join(task_id);
     let home = root.join("home");
     write_file(
+        &workspace.join("attachments/turn-1/image.png"),
+        "attachment bytes",
+    );
+    write_file(
         &workspace.join(".claude/workspace-memory.md"),
         "workspace-context",
     );
@@ -140,6 +144,7 @@ fn executor_archive_includes_only_task_native_sessions_and_workspace() {
     assert!(names.contains(&"executor-state/sessions/1385/.claude_session_id_987".to_owned()));
     assert!(names.contains(&"executor-state/sessions/1385/.codex_thread_id_654".to_owned()));
     assert!(names.contains(&"workspace/.git/HEAD".to_owned()));
+    assert!(names.contains(&"workspace/attachments/turn-1/image.png".to_owned()));
     assert!(!names.contains(&"home/.claude/home-memory.md".to_owned()));
     assert!(names.contains(&"native-claude/projects/project/session-id.jsonl".to_owned()));
     assert!(!names.contains(&"home/.claude.json".to_owned()));
@@ -154,6 +159,7 @@ fn executor_archive_includes_only_task_native_sessions_and_workspace() {
 
     fs::remove_dir_all(workspace.join(".claude")).unwrap();
     fs::remove_dir_all(workspace.join(".git")).unwrap();
+    fs::remove_dir_all(workspace.join("attachments")).unwrap();
     fs::remove_dir_all(home.join(".claude")).unwrap();
     fs::remove_file(home.join(".claude.json")).unwrap();
     fs::remove_dir_all(home.join(".wegent-executor")).unwrap();
@@ -170,6 +176,10 @@ fn executor_archive_includes_only_task_native_sessions_and_workspace() {
     assert!(restored.success);
     assert!(restored.session_restored);
     assert!(restored.git_restored);
+    assert_eq!(
+        fs::read_to_string(workspace.join("attachments/turn-1/image.png")).unwrap(),
+        "attachment bytes"
+    );
     assert_eq!(
         fs::read_to_string(workspace.join(".claude/workspace-memory.md")).unwrap(),
         "workspace-context"

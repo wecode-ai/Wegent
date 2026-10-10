@@ -6,14 +6,21 @@ use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 
-const ATTACHMENT_RUNTIME_DIR: &str = "attachments/runtime";
-
 pub(crate) fn device_runtime_attachment_dir(task_id: &str, turn_id: &str) -> PathBuf {
-    device_runtime_attachment_dir_at(device_workspace_root(), task_id, turn_id)
+    device_runtime_attachment_dir_at(crate::workspace_paths::workspace_root(), task_id, turn_id)
 }
 
 pub(crate) fn device_runtime_attachment_task_dir(task_id: &str) -> PathBuf {
-    device_runtime_attachment_root().join(safe_identity_segment(task_id))
+    crate::workspace_paths::workspace_root()
+        .join(safe_identity_segment(task_id))
+        .join("attachments")
+}
+
+// Historical files stay at their original paths, including during task cleanup.
+pub(crate) fn legacy_device_runtime_attachment_task_dir(task_id: &str) -> PathBuf {
+    crate::config::paths::executor_home()
+        .join("workspace/attachments/runtime")
+        .join(safe_identity_segment(task_id))
 }
 
 pub(crate) fn device_runtime_attachment_dir_at(
@@ -22,17 +29,9 @@ pub(crate) fn device_runtime_attachment_dir_at(
     turn_id: &str,
 ) -> PathBuf {
     workspace_root
-        .join(ATTACHMENT_RUNTIME_DIR)
         .join(safe_identity_segment(task_id))
+        .join("attachments")
         .join(safe_identity_segment(turn_id))
-}
-
-fn device_runtime_attachment_root() -> PathBuf {
-    device_workspace_root().join(ATTACHMENT_RUNTIME_DIR)
-}
-
-fn device_workspace_root() -> PathBuf {
-    crate::config::paths::executor_home().join("workspace")
 }
 
 fn safe_identity_segment(value: &str) -> String {
@@ -64,7 +63,7 @@ mod tests {
 
         assert_eq!(
             device_runtime_attachment_dir_at(root, "runtime-123", "turn-456"),
-            PathBuf::from("/executor/workspace/attachments/runtime/runtime-123/turn-456")
+            PathBuf::from("/executor/workspace/runtime-123/attachments/turn-456")
         );
     }
 
@@ -75,7 +74,8 @@ mod tests {
         let second = device_runtime_attachment_dir_at(root.clone(), "../project", "../../turn");
 
         assert_eq!(first, second);
-        assert!(first.starts_with(root.join(ATTACHMENT_RUNTIME_DIR)));
+        assert!(first.starts_with(&root));
+        assert_eq!(first.strip_prefix(root).unwrap().components().count(), 3);
         assert!(!first.to_string_lossy().contains("../"));
     }
 }

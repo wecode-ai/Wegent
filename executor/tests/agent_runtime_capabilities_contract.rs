@@ -1076,8 +1076,25 @@ async fn claude_runtime_downloads_attachments_and_rewrites_prompt_before_process
 
 #[tokio::test]
 async fn local_claude_runtime_downloads_project_attachments_outside_the_project() {
+    check_device_project_attachment_download(Some("local"), false).await;
+}
+
+#[tokio::test]
+async fn cloud_claude_runtime_downloads_project_attachments_outside_the_project() {
+    check_device_project_attachment_download(None, true).await;
+}
+
+async fn check_device_project_attachment_download(mode: Option<&str>, runtime_turn: bool) {
     let _lock = env_lock().await;
+    let isolated_home = tempfile::tempdir().unwrap();
+    let _process_home = EnvGuard::set("HOME", isolated_home.path());
+    let _workbench = EnvGuard::set(
+        "WEGENT_WORKBENCH_HOME",
+        isolated_home.path().join("workbench"),
+    );
     let executor_home = unique_dir("local-claude-runtime-home");
+    let workspace_root = unique_dir("local-claude-attachment-workspace");
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
     let project_workspace = unique_dir("local-claude-project-workspace");
     fs::create_dir_all(&project_workspace).unwrap();
     let log_path = unique_dir("local-claude-runtime-log").join("args.json");
@@ -1097,13 +1114,16 @@ async fn local_claude_runtime_downloads_project_attachments_outside_the_project(
         stream.write_all(body).await.unwrap();
     });
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", executor_home.display().to_string());
-    let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _mode = match mode {
+        Some(mode) => EnvGuard::set("EXECUTOR_MODE", mode),
+        None => EnvGuard::remove("EXECUTOR_MODE"),
+    };
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
         "codex",
     ));
-    let request = ExecutionRequest {
+    let mut request = ExecutionRequest {
         task_id: "runtime-7792".to_owned(),
         subtask_id: "turn-101".to_owned(),
         prompt: json!("summarize [attachment:56]"),
@@ -1123,6 +1143,12 @@ async fn local_claude_runtime_downloads_project_attachments_outside_the_project(
         )]),
         ..ExecutionRequest::default()
     };
+    if runtime_turn {
+        request.task_id = "backend-task".to_owned();
+        request
+            .extra
+            .insert("runtimeLocalTaskId".to_owned(), json!("runtime-7792"));
+    }
 
     let outcome = engine.run(authenticated_bot_request(request)).await;
 
@@ -1133,8 +1159,7 @@ async fn local_claude_runtime_downloads_project_attachments_outside_the_project(
         }
     );
     server.await.unwrap();
-    let expected_path =
-        executor_home.join("workspace/attachments/runtime/runtime-7792/turn-101/note.txt");
+    let expected_path = workspace_root.join("runtime-7792/attachments/turn-101/note.txt");
     assert_eq!(
         fs::read_to_string(&expected_path).unwrap(),
         "private attachment"

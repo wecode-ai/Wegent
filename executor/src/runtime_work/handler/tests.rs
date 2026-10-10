@@ -6473,6 +6473,16 @@ fn codex_guidance_turn_mismatch_exposes_the_actual_turn_id() {
 
 #[test]
 fn archived_cleanup_targets_do_not_delete_regular_project_root() {
+    let _lock = crate::test_env::lock();
+    let temp = tempfile::tempdir().unwrap();
+    let _workspace = ScalarEnv::set(
+        "WORKSPACE_ROOT",
+        temp.path().join("workspace").to_str().unwrap(),
+    );
+    let _home = ScalarEnv::set(
+        "WEGENT_EXECUTOR_HOME",
+        temp.path().join("executor").to_str().unwrap(),
+    );
     let root =
         temp_runtime_work_index_path("archived-cleanup-regular-root").with_extension("directory");
     let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
@@ -6489,6 +6499,13 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
         .collect::<Vec<_>>();
 
     assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
+    assert!(target_paths.contains(
+        &temp
+            .path()
+            .join("workspace/task-1/attachments")
+            .to_string_lossy()
+            .to_string()
+    ));
     assert!(target_paths.iter().any(|path| {
         path.ends_with("/workspace/attachments/runtime/task-1")
             || path.ends_with("\\workspace\\attachments\\runtime\\task-1")

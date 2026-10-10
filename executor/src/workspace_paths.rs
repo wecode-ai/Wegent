@@ -51,7 +51,6 @@ fn configured_workspace_root() -> Option<PathBuf> {
 pub(crate) fn local_workspace_root() -> PathBuf {
     configured_workspace_root()
         .or_else(|| env_path("LOCAL_WORKSPACE_ROOT"))
-        .or_else(|| env_path("WEGENT_EXECUTOR_HOME").map(|home| home.join("workspace")))
         .unwrap_or_else(default_workspace_root)
 }
 
@@ -195,18 +194,18 @@ mod tests {
     }
 
     #[test]
-    fn workspace_root_keeps_the_local_device_layout() {
+    fn local_workspace_default_is_independent_of_executor_home() {
         let _env = clear_workspace_env();
         env::set_var("EXECUTOR_MODE", "local");
         env::set_var("WEGENT_EXECUTOR_HOME", "/home/wegent/.wegent-executor");
 
         assert_eq!(
             workspace_root(),
-            PathBuf::from("/home/wegent/.wegent-executor/workspace")
+            _env._home.path().join(".wegent/workspace")
         );
         assert_eq!(
             task_workspace_dir("42"),
-            PathBuf::from("/home/wegent/.wegent-executor/workspace/42")
+            _env._home.path().join(".wegent/workspace/42")
         );
     }
 
@@ -274,8 +273,17 @@ mod tests {
         env::set_var("WEGENT_EXECUTOR_HOME", temp.path().join("isolated"));
         assert_eq!(
             worktrees_root(),
+            _env._home.path().join(".wegent/workspace/worktrees")
+        );
+        env::set_var(
+            "LOCAL_WORKSPACE_ROOT",
+            temp.path().join("isolated/workspace"),
+        );
+        assert_eq!(
+            worktrees_root(),
             temp.path().join("isolated/workspace/worktrees")
         );
+        env::remove_var("LOCAL_WORKSPACE_ROOT");
         env::set_var(
             "WEGENT_EXECUTOR_PROJECTS_DIR",
             temp.path().join("legacy/projects"),

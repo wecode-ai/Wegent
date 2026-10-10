@@ -805,8 +805,11 @@ fn resolve_attachments_dir(
         .iter()
         .find_map(|attachment| attachment.subtask_id.clone())
         .unwrap_or(fallback_subtask_id);
-    if is_local_mode() {
-        let task_id = runtime_attachment_task_id(request);
+    // Runtime-work turns carry their device task identity even when the cloud
+    // device has no EXECUTOR_MODE environment override.
+    let runtime_task_id = runtime_attachment_task_id(request);
+    if runtime_task_id.is_some() || is_local_mode() {
+        let task_id = runtime_task_id.unwrap_or(&request.task_id);
         return (
             device_runtime_attachment_dir(task_id, &attachment_subtask_id),
             "device_private",
@@ -831,7 +834,7 @@ fn resolve_attachments_dir(
     (attachments_dir, storage_scope)
 }
 
-fn runtime_attachment_task_id(request: &ExecutionRequest) -> &str {
+fn runtime_attachment_task_id(request: &ExecutionRequest) -> Option<&str> {
     request
         .extra
         .get("runtimeLocalTaskId")
@@ -839,7 +842,6 @@ fn runtime_attachment_task_id(request: &ExecutionRequest) -> &str {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or(&request.task_id)
 }
 
 fn mark_attachments_failed(attachments: &[AttachmentRecord], error: &str) -> Vec<AttachmentRecord> {
@@ -2923,6 +2925,7 @@ mod tests {
         let _lock = crate::test_env::lock();
         let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
         let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", "/tmp/device-executor");
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", "/tmp/device-workspace");
         let request = ExecutionRequest {
             task_id: "runtime-123".to_owned(),
             project_workspace_path: Some("/tmp/project".to_owned()),
@@ -2937,7 +2940,7 @@ mod tests {
 
         assert_eq!(
             path,
-            PathBuf::from("/tmp/device-executor/workspace/attachments/runtime/runtime-123/203")
+            PathBuf::from("/tmp/device-workspace/runtime-123/attachments/203")
         );
         assert_eq!(storage_scope, "device_private");
     }
@@ -2947,6 +2950,7 @@ mod tests {
         let _lock = crate::test_env::lock();
         let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
         let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", "/tmp/device-executor");
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", "/tmp/device-workspace");
         let mut request = ExecutionRequest {
             task_id: "backend-task".to_owned(),
             ..ExecutionRequest::default()
@@ -2960,10 +2964,37 @@ mod tests {
 
         assert_eq!(
             path,
-            PathBuf::from(
-                "/tmp/device-executor/workspace/attachments/runtime/runtime-local-task/turn-1"
-            )
+            PathBuf::from("/tmp/device-workspace/runtime-local-task/attachments/turn-1")
         );
+    }
+
+    #[test]
+    fn runtime_device_attachment_resolution_does_not_require_local_mode() {
+        let _lock = crate::test_env::lock();
+        let root = tempfile::tempdir().unwrap();
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", root.path().to_str().unwrap());
+        for mode in [None, Some("local"), Some("docker")] {
+            let _mode = match mode {
+                Some(mode) => EnvGuard::set("EXECUTOR_MODE", mode),
+                None => EnvGuard::remove("EXECUTOR_MODE"),
+            };
+            for key in ["runtimeLocalTaskId", "runtime_local_task_id"] {
+                for project in [None, Some(root.path().join("repository"))] {
+                    let request = ExecutionRequest {
+                        task_id: "backend-task".to_owned(),
+                        project_workspace_path: project.map(|path| path.display().to_string()),
+                        extra: Map::from_iter([(key.to_owned(), json!("runtime-device-task"))]),
+                        ..ExecutionRequest::default()
+                    };
+                    let (path, scope) = resolve_attachments_dir(&request, &[], "turn-1".into());
+                    assert_eq!(
+                        path,
+                        root.path().join("runtime-device-task/attachments/turn-1")
+                    );
+                    assert_eq!(scope, "device_private");
+                }
+            }
+        }
     }
 
     #[test]
@@ -2983,6 +3014,54 @@ mod tests {
             PathBuf::from("/workspace/project/.wegent/attachments/task-123/turn-1")
         );
         assert_eq!(storage_scope, "managed_project");
+    }
+
+    #[test]
+    fn managed_attachment_resolution_preserves_task_layout() {
+        let _lock = crate::test_env::lock();
+        let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", "/tmp/sandbox-workspace");
+        let request = ExecutionRequest {
+            task_id: "task-123".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        let (path, scope) = resolve_attachments_dir(&request, &[], "turn-1".into());
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/sandbox-workspace/task-123/task-123:executor:attachments/turn-1")
+        );
+        assert_eq!(scope, "managed_task");
+    }
+
+    #[test]
+    fn device_attachment_preparation_keeps_existing_legacy_paths() {
+        let _lock = crate::test_env::lock();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = temp
+            .path()
+            .join("executor/workspace/attachments/runtime/task-1/turn-1/image.png");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(&legacy, b"historical attachment").unwrap();
+        let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+        let workspace = temp.path().join("workspace");
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace.to_str().unwrap());
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "task_id": "task-1", "subtask_id": "turn-2", "prompt": "read [attachment:1]",
+            "attachments": [{"id": 1, "original_filename": "image.png", "local_path": legacy, "status": "success"}]
+        })).unwrap();
+
+        let prepared = runtime.block_on(prepare_claude_execution_request(request));
+        assert!(prepared
+            .prompt
+            .to_string()
+            .contains(legacy.to_str().unwrap()));
+        assert_eq!(fs::read(&legacy).unwrap(), b"historical attachment");
+        assert!(!workspace.exists());
     }
 
     #[test]
@@ -3072,6 +3151,8 @@ mod tests {
                 stream.write_all(body).await.unwrap();
             });
             let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", temp.to_str().unwrap());
+            let _workspace =
+                EnvGuard::set("WORKSPACE_ROOT", temp.join("workspace").to_str().unwrap());
             let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
             let _task_api = EnvGuard::remove("TASK_API_DOMAIN");
             let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
@@ -3095,7 +3176,7 @@ mod tests {
             let prepared = prepare_claude_execution_request(request).await;
             let prompt = prepared.prompt.as_str().unwrap();
             let downloaded = temp
-                .join("workspace/attachments/runtime/72")
+                .join("workspace/72/attachments")
                 .join("203")
                 .join("image.png");
 
