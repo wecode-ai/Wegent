@@ -71,6 +71,7 @@ const SUBAGENT_CHILD_TOOL_CALL_ID = 'wework-subagent-child-tool'
 const SUBAGENT_CHILD_PROMPT = 'Inspect the child event stream and report the routing result.'
 const SUBAGENT_CHILD_TOOL_MARKER = 'WEWORK_DESKTOP_E2E_SUBAGENT_TOOL'
 const SUBAGENT_CHILD_TOOL_TIMEOUT_MS = 10_000
+const SUBAGENT_CHILD_STARTUP_TIMEOUT_MS = 60_000
 const SUBAGENT_CHILD_TOOL_START = `${SUBAGENT_CHILD_TOOL_MARKER}_START`
 const SUBAGENT_CHILD_TOOL_COMPLETE = `${SUBAGENT_CHILD_TOOL_MARKER}_COMPLETE`
 const SUBAGENT_CHILD_PARTIAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARTIAL'
@@ -930,7 +931,8 @@ export function createDesktopScenario({
 }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
-  const subagentToolRenderTimeoutMs = SUBAGENT_CHILD_TOOL_TIMEOUT_MS + uiTimeoutMs
+  const subagentToolRenderTimeoutMs =
+    SUBAGENT_CHILD_STARTUP_TIMEOUT_MS + SUBAGENT_CHILD_TOOL_TIMEOUT_MS + uiTimeoutMs
   let active = false
   let generatedImageStage = 'initial'
   let subagentStage = 'initial'

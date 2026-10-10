@@ -26,6 +26,7 @@ use super::{
     codex_notifications::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
+    codex_user_input::async_question_render_payload,
     notification_mapping::{
         codex_stream_debug_enabled, log_dropped_notification, map_text_chunk,
         map_tool_output_delta, notification_item_id, TextChunkMapping,
@@ -534,6 +535,10 @@ impl CodexNotificationEventMapper {
                     return;
                 }
                 if self.emit_applied_guidance(&emit_context, notification.params) {
+                    return;
+                }
+                if emit_async_request_user_input(&emit_context, notification.params) {
+                    self.agent_message_phases.forget_item(notification.params);
                     return;
                 }
                 if self.emit_text_chunk(
@@ -1959,6 +1964,25 @@ fn emit_request_user_input(
             object.insert("requestId".to_owned(), request_id.clone());
         }
     }
+    emit_request_user_input_block(
+        event_tx,
+        device_id,
+        local_task_id,
+        request,
+        block_id,
+        render_payload,
+    );
+}
+
+/// Emits the interactive question block shared by every request-user-input source.
+fn emit_request_user_input_block(
+    event_tx: &Option<broadcast::Sender<Value>>,
+    device_id: &str,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    block_id: String,
+    render_payload: Value,
+) {
     emit_response_event(
         event_tx,
         device_id,
@@ -1976,6 +2000,34 @@ fn emit_request_user_input(
             }
         }),
     );
+}
+
+/// Codex asks non-blocking clarifying questions through `request_user_input_async`.
+/// The tool returns immediately, so the app-server delivers the question as an
+/// `agentMessage` carrying `questions`, and the answer comes back as the next user
+/// message instead of a runtime response. Render the structured choices as the
+/// interactive card rather than the plain-text fallback the same item also carries.
+fn emit_async_request_user_input(context: &EventEmitContext<'_>, params: &Value) -> bool {
+    let item = params.get("item").unwrap_or(params);
+    if item_type(item).as_str() != "agentmessage" {
+        return false;
+    }
+    let Some(questions) = item.get("questions").and_then(Value::as_array) else {
+        return false;
+    };
+    let item_id = item_id(item, "request-user-input");
+    let Some(render_payload) = async_question_render_payload(item_id.as_str(), questions) else {
+        return false;
+    };
+    emit_request_user_input_block(
+        context.event_tx,
+        context.device_id,
+        context.local_task_id,
+        context.request,
+        format!("request-user-input-{item_id}"),
+        render_payload,
+    );
+    true
 }
 
 fn emit_codex_approval_request(
@@ -2032,22 +2084,13 @@ fn emit_codex_approval_request(
             object.insert("requestId".to_owned(), request_id.clone());
         }
     }
-    emit_response_event(
+    emit_request_user_input_block(
         event_tx,
         device_id,
-        "response.block.created",
         local_task_id,
         request,
-        json!({
-            "block": {
-                "id": block_id,
-                "type": "tool",
-                "tool_name": "request_user_input",
-                "status": "pending",
-                "timestamp": now_ms(),
-                "render_payload": render_payload,
-            }
-        }),
+        block_id,
+        render_payload,
     );
 }
 
@@ -5252,6 +5295,65 @@ mod tests {
         assert_eq!(block["status"], "pending");
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["questions"][0]["id"], "goal");
+    }
+
+    #[test]
+    fn maps_codex_async_questions_to_interactive_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "call-question",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "delivery": "async",
+                        "text": "Which state jitters?\n- Following\n- Reading",
+                        "questions": [
+                            {
+                                "title": "Which state jitters?",
+                                "options": ["Following", "Reading"]
+                            }
+                        ]
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("async question should emit an interactive block");
+        let block = &event["payload"]["data"]["block"];
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "request_user_input");
+        assert_eq!(block["status"], "pending");
+        assert_eq!(block["id"], "request-user-input-call-question");
+        assert_eq!(block["render_payload"]["kind"], "request_user_input");
+        assert_eq!(block["render_payload"]["delivery"], "async");
+        assert_eq!(block["render_payload"]["itemId"], "call-question");
+        assert_eq!(
+            block["render_payload"]["questions"][0]["question"],
+            "Which state jitters?"
+        );
+        assert_eq!(
+            block["render_payload"]["questions"][0]["options"][1]["label"],
+            "Reading"
+        );
+        // The plain-text fallback that accompanies the structured question must not
+        // also land in the transcript as the final answer.
+        assert!(event_rx.try_recv().is_err());
     }
 
     #[test]

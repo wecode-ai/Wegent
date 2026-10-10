@@ -2,16 +2,28 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { defaultAppPreferences, type AppPreferencesPatch } from '@/desktop/appPreferences'
+import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { WorkspaceTabStrip } from './WorkspaceTabStrip'
 import { createWorkspaceTab, workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
 
 const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
+const updateAppPreferences = vi.hoisted(() => vi.fn())
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 const listHarnessApps = vi.hoisted(() => vi.fn().mockResolvedValue([]))
 
+vi.mock('@/desktop/appPreferences', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
+  return {
+    ...actual,
+    updateAppPreferences: (patch: AppPreferencesPatch) => updateAppPreferences(patch),
+  }
+})
+
 vi.mock('./workspaceWindow', () => ({
-  openWorkspaceTabWindow: (tab: unknown) => openWorkspaceTabWindow(tab),
+  openWorkspaceTabWindow: (tab: unknown, options?: unknown) =>
+    options === undefined ? openWorkspaceTabWindow(tab) : openWorkspaceTabWindow(tab, options),
 }))
 
 vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
@@ -45,28 +57,30 @@ function renderStrip(
   fixedBoardRoute?: string
 ) {
   return render(
-    <WorkspaceTabsProvider
-      pathname={pathname}
-      search={search}
-      storageScope="strip-test"
-      labels={labels}
-      fixedTabs={
-        fixed
-          ? (['task', 'board', 'agent'] as const).map(kind =>
-              createWorkspaceTab(kind, labels, {
-                id: `fixed-${kind}`,
-                ...(kind === 'board' && fixedBoardRoute
-                  ? { contentRoute: fixedBoardRoute }
-                  : undefined),
-                fixed: true,
-              })
-            )
-          : undefined
-      }
-      restoreSessionTabs={!fixed}
-    >
-      <WorkspaceTabStrip availableKinds={availableKinds} />
-    </WorkspaceTabsProvider>
+    <AppPreferencesContext.Provider value={{ preferences: defaultAppPreferences, loaded: true }}>
+      <WorkspaceTabsProvider
+        pathname={pathname}
+        search={search}
+        storageScope="strip-test"
+        labels={labels}
+        fixedTabs={
+          fixed
+            ? (['task', 'board', 'agent'] as const).map(kind =>
+                createWorkspaceTab(kind, labels, {
+                  id: `fixed-${kind}`,
+                  ...(kind === 'board' && fixedBoardRoute
+                    ? { contentRoute: fixedBoardRoute }
+                    : undefined),
+                  fixed: true,
+                })
+              )
+            : undefined
+        }
+        restoreSessionTabs={!fixed}
+      >
+        <WorkspaceTabStrip availableKinds={availableKinds} />
+      </WorkspaceTabsProvider>
+    </AppPreferencesContext.Provider>
   )
 }
 
@@ -74,11 +88,17 @@ describe('WorkspaceTabStrip', () => {
   beforeEach(() => {
     localStorage.clear()
     openWorkspaceTabWindow.mockClear()
+    updateAppPreferences.mockReset()
+    updateAppPreferences.mockImplementation(async (patch: AppPreferencesPatch) => ({
+      ...defaultAppPreferences,
+      ...patch,
+    }))
     experimentalFeatures.enabled = true
     listHarnessApps.mockReset()
     listHarnessApps.mockResolvedValue([])
     window.history.replaceState({}, '', '/')
     delete window.__WEWORK_DSH_UI__
+    delete window.__WEWORK_RUNTIME_CONFIG__
   })
 
   test('opens project spaces as a real tab and switches between tabs', async () => {
@@ -348,6 +368,112 @@ describe('WorkspaceTabStrip', () => {
     )
     await waitFor(() => expect(screen.queryByRole('tab', { name: '任务' })).not.toBeInTheDocument())
     expect(screen.getAllByRole('tab')).toHaveLength(2)
+  })
+
+  test('pins a non-fixed tab through the shared fixed-tab preferences', async () => {
+    const user = userEvent.setup()
+    renderStrip()
+
+    fireEvent.contextMenu(screen.getByText('任务').closest('[role="tab"]')!)
+    await user.click(screen.getByTestId('workspace-tab-pin'))
+
+    expect(updateAppPreferences).toHaveBeenCalledWith({
+      fixedWorkspaceTabs: [
+        ...defaultAppPreferences.fixedWorkspaceTabs,
+        expect.objectContaining({
+          kind: 'task',
+          title: '任务',
+          contentRoute: '/',
+        }),
+      ],
+      startupWorkspaceTabId: defaultAppPreferences.startupWorkspaceTabId,
+    })
+  })
+
+  test('keeps a pinned tab assigned to its detached workspace window', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
+      desktopWindowLabel: 'workspace-detached-task',
+    }
+    const user = userEvent.setup()
+    renderStrip()
+
+    fireEvent.contextMenu(screen.getByText('任务').closest('[role="tab"]')!)
+    await user.click(screen.getByTestId('workspace-tab-pin'))
+
+    expect(updateAppPreferences).toHaveBeenCalledWith({
+      fixedWorkspaceTabs: [
+        ...defaultAppPreferences.fixedWorkspaceTabs,
+        expect.objectContaining({
+          kind: 'task',
+          title: '任务',
+          contentRoute: '/',
+          windowLabel: 'workspace-detached-task',
+        }),
+      ],
+      startupWorkspaceTabId: defaultAppPreferences.startupWorkspaceTabId,
+    })
+  })
+
+  test('unpins a fixed tab through the shared fixed-tab preferences', async () => {
+    const user = userEvent.setup()
+    renderStrip('', undefined, '/', true)
+
+    fireEvent.contextMenu(screen.getByTestId('workspace-tab-select-fixed-task'))
+    await user.click(screen.getByTestId('workspace-tab-unpin'))
+
+    expect(updateAppPreferences).toHaveBeenCalledWith({
+      fixedWorkspaceTabs: defaultAppPreferences.fixedWorkspaceTabs.filter(
+        tab => tab.id !== 'fixed-task'
+      ),
+      startupWorkspaceTabId: 'fixed-board',
+    })
+  })
+
+  test('opens a fixed tab in a persistent workspace window', async () => {
+    const user = userEvent.setup()
+    renderStrip('', undefined, '/', true)
+
+    fireEvent.contextMenu(screen.getByTestId('workspace-tab-select-fixed-task'))
+    await user.click(screen.getByTestId('workspace-tab-open-new-window'))
+
+    const assignedPreferences = expect.arrayContaining([
+      expect.objectContaining({
+        id: 'fixed-task',
+        title: '任务',
+        contentRoute: '/',
+        windowLabel: expect.stringMatching(/^workspace-fixed-task-/),
+      }),
+    ])
+    expect(updateAppPreferences).toHaveBeenCalledWith({
+      fixedWorkspaceTabs: assignedPreferences,
+      startupWorkspaceTabId: defaultAppPreferences.startupWorkspaceTabId,
+    })
+    expect(openWorkspaceTabWindow).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'fixed-task', fixed: true }),
+      {
+        label: expect.stringMatching(/^workspace-fixed-task-/),
+      }
+    )
+    await waitFor(() =>
+      expect(screen.queryByTestId('workspace-tab-fixed-task')).not.toBeInTheDocument()
+    )
+  })
+
+  test('restores a fixed tab assignment when its workspace window fails to open', async () => {
+    openWorkspaceTabWindow.mockRejectedValueOnce(new Error('window failed'))
+    const user = userEvent.setup()
+    renderStrip('', undefined, '/', true)
+
+    fireEvent.contextMenu(screen.getByTestId('workspace-tab-select-fixed-task'))
+    await user.click(screen.getByTestId('workspace-tab-open-new-window'))
+
+    await waitFor(() => expect(updateAppPreferences).toHaveBeenCalledTimes(2))
+    expect(updateAppPreferences).toHaveBeenLastCalledWith({
+      fixedWorkspaceTabs: defaultAppPreferences.fixedWorkspaceTabs,
+      startupWorkspaceTabId: defaultAppPreferences.startupWorkspaceTabId,
+    })
+    expect(screen.getByTestId('workspace-tab-fixed-task')).toBeInTheDocument()
   })
 
   test('keeps the source tab when opening its new window fails', async () => {

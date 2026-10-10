@@ -1316,7 +1316,8 @@ Options:
 
 Service Selection:
   Passing service names without --stop/--restart starts only those services.
-  Backend and knowledge_runtime always start and stop together.
+  Explicit service selections apply to start, stop, and restart independently.
+  Include kr when Knowledge Runtime is needed and is not already available.
   Example: $0 backend frontend
 
 Configuration File:
@@ -1859,13 +1860,6 @@ stop_services() {
         done
     fi
 
-    # knowledge_runtime is a required Backend dependency, so it always stops
-    # together with the Backend instead of being a separately selected service.
-    if [[ " ${services[*]} " == *" backend "* && " ${services[*]} " != *" knowledge_runtime "* ]]; then
-        services+=("knowledge_runtime")
-        service_ports+=("$(get_runtime_service_port "knowledge_runtime")")
-    fi
-
     if [ ${#services[@]} -eq 0 ]; then
         echo -e "${YELLOW}No services to stop${NC}"
         return 0
@@ -2300,15 +2294,6 @@ start_services() {
         done
     fi
 
-    # RAG execution only runs in knowledge_runtime, so starting the Backend
-    # always starts the Knowledge Runtime too.
-    if [ "$start_backend" = true ]; then
-        start_knowledge_runtime=true
-        if [ $# -gt 0 ] && [[ " ${specified_services[*]} " != *" knowledge_runtime "* ]]; then
-            specified_services+=("knowledge_runtime")
-        fi
-    fi
-
     local backend_mode=${WEGENT_BACKEND_MODE:-hybrid}
     local backend_rs_dir=${WEGENT_BACKEND_RS_DIR:-backend-rs}
     local backend_rs_launcher="$SCRIPT_DIR/$backend_rs_dir/scripts/start-hybrid-backend.sh"
@@ -2497,6 +2482,9 @@ start_services() {
     if [ "$start_chat_shell" = true ]; then
         check_python_env "chat_shell" "Chat Shell"
     fi
+    if [ "$start_knowledge_runtime" = true ]; then
+        check_python_env "knowledge_runtime" "Knowledge Runtime"
+    fi
     echo ""
 
     # Patch backend connection URLs to use configured MYSQL_PORT / REDIS_PORT.
@@ -2589,12 +2577,13 @@ start_services() {
     # 4. Start Knowledge Runtime
     if [ "$start_knowledge_runtime" = true ]; then
         # INTERNAL_SERVICE_TOKEN: Token for internal service authentication
+        # Set both aliases so the template's empty prefixed token cannot override it.
         # BACKEND_INTERNAL_URL: URL for knowledge_runtime to call backend
         # KNOWLEDGE_RUNTIME_URL: URL for backend to call knowledge_runtime
         # --reload-dir: Watch shared and knowledge_engine modules for changes (editable dependencies)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "knowledge_runtime" "knowledge_runtime" \
-            "export INTERNAL_SERVICE_TOKEN=\$INTERNAL_SERVICE_TOKEN && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export KNOWLEDGE_RUNTIME_URL=$KNOWLEDGE_RUNTIME_URL && source .venv/bin/activate && uvicorn knowledge_runtime.main:app --env-file .env --reload --reload-dir . --reload-dir ../shared --reload-dir ../knowledge_engine $RELOAD_EXCLUDE --host 0.0.0.0 --port $KNOWLEDGE_RUNTIME_PORT --log-level debug" \
+            "export INTERNAL_SERVICE_TOKEN=\$INTERNAL_SERVICE_TOKEN && export KNOWLEDGE_RUNTIME_INTERNAL_SERVICE_TOKEN=\$INTERNAL_SERVICE_TOKEN && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export KNOWLEDGE_RUNTIME_URL=$KNOWLEDGE_RUNTIME_URL && source .venv/bin/activate && uvicorn knowledge_runtime.main:app --env-file .env --reload --reload-dir . --reload-dir ../shared --reload-dir ../knowledge_engine $RELOAD_EXCLUDE --host 0.0.0.0 --port $KNOWLEDGE_RUNTIME_PORT --log-level debug" \
             "$KNOWLEDGE_RUNTIME_PORT"
     fi
 

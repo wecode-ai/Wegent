@@ -42,6 +42,8 @@ import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
   applyRequestUserInputResponseToBlock,
+  findRequestUserInputPayload,
+  isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
   requestUserInputResponseText,
@@ -1434,72 +1436,6 @@ export function useWorkbenchPaneSession({
     ]
   )
 
-  const sendRequestUserInputResponse = useCallback(
-    async (
-      response: RequestUserInputResponse,
-      options: SendRequestUserInputResponseOptions = {}
-    ): Promise<boolean> => {
-      if (!currentRuntimeTask) return false
-
-      const message = requestUserInputResponseText(response)
-      const requestUserInputKey = requestUserInputResponseKey(response)
-      const runtimeModelOverride = options.forceDefaultCollaborationMode
-        ? { collaborationMode: 'default' }
-        : undefined
-      if (options.forceDefaultCollaborationMode) {
-        projectChat.setSelectedModelOption('collaborationMode', 'default')
-      }
-      const appendedUserMessage = options.appendUserMessage
-        ? createRuntimeUserMessage(message)
-        : null
-      if (appendedUserMessage) {
-        dispatchMessages({ type: 'user_added', message: appendedUserMessage })
-      }
-      if (requestUserInputKey) {
-        setAnsweredRequestUserInputIds(current => {
-          if (current.has(requestUserInputKey)) return current
-          const next = new Set(current)
-          next.add(requestUserInputKey)
-          return next
-        })
-      }
-      applyLocalRequestUserInputResponse(response)
-      const runtimeModelFields = options.appendUserMessage
-        ? getRuntimeModelFields(runtimeModelOverride)
-        : {}
-      const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
-      const sent = await sendRuntimePaneMessage({
-        address: currentRuntimeTask,
-        message,
-        ...(appendedUserMessage ? { clientUserMessageId: appendedUserMessage.id } : {}),
-        ...runtimeModelFields,
-        ...(options.appendUserMessage ? {} : { requestUserInputResponse: response }),
-        ...(additionalContext ? { additionalContext } : {}),
-      })
-      if (sent) {
-        markRuntimeTerminalAdditionalContextDelivered(additionalContext)
-      } else {
-        if (requestUserInputKey) {
-          setAnsweredRequestUserInputIds(current => {
-            if (!current.has(requestUserInputKey)) return current
-            const next = new Set(current)
-            next.delete(requestUserInputKey)
-            return next
-          })
-        }
-      }
-      return sent
-    },
-    [
-      applyLocalRequestUserInputResponse,
-      currentRuntimeTask,
-      dispatchMessages,
-      getRuntimeModelFields,
-      projectChat,
-      sendRuntimePaneMessage,
-    ]
-  )
-
   const editLastUserMessageInPane = useCallback(
     async (message: WorkbenchMessage, content: string): Promise<boolean> => {
       const submittedContent = content.trim()
@@ -1844,7 +1780,7 @@ export function useWorkbenchPaneSession({
   }, [runtimeTaskLoadTarget])
 
   const sendQueuedMessageAsGuidance = useCallback(
-    async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false) => {
+    async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false): Promise<boolean> => {
       const id = queuedMessage.id
       queuedMessageBusyBlockSnapshotsRef.current.delete(id)
       if (!currentRuntimeTask) {
@@ -1855,11 +1791,11 @@ export function useWorkbenchPaneSession({
               : message
           )
         )
-        return
+        return false
       }
-      if (currentRuntimeTask.runtime && currentRuntimeTask.runtime !== 'codex') return
+      if (currentRuntimeTask.runtime && currentRuntimeTask.runtime !== 'codex') return false
 
-      if (queuedMessage.status === 'sending') return
+      if (queuedMessage.status === 'sending') return false
 
       setError(null)
       if (!readCurrentPaneBusy() && !forceActiveTurn) {
@@ -1874,7 +1810,7 @@ export function useWorkbenchPaneSession({
           const result = await sendRuntimeMessage(queuedMessage)
           if (result.queued) {
             retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
-            return
+            return true
           }
           setQueuedMessages(messages =>
             result.accepted
@@ -1885,6 +1821,7 @@ export function useWorkbenchPaneSession({
                     : message
                 )
           )
+          return result.accepted
         } catch (error) {
           console.error('[Wework] Queued runtime message send failed', {
             id,
@@ -1897,8 +1834,8 @@ export function useWorkbenchPaneSession({
                 : message
             )
           )
+          return false
         }
-        return
       }
 
       try {
@@ -1943,32 +1880,32 @@ export function useWorkbenchPaneSession({
               queuedMessage
             )
           }
+          return true
         }
-        if (!result.sent) {
-          removeOptimisticRuntimeConversationGuidance(currentRuntimeTask, id)
-          if (takeInterruptedRuntimeConversationGuidance(currentRuntimeTask, id)) {
-            setQueuedMessages(messages => messages.filter(message => message.id !== id))
-            return
-          }
-          setQueuedMessages(messages =>
-            messages.map(message =>
-              message.id === id
-                ? {
-                    ...message,
-                    status: 'failed',
-                    awaitingGuidanceAcceptance: undefined,
-                    notice: undefined,
-                    error: '引导发送失败',
-                  }
-                : message
-            )
+        removeOptimisticRuntimeConversationGuidance(currentRuntimeTask, id)
+        if (takeInterruptedRuntimeConversationGuidance(currentRuntimeTask, id)) {
+          setQueuedMessages(messages => messages.filter(message => message.id !== id))
+          return true
+        }
+        setQueuedMessages(messages =>
+          messages.map(message =>
+            message.id === id
+              ? {
+                  ...message,
+                  status: 'failed',
+                  awaitingGuidanceAcceptance: undefined,
+                  notice: undefined,
+                  error: '引导发送失败',
+                }
+              : message
           )
-        }
+        )
+        return false
       } catch (error) {
         removeOptimisticRuntimeConversationGuidance(currentRuntimeTask, id)
         if (takeInterruptedRuntimeConversationGuidance(currentRuntimeTask, id)) {
           setQueuedMessages(messages => messages.filter(message => message.id !== id))
-          return
+          return true
         }
         console.error('[Wework] Queued guidance send failed', {
           id,
@@ -1987,6 +1924,7 @@ export function useWorkbenchPaneSession({
               : message
           )
         )
+        return false
       }
     },
     [
@@ -1996,6 +1934,76 @@ export function useWorkbenchPaneSession({
       sendRuntimeMessage,
       sendRuntimePaneGuidance,
       setError,
+      setQueuedMessages,
+    ]
+  )
+
+  const sendRequestUserInputResponse = useCallback(
+    async (
+      response: RequestUserInputResponse,
+      options: SendRequestUserInputResponseOptions = {}
+    ): Promise<boolean> => {
+      if (!currentRuntimeTask) return false
+
+      const message = requestUserInputResponseText(response)
+      const requestUserInputKey = requestUserInputResponseKey(response)
+      const runtimeModelOverride = options.forceDefaultCollaborationMode
+        ? { collaborationMode: 'default' }
+        : undefined
+      if (options.forceDefaultCollaborationMode) {
+        projectChat.setSelectedModelOption('collaborationMode', 'default')
+      }
+      // A question that is answered by the next user message - a non-blocking
+      // Codex question or an implementation-plan confirmation - is delivered like
+      // any other user message. Codex then steers the running turn while the model
+      // is still working and starts a new turn once it has stopped, instead of
+      // rejecting the answer for arriving mid-turn.
+      const answerIsUserMessage =
+        options.appendUserMessage ||
+        isAsyncRequestUserInputPayload(
+          findRequestUserInputPayload(messagesRef.current, requestUserInputKey)
+        )
+      if (answerIsUserMessage) {
+        const answerMessage: RuntimePaneQueuedMessage = {
+          id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
+          content: message,
+          status: 'queued',
+          createdAt: new Date().toISOString(),
+          ...getRuntimeModelFields(runtimeModelOverride),
+        }
+        setQueuedMessages(messages => [...messages, answerMessage])
+        if (!(await sendQueuedMessageAsGuidance(answerMessage))) return false
+      } else {
+        const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
+        const sent = await sendRuntimePaneMessage({
+          address: currentRuntimeTask,
+          message,
+          requestUserInputResponse: response,
+          ...(additionalContext ? { additionalContext } : {}),
+        })
+        if (!sent) return false
+        markRuntimeTerminalAdditionalContextDelivered(additionalContext)
+      }
+      if (requestUserInputKey) {
+        setAnsweredRequestUserInputIds(current => {
+          if (current.has(requestUserInputKey)) return current
+          const next = new Set(current)
+          next.add(requestUserInputKey)
+          return next
+        })
+      }
+      applyLocalRequestUserInputResponse(response)
+      return true
+    },
+    [
+      applyLocalRequestUserInputResponse,
+      currentRuntimeTask,
+      getRuntimeModelFields,
+      projectChat,
+      queuedMessages.length,
+      sendQueuedMessageAsGuidance,
+      sendRuntimePaneMessage,
+      setAnsweredRequestUserInputIds,
       setQueuedMessages,
     ]
   )

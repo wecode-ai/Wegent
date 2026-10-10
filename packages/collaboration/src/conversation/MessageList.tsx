@@ -24,6 +24,10 @@ import { stripPluginWorkspaceResultMarkers } from '@wegent/chat-core/plugin-work
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
+import {
+  resolveAsyncRequestUserInputAnswers,
+  resolveAsyncRequestUserInputReplies,
+} from '@wegent/chat-core/runtime-user-input'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 import {
@@ -178,7 +182,15 @@ export const MessageList = memo(function MessageList({
   const [layoutWidth, setLayoutWidth] = useState(0)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
-  const visibleMessages = useMemo(() => messages.filter(shouldRenderMessage), [messages])
+  const resolvedMessages = useMemo(() => resolveAsyncRequestUserInputAnswers(messages), [messages])
+  const replyQuestionsByMessageId = useMemo(
+    () => resolveAsyncRequestUserInputReplies(messages),
+    [messages]
+  )
+  const visibleMessages = useMemo(
+    () => resolvedMessages.filter(shouldRenderMessage),
+    [resolvedMessages]
+  )
   const runtimeTurnsById = useMemo(
     () => new Map(turns.flatMap(turn => (turn.id ? [[turn.id, turn] as const] : []))),
     [turns]
@@ -206,7 +218,9 @@ export const MessageList = memo(function MessageList({
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
-    !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
+    !resolvedMessages.some(
+      message => message.role === 'assistant' && message.status === 'streaming'
+    )
   const messageIntrinsicHeights = useMemo(() => {
     return new Map(
       visibleMessages.map(message => [
@@ -632,6 +646,7 @@ export const MessageList = memo(function MessageList({
               <UserMessage
                 services={userMessageServices}
                 message={message}
+                replyQuestions={replyQuestionsByMessageId.get(message.id)}
                 onBeforeToggle={onBeforeUserMessageToggle}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenLocalSkillFile={onOpenLocalSkillFile}

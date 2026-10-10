@@ -13,6 +13,25 @@ const addedSkill = 'added-check'
 const oldContent = 'Old release upgrade marker'
 const newContent = 'New release upgrade marker'
 const E2E_CATALOG_REFRESH_OBSERVATION_MS = 15_000
+const PLUGIN_SYNC_TIMEOUT_MS = 30_000
+
+async function waitForManagedPlugin(manifestPath, managedKey, timeoutMs = PLUGIN_SYNC_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const capabilities = JSON.parse(await readFile(manifestPath, 'utf8'))
+      const cachePath = capabilities.plugins[managedKey]?.runtime?.codex_link
+      if (cachePath) {
+        await access(join(cachePath, '.codex-plugin/plugin.json'))
+        return capabilities
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Timed out waiting for plugin sync: ${managedKey} in ${manifestPath}`)
+}
 
 export async function verifyPluginUpgrade({ cloudEnvironment: env, control, codexHome, setPhase }) {
   const deviceId = (
@@ -65,7 +84,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await request(`/plugins/installed/${installedId}?device_id=${deviceId}`, 'PUT', {
     updatePolicy: 'manual',
   })
-  const beforeRepair = await readCapabilities()
+  const beforeRepair = await waitForManagedPlugin(capabilityManifestPath, managedKey)
   const managed = beforeRepair.plugins[managedKey]
   assert.ok(managed?.store_path, 'Managed package must have an authoritative store path')
   const oldRoot = managed.runtime.codex_link

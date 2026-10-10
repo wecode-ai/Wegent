@@ -153,6 +153,7 @@ import { resolveDevelopmentDockIdentity } from './host/development-dock-identity
 import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import { normalizeWeworkSyncApiBaseUrl, requestWeworkSync } from './host/wework-sync-request.js'
+import { fixedWorkspaceWindowDescriptors } from './host/fixed-workspace-window-restore.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -359,7 +360,7 @@ app.on('open-url', (event, url) => {
   mainWindow?.focus()
 })
 
-if (app.isPackaged && !process.env.WEWORK_E2E_CONTROL_URL) {
+if (packagedApplication && !pluginDevelopmentInstance && !process.env.WEWORK_E2E_CONTROL_URL) {
   app.setAsDefaultProtocolClient('wework')
 }
 const pendingWorkspaceOpenRequests: LocalWorkspaceOpenRequest[] = startupWorkspaceOpenRequest
@@ -812,6 +813,7 @@ async function restartPrimaryCoreDsh(): Promise<void> {
   await mainWindow?.webContents.loadURL('about:blank')
   await desktopRuntime.restartCoreDsh()
   await loadPrimaryDshView()
+  await restoreFixedWorkspaceWindows()
 }
 
 function scheduleCoreDshRestart(): void {
@@ -888,6 +890,17 @@ async function openWorkspaceWindow(input: {
     workspaceWindow.destroy()
     throw error
   }
+}
+
+async function restoreFixedWorkspaceWindows(): Promise<void> {
+  const descriptors = fixedWorkspaceWindowDescriptors(await requiredPreferences().read())
+  await Promise.all(
+    descriptors.map(descriptor =>
+      openWorkspaceWindow(descriptor).catch(error => {
+        console.error(`[workspace-window] failed to restore ${descriptor.label}`, error)
+      })
+    )
+  )
 }
 
 async function ensureAuxiliaryWindow(
@@ -1889,6 +1902,7 @@ function startDesktopRuntime(): Promise<void> {
     logStartupStep('core-dsh-start', 'completed')
     trayNativeStatus?.start()
     await loadPrimaryDshView()
+    await restoreFixedWorkspaceWindows()
     logStartupStep('component-update-confirmation', 'started')
     await componentUpdates?.confirmStartup()
     logStartupStep('component-update-confirmation', 'completed')
