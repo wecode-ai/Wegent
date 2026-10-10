@@ -93,10 +93,12 @@ import {
 } from './runtimeModelSelection'
 export function buildRuntimeTaskCreateHandle(
   modelSelection: ModelSelectionConfig | null,
-  request: Pick<RuntimeTaskCreateRequest, 'cloudProjectId' | 'origin'>
+  request: Pick<RuntimeTaskCreateRequest, 'cloudProjectId' | 'origin' | 'wegentTeamId'>
 ): Record<string, unknown> | undefined {
-  if (!modelSelection && !request.cloudProjectId && !request.origin) return undefined
+  if (!modelSelection && !request.cloudProjectId && !request.origin && !request.wegentTeamId)
+    return undefined
   return {
+    ...(request.wegentTeamId ? { wegentTeam: { id: request.wegentTeamId } } : {}),
     ...(modelSelection ? { modelSelection } : {}),
     ...(request.cloudProjectId ? { cloudProjectId: request.cloudProjectId } : {}),
     ...(request.origin ? { origin: request.origin } : {}),
@@ -962,9 +964,7 @@ export function useWorkbenchRuntimeMessaging({
       const projectId = intent.projectId
       const workspaceExecution = options?.sideSource ? undefined : intent.execution
       const requestedManagedWorkspace = Boolean(workspaceExecution?.workspace)
-      const hasOverrideSelection = Boolean(
-        options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
-      )
+      const hasOverrideSelection = Boolean(options && options.modelSelection !== undefined)
       const overrideSelection = options?.modelSelection ?? null
       const selectedModel = hasOverrideSelection
         ? overrideSelection
@@ -1467,7 +1467,7 @@ export function useWorkbenchRuntimeMessaging({
               taskId: address.taskId,
               workspacePath: resolvedWorkspacePath,
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, intent.title),
-              runtime,
+              runtime: address.runtime ?? runtime,
               status: response.status ?? 'running',
               queuePosition: response.queuePosition,
               workspaceKind: workspaceExecution?.workspace?.source,
@@ -1499,7 +1499,7 @@ export function useWorkbenchRuntimeMessaging({
             taskId: address.taskId,
             workspacePath: resolvedWorkspacePath ?? '',
             title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, intent.title),
-            runtime,
+            runtime: address.runtime ?? runtime,
             running: false,
             status: 'queued',
             queuePosition: response.queuePosition,
@@ -1916,7 +1916,9 @@ export function useWorkbenchRuntimeMessaging({
             modelType: (executionModel.modelType as ModelType | null | undefined) ?? null,
             options: executionModel.modelOptions ?? {},
           }
-        : (taskRequest?.modelSelection ?? options.modelSelection)
+        : taskRequest?.modelSelection !== undefined
+          ? taskRequest.modelSelection
+          : options.modelSelection
       return sendPreparedRuntimeMessage(message, intent, prepared.activeDeviceId, {
         ...(taskRequest?.runtime || options.runtime
           ? { runtime: taskRequest?.runtime ?? options.runtime }
@@ -1932,6 +1934,7 @@ export function useWorkbenchRuntimeMessaging({
           ? (taskRequest.deviceWorkspaceId ?? null)
           : options.deviceWorkspaceId,
         modelSelection: explicitModelSelection,
+        wegentTeamId: taskRequest?.wegentTeamId ?? options.wegentTeamId,
         additionalContext: taskRequest?.additionalContext ?? options.additionalContext,
         runtimeExecutablePath: taskRequest?.runtimeExecutablePath,
         runtimePermissionMode: taskRequest?.runtimePermissionMode,

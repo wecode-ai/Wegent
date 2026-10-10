@@ -11,6 +11,7 @@ import {
 } from './NotificationTaskSource'
 import { useIssueDispatchNotificationActionRegistration } from './useIssueDispatchNotificationActionRegistration'
 import { readActiveNotificationPreferences } from './notificationPreferences'
+import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
 
 const api = vi.hoisted(() => ({
   list: vi.fn(),
@@ -455,6 +456,38 @@ describe('notification center', () => {
       })
     )
     expect(screen.queryByTestId('wework-notifications-popover')).toBeNull()
+  })
+
+  it('opens the original Issue for a direct human assignment without creating an AI task', async () => {
+    const directNotification = {
+      ...entry,
+      kind: 'issue_dispatch_assignment',
+      title: '新任务：整理周报',
+      url: 'wework://boards/12/issues/ISSUE-1',
+      payload: { action: 'open_issue', projectId: '12', itemId: 'ISSUE-1' },
+    }
+    api.list.mockImplementation((_offset, category) =>
+      Promise.resolve(
+        category === 'collaboration'
+          ? { items: [directNotification], unread_count: 1, next_offset: null }
+          : { items: [], unread_count: 0, next_offset: null }
+      )
+    )
+    api.read.mockResolvedValue({ ...directNotification, read_at: '2026-09-25T01:00:00+00:00' })
+    const opened = vi.fn()
+    window.addEventListener(WEWORK_OPEN_SCHEME_EVENT, opened)
+    try {
+      render(viewWithIssueDispatchAction())
+      fireEvent.click(screen.getByTestId('wework-notifications-button'))
+      fireEvent.click(screen.getByTestId('wework-notifications-category-collaboration'))
+      fireEvent.click(await screen.findByTestId('wework-notification-n1'))
+
+      await waitFor(() => expect(opened).toHaveBeenCalledOnce())
+      expect((opened.mock.calls[0][0] as CustomEvent<string>).detail).toBe(directNotification.url)
+      expect(issueDispatchNotificationAction).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener(WEWORK_OPEN_SCHEME_EVENT, opened)
+    }
   })
 
   it('updates notification channels from the settings view', async () => {

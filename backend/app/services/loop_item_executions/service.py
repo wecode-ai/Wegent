@@ -2074,7 +2074,7 @@ class LoopItemExecutionService:
                 row.message_id,
                 row.status,
             )
-            return project_chat_service.to_view(row)
+            return project_chat_service.to_view(row, db=db)
         if row is None:
             task = db.get(LoopItem, execution.loop_item_id)
             if task is not None and task.status == "completed":
@@ -2154,7 +2154,7 @@ class LoopItemExecutionService:
             db.refresh(row)
         else:
             db.flush()
-        view = project_chat_service.to_view(row)
+        view = project_chat_service.to_view(row, db=db)
         if push:
             from app.services.project_chat.push import push_project_chat_message
 
@@ -2811,7 +2811,9 @@ class LoopItemExecutionService:
             for projected in activities:
                 db.refresh(projected)
                 payloads.append(
-                    project_chat_service.to_view(projected).model_dump(by_alias=True)
+                    project_chat_service.to_view(projected, db=db).model_dump(
+                        by_alias=True
+                    )
                 )
             # ``refresh`` starts a read transaction. End it before publishing to
             # Redis so a slow transport cannot retain a SQL connection or locks.

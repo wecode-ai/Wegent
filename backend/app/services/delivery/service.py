@@ -194,7 +194,7 @@ class DeliveryService:
         return {
             "selection": selection.model_dump(mode="json"),
             "messages": [
-                project_chat_service.to_view(row).model_dump(mode="json")
+                project_chat_service.to_view(row, db=db).model_dump(mode="json")
                 for row in rows
             ],
         }
@@ -373,6 +373,15 @@ class DeliveryService:
                     binding_metadata.get("dispatch_round_id") == DIRECT_HUMAN_ROUND_ID
                 )
                 item.current_delivery_id = delivery.id
+                if direct_human_delivery:
+                    # An AI delivery is a suggestion, never a human submission.
+                    metadata = dict(item.metadata_json or {})
+                    stored = metadata.get("human_work")
+                    work = dict(stored) if isinstance(stored, dict) else {}
+                    work["assignment_id"] = binding_metadata.get("assignment_id")
+                    work["ai_draft_delivery_id"] = delivery.id
+                    metadata["human_work"] = work
+                    item.metadata_json = metadata
                 item.metadata_json = advance_content_revision(
                     item.metadata_json, actor_user_id=user_id
                 )
@@ -383,7 +392,7 @@ class DeliveryService:
                     db,
                     item=item,
                     reason=(
-                        "human_delivery_finalized"
+                        "human_ai_draft_ready"
                         if direct_human_delivery
                         else "collaboration_human_delivery_finalized"
                     ),

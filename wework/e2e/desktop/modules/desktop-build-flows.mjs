@@ -1578,6 +1578,7 @@ async function verifyModelProtocolMatrix({
   composerSelector,
   control,
   newConversationSelector,
+  readRuntimeTask,
   screenshotPrefix,
   setCodexUpstreamProtocol,
   startIndex = 0,
@@ -1644,7 +1645,38 @@ async function verifyModelProtocolMatrix({
       control.matrixState.requests.length >= 3,
       `${matrixCaseId(model)} did not send the text/tool/tool-output request sequence`
     )
-    await prepareCompletedTurnScreenshot(control)
+    try {
+      await prepareCompletedTurnScreenshot(control)
+    } catch (error) {
+      try {
+        const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
+        const task = taskId && readRuntimeTask ? await readRuntimeTask(taskId) : null
+        const execution = task
+          ? Object.fromEntries(
+              [
+                'taskId',
+                'status',
+                'running',
+                'threadStatus',
+                'turnStatus',
+                'completedAt',
+                'updatedAt',
+              ].map(key => [key, task[key] ?? null])
+            )
+          : null
+        control.matrixState.executionDiagnostics = execution
+        console.error('Model protocol matrix terminal state mismatch', {
+          caseId: matrixCaseId(model),
+          taskId,
+          execution,
+          lifecycle: snapshot.workbench?.activeLifecycle ?? null,
+        })
+      } catch {
+        console.error('Model protocol matrix terminal state diagnostics could not be collected')
+      }
+      throw error
+    }
     await captureVerificationScreenshot(
       control,
       `${screenshotPrefix}-${String(matrixIndex + 1).padStart(2, '0')}-${matrixCaseId(model)}.png`

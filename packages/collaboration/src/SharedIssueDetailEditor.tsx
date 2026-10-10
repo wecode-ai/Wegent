@@ -78,6 +78,7 @@ import type {
 } from "./types";
 import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
 import { TagEditor } from "./issue-detail/TagEditor";
+import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { localizeStandardStatuses } from "./i18n";
 import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
 
@@ -158,6 +159,11 @@ export interface SharedIssueDetailExtensions {
     onInlineAttachmentIdsChange(attachmentIds: string[]): void;
   }): ReactNode;
   renderActivity?(context: SharedIssueDetailExtensionContext): ReactNode;
+  renderHumanWork?(context: {
+    item: SharedEditorIssue;
+    onItemChange(item: SharedEditorIssue): void;
+    onCreateTask?: () => void;
+  }): ReactNode;
   renderAITableFields?(context: {
     item: SharedEditorIssue;
     project: SharedEditorProject;
@@ -393,6 +399,7 @@ function RailProp({
   testId,
   clickable = Boolean(control),
   valueClassName,
+  wrapValue = false,
 }: {
   label: string;
   children: ReactNode;
@@ -400,6 +407,7 @@ function RailProp({
   testId?: string;
   clickable?: boolean;
   valueClassName?: string;
+  wrapValue?: boolean;
 }) {
   return (
     <span
@@ -411,7 +419,8 @@ function RailProp({
       </span>
       <span
         className={cn(
-          "task-detail-rail-value flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-medium leading-5 text-text-primary",
+          "task-detail-rail-value flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium leading-5 text-text-primary",
+          wrapValue ? "overflow-visible" : "truncate",
           clickable && "group relative",
           valueClassName,
         )}
@@ -419,7 +428,12 @@ function RailProp({
         {clickable ? (
           <span className="pointer-events-none absolute -inset-x-1.5 -inset-y-[3px] rounded-md transition group-hover:bg-muted" />
         ) : null}
-        <span className="task-detail-rail-value-content relative flex min-w-0 items-center gap-1.5 truncate">
+        <span
+          className={cn(
+            "task-detail-rail-value-content relative flex min-w-0 items-center gap-1.5",
+            wrapValue ? "w-full overflow-visible" : "truncate",
+          )}
+        >
           {children}
         </span>
         {control}
@@ -1281,9 +1295,7 @@ export function TodoEditor(props: TodoEditorProps) {
       : []
     : effectiveTasks;
   const activeDisplayedTasks = displayedTasks.filter((task) =>
-    isTaskExecutionActive(
-      props.taskExecutionStates?.[String(task.id)]?.status,
-    ),
+    isTaskExecutionActive(props.taskExecutionStates?.[String(task.id)]?.status),
   );
   const activeDisplayedTaskIds = new Set(
     activeDisplayedTasks.map((task) => String(task.id)),
@@ -1299,10 +1311,7 @@ export function TodoEditor(props: TodoEditorProps) {
     ...activeDisplayedTasks,
     ...recentInactiveTasks.slice(
       0,
-      Math.max(
-        0,
-        COLLAPSED_EXECUTION_TASK_LIMIT - activeDisplayedTasks.length,
-      ),
+      Math.max(0, COLLAPSED_EXECUTION_TASK_LIMIT - activeDisplayedTasks.length),
     ),
   ];
   const orderedDisplayedTasks = [
@@ -1322,9 +1331,7 @@ export function TodoEditor(props: TodoEditorProps) {
     executionTaskCount > 0 ||
     deliveries.length > 0 ||
     (showChildren && childItems.length > 0);
-  const executionElapsedMinutes = issueExecutionElapsedMinutes(
-    displayedTasks.map((task) => task.linked_at),
-  );
+  const executionElapsedMinutes = issueExecutionElapsedMinutes(item?.ai_state);
   const executionElapsedLabel =
     executionElapsedMinutes === null
       ? t("todo.not_started", "未开始")
@@ -1997,7 +2004,11 @@ export function TodoEditor(props: TodoEditorProps) {
   // Property controls, shared by the single-column chip row and the
   // two-column Xiaohongshu-style rail cells. The overlay select/input keeps
   // every cell editable in place regardless of where it is rendered.
-  const statusSelect = (
+  const statusSelect = item?.human_work ? (
+    <span data-testid="cloud-todo-detail-status" className="sr-only">
+      {statusLabel}
+    </span>
+  ) : (
     <IssueDetailStatusSelect
       testId={
         isCreate ? "cloud-todo-create-status" : "cloud-todo-detail-status"
@@ -2263,7 +2274,9 @@ export function TodoEditor(props: TodoEditorProps) {
       <Circle className="h-3.5 w-3.5 text-text-muted" />
       <span className="text-text-muted">{t("todo.issue_status", "状态")}</span>
       {statusValue}
-      <ChevronDown className="h-3 w-3 text-text-muted" />
+      {!item?.human_work ? (
+        <ChevronDown className="h-3 w-3 text-text-muted" />
+      ) : null}
       {statusSelect}
     </span>
   );
@@ -2545,51 +2558,20 @@ export function TodoEditor(props: TodoEditorProps) {
           <RailProp
             label={t("todo.project_tags", "标签")}
             clickable={false}
-            valueClassName="overflow-visible"
+            wrapValue
           >
-            <span className="task-detail-workspace-tags">
-              {tags.map((tag) => (
-                <span
-                  key={tag}
-                  data-testid={`cloud-todo-detail-tag-tag-${tag}`}
-                  className="task-detail-workspace-tag"
-                >
-                  {tag}
-                  {editable ? (
-                    <button
-                      type="button"
-                      aria-label={`移除标签 ${tag}`}
-                      data-testid={`cloud-todo-detail-tag-tag-remove-${tag}`}
-                      onClick={() =>
-                        setTags((current) =>
-                          current.filter((candidate) => candidate !== tag),
-                        )
-                      }
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  ) : null}
-                </span>
-              ))}
-              {editable ? (
-                <label className="task-detail-workspace-tag-add">
-                  <Plus className="h-3 w-3" />
-                  <input
-                    data-testid="cloud-todo-detail-tag-input"
-                    aria-label={t("todo.add_tag", "添加标签")}
-                    placeholder={t("todo.add_tag", "添加标签")}
-                    value={tagDraft}
-                    onChange={(event) => setTagDraft(event.target.value)}
-                    onBlur={commitTagDraft}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === ",") {
-                        event.preventDefault();
-                        commitTagDraft();
-                      }
-                    }}
-                  />
-                </label>
-              ) : null}
+            <span className="task-detail-workspace-tags w-full">
+              <TagEditor
+                testIdPrefix="cloud-todo-detail-tag"
+                tags={tags}
+                onChange={setTags}
+                disabled={!editable}
+                suggestions={tagSuggestions}
+                placeholder={t("todo.add_tag", "添加标签")}
+                removeLabel={(tag) =>
+                  t("todo.remove_name", "删除 {{name}}", { name: tag })
+                }
+              />
             </span>
           </RailProp>
           {railProps}
@@ -2705,27 +2687,21 @@ export function TodoEditor(props: TodoEditorProps) {
           <span className="flex-1" />
           {props.headerActions}
           {workspacePanel && item ? (
-            <details className="task-detail-more-menu">
-              <summary
-                aria-label={t("todo.more_properties", "更多信息")}
-                data-testid="cloud-todo-more-properties"
-              >
-                •••
-              </summary>
-              <div className="task-detail-more-menu-popover">
-                {workspaceProperties}
-                {editable && props.onDelete ? (
-                  <button
-                    className="task-detail-more-menu-danger"
-                    data-testid="cloud-todo-detail-delete"
-                    onClick={props.onDelete}
-                    type="button"
-                  >
-                    {props.deleteLabel ?? t("todo.delete_issue", "删除任务")}
-                  </button>
-                ) : null}
-              </div>
-            </details>
+            <IssuePropertiesPopover
+              label={t("todo.more_properties", "更多信息")}
+            >
+              {workspaceProperties}
+              {editable && props.onDelete ? (
+                <button
+                  className="task-detail-more-menu-danger"
+                  data-testid="cloud-todo-detail-delete"
+                  onClick={props.onDelete}
+                  type="button"
+                >
+                  {props.deleteLabel ?? t("todo.delete_issue", "删除任务")}
+                </button>
+              ) : null}
+            </IssuePropertiesPopover>
           ) : null}
           {twoColumn && !isCreate && !workspacePanel ? (
             <>
@@ -2911,6 +2887,10 @@ export function TodoEditor(props: TodoEditorProps) {
                     onChange={setTags}
                     disabled={!editable}
                     suggestions={tagSuggestions}
+                    placeholder={t("todo.add_tag", "添加标签")}
+                    removeLabel={(tag) =>
+                      t("todo.remove_name", "删除 {{name}}", { name: tag })
+                    }
                   />
                 </div>
               ) : null}
@@ -3100,6 +3080,13 @@ export function TodoEditor(props: TodoEditorProps) {
                   </div>
                 </div>
               ) : null}
+              {item && editProps
+                ? extensions?.renderHumanWork?.({
+                    item,
+                    onItemChange: editProps.onUpdated,
+                    onCreateTask: props.onCreateTask,
+                  })
+                : null}
               {saveError && (
                 <p className="mt-2 text-xs text-destructive">{saveError}</p>
               )}
@@ -3197,7 +3184,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       >
                         <span className="task-detail-state-primary relative">
                           {statusValue}
-                          {editable ? (
+                          {editable && !item?.human_work ? (
                             <ChevronDown aria-hidden="true" size={13} />
                           ) : null}
                           {statusSelect}
@@ -3345,7 +3332,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           >
                             <span className="task-detail-state-metric">
                               <History aria-hidden="true" size={15} />
-                              <strong data-testid="issue-execution-duration">
+                              <strong data-testid="cloud-todo-execution-duration">
                                 {executionElapsedLabel}
                               </strong>
                             </span>

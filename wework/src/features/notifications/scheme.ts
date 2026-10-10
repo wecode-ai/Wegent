@@ -68,13 +68,19 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
   }
 }
 
-export function weworkDestinationRoute(destination: WeworkDestination): string {
+export function weworkDestinationRoute(
+  destination: WeworkDestination,
+  focusRequest?: string
+): string {
   if (destination.kind === 'boards') return '/todo'
   if (destination.kind === 'task') {
     return `/runtime-tasks?${new URLSearchParams({ deviceId: destination.deviceId, taskId: destination.taskId })}`
   }
   const params = new URLSearchParams({ projectStore: 'backend', projectId: destination.projectId })
   if (destination.itemId) params.set('itemId', destination.itemId)
-  if (destination.commentId) params.set('commentId', destination.commentId)
+  if (destination.commentId) {
+    params.set('commentId', destination.commentId)
+    if (focusRequest) params.set('focusRequest', focusRequest)
+  }
   return `/todo?${params}`
 }

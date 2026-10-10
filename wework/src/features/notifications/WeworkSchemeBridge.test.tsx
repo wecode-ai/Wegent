@@ -120,11 +120,19 @@ describe('Wework scheme bridge', () => {
     expect(openTab).not.toHaveBeenCalled()
   })
 
-  it('creates a new focus request when reopening the same comment', () => {
+  it('gives repeated comment notifications distinct focus requests on the existing board', () => {
+    const contentRoute = '/todo?projectStore=backend&projectId=12&itemId=WEG-1&commentId=c-1'
     workspaceTabs.tabs = [
-      { id: 'board', kind: 'board', title: 'Board', contentRoute: '/todo', fixed: true },
+      { id: 'other', kind: 'board', title: 'Other', contentRoute: '/todo', fixed: true },
+      {
+        id: 'target',
+        kind: 'board',
+        title: 'Target',
+        contentRoute: `${contentRoute}&focusRequest=previous-request`,
+        fixed: false,
+      },
     ]
-    workspaceTabs.activeTabId = 'board'
+    workspaceTabs.activeTabId = 'other'
     render(
       <CloudConnectionContext.Provider
         value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
@@ -134,18 +142,23 @@ describe('Wework scheme bridge', () => {
     )
 
     act(() => {
-      openWeworkScheme('wework://boards/12/issues/ISSUE-1/comments/comment-1')
-      openWeworkScheme('wework://boards/12/issues/ISSUE-1/comments/comment-1')
+      openWeworkScheme('wework://boards/12/issues/WEG-1/comments/c-1')
+      openWeworkScheme('wework://boards/12/issues/WEG-1/comments/c-1')
     })
 
     expect(workspaceTabs.selectTab).toHaveBeenCalledTimes(2)
-    const firstRoute = workspaceTabs.selectTab.mock.calls[0][1]?.contentRoute
-    const secondRoute = workspaceTabs.selectTab.mock.calls[1][1]?.contentRoute
-    expect(firstRoute).toContain('commentId=comment-1')
-    expect(firstRoute).toContain('focusRequest=')
-    expect(secondRoute).toContain('commentId=comment-1')
-    expect(secondRoute).toContain('focusRequest=')
-    expect(secondRoute).not.toBe(firstRoute)
+    const requests = workspaceTabs.selectTab.mock.calls.map(([tabId, updates]) => {
+      expect(tabId).toBe('target')
+      const route = new URL(updates.contentRoute, 'https://local')
+      const key = route.searchParams.get('focusRequest')
+      expect(key).toBeTruthy()
+      expect(key).not.toBe('previous-request')
+      route.searchParams.delete('focusRequest')
+      expect(`${route.pathname}${route.search}`).toBe(contentRoute)
+      return key
+    })
+    expect(requests[0]).not.toBe(requests[1])
+    expect(openTab).not.toHaveBeenCalled()
   })
 
   it('reuses the fixed task tab while another app is active', () => {

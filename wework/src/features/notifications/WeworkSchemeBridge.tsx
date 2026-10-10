@@ -11,6 +11,13 @@ import {
 import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 import { parseWeworkScheme, weworkDestinationRoute } from './scheme'
 
+function commentTargetRoute(route: string): string {
+  const [path, search] = route.split('?')
+  const params = new URLSearchParams(search)
+  params.delete('focusRequest')
+  return `${path}${params.size ? `?${params}` : ''}`
+}
+
 function navigateWorkspaceTab(
   workspaceTabs: WorkspaceTabsContextValue,
   kind: WorkspaceTabKind,
@@ -20,7 +27,7 @@ function navigateWorkspaceTab(
   const target = parseRuntimeTaskRoute(pathname, search)
   const candidates = workspaceTabs.tabs.filter(tab => tab.kind === kind)
   const matching = candidates.find(tab => {
-    if (!target) return tab.contentRoute === contentRoute
+    if (!target) return commentTargetRoute(tab.contentRoute) === commentTargetRoute(contentRoute)
     const [tabPath, tabSearch] = tab.contentRoute.split('?')
     const task = parseRuntimeTaskRoute(tabPath, tabSearch)
     return task?.deviceId === target.deviceId && task.taskId === target.taskId
@@ -56,15 +63,15 @@ export function WeworkSchemeBridge() {
       }
       return false
     }
-    const route = weworkDestinationRoute(destination)
-    const focusedRoute =
-      destination.kind === 'board' && destination.commentId
-        ? `${route}&focusRequest=${Date.now()}-${++focusRequestRef.current}`
-        : route
     navigateWorkspaceTab(
       tabsRef.current,
       destination.kind === 'task' ? 'task' : 'board',
-      focusedRoute
+      weworkDestinationRoute(
+        destination,
+        destination.kind === 'board' && destination.commentId
+          ? `${Date.now()}-${++focusRequestRef.current}`
+          : undefined
+      )
     )
     return true
   }, [])
