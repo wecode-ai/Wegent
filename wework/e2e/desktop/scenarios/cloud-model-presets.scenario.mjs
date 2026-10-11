@@ -75,7 +75,7 @@ export function createDesktopScenario() {
           body: JSON.stringify({
             name: model.name,
             namespace: 'default',
-            model_json: {
+            json: {
               apiVersion: 'agent.wecode.io/v1',
               kind: 'Model',
               metadata: { name: model.name, namespace: 'default', displayName: model.label },
@@ -85,7 +85,7 @@ export function createDesktopScenario() {
                 modelType: 'llm',
                 isVisible: true,
                 isWeworkAvailable: true,
-                modelConfig: { env: upstream.model_json.spec.modelConfig.env, ui },
+                modelConfig: { env: upstream.json.spec.modelConfig.env, ui },
               },
             },
           }),
