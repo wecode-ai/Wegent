@@ -85,7 +85,10 @@ export function createDesktopScenario() {
                 modelType: 'llm',
                 isVisible: true,
                 isWeworkAvailable: true,
-                modelConfig: { env: upstream.json.spec.modelConfig.env, ui },
+                modelConfig: {
+                  env: { ...upstream.json.spec.modelConfig.env, model_id: model.name },
+                  ui,
+                },
               },
             },
           }),
@@ -145,10 +148,24 @@ export function createDesktopScenario() {
         await control.command('click', `${cloudSource} > [data-model-preset="quality"]`)
         await control.command('press', 'body', { key: 'Escape' })
         await control.command('waitFor', selector, { text: models[3].label })
+      } catch (error) {
+        console.error('[cloud-model-presets] Verification failed', error)
+        throw error
       } finally {
         await control.command('press', 'body', { key: 'Escape' })
         for (const id of createdIds) {
-          await request(`/api/admin/public-models/${id}`, { method: 'DELETE' })
+          const deleted = await fetch(
+            `${cloudEnvironment.backendUrl}/api/admin/public-models/${id}`,
+            {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${cloudEnvironment.authToken}` },
+            }
+          )
+          assert.equal(
+            deleted.status,
+            204,
+            'Public model cleanup must return an empty 204 response'
+          )
         }
       }
     },
