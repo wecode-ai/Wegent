@@ -134,7 +134,31 @@ describe('TelemetryBridge', () => {
     }
   })
 
-  it('serializes a retry after a timed-out save instead of racing it', async () => {
+  it('lets a retry start a fresh save after a timed-out attempt never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.preferences.preferences.telemetryConsentAsked = false
+      mocks.updateAppPreferences.mockImplementationOnce(() => new Promise(() => {}))
+
+      render(<TelemetryBridge />)
+      fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
+
+      await vi.advanceTimersByTimeAsync(10_000)
+      await vi.waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+
+      fireEvent.click(screen.getByTestId('telemetry-consent-decline'))
+      await vi.waitFor(() => {
+        expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
+          telemetryConsentAsked: true,
+          telemetryEnabled: false,
+        })
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('re-asserts the latest choice when a superseded save completes late', async () => {
     vi.useFakeTimers()
     try {
       mocks.preferences.preferences.telemetryConsentAsked = false
@@ -153,11 +177,19 @@ describe('TelemetryBridge', () => {
       await vi.waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
 
       fireEvent.click(screen.getByTestId('telemetry-consent-decline'))
-      // The retry must wait for the still-in-flight accept save to settle.
-      expect(mocks.updateAppPreferences).toHaveBeenCalledTimes(1)
+      await vi.waitFor(() => {
+        expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
+          telemetryConsentAsked: true,
+          telemetryEnabled: false,
+        })
+      })
+      expect(mocks.updateAppPreferences).toHaveBeenCalledTimes(2)
 
+      // The abandoned accept save completes late; it must re-assert the
+      // latest decline choice so the stale value does not win.
       releaseFirstSave?.()
       await vi.waitFor(() => {
+        expect(mocks.updateAppPreferences).toHaveBeenCalledTimes(3)
         expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
           telemetryConsentAsked: true,
           telemetryEnabled: false,

@@ -29,6 +29,8 @@ export function TelemetryBridge() {
   const [savingConsent, setSavingConsent] = useState(false)
   const [consentError, setConsentError] = useState<string | null>(null)
   const pendingConsentSaveRef = useRef<Promise<unknown>>(Promise.resolve())
+  const consentSaveGenerationRef = useRef(0)
+  const latestConsentChoiceRef = useRef(false)
   const consentAsked = appPreferences?.preferences.telemetryConsentAsked
   const telemetryEnabled = appPreferences?.preferences.telemetryEnabled
   const distribution = getTelemetryConfig().distribution
@@ -115,6 +117,8 @@ export function TelemetryBridge() {
   const chooseConsent = async (enabled: boolean) => {
     setSavingConsent(true)
     setConsentError(null)
+    latestConsentChoiceRef.current = enabled
+    const generation = ++consentSaveGenerationRef.current
     // Serialize saves: a timed-out attempt may still be in flight, and a
     // parallel retry with a different value could be overwritten on disk and
     // in renderer state when the stale completion arrives last.
@@ -126,6 +130,20 @@ export function TelemetryBridge() {
           telemetryEnabled: enabled,
         })
       )
+      .finally(() => {
+        // A superseded save may complete after a retry with a different
+        // value; re-assert the latest choice once so the final state
+        // converges to the user's intent.
+        if (
+          generation !== consentSaveGenerationRef.current &&
+          latestConsentChoiceRef.current !== enabled
+        ) {
+          void updateAppPreferences({
+            telemetryConsentAsked: true,
+            telemetryEnabled: latestConsentChoiceRef.current,
+          }).catch(() => {})
+        }
+      })
     pendingConsentSaveRef.current = save
     try {
       await raceWithTimeout(
@@ -135,6 +153,10 @@ export function TelemetryBridge() {
       )
     } catch {
       setConsentError(t('workbench.telemetry_consent_save_failed'))
+      // Abandon the still in-flight save for chaining purposes so a retry
+      // can start a fresh save instead of waiting on one that may never
+      // settle.
+      pendingConsentSaveRef.current = Promise.resolve()
     } finally {
       setSavingConsent(false)
     }
