@@ -320,12 +320,12 @@ const PROJECT_AI_INITIAL_INSTRUCTIONS =
   'WEWORK_DESKTOP_E2E_PROJECT_AI_INITIAL: preserve this instruction for the existing conversation.'
 const PROJECT_AI_UPDATED_INSTRUCTIONS =
   'WEWORK_DESKTOP_E2E_PROJECT_AI_UPDATED: apply this instruction only to new conversations.'
-const PROJECT_AI_MODEL_ID = 'wework-deepseek-v4-pro'
-const PROJECT_AI_MODEL_LABEL = 'wework-deepseek-v4-pro'
+const PROJECT_AI_MODEL_ID = 'local-model:desktop-e2e-vision-main'
+const PROJECT_AI_MODEL_LABEL = 'Desktop E2E DeepSeek Pro Vision Main'
 const PROJECT_AI_MODEL_VALUE = `runtime:${PROJECT_AI_MODEL_ID}`
 const PROJECT_AI_UPSTREAM_MODEL_ID = 'deepseek-v4-pro'
-const REMEMBERED_TASK_MODEL_ID = 'gpt-5.6-sol'
-const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
+const REMEMBERED_TASK_MODEL_ID = 'gpt-6.1-sol'
+const REMEMBERED_TASK_MODEL_LABEL = 'GPT-6.1 Sol'
 const REMEMBERED_TASK_REASONING = 'high'
 const GPT_6_1_SOL_MODEL_ID = 'gpt-6.1-sol'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
@@ -506,16 +506,15 @@ async function waitForProjectComposerPlugin(control) {
 async function selectRememberedTaskModel(control) {
   await selectE2EModel(control, REMEMBERED_TASK_MODEL_ID, REMEMBERED_TASK_MODEL_LABEL)
   await control.command('click', '[data-testid="model-selector-button"]')
-  await control.command('click', '[data-testid="model-control-menu-reasoning"]')
   await control.command('waitFor', '[data-testid="model-control-reasoning-high"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     visible: true,
   })
   await control.command('click', '[data-testid="model-control-reasoning-high"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
-    'The task composer did not select GPT 5.6 Sol with high reasoning'
+    'The task composer did not select GPT-6.1 Sol with high reasoning'
   )
   await control.command('press', 'body', { key: 'Escape' })
 }
@@ -569,7 +568,7 @@ async function verifyProjectAiSettings({
   await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
     'The follow-global project did not remember the selected model and reasoning effort'
   )
@@ -804,7 +803,7 @@ async function verifyProjectAiSettings({
   await waitForE2EModelLabel(control, [PROJECT_AI_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
     'The next task did not restore the project model and reasoning effort'
   )
@@ -2270,7 +2269,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
-      if (!GUIDANCE_SCROLL_ONLY) {
+      if (!GUIDANCE_SCROLL_ONLY && !GUIDANCE_BACKGROUND_ONLY && !SIDE_CHAT_ONLY) {
         phase = 'workspace-document-tabs'
         await verifyWorkspaceDocumentTabs(control)
 

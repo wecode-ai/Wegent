@@ -1131,6 +1131,17 @@ async function verifyWorktreeCreationStatus({
       WORKBENCH_READY_TIMEOUT_MS,
       'The worktree task did not reach the model service after creation'
     )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    const pendingTranscriptSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      pendingTranscriptSnapshot.testIds.includes('runtime-transcript-error'),
+      false,
+      'The newly started Codex thread exposed a transient startup transcript error'
+    )
+    assert.ok(
+      pendingTranscriptSnapshot.text.includes(CHECKPOINT_TASK_PROMPT),
+      'The pending worktree transcript lost its optimistic user message'
+    )
   } finally {
     control.releaseScenarioResponse(scenario)
   }

@@ -20,7 +20,7 @@ import {
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const MODEL = 'wework-custom-desktop-e2e-responses'
+const MODEL = 'local-model:desktop-e2e-responses'
 const ALTERNATE_MODEL = 'wework-custom-desktop-e2e-chat'
 const UPSTREAM_MODEL = 'desktop-e2e-responses-model'
 const PROJECT = `本地协作调度-${process.pid}`

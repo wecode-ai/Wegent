@@ -434,11 +434,7 @@ impl RuntimeWorkRpcHandler {
                     ));
                 }
             }
-            let metadata_response = codex_client
-                .request(
-                    "thread/read",
-                    json!({"threadId": thread_id, "includeTurns": false}),
-                )
+            let metadata_response = read_codex_thread_metadata(&codex_client, &thread_id)
                 .await
                 .map_err(|error| AppIpcError::new("codex_error", error))?;
             let thread = metadata_response

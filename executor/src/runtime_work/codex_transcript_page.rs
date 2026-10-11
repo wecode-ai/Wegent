@@ -8,6 +8,7 @@ use std::io::{BufRead, BufReader};
 use futures_util::{stream, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tokio::time::{sleep, Duration};
 
 use crate::agents::CodexAppServerClient;
 
@@ -19,6 +20,8 @@ const CODEX_INITIAL_ITEM_BUDGET_TURN_CAP: usize = 5;
 const CODEX_INCREMENTAL_CURSOR_PREFIX: &str = "wework-codex-items:";
 const CODEX_NAVIGATION_CURSOR_PREFIX: &str = "wework-codex-navigation:";
 const CODEX_NAVIGATION_MAX_PAGES: usize = 10;
+const CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS: usize = 50;
+const CODEX_TRANSCRIPT_STARTUP_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) enum CodexTranscriptDirection {
@@ -89,12 +92,7 @@ pub(crate) async fn load_codex_transcript(
     client: &CodexAppServerClient,
     request: CodexTranscriptRequest<'_>,
 ) -> Result<CodexTranscriptPage, String> {
-    let metadata_response = client
-        .request(
-            "thread/read",
-            json!({"threadId": request.thread_id, "includeTurns": false}),
-        )
-        .await?;
+    let metadata_response = read_codex_thread_metadata(client, request.thread_id).await?;
     let mut thread = metadata_response
         .get("thread")
         .cloned()
@@ -212,6 +210,38 @@ pub(crate) async fn load_codex_transcript(
     }
 }
 
+pub(crate) async fn read_codex_thread_metadata(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+) -> Result<Value, String> {
+    for attempt in 0..CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS {
+        match client
+            .request(
+                "thread/read",
+                json!({"threadId": thread_id, "includeTurns": false}),
+            )
+            .await
+        {
+            Ok(response) => return Ok(response),
+            Err(error)
+                if codex_thread_metadata_is_pending(&error)
+                    && attempt + 1 < CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS =>
+            {
+                sleep(CODEX_TRANSCRIPT_STARTUP_RETRY_DELAY).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("Codex thread metadata retry loop always returns")
+}
+
+fn codex_thread_metadata_is_pending(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("failed to read session metadata")
+        && normalized.contains("rollout")
+        && normalized.contains("is empty")
+}
+
 pub(crate) async fn load_codex_transcript_navigation(
     client: &CodexAppServerClient,
     thread: &Value,
@@ -243,18 +273,17 @@ pub(crate) async fn load_codex_transcript_navigation(
     let mut turns = Vec::new();
     let mut seen_cursors = HashSet::new();
     for _ in 0..CODEX_NAVIGATION_MAX_PAGES {
-        let page = client
-            .request(
-                "thread/turns/list",
-                json!({
-                    "threadId": thread_id,
-                    "cursor": cursor,
-                    "limit": CODEX_ITEM_PAGE_SIZE,
-                    "sortDirection": "desc",
-                    "itemsView": "notLoaded",
-                }),
-            )
-            .await?;
+        let page = request_codex_turn_page(
+            client,
+            json!({
+                "threadId": thread_id,
+                "cursor": cursor,
+                "limit": CODEX_ITEM_PAGE_SIZE,
+                "sortDirection": "desc",
+                "itemsView": "notLoaded",
+            }),
+        )
+        .await?;
         let page_backwards_cursor = string_field(&page, "backwardsCursor");
         let page_turns = page
             .get("data")
@@ -316,18 +345,17 @@ async fn resolve_navigation_cursor(
     if cursor.descending_offset == 0 {
         return Ok(cursor.page_backwards_cursor.clone());
     }
-    let page = client
-        .request(
-            "thread/turns/list",
-            json!({
-                "threadId": thread_id,
-                "cursor": cursor.page_backwards_cursor,
-                "limit": cursor.descending_offset,
-                "sortDirection": "desc",
-                "itemsView": "notLoaded",
-            }),
-        )
-        .await?;
+    let page = request_codex_turn_page(
+        client,
+        json!({
+            "threadId": thread_id,
+            "cursor": cursor.page_backwards_cursor,
+            "limit": cursor.descending_offset,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded",
+        }),
+    )
+    .await?;
     string_field(&page, "nextCursor")
         .ok_or_else(|| "Codex navigation cursor did not resolve to the requested turn".to_owned())
 }
@@ -518,18 +546,42 @@ async fn load_turn_page(
     direction: CodexTranscriptDirection,
     paginated_history: bool,
 ) -> Result<Value, String> {
-    client
-        .request(
-            "thread/turns/list",
-            json!({
-                "threadId": thread_id,
-                "cursor": cursor,
-                "limit": limit,
-                "sortDirection": direction.as_str(),
-                "itemsView": turn_items_view(paginated_history),
-            }),
-        )
-        .await
+    request_codex_turn_page(
+        client,
+        json!({
+            "threadId": thread_id,
+            "cursor": cursor,
+            "limit": limit,
+            "sortDirection": direction.as_str(),
+            "itemsView": turn_items_view(paginated_history),
+        }),
+    )
+    .await
+}
+
+async fn request_codex_turn_page(
+    client: &CodexAppServerClient,
+    params: Value,
+) -> Result<Value, String> {
+    for attempt in 0..CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS {
+        match client.request("thread/turns/list", params.clone()).await {
+            Ok(response) => return Ok(response),
+            Err(error)
+                if codex_turn_history_is_pending(&error)
+                    && attempt + 1 < CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS =>
+            {
+                sleep(CODEX_TRANSCRIPT_STARTUP_RETRY_DELAY).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("Codex turn history retry loop always returns")
+}
+
+fn codex_turn_history_is_pending(error: &str) -> bool {
+    error
+        .to_ascii_lowercase()
+        .contains("list_turns is not supported yet")
 }
 
 fn thread_uses_paginated_history(thread: &Value) -> bool {
@@ -841,7 +893,30 @@ async fn load_turn_items(
 mod tests {
     use serde_json::json;
 
-    use super::{rollout_turns, thread_uses_paginated_history, turn_items_view};
+    use super::{
+        codex_thread_metadata_is_pending, codex_turn_history_is_pending, rollout_turns,
+        thread_uses_paginated_history, turn_items_view,
+    };
+
+    #[test]
+    fn retries_only_transient_codex_transcript_startup_errors() {
+        assert!(codex_thread_metadata_is_pending(
+            "failed to read thread: thread-store internal error: failed to read session metadata \
+             /tmp/rollout.jsonl: rollout at /tmp/rollout.jsonl is empty"
+        ));
+        assert!(!codex_thread_metadata_is_pending(
+            "failed to read thread: thread not found"
+        ));
+        assert!(!codex_thread_metadata_is_pending(
+            "failed to read session metadata /tmp/rollout.jsonl: permission denied"
+        ));
+        assert!(codex_turn_history_is_pending(
+            "list_turns is not supported yet"
+        ));
+        assert!(!codex_turn_history_is_pending(
+            "thread/turns/list returned a repeated cursor"
+        ));
+    }
 
     #[tokio::test]
     async fn full_rollout_export_includes_more_than_five_hundred_turns() {

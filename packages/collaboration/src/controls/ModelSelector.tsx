@@ -763,9 +763,6 @@ export function ModelSelector({
     const speedControl = getControlsForModel(selectedSetting.model).find(
       (control) => control.id === "speed",
     );
-    explicitModelSelectionRef.current = false;
-    setActivePowerPresetKey(preset.key);
-    setModelSelectionMode("default");
     const defaultOptions = {
       reasoning: selectedSetting.reasoningEffort,
       ...(speedControl?.defaultValue
@@ -775,12 +772,18 @@ export function ModelSelector({
     if (onSelectModelAndOptions) {
       onSelectModelAndOptions(selectedSetting.model, defaultOptions);
     } else {
-      handleSelectModel(selectedSetting.model);
+      if (handleSelectModel(selectedSetting.model) === false) {
+        closeMenu("selection");
+        return;
+      }
       handleSelectModelOption("reasoning", selectedSetting.reasoningEffort);
       if (speedControl?.defaultValue) {
         handleSelectModelOption("speed", speedControl.defaultValue);
       }
     }
+    explicitModelSelectionRef.current = false;
+    setActivePowerPresetKey(preset.key);
+    setModelSelectionMode("default");
     setDesktopMenuView("simple");
   }
 
@@ -898,11 +901,7 @@ export function ModelSelector({
                               type="button"
                               data-testid="model-advanced-fast-mode-toggle"
                               aria-pressed={fastModeState.enabled}
-                              aria-label={
-                                fastModeState.enabled
-                                  ? t("workbench.speed_standard", "标准")
-                                  : t("workbench.speed_fast", "快速")
-                              }
+                              aria-label={t("workbench.speed_fast", "快速")}
                               onClick={() =>
                                 handleSelectModelOption(
                                   "speed",

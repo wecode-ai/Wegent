@@ -7,6 +7,8 @@ import { createCollaborationTranslator } from "../i18n";
 import { CollaborationTheme } from "../theme";
 import { ModelSelector } from "./ModelSelector";
 import { PermissionModeSelector } from "./PermissionModeSelector";
+import { codexRuntimeModels } from "@wegent/chat-core/runtime-model-catalog";
+import type { CodexOfficialModel } from "@wegent/chat-core/codex-official-models";
 import type { UnifiedModel } from "@wegent/chat-core/models";
 
 let container: HTMLDivElement;
@@ -14,12 +16,12 @@ let root: Root;
 const translate = createCollaborationTranslator("zh-CN");
 
 const cloudDeepseekModel: UnifiedModel = {
-  name: 'deepseek-flash-responses(公网)',
-  type: 'public',
-  displayName: '公网:DeepSeek-V4-Flash',
-  modelId: 'deepseek-flash',
-  config: { protocol: 'openai-responses' },
-}
+  name: "deepseek-flash-responses(公网)",
+  type: "public",
+  displayName: "公网:DeepSeek-V4-Flash",
+  modelId: "deepseek-flash",
+  config: { protocol: "openai-responses" },
+};
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -37,6 +39,24 @@ function element(id: string) {
   const target = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
   if (!target) throw new Error(`Missing control ${id}`);
   return target;
+}
+
+function officialModel(modelId: string, isDefault = false): CodexOfficialModel {
+  return {
+    id: modelId,
+    displayName: modelId,
+    modelId,
+    providerId: "openai",
+    providerName: "OpenAI",
+    providerType: "official",
+    providerCurrent: true,
+    description: null,
+    hidden: false,
+    isDefault,
+    defaultReasoningEffort: "medium",
+    supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+    supportsFastMode: true,
+  };
 }
 
 describe("model controls without a desktop host", () => {
@@ -107,14 +127,61 @@ describe("model controls without a desktop host", () => {
     expect(onChange).toHaveBeenCalledWith("full-access");
   });
 
-  it.each(['deepseek', 'gpt', 'model-interface'])(
-    'exposes catalog reasoning levels for a cloud model in the %s family',
-    family => {
+  it("does not apply preset options when the host rejects the model selection", () => {
+    const models = codexRuntimeModels(
+      [
+        officialModel("gpt-6-luna"),
+        officialModel("gpt-6.1-sol", true),
+        officialModel("gpt-6-astra"),
+      ],
+      null,
+      true,
+    );
+    const selectedModel = models.find(
+      (model) => model.modelId === "gpt-6.1-sol",
+    )!;
+    const onSelectModel = vi.fn(() => false);
+    const onSelectModelOption = vi.fn();
+
+    act(() =>
+      root.render(
+        <CollaborationTheme mode="dark">
+          <ModelSelector
+            translate={translate}
+            isMobile={false}
+            models={models}
+            selectedModel={selectedModel}
+            selectedModelOptions={{ reasoning: "high", speed: "fast" }}
+            disabled={false}
+            onSelectModel={onSelectModel}
+            onSelectModelOption={onSelectModelOption}
+            onOpenModelSettings={vi.fn()}
+          />
+        </CollaborationTheme>,
+      ),
+    );
+
+    act(() => element("model-selector-button").click());
+    expect(
+      element("model-advanced-fast-mode-toggle").getAttribute("aria-label"),
+    ).toBe(translate("workbench.speed_fast", "快速"));
+    act(() => element("model-reset-default-button").click());
+
+    expect(onSelectModel).toHaveBeenCalledOnce();
+    expect(onSelectModelOption).not.toHaveBeenCalled();
+    expect(
+      document.querySelector('[data-testid="model-selector-menu"]'),
+    ).toBeNull();
+  });
+
+  it.each(["deepseek", "gpt", "model-interface"])(
+    "exposes catalog reasoning levels for a cloud model in the %s family",
+    (family) => {
       const model = {
         ...cloudDeepseekModel,
         config: { ...cloudDeepseekModel.config, ui: { family } },
-      }
-      const onSelectModelOption = vi.fn()
+      };
+      const onSelectModelOption = vi.fn();
       act(() =>
         root.render(
           <CollaborationTheme mode="dark">
@@ -123,38 +190,45 @@ describe("model controls without a desktop host", () => {
               isMobile
               models={[model]}
               selectedModel={model}
-              selectedModelOptions={{ reasoning: 'high' }}
+              selectedModelOptions={{ reasoning: "high" }}
               disabled={false}
               onSelectModel={vi.fn()}
               onSelectModelOption={onSelectModelOption}
               onOpenModelSettings={vi.fn()}
               onOpenCloudConnections={vi.fn()}
             />
-          </CollaborationTheme>
-        )
-      )
+          </CollaborationTheme>,
+        ),
+      );
 
-      act(() => element('model-selector-button').click())
+      act(() => element("model-selector-button").click());
       // element() throws when a control is missing.
-      const optionLabels = ['low', 'high', 'max'].map(value =>
-        element(`model-control-reasoning-${value}`).textContent?.trim()
-      )
-      expect(optionLabels.every(Boolean)).toBe(true)
-      expect(document.querySelector('[data-testid="model-control-reasoning-medium"]')).toBeNull()
-      expect(document.querySelector('[data-testid="model-control-reasoning-xhigh"]')).toBeNull()
-      act(() => element('model-control-reasoning-max').click())
+      const optionLabels = ["low", "high", "max"].map((value) =>
+        element(`model-control-reasoning-${value}`).textContent?.trim(),
+      );
+      expect(optionLabels.every(Boolean)).toBe(true);
+      expect(
+        document.querySelector(
+          '[data-testid="model-control-reasoning-medium"]',
+        ),
+      ).toBeNull();
+      expect(
+        document.querySelector('[data-testid="model-control-reasoning-xhigh"]'),
+      ).toBeNull();
+      act(() => element("model-control-reasoning-max").click());
 
-      expect(onSelectModelOption).toHaveBeenCalledWith('reasoning', 'max')
-    }
-  )
+      expect(onSelectModelOption).toHaveBeenCalledWith("reasoning", "max");
+    },
+  );
 
-  it.each(['deepseek', 'gpt', 'model-interface'])(
-    'enables the reasoning row for a cloud catalog model in the %s family on desktop',
-    family => {
+  it.each(["deepseek", "gpt", "model-interface"])(
+    "enables the reasoning slider for a cloud catalog model in the %s family on desktop",
+    (family) => {
       const model = {
         ...cloudDeepseekModel,
         config: { ...cloudDeepseekModel.config, ui: { family } },
-      }
+      };
+      const onSelectModelOption = vi.fn();
       act(() =>
         root.render(
           <CollaborationTheme mode="dark">
@@ -163,24 +237,25 @@ describe("model controls without a desktop host", () => {
               isMobile={false}
               models={[model]}
               selectedModel={model}
-              selectedModelOptions={{ reasoning: 'high' }}
+              selectedModelOptions={{ reasoning: "high" }}
               disabled={false}
               onSelectModel={vi.fn()}
-              onSelectModelOption={vi.fn()}
+              onSelectModelOption={onSelectModelOption}
               onOpenModelSettings={vi.fn()}
               onOpenCloudConnections={vi.fn()}
             />
-          </CollaborationTheme>
-        )
-      )
+          </CollaborationTheme>,
+        ),
+      );
 
-      act(() => element('model-selector-button').click())
+      act(() => element("model-selector-button").click());
 
-      const reasoningRow = element('model-control-menu-reasoning') as HTMLButtonElement
-      expect(reasoningRow.disabled).toBe(false)
-      expect(reasoningRow.textContent).toContain(
-        translate('workbench.local_model_reasoning_high', 'High')
-      )
-    }
-  )
-})
+      const reasoningSlider = element("model-control-reasoning-track");
+      expect(reasoningSlider.getAttribute("aria-valuetext")).toBe(
+        translate("workbench.local_model_reasoning_high", "High"),
+      );
+      act(() => element("model-control-reasoning-max").click());
+      expect(onSelectModelOption).toHaveBeenCalledWith("reasoning", "max");
+    },
+  );
+});

@@ -68,6 +68,7 @@ import {
   BACKGROUND_COMPLETION_RESTORE_TEXT,
   BACKGROUND_FOLLOW_UP_RESTORE_PROMPT,
   BACKGROUND_FOLLOW_UP_RESTORE_TEXT,
+  BACKGROUND_GUIDANCE,
   BLOCKED_CLOUD_MODEL_PATH,
   BACKGROUND_GUIDANCE_CONTINUATION,
   CANCELLATION_COMPLETION_TEXT,
@@ -138,6 +139,7 @@ import {
   GOAL_RESTART_PROMPT,
   GUIDANCE_SCROLL_ACTIVE_PROMPT,
   GUIDANCE_SCROLL_COMPLETION_TEXT,
+  GUIDANCE_SCROLL_MESSAGE,
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
@@ -539,6 +541,9 @@ class DesktopE2EServer {
     this.initialCompletionRelease = new Promise(resolvePromise => {
       this.releaseInitialCompletion = resolvePromise
     })
+    this.initialGuidanceArrival = new Promise(resolvePromise => {
+      this.releaseInitialGuidanceArrival = resolvePromise
+    })
     this.followUpRelease = new Promise(resolvePromise => {
       this.releaseFollowUp = resolvePromise
     })
@@ -548,6 +553,9 @@ class DesktopE2EServer {
     })
     this.guidanceScrollCompletionRelease = new Promise(resolvePromise => {
       this.releaseGuidanceScrollResponse = resolvePromise
+    })
+    this.guidanceScrollGuidanceArrival = new Promise(resolvePromise => {
+      this.releaseGuidanceScrollGuidanceArrival = resolvePromise
     })
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
@@ -579,6 +587,13 @@ class DesktopE2EServer {
     this.sideChatGuidanceRelease = new Promise(resolvePromise => {
       this.resolveSideChatGuidanceRelease = resolvePromise
     })
+    this.sideChatGuidanceArrival = new Promise(resolvePromise => {
+      this.resolveSideChatGuidanceArrival = resolvePromise
+    })
+    this.sideChatGuidanceCompletionRelease = new Promise(resolvePromise => {
+      this.resolveSideChatGuidanceCompletionRelease = resolvePromise
+    })
+    this.sideChatGuidanceStage = 'initial'
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
     })
@@ -1035,6 +1050,10 @@ class DesktopE2EServer {
   }
 
   releaseSideChatGuidanceResponse() {
+    this.resolveSideChatGuidanceCompletionRelease()
+  }
+
+  releaseSideChatGuidanceToolExecution() {
     this.resolveSideChatGuidanceRelease()
   }
 
@@ -2853,24 +2872,48 @@ class DesktopE2EServer {
     }
 
     if (this.scenario === 'initial') {
-      assert.equal(
-        this.modelStage,
-        'awaiting_tool_output',
-        `Unexpected desktop E2E model stage: ${this.modelStage}`
-      )
       this.recordScenarioRequest('initial', modelRequest)
-      assert.equal(
-        requestContainsToolOutput(body, 'wework-e2e-view-image'),
-        true,
-        'The real Codex request did not report the view_image tool output to the model service'
-      )
-      this.toolOutput = JSON.stringify(body.input)
-      this.modelStage = 'complete'
-      // Let the workbench commit the completed tool items before the final response
-      // triggers a transcript refresh. Real providers have network latency here; an
-      // immediate mock response can otherwise race the live image-view rendering.
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-      if (this.initialCompletionHeld) {
+      if (this.modelStage === 'awaiting_tool_output') {
+        assert.equal(
+          requestContainsToolOutput(body, 'wework-e2e-view-image'),
+          true,
+          'The real Codex request did not report the view_image tool output to the model service'
+        )
+        this.toolOutput = JSON.stringify(body.input)
+        // Let the workbench commit the completed tool items before the final response
+        // triggers a transcript refresh. Real providers have network latency here; an
+        // immediate mock response can otherwise race the live image-view rendering.
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+        if (this.initialCompletionHeld) {
+          this.modelStage = 'awaiting_guidance'
+          response.writeHead(200, {
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+            'Content-Type': 'text/event-stream; charset=utf-8',
+          })
+          response.write(createSse([responseCreated(responseId)]))
+          await this.initialGuidanceArrival
+          response.end()
+          return
+        }
+        this.modelStage = 'complete'
+        const responseEvents = [
+          responseCreated(responseId),
+          encryptedReasoningItem('wework-e2e-encrypted-reasoning', FORK_ENCRYPTED_CONTENT),
+          assistantMessage(COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ]
+        this.writeSse(response, responseEvents)
+        return
+      }
+      if (this.modelStage === 'awaiting_guidance') {
+        assert.ok(
+          JSON.stringify(body).includes(BACKGROUND_GUIDANCE),
+          'The guided Codex request did not contain the queued guidance'
+        )
+        this.modelStage = 'complete'
+        this.releaseInitialGuidanceArrival()
         const text = `${BACKGROUND_GUIDANCE_CONTINUATION}\n\n${COMPLETION_TEXT}`
         const stream = streamingTextEvents(responseId, text)
         response.writeHead(200, {
@@ -2908,14 +2951,7 @@ class DesktopE2EServer {
         )
         return
       }
-      const responseEvents = [
-        responseCreated(responseId),
-        encryptedReasoningItem('wework-e2e-encrypted-reasoning', FORK_ENCRYPTED_CONTENT),
-        assistantMessage(COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ]
-      this.writeSse(response, responseEvents)
-      return
+      assert.fail(`Unexpected desktop E2E model stage: ${this.modelStage}`)
     }
 
     if (this.scenario === 'guidance_scroll') {
@@ -2952,24 +2988,40 @@ class DesktopE2EServer {
         return
       }
 
-      assert.equal(
-        this.guidanceScrollStage,
-        'awaiting_tool_output',
-        `Unexpected guidance scroll model stage: ${this.guidanceScrollStage}`
-      )
-      assert.equal(
-        requestContainsToolOutput(body),
-        true,
-        'The guided turn did not return its tool output'
-      )
-      this.guidanceScrollStage = 'complete'
-      await this.guidanceScrollCompletionRelease
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(GUIDANCE_SCROLL_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
+      if (this.guidanceScrollStage === 'awaiting_tool_output') {
+        assert.equal(
+          requestContainsToolOutput(body),
+          true,
+          'The active turn did not return its tool output before guidance'
+        )
+        this.guidanceScrollStage = 'awaiting_guidance'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.guidanceScrollGuidanceArrival
+        response.end()
+        return
+      }
+      if (this.guidanceScrollStage === 'awaiting_guidance') {
+        assert.ok(
+          JSON.stringify(body).includes(GUIDANCE_SCROLL_MESSAGE),
+          'The active turn did not apply the queued guidance'
+        )
+        this.guidanceScrollStage = 'complete'
+        this.releaseGuidanceScrollGuidanceArrival()
+        await this.guidanceScrollCompletionRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GUIDANCE_SCROLL_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.fail(`Unexpected guidance scroll model stage: ${this.guidanceScrollStage}`)
     }
 
     if (this.scenario === 'view_image' && this.viewImageStage === 'initial') {
@@ -4507,12 +4559,14 @@ class DesktopE2EServer {
       this.recordScenarioRequest('side_chat_guidance', modelRequest)
       const requestText = JSON.stringify(body)
       const requestCount = this.scenarioRequests.get('side_chat_guidance')?.length ?? 0
-      if (requestCount === 1) {
+      if (this.sideChatGuidanceStage === 'initial') {
+        assert.equal(requestCount, 1, 'The initial side-chat guidance turn was duplicated')
         assert.ok(
           requestText.includes(SIDE_CHAT_GUIDANCE_INITIAL),
           'The initial side-chat guidance request lost its prompt'
         )
         const tool = selectShellTool(body, this.workspacePath)
+        this.sideChatGuidanceStage = 'awaiting_tool_output'
         await this.sideChatGuidanceRelease
         this.writeSse(response, [
           responseCreated(responseId),
@@ -4521,8 +4575,47 @@ class DesktopE2EServer {
         ])
         return
       }
-      if (requestCount >= 3 && requestCount <= 5) {
-        const queueIndex = requestCount - 2
+      if (this.sideChatGuidanceStage === 'awaiting_tool_output') {
+        assert.equal(requestCount, 2, 'The side-chat tool output started an unexpected extra turn')
+        assert.equal(
+          requestContainsToolOutput(body, 'wework-e2e-side-chat-guidance-tool'),
+          true,
+          'The side-chat guidance turn did not return its tool output'
+        )
+        this.sideChatGuidanceStage = 'awaiting_guidance'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.sideChatGuidanceArrival
+        response.end()
+        return
+      }
+      if (this.sideChatGuidanceStage === 'awaiting_guidance') {
+        assert.equal(requestCount, 3, 'Side-chat guidance started an unexpected extra turn')
+        assert.ok(
+          requestText.includes(SIDE_CHAT_GUIDANCE_FOLLOW_UP),
+          'The side-chat follow-up was not delivered as guidance to the active turn'
+        )
+        this.sideChatGuidanceStage = 'draining_queue'
+        this.resolveSideChatGuidanceArrival()
+        await this.sideChatGuidanceCompletionRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(SIDE_CHAT_GUIDANCE_COMPLETION),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (
+        this.sideChatGuidanceStage === 'draining_queue' &&
+        requestCount >= 4 &&
+        requestCount <= 6
+      ) {
+        const queueIndex = requestCount - 3
         const expectedPrompt =
           queueIndex === 1
             ? SIDE_CHAT_QUEUE_FOLLOW_UP
@@ -4543,22 +4636,9 @@ class DesktopE2EServer {
         ])
         return
       }
-      assert.equal(requestCount, 2, 'Side-chat guidance started an unexpected extra turn')
-      assert.equal(
-        requestContainsToolOutput(body, 'wework-e2e-side-chat-guidance-tool'),
-        true,
-        'The side-chat guidance turn did not return its tool output'
+      assert.fail(
+        `Unexpected side-chat guidance stage ${this.sideChatGuidanceStage} at request ${requestCount}`
       )
-      assert.ok(
-        requestText.includes(SIDE_CHAT_GUIDANCE_FOLLOW_UP),
-        'The side-chat follow-up was not delivered as guidance to the active turn'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(SIDE_CHAT_GUIDANCE_COMPLETION),
-        responseCompleted(responseId),
-      ])
-      return
     }
 
     if (this.scenario === 'cancellation') {

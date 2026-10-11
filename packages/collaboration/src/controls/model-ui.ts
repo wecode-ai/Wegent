@@ -948,7 +948,8 @@ export function groupModelsByFamily(models: UnifiedModel[]) {
       models:
         familyId === "codex-official"
           ? [...group.models].sort(compareCodexPickerModels)
-          : familyId.startsWith("codex-provider:")
+          : familyId === "codex-provider" ||
+              familyId.startsWith("codex-provider:")
             ? group.models
             : [...group.models].sort((a, b) => {
                 const left = getModelUiMetadata(a);

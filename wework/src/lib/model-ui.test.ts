@@ -250,6 +250,28 @@ describe('model-ui', () => {
           },
         },
       },
+      {
+        name: 'provider-bare-zeta',
+        type: 'runtime',
+        displayName: 'Bare Provider Zeta',
+        config: {
+          ui: {
+            family: 'codex-provider',
+            modelLabel: 'Bare Provider Zeta',
+          },
+        },
+      },
+      {
+        name: 'provider-bare-alpha',
+        type: 'runtime',
+        displayName: 'Bare Provider Alpha',
+        config: {
+          ui: {
+            family: 'codex-provider',
+            modelLabel: 'Bare Provider Alpha',
+          },
+        },
+      },
     ]
 
     const groups = groupModelsByFamily(models)
@@ -262,6 +284,9 @@ describe('model-ui', () => {
         .find(group => group.config.id === 'codex-provider:custom')
         ?.models.map(model => model.name)
     ).toEqual(['provider-zeta', 'provider-alpha'])
+    expect(
+      groups.find(group => group.config.id === 'codex-provider')?.models.map(model => model.name)
+    ).toEqual(['provider-bare-zeta', 'provider-bare-alpha'])
   })
 
   test('uses custom group labels for local interface model families', () => {

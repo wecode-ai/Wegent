@@ -98,7 +98,7 @@ export function ModelPowerSlider({
         onSelectModelAndOptions(setting.model, nextOptions);
         return;
       }
-      onSelectModel(setting.model);
+      if (onSelectModel(setting.model) === false) return;
       onSelectModelOption("reasoning", setting.reasoningEffort);
     },
     [

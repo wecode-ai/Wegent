@@ -18,7 +18,7 @@ import {
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const MODEL = 'wework-custom-desktop-e2e-responses'
+const MODEL = 'local-model:desktop-e2e-responses'
 const PROJECT = `本地单智能体调度-${process.pid}`
 const AGENT = `本地执行智能体-${process.pid}`
 const ASSIGNED_TASK = `采集本地执行证据-${process.pid}`

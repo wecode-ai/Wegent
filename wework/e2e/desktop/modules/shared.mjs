@@ -1366,12 +1366,6 @@ async function ensureModelOptionVisible(
           visible: true,
         })
         .catch(() => undefined)
-    } else if (menu.testIds.includes('model-control-menu-model')) {
-      await control
-        .command('hover', '[data-testid="model-control-menu-model"]', {
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        })
-        .catch(() => undefined)
     } else {
       await control
         .command('hover', modelSelectorButton, {
