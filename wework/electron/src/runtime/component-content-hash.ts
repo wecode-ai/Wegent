@@ -12,12 +12,30 @@ export async function hashComponentPath(path: string): Promise<string> {
   return hashTree(path, '', createFileHasher())
 }
 
+export function hashComponentRecords(records: string[]): string {
+  const hash = createHash('sha256')
+  for (const record of records) hash.update(record)
+  return hash.digest('hex')
+}
+
+export function validateComponentSymlink(root: string, child: string, target: string): void {
+  const destination = relativePath(resolve(root), resolve(root, dirname(child), target))
+  if (isAbsolute(target) || destination === '..' || destination.split(/[\\/]/)[0] === '..') {
+    throw new Error(`Component symlink escapes its root: ${child}`)
+  }
+}
+
+export async function hashComponentFileContents(path: string): Promise<string> {
+  return createHash('sha256')
+    .update(await readFile(path))
+    .digest('hex')
+}
+
 async function hashTree(
   root: string,
   relative: string,
   hashFile: (path: string) => Promise<string>
 ): Promise<string> {
-  const hash = createHash('sha256')
   const entries = await readdir(join(root, relative), { withFileTypes: true })
   const records = await Promise.all(
     entries
@@ -30,32 +48,19 @@ async function hashTree(
           return `file:${child}\0${await hashFile(join(root, child))}\0`
         } else if (entry.isSymbolicLink()) {
           const target = await readlink(join(root, child))
-          const destination = relativePath(resolve(root), resolve(root, dirname(child), target))
-          if (
-            isAbsolute(target) ||
-            destination === '..' ||
-            destination.split(/[\\/]/)[0] === '..'
-          ) {
-            throw new Error(`Component symlink escapes its root: ${child}`)
-          }
+          validateComponentSymlink(root, child, target)
           return `symlink:${child}\0${target}\0`
         } else {
           throw new Error(`Unsupported component tree entry: ${child}`)
         }
       })
   )
-  for (const record of records) hash.update(record)
-  return hash.digest('hex')
+  return hashComponentRecords(records)
 }
 
 function createFileHasher(): (path: string) => Promise<string> {
   const run = createFileOperationQueue()
-  return path =>
-    run(async () =>
-      createHash('sha256')
-        .update(await readFile(path))
-        .digest('hex')
-    )
+  return path => run(() => hashComponentFileContents(path))
 }
 
 export async function fileSha256(path: string): Promise<string> {

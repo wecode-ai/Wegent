@@ -14,8 +14,10 @@ export async function copyComponentSnapshot(
   const entryPath = requestedEntryPath ?? (metadata.isDirectory() ? '.' : basename(source))
   const destination = join(target, entryPath)
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
-  if (metadata.isDirectory()) await copyComponentTree(source, destination)
-  else await copyFile(source, destination, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
+  if (metadata.isDirectory()) {
+    return { entryPath, contentSha256: await copyComponentTree(source, destination) }
+  }
+  await copyFile(source, destination, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
   return { entryPath, contentSha256: await hashComponentPath(destination) }
 }
 

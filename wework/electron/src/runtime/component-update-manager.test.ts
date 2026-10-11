@@ -12,8 +12,9 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import * as tar from 'tar'
+import * as componentSnapshot from './component-snapshot.js'
 import {
   ComponentUpdateManager,
   hashComponentPath,
@@ -213,6 +214,45 @@ describe('ComponentUpdateManager', () => {
 
     const restarted = createManager(fixture, fetch)
     expect(await readFile((await restarted.prepareStartup()).executor, 'utf8')).toBe('executor-v2')
+  })
+
+  test('downloads an update while an unchanged Core snapshot is still preparing', async () => {
+    const fixture = await createFixture()
+    const update = await createExecutorUpdate(fixture.root, 'executor-overlap')
+    let resumeCopy!: () => void
+    const copyGate = new Promise<void>(resolve => {
+      resumeCopy = resolve
+    })
+    const originalCopy = componentSnapshot.cachePackagedComponent
+    const copy = vi
+      .spyOn(componentSnapshot, 'cachePackagedComponent')
+      .mockImplementation(async (...args) => {
+        if (args[2] === join(fixture.resources, 'harness-runtime')) await copyGate
+        return originalCopy(...args)
+      })
+    let downloadStarted = false
+    const fetch = componentFetch(update.manifest, update.assetName, update.archive)
+    const manager = createManager(fixture, async (...args) => {
+      if (String(args[0]).endsWith(update.assetName)) downloadStarted = true
+      return fetch(...args)
+    })
+    let stageFinished = false
+    const stage = manager.stageAvailableUpdate().then(result => {
+      stageFinished = true
+      return result
+    })
+    try {
+      await vi.waitFor(() => expect(downloadStarted).toBe(true))
+      expect(stageFinished).toBe(false)
+    } finally {
+      resumeCopy()
+      await stage
+      copy.mockRestore()
+    }
+    expect(await stage).toBe(true)
+    expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe(
+      'executor-overlap'
+    )
   })
 
   test('downloads only changed plugin code and composes it with unchanged static resources', async () => {
