@@ -2708,12 +2708,13 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           return { items: peeked.installedPlugins, deviceId: peeked.deviceId }
         }
       }
+      const generation = nextReadStateGeneration++
       const loaded = await loadInstalledPluginsOnly({
         shareInflight: options?.requireComplete ? false : options?.shareInflight,
         requireComplete: options?.requireComplete,
       })
       const installedPlugins = loaded.installedPlugins
-      if (cachedState) {
+      if (cachedState && generation >= cachedStateGeneration) {
         // An offline/unreachable OpenAI marketplace vanishes from plugin/installed
         // entirely. Do not clobber its cached installs with a bundled-only
         // membership response; an explicit unrestricted refresh reconciles.
@@ -2735,6 +2736,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           installedPlugins: [...installedPlugins, ...retainedRemoteInstalled],
           deviceId: loaded.deviceId || cachedState.deviceId,
         }
+        cachedStateGeneration = generation
         cachedStateAt = Date.now()
         // Keep the update in memory only. Persisting would write a membership-only
         // snapshot into the 7-day durable cache and can clobber a fuller readState.

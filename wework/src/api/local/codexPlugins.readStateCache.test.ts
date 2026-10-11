@@ -1932,6 +1932,9 @@ describe('local codex plugin readState cache', () => {
   })
 
   test('complete membership reads supersede an in-flight membership read', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true, refresh: true })
+
     let installedRequestCount = 0
     let resolveFirstInstalled: ((value: unknown) => void) | null = null
     let storeRequestCount = 0
@@ -1983,7 +1986,6 @@ describe('local codex plugin readState cache', () => {
       }
     )
 
-    const api = createLocalCodexPluginApi()
     const superseded = api.listInstalledPlugins({ refresh: true })
     await vi.waitFor(() => expect(installedRequestCount).toBe(1))
 
@@ -2003,6 +2005,15 @@ describe('local codex plugin readState cache', () => {
     resolveFirstInstalled?.({ marketplaces: [personalMarketplace] })
     resolveFirstStore?.({ storePath: '/tmp/store/plugins', plugins: [] })
     await superseded
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toEqual(
+      expect.objectContaining({
+        installedPlugins: [
+          expect.objectContaining({
+            metadata: expect.objectContaining({ name: 'current-plugin' }),
+          }),
+        ],
+      })
+    )
   })
 
   test('listInstalledPlugins uses plugin/installed and never waits on plugin/list', async () => {
