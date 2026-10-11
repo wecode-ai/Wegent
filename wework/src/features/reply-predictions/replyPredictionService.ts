@@ -24,7 +24,7 @@ export interface ReplyPredictionResult {
 }
 
 export function predictionTurns(transcript: RuntimePaneTranscript): ReplyPredictionTurn[] {
-  if (transcript.running || transcript.fullContent !== true) return []
+  if (transcript.fullContent !== true) return []
   return transcript.turns.map(turn => ({
     id: turn.id ?? '',
     status: turn.status === 'done' ? 'completed' : turn.status,

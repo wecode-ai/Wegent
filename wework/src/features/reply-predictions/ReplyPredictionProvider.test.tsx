@@ -77,6 +77,21 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  it('uses lifecycle busy state to prevent generation and cancel an active prediction', async () => {
+    let signal: AbortSignal | undefined
+    const generate = vi.fn(async (data: { signal?: AbortSignal }) => {
+      signal = data.signal
+      return new Promise<string>(() => {})
+    })
+    const { rerender } = render(fixture(generate, { ...source, busy: true }))
+    expect(generate).not.toHaveBeenCalled()
+    rerender(fixture(generate, source))
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    rerender(fixture(generate, { ...source, busy: true }))
+    expect(signal?.aborted).toBe(true)
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
   it('keeps blocked drafts untouched and consumes a cached suggestion across all composers', async () => {
     const generate = vi.fn(async () => '{"suggestion":"请继续并保留数据"}')
     const { rerender } = render(fixture(generate, source, true))

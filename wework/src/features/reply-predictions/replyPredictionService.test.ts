@@ -60,7 +60,6 @@ describe('reply prediction service', () => {
       ],
     }
     expect(predictionPrompt(predictionTurns(transcript))).toContain('保留运行中的任务')
-    expect(predictionTurns({ ...transcript, running: true })).toEqual([])
     expect(predictionTurns({ ...transcript, fullContent: false })).toEqual([])
   })
   it('deduplicates generation and never reoffers an accepted suggestion', async () => {
