@@ -156,8 +156,8 @@ function WorkspaceTabButton({
         'group relative flex h-8 w-36 min-w-28 max-w-[188px] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150',
         tab.contentRoute.startsWith('/app/harness-') && 'smart-app-workspace-tab-enter',
         active
-          ? 'bg-white/55 text-text-primary dark:bg-white/[0.09]'
-          : 'text-text-secondary hover:bg-black/[0.045] hover:text-text-primary dark:hover:bg-white/[0.06]',
+          ? 'border border-border/70 bg-white text-text-primary shadow-sm dark:bg-white/[0.09]'
+          : 'border border-transparent text-text-secondary hover:bg-black/[0.045] hover:text-text-primary dark:hover:bg-white/[0.06]',
         draggedTabId === tab.id && 'opacity-55'
       )}
     >
