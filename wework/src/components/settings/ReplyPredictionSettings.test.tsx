@@ -18,7 +18,11 @@ const configured = {
   executionModelId: 'model-a',
   executionModelType: 'runtime',
 }
-function setup(preferences: Partial<AppPreferences> = {}, available = true) {
+function setup(
+  preferences: Partial<AppPreferences> = {},
+  available = true,
+  requestCatalogs = vi.fn()
+) {
   render(
     <AppPreferencesContext.Provider
       value={{ loaded: true, preferences: { ...defaultAppPreferences, ...preferences } }}
@@ -27,6 +31,7 @@ function setup(preferences: Partial<AppPreferences> = {}, available = true) {
         value={
           {
             projectChat: {
+              requestCatalogs,
               models: available
                 ? [
                     {
@@ -51,6 +56,11 @@ describe('reply prediction settings', () => {
   beforeEach(() => {
     save.mockReset()
     save.mockResolvedValue(defaultAppPreferences)
+  })
+  it('requests the shared model catalog when opening settings before any conversation', () => {
+    const requestCatalogs = vi.fn()
+    setup({}, false, requestCatalogs)
+    expect(requestCatalogs).toHaveBeenCalledTimes(1)
   })
   it('requires explicit model selection and enables the first selection', async () => {
     setup()

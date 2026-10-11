@@ -1,4 +1,4 @@
-import { useContext, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { updateAppPreferences, type AppPreferencesPatch } from '@/desktop/appPreferences'
@@ -13,6 +13,10 @@ export function ReplyPredictionSettings() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(false)
   const models = workbench?.projectChat.models ?? []
+  const requestCatalogs = workbench?.projectChat.requestCatalogs
+  useEffect(() => {
+    requestCatalogs?.()
+  }, [requestCatalogs])
   const model = state?.preferences.replyPredictionModel
   const key = model ? `${model.modelType}:${model.modelName}` : ''
   const available = models.some(
