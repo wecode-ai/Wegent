@@ -7,7 +7,7 @@ import {
   until,
 } from './plugin-regression-fixture.mjs'
 
-export async function verifyPluginEnabledState(control, fixture, enabled) {
+export async function verifyPluginEnabledState(control, fixture, enabled, timeoutMs) {
   const state = await until(
     () => inventory(control),
     value => {
@@ -19,7 +19,8 @@ export async function verifyPluginEnabledState(control, fixture, enabled) {
         member?.enabled === enabled && (enabled ? app?.isEnabled === true : !app || !app.isEnabled)
       )
     },
-    'Shared membership and composer did not settle to the enabled state'
+    'Shared membership and composer did not settle to the enabled state',
+    timeoutMs
   )
   const app = state.composerApps.find(plugin => plugin.pluginKey === fixture.slug)
   assert.ok(
@@ -62,18 +63,18 @@ export async function verifyPluginTogglePersistence({
       plugin => plugin?.spec.enabled === false,
       'Disabling the plugin did not persist to the backend'
     )
-    await verifyPluginEnabledState(control, fixture, false)
+    await verifyPluginEnabledState(control, fixture, false, timeoutMs)
     await restartDesktopApp()
     await control.command('waitFor', testId('new-chat-button'), { timeoutMs })
     await openManager(false)
-    await verifyPluginEnabledState(control, fixture, false)
+    await verifyPluginEnabledState(control, fixture, false, timeoutMs)
     // A fresh catalog read must not resurrect the previous enabled state.
     await openPlugin(control, fixture)
     await control.command('click', testId('plugins-refresh-button'))
     await control.command('waitFor', testId('plugins-refresh-button') + ':not(:disabled)', {
       timeoutMs,
     })
-    await verifyPluginEnabledState(control, fixture, false)
+    await verifyPluginEnabledState(control, fixture, false, timeoutMs)
     await openManager(false)
     await control.command('click', toggle)
     await until(
@@ -81,11 +82,11 @@ export async function verifyPluginTogglePersistence({
       plugin => plugin?.spec.enabled === true,
       'Enabling the plugin did not persist to the backend'
     )
-    await verifyPluginEnabledState(control, fixture, true)
+    await verifyPluginEnabledState(control, fixture, true, timeoutMs)
     await restartDesktopApp()
     await control.command('waitFor', testId('new-chat-button'), { timeoutMs })
     await openManager(true)
-    await verifyPluginEnabledState(control, fixture, true)
+    await verifyPluginEnabledState(control, fixture, true, timeoutMs)
   } finally {
     // Cleanup changes only the isolated test account, never personal plugins.
     const current = await accountPlugin(cloud, fixture.slug)

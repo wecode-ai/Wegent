@@ -6,9 +6,9 @@
 
 # Build docker images for wecode components
 # Usage: 
-#   ./build_image.sh [OPTIONS]      - Build images with default version 1.0.0
-#   ./build_image.sh version=2.0.0  - Build images with specified version
-#   ./build_image.sh -h             - Show this help message (short form)
+#   ./build_image_mac.sh [OPTIONS]      - Build images with default version 1.0.0
+#   ./build_image_mac.sh version=2.0.0  - Build images with specified version
+#   ./build_image_mac.sh -h             - Show this help message (short form)
 
 # Default version
 DEFAULT_VERSION="1.0.0"

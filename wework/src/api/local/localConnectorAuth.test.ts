@@ -121,6 +121,28 @@ describe('localConnectorAuthHealth cache', () => {
     await localConnectorAuthHealth(target)
     expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(3)
   })
+
+  test('does not restore stale healthy state after logout', async () => {
+    const target = { pluginKey: 'weibo-api-wiki', connectorSlug: 'weibo-wiki' }
+    let resolveHealth: (value: { status: 'ok' }) => void = () => undefined
+    mocks.requestLocalExecutor.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveHealth = resolve
+        })
+    )
+
+    const staleHealth = localConnectorAuthHealth(target)
+    await vi.waitFor(() => expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(1))
+    mocks.requestLocalExecutor.mockResolvedValueOnce({ status: 'ok' })
+    await localConnectorAuthLogout(target)
+    resolveHealth({ status: 'ok' })
+    await expect(staleHealth).resolves.toEqual({ status: 'ok' })
+
+    mocks.requestLocalExecutor.mockResolvedValueOnce({ status: 'need_login' })
+    await expect(localConnectorAuthHealth(target)).resolves.toEqual({ status: 'need_login' })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(3)
+  })
 })
 
 describe('local connector kinds', () => {

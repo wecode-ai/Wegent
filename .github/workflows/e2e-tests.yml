@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       platform_e2e: ${{ steps.classify.outputs.platform_e2e }}
+      wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
 
     steps:
       - name: Checkout code
@@ -43,9 +44,12 @@ jobs:
         run: |
           if [[ "$FORCE_ALL" == "true" ]]; then
             .github/scripts/classify-ci-changes.sh --all
+            .github/scripts/classify-wework-desktop-e2e.sh --all
           else
-            git diff --name-only "$BASE_SHA...$HEAD_SHA" |
-              .github/scripts/classify-ci-changes.sh
+            changed_files="$(mktemp)"
+            git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$changed_files"
+            .github/scripts/classify-ci-changes.sh < "$changed_files"
+            .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
           fi
 
   build-frontend-e2e:
@@ -300,7 +304,11 @@ jobs:
   build-executor-e2e-runtime:
     name: Prepare Executor E2E Runtime
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    # Fork pull requests cannot pull the executor E2E image from GHCR, so the
+    # Wework desktop E2E build downloads the executor-e2e-binary artifact from
+    # this job instead. That artifact must exist whenever a fork PR selects
+    # desktop E2E, even when platform_e2e itself is not selected.
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || (needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository)))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:

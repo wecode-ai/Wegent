@@ -398,16 +398,16 @@ When a personal plugin is edited from `v1.2.0` to `v1.3.0`:
 
 ## 7. Deletion, withdrawal, and failure boundaries
 
-| Scenario                                          | Required behavior                                                                                                                 |
+| Scenario                                          | Required behavior                                                                                                           |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Upload or snapshot is incomplete                  | The temporary revision may be cancelled, and unreferenced objects are cleaned up                                                  |
-| Submitted, no MR created                          | The request may be withdrawn while preserving audit events; withdrawal is disabled during `materializing`                         |
-| MR is not merged                            | Withdrawal closes the MR first; if closing fails, withdrawal fails                                                                |
-| Deleting personal source with an unmerged request | Withdraw/close the MR in the same confirmation; failure of any step prevents deletion                                             |
-| Merged or published                               | Deleting the personal source cannot be used to roll back the enterprise edition                                                   |
-| Returned by administrator                         | The old revision is read-only; create a new revision after fixing                                                                 |
+| Upload or snapshot is incomplete                  | The temporary revision may be cancelled, and unreferenced objects are cleaned up                                            |
+| Submitted, no MR created                          | The request may be withdrawn while preserving audit events; withdrawal is disabled during `materializing`                   |
+| MR is not merged                                  | Withdrawal closes the MR first; if closing fails, withdrawal fails                                                          |
+| Deleting personal source with an unmerged request | Withdraw/close the MR in the same confirmation; failure of any step prevents deletion                                       |
+| Merged or published                               | Deleting the personal source cannot be used to roll back the enterprise edition                                             |
+| Returned by administrator                         | The old revision is read-only; create a new revision after fixing                                                           |
 | CI/code review failed                             | A developer fixes the same controlled branch/MR and creates a new commit; a non-technical author does not create a revision |
-| Release failed                                    | Retry the same version/SHA and preserve the current enterprise latest Release                                                     |
+| Release failed                                    | Retry the same version/SHA and preserve the current enterprise latest Release                                               |
 
 ## 8. Visual and responsive specifications
 
@@ -554,4 +554,4 @@ Use the isolated Electron `ai:verify` flow from `wework/AGENTS.md` to capture at
 5. S7 under administrator review and S8 in returned/CI/release states;
 6. enterprise-edition details and personal/enterprise cross-links.
 
-Compare implementation screenshots with the overall flow diagram and corresponding page designs at the same viewport, theme, and state. If any P0/P1/P2 difference remains, continue fixing and recapturing. Append this feature's evidence and conclusion as a clearly titled independent chapter in the repository-root `design-qa.md`; do not create another QA file/path, overwrite QA records for other features, or put a separate overall result inside the chapter. The whole file may contain only one final `final result: passed` or `final result: blocked`, at its very end, and that result must account for every still-valid blocker in the file.
+Compare implementation screenshots with the overall flow diagram and corresponding page designs at the same viewport, theme, and state. If any P0/P1/P2 difference remains, continue fixing and recapturing. Append this feature's evidence and conclusion as a clearly titled independent chapter in `wework/design-qa.md`; do not create another QA file/path, overwrite QA records for other features, or put a separate overall result inside the chapter. The whole file may contain only one final `final result: passed` or `final result: blocked`, at its very end, and that result must account for every still-valid blocker in the file.

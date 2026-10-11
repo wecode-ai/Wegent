@@ -1,6 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
+import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { ModelSettingsPage } from './ModelSettingsPage'
 
 const invokeDesktopHostMock = vi.hoisted(() => vi.fn())
@@ -109,5 +111,39 @@ describe('ModelSettingsPage local Codex subscription toggle', () => {
         localCodexSubscriptionEnabled: true,
       })
     })
+  })
+
+  test('hides the cloud connection pill when the subscription is off', async () => {
+    render(
+      <AppPreferencesContext.Provider
+        value={{
+          loaded: true,
+          preferences: { ...defaultAppPreferences, localCodexSubscriptionEnabled: false },
+        }}
+      >
+        <ModelSettingsPage />
+      </AppPreferencesContext.Provider>
+    )
+
+    expect(await screen.findByTestId('local-codex-subscription-toggle')).toBeInTheDocument()
+    const codexSection = screen.getByTestId('codex-auth-settings')
+    expect(within(codexSection).queryByTestId('runtime-config-cloud-required')).toBeNull()
+    expect(within(codexSection).queryByText('已连接云端')).toBeNull()
+    expect(within(codexSection).queryByText('未连接云端')).toBeNull()
+  })
+
+  test('shows the cloud connection pill when the subscription is on', async () => {
+    render(
+      <AppPreferencesContext.Provider
+        value={{
+          loaded: true,
+          preferences: { ...defaultAppPreferences, localCodexSubscriptionEnabled: true },
+        }}
+      >
+        <ModelSettingsPage />
+      </AppPreferencesContext.Provider>
+    )
+
+    expect(await screen.findByTestId('runtime-config-cloud-required')).toBeInTheDocument()
   })
 })

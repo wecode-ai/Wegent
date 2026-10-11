@@ -350,6 +350,24 @@ async function verifyRuntimeTaskNotificationNavigation({
   assert.fail('Activating the task completion notification did not open its runtime task')
 }
 
+async function waitForCurrentRuntimeTask(control, taskId) {
+  const startedAt = Date.now()
+  let currentRuntimeTask = null
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    currentRuntimeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      .workbench?.currentRuntimeTask
+    if (currentRuntimeTask?.taskId === taskId && currentRuntimeTask.deviceId) {
+      return currentRuntimeTask
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(
+    `The running task address did not settle before notification verification: ${JSON.stringify(
+      currentRuntimeTask
+    )}`
+  )
+}
+
 async function verifyBackgroundTaskWindowLifecycle({
   app,
   appBundlePath,
@@ -416,8 +434,10 @@ async function verifyBackgroundTaskWindowLifecycle({
     'runtime-local-task-running-',
     'runtime-local-task-row-'
   )
-  const taskAddress = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    .workbench?.currentRuntimeTask
+  const taskAddress = await waitForCurrentRuntimeTask(
+    control,
+    taskRowTestId.replace('runtime-local-task-row-', '')
+  )
 
   await getSingleElementMetrics(control, ACTIVE_WORKBENCH_SELECTOR, 'The running conversation pane')
   await control.command('click', '[data-testid="new-chat-button"]')

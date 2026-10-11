@@ -365,9 +365,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           uiTimeoutMs
         )
         assert.ok(projectAgent.wegentTeamId, 'The project Agent must retain its Team binding')
-        const devices = await request('/api/devices/online')
-        const localDevice = devices.items.find(device => device.device_type === 'app')
-        assert.ok(localDevice?.device_id, 'The real desktop executor must be registered')
+        const localDevice = await waitForApiValue(
+          () => request('/api/devices/online'),
+          devices => devices.items.find(device => device.device_type === 'app') ?? null,
+          'The real desktop executor must be registered',
+          workbenchReadyTimeoutMs
+        )
         const compiled = await request('/api/runtime-work/materialize', {
           method: 'POST',
           body: JSON.stringify({
