@@ -129,7 +129,12 @@ describe('WorkspaceTabStrip', () => {
       .getAllByRole('tab', { name: '协作' })
       .find(tab => tab.getAttribute('aria-selected') === 'true')
     expect(activeBoardTab).toBeDefined()
-    expect(activeBoardTab?.parentElement).toHaveClass('bg-white/55', 'rounded-md')
+    expect(activeBoardTab?.parentElement).toHaveClass(
+      'bg-white',
+      'border-border/70',
+      'shadow-sm',
+      'rounded-md'
+    )
 
     await user.click(within(tablist).getByText('任务'))
     expect(within(tablist).getByText('任务').closest('[role="tab"]')).toHaveAttribute(
