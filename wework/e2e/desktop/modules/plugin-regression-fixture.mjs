@@ -133,11 +133,17 @@ export async function installFixture(cloud, control, slug, deviceId, timeoutMs) 
   await control.command('waitFor', testId(`plugin-marketplace-actions-${fixture.pluginId}`), {
     timeoutMs,
   })
+  // Composer plugin catalogs load on demand. Exercise the real picker path
+  // before asserting that the installed plugin reached the composer projection.
+  await control.command('click', testId('new-chat-button'))
+  await control.command('click', testId('composer-plugin-picker-button'))
+  await control.command('waitFor', testId('composer-plugin-picker'), { timeoutMs })
   await until(
     () => inventory(control),
     state => state.composerApps.some(item => item.pluginKey === slug),
     'Installed fixture is missing from composer',
     timeoutMs
   )
+  await control.command('click', testId('composer-plugin-picker-button'))
   return fixture
 }
