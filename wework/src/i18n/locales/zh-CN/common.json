@@ -39,6 +39,13 @@
     }
   },
   "workbench": {
+    "reply_prediction_title": "自动回复建议",
+    "reply_prediction_enable": "预测下一条回复",
+    "reply_prediction_description": "AI 回复结束后，在空输入框中显示回复建议。按 Tab、右方向键或 Enter 接受，再编辑并发送。预测会使用所选模型的额度。",
+    "reply_prediction_model": "预测模型",
+    "reply_prediction_choose_model": "选择独立预测模型",
+    "reply_prediction_unavailable": "预测模型不可用，请重新选择",
+    "reply_prediction_save_failed": "无法保存自动回复建议设置",
     "github_cli_login_title": "GitHub · GitHub CLI",
     "github_cli_login_description": "使用执行设备上的 GitHub CLI 登录。在 GitHub 页面输入一次性验证码，凭据由 gh 保存，无需授权 ChatGPT。",
     "github_cli_login": "登录 GitHub",

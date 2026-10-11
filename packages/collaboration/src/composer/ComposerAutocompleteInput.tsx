@@ -1,6 +1,7 @@
 import { insertComposerReference } from './insertComposerReference'
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -9,6 +10,7 @@ import {
   useImperativeHandle,
   startTransition,
 } from 'react'
+import { ComposerPredictionContext } from './ComposerPredictionContext'
 import type { LocalDeviceApp, LocalDeviceSkill } from '@wegent/chat-core/runtime-composer-catalog'
 import type { UnifiedModel } from '@wegent/chat-core/models'
 import type {
@@ -145,6 +147,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   editorServices,
   transferServices,
 }: ComposerAutocompleteInputProps<Project, Conversation>) {
+  const prediction = useContext(ComposerPredictionContext)
   type ComposerMentionCandidate = Candidate<Project, Conversation>
   type MentionMenuRow = SharedMentionMenuRow<
     ComposerMentionCandidate,
@@ -934,6 +937,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
           }
         }}
         disabled={disabled}
+        prediction={!isStreaming && !showSkillMenu && !showSlashMenu ? prediction : null}
         placeholder={placeholder}
         testId={testId}
         rows={rows}

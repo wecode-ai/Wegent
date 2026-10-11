@@ -23,6 +23,7 @@ export const DESKTOP_CHECKPOINTS = [
   'telemetry-consent',
   'external-content-import',
   'send-key-preference',
+  'reply-predictions',
   'system-proxy',
   'system-pac',
   'workbench-mode',

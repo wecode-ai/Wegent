@@ -131,6 +131,7 @@ mod sidebar;
 mod supervisor;
 mod system;
 mod tasks;
+mod text_generation;
 mod transcript_sync;
 mod turns;
 mod workspaces;
@@ -602,6 +603,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
+    active_text_generations: Arc<Mutex<HashMap<String, Option<oneshot::Sender<()>>>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     codex_transcript_navigation_cache: Arc<Mutex<HashMap<String, CachedCodexTranscriptNavigation>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
@@ -873,6 +875,7 @@ impl RuntimeWorkRpcHandler {
             turn_queue_path: Arc::new(turn_queue_path),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
+            active_text_generations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             codex_transcript_navigation_cache: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
@@ -1110,6 +1113,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.collaboration.dispatch" => self.create_collaboration_dispatch(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
+            "runtime.text.cancel" => self.cancel_text_generation(payload),
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,

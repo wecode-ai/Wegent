@@ -106,60 +106,6 @@ impl RuntimeWorkRpcHandler {
         self.create_task(manager_request).await
     }
 
-    pub(super) async fn generate_text(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let mut request = execution_request(&payload)
-            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
-        request.ephemeral = true;
-        let local_task_id = request.task_id.clone();
-        let stream_request = request.clone();
-        let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
-        let mut turn_future = Box::pin(self.codex_app_server.run_turn_with_cancel(
-            request,
-            CodexAppServerTurnOptions {
-                notifications: Some(notification_tx),
-                ..CodexAppServerTurnOptions::default()
-            },
-        ));
-        let mut event_mapper = CodexNotificationEventMapper::default();
-        let result = loop {
-            tokio::select! {
-                result = &mut turn_future => break result,
-                message = notification_rx.recv() => {
-                    let Some(message) = message else {
-                        break turn_future.await;
-                    };
-                    event_mapper.map(
-                        &self.event_tx,
-                        &self.device_id,
-                        &local_task_id,
-                        &stream_request,
-                        message,
-                    );
-                }
-            }
-        };
-        while let Ok(message) = notification_rx.try_recv() {
-            event_mapper.map(
-                &self.event_tx,
-                &self.device_id,
-                &local_task_id,
-                &stream_request,
-                message,
-            );
-        }
-        let turn = result.map_err(|error| AppIpcError::new("model_transport_failed", error))?;
-        match turn.outcome {
-            ExecutionOutcome::Completed { content } => Ok(json!({"content": content})),
-            ExecutionOutcome::Failed { message } => {
-                Err(AppIpcError::new("model_request_failed", message))
-            }
-            outcome => Err(AppIpcError::new(
-                "model_request_incomplete",
-                format!("text generation did not complete: {outcome:?}"),
-            )),
-        }
-    }
-
     pub(super) async fn generate_friendly_title(
         &self,
         payload: Value,

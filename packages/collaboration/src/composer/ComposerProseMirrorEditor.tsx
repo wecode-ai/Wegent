@@ -2,6 +2,7 @@ import {
   browserComposerEditorServices,
   type ComposerEditorServices,
 } from "./ComposerEditorServices";
+import type { ComposerPrediction } from "./ComposerPredictionContext";
 import { isInTable, tableEditing } from "prosemirror-tables";
 import {
   insertComposerLineBreak,
@@ -117,6 +118,7 @@ export interface ComposerProseMirrorEditorProps {
   onReady?: () => void;
   disabled?: boolean;
   placeholder: string;
+  prediction?: ComposerPrediction | null;
   testId: string;
   rows: number;
   textareaRef: RefObject<HTMLElement | null>;
@@ -144,6 +146,7 @@ export const ComposerProseMirrorEditor = forwardRef<
   const internalValueRef = useRef(props.value);
   const composerDiagnosticIdRef = useRef<number | null>(null);
   const [hasContent, setHasContent] = useState(props.value !== "");
+  const [composing, setComposing] = useState(false);
   callbacksRef.current = resolvedProps;
 
   useLayoutEffect(() => {
@@ -422,6 +425,7 @@ export const ComposerProseMirrorEditor = forwardRef<
           return false;
         },
         compositionstart() {
+          setComposing(true);
           recordComposerDiagnostic("composition-start", {
             composerId,
             viewIsComposing: view.composing,
@@ -431,6 +435,7 @@ export const ComposerProseMirrorEditor = forwardRef<
           return false;
         },
         compositionend() {
+          setComposing(false);
           recordComposerDiagnostic("composition-end", {
             composerId,
             viewIsComposing: view.composing,
@@ -472,6 +477,32 @@ export const ComposerProseMirrorEditor = forwardRef<
     );
 
     const handleKeyDownCapture = (event: KeyboardEvent) => {
+      const prediction = callbacksRef.current.prediction;
+      if (
+        prediction &&
+        !callbacksRef.current.disabled &&
+        !view.composing &&
+        !event.isComposing &&
+        event.keyCode !== 229 &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        ["Tab", "ArrowRight", "Enter"].includes(event.key) &&
+        view.state.doc.childCount === 1 &&
+        view.state.doc.firstChild?.content.size === 0
+      ) {
+        replaceComposerValue(
+          view,
+          prediction.text,
+          prediction.text.length,
+          false,
+        );
+        prediction.onAccept();
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       if (
         openComposerTextLink(view, event, (...args) =>
           callbacksRef.current.onEditComposerLink?.(...args),
@@ -672,13 +703,23 @@ export const ComposerProseMirrorEditor = forwardRef<
       <div
         ref={mountRef}
         className={props.scrollContainerClassName}
-        data-composer-scroll-container={props.scrollContainerClassName ? '' : undefined}
+        data-composer-scroll-container={
+          props.scrollContainerClassName ? "" : undefined
+        }
       />
-      {!hasContent && (
+      {!hasContent && !composing && (
         <div
-          className={`${props.className} composer-prosemirror-placeholder pointer-events-none absolute inset-0 !text-text-muted/55`}
+          className={`${props.className} composer-prosemirror-placeholder pointer-events-none absolute inset-0 ${props.prediction && !props.disabled ? "!text-text-secondary" : "!text-text-muted/55"}`}
+          data-testid={
+            props.prediction && !props.disabled
+              ? `${props.testId}-prediction`
+              : undefined
+          }
+          aria-hidden={props.prediction ? true : undefined}
         >
-          {props.placeholder}
+          {!props.disabled && props.prediction
+            ? props.prediction.text
+            : props.placeholder}
         </div>
       )}
     </div>
@@ -704,7 +745,8 @@ function keepTrailingComposerCaretVisible(view: EditorView): void {
     const selectionAtEnd =
       view.state.selection.head === view.state.doc.content.size - 1;
     const scroller =
-      view.dom.closest<HTMLElement>('[data-composer-scroll-container]') ?? view.dom;
+      view.dom.closest<HTMLElement>("[data-composer-scroll-container]") ??
+      view.dom;
     if (!selectionAtEnd || scroller.scrollHeight <= scroller.clientHeight)
       return;
 

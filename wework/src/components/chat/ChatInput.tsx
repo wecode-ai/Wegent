@@ -56,6 +56,8 @@ import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/mo
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
+import type { ReplyPredictionSource } from '@/features/reply-predictions/replyPredictionService'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -145,6 +147,8 @@ export interface ProjectWorkControls {
 }
 
 export interface ChatInputProps {
+  predictionAddress?: RuntimeTaskAddress | null
+  predictionSource?: ReplyPredictionSource | null
   presentation?: 'chat' | 'document'
   value: string
   onChange: (value: string) => void
@@ -275,7 +279,30 @@ function requiresNewConversationForModelSwitch(
   return Boolean(activeProvider && targetProvider && activeProvider !== targetProvider)
 }
 
-export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
+export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
+  function ChatInput(props, ref) {
+    return (
+      <ReplyPredictionProvider
+        address={props.predictionAddress ?? props.projectWork?.currentRuntimeTask}
+        source={props.predictionSource}
+        blocked={
+          props.disabled ||
+          props.isStreaming ||
+          Boolean(
+            props.projectChat?.attachments.length ||
+            props.projectChat?.uploadingFiles.size ||
+            props.codeComments?.length ||
+            props.projectChat?.selectedSkills.length
+          )
+        }
+      >
+        <ChatInputBody {...props} ref={ref} />
+      </ReplyPredictionProvider>
+    )
+  }
+)
+
+const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInputBody(
   {
     value,
     presentation,

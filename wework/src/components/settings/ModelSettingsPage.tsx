@@ -1,4 +1,5 @@
 import { ProviderSettingsSection } from './ProviderSettingsSection'
+import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 import {
   AlertCircle,
   ChevronDown,
@@ -3352,6 +3353,7 @@ export function ModelSettingsPage({
           />
         </div>
         <div className="mt-8">
+          <ReplyPredictionSettings />
           <CodexAuthSettingsSection isConnected={false} showCloudStatus={subscriptionEnabled}>
             <LocalCodexSubscriptionToggle
               enabled={subscriptionEnabled}
@@ -3415,6 +3417,7 @@ export function ModelSettingsPage({
           onOpenCloudSettings={onOpenCloudSettings}
         />
       </div>
+      <ReplyPredictionSettings />
       <div className="mt-8">
         <CodexAuthSettingsSection isConnected showCloudStatus={subscriptionEnabled}>
           <LocalCodexSubscriptionToggle

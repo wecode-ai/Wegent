@@ -113,6 +113,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'drawing-attachment': './scenarios/drawing-attachment.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
   'send-key-preference': './scenarios/send-key-preference.scenario.mjs',
+  'reply-predictions': './scenarios/reply-predictions.scenario.mjs',
   'system-proxy': './scenarios/system-proxy.scenario.mjs',
   'system-pac': './scenarios/system-pac.scenario.mjs',
   'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
@@ -120,6 +121,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'reply-predictions',
   'collaboration-worktree-policy',
   'cloud-model-recovery',
   'cloud-model-presets',

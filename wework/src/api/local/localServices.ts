@@ -1,5 +1,9 @@
 import { createLocalProjectAutomationApi } from './localProjectAutomations'
 import {
+  cancellableTextGeneration,
+  textGenerationRequest,
+} from '@/features/reply-predictions/textGenerationCancellation'
+import {
   createRuntimeComposerApi,
   decodeRuntimeSkills,
 } from '@wegent/chat-core/runtime-composer-api'
@@ -3974,97 +3978,104 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   }
   const textGenerationApi: NonNullable<WorkbenchServices['textGenerationApi']> = {
     async generateText(data) {
-      const deviceId = data.deviceId?.trim() || (await getLocalDeviceId())
-      data.onProgress?.('preparing')
-      if (!(await runtimeWorkApi.prepareRuntimeModel({ deviceId, modelId: data.modelId }))) {
-        throw modelCatalogSyncCancelled()
-      }
-      const prompt = data.prompt.trim()
-      if (!prompt) throw new Error('Text generation prompt is required')
-      const generationTaskId = `text-generation-${createRuntimeTurnSeed()}`
-      const executionRequest = await buildLocalRuntimeExecutionRequest({
-        taskId: generationTaskId,
-        runtime: 'codex',
-        title: data.title?.trim() || 'Generate text',
-        message: prompt,
-        turnSeed: createRuntimeTurnSeed(),
-        modelId: data.modelId,
-        modelType: data.modelType,
-        modelOptions: data.modelOptions,
-        cloudModelGateway: deps.cloudModelGateway,
-        resolveProxy,
-        localDeviceId: deviceId,
-        workspaceSource: 'local_path',
-        newSession: true,
-        ephemeral: true,
-        requireLocalCodexCatalog: true,
-        user: deps.user ?? getLocalUser(),
-      })
-      executionRequest.enable_tools = false
-      executionRequest.enable_deep_thinking = false
-      if (data.outputSchema) {
-        executionRequest.output_schema = data.outputSchema
-      }
-      data.onProgress?.('generating')
-      let receivedDelta = false
-      let deltaCount = 0
-      let deltaCharacters = 0
-      console.debug('[Wework] Text generation stream', {
-        event: 'subscribing',
-        taskId: generationTaskId,
-      })
-      const unlisten = data.onDelta
-        ? await subscribe(event => {
-            if (
-              event.event !== 'response.output_text.delta' ||
-              String(event.payload.taskId ?? '') !== generationTaskId
-            ) {
-              return
-            }
-            const eventData = event.payload.data
-            if (!eventData || typeof eventData !== 'object' || Array.isArray(eventData)) return
-            const delta = (eventData as Record<string, unknown>).delta
-            if (typeof delta === 'string' && delta) {
-              receivedDelta = true
-              deltaCount += 1
-              deltaCharacters += delta.length
-              console.debug('[Wework] Text generation stream', {
-                event: 'delta',
-                taskId: generationTaskId,
-                deltaCount,
-                deltaLength: delta.length,
-                totalCharacters: deltaCharacters,
-                sequence: event.sequence,
-              })
-              data.onDelta?.(delta)
-            }
-          })
-        : undefined
-      try {
-        const response = await request<{ content?: string }>('runtime.text.generate', {
-          executionRequest,
-        })
-        const content = response.content?.trim() ?? ''
-        if (data.onDelta && content && !receivedDelta) {
-          console.debug('[Wework] Text generation stream', {
-            event: 'final-content-fallback',
-            taskId: generationTaskId,
-            contentLength: content.length,
-          })
-          data.onDelta(content)
-        } else {
-          console.debug('[Wework] Text generation stream', {
-            event: 'completed',
-            taskId: generationTaskId,
-            deltaCount,
-            totalCharacters: deltaCharacters,
-            contentLength: content.length,
-          })
+      return cancellableTextGeneration(data.signal, data.timeoutMs, async signal => {
+        const deviceId = data.deviceId?.trim() || (await getLocalDeviceId())
+        data.onProgress?.('preparing')
+        if (!(await runtimeWorkApi.prepareRuntimeModel({ deviceId, modelId: data.modelId }))) {
+          throw modelCatalogSyncCancelled()
         }
-        return content
-      } finally {
-        unlisten?.()
-      }
+        const prompt = data.prompt.trim()
+        signal.throwIfAborted()
+        if (!prompt) throw new Error('Text generation prompt is required')
+        const generationTaskId = `text-generation-${createRuntimeTurnSeed()}`
+        const executionRequest = await buildLocalRuntimeExecutionRequest({
+          taskId: generationTaskId,
+          runtime: 'codex',
+          title: data.title?.trim() || 'Generate text',
+          message: prompt,
+          turnSeed: createRuntimeTurnSeed(),
+          modelId: data.modelId,
+          modelType: data.modelType,
+          modelOptions: data.modelOptions,
+          cloudModelGateway: deps.cloudModelGateway,
+          resolveProxy,
+          localDeviceId: deviceId,
+          workspaceSource: 'local_path',
+          newSession: true,
+          ephemeral: true,
+          requireLocalCodexCatalog: true,
+          user: deps.user ?? getLocalUser(),
+        })
+        executionRequest.enable_tools = false
+        signal.throwIfAborted()
+        executionRequest.enable_deep_thinking = false
+        if (data.outputSchema) {
+          executionRequest.output_schema = data.outputSchema
+        }
+        data.onProgress?.('generating')
+        let receivedDelta = false
+        let deltaCount = 0
+        let deltaCharacters = 0
+        console.debug('[Wework] Text generation stream', {
+          event: 'subscribing',
+          taskId: generationTaskId,
+        })
+        const unlisten = data.onDelta
+          ? await subscribe(event => {
+              if (
+                event.event !== 'response.output_text.delta' ||
+                String(event.payload.taskId ?? '') !== generationTaskId
+              ) {
+                return
+              }
+              const eventData = event.payload.data
+              if (!eventData || typeof eventData !== 'object' || Array.isArray(eventData)) return
+              const delta = (eventData as Record<string, unknown>).delta
+              if (typeof delta === 'string' && delta) {
+                receivedDelta = true
+                deltaCount += 1
+                deltaCharacters += delta.length
+                console.debug('[Wework] Text generation stream', {
+                  event: 'delta',
+                  taskId: generationTaskId,
+                  deltaCount,
+                  deltaLength: delta.length,
+                  totalCharacters: deltaCharacters,
+                  sequence: event.sequence,
+                })
+                data.onDelta?.(delta)
+              }
+            })
+          : undefined
+        try {
+          const response = await textGenerationRequest(
+            signal,
+            () => request<{ content?: string }>('runtime.text.generate', { executionRequest }),
+            () => request('runtime.text.cancel', { taskId: generationTaskId })
+          )
+          signal.throwIfAborted()
+          const content = response.content?.trim() ?? ''
+          if (data.onDelta && content && !receivedDelta) {
+            console.debug('[Wework] Text generation stream', {
+              event: 'final-content-fallback',
+              taskId: generationTaskId,
+              contentLength: content.length,
+            })
+            data.onDelta(content)
+          } else {
+            console.debug('[Wework] Text generation stream', {
+              event: 'completed',
+              taskId: generationTaskId,
+              deltaCount,
+              totalCharacters: deltaCharacters,
+              contentLength: content.length,
+            })
+          }
+          return content
+        } finally {
+          unlisten?.()
+        }
+      })
     },
   }
   const branchNameApi: NonNullable<WorkbenchServices['branchNameApi']> = {

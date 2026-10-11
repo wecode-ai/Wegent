@@ -63,6 +63,7 @@ core_segments=(
   tray-lifecycle
   conversation-state
   send-key-preference
+  reply-predictions
   system-proxy
   system-pac
   environment-panel-scroll
@@ -155,7 +156,7 @@ cloud_shards=(
 core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state
+  temporary-chat,local-file-preview,conversation-state,reply-predictions
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
