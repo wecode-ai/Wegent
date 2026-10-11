@@ -211,6 +211,7 @@ export function WorkbenchProvider({
   lifecycleStore: providedLifecycleStore,
   onStartupReadyChange,
   workspaceTabId,
+  composerAppsSourceActive = true,
   debugSnapshotEnabled = true,
   consumePluginTrials = true,
   loadTaskComposerCatalogs = true,
@@ -2514,17 +2515,19 @@ export function WorkbenchProvider({
     const cacheKey = pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
     let previous: PluginMarketplaceCacheSnapshot | null | undefined
     let projected: LocalDeviceApp[] = []
-    const unbind = bindComposerAppsSource(() => {
-      if (!localAppsRequestedRef.current) return projected
-      const snapshot = getPluginMarketplaceCache(cacheKey)
-      if (snapshot !== previous) {
-        previous = snapshot
-        projected = snapshot
-          ? selectComposerPluginApps(snapshot, projectPluginNamesRef.current ?? undefined)
-          : []
-      }
-      return projected
-    })
+    const unbind = composerAppsSourceActive
+      ? bindComposerAppsSource(() => {
+          if (!localAppsRequestedRef.current) return projected
+          const snapshot = getPluginMarketplaceCache(cacheKey)
+          if (snapshot !== previous) {
+            previous = snapshot
+            projected = snapshot
+              ? selectComposerPluginApps(snapshot, projectPluginNamesRef.current ?? undefined)
+              : []
+          }
+          return projected
+        })
+      : () => undefined
     const unsubscribe = subscribePluginMarketplaceCache(snapshot => {
       if (snapshot && snapshot.cacheKey !== cacheKey) return
       if (snapshot) publishPluginInvocationCatalog(snapshot.deviceId, snapshot.installedPlugins, [])
@@ -2534,7 +2537,12 @@ export function WorkbenchProvider({
       unsubscribe()
       unbind()
     }
-  }, [cloudConnection.apiBaseUrl, cloudConnection.token, projectPluginNamesKey])
+  }, [
+    cloudConnection.apiBaseUrl,
+    cloudConnection.token,
+    composerAppsSourceActive,
+    projectPluginNamesKey,
+  ])
 
   useEffect(() => {
     return () => {
