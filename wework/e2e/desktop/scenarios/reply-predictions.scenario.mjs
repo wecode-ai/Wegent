@@ -72,6 +72,10 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       const capture = name => captureScreenshot(control, name, 'body')
       await control.command('navigate', 'body', { value: '/settings/personal/models' })
       await control.command('waitFor', MODEL_SELECT)
+      await control.command(
+        'waitFor',
+        `${MODEL_SELECT} option[value="runtime:local-model:desktop-e2e-responses"]`
+      )
       await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
       assert.equal(await control.command('getValue', MODEL_SELECT), '')
       await capture('reply-01-unconfigured.png')
