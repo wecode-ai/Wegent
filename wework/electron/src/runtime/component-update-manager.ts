@@ -490,19 +490,23 @@ export class ComponentUpdateManager {
     packaged: PackagedComponentManifest,
     current?: ComponentSet
   ): Promise<ComponentPaths> {
+    this.log({ event: 'startup-step', step: 'component-path-resolution', status: 'started' })
     const resolved = await this.resolveComponents(packaged, current)
+    this.log({ event: 'startup-step', step: 'component-path-resolution', status: 'completed' })
     const paths = {} as Record<ManagedComponentId, string>
     const fingerprints = {} as Record<ManagedComponentId, string>
     for (const entry of resolved) {
       paths[entry.id] = entry.path
       fingerprints[entry.id] = entry.contentSha256
     }
+    this.log({ event: 'startup-step', step: 'component-plugin-composition', status: 'started' })
     const composedCorePlugins = await this.composeCorePlugins(
       paths.weworkCorePlugins,
       paths.weworkAppStatic,
       fingerprints.weworkCorePlugins,
       fingerprints.weworkAppStatic
     )
+    this.log({ event: 'startup-step', step: 'component-plugin-composition', status: 'completed' })
     fingerprints.weworkCorePlugins = createHash('sha256')
       .update(fingerprints.weworkCorePlugins)
       .update('\0')

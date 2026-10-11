@@ -3,6 +3,7 @@ import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
+import { waitForProcessBoundPort } from './process-bound-port.mjs'
 import { rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -354,9 +355,6 @@ class RealCloudEnvironment {
 
   async reserveBackendPorts() {
     this.backendPort = await reservePort()
-    do {
-      this.pythonBackendPort = await reservePort()
-    } while (this.pythonBackendPort === this.backendPort)
     this.backendUrl = `http://127.0.0.1:${this.backendPort}`
     this.socketUrl = `http://localhost:${this.backendPort}`
   }
@@ -487,6 +485,7 @@ class RealCloudEnvironment {
   }
 
   async launchBackendAttempt(rustLogDirectory) {
+    const fromOffset = (await readFile(this.backendLogPath, 'utf8').catch(() => '')).length
     this.pythonBackend = spawn(
       'uv',
       [
@@ -499,7 +498,7 @@ class RealCloudEnvironment {
         '--host',
         '127.0.0.1',
         '--port',
-        String(this.pythonBackendPort),
+        '0',
       ],
       {
         cwd: join(repoDir, 'backend'),
@@ -512,6 +511,11 @@ class RealCloudEnvironment {
       appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
       appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
     ])
+    this.pythonBackendPort = await waitForProcessBoundPort(
+      this.pythonBackend,
+      this.backendLogPath,
+      { fromOffset, timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+    )
     await waitForProcessUrl(
       `http://127.0.0.1:${this.pythonBackendPort}/api/docs`,
       this.pythonBackend,

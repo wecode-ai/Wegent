@@ -2096,12 +2096,20 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const preparedComponents = await prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
-      validateExecutor: path =>
-        assertExecutorWorkbenchCompatibility({
+      validateExecutor: async path => {
+        logStartupStep('component-executor-schema-query', 'started')
+        await assertExecutorWorkbenchCompatibility({
           ...process.env,
           WEWORK_EXECUTOR_PATH: process.env.WEWORK_EXECUTOR_PATH?.trim() || path,
-        }),
-      log: event => appUpdateLogger.info(event),
+        })
+        logStartupStep('component-executor-schema-query', 'completed')
+      },
+      log: event => {
+        appUpdateLogger.info(event)
+        if (event.event === 'startup-step') {
+          logStartupStep(String(event.step), event.status as 'started' | 'completed')
+        }
+      },
       resourcesRoot: componentResourcesRoot,
       dataDirectory: app.getPath('userData'),
       updateBaseUrl,

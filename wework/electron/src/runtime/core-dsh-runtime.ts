@@ -158,6 +158,7 @@ export async function prepareCoreDshRuntime(
     dshHome,
     managedUiPlugins,
     corePluginsFingerprint,
+    onStartupStep: options.onStartupStep,
   })
   options.onStartupStep?.('core-dsh-profile-prepare', 'completed')
   return {
@@ -283,6 +284,7 @@ async function prepareProfile(options: {
   dshHome: string
   managedUiPlugins: boolean
   corePluginsFingerprint: string
+  onStartupStep?: PrepareCoreDshRuntimeOptions['onStartupStep']
 }): Promise<void> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
@@ -375,8 +377,11 @@ async function prepareProfile(options: {
   for (const packageName of managedDependencyNames) {
     const source = options.runtime.pluginRoots[packageName]
     const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
+    const step = `core-dsh-plugin-copy:${packageName}`
+    options.onStartupStep?.(step, 'started')
     await rm(destination, { recursive: true, force: true })
     await copyManagedPlugin(source, destination)
+    options.onStartupStep?.(step, 'completed')
   }
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
