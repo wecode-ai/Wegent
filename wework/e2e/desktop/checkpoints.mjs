@@ -4,6 +4,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-project-creation',
   'cloud-device-lifecycle',
   'cloud-model-recovery',
+  'cloud-model-presets',
   'cloud-space-mention',
   'collaboration-shared-core',
   'collaboration-first-use',

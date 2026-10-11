@@ -31,7 +31,7 @@ export function isCodexDefaultModel(model: UnifiedModel | null): boolean {
 export interface ModelPowerSetting {
   id: string;
   model: UnifiedModel;
-  reasoningEffort: string;
+  reasoningEffort?: string;
 }
 
 export interface ModelPowerPreset {
@@ -42,6 +42,18 @@ export interface ModelPowerPreset {
   owner: UnifiedModel;
   settings: ModelPowerSetting[];
   isDefault: boolean;
+}
+
+export function modelPowerOptions(
+  setting: ModelPowerSetting,
+  options: ModelOptions = {},
+): ModelOptions {
+  const nextOptions = { ...options };
+  delete nextOptions.reasoning;
+  if (setting.reasoningEffort !== undefined) {
+    nextOptions.reasoning = setting.reasoningEffort;
+  }
+  return nextOptions;
 }
 
 const PRIMARY_POWER_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
@@ -82,10 +94,12 @@ function reasoningEfforts(model: UnifiedModel): Set<string> {
 
 function modelPowerSetting(
   model: UnifiedModel,
-  reasoningEffort: string,
+  reasoningEffort?: string,
 ): ModelPowerSetting {
   return {
-    id: `${normalizedModelId(model)}:${reasoningEffort}`,
+    id: reasoningEffort
+      ? `${normalizedModelId(model)}:${reasoningEffort}`
+      : normalizedModelId(model),
     model,
     reasoningEffort,
   };
@@ -164,6 +178,14 @@ function configuredPowerPresets(
           matchesSliderModelConfig(candidate, config),
       );
       if (!model) continue;
+      if (
+        config.reasoningEfforts === undefined &&
+        config.reasoningEffort === undefined &&
+        config.reasoning_effort === undefined
+      ) {
+        settings.push(modelPowerSetting(model));
+        continue;
+      }
       const supportedEfforts = reasoningEfforts(model);
       const configuredEfforts = Array.isArray(config.reasoningEfforts)
         ? config.reasoningEfforts
@@ -289,26 +311,30 @@ export function isSelectedPowerSetting(
   return Boolean(
     selectedModel &&
     isSameModelSelection(selectedModel, setting.model) &&
-    normalizeModelOptionValue("reasoning", reasoningEffort) ===
-      setting.reasoningEffort,
+    (setting.reasoningEffort === undefined ||
+      normalizeModelOptionValue("reasoning", reasoningEffort) ===
+        setting.reasoningEffort),
   );
 }
 
 export function desktopModelControl(
   control: ModelControlConfig | undefined,
-  model: UnifiedModel | null
+  model: UnifiedModel | null,
 ): ModelControlConfig | undefined {
-  if (!control || control.id !== 'reasoning') {
-    return control
+  if (!control || control.id !== "reasoning") {
+    return control;
   }
-  if (isModelInterfaceModel(model) || (model && hasCatalogReasoningEfforts(model))) {
-    return control
+  if (
+    isModelInterfaceModel(model) ||
+    (model && hasCatalogReasoningEfforts(model))
+  ) {
+    return control;
   }
 
   return {
     ...control,
-    options: control.options.filter(option => option.value !== 'max'),
-  }
+    options: control.options.filter((option) => option.value !== "max"),
+  };
 }
 
 export function selectedControlOption(

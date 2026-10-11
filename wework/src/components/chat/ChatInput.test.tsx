@@ -3065,7 +3065,9 @@ describe('ChatInput', () => {
 
     const defaultOption = screen.getByTestId('model-option-default')
     const concreteOption = screen.getByTestId('model-option-gpt-6.1-sol')
-    expect(screen.getByTestId('model-group-codex-official')).toContainElement(defaultOption)
+    expect(screen.getByTestId('model-source-local-chatgpt')).toContainElement(defaultOption)
+    expect(screen.getByTestId('model-group-codex-official')).not.toContainElement(defaultOption)
+    expect(screen.getByTestId('model-group-codex-official')).toContainElement(concreteOption)
     expect(screen.getByTestId('model-group-gpt')).not.toContainElement(defaultOption)
     expect(defaultOption).toHaveAttribute('aria-checked', 'true')
     expect(concreteOption).toHaveAttribute('aria-checked', 'false')

@@ -235,8 +235,11 @@ spec:
 `models`，还可以用 `description` 配置第二行说明。未配置 `description` 时，
 默认 preset 回退显示“推荐模型集”，其他 preset 回退显示“模型集”。
 `models` 中的 `modelName` 对应 Model 资源名或模型 ID。存在同名资源时，可同时
-提供 `modelType`、`namespace` 和 `resourceUserId` 组成完整资源身份。每个目标模型
-仍需在自己的 `modelConfig.ui.reasoningEfforts` 中声明对应强度。不可见、不可用的
+提供 `modelType`、`namespace` 和 `resourceUserId` 组成完整资源身份。preset 展示在
+所属的“云端模型”等一级来源分组下，位于模型家族二级分组之前。
+条目省略 `reasoningEffort` 和 `reasoningEfforts` 时，只选择模型，不设置推理强度；
+模型无需声明推理强度。显式指定强度时，目标模型需支持对应强度，建议通过自身的
+`modelConfig.ui.reasoningEfforts` 声明。不可见、不可用的
 模型以及不受支持的强度会从 preset 中移除；裁剪后仍有有效档位时继续展示该
 preset，只有没有任何有效档位时才隐藏。
 
