@@ -704,21 +704,54 @@ async function verifySideChatAttachmentIsolation({
     ACTIVE_WORKBENCH_SELECTOR
   )
   control.setScenario('side_chat_attachment')
-  await control.command('waitFor', '[data-testid="right-workspace-work-item-tab"]', {
-    visible: true,
-    stableMs: 500,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('clickWhenEnabled', '[data-testid="right-workspace-new-tab-button"]', {
-    stableMs: 300,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="right-workspace-new-tab-menu"]', {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const chatOptionSelector =
-    '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-chat-option"]'
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  const visibleEntryPoint = async () => {
+    const [newTabCount, chatOptionCount] = await Promise.all([
+      control
+        .command('getElementCount', '[data-testid="right-workspace-new-tab-button"]', {
+          visible: true,
+        })
+        .then(Number),
+      control
+        .command('getElementCount', '[data-testid="right-workspace-chat-option"]', {
+          visible: true,
+        })
+        .then(Number),
+    ])
+    if (newTabCount > 0) return 'new-tab'
+    if (chatOptionCount > 0) return 'launcher'
+    return null
+  }
+  let entryPoint = await visibleEntryPoint()
+  if (!entryPoint) {
+    await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+    entryPoint = await withTimeout(
+      (async () => {
+        let visible = null
+        while (!visible) {
+          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+          visible = await visibleEntryPoint()
+        }
+        return visible
+      })(),
+      DEFAULT_STEP_TIMEOUT_MS,
+      'The right workspace panel did not expose a visible temporary-chat entry point'
+    )
+  }
+  const usesNewTabMenu = entryPoint === 'new-tab'
+  const chatOptionSelector = usesNewTabMenu
+    ? '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-chat-option"]'
+    : '[data-testid="right-workspace-chat-option"]'
+  if (usesNewTabMenu) {
+    await control.command('clickWhenEnabled', '[data-testid="right-workspace-new-tab-button"]', {
+      stableMs: 300,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="right-workspace-new-tab-menu"]', {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
   await control.command('waitFor', chatOptionSelector, {
     stableMs: 300,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
