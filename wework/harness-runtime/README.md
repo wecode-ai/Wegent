@@ -9,10 +9,18 @@ sidebar_position: 13
 
 ## 运行时角色
 
-- Core Runtime：`0.1.1-rc.2`，随 Electron 安装包内置。
-- Workbench Runtime：首个兼容版本为 `0.1.0-rc.8`，供智能工作台动态 Tab
-  启动独立 DSH 进程。
-- 每个版本在 `runtimes/<version>` 中拥有独立的精确依赖和锁文件。
+- Core Runtime：`0.2.0-rc.2`，随 Electron 安装包内置。
+  构建阶段完成解压，启动时直接引用不可变的组件目录，避免首次启动解压全部依赖。
+- Workbench Runtime：默认版本为 `0.2.0-rc.2`，供智能工作台动态 Tab
+  启动独立 DSH 进程。旧应用声明的 `0.1.0-rc.8` 在首次启动时按需下载，
+  校验大小、SHA-256 和运行时身份后缓存；后续启动可离线使用缓存。
+- 每个角色在 `runtimes/` 中拥有独立的精确依赖和锁文件。清单通过
+  `runtimeRole` 区分 Core 和 Workbench；`runtimeBundled: false` 的运行时
+  仅发布下载资产，不放入 Electron 安装包。
+- 运行时下载默认使用清单中的发布地址；`WEWORK_HARNESS_RUNTIME_BASE_URL`
+  可指定镜像根地址，资产文件名及大小、SHA-256、身份校验保持一致。
+- `0.2.0-rc.2` 的浏览器认证使用 DSH 官方启动令牌交换流程。令牌仅在进程内
+  使用；Renderer 加载不含令牌的 URL，诊断和运行时清单也不保存令牌。
 - `wework/scripts/prepare-harness-runtime.mjs` 为每个版本生成独立、不可变的运行时资产。
 
 Core 资产的 `runtime.json` 标记 `role: core`，并自带

@@ -84,6 +84,44 @@ describe('DSH runtime readiness', () => {
     await expect(runtime.start()).rejects.toThrow('dsh-web startup timed out')
     await runtime.stop()
   })
+
+  test('exchanges the managed launch token and authenticates clean readiness URLs', async () => {
+    let exchanges = 0
+    const server = createServer((request, response) => {
+      if (request.url === '/?token=fixture-token') {
+        exchanges += 1
+        response.writeHead(303, { location: '/', 'set-cookie': 'fixture=authenticated; HttpOnly' })
+      } else {
+        response.writeHead(request.headers.cookie === 'fixture=authenticated' ? 200 : 401)
+      }
+      response.end()
+    })
+    servers.push(server)
+    await listen(server)
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
+    const origin = `http://127.0.0.1:${address.port}`
+    const authenticateBrowserSession = vi.fn(async () => {})
+    const runtime = new DshRuntime({
+      url: origin,
+      command: process.execPath,
+      args: [
+        '-e',
+        `console.log('dsh web: ${origin}/?token=fixture-token'); setInterval(() => {}, 1000)`,
+      ],
+      probeUrls: [origin, `${origin}/api-ready`],
+      startTimeoutMs: 2000,
+      authenticateBrowserSession,
+    })
+    try {
+      await runtime.start()
+      expect(exchanges).toBe(1)
+      expect(authenticateBrowserSession).toHaveBeenCalledWith(`${origin}/?token=fixture-token`)
+      expect(runtime.url()).toBe(origin)
+    } finally {
+      await runtime.stop()
+    }
+  })
 })
 
 function listen(server: ReturnType<typeof createServer>): Promise<void> {

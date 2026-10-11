@@ -71,6 +71,16 @@ const packagedRuntimes = runtimeCatalog.runtimes.filter(runtime =>
 const harnessResources = join(resourcesRoot, 'harness-runtime')
 await mkdir(harnessResources, { recursive: true, mode: 0o700 })
 for (const runtime of packagedRuntimes) {
+  if (runtime.bundled === false) continue
+  if (runtime.role === 'core') {
+    runtime.directory = runtime.sourceFingerprint
+    await cp(
+      join(harnessRuntimeMaterializedRoot, runtime.sourceFingerprint),
+      join(harnessResources, runtime.directory),
+      { recursive: true, verbatimSymlinks: true }
+    )
+    continue
+  }
   await cp(
     join(harnessRuntimeAssetDirectory, runtime.assetName),
     join(harnessResources, runtime.assetName)

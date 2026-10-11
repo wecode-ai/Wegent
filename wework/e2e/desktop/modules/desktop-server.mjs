@@ -5,6 +5,7 @@ import {
   sitesMarketplacePlugin,
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
+import { serveHarnessRuntimeAsset } from './runtime-assets.mjs'
 
 import {
   assistantMessage,
@@ -1313,6 +1314,7 @@ class DesktopE2EServer {
       method: request.method ?? 'UNKNOWN',
       pathname: url.pathname,
     })
+    if (await serveHarnessRuntimeAsset(request, response, url)) return
     if (await this.handleControlRoute(request, response, url)) return
     try {
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return

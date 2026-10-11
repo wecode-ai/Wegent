@@ -6,13 +6,14 @@ import {
   mkdir,
   readFile,
   readdir,
+  readlink,
   rename,
   rm,
   stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative as relativePath, resolve } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import type { ComponentDownloadProgress } from '../host/app-update-progress.js'
 import { cloudFetch } from '../host/cloud-http.js'
@@ -427,12 +428,13 @@ export class ComponentUpdateManager {
     await mkdir(dirname(target), { recursive: true, mode: 0o700 })
     try {
       if (component.entryPath === '.') {
-        await cp(source, temporary, { recursive: true, force: true })
+        await cp(source, temporary, { recursive: true, force: true, verbatimSymlinks: true })
       } else {
         await mkdir(temporary, { recursive: true, mode: 0o700 })
         await cp(source, join(temporary, component.entryPath), {
           recursive: true,
           force: true,
+          verbatimSymlinks: true,
         })
       }
       const stagedPath =
@@ -611,6 +613,7 @@ export class ComponentUpdateManager {
       await cp(join(source, entry.name), join(destination, entry.name), {
         recursive: true,
         force: true,
+        verbatimSymlinks: true,
       })
     }
   }
@@ -955,6 +958,13 @@ async function hashTree(root: string, relative = ''): Promise<string> {
       hash.update(`directory:${child}\0${await hashTree(root, child)}\0`)
     } else if (entry.isFile()) {
       hash.update(`file:${child}\0${await sha256(join(root, child))}\0`)
+    } else if (entry.isSymbolicLink()) {
+      const target = await readlink(join(root, child))
+      const destination = relativePath(resolve(root), resolve(root, dirname(child), target))
+      if (isAbsolute(target) || destination === '..' || destination.split(/[\\/]/)[0] === '..') {
+        throw new Error(`Component symlink escapes its root: ${child}`)
+      }
+      hash.update(`symlink:${child}\0${target}\0`)
     } else {
       throw new Error(`Unsupported component tree entry: ${child}`)
     }

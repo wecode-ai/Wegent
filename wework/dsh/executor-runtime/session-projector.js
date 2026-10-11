@@ -314,13 +314,15 @@ function encodeId(value) {
 }
 
 function completedTurns(session) {
-  return session.events.reduce(
-    (maximum, event) =>
-      event.type === 'turn/end' && Number.isSafeInteger(event.data?.turn)
-        ? Math.max(maximum, event.data.turn)
-        : maximum,
-    0
-  )
+  return session
+    .snapshotEvents()
+    .reduce(
+      (maximum, event) =>
+        event.type === 'turn/end' && Number.isSafeInteger(event.data?.turn)
+          ? Math.max(maximum, event.data.turn)
+          : maximum,
+      0
+    )
 }
 
 function tokenUsage(value) {

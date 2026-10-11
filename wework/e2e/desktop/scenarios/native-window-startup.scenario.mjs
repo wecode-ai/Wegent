@@ -25,7 +25,7 @@ function startupEventIndex(events, step, status) {
   return events.findIndex(event => event.step === step && event.status === status)
 }
 
-async function waitForClosedStartupSplash(control) {
+export async function waitForClosedStartupSplash(control) {
   const deadline = Date.now() + SPLASH_CLOSE_TIMEOUT_MS
   let snapshot
 
@@ -40,7 +40,7 @@ async function waitForClosedStartupSplash(control) {
   )
 }
 
-async function waitForStartupLogs(resultDir) {
+export async function waitForStartupLogs(resultDir) {
   const logPath = join(resultDir, 'app.log')
   const deadline = Date.now() + SPLASH_CLOSE_TIMEOUT_MS
   let appLog = ''

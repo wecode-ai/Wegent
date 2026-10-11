@@ -25,8 +25,6 @@ import {
 import { resolveHarnessRuntimeCachePaths } from './lib/harness-runtime-cache.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const coreDshVersion = '0.1.1-rc.2'
-const workbenchDshVersions = new Set(['0.1.0-rc.8'])
 const source = path.join(root, 'harness-runtime')
 const runtimesDirectory = path.join(source, 'runtimes')
 const pluginsDirectory = path.join(source, 'plugins')
@@ -125,14 +123,13 @@ async function runtimeSources() {
       if (typeof dshVersion !== 'string' || dshVersion !== packageJson.version) {
         throw new Error(`${directory}/package.json must pin DSH to its package version`)
       }
+      if (!['core', 'workbench'].includes(packageJson.runtimeRole)) {
+        throw new Error(`${directory}/package.json must declare a core or workbench runtimeRole`)
+      }
       return {
         dshVersion,
-        role:
-          dshVersion === coreDshVersion
-            ? 'core'
-            : workbenchDshVersions.has(dshVersion)
-              ? 'workbench'
-              : 'legacy',
+        role: packageJson.runtimeRole,
+        bundled: packageJson.runtimeBundled !== false,
         runtimeRoot,
         entries: [
           { name: 'package.json', content: packageContent },
@@ -359,6 +356,7 @@ async function buildRuntime(runtime) {
     const descriptor = {
       dshVersion: runtime.dshVersion,
       role: runtime.role,
+      bundled: runtime.bundled,
       sourceFingerprint: runtime.sourceFingerprint,
       archiveSha256: await sha256(temporaryArchive),
       archiveBytes: (await stat(temporaryArchive)).size,

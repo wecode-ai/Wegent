@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
-import { chmod, lstat, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -15,6 +25,20 @@ import {
 const temporaryDirectories: string[] = []
 const appVersion = '1.2.3-beta.4'
 const updateBaseUrl = 'https://updates.example/releases/download/wework-updater'
+
+test('component integrity includes relative runtime links and rejects escaping links', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-runtime-link-hash-'))
+  temporaryDirectories.push(root)
+  await mkdir(join(root, 'store'))
+  await writeFile(join(root, 'store', 'package.js'), 'runtime')
+  await symlink('store/package.js', join(root, 'package.js'))
+  const storeHash = sha256(`file:store/package.js\0${sha256('runtime')}\0`)
+  expect(await hashComponentPath(root)).toBe(
+    sha256(`symlink:package.js\0store/package.js\0directory:store\0${storeHash}\0`)
+  )
+  await symlink('../outside', join(root, 'outside.js'))
+  await expect(hashComponentPath(root)).rejects.toThrow('Component symlink escapes its root')
+})
 
 afterEach(async () => {
   await Promise.all(

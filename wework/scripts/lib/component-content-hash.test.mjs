@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -46,6 +46,23 @@ describe('hashComponentPath', () => {
       .digest('hex')
 
     await expect(hashComponentPath(root)).resolves.toBe(expected)
+  })
+
+  test('hashes internal runtime symlinks without dereferencing them', async () => {
+    const root = await temporaryDirectory()
+    await mkdir(join(root, 'store'))
+    await writeFile(join(root, 'store', 'package.js'), 'runtime')
+    await symlink('store/package.js', join(root, 'package.js'))
+    const storeHash = sha256(`file:store/package.js\0${sha256('runtime')}\0`)
+    await expect(hashComponentPath(root)).resolves.toBe(
+      sha256(`symlink:package.js\0store/package.js\0directory:store\0${storeHash}\0`)
+    )
+  })
+
+  test('rejects links outside the component', async () => {
+    const root = await temporaryDirectory()
+    await symlink('../outside', join(root, 'package.js'))
+    await expect(hashComponentPath(root)).rejects.toThrow('Component symlink escapes its root')
   })
 })
 

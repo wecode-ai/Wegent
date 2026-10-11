@@ -41,6 +41,7 @@ export interface DesktopRuntimeOptions {
     principal: string
   }
   onExecutorEvent?: (event: string, payload: Record<string, unknown>) => void
+  authenticateBrowserSession?: DshRuntimeOptions['authenticateBrowserSession']
   createCoreDsh?: (options: DshRuntimeOptions) => CoreDshHandle
   createExecutor?: (options: ManagedExecutorRuntimeOptions) => ManagedExecutorHandle
   onStartupStep?: (
@@ -98,13 +99,21 @@ export class DesktopRuntime {
   private coreDshPlugins: CoreDshPluginManager | null = null
   private coreDshPort: number | null = null
   private developmentPlugin: CoreDshDevelopmentPlugin | null = null
-  private readonly workbench = new WorkbenchRuntimeManager()
+  private readonly workbench: WorkbenchRuntimeManager
   private started = false
   private lifecycleGeneration = 0
   private startOperation: { generation: number; promise: Promise<void> } | null = null
   private restartOperation: { generation: number; promise: Promise<void> } | null = null
 
-  constructor(private readonly options: DesktopRuntimeOptions) {}
+  constructor(private readonly options: DesktopRuntimeOptions) {
+    this.workbench = new WorkbenchRuntimeManager(
+      runtimeOptions =>
+        new DshRuntime({
+          ...runtimeOptions,
+          authenticateBrowserSession: options.authenticateBrowserSession,
+        })
+    )
+  }
 
   start(): Promise<void> {
     if (this.started) return Promise.resolve()
@@ -388,6 +397,7 @@ export class DesktopRuntime {
     }
     const runtimeOptions: DshRuntimeOptions = {
       name: 'dsh-core',
+      authenticateBrowserSession: this.options.authenticateBrowserSession,
       url: dshUrl,
       probeUrls: [
         `${dshUrl}/wework/electron-host/v1`,

@@ -125,6 +125,7 @@ export async function verifySmartAppRuntime(
       options.signal
     )
     stage = 'start'
+    let authenticationUrl: string | undefined
     runtime = dependencies.createRuntime({
       name: `dsh-smart-app-verification-${options.manifest.name}`,
       url: launch.url,
@@ -135,10 +136,14 @@ export async function verifySmartAppRuntime(
       env: launch.environment,
       logDirectory: options.logDirectory,
       logFileName: 'runtime.log',
+      authenticateBrowserSession: async url => {
+        authenticationUrl = url
+      },
     })
     await abortable(runtime.start(), options.signal)
     const page = await dependencies.verifyPage({
       baseUrl: launch.url,
+      authenticationUrl,
       path: options.contract.runtime.path,
       readySelector: options.contract.runtime.readySelector,
       signal: options.signal,

@@ -1199,6 +1199,26 @@ async function main() {
   let phase = 'startup'
   let desktopScenarioVerified = false
   let testFailed = false
+  const interrupted = async signal => {
+    for (const cleanup of [
+      () => cloudEnvironment?.stop(),
+      () => blockingNetworkProxy?.stop(),
+      () => stopDesktopAppProcess(app),
+      () => control.close(),
+      () => desktopScenario?.cleanup?.(),
+    ]) {
+      try {
+        await cleanup()
+      } catch (error) {
+        console.error(`[desktop-e2e] interrupted cleanup failed: ${String(error)}`)
+      }
+    }
+    process.exit(signal === 'SIGINT' ? 130 : 143)
+  }
+  const onInterrupt = () => void interrupted('SIGINT')
+  const onTerminate = () => void interrupted('SIGTERM')
+  process.once('SIGINT', onInterrupt)
+  process.once('SIGTERM', onTerminate)
   try {
     await control.start()
     if (RUNS_PLUGIN_E2E) {
@@ -1330,6 +1350,7 @@ async function main() {
       WEWORK_E2E_CONTROL_URL: control.controlUrl,
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_E2E_MODEL_SERVER_URL: control.url,
+      WEWORK_HARNESS_RUNTIME_BASE_URL: `${control.url}/dsh-runtime-assets`,
       WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
       WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
       WEWORK_E2E_POSTHOG_HOST: control.url,
@@ -4517,6 +4538,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     throw error
   } finally {
+    process.off('SIGINT', onInterrupt)
+    process.off('SIGTERM', onTerminate)
     const teardownFailures = []
     const runTeardownStep = async (label, action) => {
       try {

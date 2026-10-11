@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clipboard, type WebContents } from 'electron'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type {
   HostCapability,
@@ -33,9 +34,7 @@ import type { RendererStorageStore } from './renderer-storage-store.js'
 const electronMocks = vi.hoisted(() => ({
   appGetPath: vi.fn(() => '/tmp'),
   appGetVersion: vi.fn(() => '0.0.0-test'),
-  clipboardAvailableFormats: vi.fn(() => [] as string[]),
-  clipboardRead: vi.fn(() => ''),
-  clipboardReadBuffer: vi.fn(() => Buffer.alloc(0)),
+  clipboardRead: vi.fn(async () => []),
   clipboardReadText: vi.fn(() => 'native text'),
   clipboardWriteText: vi.fn(),
   dialogShowMessageBox: vi.fn(),
@@ -57,9 +56,7 @@ vi.mock('electron', () => ({
   },
   BrowserWindow: class BrowserWindow {},
   clipboard: {
-    availableFormats: electronMocks.clipboardAvailableFormats,
     read: electronMocks.clipboardRead,
-    readBuffer: electronMocks.clipboardReadBuffer,
     readText: electronMocks.clipboardReadText,
     writeText: electronMocks.clipboardWriteText,
   },
@@ -820,6 +817,21 @@ describe('registerDesktopServiceCapabilities', () => {
 })
 
 describe('isolated surface clipboard capabilities', () => {
+  test('reads native file payloads through asynchronous Electron clipboard items', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    const path = resolve('.')
+    const getType = vi.fn(async () => new Blob([pathToFileURL(path).toString()]))
+    electronMocks.clipboardRead.mockResolvedValueOnce([
+      { types: ['electron application/osclipboard;format="public.file-url"'], getType },
+    ] as never)
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readWorkspacePaths', {})
+    ).resolves.toEqual([{ path, isDirectory: true }])
+    expect(getType).toHaveBeenCalledWith(
+      'electron application/osclipboard;format="public.file-url"'
+    )
+  })
+
   beforeEach(() => {
     electronMocks.clipboardReadText.mockClear()
     electronMocks.clipboardWriteText.mockClear()

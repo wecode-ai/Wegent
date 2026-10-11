@@ -6,11 +6,12 @@ import { runtimeNodeArgs } from './electron-node-runtime.js'
 import * as tar from 'tar'
 import {
   selectBundledDshRuntimeMatching,
+  CORE_DSH_VERSION,
   type BundledDshRuntime,
   type CommandRunner,
 } from './core-dsh-runtime.js'
 
-export const WORKBENCH_DSH_VERSION = '0.1.0-rc.8'
+export const WORKBENCH_DSH_VERSION = CORE_DSH_VERSION
 
 export interface WorkbenchAppManifest {
   name: string

@@ -39,7 +39,7 @@ test('projects executor text, reasoning, usage, and completion into standard ses
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
   assert.ok(session)
   assert.deepEqual(
-    session.events.map(event => event.type),
+    session.snapshotEvents().map(event => event.type),
     [
       'turn/start',
       'step/start',
@@ -57,7 +57,7 @@ test('projects executor text, reasoning, usage, and completion into standard ses
       'turn/end',
     ]
   )
-  const message = session.events.find(event => event.type === 'assistant/message')
+  const message = session.snapshotEvents().find(event => event.type === 'assistant/message')
   assert.deepEqual(message.data.message.content, [
     { type: 'reasoning', text: 'Think' },
     { type: 'text', text: 'Done' },
@@ -68,7 +68,7 @@ test('projects executor text, reasoning, usage, and completion into standard ses
     cacheReadTokens: 40,
     reasoningTokens: 5,
   })
-  assert.equal(session.events.at(-1).data.reason.kind, 'completed')
+  assert.equal(session.snapshotEvents().at(-1).data.reason.kind, 'completed')
   assert.equal(completed.length, 1)
   assert.match(completed[0].turnId, /^[A-Za-z0-9_-]{43}$/u)
   assert.deepEqual(
@@ -147,7 +147,8 @@ test('projects streamed Executor text blocks into standard assistant deltas', ()
   )
 
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
-  const deltas = session.events
+  const deltas = session
+    .snapshotEvents()
     .filter(
       event =>
         event.type === 'assistant/chunk' &&
@@ -179,7 +180,7 @@ test('ignores non-model workbench blocks in the standard assistant stream', () =
 
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
   assert.equal(
-    session.events.some(event => event.type === 'assistant/chunk'),
+    session.snapshotEvents().some(event => event.type === 'assistant/chunk'),
     false
   )
 })
@@ -193,8 +194,8 @@ test('keeps parallel executor tasks in independent DSH sessions', () => {
 
   const first = sessions.get(executorSessionId('device-1', 'task-a'))
   const second = sessions.get(executorSessionId('device-1', 'task-b'))
-  assert.equal(first.events.find(event => event.type === 'assistant/chunk').data.turn, 1)
-  assert.equal(second.events.find(event => event.type === 'assistant/chunk').data.turn, 1)
+  assert.equal(first.snapshotEvents().find(event => event.type === 'assistant/chunk').data.turn, 1)
+  assert.equal(second.snapshotEvents().find(event => event.type === 'assistant/chunk').data.turn, 1)
   assert.notEqual(first, second)
 })
 
@@ -222,7 +223,7 @@ test('uses final response usage when no live token update was emitted', () => {
   )
 
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
-  const message = session.events.find(event => event.type === 'assistant/message')
+  const message = session.snapshotEvents().find(event => event.type === 'assistant/message')
   assert.deepEqual(message.data.message.content, [{ type: 'text', text: 'Final answer' }])
   assert.deepEqual(message.data.usage, {
     inputTokens: 10,
@@ -275,9 +276,9 @@ test('projects per-call Codex usage as cumulative usage within the DSH turn', ()
   )
 
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
-  const usageEvents = session.events.filter(
-    event => event.type === 'assistant/chunk' && event.data.chunk.type === 'usage'
-  )
+  const usageEvents = session
+    .snapshotEvents()
+    .filter(event => event.type === 'assistant/chunk' && event.data.chunk.type === 'usage')
   assert.deepEqual(
     usageEvents.map(event => event.data.chunk.usage),
     [
@@ -305,7 +306,7 @@ test('projects per-call Codex usage as cumulative usage within the DSH turn', ()
     ]
   )
   assert.deepEqual(
-    session.events.find(event => event.type === 'assistant/message').data.usage,
+    session.snapshotEvents().find(event => event.type === 'assistant/message').data.usage,
     usageEvents.at(-1).data.chunk.usage
   )
 })
@@ -341,9 +342,9 @@ test('keeps the source usage baseline while resetting projected usage for a new 
   )
 
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
-  const usageEvents = session.events.filter(
-    event => event.type === 'assistant/chunk' && event.data.chunk.type === 'usage'
-  )
+  const usageEvents = session
+    .snapshotEvents()
+    .filter(event => event.type === 'assistant/chunk' && event.data.chunk.type === 'usage')
   assert.deepEqual(usageEvents.at(-1).data.chunk.usage, {
     inputTokens: 200,
     outputTokens: 50,
@@ -365,9 +366,9 @@ test('marks failed executor responses as interrupted error turns', () => {
   )
 
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
-  const message = session.events.find(event => event.type === 'assistant/message')
+  const message = session.snapshotEvents().find(event => event.type === 'assistant/message')
   assert.equal(message.data.interrupted, true)
-  assert.deepEqual(session.events.at(-1).data.reason, {
+  assert.deepEqual(session.snapshotEvents().at(-1).data.reason, {
     kind: 'error',
     error: { message: 'Provider failed', code: 'MODEL_FAILED' },
   })
@@ -405,19 +406,24 @@ class SessionStoreFixture {
 }
 
 class SessionFixture {
+  #events = []
+
   constructor(id) {
     this.id = id
-    this.events = []
+  }
+
+  snapshotEvents() {
+    return this.#events.slice()
   }
 
   append(type, data, options) {
     const event = {
       type,
       data: structuredClone(data),
-      seq: this.events.length,
+      seq: this.#events.length,
       ...(options ?? {}),
     }
-    this.events.push(event)
+    this.#events.push(event)
     return event
   }
 }

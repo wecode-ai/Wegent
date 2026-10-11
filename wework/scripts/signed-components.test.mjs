@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -7,6 +7,35 @@ import { reuseSignedComponent } from '../electron/scripts/prepare-signed-compone
 const roots = []
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
+
+test('preserves relative dependency links when restoring a signed runtime component', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-signed-runtime-'))
+  roots.push(root)
+  const source = join(root, 'runtime')
+  const seed = async () => {
+    await mkdir(join(source, 'store'), { recursive: true })
+    await writeFile(join(source, 'store', 'package.js'), 'runtime')
+    await symlink('store/package.js', join(source, 'package.js'))
+  }
+  await seed()
+  const sign = vi.fn(async () => {})
+  const verify = vi.fn(async () => {})
+  const options = {
+    source,
+    cacheRoot: join(root, 'cache'),
+    identity: 'certificate',
+    policy: {},
+    sign,
+    verify,
+  }
+  const hash = await reuseSignedComponent(options)
+  await rm(source, { recursive: true })
+  await seed()
+  expect(await reuseSignedComponent(options)).toBe(hash)
+  expect(await readlink(join(source, 'package.js'))).toBe('store/package.js')
+  expect(await readFile(join(source, 'package.js'), 'utf8')).toBe('runtime')
+  expect(sign).toHaveBeenCalledOnce()
 })
 
 test('reuses signed bytes across application releases, and invalidates on content or signing policy changes', async () => {

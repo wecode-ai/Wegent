@@ -8,10 +8,22 @@ This directory defines the reproducible, multi-version DeepSeek Harness
 runtimes used by Wework. It never reads or modifies a user's personal `~/.dsh`
 profile.
 
-The bundled Core Runtime is `0.1.1-rc.2`. The first Workbench Runtime is
-`0.1.0-rc.8`; each dynamic smart-app tab launches it as an isolated DSH
-process. Every `runtimes/<version>` directory owns an exact manifest and
-lockfile.
+The bundled Core and default Workbench Runtime are `0.2.0-rc.2`; each dynamic
+smart-app tab launches its own isolated DSH process. Existing apps requiring
+`0.1.0-rc.8` download that runtime on first launch, verify its size, SHA-256,
+and identity, then reuse the cache offline. Each role under `runtimes/` owns
+an exact manifest and lockfile. `runtimeRole` distinguishes Core from Workbench;
+`runtimeBundled: false` publishes a downloadable asset without adding it to
+the Electron package.
+
+Core is extracted during the build and referenced from the immutable component
+directory, avoiding dependency extraction on first launch. Downloads use the
+catalog's release URL by default; `WEWORK_HARNESS_RUNTIME_BASE_URL` may specify
+a mirror root while preserving asset names and all integrity checks.
+
+Browser authentication in `0.2.0-rc.2` uses the official DSH launch-token
+exchange. Tokens stay in process memory; renderer URLs, diagnostics, and
+runtime catalogs never retain launch tokens.
 
 The Core asset is marked `role: core` and bundles
 `@wegent/dsh-app-wework`, `@wegent/dsh-electron-host`, and

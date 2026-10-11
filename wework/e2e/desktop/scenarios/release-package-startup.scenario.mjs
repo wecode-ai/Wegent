@@ -20,7 +20,7 @@ async function writePlugin(profileRoot, name, manifest, files) {
   )
 }
 
-async function seedNativeDshProfile(userDataDirectory) {
+export async function seedNativeDshProfile(userDataDirectory) {
   const profileRoot = join(userDataDirectory, 'dsh-core', 'profiles', PROFILE_NAME)
   await mkdir(profileRoot, { recursive: true })
   await writeFile(

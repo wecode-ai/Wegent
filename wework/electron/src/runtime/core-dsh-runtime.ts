@@ -15,7 +15,7 @@ import semver from 'semver'
 import { hashComponentPath } from './component-update-manager.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
-export const CORE_DSH_VERSION = '0.1.1-rc.2'
+export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
 const PROFILE_STAMP = '.wework-runtime.json'
 const CORE_PLUGIN_PACKAGES = [

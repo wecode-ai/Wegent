@@ -520,26 +520,15 @@ export function createElectronCapabilityRouter(
   })
   router.register('clipboard.readWorkspacePaths', async params => {
     const fallbackPaths = stringArrayParam(params, 'fallbackPaths') ?? []
-    const nativePayloads = clipboard
-      .availableFormats()
-      .filter(format => /(file|filename|uri)/i.test(format))
-      .flatMap(format => {
-        const values: string[] = []
-        try {
-          values.push(clipboard.read(format))
-        } catch {
-          // Some native formats can only be read as buffers.
-        }
-        try {
-          const buffer = clipboard.readBuffer(format)
-          if (buffer.length > 0) {
-            values.push(buffer.toString('utf8'), buffer.toString('utf16le'))
-          }
-        } catch {
-          // Ignore unsupported clipboard encodings.
-        }
-        return values
-      })
+    const nativePayloads: string[] = []
+    for (const item of await clipboard.read()) {
+      for (const type of item.types.filter(type => /(file|filename|uri)/i.test(type))) {
+        const payload = await item.getType(type)
+        if (!(payload instanceof Blob)) continue
+        const buffer = Buffer.from(await payload.arrayBuffer())
+        nativePayloads.push(buffer.toString('utf8'), buffer.toString('utf16le'))
+      }
+    }
     return inspectWorkspacePaths([
       ...extractFilePathsFromNativePayloads(nativePayloads),
       ...fallbackPaths,
@@ -569,9 +558,9 @@ export function createElectronCapabilityRouter(
     requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
     return clipboard.readText()
   })
-  router.register('isolatedClipboard.writeText', params => {
+  router.register('isolatedClipboard.writeText', async params => {
     requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
-    clipboard.writeText(rawStringParam(params, 'text'))
+    await clipboard.writeText(rawStringParam(params, 'text'))
     return { written: true }
   })
   router.register('computerUse.status', () => computerUse.status())

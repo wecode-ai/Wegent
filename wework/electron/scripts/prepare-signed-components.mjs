@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cp, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -38,7 +38,7 @@ export async function reuseSignedComponent({ source, cacheRoot, identity, policy
     }
     await verify(cached)
     await rm(source, { recursive: true, force: true })
-    await cp(cached, source, { recursive: true, preserveTimestamps: true })
+    await cp(cached, source, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true })
     return record.sha256
   }
   await sign(source)
@@ -49,7 +49,11 @@ export async function reuseSignedComponent({ source, cacheRoot, identity, policy
   await rm(temporary, { recursive: true, force: true })
   await mkdir(temporary)
   try {
-    await cp(source, join(temporary, 'content'), { recursive: true, preserveTimestamps: true })
+    await cp(source, join(temporary, 'content'), {
+      recursive: true,
+      preserveTimestamps: true,
+      verbatimSymlinks: true,
+    })
     await writeFile(join(temporary, 'metadata.json'), JSON.stringify({ key, sha256 }))
     await rename(temporary, root)
   } finally {
@@ -99,7 +103,9 @@ export async function prepareSignedComponents(environment = process.env) {
 }
 
 async function machOFiles(source) {
-  if ((await stat(source)).isDirectory()) {
+  const metadata = await lstat(source)
+  if (metadata.isSymbolicLink()) return []
+  if (metadata.isDirectory()) {
     const paths = await Promise.all(
       (await readdir(source)).sort().map(name => machOFiles(join(source, name)))
     )

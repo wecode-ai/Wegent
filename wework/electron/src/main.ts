@@ -191,7 +191,6 @@ const applicationId =
   'io.wecode.wework'
 const developmentDockIdentity = resolveDevelopmentDockIdentity(process.env)
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
-const startupStartedAt = performance.now()
 const pluginDevelopmentInstance = process.env.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development'
 const pluginDevelopmentCommand = commandLineValue(
   process.argv,
@@ -209,7 +208,7 @@ function logStartupStep(
   console.info('[startup]', {
     step,
     status,
-    elapsedMs: Math.round(performance.now() - startupStartedAt),
+    elapsedMs: Math.round(performance.now()),
     ...details,
   })
 }
@@ -1624,19 +1623,24 @@ async function configureDesktopRuntime(): Promise<void> {
       runtimeRoot,
       environment,
       runtimeHost: smartAppRuntimeHost,
-      ensureWorkbenchRuntime:
-        packagedApplication && !process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
-          ? async () => {
-              const paths = packagedHarnessRuntimePaths()
-              const resources = environment.WEWORK_HARNESS_RESOURCE_ROOT?.trim()
-              if (!resources) throw new Error('DSH runtime resources are unavailable')
-              await materializeBundledRuntimes(resources, paths.cache, ['workbench'])
-            }
-          : undefined,
+      ensureWorkbenchRuntime: environment.WEWORK_HARNESS_RESOURCE_ROOT?.trim()
+        ? async versionRequirement => {
+            const resources = environment.WEWORK_HARNESS_RESOURCE_ROOT?.trim()
+            if (!resources) throw new Error('DSH runtime resources are unavailable')
+            await materializeBundledRuntimes(resources, runtimeRoot, ['workbench'], {
+              versionRequirement,
+              downloadBaseUrl: environment.WEWORK_HARNESS_RUNTIME_BASE_URL?.trim(),
+            })
+          }
+        : undefined,
     })
   }
   desktopRuntime = new DesktopRuntime({
     environment,
+    authenticateBrowserSession: async url => {
+      const response = await session.defaultSession.fetch(url)
+      if (!response.ok) throw new Error('DSH browser session authentication failed')
+    },
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
     onStartupStep: logStartupStep,

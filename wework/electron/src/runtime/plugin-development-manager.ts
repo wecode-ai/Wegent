@@ -8,6 +8,7 @@ import {
   type CoreDshDevelopmentPlugin,
 } from './core-dsh-plugin-manager.js'
 import { RotatingLog } from './rotating-log.js'
+import { CORE_DSH_VERSION } from './core-dsh-runtime.js'
 import { terminateProcessTree } from './runtime-supervisor.js'
 
 export type PluginDevelopmentStatus =
@@ -230,7 +231,7 @@ export class PluginDevelopmentManager {
           },
           peerDependencies: {
             '@deepseek-ai/cordis': '^4.0.1',
-            '@deepseek-ai/dsh-client-runtime': '0.1.1-rc.2',
+            '@deepseek-ai/dsh-client-runtime': CORE_DSH_VERSION,
           },
           files: ['client.js', 'cordis.patch.yml', 'index.js'],
           scripts: { test: 'node --test' },

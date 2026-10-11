@@ -19,6 +19,7 @@ export interface VerifySmartAppPageOptions {
   baseUrl: string
   path: string
   readySelector: string
+  authenticationUrl?: string
   timeoutMs?: number
   pollIntervalMs?: number
   signal?: AbortSignal
@@ -38,6 +39,12 @@ export async function verifySmartAppPage(
   const view = await createView(`smart-app-verification-${randomUUID()}`)
   try {
     try {
+      if (options.authenticationUrl) {
+        if (new URL(options.authenticationUrl).origin !== new URL(options.baseUrl).origin) {
+          return { issues: [runtimeIssue('SA-RUNTIME-PATH', 'Authentication changes origin')] }
+        }
+        await view.contents.loadURL(options.authenticationUrl)
+      }
       await view.contents.loadURL(target)
     } catch {
       return {
