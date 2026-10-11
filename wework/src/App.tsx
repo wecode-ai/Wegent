@@ -474,7 +474,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
-              composerAppsSourceActive={active && nativeWorkbenchActive}
+              composerAppsSourceActive={active && !iframe}
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
               loadTaskComposerCatalogs
