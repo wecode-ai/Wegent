@@ -61,6 +61,172 @@ function officialModel(modelId: string, isDefault = false): CodexOfficialModel {
 
 describe("model controls without a desktop host", () => {
   it.each([false, true])(
+    "selects model-only preset steps without reasoning (atomic=%s)",
+    (atomic) => {
+      const glm: UnifiedModel = {
+        name: "cloud-glm",
+        type: "public",
+        config: {
+          ui: {
+            family: "glm",
+            defaultModel: true,
+            sliderModelsConfig: {
+              defaultPreset: "recommended",
+              presets: [
+                {
+                  name: "recommended",
+                  models: [
+                    { modelName: "cloud-glm" },
+                    { modelName: "cloud-deepseek" },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      };
+      const deepseek: UnifiedModel = {
+        name: "cloud-deepseek",
+        type: "public",
+        config: { ui: { family: "deepseek" } },
+      };
+      const onSelectModel = vi.fn();
+      const onSelectModelOption = vi.fn();
+      const onSelectModelAndOptions = vi.fn();
+      act(() =>
+        root.render(
+          <ModelSelector
+            translate={translate}
+            isMobile={false}
+            models={[glm, deepseek]}
+            selectedModel={glm}
+            selectedModelOptions={{}}
+            disabled={false}
+            onSelectModel={onSelectModel}
+            onSelectModelOption={onSelectModelOption}
+            onSelectModelAndOptions={
+              atomic ? onSelectModelAndOptions : undefined
+            }
+            onOpenModelSettings={vi.fn()}
+          />,
+        ),
+      );
+      act(() => element("model-selector-button").click());
+      expect(
+        element("model-power-setting-cloud-glm").getAttribute("aria-label"),
+      ).not.toContain("undefined");
+      expect(element("model-power-setting-cloud-deepseek")).toBeTruthy();
+      act(() => element("model-power-setting-cloud-deepseek").click());
+      if (atomic) {
+        expect(onSelectModelAndOptions).toHaveBeenCalledWith(deepseek, {});
+      } else {
+        expect(onSelectModel).toHaveBeenCalledWith(deepseek);
+      }
+      expect(onSelectModelOption).not.toHaveBeenCalled();
+
+      act(() => element("model-advanced-toggle").click());
+      expect(element("model-option-default").parentElement).toBe(
+        element("model-source-cloud"),
+      );
+      act(() => element("model-option-default").click());
+      if (atomic) {
+        expect(onSelectModelAndOptions).toHaveBeenLastCalledWith(glm, {});
+      } else {
+        expect(onSelectModel).toHaveBeenLastCalledWith(glm);
+      }
+      expect(onSelectModelOption).not.toHaveBeenCalled();
+    },
+  );
+
+  it("renders cloud presets before family groups and keeps local presets in their source", () => {
+    const cloudModel: UnifiedModel = {
+      ...cloudDeepseekModel,
+      config: {
+        ui: {
+          defaultModel: true,
+          reasoningEfforts: ["medium"],
+          sliderModelsConfig: {
+            defaultPreset: "recommended",
+            presets: [
+              {
+                name: "recommended",
+                label: "推荐",
+                models: [
+                  {
+                    modelName: cloudDeepseekModel.name,
+                    reasoningEffort: "medium",
+                  },
+                ],
+              },
+              {
+                name: "quality",
+                label: "高质量",
+                models: [{ modelName: "cloud-gpt", reasoningEffort: "high" }],
+              },
+            ],
+          },
+        },
+      },
+    };
+    const gptModel: UnifiedModel = {
+      name: "cloud-gpt",
+      type: "public",
+      config: { ui: { family: "gpt", reasoningEfforts: ["high"] } },
+    };
+    const localModels = codexRuntimeModels(
+      [officialModel("gpt-6.1-sol", true)],
+      null,
+      true,
+    );
+    const onSelectModelAndOptions = vi.fn();
+
+    act(() =>
+      root.render(
+        <ModelSelector
+          translate={translate}
+          isMobile={false}
+          models={[cloudModel, gptModel, ...localModels]}
+          selectedModel={cloudModel}
+          selectedModelOptions={{ reasoning: "medium" }}
+          disabled={false}
+          onSelectModel={vi.fn()}
+          onSelectModelOption={vi.fn()}
+          onSelectModelAndOptions={onSelectModelAndOptions}
+          onOpenModelSettings={vi.fn()}
+        />,
+      ),
+    );
+    act(() => element("model-selector-button").click());
+
+    const cloudSource = element("model-source-cloud");
+    const cloudPresets = cloudSource.querySelectorAll("[data-model-preset]");
+    expect(cloudPresets).toHaveLength(2);
+    for (const preset of cloudPresets) {
+      expect(preset.parentElement).toBe(cloudSource);
+      expect(
+        preset.compareDocumentPosition(
+          element(`model-option-${cloudModel.name}`),
+        ) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+    expect(element(`model-option-${cloudModel.name}`).parentElement).toBe(
+      element("model-group-deepseek"),
+    );
+    expect(element("model-option-cloud-gpt").parentElement).toBe(
+      element("model-group-gpt"),
+    );
+    const localSource = element("model-source-local-chatgpt");
+    const localPresets = localSource.querySelectorAll("[data-model-preset]");
+    expect(localPresets).toHaveLength(1);
+    expect(localPresets[0].parentElement).toBe(localSource);
+
+    act(() => element("model-option-preset-quality").click());
+    expect(onSelectModelAndOptions).toHaveBeenCalledWith(gptModel, {
+      reasoning: "high",
+    });
+  });
+
+  it.each([false, true])(
     "keeps the scoped theme in the model portal (mobile=%s)",
     (mobile) => {
       const openSettings = vi.fn();

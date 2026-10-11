@@ -5,22 +5,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCollaborationTranslator } from "../i18n";
 import { ModelPowerSlider } from "./ModelPowerSlider";
-import type { ModelControlConfig } from "./model-ui";
 import type { UnifiedModel } from "@wegent/chat-core/models";
 
 let container: HTMLDivElement;
 let root: Root;
 
 const translate = createCollaborationTranslator("zh-CN");
-const reasoningControl: ModelControlConfig = {
-  id: "reasoning",
-  label: "Reasoning",
-  defaultValue: "low",
-  options: [
-    { value: "low", label: "Low", order: 0 },
-    { value: "high", label: "High", order: 1 },
-  ],
-};
 const currentModel: UnifiedModel = {
   name: "current",
   type: "runtime",
@@ -57,6 +47,46 @@ afterEach(() => {
 });
 
 describe("ModelPowerSlider", () => {
+  it("removes the previous reasoning override when selecting a model-only step", () => {
+    const modelOnly: UnifiedModel = {
+      name: "model-only",
+      type: "public",
+      displayName: "Model only",
+      config: { ui: { family: "glm" } },
+    };
+    const onSelectModelAndOptions = vi.fn();
+    const onSelectModelOption = vi.fn();
+    act(() =>
+      root.render(
+        <ModelPowerSlider
+          translate={translate}
+          powerSettings={[
+            {
+              id: "current:high",
+              model: currentModel,
+              reasoningEffort: "high",
+            },
+            { id: "model-only", model: modelOnly },
+          ]}
+          selectedModel={currentModel}
+          selectedModelOptions={{ reasoning: "high", speed: "standard" }}
+          onSelectModel={vi.fn()}
+          onSelectModelAndOptions={onSelectModelAndOptions}
+          onSelectModelOption={onSelectModelOption}
+        />,
+      ),
+    );
+    const step = container.querySelector<HTMLElement>(
+      '[data-testid="model-power-setting-model-only"]',
+    );
+    expect(step?.getAttribute("aria-label")).toBe("Model only");
+    act(() => step!.click());
+    expect(onSelectModelAndOptions).toHaveBeenCalledWith(modelOnly, {
+      speed: "standard",
+    });
+    expect(onSelectModelOption).not.toHaveBeenCalled();
+  });
+
   it("does not apply reasoning when the host rejects a model change", () => {
     const onSelectModel = vi.fn(() => false);
     const onSelectModelOption = vi.fn();
@@ -65,7 +95,6 @@ describe("ModelPowerSlider", () => {
       root.render(
         <ModelPowerSlider
           translate={translate}
-          control={reasoningControl}
           powerSettings={[
             {
               id: "current:low",

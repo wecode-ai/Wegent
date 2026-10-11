@@ -47,6 +47,7 @@ import {
   isSelectedPowerSetting,
   isVisibleModelSelectorControl,
   modelCompatibilityDisabledMessage,
+  modelPowerOptions,
   selectedControlOption,
 } from "./model-selector-utils";
 import styles from "./ModelSelector.module.css";
@@ -688,6 +689,7 @@ export function ModelSelector({
     return (
       <div data-testid={testId}>
         <div className={styles.groupLabel}>{label}</div>
+        {renderPowerPresetOptions(groups.flatMap((group) => group.models))}
         {groups.map((group) => (
           <div
             key={group.config.id}
@@ -696,7 +698,6 @@ export function ModelSelector({
             {showFamilyLabels ? (
               <div className={styles.subgroupLabel}>{group.config.label}</div>
             ) : null}
-            {renderPowerPresetOptions(group.models)}
             {renderDesktopModelOptions(group.models)}
           </div>
         ))}
@@ -763,12 +764,11 @@ export function ModelSelector({
     const speedControl = getControlsForModel(selectedSetting.model).find(
       (control) => control.id === "speed",
     );
-    const defaultOptions = {
-      reasoning: selectedSetting.reasoningEffort,
+    const defaultOptions = modelPowerOptions(selectedSetting, {
       ...(speedControl?.defaultValue
         ? { speed: speedControl.defaultValue }
         : {}),
-    };
+    });
     if (onSelectModelAndOptions) {
       onSelectModelAndOptions(selectedSetting.model, defaultOptions);
     } else {
@@ -776,7 +776,9 @@ export function ModelSelector({
         closeMenu("selection");
         return;
       }
-      handleSelectModelOption("reasoning", selectedSetting.reasoningEffort);
+      if (selectedSetting.reasoningEffort !== undefined) {
+        handleSelectModelOption("reasoning", selectedSetting.reasoningEffort);
+      }
       if (speedControl?.defaultValue) {
         handleSelectModelOption("speed", speedControl.defaultValue);
       }
@@ -970,7 +972,7 @@ export function ModelSelector({
                             </button>
                           ) : null}
                         </div>
-                        {desktopReasoningControl &&
+                        {(useModelPowerSlider || desktopReasoningControl) &&
                         advancedReasoningAvailable ? (
                           <div
                             data-testid="model-advanced-panel"
@@ -979,7 +981,6 @@ export function ModelSelector({
                             {useModelPowerSlider ? (
                               <ModelPowerSlider
                                 translate={t}
-                                control={desktopReasoningControl}
                                 powerSettings={powerSettings}
                                 selectedModel={selectedModel}
                                 selectedModelOptions={selectedModelOptions}
@@ -992,7 +993,7 @@ export function ModelSelector({
                                 accentPulse={fastModeState.enabled}
                                 compact
                               />
-                            ) : (
+                            ) : desktopReasoningControl ? (
                               <ReasoningSlider
                                 translate={t}
                                 control={desktopReasoningControl}
@@ -1003,7 +1004,7 @@ export function ModelSelector({
                                 onInteractionChange={setPowerSliderInteracting}
                                 accentPulse={fastModeState.enabled}
                               />
-                            )}
+                            ) : null}
                           </div>
                         ) : null}
                       </div>

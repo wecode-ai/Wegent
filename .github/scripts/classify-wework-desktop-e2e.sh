@@ -101,6 +101,7 @@ cloud_worktree_segments=(
 )
 cloud_segments=(
   cloud-model-recovery
+  cloud-model-presets
   cloud-project-creation
   cloud-device-lifecycle
   core-task-flow
@@ -142,7 +143,7 @@ cloud_shards=(
   cloud-worktree-create,automation-lifecycle,browser-multi-tabs
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
-  model-routing,cloud-model-recovery
+  model-routing,cloud-model-recovery,cloud-model-presets
   plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
@@ -528,6 +529,11 @@ classify_wework_path() {
       wework/src/components/chat/composer/composerMentionCandidates*)
       select_target "plugins:skill-mention-rendering"
       select_target "core:core-task-flow"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/cloud-model-presets.scenario.mjs)
+      select_target "cloud:cloud-model-presets"
       return
       ;;
 
@@ -985,6 +991,13 @@ classify_wework_path() {
 classify_path() {
   local path="$1"
 
+  case "$path" in
+    packages/collaboration/src/controls/ModelSelector* | \
+      packages/collaboration/src/controls/ModelPowerSlider* | \
+      packages/collaboration/src/controls/model-selector-utils*)
+      select_target "cloud:cloud-model-presets"
+      ;;
+  esac
   case "$path" in
     packages/collaboration/src/conversation/McpUrlAuthorizationCard* | \
       packages/collaboration/src/conversation/RequestUserInputCard* | \

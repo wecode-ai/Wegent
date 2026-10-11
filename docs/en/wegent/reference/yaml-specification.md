@@ -241,8 +241,12 @@ Each preset has a stable unique `name`, a first-line `label`, and an ordered
 `description`, the default preset falls back to "Recommended model set" and other
 presets fall back to "Model set". `modelName` identifies a Model resource name
 or model ID. For ambiguous names, provide `modelType`, `namespace`, and
-`resourceUserId` as the complete resource identity. Every target model must
-advertise the matching efforts in its own `modelConfig.ui.reasoningEfforts`.
+`resourceUserId` as the complete resource identity. Presets appear directly under
+their top-level source, such as "Cloud models", before model-family subgroups.
+An entry that omits both `reasoningEffort` and `reasoningEfforts` selects only the
+model without setting a reasoning effort; the model need not declare reasoning
+efforts. Explicitly requested efforts must be supported by the target model;
+declare them through its own `modelConfig.ui.reasoningEfforts`.
 Invisible or unavailable models and unsupported efforts are removed from the
 preset. The remaining preset is still displayed when at least one valid
 position remains, and is hidden only when no valid positions remain.
