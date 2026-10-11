@@ -917,6 +917,10 @@ classify_wework_path() {
       ;;
 
     # Runtime queue orchestration has an independently bootstrapped checkpoint.
+    wework/e2e/desktop/scenarios/dsh-runtime-upgrade.scenario.mjs)
+      select_target "core:dsh-runtime-upgrade"
+      ;;
+
     wework/e2e/desktop/scenarios/runtime-task-queue.scenario.mjs)
       select_target "core:runtime-task-queue"
       return

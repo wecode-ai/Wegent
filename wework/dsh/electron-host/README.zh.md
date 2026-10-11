@@ -4,9 +4,10 @@
 Electron 主进程，并向第一方 Wework DSH 应用提供带版本的、仅限回环地址的
 HTTP 载体。
 
-该插件只属于内置 Core Runtime `0.2.0-rc.2`。Workbench Runtime
-`0.1.0-rc.8` 不携带它，也不会获得 Electron Host pipe。Electron 新架构不再
-支持 `0.1.0-rc.7`。
+该插件随内置 Core Runtime `0.2.0-rc.2` 分发。Smart app 的隔离 Workbench
+Profile 会安装同一个受信任插件，并通过应用专属的 Electron Host pipe 调用
+授权能力；新版 `0.2.0-rc.2` 和按需下载的 `0.1.0-rc.8` 均支持这条链路。
+Electron 新架构不再支持 `0.1.0-rc.7`。
 
 插件在当前 Cordis generation 内提供类型化的 `ctx.weworkDesktop` Host
 service。它只暴露按领域分组的窄能力，不暴露 Electron 对象、文件描述符或鉴权

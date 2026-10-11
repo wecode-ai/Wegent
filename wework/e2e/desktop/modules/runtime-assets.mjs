@@ -5,7 +5,6 @@ import { mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
-import { resolveSharedHarnessRuntimeAssetCacheRoot } from '../../../scripts/lib/harness-runtime-cache.mjs'
 
 export function packagedResourcesRoot(appBinary) {
   return resolve(
@@ -73,6 +72,8 @@ export async function preparePackagedHarnessRuntimes(appBinary, runtimeRoot) {
 // Deliver the actual build artifact over HTTP, including its production checksum and layout.
 export async function serveHarnessRuntimeAsset(request, response, url) {
   if (!url.pathname.startsWith('/dsh-runtime-assets/')) return false
+  const { resolveSharedHarnessRuntimeAssetCacheRoot } =
+    await import('../../../scripts/lib/harness-runtime-cache.mjs')
   const assetName = url.pathname.slice('/dsh-runtime-assets/'.length)
   if (request.method !== 'GET' || !/^[a-zA-Z0-9._-]+\.tar\.gz$/.test(assetName)) {
     response.writeHead(400)

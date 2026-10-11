@@ -4,9 +4,11 @@ This host-side DeepSeek Harness plugin bridges the DSH process to the Electron
 main process through two inherited private pipes. It exposes a versioned,
 loopback-only HTTP carrier to the first-party Wework DSH application.
 
-This plugin belongs only to the bundled Core Runtime `0.2.0-rc.2`. The
-Workbench Runtime `0.1.0-rc.8` does not contain it and receives no Electron
-Host pipe. The new Electron architecture no longer supports `0.1.0-rc.7`.
+This plugin ships with the bundled Core Runtime `0.2.0-rc.2`. Each Smart app's
+isolated Workbench profile installs the same trusted plugin and uses its
+application-scoped Electron Host pipe for authorized capabilities. Both
+`0.2.0-rc.2` and the on-demand `0.1.0-rc.8` runtime support this integration.
+The new Electron architecture no longer supports `0.1.0-rc.7`.
 
 The plugin provides a typed `ctx.weworkDesktop` Host service for the current
 Cordis generation. It exposes narrow domain-grouped capabilities rather than
