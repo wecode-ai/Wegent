@@ -46,7 +46,8 @@ describe('TelemetryBridge', () => {
     mocks.installTelemetry.mockClear()
     mocks.setTelemetryEnabled.mockClear()
     mocks.track.mockClear()
-    mocks.updateAppPreferences.mockClear()
+    mocks.updateAppPreferences.mockReset()
+    mocks.updateAppPreferences.mockResolvedValue(undefined)
     mocks.preferences.loaded = true
     mocks.preferences.preferences.telemetryConsentAsked = true
     mocks.preferences.preferences.telemetryEnabled = true
@@ -127,6 +128,40 @@ describe('TelemetryBridge', () => {
       await vi.waitFor(() => {
         expect(screen.getByTestId('telemetry-consent-decline')).not.toBeDisabled()
         expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('serializes a retry after a timed-out save instead of racing it', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.preferences.preferences.telemetryConsentAsked = false
+      let releaseFirstSave: (() => void) | null = null
+      mocks.updateAppPreferences.mockImplementationOnce(
+        () =>
+          new Promise<void>(resolve => {
+            releaseFirstSave = () => resolve()
+          })
+      )
+
+      render(<TelemetryBridge />)
+      fireEvent.click(screen.getByTestId('telemetry-consent-accept'))
+
+      await vi.advanceTimersByTimeAsync(10_000)
+      await vi.waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+
+      fireEvent.click(screen.getByTestId('telemetry-consent-decline'))
+      // The retry must wait for the still-in-flight accept save to settle.
+      expect(mocks.updateAppPreferences).toHaveBeenCalledTimes(1)
+
+      releaseFirstSave?.()
+      await vi.waitFor(() => {
+        expect(mocks.updateAppPreferences).toHaveBeenLastCalledWith({
+          telemetryConsentAsked: true,
+          telemetryEnabled: false,
+        })
       })
     } finally {
       vi.useRealTimers()

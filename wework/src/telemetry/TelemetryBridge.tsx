@@ -3,6 +3,7 @@ import { useAppPreferencesState } from '@/features/app-preferences/useAppPrefere
 import { installTelemetry, isTelemetryEnabled, setTelemetryEnabled, track } from './client'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { updateAppPreferences } from '@/desktop/appPreferences'
+import { raceWithTimeout } from '@/lib/promise-timeout'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TelemetryConsentDialog } from './TelemetryConsentDialog'
 import { getTelemetryConfig, isOfficialReleaseBuild } from './config'
@@ -27,6 +28,7 @@ export function TelemetryBridge() {
   const startedRef = useRef(false)
   const [savingConsent, setSavingConsent] = useState(false)
   const [consentError, setConsentError] = useState<string | null>(null)
+  const pendingConsentSaveRef = useRef<Promise<unknown>>(Promise.resolve())
   const consentAsked = appPreferences?.preferences.telemetryConsentAsked
   const telemetryEnabled = appPreferences?.preferences.telemetryEnabled
   const distribution = getTelemetryConfig().distribution
@@ -113,19 +115,24 @@ export function TelemetryBridge() {
   const chooseConsent = async (enabled: boolean) => {
     setSavingConsent(true)
     setConsentError(null)
-    try {
-      await Promise.race([
+    // Serialize saves: a timed-out attempt may still be in flight, and a
+    // parallel retry with a different value could be overwritten on disk and
+    // in renderer state when the stale completion arrives last.
+    const save = pendingConsentSaveRef.current
+      .catch(() => {})
+      .then(() =>
         updateAppPreferences({
           telemetryConsentAsked: true,
           telemetryEnabled: enabled,
-        }),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () => reject(new Error('Timed out saving telemetry consent')),
-            CONSENT_SAVE_TIMEOUT_MS
-          )
-        }),
-      ])
+        })
+      )
+    pendingConsentSaveRef.current = save
+    try {
+      await raceWithTimeout(
+        save,
+        CONSENT_SAVE_TIMEOUT_MS,
+        () => new Error('Timed out saving telemetry consent')
+      )
     } catch {
       setConsentError(t('workbench.telemetry_consent_save_failed'))
     } finally {
