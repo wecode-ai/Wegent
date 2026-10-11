@@ -20,6 +20,7 @@ import { pipeline } from 'node:stream/promises'
 import * as tar from 'tar'
 import { hashComponentPath, fileSha256 as sha256 } from './component-content-hash.js'
 import { cachePackagedComponent, copyComponentSnapshot } from './component-snapshot.js'
+import { createFileOperationQueue } from './file-operation-queue.js'
 export { hashComponentPath } from './component-content-hash.js'
 
 export const MANAGED_COMPONENT_IDS = [
@@ -339,63 +340,69 @@ export class ComponentUpdateManager {
     const stagedComponents = {} as Record<ManagedComponentId, RemoteComponent>
 
     const downloads: Array<{ id: ManagedComponentId; component: RemoteComponent }> = []
-    for (const id of MANAGED_COMPONENT_IDS) {
-      const component = remote.components[id]
-      const effectiveComponent = effective?.[id]
-      const expectedCurrentContentSha256 =
-        effectiveComponent?.contentSha256 ?? packaged.components[id].sha256
-      const reusesCurrentContent =
-        appVersion === this.currentAppVersion &&
-        component.contentSha256 === expectedCurrentContentSha256
-      if (reusesCurrentContent && !effectiveComponent) {
-        stagedComponents[id] = await cachePackagedComponent(
-          this.componentRoot(id, ''),
-          component.version,
-          reusablePaths[id]
-        )
-        this.log({ event: 'component-reused', id, reason: 'packaged-snapshot' })
-        continue
-      }
-      const reusableContentSha256 = await hashComponentPath(reusablePaths[id])
-      if (reusesCurrentContent || component.contentSha256 === reusableContentSha256) {
-        this.log({
-          event: 'component-reused',
-          id,
-          reason: reusesCurrentContent ? 'current-content' : 'verified-installed-content',
+    const prepare = createFileOperationQueue(2)
+    const prepared = await Promise.allSettled(
+      MANAGED_COMPONENT_IDS.map(id =>
+        prepare(async () => {
+          const component = remote.components[id]
+          const effectiveComponent = effective?.[id]
+          const expectedCurrentContentSha256 =
+            effectiveComponent?.contentSha256 ?? packaged.components[id].sha256
+          const reusesCurrentContent =
+            appVersion === this.currentAppVersion &&
+            component.contentSha256 === expectedCurrentContentSha256
+          if (reusesCurrentContent && !effectiveComponent) {
+            stagedComponents[id] = await cachePackagedComponent(
+              this.componentRoot(id, ''),
+              component.version,
+              reusablePaths[id]
+            )
+            this.log({ event: 'component-reused', id, reason: 'packaged-snapshot' })
+            return
+          }
+          const reusableContentSha256 = await hashComponentPath(reusablePaths[id])
+          if (reusesCurrentContent || component.contentSha256 === reusableContentSha256) {
+            this.log({
+              event: 'component-reused',
+              id,
+              reason: reusesCurrentContent ? 'current-content' : 'verified-installed-content',
+            })
+            // Packaged binaries may have changed during signing or stripping.
+            // Cache the installed bytes with their actual hash, independently of the app bundle.
+            const reusable =
+              effectiveComponent?.contentSha256 === reusableContentSha256
+                ? effectiveComponent
+                : await this.packagedComponentDescriptor(
+                    packaged.components[id].version,
+                    reusablePaths[id],
+                    reusableContentSha256
+                  )
+            stagedComponents[id] = {
+              ...reusable,
+              version: component.version,
+            }
+            await this.ensureReusableComponent(id, stagedComponents[id], reusablePaths[id])
+          } else {
+            const target = this.componentRoot(id, component.archiveSha256)
+            const componentPath =
+              component.entryPath === '.' ? target : join(target, component.entryPath)
+            if (!(await componentMatches(componentPath, component.contentSha256))) {
+              downloads.push({ id, component })
+              this.log({
+                event: 'component-download-required',
+                id,
+                version: component.version,
+                archiveBytes: component.archiveBytes,
+              })
+            } else {
+              this.log({ event: 'component-reused', id, reason: 'verified-cache' })
+            }
+            stagedComponents[id] = component
+          }
         })
-        // Packaged binaries may have changed during signing or stripping.
-        // Cache the installed bytes with their actual hash, independently of the app bundle.
-        const reusable =
-          effectiveComponent?.contentSha256 === reusableContentSha256
-            ? effectiveComponent
-            : await this.packagedComponentDescriptor(
-                packaged.components[id].version,
-                reusablePaths[id],
-                reusableContentSha256
-              )
-        stagedComponents[id] = {
-          ...reusable,
-          version: component.version,
-        }
-        await this.ensureReusableComponent(id, stagedComponents[id], reusablePaths[id])
-      } else {
-        const target = this.componentRoot(id, component.archiveSha256)
-        const componentPath =
-          component.entryPath === '.' ? target : join(target, component.entryPath)
-        if (!(await componentMatches(componentPath, component.contentSha256))) {
-          downloads.push({ id, component })
-          this.log({
-            event: 'component-download-required',
-            id,
-            version: component.version,
-            archiveBytes: component.archiveBytes,
-          })
-        } else {
-          this.log({ event: 'component-reused', id, reason: 'verified-cache' })
-        }
-        stagedComponents[id] = component
-      }
-    }
+      )
+    )
+    for (const result of prepared) if (result.status === 'rejected') throw result.reason
     await this.downloadComponents(downloads, onProgress)
     await this.writeState({
       ...state,
