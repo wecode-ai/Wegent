@@ -1931,9 +1931,11 @@ describe('local codex plugin readState cache', () => {
     expect(order).toEqual(['installed-start', 'installed-end', 'list-start'])
   })
 
-  test('listInstalledPlugins can supersede an in-flight membership read', async () => {
+  test('complete membership reads supersede an in-flight membership read', async () => {
     let installedRequestCount = 0
     let resolveFirstInstalled: ((value: unknown) => void) | null = null
+    let storeRequestCount = 0
+    let resolveFirstStore: ((value: unknown) => void) | null = null
     mocks.requestLocalExecutor.mockImplementation(
       async (
         method: string,
@@ -1941,6 +1943,15 @@ describe('local codex plugin readState cache', () => {
           method?: string
         }
       ) => {
+        if (method === 'executor.plugins.store.list') {
+          storeRequestCount += 1
+          if (storeRequestCount === 1) {
+            return await new Promise(resolve => {
+              resolveFirstStore = resolve
+            })
+          }
+          return { storePath: '/tmp/store/plugins', plugins: [] }
+        }
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }
@@ -1976,7 +1987,7 @@ describe('local codex plugin readState cache', () => {
     const superseded = api.listInstalledPlugins({ refresh: true })
     await vi.waitFor(() => expect(installedRequestCount).toBe(1))
 
-    const current = api.listInstalledPlugins({ refresh: true, shareInflight: false })
+    const current = api.listInstalledPlugins({ requireComplete: true })
     await expect(current).resolves.toEqual(
       expect.objectContaining({
         items: [
@@ -1987,8 +1998,10 @@ describe('local codex plugin readState cache', () => {
       })
     )
     expect(installedRequestCount).toBe(2)
+    expect(storeRequestCount).toBe(2)
 
     resolveFirstInstalled?.({ marketplaces: [personalMarketplace] })
+    resolveFirstStore?.({ storePath: '/tmp/store/plugins', plugins: [] })
     await superseded
   })
 

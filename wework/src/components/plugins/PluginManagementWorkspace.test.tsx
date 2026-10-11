@@ -100,10 +100,7 @@ describe('PluginManagementWorkspace cache', () => {
 
     expect(await screen.findByText('Cached Plugin')).toBeInTheDocument()
     expect(screen.queryByText('正在加载插件')).not.toBeInTheDocument()
-    expect(listInstalledPlugins).toHaveBeenCalledWith({
-      requireComplete: true,
-      shareInflight: true,
-    })
+    expect(listInstalledPlugins).toHaveBeenCalledWith({ requireComplete: true })
     expect(readState).not.toHaveBeenCalled()
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('device_id=resolved-device')

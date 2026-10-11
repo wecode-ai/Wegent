@@ -1473,7 +1473,7 @@ export async function listWegentStorePluginsFromDisk(
 ): Promise<InstalledPlugin[]> {
   if (!isElectronRuntime()) return []
   const pending =
-    inflightWegentStoreList ??
+    (requireComplete ? null : inflightWegentStoreList) ??
     requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
       .then(listed => {
         if (!listed || !Array.isArray(listed.plugins))
@@ -2709,7 +2709,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         }
       }
       const loaded = await loadInstalledPluginsOnly({
-        shareInflight: options?.shareInflight,
+        shareInflight: options?.requireComplete ? false : options?.shareInflight,
         requireComplete: options?.requireComplete,
       })
       const installedPlugins = loaded.installedPlugins
