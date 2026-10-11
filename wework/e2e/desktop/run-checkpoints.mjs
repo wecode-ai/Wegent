@@ -15,6 +15,10 @@ import {
 } from './result-retention.mjs'
 import { prepareDesktopE2EBuild } from '../../scripts/lib/desktop-e2e-build.mjs'
 import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
+import { keepVerificationHostAwake } from '../../scripts/lib/verification-power.mjs'
+
+// Keep wall-clock checkpoint deadlines valid on unattended macOS hosts.
+keepVerificationHostAwake()
 
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1

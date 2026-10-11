@@ -18,6 +18,14 @@
 # Don't exit on error - we want to run all checks and report at the end
 set +e
 
+# Preserve test deadlines while unattended macOS hosts would otherwise sleep.
+if [ "$(uname -s)" = "Darwin" ]; then
+    if [ "${WEGENT_PUSH_AWAKE_GUARD:-0}" != "1" ]; then
+        export WEGENT_PUSH_AWAKE_GUARD=1
+        exec /usr/bin/caffeinate -is /bin/bash "$0" "$@"
+    fi
+fi
+
 # Create temp directory for storing check outputs (reduces memory usage)
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
