@@ -1,3 +1,4 @@
+import { capturePluginDeviceSyncScope } from '@/features/plugins/pluginDeviceSyncScope'
 import {
   recordPluginInstallationAccepted,
   reconcilePluginInstallation,
@@ -3725,6 +3726,16 @@ export function PluginsWorkspace({
     autoUpdateAttemptKeysRef.current.add(attemptKey)
     const deviceId = currentDeviceId
 
+    const syncScopeIsCurrent = capturePluginDeviceSyncScope(
+      {
+        lifetime: deviceSyncLifetimeRef,
+        marketplaceKey: marketplaceStateCacheKeyRef,
+        deviceId: currentDeviceIdRef,
+      },
+      marketplaceCacheKeyValue,
+      deviceId
+    )
+
     void runPluginAutoUpdate({
       updateBatch: () => pluginApi.autoUpdateInstalledPlugins(),
       syncPlugin: installedPluginId =>
@@ -3732,7 +3743,7 @@ export function PluginsWorkspace({
       syncDevice: () => pluginApi.syncInstalledPluginsToDevice(deviceId),
       syncWhenNoUpdates: marketplaceNeedsDeviceSync(pluginMarketplaceState.items),
       onProgress: ({ processedCount, remainingCount }) => {
-        if (currentDeviceIdRef.current !== deviceId) return
+        if (!syncScopeIsCurrent()) return
         setPluginOperationNotice({
           id: `plugin-auto-update-${deviceId}`,
           kind: 'authorization',
@@ -3745,7 +3756,7 @@ export function PluginsWorkspace({
       },
     })
       .then(result => {
-        if (currentDeviceIdRef.current !== deviceId) return
+        if (!syncScopeIsCurrent()) return
         if (result.failedCount > 0) {
           const stageLabels: Record<string, string> = {
             local_state: t('workbench.plugins_auto_update_stage_local_state', '读取本地插件状态'),
@@ -3805,7 +3816,7 @@ export function PluginsWorkspace({
         setDeviceAutoSyncSettled(true)
       })
       .catch(error => {
-        if (currentDeviceIdRef.current !== deviceId) return
+        if (!syncScopeIsCurrent()) return
         markPluginDeviceAutoSyncAttempted(deviceId)
         markPluginDeviceAutoSyncSettled(deviceId)
         setDeviceAutoSyncSettled(true)
@@ -3822,7 +3833,7 @@ export function PluginsWorkspace({
       })
       .finally(() => {
         finishDeviceSync()
-        if (currentDeviceIdRef.current === deviceId) {
+        if (syncScopeIsCurrent()) {
           setMarketplaceRefreshTick(previous => previous + 1)
         }
       })
@@ -3845,13 +3856,16 @@ export function PluginsWorkspace({
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
     const deviceId = currentDeviceId
-    const lifetime = deviceSyncLifetimeRef.current
     const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-    const syncScopeIsCurrent = () =>
-      lifetime !== null &&
-      deviceSyncLifetimeRef.current === lifetime &&
-      marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue &&
-      currentDeviceIdRef.current === deviceId
+    const syncScopeIsCurrent = capturePluginDeviceSyncScope(
+      {
+        lifetime: deviceSyncLifetimeRef,
+        marketplaceKey: marketplaceStateCacheKeyRef,
+        deviceId: currentDeviceIdRef,
+      },
+      marketplaceCacheKeyValue,
+      deviceId
+    )
     const syncIsCurrent = () =>
       syncScopeIsCurrent() &&
       pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)

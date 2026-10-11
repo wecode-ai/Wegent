@@ -9,9 +9,21 @@ export async function copyComponentTree(source: string, destination: string): Pr
     const metadata = await run(() => lstat(from))
     if (metadata.isDirectory()) {
       await run(() => mkdir(to, { mode: metadata.mode | 0o700 }))
-      const entries = await run(() => readdir(from))
+      const entries = await run(() => readdir(from, { withFileTypes: true }))
       const results = await Promise.allSettled(
-        entries.map(name => copy(join(from, name), join(to, name)))
+        entries.map(async entry => {
+          const sourcePath = join(from, entry.name)
+          const targetPath = join(to, entry.name)
+          if (entry.isDirectory()) await copy(sourcePath, targetPath)
+          else if (entry.isFile()) {
+            await run(() =>
+              copyFile(sourcePath, targetPath, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
+            )
+          } else if (entry.isSymbolicLink()) {
+            const target = await run(() => readlink(sourcePath))
+            await run(() => symlink(target, targetPath))
+          } else throw new Error(`Unsupported component tree entry: ${sourcePath}`)
+        })
       )
       for (const result of results) if (result.status === 'rejected') throw result.reason
       await run(() => chmod(to, metadata.mode))

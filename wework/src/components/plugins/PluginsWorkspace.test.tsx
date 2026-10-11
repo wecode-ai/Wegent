@@ -8,7 +8,10 @@ import {
   createLocalCodexPluginApi,
 } from '@/api/local/codexPlugins'
 import { clearLocalConnectorAuthHealthCache } from '@/api/local/localConnectorAuth'
-import { clearPluginDeviceAutoSyncAttempts } from '@/features/plugins/pluginDeviceAutoSync'
+import {
+  clearPluginDeviceAutoSyncAttempts,
+  hasSettledPluginDeviceAutoSync,
+} from '@/features/plugins/pluginDeviceAutoSync'
 import {
   resetLocalExecutorCloudConnectionStatus,
   setLocalExecutorCloudConnectionStatus,
@@ -2926,6 +2929,33 @@ describe('PluginsWorkspace', () => {
       'data-notice-kind',
       'success'
     )
+  })
+
+  test('does not settle a later plugin session when an unmounted auto-update finishes', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    let releaseSync!: () => void
+    const deviceAutoSyncGate = new Promise<void>(resolve => {
+      releaseSync = resolve
+    })
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'auto',
+      autoUpdateBatchSizes: [1],
+      deviceAutoSyncSucceeds: true,
+      deviceAutoSyncGate,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+    view.unmount()
+    clearPluginDeviceAutoSyncAttempts()
+    await act(async () => {
+      releaseSync()
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(hasSettledPluginDeviceAutoSync('current-device')).toBe(false)
   })
 
   test('continues isolated plugin updates and shows the real failed stage', async () => {
