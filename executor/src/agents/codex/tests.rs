@@ -4720,6 +4720,7 @@ fn codex_thread_binds_project_space_through_context_grant() {
 
 #[test]
 fn codex_thread_exposes_project_space_to_issue_automation_executor() {
+    let _environment = environment::LaunchEnvironment::new();
     let mut request = ExecutionRequest {
         task_id: "runtime-executor-1".to_owned(),
         ..ExecutionRequest::default()
