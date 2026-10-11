@@ -14,6 +14,12 @@ function appSurface(): 'main' | 'popout' | 'workspace' {
   return 'main'
 }
 
+// The consent save rides the renderer-to-host HTTP invoke, which can hang
+// indefinitely (e.g. when Chromium's network service crashes mid-request).
+// Bound the wait so the dialog surfaces a retryable error instead of
+// deadlocking the full-screen modal.
+const CONSENT_SAVE_TIMEOUT_MS = 10_000
+
 export function TelemetryBridge() {
   const appPreferences = useAppPreferencesState()
   const { t } = useTranslation('common')
@@ -108,10 +114,18 @@ export function TelemetryBridge() {
     setSavingConsent(true)
     setConsentError(null)
     try {
-      await updateAppPreferences({
-        telemetryConsentAsked: true,
-        telemetryEnabled: enabled,
-      })
+      await Promise.race([
+        updateAppPreferences({
+          telemetryConsentAsked: true,
+          telemetryEnabled: enabled,
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error('Timed out saving telemetry consent')),
+            CONSENT_SAVE_TIMEOUT_MS
+          )
+        }),
+      ])
     } catch {
       setConsentError(t('workbench.telemetry_consent_save_failed'))
     } finally {

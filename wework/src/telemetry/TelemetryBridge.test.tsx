@@ -111,6 +111,28 @@ describe('TelemetryBridge', () => {
     expect(mocks.installTelemetry).not.toHaveBeenCalled()
   })
 
+  it('shows a retryable error when saving the consent choice never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.preferences.preferences.telemetryConsentAsked = false
+      mocks.updateAppPreferences.mockReturnValue(new Promise(() => {}))
+
+      render(<TelemetryBridge />)
+      fireEvent.click(screen.getByTestId('telemetry-consent-decline'))
+
+      expect(screen.getByTestId('telemetry-consent-decline')).toBeDisabled()
+
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('telemetry-consent-decline')).not.toBeDisabled()
+        expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('enables telemetry by default without prompting in development builds', async () => {
     mocks.officialRelease = false
     mocks.electronRuntime = true
