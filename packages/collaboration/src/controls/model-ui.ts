@@ -637,7 +637,10 @@ export function getControlsForModel(
               );
               return standardOption
                 ? { ...standardOption, order: (index + 1) * 10 }
-                : modelInterfaceReasoningOptions([value])[0];
+                : {
+                    ...modelInterfaceReasoningOptions([value])[0],
+                    order: (index + 1) * 10,
+                  };
             });
         if (options.length === 0) return [];
         const configuredDefault = metadata.defaultReasoningEffort;

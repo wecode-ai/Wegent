@@ -649,6 +649,29 @@ describe('model-ui', () => {
     })
   })
 
+  test('preserves declared positions for nonstandard reasoning efforts', () => {
+    const model: UnifiedModel = {
+      name: 'gpt-custom-efforts',
+      type: 'runtime',
+      displayName: 'GPT Custom Efforts',
+      config: {
+        ui: {
+          family: 'codex-official',
+          reasoningEfforts: ['low', 'medium', 'high', 'none'],
+        },
+      },
+    }
+
+    const reasoningControl = getControlsForModel(model).find(control => control.id === 'reasoning')
+
+    expect(reasoningControl?.options.map(option => [option.value, option.order])).toEqual([
+      ['low', 10],
+      ['medium', 20],
+      ['high', 30],
+      ['none', 40],
+    ])
+  })
+
   test('falls back to the advertised default when a stored effort is unsupported', () => {
     const model: UnifiedModel = {
       name: 'gpt-5.6-luna',

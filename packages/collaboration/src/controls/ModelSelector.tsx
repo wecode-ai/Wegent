@@ -584,13 +584,13 @@ export function ModelSelector({
               onBlockedModelSelect?.(model, disabledMessage);
               return;
             }
-            explicitModelSelectionRef.current = true;
-            setModelSelectionMode("model");
             const selectionApplied = handleSelectModel(model);
             if (selectionApplied === false) {
               closeMenu("selection");
               return;
             }
+            explicitModelSelectionRef.current = true;
+            setModelSelectionMode("model");
             setDesktopMenuView("simple");
           }}
           className={[

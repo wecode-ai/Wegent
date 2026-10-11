@@ -979,9 +979,8 @@ function commandOutput(command, args, options = {}) {
   })
   if (result.error) throw result.error
   if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(' ')} exited with ${result.status}: ${result.stderr || result.stdout}`
-    )
+    const failureOutput = [result.stderr, result.stdout].filter(Boolean).join('\n')
+    throw new Error(`${command} ${args.join(' ')} exited with ${result.status}: ${failureOutput}`)
   }
   return result.stdout.trim()
 }
@@ -1009,9 +1008,10 @@ async function commandOutputAsync(command, args, options = {}) {
         resolvePromise(stdout.trim())
         return
       }
+      const failureOutput = [stderr, stdout].filter(Boolean).join('\n')
       reject(
         new Error(
-          `${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}: ${stderr || stdout}`
+          `${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}: ${failureOutput}`
         )
       )
     })

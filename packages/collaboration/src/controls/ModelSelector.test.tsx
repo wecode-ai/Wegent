@@ -174,6 +174,60 @@ describe("model controls without a desktop host", () => {
     ).toBeNull();
   });
 
+  it("keeps default mode when the host rejects a direct model selection", () => {
+    const models = codexRuntimeModels(
+      [
+        officialModel("gpt-6-luna"),
+        officialModel("gpt-6.1-sol", true),
+        officialModel("gpt-6-astra"),
+      ],
+      null,
+      true,
+    );
+    const selectedModel = models.find(
+      (model) => model.modelId === "gpt-6.1-sol",
+    )!;
+    const alternateModel = models.find(
+      (model) => model.modelId === "gpt-6-astra",
+    )!;
+    const onSelectModel = vi.fn(() => false);
+
+    act(() =>
+      root.render(
+        <CollaborationTheme mode="dark">
+          <ModelSelector
+            translate={translate}
+            isMobile={false}
+            models={models}
+            selectedModel={selectedModel}
+            selectedModelOptions={{ reasoning: "medium", speed: "standard" }}
+            disabled={false}
+            onSelectModel={onSelectModel}
+            onSelectModelOption={vi.fn()}
+            onOpenModelSettings={vi.fn()}
+          />
+        </CollaborationTheme>,
+      ),
+    );
+
+    act(() => element("model-selector-button").click());
+    expect(
+      document.querySelector('[data-testid="model-reset-default-button"]'),
+    ).toBeNull();
+    act(() => element("model-advanced-toggle").click());
+    act(() => element(`model-option-${alternateModel.name}`).click());
+
+    expect(onSelectModel).toHaveBeenCalledWith(alternateModel);
+    expect(
+      document.querySelector('[data-testid="model-selector-menu"]'),
+    ).toBeNull();
+
+    act(() => element("model-selector-button").click());
+    expect(
+      document.querySelector('[data-testid="model-reset-default-button"]'),
+    ).toBeNull();
+  });
+
   it.each(["deepseek", "gpt", "model-interface"])(
     "exposes catalog reasoning levels for a cloud model in the %s family",
     (family) => {
