@@ -1,8 +1,6 @@
 import type { UnifiedModel } from './models'
 import {
   type CodexOfficialModel,
-  codexModelPickerLabel,
-  codexModelPickerSortOrder,
   codexOfficialModelName,
   CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
 } from './codex-official-models'
@@ -14,13 +12,36 @@ function localCodexModelFamily(model: CodexOfficialModel): string {
   return `codex-provider:${encodeURIComponent(model.providerId.toLowerCase())}`
 }
 
+function codexPickerDisplayName(displayName: string): string {
+  return displayName.replace(/(?<=\d)-(?=[A-Za-z])/g, ' ')
+}
+
+const CHATGPT_SLIDER_MODELS_CONFIG = {
+  defaultPreset: 'recommended',
+  presets: [
+    {
+      name: 'recommended',
+      label: '推荐',
+      description: '推荐模型集',
+      models: [
+        { model: 'gpt-6-luna', reasoning_effort: 'high' },
+        { model: 'gpt-6.1-sol', reasoning_effort: 'low' },
+        { model: 'gpt-6.1-sol', reasoning_effort: 'medium' },
+        { model: 'gpt-6-astra', reasoning_effort: 'low' },
+        { model: 'gpt-6-astra', reasoning_effort: 'medium' },
+        { model: 'gpt-6-astra', reasoning_effort: 'xhigh' },
+      ],
+    },
+  ],
+} as const
+
 export function localCodexModel(
   model: CodexOfficialModel,
   codexAuthConfigured: boolean
 ): UnifiedModel {
   const modelFamily = localCodexModelFamily(model)
   const providerFamilyLabel = model.providerType === 'provider' ? model.providerName : undefined
-  const modelLabel = codexModelPickerLabel(model.modelId)
+  const modelLabel = codexPickerDisplayName(model.displayName)
   return {
     name: codexOfficialModelName(model),
     type: 'runtime',
@@ -33,6 +54,7 @@ export function localCodexModel(
       weworkModelKind: model.providerType === 'provider' ? 'codex-provider' : 'codex-official',
       codexAuthConfigured,
       codexOfficialModelId: model.id,
+      codexIsDefault: model.isDefault,
       codexProviderId: model.providerId,
       codexProviderName: model.providerName,
       codexProviderType: model.providerType,
@@ -43,8 +65,6 @@ export function localCodexModel(
         reasoningEfforts: model.supportedReasoningEfforts,
         defaultReasoningEffort: model.defaultReasoningEffort,
         controls: ['speed'],
-        sortOrder:
-          (model.providerType === 'provider' ? 100 : 0) + codexModelPickerSortOrder(model.modelId),
       },
     },
     runtime: {
@@ -93,18 +113,37 @@ export function codexRuntimeModels(
   const officialCatalogModels = codexOfficialModels.filter(
     model => model.providerType === 'official'
   )
-  const officialModels = !codexAuthConfigured
-    ? []
-    : codexOfficialError || officialCatalogModels.length === 0
-      ? [
-          unavailableCodexModel(
-            codexOfficialError || 'Codex model list returned no available models'
-          ),
-        ]
-      : officialCatalogModels.map(model => localCodexModel(model, true))
   const providerModels = codexOfficialModels
     .filter(model => model.providerType === 'provider')
     .map(model => localCodexModel(model, codexAuthConfigured))
 
-  return [...officialModels, ...providerModels]
+  if (!codexAuthConfigured) {
+    return providerModels
+  }
+  if (!codexOfficialError && officialCatalogModels.length > 0) {
+    const runtimeModels = codexOfficialModels.map(model => localCodexModel(model, true))
+    const defaultModel = runtimeModels.find(model => model.config?.codexIsDefault === true)
+    if (defaultModel) {
+      const defaultUi =
+        defaultModel.config?.ui &&
+        typeof defaultModel.config.ui === 'object' &&
+        !Array.isArray(defaultModel.config.ui)
+          ? (defaultModel.config.ui as Record<string, unknown>)
+          : {}
+      defaultModel.config = {
+        ...defaultModel.config,
+        ui: {
+          ...defaultUi,
+          defaultModel: true,
+          sliderModelsConfig: CHATGPT_SLIDER_MODELS_CONFIG,
+        },
+      }
+    }
+    return runtimeModels
+  }
+
+  return [
+    unavailableCodexModel(codexOfficialError || 'Codex model list returned no available models'),
+    ...providerModels,
+  ]
 }

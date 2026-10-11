@@ -5,6 +5,7 @@ const execute = promisify(execFile)
 const PROTOCOL_VERSION = 1
 const LAYOUT_VERSION = 1
 const MANIFEST_VERSION = 2
+export const EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS = 15_000
 
 export function assertWorkbenchSchema(response: unknown): void {
   if (!response || typeof response !== 'object' || Array.isArray(response)) {
@@ -52,7 +53,7 @@ export async function assertExecutorWorkbenchCompatibility(
         SystemRoot: environment.SystemRoot,
         WINDIR: environment.WINDIR,
       },
-      timeout: 5_000,
+      timeout: EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
       killSignal: 'SIGKILL',
       maxBuffer: 16 * 1024,
       windowsHide: true,

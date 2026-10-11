@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import os
 import re
 import sys
 from pathlib import Path, PurePosixPath
@@ -208,10 +207,7 @@ def main() -> None:
     args = parser.parse_args()
     creator_root = args.codex_creator_root
     if creator_root is None:
-        home = os.environ.get("WEGENT_CODEX_HOME") or os.environ.get("CODEX_HOME")
-        if not home:
-            parser.error("Set CODEX_HOME or pass --codex-creator-root")
-        creator_root = Path(home) / "skills/.system/plugin-creator"
+        creator_root = Path(__file__).parent / "codex-plugin-creator"
     try:
         errors = validate_plugin(
             args.plugin_root.resolve(), load_codex_validator(creator_root)

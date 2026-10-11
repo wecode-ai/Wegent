@@ -13,6 +13,7 @@ const provider = {
   data: [
     {
       id: 'gpt-5.6-sol',
+      displayName: 'GPT-5.6 Sol',
       supportedReasoningEfforts: [{ reasoningEffort: 'high' }],
       defaultReasoningEffort: 'high',
     },
@@ -43,7 +44,7 @@ describe('browser device model catalog', () => {
     expect(models).toEqual([
       expect.objectContaining({
         name: 'gpt-5.6-sol',
-        displayName: 'GPT 5.6 Sol',
+        displayName: 'GPT-5.6 Sol',
         type: 'runtime',
         config: expect.objectContaining({
           codexAuthConfigured: true,

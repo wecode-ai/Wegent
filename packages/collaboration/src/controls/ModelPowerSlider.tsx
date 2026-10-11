@@ -10,43 +10,43 @@ import {
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 import { ReasoningSlider } from "./ReasoningSlider";
 import {
-  getCodexModelPowerSettings,
+  type ModelPowerSetting,
   isSelectedPowerSetting,
 } from "./model-selector-utils";
 
 interface ModelPowerSliderProps {
   translate: CollaborationTranslate;
   control: ModelControlConfig;
-  models: UnifiedModel[];
+  powerSettings: ModelPowerSetting[];
   selectedModel: UnifiedModel | null;
   selectedModelOptions: ModelOptions;
-  onSelectModel: (model: UnifiedModel | null) => void;
+  onSelectModel: (model: UnifiedModel | null) => boolean | void;
   onSelectModelAndOptions?: (
     model: UnifiedModel,
     options: ModelOptions,
   ) => void;
   onSelectModelOption: (optionId: string, value: string) => void;
   onInteractionChange?: (interacting: boolean) => void;
+  compact?: boolean;
+  accentPulse?: boolean;
 }
 
 export function ModelPowerSlider({
   translate: t,
   control,
-  models,
+  powerSettings,
   selectedModel,
   selectedModelOptions,
   onSelectModel,
   onSelectModelAndOptions,
   onSelectModelOption,
   onInteractionChange,
+  compact = false,
+  accentPulse = false,
 }: ModelPowerSliderProps) {
   const resolveLabel = useCallback(
     (key: string, fallback: string) => t(key, fallback),
     [t],
-  );
-  const powerSettings = useMemo(
-    () => getCodexModelPowerSettings(models),
-    [models],
   );
   const selectedReasoningValue =
     normalizeModelOptionValue("reasoning", selectedModelOptions.reasoning) ??
@@ -75,7 +75,6 @@ export function ModelPowerSlider({
           value: setting.id,
           label: `${getModelDisplayLabel(setting.model, {}, resolveLabel)} ${reasoningLabel}`,
           dataTestId: `model-power-setting-${setting.id.replace(/[^a-z0-9]+/giu, "-")}`,
-          ultra: setting.reasoningEffort === "ultra",
         };
       }),
     [powerSettings, resolveLabel],
@@ -99,7 +98,7 @@ export function ModelPowerSlider({
         onSelectModelAndOptions(setting.model, nextOptions);
         return;
       }
-      onSelectModel(setting.model);
+      if (onSelectModel(setting.model) === false) return;
       onSelectModelOption("reasoning", setting.reasoningEffort);
     },
     [
@@ -118,11 +117,13 @@ export function ModelPowerSlider({
       control={control}
       selectedModelOptions={selectedModelOptions}
       onSelectOption={onSelectModelOption}
+      compact={compact}
       clearSubmenuOnHover={false}
       onInteractionChange={onInteractionChange}
       steps={steps.length > 0 ? steps : undefined}
       selectedStepValue={selectedPowerSetting?.id}
       onSelectStep={steps.length > 0 ? selectPowerSetting : undefined}
+      accentPulse={accentPulse}
     />
   );
 }

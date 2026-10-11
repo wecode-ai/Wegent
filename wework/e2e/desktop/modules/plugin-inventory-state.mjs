@@ -8,6 +8,11 @@ import {
 } from './plugin-regression-fixture.mjs'
 
 export async function verifyPluginEnabledState(control, fixture, enabled, timeoutMs) {
+  // A fresh renderer loads the composer catalog only when the real picker is
+  // requested, so trigger that path before comparing its projection.
+  await control.command('click', testId('new-chat-button'))
+  await control.command('click', testId('composer-plugin-picker-button'))
+  await control.command('waitFor', testId('composer-plugin-picker'), { timeoutMs })
   const state = await until(
     () => inventory(control),
     value => {
@@ -27,8 +32,6 @@ export async function verifyPluginEnabledState(control, fixture, enabled, timeou
     state.sharedInventory.installedPlugins.some(plugin => plugin.pluginKey === fixture.slug)
   )
   assert.equal(Boolean(app?.isEnabled), enabled, 'Composer disagrees with shared enabled state')
-  await control.command('click', testId('new-chat-button'))
-  await control.command('click', testId('composer-plugin-picker-button'))
   await control.command('fill', testId('composer-plugin-picker-search'), { value: fixture.slug })
   const picker = JSON.parse(await control.command('snapshot', testId('composer-plugin-picker')))
   assert.equal(

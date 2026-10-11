@@ -16,7 +16,7 @@ const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const CLOUD_WORKSPACE_ID = 'offline-cloud-workspace'
 const PROJECT_NAME = '离线本地项目空间'
 const ISSUE_NAME = '离线本地 Issue'
-const MODEL_NAME = 'wework-custom-desktop-e2e-responses'
+const MODEL_NAME = 'local-model:desktop-e2e-responses'
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' })

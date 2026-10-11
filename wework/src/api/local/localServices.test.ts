@@ -527,16 +527,10 @@ describe('createLocalAppServices', () => {
     const models = await services.modelApi.listModels()
 
     expect(request).toHaveBeenCalledWith('runtime.codex.models.list', {
-      includeHidden: true,
+      includeHidden: false,
     })
     expect(models).toEqual({
       data: expect.arrayContaining([
-        expect.objectContaining({
-          name: 'gpt-6-astra',
-          type: 'runtime',
-          modelId: 'gpt-6-astra',
-          runtime: { family: 'openai.openai-responses', provider: 'local' },
-        }),
         expect.objectContaining({
           name: 'gpt-6-sol',
           type: 'runtime',
@@ -568,7 +562,6 @@ describe('createLocalAppServices', () => {
     const modelIds = models.data.map(model => model.modelId)
     expect(modelIds).toEqual(
       expect.arrayContaining([
-        'gpt-6-astra',
         'gpt-6-sol',
         'gpt-6-luna',
         'gpt-5.6-sol',
@@ -1557,7 +1550,7 @@ describe('createLocalAppServices', () => {
         expect.objectContaining({
           name: 'Doubao-Seed-2.0-pro-260215',
           type: 'runtime',
-          displayName: 'Doubao-Seed-2.0-pro-260215',
+          displayName: 'Doubao Seed',
           modelId: 'Doubao-Seed-2.0-pro-260215',
           config: expect.objectContaining({
             weworkModelKind: 'codex-provider',

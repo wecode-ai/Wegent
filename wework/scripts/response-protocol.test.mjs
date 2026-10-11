@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import {
+  createSse,
   cors,
+  customToolCall,
+  functionCall,
   mcpToolRequestEvents,
   requestAdvertisesProgrammaticExec,
+  responseCompleted,
+  responseCreated,
   serializedOutputReportsSuccess,
   selectMcpTool,
   selectMcpToolRequest,
@@ -27,6 +32,48 @@ function namespace(name, ...toolNames) {
 function functionTool(name) {
   return { type: 'function', name }
 }
+
+describe('responses stream fixtures', () => {
+  test('completes tool items in the final response for Codex turn history', () => {
+    const events = [
+      responseCreated('response-1'),
+      ...functionCall('call-1', 'view_image', { path: '/tmp/image.png' }),
+      customToolCall('call-2', 'apply_patch', '*** Begin Patch\n*** End Patch'),
+      responseCompleted('response-1'),
+    ]
+    const completedEvent = createSse(events)
+      .split('\n\n')
+      .map(chunk => chunk.split('\n').find(line => line.startsWith('data: ')))
+      .filter(Boolean)
+      .map(line => JSON.parse(line.slice('data: '.length)))
+      .find(event => event.type === 'response.completed')
+
+    expect(completedEvent.response.output).toEqual([
+      expect.objectContaining({
+        id: 'fc_call-1',
+        type: 'function_call',
+        status: 'completed',
+        call_id: 'call-1',
+      }),
+      expect.objectContaining({
+        id: 'fc_call-2',
+        type: 'custom_tool_call',
+        status: 'completed',
+        call_id: 'call-2',
+      }),
+    ])
+    expect(completedEvent.response).toEqual(
+      expect.objectContaining({
+        object: 'response',
+        status: 'completed',
+        model: 'wework-desktop-e2e',
+        error: null,
+        incomplete_details: null,
+      })
+    )
+    expect(completedEvent.response.created_at).toEqual(expect.any(Number))
+  })
+})
 
 describe('cors', () => {
   test('allows every HTTP method used by desktop application APIs', () => {

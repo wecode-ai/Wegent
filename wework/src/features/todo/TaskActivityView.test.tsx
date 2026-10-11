@@ -26,6 +26,12 @@ const rejectLoopItemRun = vi.fn()
 const cancelCloudAutomationRun = vi.fn()
 const listModels = vi.fn()
 const modelListeners = new Set<() => void>()
+
+async function revealModelOptions(user: ReturnType<typeof userEvent.setup>) {
+  const advancedToggle = screen.queryByTestId('model-advanced-toggle')
+  if (advancedToggle) await user.click(advancedToggle)
+}
+
 const attachmentSelectionMock = {
   attachments: [] as Attachment[],
   uploadingFiles: new Map(),
@@ -1021,8 +1027,9 @@ describe('TaskActivityView', () => {
       expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5 Codex')
     })
     await user.click(screen.getByTestId('model-selector-button'))
-    await user.hover(await screen.findByTestId('model-control-menu-model'))
+    await revealModelOptions(user)
     await user.click(await screen.findByTestId('model-option-gpt-5.2-codex'))
+    await user.keyboard('{Escape}')
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.2 Codex')
 
     const loadsBeforeRefresh = listModels.mock.calls.length
@@ -1237,8 +1244,9 @@ describe('TaskActivityView', () => {
     )
 
     await user.click(await screen.findByTestId('model-selector-button'))
-    await user.hover(await screen.findByTestId('model-control-menu-model'))
+    await revealModelOptions(user)
     await user.click(await screen.findByTestId('model-option-gpt-5.5-codex'))
+    await user.keyboard('{Escape}')
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
 
@@ -2842,8 +2850,9 @@ describe('TaskActivityView', () => {
       if (selectNewCommentModel) {
         await user.click(screen.getByTestId('task-comment-settings-toggle'))
         await user.click(await screen.findByTestId('model-selector-button'))
-        await user.hover(await screen.findByTestId('model-control-menu-model'))
+        await revealModelOptions(user)
         await user.click(await screen.findByTestId('model-option-gpt-5.5-codex'))
+        await user.keyboard('{Escape}')
       }
       expect(
         screen.queryByTestId(`cloud-task-activity-reply-${completedAgentMessage.messageId}`)
