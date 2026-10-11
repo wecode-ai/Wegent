@@ -1445,9 +1445,11 @@ describe('App plugins route', () => {
     vi.stubGlobal('fetch', fetchMock)
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await act(async () => {
+      renderApp()
+    })
 
-    expect(await screen.findByText('云端站点')).toBeInTheDocument()
+    expect(screen.getByText('云端站点')).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:9100/api/sites?app_type=web&offset=0&limit=20',
       expect.objectContaining({
@@ -1606,9 +1608,11 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites?app_type=web')
 
-    renderApp()
-    await updateAppPreferences({ experimentalFeaturesEnabled: true })
-    await screen.findByText('产品发布页')
+    await act(async () => {
+      renderApp()
+      await updateAppPreferences({ experimentalFeaturesEnabled: true })
+    })
+    expect(screen.getByText('产品发布页')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('site-continue-development-site-1'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
