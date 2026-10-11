@@ -1,6 +1,7 @@
 import {
   type ModelControlConfig,
   getControlsForModel,
+  hasCatalogReasoningEfforts,
   isCodexOfficialModel,
   isModelInterfaceModel,
   isSameModelSelection,
@@ -138,16 +139,19 @@ export function isSelectedPowerSetting(
 
 export function desktopModelControl(
   control: ModelControlConfig | undefined,
-  model: UnifiedModel | null,
+  model: UnifiedModel | null
 ): ModelControlConfig | undefined {
-  if (!control || control.id !== "reasoning" || isModelInterfaceModel(model)) {
-    return control;
+  if (!control || control.id !== 'reasoning') {
+    return control
+  }
+  if (isModelInterfaceModel(model) || (model && hasCatalogReasoningEfforts(model))) {
+    return control
   }
 
   return {
     ...control,
-    options: control.options.filter((option) => option.value !== "max"),
-  };
+    options: control.options.filter(option => option.value !== 'max'),
+  }
 }
 
 export function selectedControlOption(

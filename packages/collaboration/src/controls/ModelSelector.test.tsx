@@ -7,10 +7,19 @@ import { createCollaborationTranslator } from "../i18n";
 import { CollaborationTheme } from "../theme";
 import { ModelSelector } from "./ModelSelector";
 import { PermissionModeSelector } from "./PermissionModeSelector";
+import type { UnifiedModel } from "@wegent/chat-core/models";
 
 let container: HTMLDivElement;
 let root: Root;
 const translate = createCollaborationTranslator("zh-CN");
+
+const cloudDeepseekModel: UnifiedModel = {
+  name: 'deepseek-flash-responses(公网)',
+  type: 'public',
+  displayName: '公网:DeepSeek-V4-Flash',
+  modelId: 'deepseek-flash',
+  config: { protocol: 'openai-responses' },
+}
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -97,4 +106,81 @@ describe("model controls without a desktop host", () => {
     act(() => element("full-access-confirm-submit").click());
     expect(onChange).toHaveBeenCalledWith("full-access");
   });
-});
+
+  it.each(['deepseek', 'gpt', 'model-interface'])(
+    'exposes catalog reasoning levels for a cloud model in the %s family',
+    family => {
+      const model = {
+        ...cloudDeepseekModel,
+        config: { ...cloudDeepseekModel.config, ui: { family } },
+      }
+      const onSelectModelOption = vi.fn()
+      act(() =>
+        root.render(
+          <CollaborationTheme mode="dark">
+            <ModelSelector
+              translate={translate}
+              isMobile
+              models={[model]}
+              selectedModel={model}
+              selectedModelOptions={{ reasoning: 'high' }}
+              disabled={false}
+              onSelectModel={vi.fn()}
+              onSelectModelOption={onSelectModelOption}
+              onOpenModelSettings={vi.fn()}
+              onOpenCloudConnections={vi.fn()}
+            />
+          </CollaborationTheme>
+        )
+      )
+
+      act(() => element('model-selector-button').click())
+      // element() throws when a control is missing.
+      const optionLabels = ['low', 'high', 'max'].map(value =>
+        element(`model-control-reasoning-${value}`).textContent?.trim()
+      )
+      expect(optionLabels.every(Boolean)).toBe(true)
+      expect(document.querySelector('[data-testid="model-control-reasoning-medium"]')).toBeNull()
+      expect(document.querySelector('[data-testid="model-control-reasoning-xhigh"]')).toBeNull()
+      act(() => element('model-control-reasoning-max').click())
+
+      expect(onSelectModelOption).toHaveBeenCalledWith('reasoning', 'max')
+    }
+  )
+
+  it.each(['deepseek', 'gpt', 'model-interface'])(
+    'enables the reasoning row for a cloud catalog model in the %s family on desktop',
+    family => {
+      const model = {
+        ...cloudDeepseekModel,
+        config: { ...cloudDeepseekModel.config, ui: { family } },
+      }
+      act(() =>
+        root.render(
+          <CollaborationTheme mode="dark">
+            <ModelSelector
+              translate={translate}
+              isMobile={false}
+              models={[model]}
+              selectedModel={model}
+              selectedModelOptions={{ reasoning: 'high' }}
+              disabled={false}
+              onSelectModel={vi.fn()}
+              onSelectModelOption={vi.fn()}
+              onOpenModelSettings={vi.fn()}
+              onOpenCloudConnections={vi.fn()}
+            />
+          </CollaborationTheme>
+        )
+      )
+
+      act(() => element('model-selector-button').click())
+
+      const reasoningRow = element('model-control-menu-reasoning') as HTMLButtonElement
+      expect(reasoningRow.disabled).toBe(false)
+      expect(reasoningRow.textContent).toContain(
+        translate('workbench.local_model_reasoning_high', 'High')
+      )
+    }
+  )
+})

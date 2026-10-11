@@ -36,6 +36,7 @@ describe('tray native status', () => {
       } as unknown as PreferencesStore,
       requestExecutor,
       apply,
+      codexSubscriptionActiveAtStartup: true,
     })
 
     await controller.refresh()
@@ -76,6 +77,7 @@ describe('tray native status', () => {
       } as unknown as PreferencesStore,
       requestExecutor,
       apply,
+      codexSubscriptionActiveAtStartup: true,
     })
 
     await controller.refresh()
@@ -83,6 +85,82 @@ describe('tray native status', () => {
     expect(requestExecutor).not.toHaveBeenCalledWith('runtime.codex.rate_limits.read')
     expect(requestExecutor).not.toHaveBeenCalledWith('device.execute_command', expect.anything())
     expect(requestExecutor).not.toHaveBeenCalledWith('runtime.tasks.list')
+    expect(apply).toHaveBeenCalledWith({
+      usageTitle: null,
+      usageTooltip: null,
+      runningCount: 0,
+      showRunningStatus: true,
+    })
+  })
+
+  test('skips Codex quota when the local Codex subscription is off', async () => {
+    const apply = vi.fn()
+    const requestExecutor = vi.fn(async (method: string) => {
+      if (method === 'runtime.tasks.running_count') return { runningCount: 0 }
+      if (method === 'runtime.codex.rate_limits.read') {
+        throw new Error('rate limits must not be read while the subscription is off')
+      }
+      if (method === 'executor.codex_home.status') {
+        throw new Error('codex home must not be read while the subscription is off')
+      }
+      throw new Error('cloud quota unavailable')
+    })
+    const controller = new TrayNativeStatusController({
+      preferences: {
+        read: vi.fn(async () => ({
+          language: 'zh-CN',
+          trayRunningEnabled: true,
+          trayUsageEnabled: true,
+          trayWegentUsageEnabled: false,
+          localCodexSubscriptionEnabled: false,
+        })),
+      } as unknown as PreferencesStore,
+      requestExecutor,
+      apply,
+      codexSubscriptionActiveAtStartup: true,
+    })
+
+    await controller.refresh()
+
+    expect(requestExecutor.mock.calls.map(call => call[0])).toEqual(['runtime.tasks.running_count'])
+    expect(apply).toHaveBeenCalledWith({
+      usageTitle: null,
+      usageTooltip: null,
+      runningCount: 0,
+      showRunningStatus: true,
+    })
+  })
+
+  test('skips Codex quota when the subscription was off at startup but is now on', async () => {
+    const apply = vi.fn()
+    const requestExecutor = vi.fn(async (method: string) => {
+      if (method === 'runtime.tasks.running_count') return { runningCount: 0 }
+      if (method === 'runtime.codex.rate_limits.read') {
+        throw new Error('rate limits must wait for the restarted executor')
+      }
+      if (method === 'executor.codex_home.status') {
+        throw new Error('codex home must wait for the restarted executor')
+      }
+      throw new Error('cloud quota unavailable')
+    })
+    const controller = new TrayNativeStatusController({
+      preferences: {
+        read: vi.fn(async () => ({
+          language: 'zh-CN',
+          trayRunningEnabled: true,
+          trayUsageEnabled: true,
+          trayWegentUsageEnabled: false,
+          localCodexSubscriptionEnabled: true,
+        })),
+      } as unknown as PreferencesStore,
+      requestExecutor,
+      apply,
+      codexSubscriptionActiveAtStartup: false,
+    })
+
+    await controller.refresh()
+
+    expect(requestExecutor.mock.calls.map(call => call[0])).toEqual(['runtime.tasks.running_count'])
     expect(apply).toHaveBeenCalledWith({
       usageTitle: null,
       usageTooltip: null,
@@ -107,6 +185,7 @@ describe('tray native status', () => {
       } as unknown as PreferencesStore,
       requestExecutor,
       apply,
+      codexSubscriptionActiveAtStartup: true,
     })
 
     await controller.refresh()

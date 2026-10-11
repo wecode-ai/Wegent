@@ -5,8 +5,11 @@ import {
   resolveModelExecutionSelection,
   supportsCloudExecution,
 } from '@wegent/chat-core/model-execution'
-import { getDefaultModelOptions, normalizeModelOptionAliases } from './model-ui'
-import { codexCatalogModelIdForUpstream } from '@wegent/chat-core/codex-catalog'
+import {
+  getDefaultModelOptions,
+  normalizeModelOptionAliases,
+  resolveCodexCatalogModelId,
+} from './model-ui'
 import type { ModelOptions, ModelType, UnifiedModel } from '@wegent/chat-core/models'
 
 export const CLOUD_MODEL_NAMESPACE_OPTION = 'weworkCloudModelNamespace'
@@ -121,24 +124,6 @@ function modelKind(model: UnifiedModel): string {
   )
 }
 
-function cloudCodexCatalogModelId(model: UnifiedModel, upstreamApiFormat: string): string {
-  const configured =
-    getRawStringConfigValue(model.config, 'codex_catalog_model_id') ||
-    getRawStringConfigValue(model.config, 'codexCatalogModelId')
-  if (configured) return configured
-
-  const upstreamCandidates = [
-    model.modelId,
-    getRawStringConfigValue(model.config, 'model_id'),
-    getRawStringConfigValue(model.config, 'modelId'),
-    getRawStringConfigValue(model.config, 'model'),
-  ]
-  const catalogCandidates = upstreamCandidates.some(candidate => candidate?.trim())
-    ? upstreamCandidates
-    : [model.name]
-  return codexCatalogModelIdForUpstream(catalogCandidates, upstreamApiFormat) ?? ''
-}
-
 function isLocalModel(model: UnifiedModel): boolean {
   return model.provider === 'local'
 }
@@ -245,7 +230,7 @@ export function selectedModelExecutionFields(
         )
       }
     }
-    const codexCatalogModelId = cloudCodexCatalogModelId(selectedModel, upstreamApiFormat ?? '')
+    const codexCatalogModelId = resolveCodexCatalogModelId(selectedModel)
     if (codexCatalogModelId) {
       modelOptions[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] = codexCatalogModelId
     }
