@@ -101,6 +101,7 @@ export function createDesktopScenario() {
     },
     async verify(control) {
       const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+      const errors = []
       try {
         await ensureModelOptionVisible(control, 'model-option-preset-deepseek', selector, null)
         await control.command('waitFor', recommended, { visible: true })
@@ -150,7 +151,7 @@ export function createDesktopScenario() {
         await control.command('waitFor', selector, { text: models[3].label })
       } catch (error) {
         console.error('[cloud-model-presets] Verification failed', error)
-        throw error
+        errors.push(error)
       } finally {
         await control.command('press', 'body', { key: 'Escape' }).catch(error => {
           console.warn('[cloud-model-presets] Could not close the model selector', error)
@@ -171,13 +172,13 @@ export function createDesktopScenario() {
             )
           })
         )
-        const failures = cleanup.filter(result => result.status === 'rejected')
-        if (failures.length > 0) {
-          throw new AggregateError(
-            failures.map(result => result.reason),
-            'Public model cleanup failed'
-          )
-        }
+        errors.push(
+          ...cleanup.filter(result => result.status === 'rejected').map(result => result.reason)
+        )
+      }
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1) {
+        throw new AggregateError(errors, 'Cloud preset verification or cleanup failed')
       }
     },
   }
