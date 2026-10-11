@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
-import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import {
+  createSingleRootLocalProject,
+  selectE2EModel,
+  WORKBENCH_READY_TIMEOUT_MS,
+} from '../modules/shared.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const INPUT = `${ACTIVE} [data-testid="chat-message-input"]`
@@ -74,7 +78,8 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await control.command('waitFor', MODEL_SELECT)
       await control.command(
         'waitFor',
-        `${MODEL_SELECT} option[value="runtime:local-model:desktop-e2e-responses"]`
+        `${MODEL_SELECT} option[value="runtime:local-model:desktop-e2e-responses"]`,
+        { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
       )
       await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
       assert.equal(await control.command('getValue', MODEL_SELECT), '')
