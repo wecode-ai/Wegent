@@ -2324,6 +2324,18 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
 ):
     from contextlib import contextmanager
 
+    class OneShotCurrentUser:
+        accesses = 0
+
+        @property
+        def id(self):
+            self.accesses += 1
+            if self.accesses > 1:
+                raise AssertionError(
+                    "current_user.id was read after the request session closed"
+                )
+            return test_user.id
+
     installed, release = _device_install(test_db, test_user.id)
     reconcile_calls: list[int] = []
 
@@ -2369,7 +2381,7 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
     response = await sync_installed_plugins_to_device(
         device_id="new-device",
         db=test_db,
-        current_user=test_user,
+        current_user=OneShotCurrentUser(),
     )
 
     assert reconcile_calls == [test_user.id]

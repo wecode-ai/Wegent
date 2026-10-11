@@ -222,11 +222,24 @@ pub(crate) async fn read_codex_thread_metadata(
             )
             .await
         {
-            Ok(response) => return Ok(response),
+            Ok(response) => {
+                if attempt > 0 {
+                    eprintln!(
+                        "Codex rollout metadata recovered after transcript startup retry: \
+                         thread_id={thread_id} attempts={attempt}"
+                    );
+                }
+                return Ok(response);
+            }
             Err(error)
                 if codex_thread_metadata_is_pending(&error)
                     && attempt + 1 < CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS =>
             {
+                eprintln!(
+                    "Codex rollout metadata is not ready; retrying transcript startup: \
+                     thread_id={thread_id} attempt={}",
+                    attempt + 1
+                );
                 sleep(CODEX_TRANSCRIPT_STARTUP_RETRY_DELAY).await;
             }
             Err(error) => return Err(error),

@@ -1980,6 +1980,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyWorktreeCreationStatus({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorHome,
         workspacePath,
         restartDesktopApp,
       })
@@ -2346,6 +2347,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyWorktreeCreationStatus({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorHome,
         workspacePath,
         restartDesktopApp,
       })
