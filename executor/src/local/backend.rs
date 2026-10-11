@@ -638,12 +638,15 @@ where
 
     async fn heartbeat_until_reconnect(&self) -> bool {
         enum RunnerTick {
+            ConnectionStatus,
             Heartbeat,
             RuntimeWork,
         }
 
         let mut consecutive_failures = 0_u32;
         let mut observed_successful_heartbeat = false;
+        let mut next_connection_status_poll_at =
+            Instant::now() + RUNTIME_EVENT_CONNECTION_POLL_INTERVAL;
         let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
         let mut next_runtime_work_poll_at =
             Instant::now() + self.client.config.runtime_work_poll_interval;
@@ -657,6 +660,7 @@ where
         tokio::pin!(terminal_relay);
         loop {
             let tick = tokio::select! {
+                _ = sleep_until(next_connection_status_poll_at) => RunnerTick::ConnectionStatus,
                 _ = sleep_until(next_heartbeat_at) => RunnerTick::Heartbeat,
                 _ = sleep_until(next_runtime_work_poll_at) => RunnerTick::RuntimeWork,
                 result = &mut terminal_relay => {
@@ -669,6 +673,15 @@ where
                     return observed_successful_heartbeat;
                 }
             };
+            if matches!(tick, RunnerTick::ConnectionStatus) {
+                if !self.connection_status.load(Ordering::Acquire) {
+                    let _ = self.client.disconnect().await;
+                    return observed_successful_heartbeat;
+                }
+                next_connection_status_poll_at =
+                    Instant::now() + RUNTIME_EVENT_CONNECTION_POLL_INTERVAL;
+                continue;
+            }
             if matches!(tick, RunnerTick::RuntimeWork) {
                 self.trigger_runtime_work_poll();
                 next_runtime_work_poll_at =

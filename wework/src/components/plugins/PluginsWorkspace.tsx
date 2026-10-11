@@ -2995,7 +2995,10 @@ export function PluginsWorkspace({
     // Reconcile Wework official, enterprise, and personal-created first. GitHub
     // plugin/list is last because it shares the Codex app-server lock with
     // plugin/install.
-    const membershipPromise = localPluginApi.listInstalledPlugins({ refresh: true })
+    const membershipPromise = localPluginApi.listInstalledPlugins({
+      refresh: true,
+      shareInflight: !isExplicitRefresh,
+    })
     const localPromise = Promise.resolve(peekedLocalState)
     // Use a known device id when available (cache / prior load). Otherwise start cloud
     // immediately for progressive first paint; a device-scoped pass follows once local

@@ -5043,6 +5043,49 @@ describe('PluginsWorkspace', () => {
     await waitFor(() => expect(unrestrictedPluginListStarted).toBe(true))
   })
 
+  test('explicit refresh supersedes a pending plugin/installed request', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'local-device' })
+    seedDurableOpenAiGithubPeek({
+      seedInventory: true,
+      remoteFetchedAt: Date.now(),
+      cacheKey: '/api|cloud-token',
+    })
+
+    let installedRequestCount = 0
+    let resolveFirstInstalled: ((value: unknown) => void) | null = null
+    const previousInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()
+    vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'codex.app_server_request') {
+        const request = args as { method?: string }
+        if (request.method === 'plugin/installed') {
+          installedRequestCount += 1
+          if (installedRequestCount === 1) {
+            return new Promise(resolve => {
+              resolveFirstInstalled = resolve
+            })
+          }
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    await waitFor(() => expect(installedRequestCount).toBe(1))
+    await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+
+    await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+
+    await waitFor(() => expect(installedRequestCount).toBe(2))
+    resolveFirstInstalled?.({ marketplaces: [] })
+  })
+
   test('does not start plugin/list until personal-created disk listing finishes', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const marketplaceMock = mockSystemSkillsFetch({
