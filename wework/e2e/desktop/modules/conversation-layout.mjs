@@ -1166,24 +1166,30 @@ async function verifyWorktreeCreationStatus({
   assert.ok(rolloutPath, 'The project task rollout was not persisted before recovery')
   const rollout = await readFile(rolloutPath, 'utf8')
   assert.ok(rollout.trim(), 'The project task rollout fixture was already empty')
-  await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  const executorLogPath = join(resultDir, 'executor.log')
+  const recoveryLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
+  let restoreRollout
+  await restartDesktopApp({
+    afterStop: async () => {
+      await writeFile(rolloutPath, '', 'utf8')
+      restoreRollout = waitForLogPattern(
+        executorLogPath,
+        /Codex rollout metadata is not ready; retrying transcript startup/,
+        {
+          fromOffset: recoveryLogOffset,
+          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+        }
+      ).then(() => writeFile(rolloutPath, rollout, 'utf8'))
+    },
   })
-  await writeFile(rolloutPath, '', 'utf8')
-  const restoreRollout = new Promise((resolvePromise, rejectPromise) => {
-    setTimeout(() => {
-      writeFile(rolloutPath, rollout, 'utf8').then(resolvePromise, rejectPromise)
-    }, 750)
-  })
-  const restoredTaskRowTestId = `runtime-local-task-row-${restoredTaskId}`
-  await ensureTaskRowVisible(control, restoredTaskRowTestId)
-  await control.command('clickWhenEnabled', `[data-testid="${restoredTaskRowTestId}"]`)
   await restoreRollout
   await waitForLogPattern(
-    join(resultDir, 'executor.log'),
+    executorLogPath,
     /Codex rollout metadata recovered after transcript startup retry/,
-    WORKBENCH_READY_TIMEOUT_MS
+    {
+      fromOffset: recoveryLogOffset,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
   )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: scenarioCompletionText,
