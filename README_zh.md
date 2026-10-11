@@ -300,20 +300,6 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/joyway1978">
-                    <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
-                    <br />
-                    <sub><b>Joyway78</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/yixiangxx">
-                    <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
-                    <br />
-                    <sub><b>Yi Xiang</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/sdadunderscoresdad">
                     <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
                     <br />
@@ -321,10 +307,24 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/joyway1978">
+                    <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
+                    <br />
+                    <sub><b>Joyway78</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/hustfisher">
                     <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
                     <br />
                     <sub><b>fishermen</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/yixiangxx">
+                    <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+                    <br />
+                    <sub><b>Yi Xiang</b></sub>
                 </a>
             </td>
 		</tr>
@@ -337,17 +337,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/2561056571">
-                    <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
-                    <br />
-                    <sub><b>Xuemin</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/lvmowei">
                     <img src="https://avatars.githubusercontent.com/u/5328905?v=4" width="80;" alt="lvmowei"/>
                     <br />
                     <sub><b>lvmowei</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/2561056571">
+                    <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+                    <br />
+                    <sub><b>Xuemin</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -379,19 +379,19 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/maquan0927">
-                    <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
+                <a href="https://github.com/Twelveeee">
+                    <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
                     <br />
-                    <sub><b>Just Quan</b></sub>
+                    <sub><b>Twelveeee</b></sub>
                 </a>
             </td>
 		</tr>
 		<tr>
             <td align="center">
-                <a href="https://github.com/Twelveeee">
-                    <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
+                <a href="https://github.com/maquan0927">
+                    <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
                     <br />
-                    <sub><b>Twelveeee</b></sub>
+                    <sub><b>Just Quan</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -423,17 +423,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/fingki">
-                    <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
-                    <br />
-                    <sub><b>Fingki</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/sleetdrop">
                     <img src="https://avatars.githubusercontent.com/u/88603?v=4" width="80;" alt="sleetdrop"/>
                     <br />
                     <sub><b>sleetdrop</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/fingki">
+                    <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
+                    <br />
+                    <sub><b>Fingki</b></sub>
                 </a>
             </td>
             <td align="center">
