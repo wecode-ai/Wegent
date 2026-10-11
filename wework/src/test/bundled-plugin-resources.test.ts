@@ -379,7 +379,7 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('WEWORK_ELECTRON_DEPENDENCIES_READY: "true"')
     expect(workflow).toContain('WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"')
     expect(workflow).toContain(
-      '--parallel-segments release-package-startup,component-update,app-update-differential'
+      '--parallel-segments release-package-startup,component-update,app-update-full'
     )
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')

@@ -169,8 +169,7 @@ function PluginManagementWorkspaceContent({
     let current = true
     void refreshInstalledPluginInventory({
       cacheKey: marketplaceCacheKeyValue,
-      readLocal: () =>
-        localPluginApi.listInstalledPlugins({ requireComplete: true, shareInflight: true }),
+      readLocal: () => localPluginApi.listInstalledPlugins({ requireComplete: true }),
       readCloud: deviceId => cloudPluginApi.listInstalledPlugins(deviceId),
       isCurrent: () => current,
     })

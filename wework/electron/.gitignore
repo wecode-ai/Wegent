@@ -4,6 +4,7 @@ node_modules/
 public/
 release/
 release-installer/
+release-online-update/
 release-minio/
 resources/
 .package-staging/

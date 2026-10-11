@@ -3628,6 +3628,80 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
   })
 
+  test('does not let an inactive workspace provider replace the composer inventory source', async () => {
+    setElectronRuntime()
+    const cacheKey = pluginMarketplaceCacheKey('https://cloud.example/api', 'test-token')
+    const plugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'documents', namespace: 'wework', labels: { id: 'documents' } },
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'wework',
+          pluginKey: 'documents',
+          marketplace: 'wework',
+        },
+        displayName: 'Documents',
+        description: 'Create documents',
+        enabled: true,
+        installState: 'installed',
+        components: emptyPluginComponents(),
+      },
+      status: { state: 'enabled' },
+    }
+    writePluginInventory(cacheKey, 'local-device', {
+      installedPlugins: [plugin],
+      installedPluginsFetchedAt: Date.now(),
+    })
+    localExecutorMocks.requestLocalExecutor.mockImplementation(async method => {
+      if (method === 'executor.plugins.personal.list')
+        return { marketplacePath: '/personal', plugins: [] }
+      if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+      if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [] }
+      if (method === 'executor.plugins.links.list') return []
+      if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+      return {}
+    })
+    const cloudConnectionValue: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      status: 'connected',
+      isConnected: true,
+      apiBaseUrl: 'https://cloud.example/api',
+      token: 'test-token',
+      serviceKey: 'test-connected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+
+    render(
+      <CloudConnectionContext.Provider value={cloudConnectionValue}>
+        <WorkbenchProvider
+          user={user}
+          services={createWorkbenchServices()}
+          composerAppsSourceActive
+        >
+          <WorkbenchProbeSessionProvider>
+            <RuntimeTaskSkillsProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+        <WorkbenchProvider
+          user={user}
+          services={createWorkbenchServices()}
+          composerAppsSourceActive={false}
+        >
+          <div>inactive workspace</div>
+        </WorkbenchProvider>
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByText('list local apps'))
+
+    await waitFor(() => expect(getComposerApps().map(app => app.pluginKey)).toEqual(['documents']))
+  })
+
   test('clears a stale composer snapshot on a successful empty read while offline', async () => {
     setElectronRuntime()
     replaceComposerApps([{ id: 'old-plugin', name: 'Old plugin', isAccessible: true }])
