@@ -1,11 +1,31 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { createServer } from 'node:net'
 import { mkdtemp, rm, writeFile, appendFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { waitForProcessBoundPort } from '../e2e/desktop/modules/process-bound-port.mjs'
+import { reserveListeningPort } from '../e2e/desktop/port-reservation.mjs'
+
+test('keeps the gateway port unavailable until the Python process owns its port', async () => {
+  const reservation = await reserveListeningPort()
+  const contender = createServer()
+  try {
+    const failed = once(contender, 'error')
+    contender.listen(reservation.port, '127.0.0.1')
+    const [error] = await failed
+    assert.equal(error.code, 'EADDRINUSE')
+    await reservation.release()
+    const listening = once(contender, 'listening')
+    contender.listen(reservation.port, '127.0.0.1')
+    await listening
+  } finally {
+    await reservation.release()
+    await new Promise(resolve => contender.close(resolve))
+  }
+})
 
 test('uses the port owned by the new process instead of an earlier startup log', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-bound-port-'))

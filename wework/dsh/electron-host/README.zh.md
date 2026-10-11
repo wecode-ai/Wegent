@@ -16,6 +16,10 @@ token。旧 generation 卸载后，保留的 service 引用会立即拒绝调用
 Renderer 不能直接读取 Host Cordis service。浏览器侧仍通过同源 HTTP
 route 调用同一套 capability，后续由产品插件封装 client adapter。
 
+`browser.setBounds` 的 `preserveVisibility: true` 表示仅同步尺寸，保留宿主当前的
+可见性。入场动画和布局更新使用该选项，避免覆盖显式隐藏操作；未指定该选项的
+既有调用仍按 `visible` 更新可见性，省略 `visible` 时仍默认为显示。
+
 Electron 主进程向 Renderer 推送的窗口、托盘和内置浏览器事件统一通过
 `desktop.events` capability 传输。Renderer 为所有订阅者共享一个 500ms 的
 非阻塞轮询；Host 每次立即返回当前事件批次，避免长期占用同源 HTTP 请求通道。

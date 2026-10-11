@@ -8,7 +8,11 @@ import {
   validateComponentSymlink,
 } from './component-content-hash.js'
 
-export async function copyComponentTree(source: string, destination: string): Promise<string> {
+export async function copyComponentTree(
+  source: string,
+  destination: string,
+  excluded: ReadonlySet<string> = new Set()
+): Promise<string> {
   const run = createFileOperationQueue()
   const copy = async (relative: string): Promise<string> => {
     const from = join(source, relative)
@@ -19,6 +23,7 @@ export async function copyComponentTree(source: string, destination: string): Pr
     const entries = await run(() => readdir(from, { withFileTypes: true }))
     const results = await Promise.allSettled(
       entries
+        .filter(entry => !excluded.has(join(relative, entry.name)))
         .sort((left, right) => left.name.localeCompare(right.name))
         .map(async entry => {
           const child = join(relative, entry.name)

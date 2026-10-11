@@ -391,13 +391,16 @@ export function createElectronCapabilityRouter(
     })
   )
   registerBrowserAnnotationCapabilities(router, desktopServices.browserAnnotations)
-  router.register('browser.setBounds', params =>
-    browser.setBounds(
-      stringParam(params, 'label'),
+  router.register('browser.setBounds', params => {
+    const label = stringParam(params, 'label')
+    return browser.setBounds(
+      label,
       browserBoundsParam(params),
-      booleanParam(params, 'visible') ?? true
+      booleanParam(params, 'preserveVisibility')
+        ? browser.state(label).visible
+        : (booleanParam(params, 'visible') ?? true)
     )
-  )
+  })
   router.register('browser.setDeviceMetrics', params => {
     const width = nullableIntegerParam(params, 'width')
     const height = nullableIntegerParam(params, 'height')

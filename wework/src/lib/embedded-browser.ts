@@ -379,13 +379,15 @@ export async function setEmbeddedBrowserBounds(
   bounds: EmbeddedBrowserBounds,
   visible: boolean,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL,
-  readyWhenHidden = false
+  readyWhenHidden = false,
+  preserveVisibility = false
 ): Promise<void> {
   await invokeDesktopHost<void>('browser.setBounds', {
     label,
     bounds,
     visible,
     readyWhenHidden,
+    ...(preserveVisibility ? { preserveVisibility: true } : {}),
   })
 }
 

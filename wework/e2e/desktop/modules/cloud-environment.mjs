@@ -4,6 +4,7 @@ import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
 import { waitForProcessBoundPort } from './process-bound-port.mjs'
+import { reserveListeningPort } from '../port-reservation.mjs'
 import { rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -354,7 +355,8 @@ class RealCloudEnvironment {
   }
 
   async reserveBackendPorts() {
-    this.backendPort = await reservePort()
+    this.backendPortReservation = await reserveListeningPort()
+    this.backendPort = this.backendPortReservation.port
     this.backendUrl = `http://127.0.0.1:${this.backendPort}`
     this.socketUrl = `http://localhost:${this.backendPort}`
   }
@@ -523,6 +525,8 @@ class RealCloudEnvironment {
     )
 
     const backendRsBinary = await resolveBackendRsBinary()
+    await this.backendPortReservation?.release()
+    this.backendPortReservation = null
     this.rustBackend = spawn(backendRsBinary, [], {
       cwd: join(repoDir, 'backend-rs'),
       env: {
@@ -552,6 +556,8 @@ class RealCloudEnvironment {
   async stopBackend() {
     await stopProcessGroup(this.rustBackend)
     await stopProcessGroup(this.pythonBackend)
+    await this.backendPortReservation?.release()
+    this.backendPortReservation = null
     this.rustBackend = null
     this.pythonBackend = null
   }

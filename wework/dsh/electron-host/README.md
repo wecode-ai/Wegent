@@ -19,6 +19,11 @@ The Renderer cannot read the Host Cordis service directly. Browser code keeps
 using the same-origin HTTP route for these capabilities and a product plugin
 can wrap that route with a client adapter.
 
+`browser.setBounds` accepts `preserveVisibility: true` for geometry updates that
+retain the host's current visibility. Reveal animations and layout updates use
+this option so they cannot override an explicit hide. Existing calls still
+apply `visible`, which defaults to showing the view when omitted.
+
 Window, tray, and Wework built-in browser events from the Electron main process
 share the `desktop.events` capability. The Renderer keeps one non-blocking
 500 ms poll for all subscribers, and the Host immediately returns the current

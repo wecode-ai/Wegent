@@ -318,7 +318,8 @@ function createIsolatedClipboardRouter(
     scheduleCoreDshRestart?: () => void
     setPopoutMode: (mode: 'composer' | 'menu' | 'conversation') => void
   },
-  smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> }
+  smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> },
+  browser?: Pick<EmbeddedBrowserManager, 'state' | 'setBounds'>
 ) {
   const notificationNavigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
   const targetWindow = {
@@ -337,7 +338,7 @@ function createIsolatedClipboardRouter(
     () => (smartApps ?? null) as never,
     {} as never,
     {} as never,
-    {} as never,
+    (browser ?? {}) as never,
     {} as never,
     {
       executorHome: '/tmp/wework-clipboard-test/executor',
@@ -982,6 +983,49 @@ describe('registerPluginDevelopmentCapabilities', () => {
 })
 
 describe('createWorkbenchCapabilityRouter', () => {
+  test('geometry updates preserve a hidden owner while legacy visibility commands still work', async () => {
+    let visible = false
+    const browser = {
+      has: vi.fn(() => true),
+      state: vi.fn(() => ({ visible })),
+      setBounds: vi.fn((_label: string, _bounds: unknown, requestedVisible: boolean) => {
+        visible = requestedVisible
+      }),
+      capture: vi.fn(async () => 'data:image/png;base64,owner-rect'),
+    }
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, browser as never)
+    const owner = createWorkbenchCapabilityRouter(browser as never, 'smart-app:test')
+    const params = {
+      label: 'smart-app:test',
+      bounds: { x: 0, y: 0, width: 100, height: 100 },
+      visible: true,
+    }
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'browser.setBounds', {
+      ...params,
+      preserveVisibility: true,
+    })
+    await expect(
+      owner.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'dshCapture.ownerRect', {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+      })
+    ).rejects.toMatchObject({ code: 'owner_view_hidden' })
+    expect(browser.capture).not.toHaveBeenCalled()
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'browser.setBounds', params)
+    await expect(
+      owner.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'dshCapture.ownerRect', {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+      })
+    ).resolves.toEqual({ dataUrl: 'data:image/png;base64,owner-rect' })
+  })
+
   test('captures a rectangle from the scoped owner without accepting a caller-supplied label', async () => {
     const browser = {
       has: vi.fn((label: string) => label === 'smart-app:test'),

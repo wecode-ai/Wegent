@@ -51,3 +51,21 @@ test.each(['file', 'directory'])(
     }
   }
 )
+
+test('excludes separately composed static assets while keeping an independent code snapshot', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-component-compose-'))
+  const source = join(root, 'source')
+  const target = join(root, 'composed')
+  try {
+    await mkdir(join(source, 'wework-app', 'web'), { recursive: true })
+    await writeFile(join(source, 'wework-app', 'index.js'), 'plugin code')
+    await writeFile(join(source, 'wework-app', 'web', 'index.html'), 'separate web assets')
+    const digest = await copyComponentTree(source, target, new Set([join('wework-app', 'web')]))
+    await rm(source, { recursive: true })
+    expect(await readFile(join(target, 'wework-app', 'index.js'), 'utf8')).toBe('plugin code')
+    await expect(stat(join(target, 'wework-app', 'web'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await hashComponentPath(target)).toBe(digest)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

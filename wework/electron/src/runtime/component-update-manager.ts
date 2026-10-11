@@ -21,6 +21,7 @@ import * as tar from 'tar'
 import { hashComponentPath, fileSha256 as sha256 } from './component-content-hash.js'
 import { cachePackagedComponent, copyComponentSnapshot } from './component-snapshot.js'
 import { createFileOperationQueue } from './file-operation-queue.js'
+import { copyComponentTree } from './component-copy.js'
 export { hashComponentPath } from './component-content-hash.js'
 
 export const MANAGED_COMPONENT_IDS = [
@@ -598,11 +599,8 @@ export class ComponentUpdateManager {
     await rm(temporary, { recursive: true, force: true })
     await mkdir(dirname(target), { recursive: true, mode: 0o700 })
     try {
-      await mkdir(temporary, { recursive: true, mode: 0o700 })
-      await this.copyDirectoryEntries(corePlugins, temporary, new Set(['wework-app']))
+      await copyComponentTree(corePlugins, temporary, new Set([join('wework-app', 'web')]))
       const appRoot = join(temporary, 'wework-app')
-      await mkdir(appRoot, { recursive: true, mode: 0o700 })
-      await this.copyDirectoryEntries(join(corePlugins, 'wework-app'), appRoot, new Set(['web']))
       const webRoot = join(appRoot, 'web')
       await mkdir(webRoot, { recursive: true, mode: 0o700 })
       await this.linkDirectoryEntries(
@@ -618,22 +616,6 @@ export class ComponentUpdateManager {
       return target
     } finally {
       await rm(temporary, { recursive: true, force: true })
-    }
-  }
-
-  private async copyDirectoryEntries(
-    source: string,
-    destination: string,
-    excluded: ReadonlySet<string>
-  ): Promise<void> {
-    const entries = await readdir(source, { withFileTypes: true })
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (excluded.has(entry.name)) continue
-      await cp(join(source, entry.name), join(destination, entry.name), {
-        recursive: true,
-        force: true,
-        verbatimSymlinks: true,
-      })
     }
   }
 
