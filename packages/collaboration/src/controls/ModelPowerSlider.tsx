@@ -50,9 +50,15 @@ export function ModelPowerSlider({
     getControlsForModel(selectedModel).find(
       (control) => control.id === "reasoning",
     )?.defaultValue;
-  const selectedPowerSetting = powerSettings.find((setting) =>
-    isSelectedPowerSetting(setting, selectedModel, selectedReasoningValue),
-  );
+  const selectedPowerSetting =
+    powerSettings.find(
+      (setting) =>
+        setting.reasoningEffort !== undefined &&
+        isSelectedPowerSetting(setting, selectedModel, selectedReasoningValue),
+    ) ??
+    powerSettings.find((setting) =>
+      isSelectedPowerSetting(setting, selectedModel, selectedReasoningValue),
+    );
   const steps = useMemo(
     () =>
       powerSettings.map((setting) => {
@@ -90,10 +96,11 @@ export function ModelPowerSlider({
       );
       if (!setting) return;
 
-      if (isSameModelSelection(setting.model, selectedModel)) {
-        if (setting.reasoningEffort !== undefined) {
-          onSelectModelOption("reasoning", setting.reasoningEffort);
-        }
+      if (
+        isSameModelSelection(setting.model, selectedModel) &&
+        setting.reasoningEffort !== undefined
+      ) {
+        onSelectModelOption("reasoning", setting.reasoningEffort);
         return;
       }
       const nextOptions = modelPowerOptions(setting, selectedModelOptions);

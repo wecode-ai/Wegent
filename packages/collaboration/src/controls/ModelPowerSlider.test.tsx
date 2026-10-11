@@ -47,6 +47,48 @@ afterEach(() => {
 });
 
 describe("ModelPowerSlider", () => {
+  it("prefers an exact effort step and clears its override when choosing the same model without an effort", () => {
+    const onSelectModelAndOptions = vi.fn();
+    const onSelectModelOption = vi.fn();
+    act(() =>
+      root.render(
+        <ModelPowerSlider
+          translate={translate}
+          powerSettings={[
+            { id: "current", model: currentModel },
+            {
+              id: "current:high",
+              model: currentModel,
+              reasoningEffort: "high",
+            },
+          ]}
+          selectedModel={currentModel}
+          selectedModelOptions={{ reasoning: "high", speed: "standard" }}
+          onSelectModel={vi.fn()}
+          onSelectModelAndOptions={onSelectModelAndOptions}
+          onSelectModelOption={onSelectModelOption}
+        />,
+      ),
+    );
+    const step = container.querySelector<HTMLElement>(
+      '[data-testid="model-power-setting-current"]',
+    )!;
+    const exactStep = container.querySelector<HTMLElement>(
+      '[data-testid="model-power-setting-current-high"]',
+    )!;
+    const track = container.querySelector<HTMLElement>(
+      '[data-testid="model-control-reasoning-track"]',
+    )!;
+    expect(track.getAttribute("aria-valuetext")).toBe(
+      exactStep.getAttribute("aria-label"),
+    );
+    act(() => step.click());
+    expect(onSelectModelAndOptions).toHaveBeenCalledWith(currentModel, {
+      speed: "standard",
+    });
+    expect(onSelectModelOption).not.toHaveBeenCalled();
+  });
+
   it("removes the previous reasoning override when selecting a model-only step", () => {
     const modelOnly: UnifiedModel = {
       name: "model-only",
