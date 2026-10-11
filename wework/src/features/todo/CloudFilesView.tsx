@@ -8,7 +8,7 @@ import {
   type SharedWorkspaceApi,
 } from '@wegent/collaboration'
 import type { CloudProject } from '@/api/deliveries'
-import { WorkspaceFilePreview } from '@/components/layout/workspace-panels/LazyWorkspaceFilePreview'
+import { WorkspaceFilePreview } from '@/components/layout/workspace-panels/WorkspaceFilePreview'
 import { Tooltip } from '@/components/ui/tooltip'
 import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
