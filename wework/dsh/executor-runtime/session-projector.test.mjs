@@ -421,7 +421,13 @@ class SessionFixture {
       type,
       data: structuredClone(data),
       seq: this.#events.length,
+      time: Date.now(),
       ...(options ?? {}),
+    }
+    if (type === 'assistant/message') {
+      assert.equal(options?.sourceEventSeqs, undefined)
+      assert.ok(Array.isArray(data.stream))
+      for (const record of data.stream) assert.equal(typeof record.time, 'number')
     }
     this.#events.push(event)
     return event

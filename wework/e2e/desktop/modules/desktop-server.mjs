@@ -1314,7 +1314,8 @@ class DesktopE2EServer {
       method: request.method ?? 'UNKNOWN',
       pathname: url.pathname,
     })
-    if (await serveHarnessRuntimeAsset(request, response, url)) return
+    if (await serveHarnessRuntimeAsset(request, response, url, this.harnessRuntimeAssetDirectory))
+      return
     if (await this.handleControlRoute(request, response, url)) return
     try {
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return

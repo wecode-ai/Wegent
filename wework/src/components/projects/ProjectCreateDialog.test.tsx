@@ -10,7 +10,7 @@ const pickerMocks = vi.hoisted(() => ({
   useNative: false,
 }))
 
-vi.mock('@/e2e/automation', () => ({
+vi.mock('@/e2e/runtime-config', () => ({
   shouldUseNativeProjectDirectoryPicker: () => pickerMocks.useNative,
 }))
 

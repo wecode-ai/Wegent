@@ -71,12 +71,11 @@ export class ExecutorSessionProjector {
       this.ensureOpenTurn(state, subtaskId)
       state.sourceUsage = totalUsage
       state.usage = addUsage(state.usage, increment)
-      const appended = state.session.append('assistant/chunk', {
+      appendAssistantChunk(state, {
         turn: state.turn,
         step: 1,
         chunk: { type: 'usage', usage: state.usage },
       })
-      state.sourceEventSeqs.push(appended.seq)
       return
     }
 
@@ -109,7 +108,7 @@ export class ExecutorSessionProjector {
       usage: null,
       sourceUsage: null,
       blocks: new Map(),
-      sourceEventSeqs: [],
+      stream: [],
       generatedUserMessageIds: new Set(),
     }
     this.tasks.set(key, state)
@@ -129,7 +128,7 @@ export class ExecutorSessionProjector {
     state.reasoningStarted = false
     state.usage = null
     state.blocks.clear()
-    state.sourceEventSeqs = []
+    state.stream = []
     state.session.append('turn/start', { turn: state.turn })
     state.session.append('step/start', { turn: state.turn, step: 1 })
   }
@@ -164,16 +163,15 @@ export class ExecutorSessionProjector {
     const index = kind === 'reasoning' ? 0 : 1
     const startedKey = kind === 'reasoning' ? 'reasoningStarted' : 'textStarted'
     if (!state[startedKey]) {
-      const start = state.session.append('assistant/chunk', {
+      appendAssistantChunk(state, {
         turn: state.turn,
         step: 1,
         chunk: { type: 'block-start', index, blockType: kind },
       })
-      state.sourceEventSeqs.push(start.seq)
       state[startedKey] = true
     }
     state[kind] += text
-    const appended = state.session.append('assistant/chunk', {
+    appendAssistantChunk(state, {
       turn: state.turn,
       step: 1,
       chunk: {
@@ -182,7 +180,6 @@ export class ExecutorSessionProjector {
         text,
       },
     })
-    state.sourceEventSeqs.push(appended.seq)
   }
 
   appendBlockCreated(state, subtaskId, data) {
@@ -235,12 +232,11 @@ export class ExecutorSessionProjector {
     if (state.reasoningStarted) this.appendBlockEnd(state, 'reasoning', 0)
     if (state.textStarted) this.appendBlockEnd(state, 'text', 1)
     if (event === 'response.completed') {
-      const finish = state.session.append('assistant/chunk', {
+      appendAssistantChunk(state, {
         turn: state.turn,
         step: 1,
         chunk: { type: 'finish', reason: { kind: 'stop' } },
       })
-      state.sourceEventSeqs.push(finish.seq)
     }
 
     const content = []
@@ -261,10 +257,11 @@ export class ExecutorSessionProjector {
             model: 'executor-managed',
           },
         },
+        stream: state.stream,
         ...(state.usage ? { usage: state.usage } : {}),
         ...(event === 'response.completed' ? {} : { interrupted: true }),
       },
-      { surfaceOp: 'append', sourceEventSeqs: state.sourceEventSeqs }
+      { surfaceOp: 'append' }
     )
     state.session.append('step/end', { turn: state.turn, step: 1 })
     state.session.append('turn/end', {
@@ -286,13 +283,17 @@ export class ExecutorSessionProjector {
   }
 
   appendBlockEnd(state, kind, index) {
-    const appended = state.session.append('assistant/chunk', {
+    appendAssistantChunk(state, {
       turn: state.turn,
       step: 1,
       chunk: { type: 'block-end', index, block: { type: kind, text: state[kind] } },
     })
-    state.sourceEventSeqs.push(appended.seq)
   }
+}
+
+function appendAssistantChunk(state, data) {
+  const event = state.session.append('assistant/chunk', data)
+  state.stream.push({ type: 'chunk', time: event.time, chunk: event.data.chunk })
 }
 
 function syncTurnId(state) {

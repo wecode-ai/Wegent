@@ -30,6 +30,11 @@ test ! -L "$codex_root"
 rm -rf "$staging_dir"
 mkdir -p "$staging_dir/codex"
 cp -a "$electron_package" "$staging_dir/electron-app"
+runtime_asset_cache="$(node --input-type=module -e "import { resolveSharedHarnessRuntimeAssetCacheRoot } from './wework/scripts/lib/harness-runtime-cache.mjs'; console.log(resolveSharedHarnessRuntimeAssetCacheRoot() + '/harness-runtime-assets')")"
+node wework/scripts/collect-harness-runtime-release-assets.mjs \
+  "$runtime_asset_cache" \
+  "$staging_dir/electron-app/resources/e2e-runtime-assets" \
+  "$core_dsh/runtimes.json"
 cp -R "$codex_root" "$staging_dir/codex/$codex_target"
 mkdir -p "$staging_dir/backend-rs"
 cp "$backend_rs_binary" "$staging_dir/backend-rs/wegent-backend-rs"

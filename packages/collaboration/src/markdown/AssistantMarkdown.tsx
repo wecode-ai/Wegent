@@ -1,6 +1,8 @@
 import { FileReferenceIcon } from '../composer/FileReferenceIcon'
 import {
   Fragment,
+  lazy,
+  Suspense,
   createContext,
   memo,
   useCallback,
@@ -26,7 +28,6 @@ import { AssistantMarkdownImage } from './AssistantMarkdownImage'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { MarkdownTable } from './MarkdownTable'
 import { createTableMarkdownRehypePlugins } from './markdownTableSource'
-import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
 import { splitStaticMarkdownChunks } from './assistantMarkdownWindowing'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
 import { splitCodexInlineVisualizations } from './codex-directives'
@@ -34,6 +35,10 @@ import { getRecognizedLink } from './link-preview'
 import { Tooltip } from '../issue-detail/Tooltip'
 import { useMarkdownServices, type MarkdownFileOpenOptions } from './MarkdownServices'
 import { WindowedMarkdownChunk } from './WindowedMarkdownChunk'
+
+const MarkdownDiagramPreview = lazy(() =>
+  import('./MarkdownDiagramPreview').then(module => ({ default: module.MarkdownDiagramPreview }))
+)
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -364,7 +369,17 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
       )
     }
     if (DIAGRAM_LANGUAGES.has(lang.toLowerCase())) {
-      return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
+      return (
+        <Suspense
+          fallback={
+            <MarkdownCodeBlock lang={lang} compact={compact}>
+              {text.trimEnd()}
+            </MarkdownCodeBlock>
+          }
+        >
+          <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
+        </Suspense>
+      )
     }
     return (
       <MarkdownCodeBlock lang={lang} compact={compact} isStreaming={isStreaming}>

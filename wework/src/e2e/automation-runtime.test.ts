@@ -1,11 +1,25 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { fillDesktopControlElement, isWeworkAutomationEnabled } from './automation'
+import {
+  fillDesktopControlElement,
+  installWeworkAutomationBridge,
+  isWeworkAutomationEnabled,
+} from './automation'
 
 afterEach(() => {
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
 })
 
 describe('Electron desktop E2E automation', () => {
+  test('shares bridge initialization when DSH remounts the application in one page', async () => {
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+      controlUrl: 'http://127.0.0.1:43111',
+    }
+    const first = installWeworkAutomationBridge()
+    const remounted = installWeworkAutomationBridge()
+
+    expect(remounted).toBe(first)
+    await first
+  })
   test('is enabled by an injected runtime control URL', () => {
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
       controlUrl: 'http://127.0.0.1:43111',

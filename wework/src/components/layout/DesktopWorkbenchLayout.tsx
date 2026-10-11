@@ -13,7 +13,7 @@ import type {
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
-import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
+import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/runtime-config'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
 import type { DesktopSidebarAccountSettingsOptions } from './DesktopSidebarAccount'

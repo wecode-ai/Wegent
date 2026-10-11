@@ -21,6 +21,10 @@ directory, avoiding dependency extraction on first launch. Downloads use the
 catalog's release URL by default; `WEWORK_HARNESS_RUNTIME_BASE_URL` may specify
 a mirror root while preserving asset names and all integrity checks.
 
+Release preparation collects every runtime archive and descriptor directly
+from the build cache. Linux E2E artifacts include a separate download-service
+asset directory; production installers bundle only the default runtimes.
+
 Browser authentication in `0.2.0-rc.2` uses the official DSH launch-token
 exchange. Tokens stay in process memory; renderer URLs, diagnostics, and
 runtime catalogs never retain launch tokens.

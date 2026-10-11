@@ -123,8 +123,11 @@ export default defineConfig({
     fileViewerRenderers({
       preset: 'auto',
       autoPresets: ['office', 'lite', 'engineering'],
+      // Preview components provide presets explicitly when they are opened.
+      inject: false,
       copyAssets: process.env.VITEST !== 'true',
-      chunkStrategy: 'renderer',
+      // Forced renderer chunks also capture Vite's shared preload helper.
+      chunkStrategy: 'none',
     }),
   ],
   define: {
@@ -140,8 +143,7 @@ export default defineConfig({
     include: ['mermaid', 'plantuml-encoder'],
   },
   build: {
-    // File-viewer renderers are split into dedicated chunks; the desktop shell
-    // intentionally remains a single entry bundle.
+    // Let the bundler retain dynamic-import boundaries for optional viewers.
     chunkSizeWarningLimit: 5_000,
     rolldownOptions: {
       input: {

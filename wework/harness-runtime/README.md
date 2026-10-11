@@ -22,6 +22,8 @@ sidebar_position: 13
 - `0.2.0-rc.2` 的浏览器认证使用 DSH 官方启动令牌交换流程。令牌仅在进程内
   使用；Renderer 加载不含令牌的 URL，诊断和运行时清单也不保存令牌。
 - `wework/scripts/prepare-harness-runtime.mjs` 为每个版本生成独立、不可变的运行时资产。
+  发布阶段从构建缓存收集全部版本的归档和描述文件，不从 Core 组件反向提取。
+  Linux E2E 构建额外携带下载服务使用的资产目录；生产安装包仍只内置默认运行时。
 
 Core 资产的 `runtime.json` 标记 `role: core`，并自带
 `@wegent/dsh-app-wework`、`@wegent/dsh-electron-host` 和

@@ -12,7 +12,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { LocalCodexPluginApi } from '@/api/local/codexPlugins'
-import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
+import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/runtime-config'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
   loadProjectSpaceOptions,

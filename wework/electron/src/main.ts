@@ -725,6 +725,24 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     runtimeError = null
     rendererHealth.ready()
     logStartupStep('primary-renderer-load', 'completed')
+    void contents
+      .executeJavaScript(
+        `(() => {
+        const resources = performance.getEntriesByType('resource')
+          .filter(entry => /\\.(?:m?js|css)$/.test(new URL(entry.name).pathname))
+        return {
+          modules: resources.length,
+          bytes: resources.reduce((total, entry) => total + entry.decodedBodySize, 0),
+          slowest: resources.sort((left, right) => right.duration - left.duration)
+            .slice(0, 5).map(entry => ({
+              path: new URL(entry.name).pathname,
+              durationMs: Math.round(entry.duration),
+            })),
+        }
+      })()`
+      )
+      .then(details => console.info('[startup][renderer-assets]', details))
+      .catch(error => console.warn('[startup] Failed to read renderer asset timings', error))
   })
   contents.on('unresponsive', () => rendererHealth.unresponsive())
   contents.on('responsive', () => rendererHealth.responsive())

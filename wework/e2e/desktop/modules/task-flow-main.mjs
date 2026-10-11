@@ -4,6 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { packagedResourcesRoot } from './runtime-assets.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
@@ -1274,6 +1275,12 @@ async function main() {
       : await desktopAppPromise
     desktopScenario?.setCloudEnvironment?.(cloudEnvironment)
     const appBinary = desktopApp.binaryPath
+    if (process.platform === 'linux' && process.env.CI === 'true') {
+      control.harnessRuntimeAssetDirectory = join(
+        packagedResourcesRoot(appBinary),
+        'e2e-runtime-assets'
+      )
+    }
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {

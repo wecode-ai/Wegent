@@ -53,7 +53,11 @@ import {
   type AppPreferencesPatch,
 } from '@/desktop/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
-import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
+import {
+  getDesktopE2ERuntimeConfig,
+  loadDesktopE2ERuntimeConfig,
+  isWeworkAutomationEnabled,
+} from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
@@ -148,21 +152,7 @@ declare global {
   }
 }
 
-export function isWeworkAutomationEnabled(): boolean {
-  if (getDesktopE2ERuntimeConfig().disabled === true) return false
-  return (
-    import.meta.env.MODE === 'e2e' ||
-    import.meta.env.VITE_WEWORK_E2E === 'true' ||
-    Boolean(getDesktopE2ERuntimeConfig().controlUrl)
-  )
-}
-
-export function shouldUseNativeProjectDirectoryPicker(): boolean {
-  return (
-    !isWeworkAutomationEnabled() ||
-    import.meta.env.VITE_WEWORK_E2E_NATIVE_DIRECTORY_PICKER === 'true'
-  )
-}
+export { isWeworkAutomationEnabled, shouldUseNativeProjectDirectoryPicker } from './runtime-config'
 
 function desktopControlUrl(): string | null {
   if (getDesktopE2ERuntimeConfig().disabled === true) return null
@@ -498,13 +488,17 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
   })
 }
 
-export async function installWeworkAutomationBridge(
+let automationBridgeInstallation: Promise<void> | null = null
+
+export function installWeworkAutomationBridge(
   beforeSeed: Promise<void> = Promise.resolve()
 ): Promise<void> {
-  if (!isWeworkAutomationEnabled() || typeof window === 'undefined') {
-    return
-  }
+  if (!isWeworkAutomationEnabled() || typeof window === 'undefined') return Promise.resolve()
+  automationBridgeInstallation ??= initializeWeworkAutomationBridge(beforeSeed)
+  return automationBridgeInstallation
+}
 
+async function initializeWeworkAutomationBridge(beforeSeed: Promise<void>): Promise<void> {
   if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
   }

@@ -6,7 +6,7 @@ import type {
 } from '@/types/workspace-files'
 import { useTranslation } from '@/hooks/useTranslation'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
-import { WorkspaceFilePreview } from './WorkspaceFilePreview'
+import { WorkspaceFilePreview } from './LazyWorkspaceFilePreview'
 import { workspaceFilePreviewKind } from './workspaceFileTypes'
 
 export function WorkspaceAttachmentPreview({

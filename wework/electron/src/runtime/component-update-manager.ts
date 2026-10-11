@@ -1,24 +1,26 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream, createWriteStream } from 'node:fs'
+import { createWriteStream } from 'node:fs'
 import {
   cp,
   lstat,
   mkdir,
   readFile,
   readdir,
-  readlink,
   rename,
   rm,
   stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative as relativePath, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import type { ComponentDownloadProgress } from '../host/app-update-progress.js'
 import { cloudFetch } from '../host/cloud-http.js'
 import { pipeline } from 'node:stream/promises'
 import * as tar from 'tar'
+import { hashComponentPath, fileSha256 as sha256 } from './component-content-hash.js'
+import { copyComponentTree } from './component-copy.js'
+export { hashComponentPath } from './component-content-hash.js'
 
 export const MANAGED_COMPONENT_IDS = [
   'coreDsh',
@@ -428,7 +430,7 @@ export class ComponentUpdateManager {
     await mkdir(dirname(target), { recursive: true, mode: 0o700 })
     try {
       if (component.entryPath === '.') {
-        await cp(source, temporary, { recursive: true, force: true, verbatimSymlinks: true })
+        await copyComponentTree(source, temporary)
       } else {
         await mkdir(temporary, { recursive: true, mode: 0o700 })
         await cp(source, join(temporary, component.entryPath), {
@@ -940,42 +942,6 @@ async function componentMatches(path: string, expectedSha256: string): Promise<b
   } catch {
     return false
   }
-}
-
-export async function hashComponentPath(path: string): Promise<string> {
-  const metadata = await lstat(path)
-  if (metadata.isFile()) return sha256(path)
-  if (!metadata.isDirectory()) throw new Error(`Unsupported component entry: ${path}`)
-  return hashTree(path)
-}
-
-async function hashTree(root: string, relative = ''): Promise<string> {
-  const hash = createHash('sha256')
-  const entries = await readdir(join(root, relative), { withFileTypes: true })
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const child = join(relative, entry.name)
-    if (entry.isDirectory()) {
-      hash.update(`directory:${child}\0${await hashTree(root, child)}\0`)
-    } else if (entry.isFile()) {
-      hash.update(`file:${child}\0${await sha256(join(root, child))}\0`)
-    } else if (entry.isSymbolicLink()) {
-      const target = await readlink(join(root, child))
-      const destination = relativePath(resolve(root), resolve(root, dirname(child), target))
-      if (isAbsolute(target) || destination === '..' || destination.split(/[\\/]/)[0] === '..') {
-        throw new Error(`Component symlink escapes its root: ${child}`)
-      }
-      hash.update(`symlink:${child}\0${target}\0`)
-    } else {
-      throw new Error(`Unsupported component tree entry: ${child}`)
-    }
-  }
-  return hash.digest('hex')
-}
-
-async function sha256(path: string): Promise<string> {
-  const hash = createHash('sha256')
-  await pipeline(createReadStream(path), hash)
-  return hash.digest('hex')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

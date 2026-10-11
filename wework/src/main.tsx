@@ -14,7 +14,7 @@ import { installExternalDropGuard } from './lib/external-drop-guard'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPageZoomGuard } from './lib/pageZoomGuard'
 import { installPerformanceDiagnostics, recordReactCommit } from './lib/performanceDiagnostics'
-import { installWeworkAutomationBridge } from './e2e/automation'
+import { isWeworkAutomationEnabled } from './e2e/runtime-config'
 import { installDesktopExtensions } from '@extensions/desktop'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
@@ -138,9 +138,10 @@ async function mountWework(container: HTMLElement, context: Context | null): Pro
     renderStartupFailure(container, storageError)
     return () => {}
   }
-  if (!isSystemDragPanel) {
+  if (!isSystemDragPanel && isWeworkAutomationEnabled()) {
     logRendererStartupStep('automation-bridge-install', 'started')
     try {
+      const { installWeworkAutomationBridge } = await import('./e2e/automation')
       await installWeworkAutomationBridge()
       logRendererStartupStep('automation-bridge-install', 'completed')
     } catch (error) {

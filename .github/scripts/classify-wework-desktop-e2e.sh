@@ -167,11 +167,13 @@ core_shards=(
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
   rendering-extensions,transcript-sync
-  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,dsh-runtime-upgrade,renderer-storage,external-content-import
+  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate
+  # Keep the startup benchmark isolated from concurrent Electron cold starts.
+  dsh-runtime-upgrade
 )
 
 validate_core_shards() {

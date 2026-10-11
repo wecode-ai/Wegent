@@ -70,7 +70,7 @@ export async function preparePackagedHarnessRuntimes(appBinary, runtimeRoot) {
 }
 
 // Deliver the actual build artifact over HTTP, including its production checksum and layout.
-export async function serveHarnessRuntimeAsset(request, response, url) {
+export async function serveHarnessRuntimeAsset(request, response, url, assetDirectory) {
   if (!url.pathname.startsWith('/dsh-runtime-assets/')) return false
   const { resolveSharedHarnessRuntimeAssetCacheRoot } =
     await import('../../../scripts/lib/harness-runtime-cache.mjs')
@@ -81,8 +81,7 @@ export async function serveHarnessRuntimeAsset(request, response, url) {
     return true
   }
   const path = join(
-    resolveSharedHarnessRuntimeAssetCacheRoot(),
-    'harness-runtime-assets',
+    assetDirectory ?? join(resolveSharedHarnessRuntimeAssetCacheRoot(), 'harness-runtime-assets'),
     assetName
   )
   const metadata = await stat(path)
