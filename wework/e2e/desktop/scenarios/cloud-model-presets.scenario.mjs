@@ -152,19 +152,30 @@ export function createDesktopScenario() {
         console.error('[cloud-model-presets] Verification failed', error)
         throw error
       } finally {
-        await control.command('press', 'body', { key: 'Escape' })
-        for (const id of createdIds) {
-          const deleted = await fetch(
-            `${cloudEnvironment.backendUrl}/api/admin/public-models/${id}`,
-            {
-              method: 'DELETE',
-              headers: { Authorization: `Bearer ${cloudEnvironment.authToken}` },
-            }
-          )
-          assert.equal(
-            deleted.status,
-            204,
-            'Public model cleanup must return an empty 204 response'
+        await control.command('press', 'body', { key: 'Escape' }).catch(error => {
+          console.warn('[cloud-model-presets] Could not close the model selector', error)
+        })
+        const cleanup = await Promise.allSettled(
+          createdIds.map(async id => {
+            const deleted = await fetch(
+              `${cloudEnvironment.backendUrl}/api/admin/public-models/${id}`,
+              {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${cloudEnvironment.authToken}` },
+              }
+            )
+            assert.equal(
+              deleted.status,
+              204,
+              'Public model cleanup must return an empty 204 response'
+            )
+          })
+        )
+        const failures = cleanup.filter(result => result.status === 'rejected')
+        if (failures.length > 0) {
+          throw new AggregateError(
+            failures.map(result => result.reason),
+            'Public model cleanup failed'
           )
         }
       }
