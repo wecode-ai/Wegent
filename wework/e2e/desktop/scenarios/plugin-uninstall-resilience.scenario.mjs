@@ -165,7 +165,10 @@ export async function createDesktopScenario({
     assert.ok((await pendingRows(item)).some(row => row.state === 'uninstalling'))
     await cloud.launchBackend()
     deviceProxy.pauseDeviceDelivery(false)
-    await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'online', cloud.remoteExecutorLogPath)
+    await Promise.all([
+      cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'online', cloud.remoteExecutorLogPath),
+      cloud.waitForDeviceStatus(local.device_id, 'online', join(resultDir, 'executor.log')),
+    ])
     await until(
       async () => ({
         plugin: await materializedPlugin(remoteHome, item.installedId),
