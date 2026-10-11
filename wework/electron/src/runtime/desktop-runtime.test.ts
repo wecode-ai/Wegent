@@ -341,7 +341,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(runtime.state().ready).toBe(false)
   })
 
-  test('prepares Core DSH in parallel but allocates its port after executor startup', async () => {
+  test('starts Core DSH and the executor concurrently after the Home compatibility gate', async () => {
     const executor = new FakeExecutor()
     executor.startHang = deferred()
     nextStartHang = deferred()
@@ -385,25 +385,15 @@ describe('DesktopRuntime lifecycle generation', () => {
       version: '0.0.0',
       sourceFingerprint: 'test',
     })
-    await flush()
-    expect(created).toHaveLength(0)
-    expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
-
-    executor.startHang.resolve()
     await vi.waitFor(() => expect(created).toHaveLength(1))
     expect(created[0].startCalls).toBe(1)
-    expect(startupSteps.indexOf('core-dsh-prepare:started')).toBeLessThan(
-      startupSteps.indexOf('executor-start:completed')
-    )
-    expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
-      startupSteps.indexOf('core-dsh-port-allocation:started')
-    )
+    expect(runtime.state().ready).toBe(false)
     expect(startupSteps.indexOf('core-dsh-port-allocation:completed')).toBeLessThan(
       startupSteps.indexOf('core-dsh-process-start:started')
     )
-    expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
-      startupSteps.indexOf('core-dsh-process-start:started')
-    )
+    expect(startupSteps).not.toContain('executor-start:completed')
+    executor.startHang.resolve()
+    await vi.waitFor(() => expect(startupSteps).toContain('executor-start:completed'))
     expect(executor.requests).toEqual([])
 
     nextStartHang.resolve()

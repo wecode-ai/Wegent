@@ -78,6 +78,7 @@ export interface RunSmartAppRuntimeProbeOptions extends Omit<
 > {
   script: string
   baseUrl: string
+  cookie?: string
 }
 
 export async function runSmartAppProjectScripts(
@@ -100,11 +101,15 @@ export async function runSmartAppProjectScripts(
   const scripts: SmartAppProjectScriptResult[] = []
   for (const key of SCRIPT_ORDER) {
     const script = options.scripts[key]
-    const result = await run(command.command, [...command.argsPrefix, 'run', script], {
-      cwd: options.projectRoot,
-      env: environment,
-      shell: false,
-    })
+    const result = await run(
+      command.command,
+      [...command.argsPrefix, '--ignore-workspace', 'run', script],
+      {
+        cwd: options.projectRoot,
+        env: environment,
+        shell: false,
+      }
+    )
     const log = join(logsDirectory, `${key}.log`)
     await writeFile(log, scriptLog(command.command, script, result), { mode: 0o600 })
     const logPath = relative(options.projectRoot, log).split(sep).join('/')
@@ -140,16 +145,26 @@ export async function runSmartAppRuntimeProbe(
   const environment = {
     ...sanitizedEnvironment(command.environment),
     SMART_APP_BASE_URL: options.baseUrl,
+    ...(options.cookie ? { SMART_APP_RUNTIME_COOKIE: options.cookie } : {}),
   }
   const run = options.run ?? runCommand
-  const result = await run(command.command, [...command.argsPrefix, 'run', options.script], {
-    cwd: options.projectRoot,
-    env: environment,
-    shell: false,
-  })
+  const result = await run(
+    command.command,
+    [...command.argsPrefix, '--ignore-workspace', 'run', options.script],
+    {
+      cwd: options.projectRoot,
+      env: environment,
+      shell: false,
+    }
+  )
   const log = join(options.projectRoot, 'test-results', 'smart-app', 'logs', 'runtime-probe.log')
   await mkdir(join(log, '..'), { recursive: true, mode: 0o700 })
-  await writeFile(log, scriptLog(command.command, options.script, result), { mode: 0o600 })
+  let content = scriptLog(command.command, options.script, result)
+  for (const cookie of options.cookie?.split(';') ?? []) {
+    const value = cookie.slice(cookie.indexOf('=') + 1).trim()
+    if (value) content = content.replaceAll(value, '[REDACTED]')
+  }
+  await writeFile(log, content, { mode: 0o600 })
   if (result.exitCode === 0) return { issues: [] }
   return {
     issues: [
@@ -168,13 +183,16 @@ export async function runSmartAppRuntimeProbe(
 }
 
 function sanitizedEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    Object.entries(environment).filter(
-      ([key, value]) =>
-        value !== undefined &&
-        (SAFE_ENVIRONMENT_KEYS.has(key.toUpperCase()) || key.startsWith('LC_'))
-    )
-  )
+  return {
+    PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: 'false',
+    ...Object.fromEntries(
+      Object.entries(environment).filter(
+        ([key, value]) =>
+          value !== undefined &&
+          (SAFE_ENVIRONMENT_KEYS.has(key.toUpperCase()) || key.startsWith('LC_'))
+      )
+    ),
+  }
 }
 
 function runCommand(

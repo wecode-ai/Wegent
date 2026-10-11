@@ -316,6 +316,11 @@ export class SmartAppVerifier {
       issues: [...source.issues, ...issues],
     }
     await persistReport(root, report)
+    console.info('[smart-app-verification]', {
+      status: report.status,
+      stages: report.stages.map(stage => ({ stage: stage.stage, status: stage.status })),
+      issues: issues.map(issue => ({ stage: issue.stage, code: issue.code })),
+    })
     return report
   }
 
@@ -456,6 +461,11 @@ export class SmartAppVerifier {
       issues,
     }
     await persistReport(root, report)
+    console.info('[smart-app-verification]', {
+      status: report.status,
+      stages: report.stages.map(stage => ({ stage: stage.stage, status: stage.status })),
+      issues: issues.map(issue => ({ stage: issue.stage, code: issue.code })),
+    })
     return report
   }
 }

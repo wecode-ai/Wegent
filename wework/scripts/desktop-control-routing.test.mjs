@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
 
 async function startControl(t) {
   const control = new DesktopE2EServer('/workspace')
@@ -75,4 +76,25 @@ test('updates the selected window client after a renderer reload', async t => {
   control.activateWindow('main')
   await register(control, 'main', 'main-2')
   assert.equal(control.activeControlClientId, 'main-2')
+})
+
+test('delivers the runner wait timeout to the renderer and preserves explicit overrides', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+
+  for (const options of [{}, { timeoutMs: 750 }]) {
+    const result = control.command('waitFor', '[data-testid="connector-auth-qr"]', options)
+    const response = await fetch(`${control.controlUrl}/commands?clientId=main-1`)
+    assert.equal(response.status, 200)
+    const command = await response.json()
+    assert.equal(command.timeoutMs, options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS)
+    await post(control, 'started', { id: command.id, clientId: 'main-1' })
+    await post(control, 'results', {
+      id: command.id,
+      clientId: 'main-1',
+      ok: true,
+      value: 'QR code is visible',
+    })
+    assert.equal(await result, 'QR code is visible')
+  }
 })

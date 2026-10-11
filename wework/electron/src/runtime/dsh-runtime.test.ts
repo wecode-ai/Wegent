@@ -116,7 +116,10 @@ describe('DSH runtime readiness', () => {
     try {
       await runtime.start()
       expect(exchanges).toBe(1)
-      expect(authenticateBrowserSession).toHaveBeenCalledWith(`${origin}/?token=fixture-token`)
+      expect(authenticateBrowserSession).toHaveBeenCalledWith(
+        `${origin}/?token=fixture-token`,
+        'fixture=authenticated'
+      )
       expect(runtime.url()).toBe(origin)
     } finally {
       await runtime.stop()

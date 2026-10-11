@@ -178,6 +178,13 @@ async function writeBundle(
 function disabledDefaultWebModules(): string {
   return [
     'ui-conversation',
+    'ui-chat',
+    'ui-workflow-run',
+    'ui-goal',
+    'ui-plan',
+    'ui-user-questions',
+    'ui-trajectory',
+    'ui-deliverables',
     'ui-sidebar',
     'ui-settings-general',
     'ui-settings-models',
@@ -207,7 +214,7 @@ async function writeProjectTools(
   if (capabilities.remote) {
     await writeFile(
       join(input.path, 'scripts', 'runtime-probe.mjs'),
-      "const baseUrl = process.env.SMART_APP_BASE_URL\nif (!baseUrl) throw new Error('SMART_APP_BASE_URL is required')\nconst response = await fetch(new URL('/', baseUrl))\nif (!response.ok) throw new Error(`Smart App returned HTTP ${response.status}`)\n"
+      "const baseUrl = process.env.SMART_APP_BASE_URL\nif (!baseUrl) throw new Error('SMART_APP_BASE_URL is required')\nconst cookie = process.env.SMART_APP_RUNTIME_COOKIE\nconst response = await fetch(new URL('/', baseUrl), { headers: cookie ? { cookie } : {} })\nif (!response.ok) throw new Error(`Smart App returned HTTP ${response.status}`)\n"
     )
   }
   await writeFile(
@@ -233,7 +240,7 @@ function clientModuleSource(packageName: string, displayName: string, remote: bo
           method: 'ping',
           invocation: { kind: 'direct' },
           parameters: [],
-          result: { mode: 'strict', typeSymbol: '${packageName}#Health', schema: healthSchema },
+          result: { mode: 'strict', typeSymbol: '${packageName}#Health', create: () => healthSchema },
         }],
       }`
     : ''
@@ -278,7 +285,7 @@ function clientModuleSource(packageName: string, displayName: string, remote: bo
 }
 
 function remoteDescriptorSource(packageName: string): string {
-  return `import { z } from 'zod'\n\nexport const TYPERT_REMOTE = {\n  package: '${packageName}',\n  descriptors: [{\n    id: '${packageName}#health/ping',\n    service: 'health',\n    namespace: 'health',\n    method: 'ping',\n    invocation: { kind: 'direct' },\n    parameters: [],\n    result: { mode: 'strict', typeSymbol: '${packageName}#Health', schema: z.object({ ok: z.literal(true) }) },\n  }],\n}\n\nexport default TYPERT_REMOTE\n`
+  return `import { z } from 'zod'\n\nexport const TYPERT_REMOTE = {\n  package: '${packageName}',\n  descriptors: [{\n    id: '${packageName}#health/ping',\n    service: 'health',\n    namespace: 'health',\n    method: 'ping',\n    invocation: { kind: 'direct' },\n    parameters: [],\n    result: { mode: 'strict', typeSymbol: '${packageName}#Health', create: () => z.object({ ok: z.literal(true) }) },\n  }],\n}\n\nexport default TYPERT_REMOTE\n`
 }
 
 function remoteHostSource(): string {

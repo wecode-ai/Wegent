@@ -11,6 +11,63 @@ import type { SmartAppVerificationContract } from './smart-app-verification-type
 import { copySmartAppDeliveryFiles } from './smart-app-package-validator.js'
 
 describe('verifySmartAppRuntime', () => {
+  test('passes only the isolated runtime session cookie to the Remote probe', async () => {
+    const runProbe = vi.fn().mockResolvedValue({ issues: [] })
+    await verifySmartAppRuntime(
+      options(),
+      fixtureDependencies({
+        createRuntime: runtimeOptions => ({
+          start: async () => {
+            await runtimeOptions.authenticateBrowserSession?.(
+              `${runtimeOptions.url}?token=isolated-launch-token`,
+              'dsh-session=isolated-session'
+            )
+          },
+          stop: vi.fn().mockResolvedValue(undefined),
+        }),
+        runProbe,
+      })
+    )
+    expect(runProbe).toHaveBeenCalledWith(
+      expect.objectContaining({ cookie: 'dsh-session=isolated-session' })
+    )
+    expect(runProbe.mock.calls[0]?.[0].environment).not.toHaveProperty('DSH_HOME')
+  })
+  test('keeps the runtime and project alive until the Remote probe settles', async () => {
+    const stop = vi.fn().mockResolvedValue(undefined)
+    let enteredProbe!: (projectRoot: string) => void
+    let finishProbe!: (result: { issues: [] }) => void
+    const entered = new Promise<string>(resolve => {
+      enteredProbe = resolve
+    })
+    const probe = new Promise<{ issues: [] }>(resolve => {
+      finishProbe = resolve
+    })
+    const verification = verifySmartAppRuntime(
+      options(),
+      fixtureDependencies({
+        copyProject: async (_source, destination) => {
+          await mkdir(destination, { recursive: true })
+        },
+        createRuntime: () => ({ start: vi.fn().mockResolvedValue(undefined), stop }),
+        runProbe: ({ projectRoot }) => {
+          enteredProbe(projectRoot)
+          return probe
+        },
+      })
+    )
+    const projectRoot = await entered
+    try {
+      await new Promise(resolve => setImmediate(resolve))
+      expect(stop).not.toHaveBeenCalled()
+      expect((await stat(projectRoot)).isDirectory()).toBe(true)
+    } finally {
+      finishProbe({ issues: [] })
+      await verification
+    }
+    expect(stop).toHaveBeenCalledOnce()
+    await expect(stat(projectRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
   test('uses unique temporary homes and ports, preflights, starts, probes, and cleans up', async () => {
     const prepared: Array<{ dataDirectory: string; port: number; environment: NodeJS.ProcessEnv }> =
       []
@@ -91,7 +148,7 @@ describe('verifySmartAppRuntime', () => {
     expect(verificationEnvironment).not.toHaveProperty('DSH_CREDENTIALS_PATH')
   })
 
-  test('creates a private credentials document with a string schema version', async () => {
+  test('creates a private empty credentials document accepted by both runtime schemas', async () => {
     let credentials = ''
     let credentialsMode = 0
     const dependencies = fixtureDependencies({
@@ -105,7 +162,7 @@ describe('verifySmartAppRuntime', () => {
 
     await verifySmartAppRuntime(options(), dependencies)
 
-    expect(credentials).toBe('version: "1"\n')
+    expect(credentials).toBe('{}\n')
     expect(credentialsMode).toBe(0o600)
   })
 

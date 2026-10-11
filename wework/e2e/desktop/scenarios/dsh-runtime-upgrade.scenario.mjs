@@ -88,6 +88,27 @@ async function assertRuntime(control, installationId, version) {
   await invoke(control, 'smartApps.stop', { installationId })
 }
 
+async function verifySmartAppTemplates(control, resultDir) {
+  const templates = ['web', 'host', 'web-host', 'web-host-remote']
+  for (const template of templates) {
+    const installation = await invoke(control, 'smartApps.createDirectory', {
+      parentPath: resultDir,
+      name: `runtime-template-${template}`,
+      displayName: `Runtime template ${template}`,
+      description: 'Verify the generated template against the official latest runtime',
+      template,
+    })
+    assert.equal(installation.manifest.requirements.dsh, LATEST_VERSION)
+    const report = await invoke(control, 'smartApps.verify', { installationId: installation.id })
+    assert.equal(report.status, 'passed', `${template}: ${JSON.stringify(report)}`)
+    assert.deepEqual(
+      report.stages.map(stage => [stage.stage, stage.status]),
+      ['manifest', 'scripts', 'artifacts', 'runtime'].map(stage => [stage, 'passed'])
+    )
+  }
+  return templates
+}
+
 async function assertStartupBudget(control, resultDir, label) {
   await waitForClosedStartupSplash(control)
   const log = await waitForStartupLogs(resultDir)
@@ -192,9 +213,10 @@ export function createDesktopScenario({ resultDir, electronUserDataDirectory }) 
         await readFile(join(legacyRoot, 'plugin-manifest.json'), 'utf8'),
         legacyManifestBytes
       )
+      const templates = await verifySmartAppTemplates(control, resultDir)
       await writeFile(
         join(resultDir, 'dsh-runtime-upgrade.json'),
-        JSON.stringify({ durations, downloads: downloads.length }, null, 2)
+        JSON.stringify({ durations, downloads: downloads.length, templates }, null, 2)
       )
     },
   }

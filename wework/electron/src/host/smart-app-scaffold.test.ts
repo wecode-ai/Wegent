@@ -82,6 +82,17 @@ describe('scaffoldSmartApp', () => {
       expect(client).toContain('data-testid')
       expect(client).toContain('smart-app-ready')
       expect(bundlePatch).toContain('id: ui-conversation\n  disabled: true')
+      for (const id of [
+        'ui-chat',
+        'ui-workflow-run',
+        'ui-goal',
+        'ui-plan',
+        'ui-user-questions',
+        'ui-trajectory',
+        'ui-deliverables',
+      ]) {
+        expect(bundlePatch).toContain(`id: ${id}\n  disabled: true`)
+      }
       expect(bundlePatch).toContain('id: ui-sidebar\n  disabled: true')
     } else {
       expect(bundleManifest.exports).not.toHaveProperty('./client')

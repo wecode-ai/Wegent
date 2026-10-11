@@ -10,6 +10,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import { describe, expect, test } from 'vitest'
 import {
   CORE_DSH_VERSION,
@@ -29,7 +30,29 @@ async function prepareCoreDshLaunch(
 }
 
 describe('core DSH runtime', () => {
-  test('preserves linked plugin directories as Windows junctions', async () => {
+  test('resolves plugin dependencies from the profile while linking immutable web assets', async () => {
+    const root = await temporaryDirectory('core-dsh-module-resolution-')
+    try {
+      const source = join(root.path, 'component', 'terminal-runtime')
+      const modules = join(root.path, 'profile', 'node_modules')
+      const destination = join(modules, '@wegent', 'dsh-terminal-runtime')
+      await mkdir(join(source, 'web'), { recursive: true })
+      await mkdir(join(modules, 'node-pty'), { recursive: true })
+      await writeFile(join(source, 'index.cjs'), 'module.exports = require("node-pty")\n')
+      await writeFile(join(source, 'web', 'index.html'), '<html></html>\n')
+      await writeFile(join(modules, 'node-pty', 'index.js'), 'module.exports = "profile PTY"\n')
+
+      await copyManagedPlugin(source, destination)
+
+      const requirePlugin = createRequire(join(destination, 'package.json'))
+      expect(requirePlugin('./index.cjs')).toBe('profile PTY')
+      expect(await realpath(join(destination, 'web'))).toBe(await realpath(join(source, 'web')))
+      expect((await lstat(join(destination, 'index.cjs'))).isFile()).toBe(true)
+    } finally {
+      await root.remove()
+    }
+  })
+  test('links static web assets as Windows junctions while copying plugin modules', async () => {
     const root = await temporaryDirectory('core-dsh-windows-links-')
     try {
       const source = join(root.path, 'source')
@@ -55,6 +78,9 @@ describe('core DSH runtime', () => {
 
       const copiedAssets = join(destination, 'web', 'assets')
       expect(directoryLinkTypes).toEqual(['junction'])
+      expect((await lstat(destination)).isDirectory()).toBe(true)
+      expect((await lstat(join(destination, 'web'))).isSymbolicLink()).toBe(true)
+      expect(await realpath(join(destination, 'web'))).toBe(await realpath(join(source, 'web')))
       expect((await lstat(copiedAssets)).isSymbolicLink()).toBe(true)
       expect(await realpath(copiedAssets)).toBe(await realpath(assets))
       await expect(readFile(join(copiedAssets, 'index.js'), 'utf8')).resolves.toBe(

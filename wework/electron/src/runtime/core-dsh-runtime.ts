@@ -12,7 +12,7 @@ import {
 } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
-import { hashComponentPath } from './component-update-manager.js'
+import { hashComponentPath } from './component-content-hash.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
@@ -127,6 +127,7 @@ export interface PrepareCoreDshRuntimeOptions {
   runtimeRoot: string
   dataDirectory: string
   environment: NodeJS.ProcessEnv
+  onStartupStep?: (step: string, status: 'started' | 'completed') => void
 }
 
 export type CommandRunner = (
@@ -142,19 +143,23 @@ export async function prepareCoreDshRuntime(
   if (!pluginsRoot) {
     throw new Error('WEWORK_CORE_PLUGIN_ROOT is required for the packaged Core DSH runtime')
   }
+  options.onStartupStep?.('core-dsh-runtime-select', 'started')
   const runtime = await selectCoreDshRuntime(options.runtimeRoot, pluginsRoot)
+  options.onStartupStep?.('core-dsh-runtime-select', 'completed')
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
   const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
   const corePluginsFingerprint =
     options.environment.WEWORK_CORE_PLUGINS_SHA256?.trim() ||
     (await hashComponentPath(resolve(pluginsRoot)))
+  options.onStartupStep?.('core-dsh-profile-prepare', 'started')
   await prepareProfile({
     runtime,
     dshHome,
     managedUiPlugins,
     corePluginsFingerprint,
   })
+  options.onStartupStep?.('core-dsh-profile-prepare', 'completed')
   return {
     command: nodeCommand,
     entry: runtime.entry,
@@ -388,11 +393,23 @@ export async function copyManagedPlugin(
   } = {}
 ): Promise<void> {
   const platform = options.platform ?? process.platform
-  if (platform !== 'win32') {
-    await cp(source, destination, { recursive: true })
-    return
+  const linkDirectory = options.linkDirectory ?? symlink
+  await mkdir(destination, { recursive: true, mode: 0o700 })
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const sourceEntry = join(source, entry.name)
+    const destinationEntry = join(destination, entry.name)
+    if (entry.name === 'web' && entry.isDirectory()) {
+      await linkDirectory(
+        resolve(sourceEntry),
+        destinationEntry,
+        platform === 'win32' ? 'junction' : 'dir'
+      )
+    } else if (platform === 'win32') {
+      await copyWindowsEntry(sourceEntry, destinationEntry, linkDirectory)
+    } else {
+      await cp(sourceEntry, destinationEntry, { recursive: true })
+    }
   }
-  await copyWindowsEntry(source, destination, options.linkDirectory ?? symlink)
 }
 
 async function copyWindowsEntry(

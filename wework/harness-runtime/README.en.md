@@ -21,6 +21,10 @@ directory, avoiding dependency extraction on first launch. Downloads use the
 catalog's release URL by default; `WEWORK_HARNESS_RUNTIME_BASE_URL` may specify
 a mirror root while preserving asset names and all integrity checks.
 
+Built-in plugins link their static web directories to the signed component.
+Plugin code stays in the profile to preserve dependency resolution without
+copying the web assets again.
+
 Release preparation collects every runtime archive and descriptor directly
 from the build cache. Linux E2E artifacts include a separate download-service
 asset directory; production installers bundle only the default runtimes.
@@ -57,3 +61,12 @@ reused.
 
 The three built-in tabs share one Core DSH process. Each active smart-app tab
 owns an isolated Workbench DSH process that must exit when the tab closes.
+
+Smart app verification uses a private empty credential file compatible with
+both runtime schemas. Verification scripts run only in the app project and
+do not trigger dependency installation in a parent workspace. Verification
+processes must be cleaned up when the verification exits.
+The Remote template uses Typert's `create()` codec factories and verifies a
+real `health.ping` round trip. Its HTTP probe receives only the isolated
+runtime's session cookie, which is redacted from output logs. Runtime shutdown
+and temporary-directory removal wait until the probe has settled.

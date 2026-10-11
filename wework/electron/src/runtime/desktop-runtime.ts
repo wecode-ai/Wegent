@@ -134,11 +134,14 @@ export class DesktopRuntime {
         await this.startPreparedExecutor(executor, generation)
         return executor
       })
-      const coreDshPreparation = this.prepareCoreDshLaunch(executorReady)
-      const [launch, executor] = await Promise.all([coreDshPreparation, executorReady])
-      if (this.lifecycleGeneration !== generation || !launch) return
-      const preparedCoreDsh = this.createPreparedCoreDsh(launch, executor)
-      await this.startPreparedCoreDsh(preparedCoreDsh, generation)
+      const coreDshPreparation = this.prepareCoreDshLaunch(executorPreparation)
+      const coreDshReady = Promise.all([coreDshPreparation, executorPreparation]).then(
+        async ([launch, executor]) => {
+          if (this.lifecycleGeneration !== generation || !launch) return
+          await this.startPreparedCoreDsh(this.createPreparedCoreDsh(launch, executor), generation)
+        }
+      )
+      await Promise.all([coreDshReady, executorReady])
       if (this.lifecycleGeneration !== generation) return
       this.started = true
     } catch (error) {
@@ -349,6 +352,7 @@ export class DesktopRuntime {
         runtimeRoot: managedRoot,
         dataDirectory: this.options.dataDirectory,
         environment: this.options.environment,
+        onStartupStep: (step, status) => this.startupStep(step, status),
       })
       if (this.lifecycleGeneration !== generation) return null
       cwd = managedRuntime.cwd
@@ -362,7 +366,9 @@ export class DesktopRuntime {
         environment: managedRuntime.environment,
       })
       if (this.options.readWorkbenchMode) {
+        this.startupStep('core-dsh-mode-apply', 'started')
         await applyWorkbenchModeToCorePlugins(await this.options.readWorkbenchMode(), plugins)
+        this.startupStep('core-dsh-mode-apply', 'completed')
         if (this.lifecycleGeneration !== generation) return null
       }
       const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
