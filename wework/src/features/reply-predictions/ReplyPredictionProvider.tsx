@@ -43,13 +43,13 @@ export function ReplyPredictionProvider({
     store?.getSnapshot ?? emptySnapshot
   )
   const lifecycle = snapshot && address ? store?.selectTask(snapshot, address) : null
-  const api = workbench?.services.textGenerationApi
-  const service = useMemo(() => (api ? replyPredictionService(api) : null), [api])
-  useSyncExternalStore(service?.subscribe ?? noSubscription, service?.getSnapshot ?? emptySnapshot)
   const configured =
     preferences?.loaded && preferences.preferences.replyPredictionsEnabled
       ? preferences.preferences.replyPredictionModel
       : null
+  const api = configured ? workbench?.services.textGenerationApi : undefined
+  const service = useMemo(() => (api ? replyPredictionService(api) : null), [api])
+  useSyncExternalStore(service?.subscribe ?? noSubscription, service?.getSnapshot ?? emptySnapshot)
   const model =
     configured &&
     workbench?.projectChat.models.some(
