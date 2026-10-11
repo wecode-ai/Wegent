@@ -476,9 +476,9 @@ const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 // the official option is served from the cloud model catalog with a canonical
 // model id that does not collide with the local Codex catalog.
 const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'gpt-5.5'
-const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
+const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
-const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
+const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT-5.5'
 const PROVIDER_SWITCH_PROMPT =
   'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with official GPT.'
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
@@ -1526,6 +1526,14 @@ async function selectE2EModel(
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       }
     )
+  } else if (selectionSnapshot.testIds.includes('model-selector-menu')) {
+    await waitForE2EModelOptionSelected(control, targetSelector)
+    await control.command('press', 'body', { key: 'Escape' })
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('model-selector-menu'),
+      'The model selector menu did not close after selecting the E2E model'
+    )
   }
   await waitForE2EModelLabel(control, labels, modelSelectorButton)
   if (expectedProviderId) {
@@ -1537,15 +1545,21 @@ async function selectE2EModel(
       'The model selector did not retain the expected provider'
     )
   }
-  const menuSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (menuSnapshot.testIds.includes('model-selector-menu')) {
-    await control.command('press', 'body', { key: 'Escape' })
-    await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('model-selector-menu'),
-      'The model selector menu did not close after selecting the E2E model'
-    )
+}
+
+async function waitForE2EModelOptionSelected(control, targetSelector) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    if (
+      (await control.command('getAttribute', targetSelector, {
+        value: 'aria-checked',
+      })) === 'true'
+    ) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
+  throw new Error(`The model option did not become selected: ${targetSelector}`)
 }
 
 async function waitForE2EModelLabel(

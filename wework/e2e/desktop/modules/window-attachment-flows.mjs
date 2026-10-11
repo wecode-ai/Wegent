@@ -208,12 +208,9 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     modelPickerMetrics.width >= 240 &&
       modelPickerMetrics.left >= 16 &&
       modelPickerMetrics.right <= viewportMetrics.right - 16 &&
-      modelPickerMetrics.right > rightPanelMetrics.left &&
-      modelPickerMetrics.right > browserHostMetrics.left &&
-      modelPickerMetrics.left < browserHostMetrics.right &&
-      modelPickerMetrics.bottom > browserHostMetrics.top &&
-      modelPickerMetrics.top < browserHostMetrics.bottom,
-    `The narrow-pane model picker was compressed instead of using the browser overlay: ${JSON.stringify(
+      modelPickerMetrics.right <= rightPanelMetrics.left - 16 &&
+      modelPickerMetrics.right <= browserHostMetrics.left - 16,
+    `The narrow-pane model picker was compressed or overlapped the right workspace panel: ${JSON.stringify(
       {
         browserHostMetrics,
         modelPickerMetrics,
