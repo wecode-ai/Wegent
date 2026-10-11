@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 
 import {
+  EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
   assertExecutorWorkbenchCompatibility,
   assertWorkbenchSchema,
 } from './workbench-executor-schema.js'
@@ -37,6 +38,10 @@ test('allows explicitly supported layout and manifest versions', () => {
   expect(() =>
     assertWorkbenchSchema({ ...compatible, capability_manifest_versions: [1, 2, 3] })
   ).not.toThrow()
+})
+
+test('allows time for first-run macOS executable validation', () => {
+  expect(EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS).toBeGreaterThan(5_000)
 })
 
 test('missing executors and arbitrary wrapper arguments cannot authorize migration', async () => {
@@ -75,7 +80,7 @@ test('query supports spaced paths, carries the legacy version guard and strips c
   const probe = spawnSync(binary, ['--workbench-schema', '--version'], {
     env: {},
     encoding: 'utf8',
-    timeout: 5_000,
+    timeout: EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
   })
   expect(
     probe.status,
@@ -92,4 +97,4 @@ test('query supports spaced paths, carries the legacy version guard and strips c
   await expect(
     assertExecutorWorkbenchCompatibility({ WEWORK_EXECUTOR_PATH: binary })
   ).rejects.toThrow('schema query failed')
-})
+}, 20_000)

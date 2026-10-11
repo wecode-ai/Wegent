@@ -221,9 +221,9 @@ async def sync_installed_plugins_to_device(
     normalized_device_id = device_id.strip()
     if not normalized_device_id:
         raise HTTPException(status_code=400, detail="device_id is required")
+    user_id = current_user.id
 
     if reconcile:
-        user_id = current_user.id
         db.close()
         return await reconcile_device_plugins(user_id, normalized_device_id)
 
@@ -231,22 +231,22 @@ async def sync_installed_plugins_to_device(
     # Close the request session before awaiting the device round-trip so the
     # connection is not held for the Socket.IO acknowledgement timeout.
     plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
-        db, user_id=current_user.id
+        db, user_id=user_id
     )
     pending_count = plugin_device_installation_service.ensure_pending_for_device(
         db,
-        user_id=current_user.id,
+        user_id=user_id,
         device_id=normalized_device_id,
     )
     db.close()
     result = await device_capability_sync_service.sync_current_device_capabilities(
-        user_id=current_user.id,
+        user_id=user_id,
         device_id=normalized_device_id,
     )
     with get_db_session() as record_db:
         plugin_device_installation_service.record_device_sync_result(
             record_db,
-            user_id=current_user.id,
+            user_id=user_id,
             result=result,
         )
     errors = list(result.errors or [])
@@ -267,7 +267,7 @@ async def sync_installed_plugins_to_device(
     )
     logger.info(
         "Device plugin sync completed: user_id=%s device_id=%s pending=%s success=%s",
-        current_user.id,
+        user_id,
         normalized_device_id,
         pending_count,
         result.success,

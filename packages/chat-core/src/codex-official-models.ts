@@ -34,21 +34,6 @@ export interface CodexOfficialModelList {
 export const CODEX_RUNTIME_MODEL_ID = 'gpt-5.6-sol'
 export const CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME = 'codex-official-unavailable'
 
-const CODEX_MODEL_PRESENTATION = [
-  { modelId: 'gpt-6-astra', label: 'GPT-6 Astra' },
-  { modelId: 'gpt-6-sol', label: 'GPT-6 Sol' },
-  { modelId: 'gpt-6-luna', label: 'GPT-6 Luna' },
-  { modelId: 'gpt-5.6-sol', label: 'GPT 5.6 Sol' },
-  { modelId: 'gpt-5.6-terra', label: 'GPT 5.6 Terra' },
-  { modelId: 'gpt-5.6-luna', label: 'GPT 5.6 Luna' },
-  { modelId: 'gpt-5.5', label: 'GPT 5.5' },
-  { modelId: 'gpt-5.4', label: 'GPT 5.4' },
-  { modelId: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
-  { modelId: 'gpt-5.3-codex-spark', label: 'GPT 5.3 Codex Spark' },
-] as const
-
-const PROMOTED_HIDDEN_MODEL_IDS: ReadonlySet<string> = new Set(['gpt-6-astra'])
-
 function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -76,24 +61,6 @@ function providerTypeValue(value: unknown): CodexModelProviderType | null {
   if (normalized === 'provider') return 'provider'
   if (normalized === 'official') return 'official'
   return null
-}
-
-function normalizedModelId(modelId: string): string {
-  return modelId.trim().toLowerCase()
-}
-
-export function codexModelPickerLabel(modelId: string): string {
-  return (
-    CODEX_MODEL_PRESENTATION.find(model => model.modelId === normalizedModelId(modelId))?.label ??
-    modelId
-  )
-}
-
-export function codexModelPickerSortOrder(modelId: string): number {
-  const index = CODEX_MODEL_PRESENTATION.findIndex(
-    model => model.modelId === normalizedModelId(modelId)
-  )
-  return index >= 0 ? index : CODEX_MODEL_PRESENTATION.length
 }
 
 function reasoningEffortValue(value: unknown): string | null {
@@ -154,19 +121,7 @@ function normalizeOfficialModel(
 }
 
 function isVisibleCodexPickerModel(model: CodexOfficialModel | null): model is CodexOfficialModel {
-  return (
-    model !== null &&
-    (model.providerType === 'provider' ||
-      !model.hidden ||
-      PROMOTED_HIDDEN_MODEL_IDS.has(normalizedModelId(model.modelId)))
-  )
-}
-
-function sortModels(models: CodexOfficialModel[]): CodexOfficialModel[] {
-  return [...models].sort(
-    (left, right) =>
-      codexModelPickerSortOrder(left.modelId) - codexModelPickerSortOrder(right.modelId)
-  )
+  return model !== null && !model.hidden
 }
 
 function normalizeProvider(value: unknown): CodexOfficialModelProvider | null {
@@ -184,11 +139,9 @@ function normalizeProvider(value: unknown): CodexOfficialModelProvider | null {
     available: record.available !== false,
     error: stringValue(record.error),
   }
-  const normalizedModels = sortModels(
-    arrayValue(record.data)
-      .map(model => normalizeOfficialModel(model, provider))
-      .filter(isVisibleCodexPickerModel)
-  )
+  const normalizedModels = arrayValue(record.data)
+    .map(model => normalizeOfficialModel(model, provider))
+    .filter(isVisibleCodexPickerModel)
   return { ...provider, models: normalizedModels }
 }
 
@@ -199,7 +152,10 @@ export function normalizeCodexOfficialModelList(value: unknown): CodexOfficialMo
     .filter((provider): provider is CodexOfficialModelProvider => provider !== null)
 
   if (providers.length > 0) {
-    return { providers, models: providers.flatMap(provider => provider.models) }
+    return {
+      providers,
+      models: providers.flatMap(provider => provider.models),
+    }
   }
 
   const fallbackProvider: CodexOfficialModelProvider = {
@@ -211,11 +167,9 @@ export function normalizeCodexOfficialModelList(value: unknown): CodexOfficialMo
     error: null,
     models: [],
   }
-  const fallbackModels = sortModels(
-    arrayValue(record.data)
-      .map(model => normalizeOfficialModel(model, fallbackProvider))
-      .filter(isVisibleCodexPickerModel)
-  )
+  const fallbackModels = arrayValue(record.data)
+    .map(model => normalizeOfficialModel(model, fallbackProvider))
+    .filter(isVisibleCodexPickerModel)
   return {
     providers: fallbackModels.length > 0 ? [{ ...fallbackProvider, models: fallbackModels }] : [],
     models: fallbackModels,

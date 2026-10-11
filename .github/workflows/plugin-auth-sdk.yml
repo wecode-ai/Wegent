@@ -82,7 +82,7 @@ jobs:
       - name: Test SDK, scaffolds, and isolated plugin processes
         run: uv run --no-project python -m unittest discover -s sdk/plugin-auth/tests -v
       - name: Test Wework Creator Connector validation
-        run: uv run --no-project python -m unittest discover -s sdk/plugin-creator/tests -v
+        run: uv run --no-project --with pyyaml python -m unittest discover -s sdk/plugin-creator/tests -v
 
   native:
     needs: changes

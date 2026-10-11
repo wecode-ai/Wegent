@@ -133,7 +133,7 @@ async function addAgent(control, timeoutMs) {
   await selectWhenOptionAvailable(
     control,
     '[data-testid="cloud-project-chat-agent-model"]',
-    'wework-custom-desktop-e2e-responses',
+    'local-model:desktop-e2e-responses',
     timeoutMs
   )
   await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]')

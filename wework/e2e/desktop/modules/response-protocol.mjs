@@ -21,7 +21,38 @@ import {
 } from './shared.mjs'
 
 function createSse(events) {
-  return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
+  const completedOutput = []
+  return events
+    .map(event => {
+      if (event.type === 'response.output_item.done' && event.item) {
+        completedOutput.push(event.item)
+      }
+      const existingOutput = event.response?.output
+      const normalizedEvent =
+        event.type === 'response.completed' &&
+        Array.isArray(existingOutput) &&
+        completedOutput.length > 0
+          ? {
+              ...event,
+              response: {
+                ...event.response,
+                output: [
+                  ...completedOutput,
+                  ...existingOutput.filter(
+                    existing =>
+                      !completedOutput.some(
+                        completed =>
+                          (completed.id && completed.id === existing.id) ||
+                          (completed.call_id && completed.call_id === existing.call_id)
+                      )
+                  ),
+                ],
+              },
+            }
+          : event
+      return `event: ${normalizedEvent.type}\ndata: ${JSON.stringify(normalizedEvent)}\n\n`
+    })
+    .join('')
 }
 
 function codexRequestKind(body) {
@@ -47,8 +78,12 @@ function responseCreated(id) {
     response: {
       id,
       object: 'response',
+      created_at: Math.floor(Date.now() / 1000),
       status: 'in_progress',
+      model: 'wework-desktop-e2e',
       output: [],
+      error: null,
+      incomplete_details: null,
     },
   }
 }
@@ -59,7 +94,9 @@ function responseCompleted(id, output) {
     response: {
       id,
       object: 'response',
+      created_at: Math.floor(Date.now() / 1000),
       status: 'completed',
+      model: 'wework-desktop-e2e',
       output: output ?? [],
       usage: {
         input_tokens: 0,
@@ -68,6 +105,8 @@ function responseCompleted(id, output) {
         output_tokens_details: null,
         total_tokens: 0,
       },
+      error: null,
+      incomplete_details: null,
     },
   }
 }
@@ -85,13 +124,15 @@ function responseFailed(id, message, code = 'context_length_exceeded') {
 
 function functionCall(callId, name, argumentsValue, outputIndex = 0) {
   const argumentsText = JSON.stringify(argumentsValue)
+  const itemId = `fc_${callId}`
   return [
     {
       type: 'response.output_item.added',
       output_index: outputIndex,
       item: {
-        id: callId,
+        id: itemId,
         type: 'function_call',
+        status: 'in_progress',
         call_id: callId,
         name,
         arguments: '',
@@ -100,14 +141,14 @@ function functionCall(callId, name, argumentsValue, outputIndex = 0) {
     {
       type: 'response.function_call_arguments.delta',
       output_index: outputIndex,
-      item_id: callId,
+      item_id: itemId,
       call_id: callId,
       delta: argumentsText,
     },
     {
       type: 'response.function_call_arguments.done',
       output_index: outputIndex,
-      item_id: callId,
+      item_id: itemId,
       call_id: callId,
       arguments: argumentsText,
     },
@@ -115,8 +156,9 @@ function functionCall(callId, name, argumentsValue, outputIndex = 0) {
       type: 'response.output_item.done',
       output_index: outputIndex,
       item: {
-        id: callId,
+        id: itemId,
         type: 'function_call',
+        status: 'completed',
         call_id: callId,
         name,
         arguments: argumentsText,
@@ -154,7 +196,9 @@ function customToolCall(callId, name, input) {
   return {
     type: 'response.output_item.done',
     item: {
+      id: `fc_${callId}`,
       type: 'custom_tool_call',
+      status: 'completed',
       call_id: callId,
       name,
       input,

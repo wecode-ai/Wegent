@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest'
-import { codexModelPickerLabel, normalizeCodexOfficialModelList } from './codexOfficialModels'
+import { normalizeCodexOfficialModelList } from './codexOfficialModels'
 
 describe('codexOfficialModels', () => {
-  test('preserves provider order and unknown model order while applying picker order', () => {
+  test('preserves provider and model order from Codex', () => {
     const models = normalizeCodexOfficialModelList({
       providers: [
         {
@@ -21,26 +21,13 @@ describe('codexOfficialModels', () => {
     expect(models.models.map(model => model.modelId)).toEqual([
       'zeta',
       'alpha',
+      'gpt-5.4',
       'gpt-5.6-sol',
       'gpt-5.5',
-      'gpt-5.4',
     ])
   })
 
-  test('maps known picker names in product order and keeps unknown models available', () => {
-    const modelIds = [
-      'future-codex-model',
-      'gpt-5.3-codex-spark',
-      'gpt-5.4-mini',
-      'gpt-5.4',
-      'gpt-5.6-luna',
-      'gpt-5.6-terra',
-      'gpt-5.6-sol',
-      'gpt-6-luna',
-      'gpt-6-sol',
-      'gpt-5.5',
-      'gpt-6-astra',
-    ]
+  test('uses display names from Codex without model-specific presentation rules', () => {
     const result = normalizeCodexOfficialModelList({
       providers: [
         {
@@ -49,32 +36,29 @@ describe('codexOfficialModels', () => {
           type: 'official',
           current: true,
           available: true,
-          data: modelIds.map(model => ({
-            id: model,
-            model,
-            displayName: model,
-            supportedReasoningEfforts: [{ reasoningEffort: 'low' }],
-          })),
+          data: [
+            {
+              id: 'gpt-6.1-sol',
+              model: 'gpt-6.1-sol',
+              displayName: 'GPT-6.1-Sol',
+            },
+            {
+              id: 'future-codex-model',
+              model: 'future-codex-model',
+              displayName: 'Future Codex Model',
+            },
+          ],
         },
       ],
     })
 
-    expect(result.models.map(model => codexModelPickerLabel(model.modelId))).toEqual([
-      'GPT-6 Astra',
-      'GPT-6 Sol',
-      'GPT-6 Luna',
-      'GPT 5.6 Sol',
-      'GPT 5.6 Terra',
-      'GPT 5.6 Luna',
-      'GPT 5.5',
-      'GPT 5.4',
-      'GPT 5.4 Mini',
-      'GPT 5.3 Codex Spark',
-      'future-codex-model',
+    expect(result.models.map(model => model.displayName)).toEqual([
+      'GPT-6.1-Sol',
+      'Future Codex Model',
     ])
   })
 
-  test('accepts visible Codex models dynamically while excluding hidden legacy entries', () => {
+  test('accepts visible Codex models dynamically and excludes every hidden model', () => {
     const result = normalizeCodexOfficialModelList({
       data: [
         { model: 'future-codex-model' },
@@ -93,17 +77,16 @@ describe('codexOfficialModels', () => {
     })
 
     expect(result.models.map(model => model.modelId)).toEqual([
-      'gpt-6-astra',
-      'gpt-6-sol',
-      'gpt-6-luna',
-      'gpt-5.6-sol',
-      'gpt-5.6-terra',
-      'gpt-5.6-luna',
-      'gpt-5.5',
-      'gpt-5.4',
-      'gpt-5.4-mini',
-      'gpt-5.3-codex-spark',
       'future-codex-model',
+      'gpt-5.3-codex-spark',
+      'gpt-5.4-mini',
+      'gpt-5.4',
+      'gpt-5.5',
+      'gpt-5.6-luna',
+      'gpt-5.6-terra',
+      'gpt-5.6-sol',
+      'gpt-6-luna',
+      'gpt-6-sol',
     ])
   })
 
