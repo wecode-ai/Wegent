@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { hashComponentPath } from './component-content-hash.js'
 import { copyComponentTree } from './component-copy.js'
+import { copyComponentSnapshot } from './component-snapshot.js'
 
 test('preserves runtime links, executable modes and checksums after removing the source', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-component-copy-'))
@@ -29,3 +30,24 @@ test('preserves runtime links, executable modes and checksums after removing the
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test.each(['file', 'directory'])(
+  'retains the remote entry path for an existing %s component',
+  async kind => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-component-entry-'))
+    try {
+      const source = join(root, 'source')
+      if (kind === 'directory') {
+        await mkdir(source)
+        await writeFile(join(source, 'runtime.js'), 'runtime')
+      } else await writeFile(source, 'runtime')
+      const expected = await hashComponentPath(source)
+      const snapshot = await copyComponentSnapshot(source, join(root, 'cache'), 'bin/runtime')
+      await rm(source, { recursive: true })
+      expect(snapshot).toEqual({ entryPath: 'bin/runtime', contentSha256: expected })
+      expect(await hashComponentPath(join(root, 'cache', 'bin/runtime'))).toBe(expected)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

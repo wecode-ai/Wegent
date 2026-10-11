@@ -10,7 +10,8 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 
-vi.mock('@/e2e/automation', () => ({
+vi.mock('@/e2e/runtime-config', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/e2e/runtime-config')>()),
   shouldUseNativeProjectDirectoryPicker: () => false,
 }))
 

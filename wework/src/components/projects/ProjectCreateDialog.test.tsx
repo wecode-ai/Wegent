@@ -10,7 +10,8 @@ const pickerMocks = vi.hoisted(() => ({
   useNative: false,
 }))
 
-vi.mock('@/e2e/runtime-config', () => ({
+vi.mock('@/e2e/runtime-config', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/e2e/runtime-config')>()),
   shouldUseNativeProjectDirectoryPicker: () => pickerMocks.useNative,
 }))
 

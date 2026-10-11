@@ -450,7 +450,8 @@ const automationMocks = vi.hoisted(() => ({
   useNativeDirectoryPicker: true,
 }))
 
-vi.mock('@/e2e/runtime-config', () => ({
+vi.mock('@/e2e/runtime-config', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/e2e/runtime-config')>()),
   shouldUseNativeProjectDirectoryPicker: () => automationMocks.useNativeDirectoryPicker,
 }))
 

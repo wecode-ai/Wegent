@@ -19,7 +19,7 @@ import { cloudFetch } from '../host/cloud-http.js'
 import { pipeline } from 'node:stream/promises'
 import * as tar from 'tar'
 import { hashComponentPath, fileSha256 as sha256 } from './component-content-hash.js'
-import { copyComponentTree } from './component-copy.js'
+import { cachePackagedComponent, copyComponentSnapshot } from './component-snapshot.js'
 export { hashComponentPath } from './component-content-hash.js'
 
 export const MANAGED_COMPONENT_IDS = [
@@ -347,6 +347,15 @@ export class ComponentUpdateManager {
       const reusesCurrentContent =
         appVersion === this.currentAppVersion &&
         component.contentSha256 === expectedCurrentContentSha256
+      if (reusesCurrentContent && !effectiveComponent) {
+        stagedComponents[id] = await cachePackagedComponent(
+          this.componentRoot(id, ''),
+          component.version,
+          reusablePaths[id]
+        )
+        this.log({ event: 'component-reused', id, reason: 'packaged-snapshot' })
+        continue
+      }
       const reusableContentSha256 = await hashComponentPath(reusablePaths[id])
       if (reusesCurrentContent || component.contentSha256 === reusableContentSha256) {
         this.log({
@@ -429,19 +438,8 @@ export class ComponentUpdateManager {
     await rm(temporary, { recursive: true, force: true })
     await mkdir(dirname(target), { recursive: true, mode: 0o700 })
     try {
-      if (component.entryPath === '.') {
-        await copyComponentTree(source, temporary)
-      } else {
-        await mkdir(temporary, { recursive: true, mode: 0o700 })
-        await cp(source, join(temporary, component.entryPath), {
-          recursive: true,
-          force: true,
-          verbatimSymlinks: true,
-        })
-      }
-      const stagedPath =
-        component.entryPath === '.' ? temporary : join(temporary, component.entryPath)
-      if (!(await componentMatches(stagedPath, component.contentSha256))) {
+      const snapshot = await copyComponentSnapshot(source, temporary, component.entryPath)
+      if (snapshot.contentSha256 !== component.contentSha256) {
         throw new Error(`Reusable component checksum mismatch: ${id}`)
       }
       await rm(target, { recursive: true, force: true })

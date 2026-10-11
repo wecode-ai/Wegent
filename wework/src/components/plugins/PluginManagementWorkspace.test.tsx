@@ -9,13 +9,19 @@ import {
 } from '@/features/plugins/pluginMarketplaceCache'
 import { navigateTo } from '@/lib/navigation'
 import * as localPlugins from '@/api/local/codexPlugins'
+import * as runtimeEnvironment from '@/lib/runtime-environment'
 import '@/i18n'
 import { PluginManagementWorkspace } from './PluginManagementWorkspace'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import type { PluginMarketplaceItem } from '@/types/api'
 
-vi.mock('@/lib/navigation', () => ({
+vi.mock('@/lib/navigation', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/navigation')>()),
   navigateTo: vi.fn(),
+}))
+
+vi.mock('./CoreDshPluginManagementSection', () => ({
+  CoreDshPluginManagementSection: () => <div data-testid="core-dsh-plugin-management" />,
 }))
 
 function cachedInstalledPlugin(): InstalledPluginItem {
@@ -77,6 +83,27 @@ describe('PluginManagementWorkspace cache', () => {
     clearPluginMarketplaceCache()
     vi.mocked(navigateTo).mockReset()
     window.localStorage.clear()
+    window.history.replaceState({}, '', '/plugins/manage')
+  })
+
+  test('preserves the Wework tab through a DSH client remount', async () => {
+    vi.spyOn(runtimeEnvironment, 'isElectronRuntime').mockReturnValue(true)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {}))
+    )
+    const first = render(
+      <PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />
+    )
+    await userEvent.click(screen.getByTestId('plugin-management-surface-core-dsh'))
+    expect(new URLSearchParams(window.location.search).get('surface')).toBe('core-dsh')
+    first.unmount()
+
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    expect(screen.getByTestId('core-dsh-plugin-management')).toBeVisible()
+    await userEvent.click(screen.getByTestId('plugin-management-surface-wework'))
+    expect(new URLSearchParams(window.location.search).has('surface')).toBe(false)
+    expect(screen.queryByTestId('core-dsh-plugin-management')).not.toBeInTheDocument()
   })
 
   test('shows cold local inventory while cloud is pending without reading any marketplace', async () => {
