@@ -10,6 +10,7 @@ import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { DesktopEmptyTaskLauncher } from '@/components/layout/DesktopEmptyTaskLauncher'
 import { useLocalConnectorAuthGate } from './useLocalConnectorAuthGate'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 
 const mocks = vi.hoisted(() => ({ requestLocalExecutor: vi.fn() }))
 
@@ -225,6 +226,48 @@ describe('managed Wiki conversation authorization', () => {
       )
     ).toHaveLength(2)
   })
+
+  test.each(['pending', 'in-flight'])(
+    'invalidates %s authorization when a new chat reuses its pane',
+    async phase => {
+      let finishHealth: ((result: { status: string }) => void) | undefined
+      mocks.requestLocalExecutor.mockImplementation(async method => {
+        if (method === 'runtime.local_connector_auth.health') {
+          return new Promise(resolve => {
+            finishHealth = resolve
+          })
+        }
+        throw new Error(`Unexpected executor method: ${method}`)
+      })
+      const onResumeSend = vi.fn()
+      const { result } = renderHook(() =>
+        useLocalConnectorAuthGate({
+          messages: [],
+          onResumeSend,
+          onRetryMessage: vi.fn(),
+        })
+      )
+      const preflight = result.current.gateBeforeSend('[$GitHub](app://github) List repositories')
+      await waitFor(() => expect(finishHealth).toBeDefined())
+      if (phase === 'pending') {
+        await act(async () => {
+          finishHealth!({ status: 'need_login' })
+          await preflight
+        })
+        expect(result.current.pending).not.toBeNull()
+      }
+      const lateSuccess = result.current.completePending
+      await act(async () => {
+        requestNewChatComposerFocus()
+        if (phase === 'in-flight') finishHealth!({ status: 'need_login' })
+        await preflight
+        await lateSuccess()
+      })
+      expect(result.current.pending).toBeNull()
+      expect(onResumeSend).not.toHaveBeenCalled()
+      expect(await result.current.gateBeforeSend('ordinary message')).toBe('send')
+    }
+  )
 
   test('discards an in-flight preflight when the workbench pane becomes inactive', async () => {
     let finishHealth: ((result: { status: string }) => void) | undefined

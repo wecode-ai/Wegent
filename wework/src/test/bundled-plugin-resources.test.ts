@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 
@@ -17,6 +18,30 @@ const bundledSmartAppBuilderDirectory = 'bundled-plugins/wework-personal/plugins
 const weworkPluginDeveloperDirectory = 'dsh/plugin-developer'
 
 describe('bundled plugin resources', () => {
+  test('rejects release hosts that differ from the target even when Node matches', () => {
+    const workflow = readFileSync(
+      resolve(process.cwd(), '../.github/workflows/wework-app.yml'),
+      'utf8'
+    )
+    const guard = workflow.match(
+      /Verify native build architecture[\s\S]*?node -e '([\s\S]*?)'/
+    )?.[1]
+    expect(guard).toBeDefined()
+    const nativeHost = process.arch === 'arm64' ? 'ARM64' : 'X64'
+    const otherHost = nativeHost === 'ARM64' ? 'X64' : 'ARM64'
+    const runGuard = (host: string, target: string) =>
+      spawnSync(process.execPath, ['-e', guard!], {
+        encoding: 'utf8',
+        env: { ...process.env, WEWORK_RUNNER_ARCH: host, WEWORK_RELEASE_ARCH: target },
+      })
+
+    expect(runGuard(nativeHost, process.arch).status).toBe(0)
+    const translated = runGuard(otherHost, process.arch)
+    expect(translated.status).toBe(1)
+    expect(translated.stderr).toContain('requires native hardware and Node.js')
+    expect(runGuard(nativeHost, process.arch === 'arm64' ? 'x64' : 'arm64').status).toBe(1)
+  })
+
   test('explicitly packages hidden marketplace manifests', () => {
     const resourcesDirectory = resolve(process.cwd(), 'resources')
     const packageScript = readFileSync(
@@ -377,10 +402,12 @@ describe('bundled plugin resources', () => {
 
     expect(workflow).toMatch(/name: macOS arm64\s+runner: macos-14\s+platform: macos\s+arch: arm64/)
     expect(workflow).toMatch(
-      /name: macOS x64\s+runner: macos-14\s+platform: macos\s+arch: x64\s+node_arch: x64/
+      /name: macOS x64\s+runner: macos-15-intel\s+platform: macos\s+arch: x64/
     )
-    expect(workflow).toContain('- name: Install Rosetta 2')
-    expect(workflow).toContain('architecture: ${{ matrix.node_arch }}')
+    expect(workflow).not.toContain('Install Rosetta 2')
+    expect(workflow).not.toContain('node_arch')
+    expect(workflow).toContain('WEWORK_RUNNER_ARCH: ${{ runner.arch }}')
+    expect(workflow).toContain('process.arch !== expected || host !== expected')
     expect(workflow.indexOf('- name: Verify native build architecture')).toBeGreaterThan(
       workflow.indexOf('- name: Set up Node.js')
     )

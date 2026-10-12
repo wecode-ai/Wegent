@@ -8,10 +8,14 @@ The Wework desktop application uses Electron. Formal builds and releases are
 handled by `.github/workflows/wework-app.yml`, which produces Electron
 installers for macOS, Windows, and Linux.
 
-Both macOS arm64 and x64 releases use the Apple Silicon `macos-14` runner. The
-x64 build verifies Rosetta 2 and then installs x64 Node.js through
-`actions/setup-node`. Before installing dependencies, the workflow checks that
-the running Node.js architecture matches the target. Harness Runtime native
+macOS arm64 releases use the Apple Silicon `macos-14` runner; x64 releases use
+the native Intel `macos-15-intel` runner. Before installing dependencies, the
+workflow checks that host hardware and Node.js architectures match the target,
+preventing release tools from running through Rosetta translation. Intel builds
+can take longer; do not restore translation solely to shorten compilation.
+Package preparation logs each subprocess command, PID, and completion state,
+and retains exit codes or signals to identify failures during parallel preparation.
+Harness Runtime native
 dependencies follow the running Node.js architecture, so selecting an Electron
 Builder target alone cannot cross-build the complete runtime. If the
 architectures differ, correct the Node.js architecture and rebuild; do not
@@ -417,3 +421,16 @@ workflow repairs an incomplete equal version and fails for an incomplete newer
 version instead of overwriting it with an older release. Component archives
 are never overwritten and are uploaded only when their content-addressed asset
 name is absent.
+
+## Component preparation I/O concurrency
+
+Formal package verification requires `component-update` to stage the complete
+component set within its existing budget. Release scripts and Electron share
+one hashing implementation: read at most eight files concurrently per directory
+tree, then feed records to the hash in sorted path order. Directory records,
+file digests, and path separators remain consistent, preserving existing
+component digests. Unsupported entries such as symbolic links still fail
+validation. Independent components validate and prepare their caches in
+parallel; missing downloads and pending-state publication follow only after
+all preparations succeed. Do not increase E2E timeouts or omit digest checks
+to hide serial I/O costs.

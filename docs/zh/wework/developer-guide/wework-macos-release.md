@@ -8,9 +8,12 @@ Wework 桌面应用使用 Electron。正式构建和发布由
 `.github/workflows/wework-app.yml` 负责；该工作流同时生成 macOS、Windows 和
 Linux 的 Electron 安装包。
 
-macOS arm64 和 x64 发布都使用 Apple Silicon `macos-14` runner。x64 构建先
-校验 Rosetta 2，再通过 `actions/setup-node` 安装 x64 Node.js；安装依赖前，
-工作流校验运行中的 Node.js 架构与目标架构一致。Harness Runtime 的原生依赖按
+macOS arm64 发布使用 Apple Silicon `macos-14` runner，x64 发布使用原生 Intel
+`macos-15-intel` runner。安装依赖前，工作流校验宿主硬件、运行中的 Node.js
+架构与目标架构一致，避免在 Rosetta 转译下运行发布工具。Intel 构建可能更慢；
+不能仅为缩短编译时间恢复转译路径。资源准备日志记录各子进程的命令、PID 和
+完成状态，失败时保留退出码或信号，以定位并行准备中的具体失败步骤。
+Harness Runtime 的原生依赖按
 运行中的 Node.js 架构准备，仅指定 Electron Builder 的目标架构不足以交叉构建
 完整运行环境。架构不匹配时应修正 Node.js 架构并重新构建，不能复用错误架构的
 产物或仅重跑发布步骤。
@@ -322,3 +325,12 @@ workflow 中复制另一份资源列表。
 未变而跳过上传。相同版本但资产不完整时必须补齐；如果远端是不完整的更高版本，
 工作流必须失败，避免用旧版本覆盖。组件压缩包不可覆盖，只能在对应内容哈希尚不
 存在时上传。
+
+## 组件更新准备的 I/O 并发
+
+正式包验证中的 `component-update` 需要在现有预算内暂存完整组件集。
+组件哈希由发布脚本和 Electron 运行时共享同一个实现：每棵目录树最多并行
+读取八个文件，再按排序后的路径顺序写入哈希。目录记录、文件摘要和路径分隔符
+保持一致，不改变已有组件摘要；符号链接等不支持的条目仍拒绝校验。
+独立组件的校验和缓存准备并行执行，全部成功后才下载缺失组件并写入 pending 状态。
+不得通过扩大 E2E 超时或省略摘要校验掩盖串行 I/O 的耗时。
