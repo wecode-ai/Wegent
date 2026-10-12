@@ -515,7 +515,7 @@ function LocalProjectEditDialogContent({
             <h3 className="mt-5 text-base font-medium">
               {t('workbench.source_folders', '源文件夹')}
             </h3>
-            {!capabilities.multiRoots && (
+            {!offline && !capabilities.multiRoots && (
               <p
                 data-testid="project-folders-upgrade-hint"
                 className="mt-1 text-sm text-text-secondary"
@@ -601,7 +601,7 @@ function LocalProjectEditDialogContent({
                 <h3 className="mt-5 text-base font-medium">
                   {t('workbench.project_auto_join_space', '自动加入项目空间')}
                 </h3>
-                {!capabilities.defaultProjectSpace && (
+                {!offline && !capabilities.defaultProjectSpace && (
                   <p
                     data-testid="project-default-space-upgrade-hint"
                     className="mt-1 text-sm text-text-secondary"
@@ -655,7 +655,7 @@ function LocalProjectEditDialogContent({
           </div>
         ) : activeTab === 'ai' ? (
           <div data-testid="local-project-settings-ai-panel">
-            {!capabilities.aiSettings && (
+            {!offline && !capabilities.aiSettings && (
               <p
                 data-testid="project-ai-settings-upgrade-hint"
                 className="mt-3 text-sm text-text-secondary"
@@ -775,7 +775,7 @@ function LocalProjectEditDialogContent({
           </div>
         ) : activeTab === 'quick-phrases' ? (
           <div data-testid="local-project-settings-quick-phrases-panel">
-            {!capabilities.aiSettings && (
+            {!offline && !capabilities.aiSettings && (
               <p
                 data-testid="project-quick-phrases-upgrade-hint"
                 className="mt-3 text-sm text-text-secondary"
@@ -815,6 +815,7 @@ function LocalProjectEditDialogContent({
             searchDisabled={submitting || pluginsPending}
             pluginSupport={pluginSupport}
             aiSettingsSupported={capabilities.aiSettings}
+            offline={offline}
             installingPluginId={installingPluginId}
             apiAvailable={Boolean(pluginApi)}
             onSearch={setPluginSearch}

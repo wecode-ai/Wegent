@@ -17,6 +17,7 @@ interface ProjectPluginSettingsPanelProps {
   searchDisabled: boolean
   pluginSupport: ProjectPluginSupport
   aiSettingsSupported: boolean
+  offline: boolean
   installingPluginId: string | null
   apiAvailable: boolean
   onSearch: (query: string) => void
@@ -34,6 +35,7 @@ export function ProjectPluginSettingsPanel({
   searchDisabled,
   pluginSupport,
   aiSettingsSupported,
+  offline,
   installingPluginId,
   apiAvailable,
   onSearch,
@@ -43,7 +45,7 @@ export function ProjectPluginSettingsPanel({
   const { t } = useTranslation('common')
   return (
     <div data-testid="local-project-settings-plugins-panel">
-      {(pluginSupport === 'unsupported' || !aiSettingsSupported) && (
+      {!offline && (pluginSupport === 'unsupported' || !aiSettingsSupported) && (
         <p data-testid="project-plugins-upgrade-hint" className="mt-3 text-sm text-text-secondary">
           {t('workbench.project_plugins_upgrade_required')}
         </p>

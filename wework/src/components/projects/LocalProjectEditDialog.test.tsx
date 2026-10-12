@@ -73,6 +73,7 @@ describe('LocalProjectEditDialog', () => {
       'backend:saved-space'
     )
     expect(screen.getByTestId('local-project-auto-join-space-select')).toBeDisabled()
+    expect(screen.getByTestId('project-default-space-upgrade-hint')).toBeVisible()
   })
   test('keeps a saved model readable when unsupported and absent from the catalog', () => {
     render(
@@ -236,6 +237,8 @@ describe('LocalProjectEditDialog', () => {
     fireEvent.click(screen.getByTestId('local-project-settings-ai-tab'))
     expect(screen.getByTestId('local-project-instructions-input')).toBeDisabled()
     expect(screen.getByTestId('project-ai-settings-upgrade-hint')).toBeVisible()
+    fireEvent.click(screen.getByTestId('local-project-settings-quick-phrases-tab'))
+    expect(screen.getByTestId('project-quick-phrases-upgrade-hint')).toBeVisible()
     fireEvent.click(screen.getByTestId('save-local-project-button'))
     await waitFor(() => expect(onSave).toHaveBeenCalled())
     expect(onSave).toHaveBeenCalledWith(
@@ -277,8 +280,10 @@ describe('LocalProjectEditDialog', () => {
     )
     expect(screen.getByTestId('local-project-name-input')).toBeEnabled()
     expect(screen.getByTestId('add-local-project-folders')).toBeDisabled()
+    expect(screen.getByTestId('project-folders-upgrade-hint')).toBeVisible()
     fireEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
     expect(screen.getByTestId('project-selected-plugin-quality@team')).toHaveTextContent('Quality')
+    expect(screen.getByTestId('project-plugins-upgrade-hint')).toBeVisible()
     expect(screen.getByTestId('remove-project-selected-plugin-quality@team')).toBeDisabled()
   })
   test('saves a cached remote descriptor through the owning device and project key', async () => {
@@ -344,6 +349,83 @@ describe('LocalProjectEditDialog', () => {
     await userEvent.click(screen.getByTestId('add-local-project-folders'))
     expect(pickerMocks.open).not.toHaveBeenCalled()
     await waitFor(() => expect(listDirectories).toHaveBeenCalledWith('remote-device', '/repo/web'))
+  })
+
+  test('shows offline status instead of upgrade hints when discovery omits runtime metadata', async () => {
+    const pluginApi = { readState: vi.fn(), installAvailablePlugin: vi.fn() }
+    const projectSpaceApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [] }),
+    } as unknown as ProjectSpaceApi
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        device={{
+          device_id: 'remote-device',
+          device_type: 'remote',
+          status: 'offline',
+          name: 'Remote',
+          executor_version: null,
+          runtime_features: null,
+        }}
+        open
+        projectWork={{
+          ...projectWork,
+          project: {
+            ...projectWork.project,
+            ownerDeviceId: 'remote-device',
+            defaultProjectSpace: { projectStore: 'backend', projectId: 'saved-space' },
+            aiSettings: {
+              instructions: 'Saved instructions',
+              modelSelection: { modelName: 'saved-model', modelType: 'public' },
+              quickPhrases: [
+                {
+                  id: 'saved',
+                  title: 'Saved quick phrase',
+                  content: 'Keep this saved',
+                  mode: 'plan',
+                },
+              ],
+              plugins: [
+                {
+                  id: 'quality@team',
+                  pluginName: 'quality',
+                  marketplaceId: 'team',
+                  displayName: 'Quality',
+                },
+              ],
+            },
+          },
+        }}
+        projectSpaceApis={[projectSpaceApi]}
+        pluginApi={pluginApi as never}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+    await screen.findByText('不自动加入')
+    expect(screen.getByTestId('local-project-name-input')).toHaveValue('Product')
+    expect(screen.getByTitle('/repo/web')).toBeVisible()
+    expect(screen.getByTestId('local-project-auto-join-space-select')).toHaveValue(
+      'backend:saved-space'
+    )
+    expect(screen.getByTestId('project-device-offline')).toBeVisible()
+    expect(screen.queryAllByTestId(/upgrade-hint$/)).toHaveLength(0)
+    expect(screen.getByTestId('save-local-project-button')).toBeDisabled()
+    expect(screen.getByTestId('add-local-project-folders')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('local-project-settings-ai-tab'))
+    expect(screen.getByTestId('local-project-instructions-input')).toHaveValue('Saved instructions')
+    expect(screen.getByTestId('local-project-model-select')).toHaveValue('public:saved-model')
+    expect(screen.queryAllByTestId(/upgrade-hint$/)).toHaveLength(0)
+    fireEvent.click(screen.getByTestId('local-project-settings-quick-phrases-tab'))
+    expect(screen.getByText('Saved quick phrase')).toBeVisible()
+    expect(screen.queryAllByTestId(/upgrade-hint$/)).toHaveLength(0)
+    fireEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
+    expect(screen.getByTestId('project-selected-plugin-quality@team')).toHaveTextContent('Quality')
+    expect(screen.queryAllByTestId(/upgrade-hint$/)).toHaveLength(0)
+    expect(screen.getByTestId('remove-project-selected-plugin-quality@team')).toBeDisabled()
+    expect(screen.getByTestId('save-local-project-button')).toBeDisabled()
+    expect(pluginApi.readState).not.toHaveBeenCalled()
   })
 
   test('keeps an offline project readable while disabling save and directory mutations', () => {
