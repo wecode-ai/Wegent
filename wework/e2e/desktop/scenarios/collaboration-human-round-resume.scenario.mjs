@@ -344,7 +344,7 @@ async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
   return issue
 }
 
-async function initializeRemoteEnvironment(control, remoteDevice, timeoutMs) {
+async function authorizeRemoteEnvironment(control, remoteDevice, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
   await control.command(
     'click',
@@ -360,18 +360,6 @@ async function initializeRemoteEnvironment(control, remoteDevice, timeoutMs) {
       `[data-testid="collaboration-project-execution-environment-candidate-${remoteDevice.id}"]`
     ),
     { timeoutMs }
-  )
-  await control.command(
-    'clickWhenEnabled',
-    scoped(
-      `[data-testid="collaboration-project-execution-environment-initialize-${remoteDevice.id}"]`
-    ),
-    { timeoutMs }
-  )
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-project-execution-environment-completion-status"]'),
-    { text: '环境已初始化', timeoutMs }
   )
 }
 
@@ -633,7 +621,7 @@ export function createDesktopScenario({
         'remote'
       )
       assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
-      await initializeRemoteEnvironment(control, remoteDevice, modelResponseTimeoutMs)
+      await authorizeRemoteEnvironment(control, remoteDevice, modelResponseTimeoutMs)
 
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
       await control.command(

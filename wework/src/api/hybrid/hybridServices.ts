@@ -366,7 +366,11 @@ export function createHybridWorkbenchServices(
     apiKey: options.token,
     ...(options.backendUrl ? { backendUrl: options.backendUrl } : {}),
   }
-  const localProjectServices = createLocalAppServices()
+  const localProjectServices = createLocalAppServices({
+    cloudModelGateway,
+    listCloudModels: () => cloudServices.agentResourceApi!.listModels(),
+    user: options.user,
+  })
   const localServices = createLocalAppServices({
     listCloudInstalledPlugins: deviceId =>
       createPluginApi(
@@ -380,6 +384,7 @@ export function createHybridWorkbenchServices(
         .listInstalledPlugins(deviceId)
         .then(response => response.items),
     cloudModelGateway,
+    listCloudModels: () => cloudServices.agentResourceApi!.listModels(),
     user: options.user,
     materializeRuntimeTask: async request => {
       try {

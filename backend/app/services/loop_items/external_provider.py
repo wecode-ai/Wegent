@@ -1295,6 +1295,41 @@ class ExternalLoopItemProvider:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
             )
+        if agent is not None:
+            from app.services.project_chat.service import compiled_bot_config
+            from app.services.runner_routing import resolve_routing
+
+            config = compiled_bot_config(db, agent, execution_user_id=user_id)
+            if config.get("execution_policy"):
+                resolve_routing(
+                    db,
+                    config=config,
+                    project_id=str(project.id),
+                    issue_id=item_id,
+                    user_id=user_id,
+                    selection=(
+                        values.runner_selection.model_dump(exclude_none=True)
+                        if values.runner_selection
+                        else (automation_context or {}).get("runner_selection")
+                    ),
+                    automatic=bool((automation_context or {}).get("run_id")),
+                )
+        if group is not None:
+            from app.services.runner_routing import resolve_group_routing
+
+            resolve_group_routing(
+                db,
+                group=group,
+                project_id=str(project.id),
+                issue_id=item_id,
+                user_id=user_id,
+                selection=(
+                    values.runner_selection.model_dump(exclude_none=True)
+                    if values.runner_selection
+                    else (automation_context or {}).get("runner_selection")
+                ),
+                automatic=bool((automation_context or {}).get("run_id")),
+            )
         issue = self._update_issue(
             project,
             number,
@@ -1337,6 +1372,12 @@ class ExternalLoopItemProvider:
                 item=index_row,
                 group=group,
                 user_id=user_id,
+                runner_selection=(
+                    values.runner_selection.model_dump(exclude_none=True)
+                    if values.runner_selection
+                    else (automation_context or {}).get("runner_selection")
+                ),
+                automation_context=automation_context,
             )
             db.commit()
             return self._response(db, project, issue, access, user_id)
@@ -1366,7 +1407,14 @@ class ExternalLoopItemProvider:
                 agent=agent,
                 user_id=user_id,
                 priority=self._priority(current_labels),
-                automation_context=automation_context,
+                automation_context={
+                    **(automation_context or {}),
+                    "runner_selection": (
+                        values.runner_selection.model_dump(exclude_none=True)
+                        if values.runner_selection
+                        else (automation_context or {}).get("runner_selection")
+                    ),
+                },
                 instruction=instruction,
             )
         elif team is not None and assignment_created:
@@ -1505,6 +1553,8 @@ class ExternalLoopItemProvider:
         item: LoopItem,
         group: dict[str, Any],
         user_id: int,
+        runner_selection: dict | None = None,
+        automation_context: dict | None = None,
     ) -> None:
         """Materialize the external Issue snapshot required by one dispatch."""
 
@@ -1534,6 +1584,9 @@ class ExternalLoopItemProvider:
             item=item,
             user_id=user_id,
             group=group,
+            runner_selection=runner_selection,
+            automatic=bool((automation_context or {}).get("run_id")),
+            automation_context=automation_context,
         )
 
     @staticmethod

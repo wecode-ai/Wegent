@@ -3095,6 +3095,29 @@ def test_runtime_create_response_rejects_invalid_executor_worktree_path(
     assert response.model_dump(by_alias=True)["errorCode"] == "worktree_prepare_failed"
 
 
+def test_runtime_create_response_accepts_pending_project_workspace():
+    from app.services import runtime_work_service
+
+    response = runtime_work_service._runtime_create_response(
+        {
+            "success": True,
+            "accepted": True,
+            "taskId": "runtime-1",
+            "workspacePath": "",
+            "workspacePending": True,
+        },
+        "codex",
+        "device-1",
+        "/repo/Wegent",
+        "git_worktree",
+    )
+
+    assert response.accepted is True
+    assert response.workspace_pending is True
+    assert response.workspace_path == ""
+    assert response.error_code is None
+
+
 def test_runtime_create_response_keeps_non_worktree_workspace_fallback():
     from app.services import runtime_work_service
 
@@ -3160,6 +3183,31 @@ def test_direct_runtime_task_target_applies_requested_worktree_source(
 
     assert target.device_id == "device-1"
     assert target.workspace_path == "/repo/Wegent"
+    assert target.workspace_source == "git_worktree"
+
+
+def test_runtime_target_accepts_runner_preparation_without_a_workspace_path(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    target = runtime_work_service._resolve_runtime_task_target(
+        test_db,
+        test_user.id,
+        RuntimeTaskCreateRequest(
+            deviceId="device-1",
+            runtime="codex",
+            message="prepare and run",
+            execution={
+                "workspace": {"source": "git_worktree"},
+                "environment": {"environmentId": "project-1", "repositories": []},
+            },
+        ),
+    )
+    assert target.device_id == "device-1"
+    assert target.workspace_path == ""
     assert target.workspace_source == "git_worktree"
 
 
@@ -5101,6 +5149,54 @@ def test_build_runtime_send_execution_request_preserves_selected_model_and_catal
     )
     assert execution_request.runtime_permission_profile == ":workspace"
     assert execution_request.to_dict()["runtime_permission_profile"] == ":workspace"
+
+
+def test_cloud_model_override_keeps_anthropic_resource_with_codex_capability_metadata(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    model = _codex_provider_model(
+        test_db, 0, name="deepseek-v4-flash(claude)", api_model_id="deepseek-v4-flash"
+    )
+    model.json = {
+        **model.json,
+        "spec": {
+            "protocol": "claude",
+            "modelConfig": {
+                "env": {
+                    "model": "claude",
+                    "model_id": "deepseek-v4-flash",
+                    "base_url": "https://api.deepseek.com/anthropic",
+                    "api_key": "provider-secret",
+                }
+            },
+        },
+    }
+    test_db.commit()
+    request = RuntimeTaskCreateRequest(
+        runtime="codex",
+        message="Read this Issue",
+        modelId=model.name,
+        modelType="public",
+        modelOptions={
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": "0",
+        },
+    )
+
+    config, _, _ = runtime_work_service._runtime_model_override(
+        db=test_db, user_id=test_user.id, request=request
+    )
+
+    assert config["model_id"] == model.name
+    assert config["codex_catalog_model_id"] == "wework-gpt-5.6-sol"
+    assert config["upstream_api_format"] == "anthropic-messages"
+    assert config["native_namespace_tools"] is False
+    assert config["native_tool_search"] is False
+    assert config["api_key"] != "provider-secret"
 
 
 def test_runtime_model_override_rejects_incomplete_cloud_identity(

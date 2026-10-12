@@ -2774,10 +2774,7 @@ describe('Wework collaboration workspace API', () => {
     } as unknown as DeliveryApi
     const api = createWeworkPlatformApi(
       { workspaces: {}, projects: {} } as unknown as SharedWorkspaceApi,
-      deliveryApi,
-      1,
-      'admin',
-      null
+      createLocalWorkspaceApi(deliveryApi, 1, 'admin', null)
     )
 
     const created = await api?.automations?.create('local-project', {
@@ -2849,10 +2846,7 @@ describe('Wework collaboration workspace API', () => {
         projects: {},
         automations: cloudAutomations,
       } as unknown as SharedWorkspaceApi,
-      createLocalDeliveryApi(),
-      1,
-      'admin',
-      null
+      createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null)
     )
 
     await api!.automations!.list('cloud-project')
@@ -2903,11 +2897,13 @@ describe('Wework collaboration workspace API', () => {
     } as unknown as SharedWorkspaceApi
     const api = createWeworkPlatformApi(
       cloudApi,
-      createLocalDeliveryApi(),
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(
+        createLocalDeliveryApi(),
+        1,
+        'admin',
+        null,
+        createLocalDetailServices()
+      )
     )
 
     await expect(api?.projects.listExecutionEnvironments('cloud-project')).resolves.toEqual([
@@ -2926,11 +2922,13 @@ describe('Wework collaboration workspace API', () => {
     } as unknown as SharedWorkspaceApi
     const api = createWeworkPlatformApi(
       cloudApi,
-      createLocalDeliveryApi(),
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(
+        createLocalDeliveryApi(),
+        1,
+        'admin',
+        null,
+        createLocalDetailServices()
+      )
     )
 
     await expect(
@@ -2959,11 +2957,7 @@ describe('Wework collaboration workspace API', () => {
     } as unknown as SharedWorkspaceApi
     const api = createWeworkPlatformApi(
       cloudApi,
-      localDeliveryApi,
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(localDeliveryApi, 1, 'admin', null, createLocalDetailServices())
     )
 
     await expect(api?.issues.list('local-project')).resolves.toEqual([localIssue])
@@ -2986,11 +2980,7 @@ describe('Wework collaboration workspace API', () => {
           get: getCloudIssue,
         },
       } as unknown as SharedWorkspaceApi,
-      localDeliveryApi,
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(localDeliveryApi, 1, 'admin', null, createLocalDetailServices())
     )
 
     await expect(api?.issues.get('local-issue')).rejects.toBe(localFailure)
@@ -3016,11 +3006,7 @@ describe('Wework collaboration workspace API', () => {
           get: getCloudIssue,
         },
       } as unknown as SharedWorkspaceApi,
-      localDeliveryApi,
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(localDeliveryApi, 1, 'admin', null, createLocalDetailServices())
     )
 
     await expect(api?.issues.get(cloudIssue.id)).resolves.toEqual(cloudIssue)
@@ -3046,13 +3032,15 @@ describe('Wework collaboration workspace API', () => {
         projects: { addCollaborationGroup: cloudAdd },
         workspaces: {},
       } as unknown as SharedWorkspaceApi,
-      {
-        listCloudProjects: vi.fn(async () => ({ items: records })),
-        updateCloudProject: update,
-      } as unknown as DeliveryApi,
-      1,
-      'admin',
-      null
+      createLocalWorkspaceApi(
+        {
+          listCloudProjects: vi.fn(async () => ({ items: records })),
+          updateCloudProject: update,
+        } as unknown as DeliveryApi,
+        1,
+        'admin',
+        null
+      )
     )!
     const group = await api.workspaces!.createCollaborationGroup('wework-local-workspace', {
       name: '111',
@@ -3094,6 +3082,46 @@ describe('Wework collaboration workspace API', () => {
       api.workspaces!.listCollaborationGroups('wework-local-workspace')
     ).resolves.toEqual([group])
     expect(cloudAdd).not.toHaveBeenCalled()
+  })
+
+  it('loads cloud and local device catalogs independently without listing or creating Agents', async () => {
+    let resolveLocal!: (devices: unknown[]) => void
+    const localResult = new Promise<unknown[]>(resolve => {
+      resolveLocal = resolve
+    })
+    const listAgents = vi.fn()
+    const ensureDefault = vi.fn()
+    const listCloud = vi.fn(async () => [{ id: '42', device_id: 42, name: 'Cloud runner' }])
+    const allResources = vi.fn()
+    const localApi = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'User', null, {
+      deviceApi: { listDevices: vi.fn(() => localResult) },
+      localProjectChatAgentApi: { list: listAgents, ensureDefault },
+    } as unknown as ProjectSpaceDetailServices)!
+    const api = createWeworkPlatformApi(
+      {
+        workspaces: {},
+        projects: {},
+        resources: { devices: { cloud: listCloud }, list: allResources },
+      } as unknown as SharedWorkspaceApi,
+      localApi
+    )!
+    expect(api.resources!.devices.local).toBe(localApi.resources!.devices.local)
+    expect(api.resources!.devices.cloud).toBe(listCloud)
+    const localPending = api.resources!.devices.local!()
+    await expect(api.resources!.devices.cloud!()).resolves.toMatchObject([{ id: '42' }])
+    resolveLocal([
+      {
+        id: 7,
+        device_id: 'local-device',
+        name: 'Local device',
+        device_type: 'local',
+        status: 'online',
+      },
+    ])
+    await expect(localPending).resolves.toMatchObject([{ device_key: 'local-device' }])
+    expect(listAgents).not.toHaveBeenCalled()
+    expect(ensureDefault).not.toHaveBeenCalled()
+    expect(allResources).not.toHaveBeenCalled()
   })
 
   it('exposes locally persisted Agents through the collaboration resource catalog', async () => {
@@ -3333,11 +3361,7 @@ describe('Wework collaboration workspace API', () => {
           list: vi.fn().mockRejectedValue(new Error('Cloud unavailable')),
         },
       } as unknown as SharedWorkspaceApi,
-      createLocalDeliveryApi(),
-      1,
-      'admin',
-      null,
-      detailServices
+      createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)
     )
 
     await expect(api?.resources?.list()).resolves.toMatchObject({
@@ -3418,11 +3442,13 @@ describe('Wework collaboration workspace API', () => {
     } as unknown as SharedWorkspaceApi
     const api = createWeworkPlatformApi(
       cloudApi,
-      createLocalDeliveryApi(),
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(
+        createLocalDeliveryApi(),
+        1,
+        'admin',
+        null,
+        createLocalDetailServices()
+      )
     )
 
     await expect(api?.members.list('local-project')).resolves.toEqual([
@@ -3447,11 +3473,7 @@ describe('Wework collaboration workspace API', () => {
     } as unknown as SharedWorkspaceApi
     const api = createWeworkPlatformApi(
       cloudApi,
-      localDeliveryApi,
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(localDeliveryApi, 1, 'admin', null, createLocalDetailServices())
     )
 
     await expect(api?.issues.getBoardSnapshot('local-project')).resolves.toEqual(
@@ -3489,11 +3511,7 @@ describe('Wework collaboration workspace API', () => {
     } as unknown as SharedWorkspaceApi
     const api = createWeworkPlatformApi(
       cloudApi,
-      localDeliveryApi,
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(localDeliveryApi, 1, 'admin', null, createLocalDetailServices())
     )
 
     await expect(api?.issues.listArchived('local-project')).resolves.toEqual({
@@ -3557,11 +3575,13 @@ describe('Wework collaboration workspace API', () => {
     } as unknown as SharedWorkspaceApi
     const api = createWeworkPlatformApi(
       cloudApi,
-      createLocalDeliveryApi(),
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(
+        createLocalDeliveryApi(),
+        1,
+        'admin',
+        null,
+        createLocalDetailServices()
+      )
     )
 
     const [workspaces, projects] = await Promise.all([
@@ -3602,11 +3622,13 @@ describe('Wework collaboration workspace API', () => {
     } as unknown as SharedWorkspaceApi
     const api = createWeworkPlatformApi(
       cloudApi,
-      createLocalDeliveryApi(),
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(
+        createLocalDeliveryApi(),
+        1,
+        'admin',
+        null,
+        createLocalDetailServices()
+      )
     )
 
     await expect(api?.projects.list()).resolves.toEqual([
@@ -3664,11 +3686,7 @@ describe('Wework collaboration workspace API', () => {
           list: listCloudProjects,
         },
       } as unknown as SharedWorkspaceApi,
-      localDeliveryApi,
-      1,
-      'admin',
-      null,
-      createLocalDetailServices()
+      createLocalWorkspaceApi(localDeliveryApi, 1, 'admin', null, createLocalDetailServices())
     )
 
     await expect(api?.projects.list()).resolves.toEqual([

@@ -50,6 +50,9 @@ mod task_project_move_tests;
 #[path = "message_presentation_tests.rs"]
 mod message_presentation_tests;
 
+#[path = "project_preparation_tests.rs"]
+mod project_preparation_tests;
+
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
     let config = CodexRuntimeProxyConfig::default();

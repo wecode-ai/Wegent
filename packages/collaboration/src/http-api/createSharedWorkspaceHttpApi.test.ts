@@ -31,6 +31,39 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it("loads devices without fetching the agent resource catalog", async () => {
+    const { transport, get } = createTransport();
+    get.mockResolvedValue({
+      items: [
+        {
+          id: 42,
+          device_id: "runner-42",
+          name: "Runner",
+          device_type: "remote",
+          status: "busy",
+          bind_shell: "claudecode",
+        },
+        {
+          id: 43,
+          device_id: "other-shell",
+          bind_shell: "openclaw",
+          status: "online",
+        },
+      ],
+    });
+    const api = createSharedWorkspaceHttpApi(transport);
+    await expect(api.resources.devices.cloud!()).resolves.toMatchObject([
+      {
+        id: "42",
+        device_id: 42,
+        device_key: "runner-42",
+        kind: "cloud_host",
+        status: "online",
+      },
+    ]);
+    expect(get).toHaveBeenCalledExactlyOnceWith("/devices");
+  });
+
   it("deletes a cloud Agent through its Team resource", async () => {
     const { transport, remove } = createTransport();
     const api = createSharedWorkspaceHttpApi(transport);
@@ -323,12 +356,18 @@ describe("createSharedWorkspaceHttpApi", () => {
       workspaceHttpRequestBody({
         executionDeviceId: "device-1",
         plugins: [{ marketplaceId: "official", enabled: true }],
-        modelOptions: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' },
+        modelOptions: {
+          weworkCloudModelNamespace: "default",
+          weworkCloudModelResourceUserId: "0",
+        },
       }),
     ).toEqual({
       execution_device_id: "device-1",
       plugins: [{ marketplace_id: "official", enabled: true }],
-      model_options: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' },
+      model_options: {
+        weworkCloudModelNamespace: "default",
+        weworkCloudModelResourceUserId: "0",
+      },
     });
   });
 });

@@ -68,7 +68,9 @@ def execution_environment_values(
         "device_id": device.id,
         "device_key": runtime_device_route_id(device),
         "name": str(spec.get("displayName") or device.name),
-        "kind": execution_environment_kind(device_type),
+        "kind": execution_environment_kind(
+            str(spec.get("deploymentLocation") or device_type)
+        ),
         "device_type": device_type,
         "runtime_instance_id": (
             str(spec["runtimeInstanceId"])
@@ -107,7 +109,9 @@ def personal_environment_values(
         "device_id": device.id,
         "device_key": runtime_device_route_id(device),
         "name": str(spec.get("displayName") or device.name),
-        "kind": execution_environment_kind(device_type),
+        "kind": execution_environment_kind(
+            str(spec.get("deploymentLocation") or device_type)
+        ),
         "coding_tools": coding_tools(spec),
         "owner_type": "user",
         "owner_id": str(owner.id),
@@ -134,14 +138,18 @@ def owner_values(
     grant: ResourceMember,
     resource: Kind,
 ) -> tuple[str, str, str, int | None]:
-    if grant.role == BaseRole.Owner.value:
-        workspace_kind = db.get(Kind, int(grant.entity_id))
+    workspace_owner = _kind_spec(resource).get("workspaceOwnerId")
+    if workspace_owner or (
+        resource.kind != "Device" and grant.role == BaseRole.Owner.value
+    ):
+        workspace_id = str(workspace_owner or grant.entity_id)
+        workspace_kind = db.get(Kind, int(workspace_id))
         workspace = (
             workspace_from_kind(workspace_kind) if workspace_kind is not None else None
         )
         return (
             "workspace",
-            str(grant.entity_id),
+            workspace_id,
             workspace.name if workspace is not None else "",
             None,
         )

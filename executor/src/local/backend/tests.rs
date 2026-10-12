@@ -40,12 +40,13 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
     fn call<'a>(
         &'a self,
         event: &'a str,
-        _payload: Value,
+        payload: Value,
         _timeout: Duration,
     ) -> TransportFuture<'a, Value> {
         Box::pin(async move {
             match event {
                 "runtime.tasks.pull" => {
+                    assert!(payload["runner_catalog"]["models"].is_array());
                     let pull_index = self.pull_calls.fetch_add(1, AtomicOrdering::AcqRel);
                     if pull_index == 0 && self.fail_first_pull.swap(false, AtomicOrdering::AcqRel) {
                         return Err("first queued execution failed preflight".to_owned());
@@ -126,6 +127,7 @@ impl RuntimeWorkHandler for BlockingCapacityRuntimeWorkHandler {
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         Box::pin(async move {
             match data.get("method").and_then(Value::as_str) {
+                Some("runtime.runner.catalog") => Ok(json!({"models": []})),
                 Some("runtime.capacity.get") => {
                     let call_index = self.capacity_calls.fetch_add(1, AtomicOrdering::AcqRel);
                     if call_index == 0 {
@@ -222,7 +224,7 @@ async fn runtime_pull_carries_and_acknowledges_workspace_cleanup_intents() {
     let client = LocalBackendClient::new(backend_config("local-device"), transport.clone());
 
     let work = client
-        .pull_runtime_work(Duration::from_secs(1))
+        .pull_runtime_work(Duration::from_secs(1), json!({"models": []}))
         .await
         .unwrap();
     let intent = &work.workspace_cleanup_intents[0];

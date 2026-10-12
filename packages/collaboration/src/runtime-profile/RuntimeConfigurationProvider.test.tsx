@@ -95,7 +95,13 @@ describe("inline runtime configuration", () => {
         root.render(
           <RuntimeConfigurationProvider
             api={api}
-            project={{ id: "project", access_role: "Owner" }}
+            project={{
+              id: "project",
+              workspace_id: "workspace",
+              project_store: "backend",
+              version: 1,
+              access_role: "Owner",
+            }}
             locale="zh-CN"
           >
             <ExecutionConfigurationNotice

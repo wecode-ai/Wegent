@@ -13,9 +13,9 @@ import {
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createLocalCollaborationProject,
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
-  selectWhenOptionAvailable,
+  selectProjectRunnerModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
@@ -122,12 +122,7 @@ async function addAgent(control, name, prompt, timeoutMs) {
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: name,
   })
-  await selectWhenOptionAvailable(
-    control,
-    '[data-testid="cloud-project-chat-agent-model"]',
-    MODEL,
-    timeoutMs
-  )
+  await selectProjectRunnerModel(control, timeoutMs)
   await control.command('click', '[data-testid="cloud-project-chat-agent-editor-advanced-toggle"]')
   await control.command('fill', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
     value: prompt,
@@ -548,7 +543,7 @@ export async function createDesktopScenario({
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
-      await initializeFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
+      await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
 
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
       await control.command(

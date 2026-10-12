@@ -12,6 +12,8 @@ import {
   mapWorkspaceGitBranchDto,
   mapWorkspaceGitRepositoryDto,
 } from "../dto-mappers";
+import { filterClaudeCodeDevices } from "@wegent/chat-core/device-capabilities";
+import type { DeviceInfo } from "@wegent/chat-core/execution-project";
 import type {
   SharedCollaborationResourcesApi,
   SharedCollaborationWorkspacesApi,
@@ -214,6 +216,12 @@ export function createSharedWorkspaceHttpApi(
 ): SharedWorkspaceHttpApi {
   return {
     workspaces: {
+      registerRunner(workspaceId, name) {
+        return transport.post(
+          `/v1/workspaces/${encoded(workspaceId)}/runners`,
+          { name },
+        );
+      },
       async list() {
         const response = await transport.get<{ items: unknown[] }>(
           "/v1/workspaces",
@@ -364,6 +372,31 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     resources: {
+      devices: {
+        async cloud() {
+          const response = await transport.get<{ items: DeviceInfo[] }>(
+            "/devices",
+          );
+          return filterClaudeCodeDevices(response.items).map((device) => ({
+            id: String(device.id),
+            device_id: device.id,
+            device_key: device.device_id,
+            name: device.name,
+            kind:
+              device.device_type === "cloud" || device.device_type === "remote"
+                ? ("cloud_host" as const)
+                : ("local_device" as const),
+            coding_tools: ["claude_code", "codex"],
+            // /devices lists the signed-in user's devices; the host supplies their identity.
+            owner_type: "user" as const,
+            owner_id: "",
+            owner_name: "",
+            status:
+              device.status === "busy" ? ("online" as const) : device.status,
+            updated_at: "",
+          }));
+        },
+      },
       async list() {
         return mapCollaborationPlatformResourcesDto(
           await transport.get("/v1/resources"),

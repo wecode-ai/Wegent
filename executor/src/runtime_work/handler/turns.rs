@@ -392,8 +392,10 @@ impl RuntimeWorkRpcHandler {
             if turn
                 .request
                 .extra
-                .contains_key("deferred_worktree_source_path")
+                .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
             {
+                self.start_queued_turn(turn);
+            } else if project_preparation::needs_preparation(&turn) {
                 self.prepare_and_start_reserved_turn(turn).await?;
             } else {
                 self.start_turn(turn);
@@ -638,6 +640,7 @@ impl RuntimeWorkRpcHandler {
             .and_then(|value| value.as_str().map(ToOwned::to_owned));
         let worktrees = self.worktrees.clone();
         let worktree_id = turn.local_task_id.clone();
+        let previous_root = source_path.clone();
         let record =
             tokio::task::spawn_blocking(move || match (planned_path, repo_root_fingerprint) {
                 (Some(planned_path), Some(repo_root_fingerprint)) => worktrees.prepare_planned(
@@ -671,6 +674,11 @@ impl RuntimeWorkRpcHandler {
             })?
             .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
         turn.request.project_workspace_path = Some(record.path.clone());
+        for root in &mut turn.request.runtime_workspace_roots {
+            if *root == previous_root {
+                *root = record.path.clone();
+            }
+        }
         self.store.update_task(&turn.local_task_id, |link| {
             link.workspace_path = record.path.clone();
             link.updated_at = now_ms();
@@ -680,13 +688,15 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn reserve_worktree_preparation(&self, turn: &SpawnTurnRequest) {
-        if !turn
-            .request
-            .extra
-            .contains_key("deferred_worktree_source_path")
-        {
+        if !project_preparation::needs_preparation(turn) {
             return;
         }
+        self.store.update_task(&turn.local_task_id, |link| {
+            link.running = true;
+            link.status = "active".to_owned();
+            link.thread_status = "active".to_owned();
+            link.updated_at = now_ms();
+        });
         self.preparing_worktree_turns
             .lock()
             .expect("preparing worktree turn map lock should not be poisoned")
@@ -765,6 +775,9 @@ impl RuntimeWorkRpcHandler {
         else {
             return;
         };
+        if !self.worktrees.is_managed_path(&path) {
+            return;
+        }
         let worktrees = self.worktrees.clone();
         let cleanup_path = path.clone();
         let worktree_id = turn.local_task_id.clone();
@@ -799,7 +812,18 @@ impl RuntimeWorkRpcHandler {
         &self,
         mut turn: SpawnTurnRequest,
     ) -> Result<(), AppIpcError> {
-        let preparation = self.prepare_deferred_worktree(&mut turn).await;
+        let preparation = async {
+            self.prepare_project_environment(&mut turn).await?;
+            self.prepare_deferred_worktree(&mut turn).await?;
+            self.persist_prepared_project_workspace(&turn)?;
+            self.store.update_task(&turn.local_task_id, |link| {
+                link.workspace_path = turn.request.cwd().unwrap_or_default().to_owned();
+                link.runtime_workspace_roots = turn.request.runtime_workspace_roots.clone();
+                store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
+            });
+            Ok::<(), AppIpcError>(())
+        }
+        .await;
         if preparation.is_ok() {
             {
                 let mut preparing = self
@@ -811,7 +835,7 @@ impl RuntimeWorkRpcHandler {
                     .is_some_and(|preparation| preparation.cancellation_requested)
                 {
                     preparing.remove(&turn.local_task_id);
-                    self.start_turn(turn);
+                    self.start_queued_turn(turn);
                     return Ok(());
                 }
                 preparing.remove(&turn.local_task_id);
@@ -843,6 +867,13 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn start_queued_turn(&self, turn: SpawnTurnRequest) {
+        if project_preparation::needs_preparation(&turn) {
+            let handler = self.clone();
+            tokio::spawn(async move {
+                let _ = handler.prepare_and_start_reserved_turn(turn).await;
+            });
+            return;
+        }
         if turn
             .request
             .extra
@@ -867,18 +898,7 @@ impl RuntimeWorkRpcHandler {
             });
             return;
         }
-        if !turn
-            .request
-            .extra
-            .contains_key("deferred_worktree_source_path")
-        {
-            self.start_turn(turn);
-            return;
-        }
-        let handler = self.clone();
-        tokio::spawn(async move {
-            let _ = handler.prepare_and_start_reserved_turn(turn).await;
-        });
+        self.start_turn(turn);
     }
 
     pub(super) async fn map_execution_codex_notification(
@@ -1400,7 +1420,13 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn is_busy_local_task(&self, local_task_id: &str) -> bool {
-        self.is_active_local_task(local_task_id) || self.is_queued_local_task(local_task_id)
+        self.is_active_local_task(local_task_id)
+            || self.is_queued_local_task(local_task_id)
+            || self
+                .preparing_worktree_turns
+                .lock()
+                .expect("preparation map poisoned")
+                .contains_key(local_task_id)
     }
 
     pub(super) async fn remove_queued_turn(

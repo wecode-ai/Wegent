@@ -25,6 +25,10 @@ import {
   X,
 } from "lucide-react";
 
+import { useDeviceCatalog, type DeviceCatalogState } from "./useDeviceCatalog";
+import { DeviceCatalogFeedback } from "./DeviceCatalogFeedback";
+import type { CollaborationTranslate } from "../i18n";
+
 import { CollaborationApp } from "../CollaborationApp";
 import { ProjectLoadingSkeleton } from "../project-shell";
 import { ActionMenu } from "../controls/ActionMenu";
@@ -174,8 +178,6 @@ const platformMessages = {
     noCloudAgents: "云端还没有智能体",
     noLocalTeams: "当前设备还没有协作小组",
     noCloudTeams: "云端还没有协作小组",
-    noLocalDevices: "当前没有本地设备",
-    noCloudDevices: "当前没有云端设备",
     collaborationHome: "协作首页",
     collaborationHomeHint: "继续推进你和团队正在进行的工作。",
     issueHomeTitle: "今天要推进什么？",
@@ -394,8 +396,6 @@ const platformMessages = {
     noCloudAgents: "No cloud agents yet",
     noLocalTeams: "No local teams yet",
     noCloudTeams: "No cloud teams yet",
-    noLocalDevices: "No local devices",
-    noCloudDevices: "No cloud devices",
     collaborationHome: "Collaboration home",
     collaborationHomeHint: "Keep your team's active work moving.",
     issueHomeTitle: "What should we move forward today?",
@@ -1265,6 +1265,8 @@ function ResourceCatalogPage({
   agents,
   groups,
   environments,
+  deviceCatalog,
+  translate,
   canCreateDevice,
   workspaces,
   projects,
@@ -1286,6 +1288,8 @@ function ResourceCatalogPage({
   agents: CollaborationOwnedAgent[];
   groups: CollaborationGroup[];
   environments: CollaborationExecutionEnvironment[];
+  deviceCatalog?: DeviceCatalogState;
+  translate: CollaborationTranslate;
   canCreateDevice: boolean;
   workspaces: CollaborationWorkspace[];
   projects: CollaborationProject[];
@@ -1620,7 +1624,7 @@ function ResourceCatalogPage({
     id: environment.id,
     name: environment.name,
     source:
-      environment.kind === "local_device"
+      environment.is_current_device === true
         ? ("local" as const)
         : ("cloud" as const),
     scope:
@@ -1710,7 +1714,11 @@ function ResourceCatalogPage({
         <span className="collaboration-resource-collection-copy">
           <span>
             <h1>{pageCopy.title}</h1>
-            <em>{rowsInSource.length}</em>
+            <em>
+              {deviceCatalog && !deviceCatalog.complete && !rowsInSource.length
+                ? "—"
+                : rowsInSource.length}
+            </em>
           </span>
           <p>{pageCopy.hint}</p>
         </span>
@@ -1748,7 +1756,11 @@ function ResourceCatalogPage({
                   : candidate === "mine"
                     ? messages.createdByMe
                     : messages.teamShared}
-                <em>{scopeCounts[candidate]}</em>
+                <em>
+                  {deviceCatalog && !deviceCatalog.complete && !rows.length
+                    ? "—"
+                    : scopeCounts[candidate]}
+                </em>
               </button>
             ))}
           </div>
@@ -1764,6 +1776,9 @@ function ResourceCatalogPage({
         </label>
       </div>
 
+      {deviceCatalog ? (
+        <DeviceCatalogFeedback catalog={deviceCatalog} translate={translate} />
+      ) : null}
       <section className="collaboration-resource-catalog-list" data-kind={kind}>
         {visibleRows.length ? (
           <div className="collaboration-resource-catalog-list-header">
@@ -1957,21 +1972,19 @@ function ResourceCatalogPage({
               </span>
             </article>
           ))
-        ) : (
+        ) : deviceCatalog && !deviceCatalog.complete ? null : (
           <div className="collaboration-resource-catalog-empty">
             <PageIcon aria-hidden="true" />
             <strong>
-              {domain === "local"
-                ? kind === "agents"
-                  ? messages.noLocalAgents
-                  : kind === "teams"
-                    ? messages.noLocalTeams
-                    : messages.noLocalDevices
-                : kind === "agents"
-                  ? messages.noCloudAgents
-                  : kind === "teams"
-                    ? messages.noCloudTeams
-                    : messages.noCloudDevices}
+              {kind === "devices"
+                ? translate("todo.device_catalog_empty", "尚未添加设备")
+                : domain === "local"
+                  ? kind === "agents"
+                    ? messages.noLocalAgents
+                    : messages.noLocalTeams
+                  : kind === "agents"
+                    ? messages.noCloudAgents
+                    : messages.noCloudTeams}
             </strong>
             <p>{pageCopy.hint}</p>
           </div>
@@ -3400,6 +3413,16 @@ export function CollaborationPlatformApp({
 }) {
   const messages = platformMessages[locale];
   const translate = createCollaborationTranslator(locale);
+  const isDevicePage =
+    !host.location.projectId &&
+    !host.location.workspaceId &&
+    host.location.rootView === "devices";
+  const deviceCatalog = useDeviceCatalog(
+    api,
+    isDevicePage,
+    refreshKey,
+    host.currentUser,
+  );
   const { state, commands } = useCollaborationPlatformController({
     api,
     navigationApis,
@@ -3780,9 +3803,11 @@ export function CollaborationPlatformApp({
         if (!agent?.team_id) throw new Error("Agent cannot be authorized");
         await api.workspaces.addAgent(workspaceId, { teamId: agent.team_id });
       } else if (kind === "devices") {
-        const environment = state.resources.execution_environments.find(
-          (candidate) => candidate.id === resourceId,
-        );
+        const environment = (
+          isDevicePage
+            ? deviceCatalog.items
+            : state.resources.execution_environments
+        ).find((candidate) => candidate.id === resourceId);
         if (!environment?.device_id) {
           throw new Error("Execution environment cannot be authorized");
         }
@@ -3871,7 +3896,7 @@ export function CollaborationPlatformApp({
     });
   };
   let content: React.ReactNode;
-  if (state.loading) {
+  if (state.loading && !isDevicePage) {
     content = (
       <ProjectLoadingSkeleton
         label={translate("common.loading", "正在加载…")}
@@ -3882,7 +3907,7 @@ export function CollaborationPlatformApp({
         }
       />
     );
-  } else if (state.error) {
+  } else if (state.error && !isDevicePage) {
     content = (
       <div className="collaboration-alert" role="alert">
         {state.error}
@@ -3957,7 +3982,7 @@ export function CollaborationPlatformApp({
         {messages.loading}
       </div>
     );
-  } else if (!state.workspace) {
+  } else if (!state.workspace || isDevicePage) {
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {
       const operation = workspaceIssueOperationState(item);
@@ -3980,7 +4005,13 @@ export function CollaborationPlatformApp({
           kind={rootView}
           agents={state.resources.agents}
           groups={state.collaborationGroups}
-          environments={state.resources.execution_environments}
+          environments={
+            rootView === "devices"
+              ? deviceCatalog.items
+              : state.resources.execution_environments
+          }
+          deviceCatalog={rootView === "devices" ? deviceCatalog : undefined}
+          translate={translate}
           canCreateDevice={Boolean(host.renderDeviceCreator)}
           workspaces={state.workspaces}
           projects={state.navigationProjects}
@@ -4791,7 +4822,7 @@ export function CollaborationPlatformApp({
         ? host.renderDeviceCreator({
             source: rootDeviceCreator.source,
             workspaceId: rootDeviceCreator.workspaceId,
-            hasCloudDevice: state.resources.execution_environments.some(
+            hasCloudDevice: deviceCatalog.items.some(
               (environment) => environment.kind === "cloud_host",
             ),
             onClose: () => setRootDeviceCreator(null),
@@ -4805,6 +4836,7 @@ export function CollaborationPlatformApp({
                 );
               }
               setRootDeviceCreator(null);
+              await deviceCatalog.refresh();
               await commands.reload();
               host.notify?.(messages.resourceSaved, "success");
             },

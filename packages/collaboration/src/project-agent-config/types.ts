@@ -31,6 +31,7 @@ export interface ProjectAgentConfigurationHost {
    */
   supportsExistingAgentSelection?: boolean;
   renderAgentCreator?(props: {
+    projectId?: string;
     namespace: string;
     onClose(): void;
     onCreated(agent: { name: string; teamId: number }): Promise<void>;
@@ -47,6 +48,7 @@ export interface ProjectAgentConfigurationHost {
    * cannot reach the resource library omit it and no edit action is rendered.
    */
   renderAgentEditor?(props: {
+    projectId?: string;
     agent: { teamId: number };
     namespace: string;
     onClose(): void;

@@ -125,8 +125,11 @@ mod hooks;
 mod notifications;
 mod plugin_install;
 mod plugin_marketplace;
+mod project_preparation;
 mod queries;
 mod robot_queue_rpc;
+mod runner_catalog;
+mod runner_cloud_models;
 mod sidebar;
 mod supervisor;
 mod system;
@@ -1067,7 +1070,7 @@ impl RuntimeWorkRpcHandler {
             .remove(local_task_id);
     }
 
-    /// Rewrite a loopback cloud-model gateway to the backend this device reaches.
+    /// Bind the cloud-model gateway to the backend this device reaches.
     ///
     /// The connection snapshot is unavailable before the device finishes
     /// connecting, so fall back to the request's own backend URL (environment,
@@ -1085,7 +1088,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             snapshot_backend_url
         };
-        crate::agents::rewrite_loopback_model_gateway(request, &backend_url);
+        crate::agents::bind_backend_model_gateway(request, &backend_url);
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
@@ -1154,6 +1157,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.hooks.delete" => self.delete_hook(payload).await,
             "runtime.hooks.reveal" => self.reveal_hook(payload).await,
             "runtime.hooks.test" => self.test_hook(payload).await,
+            "runtime.runner.catalog" => self.runner_catalog().await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.ensure_started" => self.ensure_codex_started().await,
             "runtime.codex.auth.read" => self.read_codex_account().await,

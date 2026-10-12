@@ -94,6 +94,7 @@ describe('CollaborationApp project collaboration groups', () => {
         listExecutionEnvironments: jest.fn().mockResolvedValue([]),
       },
       resources: {
+        devices: { cloud: jest.fn().mockResolvedValue([]) },
         list: jest.fn().mockResolvedValue({
           agents: [],
           execution_environments: [],

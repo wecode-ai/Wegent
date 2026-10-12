@@ -11,14 +11,13 @@ import {
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createLocalCollaborationProject,
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
-  selectWhenOptionAvailable,
+  selectProjectRunnerModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const MODEL = 'local-model:desktop-e2e-responses'
 const PROJECT = `本地单智能体调度-${process.pid}`
 const AGENT = `本地执行智能体-${process.pid}`
 const ASSIGNED_TASK = `采集本地执行证据-${process.pid}`
@@ -64,12 +63,7 @@ async function addLocalAgent(control, timeoutMs) {
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: AGENT,
   })
-  await selectWhenOptionAvailable(
-    control,
-    '[data-testid="cloud-project-chat-agent-model"]',
-    MODEL,
-    timeoutMs
-  )
+  await selectProjectRunnerModel(control, timeoutMs)
   await control.command('click', '[data-testid="cloud-project-chat-agent-editor-advanced-toggle"]')
   await control.command('fill', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
     value: `${MARKER}。你是直接执行成员，只完成用户分配的任务，不规划协作小组，不修改 Issue 状态。`,
@@ -257,6 +251,16 @@ export async function createDesktopScenario({
   )
 
   return {
+    requiresCloudEnvironment: true,
+
+    async prepareCloud(cloud) {
+      const response = await fetch(`${cloud.backendUrl}/api/admin/setup-complete`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cloud.authToken}` },
+      })
+      assert.equal(response.ok, true, 'The real test backend could not complete setup')
+    },
+
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -323,7 +327,7 @@ export async function createDesktopScenario({
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
-      await initializeFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
+      await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       const agentId = await addLocalAgent(control, uiTimeoutMs)
       await createIssueAndAssignAgent(control, agentId, uiTimeoutMs)
 

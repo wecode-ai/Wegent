@@ -734,25 +734,27 @@ fn attach_user_message_presentations_for_page(
                     timestamp_ms_field(&presentation, "createdAt").unwrap_or_else(now_ms);
                 let turn_id = string_field(&presentation, "turnId")
                     .or_else(|| string_field(&presentation, "turn_id"));
-                let index = turn_id.as_deref().and_then(|turn_id| messages
-                        .iter()
-                        .position(|message| {
+                let index = turn_id
+                    .as_deref()
+                    .and_then(|turn_id| {
+                        messages.iter().position(|message| {
                             string_field(message, "turnId")
                                 .or_else(|| string_field(message, "turn_id"))
                                 .or_else(|| string_field(message, "subtaskId"))
                                 .or_else(|| string_field(message, "subtask_id"))
                                 .as_deref()
                                 == Some(turn_id)
-                        }))
-                    .or_else(|| messages
-                        .iter()
-                        .position(|message| {
+                        })
+                    })
+                    .or_else(|| {
+                        messages.iter().position(|message| {
                             timestamp_ms_field(message, "createdAt").is_some_and(|message_at| {
                                 message_at > created_at
                                     || (message_at == created_at
                                         && string_field(message, "role").as_deref() != Some("user"))
                             })
-                        }))
+                        })
+                    })
                     .unwrap_or(messages.len());
                 let turn_id = turn_id.or_else(|| {
                     messages[index..].iter().find_map(|message| {
@@ -1135,6 +1137,7 @@ fn runtime_handle_json(link: &RuntimeTaskLink) -> Value {
         .as_object()
         .cloned()
         .unwrap_or_else(Map::new);
+    object.remove("collaborationMemberRuntimeProfiles");
     object.insert(
         "threadId".to_owned(),
         link.thread_id

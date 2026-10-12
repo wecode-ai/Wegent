@@ -1,3 +1,4 @@
+import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
 import { createPluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
 import {
   useCallback,
@@ -2941,6 +2942,7 @@ export function WorkbenchProvider({
                 models={conversationModels}
                 services={resolvedServices}
               />
+              <RunnerSelectionHost />
               {children}
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>

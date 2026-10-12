@@ -8,9 +8,28 @@ pub(super) fn create_local_execution(
     agent_id: &str,
     agent: &LoopItem,
     priority: &str,
-    payload: Value,
+    mut payload: Value,
 ) -> Result<i64, TaskRuntimeError> {
     let metadata = &agent.metadata;
+    if metadata
+        .get("routing_configuration_required")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "RUNNER_CONFIGURATION_REQUIRED: review the migrated agent policies".into(),
+        ));
+    }
+    if metadata
+        .get("execution_policy")
+        .is_some_and(|policy| !policy.is_null())
+    {
+        if !payload.is_object() {
+            payload = json!({});
+        }
+        payload["runnerPolicy"] = json!({"execution_policy":metadata["execution_policy"], "model_policy":metadata["model_policy"], "runtime":metadata["runtime"]});
+    }
+
     let mode = metadata
         .get("execution_mode")
         .and_then(Value::as_str)
@@ -43,10 +62,14 @@ pub(super) fn create_local_execution(
             project_id,
             agent_id,
             environment,
-            agent
-                .metadata
-                .get("execution_device_id")
-                .and_then(Value::as_str),
+            if metadata
+                .get("execution_policy")
+                .is_some_and(|v| !v.is_null())
+            {
+                None
+            } else {
+                metadata.get("execution_device_id").and_then(Value::as_str)
+            },
             status,
             priority_weight(priority),
             now,
@@ -372,4 +395,75 @@ impl LocalTaskStore {
         transaction.commit()?;
         Ok(())
     }
+}
+
+pub(super) fn comment_execution_payload(
+    connection: &Connection,
+    trigger: &LocalComment,
+    agent_id: &str,
+    mut payload: Value,
+) -> Result<Value, TaskRuntimeError> {
+    if trigger.reply_to_message_id.is_none() {
+        return Ok(payload);
+    }
+    let previous: Option<String> = connection.query_row(
+        "SELECT metadata FROM loop_item_comments
+         WHERE project_id=?1 AND task_id=?2 AND (thread_root_message_id=?3 OR message_id=?3) AND sender_type='agent'
+           AND sender_id=?4 AND deleted_at IS NULL
+         ORDER BY id DESC LIMIT 1",
+        params![trigger.project_id, trigger.task_id, trigger.thread_root_message_id, agent_id], |row| row.get(0),
+    ).optional()?;
+    let previous: Value = serde_json::from_str(&previous.ok_or_else(|| {
+        TaskRuntimeError::Invalid("The thread has no resumable execution".into())
+    })?)
+    .map_err(|_| TaskRuntimeError::Invalid("Invalid thread execution metadata".into()))?;
+    let task_id = if let Some(execution_id) = previous["execution_id"].as_i64() {
+        let execution = execution_row(connection, execution_id)?;
+        let task_id = execution
+            .runtime_task_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .or_else(|| {
+                execution
+                    .execution_payload
+                    .as_ref()
+                    .and_then(|value| value["continueTaskId"].as_str())
+            })
+            .ok_or_else(|| {
+                TaskRuntimeError::Invalid("The thread execution has not been claimed yet".into())
+            })?
+            .to_owned();
+        payload = execution.execution_payload.ok_or_else(|| {
+            TaskRuntimeError::Invalid("The thread execution configuration is unavailable".into())
+        })?;
+        task_id
+    } else {
+        // Pre-queue comments persist their session through a TaskBinding.
+        let address = &previous["runtime_address"];
+        let device = address["deviceId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| TaskRuntimeError::Invalid("The thread runner is unavailable".into()))?;
+        let task = address["taskId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| TaskRuntimeError::Invalid("The thread session is unavailable".into()))?;
+        let bound: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='execution' AND cloud_project_id=?1 AND loop_item_id=?2 AND device_id=?3 AND task_id=?4)",
+            params![trigger.project_id, trigger.task_id, device, task], |row| row.get(0),
+        )?;
+        if !bound {
+            return Err(TaskRuntimeError::Invalid(
+                "ISSUE_RUNNER_CONFLICT: the historical session is not bound to this Issue".into(),
+            ));
+        }
+        payload["resumeEnvironmentId"] = json!(device);
+        task.to_owned()
+    };
+    payload["message"] = json!(trigger.content);
+    payload["continueTaskId"] = json!(task_id);
+    payload["runtimeAction"] = json!("send");
+    payload["queueIfBusy"] = json!(true);
+    payload["clientUserMessageId"] = json!(trigger.message_id);
+    Ok(payload)
 }

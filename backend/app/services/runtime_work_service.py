@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 
@@ -515,7 +516,18 @@ async def get_runtime_transcript(
         raise HTTPException(
             502, "Runtime transcript response is missing canonical turns"
         )
-    return RuntimeTranscriptResponse.model_validate(result)
+    try:
+        return RuntimeTranscriptResponse.model_validate(result)
+    except ValidationError as exc:
+        logger.error(
+            "[RuntimeWork] Invalid transcript response: device_id=%s task_id=%s fields=%s",
+            normalized_address.device_id,
+            normalized_address.local_task_id,
+            [error["loc"] for error in exc.errors()],
+        )
+        raise HTTPException(
+            502, "Runtime returned an invalid conversation response"
+        ) from exc
 
 
 async def search_runtime_work(
@@ -1414,6 +1426,7 @@ def compile_runtime_task_create(
     db: Session,
     user_id: int,
     request: RuntimeTaskCreateRequest,
+    execution_user_id: int | None = None,
 ) -> CompiledRuntimeTaskCreate:
     """Compile a create request for a Backend-owned Executor target."""
 
@@ -1421,7 +1434,7 @@ def compile_runtime_task_create(
     _ensure_owned_device(db, user_id, target.device_id)
     return _compile_runtime_task_create(
         db=db,
-        user_id=user_id,
+        user_id=execution_user_id if execution_user_id is not None else user_id,
         request=request,
         target=target,
     )
@@ -2508,7 +2521,12 @@ def _runtime_create_response(
         source_workspace_path=workspace_path,
         workspace_source=workspace_source,
     )
-    if workspace_source == "git_worktree" and response_workspace_path is None:
+    workspace_pending = result.get("workspacePending") is True
+    if (
+        workspace_source == "git_worktree"
+        and response_workspace_path is None
+        and not workspace_pending
+    ):
         error_code = _runtime_result_error_code(result) or "worktree_prepare_failed"
         return RuntimeTaskCreateResponse(
             accepted=False,
@@ -2523,7 +2541,9 @@ def _runtime_create_response(
             errorCode=error_code,
         )
 
-    resolved_workspace_path = response_workspace_path or workspace_path
+    resolved_workspace_path = (
+        "" if workspace_pending else response_workspace_path or workspace_path
+    )
     runtime_handle = result.get("runtimeHandle") or result.get("runtime_handle")
     if not isinstance(runtime_handle, dict):
         runtime_handle = None
@@ -2543,6 +2563,7 @@ def _runtime_create_response(
         deviceId=str(result.get("deviceId") or device_id),
         taskId=str(result.get("taskId") or ""),
         workspacePath=resolved_workspace_path,
+        workspacePending=workspace_pending,
         runtime=result.get("runtime") or runtime,
         runtimeHandle=runtime_handle,
         error=result.get("error"),
@@ -4069,6 +4090,7 @@ def _resolve_runtime_task_target(
         request.standalone_chat_workspace
         or request.workspace_source_task
         or request.runtime_project_key
+        or isinstance((request.execution or {}).get("environment"), dict)
     ):
         requested_workspace = _request_execution_workspace(request)
         return RuntimeTaskTarget(
@@ -4177,6 +4199,9 @@ def _build_team_runtime_execution_request(
         prompt=message,
         message_id=1,
     )
+    model_config, model_name, force_override = _runtime_model_override(
+        db, user_id, request
+    )
     execution_request = TaskRequestBuilder(db).build(
         subtask=subtask,
         task=task,
@@ -4186,6 +4211,9 @@ def _build_team_runtime_execution_request(
         new_session=getattr(request, "new_session", True),
         preload_skills=list(request.additional_skills),
         attachments=_runtime_create_attachment_payloads(db, user_id, request),
+        runtime_model_config=request.runtime_model_config or model_config,
+        override_model_name=model_name,
+        force_override=force_override,
     )
     _apply_runtime_task_target(execution_request, target)
     _apply_runtime_create_request(execution_request, request)
@@ -4503,6 +4531,13 @@ def _runtime_model_override_values(
 ) -> tuple[Optional[dict[str, Any]], Optional[str], bool]:
     """Resolve one model selection without coupling it to a request container."""
 
+    runner_provider = model_options.get("runnerModelProvider")
+    if runner_provider:
+        return (
+            {"model_id": model_id, "model_provider": str(runner_provider)},
+            None,
+            False,
+        )
     if not model_id:
         return None, None, False
     if runtime == "codex" and model_type == RUNTIME_MODEL_TYPE:
@@ -4517,7 +4552,7 @@ def _runtime_model_override_values(
             user_id=user_id,
         )
         return config, None, False
-    if runtime == "codex" and model_type in CLOUD_MODEL_TYPES:
+    if runtime in {"codex", "claude_code"} and model_type in CLOUD_MODEL_TYPES:
         from app.services.chat.trigger.request_preparation import (
             _build_cloud_gateway_model_config,
         )
@@ -4537,6 +4572,26 @@ def _runtime_model_override_values(
                 detail="Cloud model gateway is not configured",
             )
         _apply_runtime_cloud_model_options(config, model_options)
+        if runtime == "claude_code":
+            if config.get("upstream_api_format") != "anthropic-messages":
+                raise HTTPException(
+                    422, "Claude Code requires an Anthropic Messages model"
+                )
+            config["default_headers"][
+                "X-Wegent-Upstream-Header-wecode-executor"
+            ] = "claude"
+            config.update(
+                {
+                    "model": "claude",
+                    "protocol": "anthropic-messages",
+                    "ANTHROPIC_AUTH_TOKEN": config["api_key"],
+                    "ANTHROPIC_BASE_URL": config["base_url"],
+                    "ANTHROPIC_CUSTOM_HEADERS": "\n".join(
+                        f"{key}: {value}"
+                        for key, value in config["default_headers"].items()
+                    ),
+                }
+            )
         return config, None, False
     if runtime == "codex" and model_type is None:
         # Centralized V1 adapter for persisted robot records created before

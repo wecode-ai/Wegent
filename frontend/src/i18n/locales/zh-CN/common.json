@@ -22,7 +22,6 @@
     "title": "新建智能体",
     "description": "设置名称、模型和提示词即可创建，其他能力默认跟随运行设备。",
     "basic_section": "基本信息",
-    "capabilities_section": "运行配置",
     "abilities_section": "能力",
     "advanced": "高级设置",
     "advanced_description": "MCP 与其他运行参数",

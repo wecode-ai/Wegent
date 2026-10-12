@@ -272,7 +272,7 @@ function toBoardSnapshot(
 function toAutomationRule(
   rule: Awaited<ReturnType<ProjectAutomationApi['create']>>
 ): WorkspaceAutomationRule {
-  return { ...rule }
+  return { ...rule, runnerSelection: rule.runnerSelection ?? undefined }
 }
 
 function toAutomationRun(

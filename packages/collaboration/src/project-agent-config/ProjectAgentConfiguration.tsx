@@ -495,6 +495,7 @@ export function ProjectAgentConfiguration({
       });
     }
     return host?.renderAgentCreator?.({
+      projectId: scope === "project" ? project.id : undefined,
       namespace: creatorContext.namespace,
       onClose,
       onCreated: createAndAddAgent,
@@ -788,6 +789,8 @@ export function ProjectAgentConfiguration({
                 editingAgent.wegentTeamId !== null &&
                 host?.renderAgentEditor
               ? host.renderAgentEditor({
+                  projectId:
+                    scope === "project" ? String(project.id) : undefined,
                   agent: { teamId: editingAgent.wegentTeamId },
                   namespace: creatorContext.namespace,
                   onClose: () => setEditingAgentId(null),

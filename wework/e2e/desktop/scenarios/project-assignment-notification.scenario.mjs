@@ -21,7 +21,7 @@ import {
 } from '../modules/shared.mjs'
 import {
   inCollaborationSidebar,
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
 
@@ -609,7 +609,7 @@ export function createDesktopScenario({
         'remote'
       )
       assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
-      await initializeFirstProjectExecutionEnvironment(
+      await configureFirstProjectExecutionEnvironment(
         control,
         CONTENT,
         modelResponseTimeoutMs,

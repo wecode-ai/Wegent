@@ -22,7 +22,6 @@
     "title": "Create Agent",
     "description": "Set a name, model, and prompt to create the Agent. Other capabilities follow the runtime device by default.",
     "basic_section": "Basic information",
-    "capabilities_section": "Runtime",
     "abilities_section": "Capabilities",
     "advanced": "Advanced settings",
     "advanced_description": "MCP and other runtime parameters",

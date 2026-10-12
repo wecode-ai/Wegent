@@ -124,6 +124,8 @@ fn deserialize_optional_group_id<'de, D: serde::Deserializer<'de>>(
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChatAgentCreate {
+    pub execution_policy: Option<Value>,
+    pub model_policy: Option<Value>,
     pub name: String,
     pub display_name: Option<String>,
     pub namespace: Option<String>,
@@ -160,6 +162,8 @@ pub struct ChatAgentCreate {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChatAgentUpdate {
+    pub execution_policy: Option<Value>,
+    pub model_policy: Option<Value>,
     pub version: i64,
     pub name: Option<String>,
     pub display_name: Option<String>,
@@ -189,6 +193,8 @@ pub struct ChatAgentUpdate {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatAgent {
+    pub execution_policy: Option<Value>,
+    pub model_policy: Option<Value>,
     pub id: String,
     pub project_id: String,
     pub name: String,

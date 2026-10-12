@@ -16,7 +16,7 @@ import {
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import {
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -188,6 +188,41 @@ export function createDesktopScenario({
         })
         await capture(control, 'collaboration-shared-core-01-all-workspaces.png')
 
+        await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
+        const deviceRow = scoped(`[data-testid="collaboration-devices-row-${remoteDevice.id}"]`)
+        await control.command('waitFor', deviceRow, { visible: true, timeoutMs: uiTimeoutMs })
+        const currentDeviceRows = scoped(
+          '[data-testid^="collaboration-devices-row-"][data-source="local"]'
+        )
+        await control.command('waitFor', currentDeviceRows, {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.equal(
+          Number(await control.command('getElementCount', currentDeviceRows)),
+          1,
+          'Only the active local runtime may be labelled as the current device'
+        )
+        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await control.command(
+          'clickThenMacrotask',
+          scoped('[data-testid="collaboration-primary-devices"]'),
+          {
+            target: scoped('[data-testid="collaboration-devices-scope-all"]'),
+          }
+        )
+        assert.equal(
+          Number(await control.command('getElementCount', deviceRow)),
+          1,
+          'Reopening the device catalog discarded the loaded cloud runner'
+        )
+        assert.doesNotMatch(
+          await control.command('getText', scoped('[data-testid="collaboration-devices-page"]')),
+          /尚未添加设备|当前没有云端设备/,
+          'A cached device catalog rendered a false empty state'
+        )
+        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+
         const workspaceName = `${WORKSPACE_NAME}-${process.pid}`
         await control.command('click', scoped('[data-testid="collaboration-workspace-create"]'))
         await control.command(
@@ -315,7 +350,7 @@ export function createDesktopScenario({
           'click',
           scoped('[data-testid="issue-execution-environment-notice-action"]')
         )
-        await initializeFirstProjectExecutionEnvironment(
+        await configureFirstProjectExecutionEnvironment(
           control,
           ACTIVE_WORKBENCH_SELECTOR,
           uiTimeoutMs,
@@ -333,7 +368,7 @@ export function createDesktopScenario({
             )
           ),
           0,
-          'The execution environment warning remained after initialization and returning home'
+          'The execution environment warning remained after authorizing an online runner'
         )
         const terminalStatusIssue = await request(
           `/api/v1/cloud-projects/${project.id}/loop-items`,

@@ -228,6 +228,11 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         ),
         "capability_mode": capability_mode,
         "execution_device_id": row.device_id,
+        "routing_configuration_required": metadata.get(
+            "routing_configuration_required", False
+        ),
+        "execution_policy": metadata.get("execution_policy"),
+        "model_policy": metadata.get("model_policy"),
         "default_runtime_profile_id": metadata.get(BOT_RUNTIME_PROFILE_ID_KEY),
         "plugins": metadata.get(BOT_PLUGINS_KEY, []),
         "additional_skills": metadata.get(BOT_ADDITIONAL_SKILLS_KEY, []),
@@ -255,6 +260,14 @@ def compiled_bot_config(
     """
 
     config = bot_config(row)
+    if config.get("routing_configuration_required"):
+        from app.services.runner_routing import routing_error
+
+        raise routing_error(
+            "RUNNER_CONFIGURATION_REQUIRED",
+            "Review the migrated agent's environment and model policies",
+        )
+
     if config["runtime"] != "wegent":
         return config
 
@@ -332,13 +345,28 @@ def compiled_bot_config(
 
     from app.services.chat.config.model_resolver import resolve_model_name_for_bot
 
-    model_name = resolve_model_name_for_bot(
-        db,
-        bot,
-        resolved_execution_user_id,
+    if bot_crd.spec.routing_configuration_required:
+        from app.services.runner_routing import routing_error
+
+        raise routing_error(
+            "RUNNER_CONFIGURATION_REQUIRED",
+            "Review the migrated agent's environment and model policies",
+        )
+    policy_model = (
+        bot_crd.spec.model_policy.model if bot_crd.spec.model_policy else None
+    )
+    cloud_ref = (
+        policy_model.cloud_model
+        if policy_model and policy_model.source == "cloud"
+        else None
+    )
+    model_name = (
+        (cloud_ref.name if cloud_ref else policy_model.model_id if policy_model else "")
+        if bot_crd.spec.execution_policy
+        else resolve_model_name_for_bot(db, bot, resolved_execution_user_id)
     )
     model_kind = None
-    if bot_crd.spec.modelRef is not None:
+    if not bot_crd.spec.execution_policy and bot_crd.spec.modelRef is not None:
         model_kind = kindReader.get_by_name_and_namespace(
             db,
             resolved_execution_user_id,
@@ -346,7 +374,9 @@ def compiled_bot_config(
             bot_crd.spec.modelRef.namespace,
             bot_crd.spec.modelRef.name,
         )
-    if model_kind is None:
+    if cloud_ref is not None:
+        model_type = cloud_ref.type
+    elif model_kind is None:
         model_type = "runtime"
     elif model_kind.user_id == 0:
         model_type = "public"
@@ -356,15 +386,19 @@ def compiled_bot_config(
         model_type = "group"
 
     model_options: dict[str, str] = {}
-    if model_kind is not None:
+    if model_kind is not None or cloud_ref is not None:
         from app.services.runtime_profiles import (
             CLOUD_MODEL_NAMESPACE_OPTION,
             CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
         )
 
         model_options = {
-            CLOUD_MODEL_NAMESPACE_OPTION: model_kind.namespace,
-            CLOUD_MODEL_RESOURCE_USER_ID_OPTION: str(model_kind.user_id),
+            CLOUD_MODEL_NAMESPACE_OPTION: (
+                cloud_ref.namespace if cloud_ref else model_kind.namespace
+            ),
+            CLOUD_MODEL_RESOURCE_USER_ID_OPTION: str(
+                cloud_ref.resource_user_id if cloud_ref else model_kind.user_id
+            ),
         }
 
     additional_skills = [
@@ -387,6 +421,16 @@ def compiled_bot_config(
     return {
         **config,
         "runtime": native_runtime,
+        "execution_policy": (
+            bot_crd.spec.execution_policy.model_dump()
+            if bot_crd.spec.execution_policy
+            else config.get("execution_policy")
+        ),
+        "model_policy": (
+            bot_crd.spec.model_policy.model_dump()
+            if bot_crd.spec.model_policy
+            else config.get("model_policy")
+        ),
         "model": model_name,
         "model_type": model_type,
         "model_options": model_options,
@@ -467,6 +511,16 @@ class ProjectChatService:
             task_id=None,
             required_role=BaseRole.Maintainer,
         )
+        from app.services.runner_routing import validate_agent_policies
+
+        validate_agent_policies(
+            db,
+            user_id=user_id,
+            project_id=project_id,
+            policy=request.execution_policy,
+            model_policy=request.model_policy,
+            runtime=request.runtime,
+        )
         if request.runtime == "wegent":
             from app.services.project_automation_domain import runnable_wegent_team
 
@@ -518,6 +572,14 @@ class ProjectChatService:
             "model_options": request.model_options,
             "system_prompt": request.system_prompt,
             BOT_CAPABILITY_MODE_KEY: request.capability_mode,
+            "execution_policy": (
+                request.execution_policy.model_dump()
+                if request.execution_policy
+                else None
+            ),
+            "model_policy": (
+                request.model_policy.model_dump() if request.model_policy else None
+            ),
             BOT_VISIBILITY_KEY: request.visibility,
             BOT_EXECUTION_ENVIRONMENT_KEY: request.execution_environment,
             BOT_EXECUTION_MODE_KEY: request.execution_mode,
@@ -619,6 +681,27 @@ class ProjectChatService:
             metadata[BOT_MCP_SERVERS_KEY] = request.mcp_servers
         if request.capability_description is not None:
             row.description = request.capability_description.strip()
+        for field in ("execution_policy", "model_policy"):
+            if field in request.model_fields_set:
+                value = getattr(request, field)
+                metadata[field] = value.model_dump() if value else None
+        if {"execution_policy", "model_policy"} & request.model_fields_set:
+            if not metadata.get("execution_policy") or not metadata.get("model_policy"):
+                raise HTTPException(
+                    422, "Environment and model policies must be configured together"
+                )
+            metadata.pop("routing_configuration_required", None)
+            from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy
+            from app.services.runner_routing import validate_agent_policies
+
+            validate_agent_policies(
+                db,
+                user_id=user_id,
+                project_id=project_id,
+                policy=ExecutionPolicy.model_validate(metadata["execution_policy"]),
+                model_policy=ModelPolicy.model_validate(metadata["model_policy"]),
+                runtime=metadata.get("runtime"),
+            )
         if request.capability_mode is not None:
             metadata[BOT_CAPABILITY_MODE_KEY] = request.capability_mode
         if request.visibility is not None:
@@ -2221,6 +2304,8 @@ class ProjectChatService:
             ),
             execution_mode=config.get("execution_mode") or BOT_DEFAULT_EXECUTION_MODE,
             execution_device_id=row.device_id or None,
+            execution_policy=config.get("execution_policy"),
+            model_policy=config.get("model_policy"),
             workspace_binding=workspace_binding,
             local_project_id=workspace_binding.project_id,
             max_concurrent_executions=int(

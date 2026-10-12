@@ -1,3 +1,8 @@
+import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
+import {
+  AgentEnvironmentFields,
+  AgentModelFields,
+} from '@/features/collaboration/AgentRoutingFields'
 import { useEffect, useMemo, useState } from 'react'
 import {
   AgentCapabilitiesSelector,
@@ -84,6 +89,8 @@ export function ProjectChatAgentEditor({
   const [modelNamespace, setModelNamespace] = useState('default')
   const [allowedModels, setAllowedModels] = useState<LocalProjectChatAgentModel[]>([])
   const [runtime, setRuntime] = useState<LocalProjectChatAgent['runtime']>('codex')
+  const routing = useAgentRouting(api, runtime, projectId)
+  const loadRouting = routing.load
   const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
   const [mcpConfig, setMcpConfig] = useState('{}')
   const [models, setModels] = useState<
@@ -199,6 +206,7 @@ export function ProjectChatAgentEditor({
                 : [])
           )
           setRuntime(agent.runtime)
+          loadRouting(agent.executionPolicy, agent.modelPolicy)
           setCapabilityMode(agent.capabilityMode)
           setMcpConfig(JSON.stringify(agent.mcpServers ?? {}, null, 2))
           setSelectedSkillKeys(storedSkillKeys(agent.additionalSkills))
@@ -232,7 +240,7 @@ export function ProjectChatAgentEditor({
     return () => {
       active = false
     }
-  }, [api, editingAgentId, modelApi, pluginApi, projectId, skillApi, t])
+  }, [api, editingAgentId, modelApi, pluginApi, projectId, skillApi, t, loadRouting])
 
   const selectedSkillSet = useMemo(() => new Set(selectedSkillKeys), [selectedSkillKeys])
   const selectedPluginSet = useMemo(() => new Set(selectedPluginIds), [selectedPluginIds])
@@ -273,7 +281,7 @@ export function ProjectChatAgentEditor({
 
   const save = async () => {
     if (busy || loadingAgent) return
-    if (defaultDeviceAgent ? allowedModels.length === 0 : !model) {
+    if (defaultDeviceAgent ? allowedModels.length === 0 : !routing.valid) {
       setError(t('workbench.agent_creator_model_required', '请选择模型'))
       return
     }
@@ -326,9 +334,17 @@ export function ProjectChatAgentEditor({
         displayName: definition.displayName,
         namespace: definition.namespace,
         runtime,
-        model: definition.model.name,
-        modelType: definition.model.type,
-        modelNamespace: definition.model.namespace,
+        executionPolicy: defaultDeviceAgent ? undefined : (routing.executionPolicy ?? undefined),
+        modelPolicy: defaultDeviceAgent ? undefined : (routing.modelPolicy ?? undefined),
+        model: defaultDeviceAgent
+          ? definition.model.name
+          : (routing.model?.cloud_model?.name ?? routing.model?.model_id ?? null),
+        modelType: defaultDeviceAgent
+          ? definition.model.type
+          : (routing.model?.cloud_model?.type ?? 'runtime'),
+        modelNamespace: defaultDeviceAgent
+          ? definition.model.namespace
+          : (routing.model?.cloud_model?.namespace ?? 'default'),
         allowedModels: defaultDeviceAgent ? allowedModels : [definition.model],
         capabilityDescription: legacyConfig.capabilityDescription,
         capabilityMode: definition.capabilityMode,
@@ -375,8 +391,8 @@ export function ProjectChatAgentEditor({
               ),
         title:
           capabilityMode === 'follow_device'
-            ? t('workbench.agent_creator_follow_device_summary', '能力：跟随运行设备')
-            : t('workbench.agent_creator_manual_summary', '能力：固定到智能体'),
+            ? t('workbench.agent_creator_follow_device_summary', '使用环境能力')
+            : t('workbench.agent_creator_manual_summary', '自定义能力'),
       }}
       busy={busy}
       capabilities={
@@ -434,14 +450,8 @@ export function ProjectChatAgentEditor({
       }
       description={
         editing
-          ? t(
-              'workbench.agent_editor_description',
-              '修改智能体资源的执行器、模型、Skill、插件和 MCP，保存后立即对项目生效。'
-            )
-          : t(
-              'workbench.agent_creator_description',
-              '设置名称、模型和提示词即可创建，其他能力默认跟随运行设备。'
-            )
+          ? t('workbench.agent_editor_description', '修改执行环境、模型和提示词。')
+          : t('workbench.agent_creator_description', '先选择执行环境，再设置模型和提示词。')
       }
       displayName={{
         label: t('workbench.agent_creator_display_name', '智能体名称'),
@@ -451,6 +461,15 @@ export function ProjectChatAgentEditor({
         value: displayName,
       }}
       error={error}
+      executionControl={
+        defaultDeviceAgent ? undefined : (
+          <AgentEnvironmentFields
+            routing={routing}
+            disabled={busy || loadingAgent}
+            prefix="cloud-project-chat-agent"
+          />
+        )
+      }
       capabilityMode={
         <AgentCapabilityModeSelector
           busy={busy || loadingAgent}
@@ -493,24 +512,12 @@ export function ProjectChatAgentEditor({
           value={capabilityMode}
         />
       }
-      footerHint={
-        capabilityMode === 'follow_device'
-          ? t(
-              'workbench.agent_creator_follow_device_footer',
-              '使用 Codex，并从任务运行设备获取能力。'
-            )
-          : t(
-              'workbench.agent_creator_manual_footer',
-              '使用 Codex；所选能力会随智能体同步到执行设备。'
-            )
-      }
       labels={{
         advanced: t('workbench.agent_creator_advanced', '高级设置'),
         advancedDescription: t(
           'workbench.agent_creator_advanced_description',
           'MCP 与其他运行参数'
         ),
-        capabilitiesSection: t('workbench.agent_creator_capabilities', '运行配置'),
         cancel: t('workbench.cancel', '取消'),
         close: t('workbench.close', '关闭'),
         owner: t('workbench.agent_creator_owner', '保存位置'),
@@ -527,32 +534,6 @@ export function ProjectChatAgentEditor({
               value: mcpConfig,
             }
           : undefined
-      }
-      model={
-        defaultDeviceAgent
-          ? undefined
-          : {
-              disabled: loadingAgent,
-              label: t('workbench.agent_creator_model', '模型'),
-              onChange: value => {
-                const selected = models.find(candidate => candidate.name === value)
-                setModel(value)
-                setModelType(selected?.type)
-                setModelNamespace(selected?.namespace || 'default')
-              },
-              options: [
-                ...(model && !models.some(candidate => candidate.name === model)
-                  ? [{ value: model, label: model }]
-                  : []),
-                ...models.map(item => ({
-                  value: item.name,
-                  label: item.displayName || item.name,
-                })),
-              ],
-              placeholder: t('workbench.agent_creator_model_placeholder', '请选择模型'),
-              testId: 'cloud-project-chat-agent-model',
-              value: model,
-            }
       }
       modelControl={
         defaultDeviceAgent ? (
@@ -630,7 +611,13 @@ export function ProjectChatAgentEditor({
               })}
             </div>
           </fieldset>
-        ) : undefined
+        ) : (
+          <AgentModelFields
+            routing={routing}
+            disabled={busy || loadingAgent}
+            prefix="cloud-project-chat-agent"
+          />
+        )
       }
       namespace={namespace}
       onClose={onClose}
@@ -675,7 +662,9 @@ export function ProjectChatAgentEditor({
           }
         />
       }
-      saveDisabled={loadingAgent || (defaultDeviceAgent ? allowedModels.length === 0 : !model)}
+      saveDisabled={
+        loadingAgent || (defaultDeviceAgent ? allowedModels.length === 0 : !routing.valid)
+      }
       saveLabel={
         editing
           ? t('workbench.agent_editor_save', '保存')

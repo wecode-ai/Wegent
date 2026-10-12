@@ -988,6 +988,7 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
     matches!(
         key,
         "message"
+            | "collaborationMemberRuntimeProfiles"
             | "messages"
             | "userMessagePresentations"
             | "cachedMessage"
@@ -1179,6 +1180,7 @@ mod tests {
             runtime_handle: json!({
                 "threadId": "stale-thread",
                 "modelSelection": {"model": "gpt-5.5"},
+                "collaborationMemberRuntimeProfiles": [{"credential": "memory-only"}],
                 "messages": [
                     {
                         "role": "assistant",
@@ -1208,6 +1210,7 @@ mod tests {
         assert_eq!(handle["modelSelection"]["model"], "gpt-5.5");
         assert!(handle.get("messages").is_none());
         assert!(handle.get("userMessagePresentations").is_none());
+        assert!(handle.get("collaborationMemberRuntimeProfiles").is_none());
     }
 
     #[test]

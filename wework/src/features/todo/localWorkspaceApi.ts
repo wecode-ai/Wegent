@@ -1,3 +1,5 @@
+import { cloudRunnerModels, resolveRunnerSelection } from '@wegent/collaboration'
+import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
   mapAutomationExecutionCatalog,
   type CollaborationExecutionEnvironmentConfig,
@@ -95,9 +97,9 @@ export function createLocalWorkspaceApi(
         name: device.name,
         kind: 'local_device' as const,
         coding_tools: ['codex'],
-        owner_type: 'workspace' as const,
-        owner_id: LOCAL_WORKSPACE_ID,
-        owner_name: locale === 'zh-CN' ? '本地空间' : 'Local space',
+        owner_type: 'user' as const,
+        owner_id: String(userId),
+        owner_name: userName,
         status:
           device.status === 'online' || device.status === 'busy'
             ? ('online' as const)
@@ -384,11 +386,98 @@ export function createLocalWorkspaceApi(
     const project = await delivery.projects.get(projectId)
     return project.automatic_processing_rules ?? []
   }
+  const validateRunnerSelections = async (projectId: string, rules: WorkspaceAutomationRule[]) => {
+    if (!projectAgentApi) return
+    const agents = await projectAgentApi.list(projectId)
+    const groups = await projectCollaborationGroups(projectId)
+    const environments = await projectAgentApi.listRunnerEnvironments(projectId)
+    const cloudModels = await projectAgentApi.listModels()
+    for (const rule of rules) {
+      if (!rule.enabled || rule.targetKind === 'human') continue
+      const group =
+        rule.targetKind === 'collaboration_group'
+          ? groups.find(item => item.id === rule.targetId)
+          : undefined
+      const ids = group
+        ? [group.leader, ...group.members]
+            .filter(item => item.kind === 'agent')
+            .map(item => item.id)
+        : [rule.targetId]
+      const members = [...new Set(ids)].map(id => {
+        const agent = agents.find(item => item.id === id)
+        if (!agent) throw new Error(`Automation agent '${id}' is unavailable`)
+        return agent
+      })
+      for (const agent of members) {
+        if (!agent.executionPolicy || !agent.modelPolicy) continue
+        const selection = () => ({
+          ...(agent.executionPolicy?.mode === 'user_select'
+            ? { execution_policy: rule.runnerSelection?.execution_policy }
+            : {}),
+          ...(agent.modelPolicy?.mode === 'user_select'
+            ? { model: rule.runnerSelection?.model }
+            : {}),
+        })
+        const input = {
+          environments,
+          cloudModels: cloudRunnerModels(cloudModels),
+          executionPolicy: agent.executionPolicy,
+          modelPolicy: agent.modelPolicy,
+          runtime: agent.runtime,
+          automatic: true,
+        }
+        try {
+          resolveRunnerSelection({ ...input, selection: selection() })
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            !/^(AUTOMATION_RUNNER_REQUIRED|RUNNER_MODEL_REQUIRED):/.test(error.message)
+          )
+            throw error
+          rule.runnerSelection = {
+            ...rule.runnerSelection,
+            ...(await requestRunnerSelection({
+              environments,
+              cloud_models: cloudModels,
+              cloud_only: agent.executionPolicy.mode !== 'fixed',
+              runtime: agent.runtime,
+              execution_policy: agent.executionPolicy,
+              model_policy: agent.modelPolicy,
+              automatic: true,
+            })),
+          }
+          resolveRunnerSelection({ ...input, selection: selection() })
+        }
+      }
+      // Recheck the entire group after the last choice: one deferred selection
+      // must satisfy every member that delegates that choice to the operator.
+      for (const agent of members) {
+        if (!agent.executionPolicy || !agent.modelPolicy) continue
+        resolveRunnerSelection({
+          environments,
+          cloudModels: cloudRunnerModels(cloudModels),
+          executionPolicy: agent.executionPolicy,
+          modelPolicy: agent.modelPolicy,
+          runtime: agent.runtime,
+          automatic: true,
+          selection: {
+            ...(agent.executionPolicy.mode === 'user_select'
+              ? { execution_policy: rule.runnerSelection?.execution_policy }
+              : {}),
+            ...(agent.modelPolicy.mode === 'user_select'
+              ? { model: rule.runnerSelection?.model }
+              : {}),
+          },
+        })
+      }
+    }
+  }
   const persistProjectAutomaticProcessingRules = async (
     projectId: string,
     rules: WorkspaceAutomationRule[]
   ) => {
     const project = await delivery.projects.get(projectId)
+    await validateRunnerSelections(projectId, rules)
     const updated = await delivery.projects.update(projectId, {
       version: project.version,
       automaticProcessingRules: rules,
@@ -565,6 +654,7 @@ export function createLocalWorkspaceApi(
       },
     },
     resources: {
+      devices: { local: executionEnvironments },
       list: async () => ({
         agents: await localAgentResources(),
         execution_environments: await executionEnvironments(),
