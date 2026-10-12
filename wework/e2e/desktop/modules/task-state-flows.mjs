@@ -397,6 +397,79 @@ export async function verifyAsyncRequestUserInput({ composerSelector, control, e
   )
 }
 
+export async function verifyAsyncQuestionWaitingIndicator({
+  composerSelector,
+  control,
+  executorHome,
+}) {
+  await setCatalogOverride(executorHome, DEFAULT_MODEL_ID, {
+    experimental_supported_tools: ['request_user_input_async'],
+  })
+  control.setScenario('request_user_input_async')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (snapshot.testIds.includes('plan-mode-pill')) {
+    await control.command('click', '[data-testid="cancel-plan-mode-button"]')
+  }
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    REQUEST_USER_INPUT_ASYNC_PROMPT,
+    'request_user_input_async'
+  )
+  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+    text: REQUEST_USER_INPUT_ASYNC_QUESTION,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForWorkbenchDebugState(
+    control,
+    state => state.pane?.status?.isBusy === false,
+    'The async question execution did not finish'
+  )
+  const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const taskId = debug.workbench?.currentRuntimeTask?.taskId
+  assert.ok(taskId, 'The async question task must have a runtime ID')
+  await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
+  const waitingSelector = `[data-testid="runtime-local-task-waiting-${taskId}"]`
+  await control.command('waitFor', waitingSelector, {
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
+  await control.command('waitFor', waitingSelector, {
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
+  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+    text: REQUEST_USER_INPUT_ASYNC_QUESTION,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="request-user-input-option-question_1-1"]')
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', waitingSelector)),
+    0,
+    'The sidebar must clear its async waiting indicator after the reply is accepted'
+  )
+}
+
 async function findRuntimeTaskSortableListSelector(control, taskRowTestIds) {
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   const candidateTestIds = snapshot.testIds.filter(

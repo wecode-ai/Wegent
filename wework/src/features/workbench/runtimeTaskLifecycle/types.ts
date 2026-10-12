@@ -92,7 +92,7 @@ export type RuntimeTaskLifecycleEvent =
       outcome?: Exclude<RuntimeTaskTurnOutcome, null>
     }
   | { type: 'turn_recovered'; streaming: boolean; turnId?: string | null }
-  | { type: 'user_input_requested' }
+  | { type: 'user_input_requested'; delivery?: 'async' }
   | { type: 'user_input_responded' }
   | { type: 'goal_status_received'; goalStatus: RuntimeGoalStatus | null }
   | { type: 'marked_read' }

@@ -60,6 +60,9 @@ fn task_group(
         }
         return WorkspaceGroupKey::Directory(path.to_owned());
     }
+    if infer_workspace_kind(&link.workspace_path) == "chat" {
+        return WorkspaceGroupKey::Directory(normalize_workspace_path(&link.workspace_path));
+    }
     // Unbound local tasks may be grouped by a unique local root. A remote
     // reference with the same path cannot claim them.
     let mut matches = groups
@@ -269,6 +272,22 @@ mod tests {
         assert_eq!(rows[1]["tasks"].as_array().unwrap().len(), 1);
         assert_eq!(rows[0]["tasks"][0]["taskId"], "task-a");
         assert_eq!(rows[1]["tasks"][0]["taskId"], "task-b");
+    }
+
+    #[test]
+    fn workspace_response_does_not_assign_standalone_chats_to_an_ancestor_project() {
+        let chat_path = "/srv/work/Documents/Codex/chat";
+        let mut standalone = task("standalone", None);
+        standalone.workspace_path = chat_path.to_owned();
+        let mut assigned = task("assigned", Some("project"));
+        assigned.workspace_path = chat_path.to_owned();
+        let rows = workspace_response(vec![standalone, assigned], vec![project("project", None)]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["tasks"].as_array().unwrap().len(), 1);
+        assert_eq!(rows[0]["tasks"][0]["taskId"], "assigned");
+        assert_eq!(rows[1]["workspacePath"], chat_path);
+        assert_eq!(rows[1]["workspaceKind"], "chat");
+        assert_eq!(rows[1]["tasks"][0]["taskId"], "standalone");
     }
 
     #[test]
