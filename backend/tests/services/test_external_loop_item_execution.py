@@ -19,6 +19,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
@@ -368,6 +369,52 @@ def test_external_issue_page_cache_reuses_provider_response(
     external_loop_item_provider._list_issue_page(project, "pending", None, 1, 5)
 
     assert calls == 2
+
+
+@pytest.mark.parametrize(
+    ("cache_seconds", "within_ttl_issue", "expired_issue"),
+    [(0, 2, 3), (5, 1, 2), (60, 1, 2)],
+)
+def test_external_issue_page_cache_uses_configured_expiration(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    cache_seconds: int,
+    within_ttl_issue: int,
+    expired_issue: int,
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    calls = 0
+    now = 100.0
+
+    def request(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return [_issue(calls)]
+
+    external_loop_item_provider._invalidate_issue_page_cache(project.id)
+    monkeypatch.setattr(settings, "ISSUE_PAGE_CACHE_SECONDS", cache_seconds)
+    monkeypatch.setattr(external_provider_module.time, "monotonic", lambda: now)
+    monkeypatch.setattr(
+        external_loop_item_provider, "_repository", lambda _project: "repo"
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_request", request)
+
+    first = external_loop_item_provider._list_issue_page(
+        project, "pending", None, 1, 10
+    )
+    now = 100.0 + cache_seconds / 2
+    within_ttl = external_loop_item_provider._list_issue_page(
+        project, "pending", None, 1, 10
+    )
+    now = 100.0 + cache_seconds
+    expired = external_loop_item_provider._list_issue_page(
+        project, "pending", None, 1, 10
+    )
+
+    assert first[0]["iid"] == 1
+    assert within_ttl[0]["iid"] == within_ttl_issue
+    assert expired[0]["iid"] == expired_issue
 
 
 def test_gitlab_child_page_filters_by_existing_parent_marker(
