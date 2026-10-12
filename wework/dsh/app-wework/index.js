@@ -99,8 +99,10 @@ export async function serveWeworkApp(req, res) {
     return
   }
 
-  const asset = relativePath && (await isFile(target)) ? target : indexPath
-  if (!(await isFile(asset))) {
+  const targetMetadata = relativePath ? await fileMetadata(target) : null
+  const asset = targetMetadata ? target : indexPath
+  const metadata = targetMetadata ?? (await fileMetadata(indexPath))
+  if (!metadata) {
     res.writeHead(503, {
       'content-type': 'text/plain; charset=utf-8',
       'cache-control': 'no-store',
@@ -126,7 +128,6 @@ export async function serveWeworkApp(req, res) {
     return
   }
 
-  const metadata = await stat(asset)
   res.writeHead(200, {
     'content-type': MIME_TYPES[extname(asset)] ?? 'application/octet-stream',
     'cache-control': weworkAssetCacheControl(process.env),
@@ -472,10 +473,11 @@ function escapeJsonForHtml(value) {
   )
 }
 
-async function isFile(path) {
+async function fileMetadata(path) {
   try {
-    return (await stat(path)).isFile()
+    const metadata = await stat(path)
+    return metadata.isFile() ? metadata : null
   } catch {
-    return false
+    return null
   }
 }

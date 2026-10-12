@@ -2,11 +2,12 @@ import path from 'path'
 import fs from 'fs'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
-import { createLogger, defineConfig, type Plugin } from 'vite'
+import { createLogger, defineConfig, normalizePath, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
 import { excalidrawAssets } from './vite/excalidrawAssets'
+import { createInitialRendererChunk } from './vite/initialRendererChunk'
 
 function normalizeBackendUrl(value: string): string {
   const url = new URL(value)
@@ -210,9 +211,9 @@ export default defineConfig({
         codeSplitting: {
           groups: [
             {
-              name: 'initial-icons',
-              test: /node_modules[\\/]lucide-react[\\/]/,
-              tags: ['$initial'],
+              name: createInitialRendererChunk(
+                normalizePath(path.resolve(__dirname, 'src/main.tsx'))
+              ),
             },
           ],
         },
