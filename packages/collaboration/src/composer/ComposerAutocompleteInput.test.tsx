@@ -324,6 +324,15 @@ describe('shared autocomplete controller in a browser host', () => {
     expect(accepted).not.toHaveBeenCalled()
     expect(input.current!.getValue()).toBe('')
   })
+  it('opens the host model selector without rendering a second model menu', async () => {
+    const onOpenModelSelector = vi.fn()
+    await mount({ onOpenModelSelector })
+    await type('/model')
+    await click('slash-command-option-model')
+    expect(onOpenModelSelector).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('[data-testid="slash-model-menu"]')).toBeNull()
+    expect(input.current!.getValue()).toBe('')
+  })
   it('does not delete the trigger when keyboard selection reaches an unavailable file picker', async () => {
     await mount()
     await type('@')

@@ -77,6 +77,8 @@ export interface ComposerAutocompleteInputProps<
   onSetGoal?: () => void
   onDraw?: () => void
   onSelectModel?: (model: UnifiedModel | null) => void
+  onOpenModelSelector?: () => void
+  modelSelectorOpen?: boolean
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   isModelSelectionReady?: boolean
   appsStore?: ComposerCatalogStore<LocalDeviceApp>

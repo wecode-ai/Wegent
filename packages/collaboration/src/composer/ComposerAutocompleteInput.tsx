@@ -124,6 +124,8 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   onSetGoal,
   onDraw,
   onSelectModel,
+  onOpenModelSelector,
+  modelSelectorOpen = false,
   onBlockedModelSelect,
   isModelSelectionReady = true,
   sendKey = 'enter',
@@ -287,12 +289,16 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   // `cloud://projects` capability reference.
   const cloudSpaceDirectReference = `[$${t('workbench.mention_cloud_project_space', '项目空间')}](cloud://projects)`
 
-  const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onSelectModel) && models.length > 0
+  const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onOpenModelSelector || (onSelectModel && models.length > 0))
   const openSlashModelMenu = useCallback(() => {
+    if (onOpenModelSelector) {
+      onOpenModelSelector()
+      return
+    }
     setModelQuery('')
     setModelSelectedIndex(0)
     setModelMenuOpen(true)
-  }, [])
+  }, [onOpenModelSelector])
   const closeSlashModelMenu = useCallback(
     (focusTextarea = false) => {
       setModelMenuOpen(false)
@@ -901,7 +907,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   })
 
   const predictionHidden =
-    hasDraft || disabled || isStreaming || showSkillMenu || showSlashMenu || modelMenuOpen
+    hasDraft || disabled || isStreaming || showSkillMenu || showSlashMenu || modelMenuOpen || modelSelectorOpen
 
   return (
     <div className="relative min-w-0 flex-1 w-full">

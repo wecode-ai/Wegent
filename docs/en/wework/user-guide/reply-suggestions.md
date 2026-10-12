@@ -10,8 +10,10 @@ After an AI response completes in a task, temporary chat, or project activity co
 
 Suggestions are hidden when there is a draft, attachment, reference, autocomplete menu, input method composition, running conversation, or pending interaction. The model may return no suggestion. Failed, timed-out, or unavailable predictions do not block normal chat. Returning to a conversation reuses the cached result for that turn during the current app session.
 
-Predictions use the separate model's allowance and send it the conversation goal and recent context. Generation runs in a temporary conversation with tools disabled, performs no task actions, and does not enter the real conversation history. Starting another turn, disabling the feature, or changing prediction models cancels previous predictions.
+Predictions use the selected model's allowance and send it the conversation goal and recent context. Generation runs in a temporary conversation with tools disabled, performs no task actions, and does not enter the real conversation history. Starting another turn, disabling the feature, or changing prediction models cancels previous predictions.
 
-While generating, the empty composer shows a small “Generating a suggestion…” status. Typing hides it; completion, cancellation, or failure removes it.
+While generating, the composer toolbar shows a small “Generating a suggestion…” status. Typing hides it; completion, cancellation, or failure removes it.
 
 When a suggestion appears, click “Accept suggestion · Tab” or press Tab, Right Arrow, or Enter to insert it as a draft, then edit and send. “Same as task” selects the same model; prediction remains a separate short-context request and does not fork the original conversation or guarantee reuse of its prompt cache.
+
+In Wework, `/model` and the model button open the same selector. Suggestions stay hidden while this menu is open and return when it closes, preventing acceptance keys from conflicting with menu navigation.

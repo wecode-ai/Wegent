@@ -126,14 +126,27 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await control.command('fill', INPUT, { value: '/model' })
       await control.command('waitFor', `${ACTIVE} [data-testid="slash-command-option-model"]`)
       await control.command('click', `${ACTIVE} [data-testid="slash-command-option-model"]`)
-      await control.command('waitFor', `${ACTIVE} [data-testid="slash-model-menu"]`)
+      await control.command('waitFor', '[data-testid="model-selector-menu"]')
+      assert.equal(
+        Number(
+          await control.command('getElementCount', `${ACTIVE} [data-testid="slash-model-menu"]`)
+        ),
+        0
+      )
       assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
       assert.equal(Number(await control.command('getElementCount', ACCEPT)), 0)
       assert.equal(await control.command('getValue', INPUT), '')
       await capture('reply-04c-model-menu-suppresses-suggestion.png')
-      await control.command('press', `${ACTIVE} [data-testid="slash-model-search-input"]`, {
+      await control.command('press', '[data-testid="model-selector-menu"]', {
         key: 'Escape',
       })
+      await control.command('waitFor', GHOST, { text: SUGGESTION })
+      await control.command('click', `${ACTIVE} [data-testid="model-selector-button"]`)
+      await control.command('waitFor', '[data-testid="model-selector-menu"]')
+      assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
+      assert.equal(Number(await control.command('getElementCount', ACCEPT)), 0)
+      await capture('reply-04d-toolbar-model-selector.png')
+      await control.command('press', '[data-testid="model-selector-menu"]', { key: 'Escape' })
       await control.command('waitFor', GHOST, { text: SUGGESTION })
       await control.command('fill', INPUT, { value: '我自己写的草稿' })
       assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
