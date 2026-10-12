@@ -161,6 +161,8 @@ flowchart LR
 
 运行时市场映射保持：`personal -> wework-personal`、`workspace -> wegent`、`public -> wework`。该映射只用于受管安装记录；不能用展示名或 slug 跨命名空间合并身份。
 
+插件目录和安装清单的持久缓存共用精简 manifest 逻辑，必须保留 `marketplaceId` 与 `marketplacePath`。冷启动后的本地目录插件仍通过本地路径读取和安装，不能因为缓存丢失路径而变成要求 ChatGPT 登录的远程目录请求。
+
 ### 4.2 ER 模型
 
 ```mermaid

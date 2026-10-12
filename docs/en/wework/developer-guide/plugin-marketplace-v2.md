@@ -161,6 +161,8 @@ The server derives `catalog_namespace`; clients cannot supply arbitrary values. 
 
 The runtime marketplace mapping remains `personal -> wework-personal`, `workspace -> wegent`, and `public -> wework`. It applies only to managed installation records; display names and slugs must never merge identities across namespaces.
 
+Durable catalog and inventory caches share compact manifest serialization and must retain both `marketplaceId` and `marketplacePath`. After a cold start, local catalog plugins still use their local path for reads and installation; dropping that path must not turn them into remote catalog requests requiring ChatGPT authentication.
+
 ### 4.2 ER model
 
 ```mermaid
