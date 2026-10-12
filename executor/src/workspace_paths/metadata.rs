@@ -4,10 +4,11 @@
 use fs2::FileExt;
 use std::{
     fs,
-    fs::File,
     fs::OpenOptions,
     path::{Path, PathBuf},
 };
+
+use crate::file_lease::FileLease;
 
 #[derive(Clone, Copy)]
 pub(crate) enum Entry {
@@ -69,7 +70,7 @@ pub(crate) fn path(root: &Path, entry: Entry) -> Result<PathBuf, String> {
     Ok(selected)
 }
 
-pub(crate) fn lock_file(path: &Path) -> std::io::Result<File> {
+pub(crate) fn lock_file(path: &Path) -> std::io::Result<FileLease> {
     let mut options = OpenOptions::new();
     options.create(true).truncate(false).read(true).write(true);
     #[cfg(unix)]
@@ -84,7 +85,7 @@ pub(crate) fn lock_file(path: &Path) -> std::io::Result<File> {
         ));
     }
     file.try_lock_exclusive()?;
-    Ok(file)
+    Ok(FileLease(file))
 }
 
 /// The caller must stop all executors sharing this root, including older versions.
