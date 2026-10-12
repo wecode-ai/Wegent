@@ -5287,11 +5287,13 @@ describe('DesktopSidebar', () => {
   })
 
   test.each([
-    ['remote', 'relay'],
-    ['cloud', 'runtime'],
-  ])(
-    'keeps an online %s project editable through its %s owner alias',
-    async (deviceType, ownerAlias) => {
+    ['remote', 'relay', '2.0.21'],
+    ['cloud', 'runtime', '2.0.21'],
+    ['remote', 'relay', undefined],
+    ['cloud', 'runtime', undefined],
+  ] as const)(
+    'keeps an online %s project editable through its %s owner alias according to executor version %s',
+    async (deviceType, ownerAlias, executorVersion) => {
       const pluginApi = {
         readState: vi.fn().mockResolvedValue({ marketplaceItems: [] }),
         installAvailablePlugin: vi.fn(),
@@ -5305,6 +5307,7 @@ describe('DesktopSidebar', () => {
         device_type: deviceType,
         status: 'online',
         name: 'Owner',
+        executor_version: executorVersion,
       }
       const projectWork = {
         project: {
@@ -5342,6 +5345,29 @@ describe('DesktopSidebar', () => {
       await userEvent.click(screen.getByTestId('rename-project-7'))
       expect(screen.getByTestId('save-local-project-button')).toBeEnabled()
       expect(screen.queryByTestId('project-device-offline')).not.toBeInTheDocument()
+      if (executorVersion === undefined) {
+        expect(screen.getByTestId('local-project-name-input')).toBeEnabled()
+        expect(screen.getByTestId('add-local-project-folders')).toBeDisabled()
+        expect(screen.getByTestId('project-folders-upgrade-hint')).toBeVisible()
+        await userEvent.click(screen.getByTestId('local-project-settings-ai-tab'))
+        expect(screen.getByTestId('local-project-instructions-input')).toBeDisabled()
+        await userEvent.click(screen.getByTestId('local-project-settings-basic-tab'))
+        fireEvent.change(screen.getByTestId('local-project-name-input'), {
+          target: { value: 'Renamed alias project' },
+        })
+        await userEvent.click(screen.getByTestId('save-local-project-button'))
+        await waitFor(() =>
+          expect(save).toHaveBeenCalledWith({
+            deviceId: ownerAlias,
+            projectKey: 'real',
+            name: 'Renamed alias project',
+            roots: ['/owner'],
+          })
+        )
+        expect(listDirectories).not.toHaveBeenCalled()
+        expect(projectDevicePluginApi).toHaveBeenCalledWith(ownerAlias)
+        return
+      }
       await userEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
       await waitFor(() =>
         expect(pluginApi.readState).toHaveBeenCalledWith({
