@@ -8,6 +8,8 @@ Wework can start an isolated development verification session so an AI can opera
 
 ## Start a session
 
+During builds, `prepare-codex-binary.mjs` downloads the locked version through native Node HTTP/HTTPS streams, follows redirects, and removes failed temporary files. Archives are extracted for use only after integrity verification. The download stream does not depend on the Undici parser used by Node's built-in Fetch, avoiding parser crashes that terminate the build process.
+
 ```bash
 pnpm --filter wework ai:verify start
 ```
