@@ -1441,6 +1441,7 @@ def test_update_requires_content_permission_for_mixed_change(
     project = _make_project(test_db, test_user)
     creator = _make_member(test_db, project, "creator", BaseRole.Viewer)
     item = _make_item(test_db, project, creator)
+    original_title = item.title
 
     with pytest.raises(HTTPException) as excinfo:
         loop_item_service.update(
@@ -1455,6 +1456,8 @@ def test_update_requires_content_permission_for_mixed_change(
         )
 
     assert excinfo.value.status_code == 403
+    test_db.refresh(item)
+    assert item.title == original_title
 
     updated = loop_item_service.update(
         test_db,
@@ -1464,7 +1467,8 @@ def test_update_requires_content_permission_for_mixed_change(
     )
 
     assert updated.assignee_user_id == test_user.id
-    assert updated.title == item.title
+    test_db.refresh(item)
+    assert item.title == original_title
 
 
 def test_external_assign_rejects_issue_hidden_from_developer(
@@ -1586,6 +1590,10 @@ def test_external_update_lets_creator_reroute_assignee_only(
     )
 
     assert update_issue.called
+    assert (
+        f"wegent:assignee:user:{assignee.id}"
+        in update_issue.call_args.args[2]["labels"]
+    )
 
     with pytest.raises(HTTPException) as excinfo:
         external_loop_item_provider.update(
