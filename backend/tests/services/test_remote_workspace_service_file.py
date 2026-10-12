@@ -14,11 +14,10 @@ def test_stream_file_download_sets_attachment_disposition():
     service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
 
     with (
-        patch.object(service, "_get_task_detail", return_value={"subtasks": []}),
         patch.object(
             service,
-            "normalize_and_validate_workspace_path",
-            return_value="/workspace/a.txt",
+            "_resolve_request_path",
+            return_value=(None, "/workspace", "/workspace/a.txt"),
         ),
         patch.object(
             service, "_ensure_sandbox_available", return_value="http://sandbox"
@@ -44,11 +43,10 @@ def test_stream_file_zip_download_appends_zip_extension():
     service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
 
     with (
-        patch.object(service, "_get_task_detail", return_value={"subtasks": []}),
         patch.object(
             service,
-            "normalize_and_validate_workspace_path",
-            return_value="/workspace/demo",
+            "_resolve_request_path",
+            return_value=(None, "/workspace", "/workspace/demo"),
         ),
         patch.object(
             service, "_ensure_sandbox_available", return_value="http://sandbox"
@@ -75,11 +73,10 @@ def test_stream_file_inline_sets_inline_disposition():
     service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
 
     with (
-        patch.object(service, "_get_task_detail", return_value={"subtasks": []}),
         patch.object(
             service,
-            "normalize_and_validate_workspace_path",
-            return_value="/workspace/a.txt",
+            "_resolve_request_path",
+            return_value=(None, "/workspace", "/workspace/a.txt"),
         ),
         patch.object(
             service, "_ensure_sandbox_available", return_value="http://sandbox"
@@ -105,11 +102,10 @@ def test_stream_file_non_ascii_filename_uses_rfc5987_disposition():
     service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
 
     with (
-        patch.object(service, "_get_task_detail", return_value={"subtasks": []}),
         patch.object(
             service,
-            "normalize_and_validate_workspace_path",
-            return_value="/home/user/出师表.txt",
+            "_resolve_request_path",
+            return_value=(None, "/home/user", "/home/user/出师表.txt"),
         ),
         patch.object(
             service, "_ensure_sandbox_available", return_value="http://sandbox"

@@ -443,12 +443,14 @@ def get_remote_workspace_status(
     response_model=RemoteWorkspaceTreeResponse,
 )
 def get_remote_workspace_tree(
-    path: str = Query("/workspace", description="Workspace path to list"),
+    path: Optional[str] = Query(
+        None, description="Workspace path; defaults to the task root"
+    ),
     task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List remote workspace tree under /workspace."""
+    """List files within the task's resolved remote workspace."""
     return remote_workspace_service.list_tree(
         db=db,
         task_id=task_id,
