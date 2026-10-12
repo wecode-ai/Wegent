@@ -7,6 +7,7 @@ import type {
 } from '@/types/api'
 import type { InstalledPluginItem } from '@/components/plugins/PluginManagementRows'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
+import { slimPluginManifestForCache } from '@/features/plugins/slimPluginManifest'
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
 import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugins'
 import { isOpenAiOfficialRemoteMarketplaceId } from './marketplaceIdentity'
@@ -117,24 +118,6 @@ function slimInterface(interfaceData?: PluginInterface | null): PluginInterface 
   }
 }
 
-function slimManifest(manifest?: Record<string, unknown> | null): Record<string, unknown> {
-  if (!manifest) return {}
-  const keys = [
-    'name',
-    'id',
-    'marketplaceId',
-    'source',
-    'installPolicy',
-    'authPolicy',
-    'availability',
-    'disabledReason',
-    'eligiblePlanTypes',
-  ] as const
-  return Object.fromEntries(
-    keys.flatMap(key => (manifest[key] === undefined ? [] : [[key, manifest[key]]]))
-  )
-}
-
 function hasOversizedLogo(interfaceData?: PluginInterface | null): boolean {
   if (!interfaceData) return false
   return [interfaceData.logo, interfaceData.logoDark, interfaceData.composerIcon].some(
@@ -175,7 +158,7 @@ function toPersistedSnapshot(next: PluginMarketplaceCacheSnapshot): PluginMarket
       ...item,
       interface: slimInterface(item.interface),
       components: persistableComponents(item.components),
-      manifest: slimManifest(item.manifest),
+      manifest: slimPluginManifestForCache(item.manifest),
     })),
     installedPlugins: next.installedPlugins.map(plugin => ({
       ...plugin,

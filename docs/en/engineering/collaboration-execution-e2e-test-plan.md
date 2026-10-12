@@ -169,6 +169,18 @@ authentication tokens or model secrets.
 
 ## Complete Scenario Matrix
 
+### Remote collaboration group manager planning details
+
+The `collaboration-remote-group-planning-details` checkpoint uses isolated Electron, a real backend, MySQL, Redis, and a remote Executor. Only the upstream model is replaced.
+
+1. Create a project, collaboration rules, a manager, members, and an Issue, then assign the group through the UI.
+2. Wait for the manager's real model request, hold its response, and click execution details on the planning activity.
+3. Assert that the conversation shows this round's collaboration rules and the pause button, with no failed-conversation retry entry.
+4. Close and reopen details, then assert that the transcript remains visible.
+5. Release the manager response and continue validating two planning rounds, three member executions, and the final Issue state.
+
+The collaboration dispatch retains its execution lifecycle identity; TaskBinding and the manager activity address the actual `-manager-initial` conversation. This scenario prevents using the dispatch task as a transcript address, which causes backend validation failure and `Failed to fetch` in the UI. CI runs it in the `core18` shard. Failure and success evidence stays in test artifacts; cleanup releases held responses and stops isolated processes.
+
 ### E2E-01: Create collaboration resources in Wegent
 
 Goal: prove that Wegent Web can create collaboration-domain resources and that they are persisted.

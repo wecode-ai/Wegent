@@ -37,6 +37,7 @@ import type {
   Attachment,
   ModelOptions,
   ModelType,
+  RuntimeTaskAddress,
   ProjectDeviceSessionResponse,
   RuntimeProjectPluginRef,
   User,
@@ -219,6 +220,13 @@ export interface WorkbenchServices {
       modelType?: ModelType | null
       modelOptions?: ModelOptions
     }) => Promise<string>
+  }
+  replyPredictionApi?: {
+    predict: (data: {
+      address: RuntimeTaskAddress
+      latestTurnId?: string | null
+      signal?: AbortSignal
+    }) => Promise<{ suggestion: string | null }>
   }
   textGenerationApi?: {
     generateText: (data: {
