@@ -13,6 +13,7 @@ import logging
 import time
 from enum import Enum
 from hashlib import sha256
+from threading import Lock
 from typing import Optional
 
 from fastapi import Request
@@ -23,6 +24,8 @@ from app.services.auth.task_token import extract_token_from_header
 
 logger = logging.getLogger(__name__)
 _redis_rate_limit_client = None
+_redis_rate_limit_initialization_lock = Lock()
+_redis_rate_limit_unavailable_until = 0.0
 
 
 class ExternalMcpRateLimitStatus(str, Enum):
@@ -62,13 +65,29 @@ def _check_redis_available() -> bool:
 
 def _get_rate_limit_redis_client(*, require_global_enabled: bool = True):
     """Get a cached Redis client for custom rate limit checks."""
-    global _redis_rate_limit_client
+    global _redis_rate_limit_client, _redis_rate_limit_unavailable_until
     if require_global_enabled and not settings.RATE_LIMIT_ENABLED:
         return None
-    if _redis_rate_limit_client is not None:
-        return _redis_rate_limit_client
+
+    if time.monotonic() < _redis_rate_limit_unavailable_until:
+        return None
+
+    client = _redis_rate_limit_client
+    if client is not None:
+        return client
+
+    if not _redis_rate_limit_initialization_lock.acquire(blocking=False):
+        return None
+
     try:
         import redis
+
+        if time.monotonic() < _redis_rate_limit_unavailable_until:
+            return None
+
+        client = _redis_rate_limit_client
+        if client is not None:
+            return client
 
         client = redis.from_url(
             settings.REDIS_URL,
@@ -79,8 +98,24 @@ def _get_rate_limit_redis_client(*, require_global_enabled: bool = True):
         _redis_rate_limit_client = client
         return client
     except Exception as e:
+        _redis_rate_limit_unavailable_until = (
+            time.monotonic() + settings.RATE_LIMIT_REDIS_UNAVAILABLE_COOLDOWN_SECONDS
+        )
         logger.warning(f"Redis not available for custom rate limiting: {e}")
         return None
+    finally:
+        _redis_rate_limit_initialization_lock.release()
+
+
+def _mark_rate_limit_redis_unavailable() -> None:
+    """Clear a failed Redis client and short-circuit later custom checks."""
+    global _redis_rate_limit_client, _redis_rate_limit_unavailable_until
+
+    with _redis_rate_limit_initialization_lock:
+        _redis_rate_limit_client = None
+        _redis_rate_limit_unavailable_until = (
+            time.monotonic() + settings.RATE_LIMIT_REDIS_UNAVAILABLE_COOLDOWN_SECONDS
+        )
 
 
 def hash_rate_limit_value(value: str) -> str:
@@ -189,6 +224,7 @@ def check_external_mcp_dimension_rate_limit(
             pipe.expire(key, window_seconds + 1)
         results = pipe.execute()
     except Exception as e:
+        _mark_rate_limit_redis_unavailable()
         logger.warning(f"External MCP rate limit check failed: {e}")
         return ExternalMcpRateLimitStatus.UNAVAILABLE
 
