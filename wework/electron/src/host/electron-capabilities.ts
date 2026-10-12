@@ -1088,7 +1088,15 @@ export function registerAppUpdateCapabilities(
   router.register('appUpdate.check', params =>
     requiredAppUpdates(appUpdates).check(updateChannelParam(params))
   )
-  router.register('appUpdate.download', () => requiredAppUpdates(appUpdates).download())
+  // A download outlives any single host request, and every host request is
+  // bounded by a fixed timeout. Start the download and let callers follow
+  // appUpdate.downloadProgress until it reports a terminal phase.
+  router.register('appUpdate.download', () => {
+    void requiredAppUpdates(appUpdates)
+      .download()
+      .catch(() => undefined)
+    return null
+  })
   router.register('appUpdate.downloadProgress', () =>
     requiredAppUpdates(appUpdates).downloadProgress()
   )

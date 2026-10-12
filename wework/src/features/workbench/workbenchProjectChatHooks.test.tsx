@@ -855,6 +855,42 @@ describe('workbench project chat hooks', () => {
     expect(onSelectionChange).not.toHaveBeenCalled()
   })
 
+  test.each(['public', 'runtime'] as const)(
+    'recovers a deleted %s task model when the catalog starts empty',
+    async modelType => {
+      const replacement: UnifiedModel = { name: 'replacement', type: modelType }
+      const api = { listModels: vi.fn().mockResolvedValue({ data: [] }) }
+      const { result } = renderHook(() =>
+        useWorkbenchModels({
+          api,
+          locked: false,
+          persistSelection: false,
+          selectionConfig: { modelName: 'deleted', modelType },
+          fallbackWhenConfiguredModelUnavailable: false,
+        })
+      )
+
+      await waitFor(() => expect(api.listModels).toHaveBeenCalledOnce())
+      await waitFor(() => expect(result.current.isLoading).toBe(false))
+      expect(result.current.selectedModel).toBeNull()
+      expect(result.current.isSelectionReady).toBe(false)
+      expect(result.current.isConfiguredModelUnavailable).toBe(true)
+
+      api.listModels.mockResolvedValue({ data: [replacement] })
+      act(() => result.current.refreshModels())
+      await waitFor(() => expect(result.current.models).toEqual([replacement]))
+      act(() => result.current.setSelectedModel(replacement))
+      expect(result.current.isSelectionReady).toBe(true)
+      expect(result.current.isConfiguredModelUnavailable).toBe(false)
+      expect(result.current.getSelectedModel()).toEqual(replacement)
+
+      act(() => result.current.refreshModels())
+      await waitFor(() => expect(result.current.isLoading).toBe(false))
+      expect(result.current.getSelectedModel()).toEqual(replacement)
+      expect(result.current.isSelectionReady).toBe(true)
+    }
+  )
+
   test('persists options when using the default model selection', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.4',

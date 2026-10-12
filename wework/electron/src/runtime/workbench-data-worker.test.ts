@@ -8,7 +8,10 @@ import ts from 'typescript'
 import { afterEach, expect, test } from 'vitest'
 
 const roots: string[] = []
+const migrations: Promise<void>[] = []
 afterEach(async () => {
+  // A timed-out test can leave its worker writing into the fixture.
+  await Promise.allSettled(migrations.splice(0))
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
 
@@ -40,7 +43,11 @@ async function fixture() {
     source,
     target,
     state,
-    migrate: () => migrateWorkbenchDataInWorker({ source, target, state }) as Promise<void>,
+    migrate: () => {
+      const migration = migrateWorkbenchDataInWorker({ source, target, state }) as Promise<void>
+      migrations.push(migration)
+      return migration
+    },
   }
 }
 
@@ -86,7 +93,7 @@ test('large history migrates without blocking the parent event loop and restarts
   // Removing the synthetic files also makes any unintended traversal observable.
   await rm(join(source, 'data/objects/attachments'), { recursive: true })
   await migrate()
-})
+}, 30_000)
 
 test('worker failure rejects startup and leaves conflicting data intact', async () => {
   const { source, target, migrate } = await fixture()

@@ -156,6 +156,17 @@ dispatch rules: `wework <path>` opens a workspace, while
 
 ## Model Identity and Execution Transport
 
+Task composers always display the model selector, including initial loading,
+catalog refresh failures, empty catalogs, and task restoration after a cloud
+model is retired or a local configuration is deleted. Sending remains blocked
+until an available model is selected, while the selector still allows adding
+a local model or connecting to the cloud. Selecting a replacement resumes
+follow-ups in the same task. Never use send readiness to hide the selector or
+silently replace the task's model. Desktop and compact composers follow the
+same rule. The `task-model-deletion` desktop E2E checkpoint covers reopening a
+task after local configuration deletion, cold restoration after cloud model
+deletion, and continuing the original conversation with a replacement model.
+
 Models keep one canonical identity across the UI, task state, and execution requests: `name`, `type`, `namespace`, and `resourceUserId`. The frontend must not add `local:` or `cloud:` prefixes to distinguish execution locations, and model config must not carry a separate transport source. When catalogs are merged, an Executor-discovered model wins over a Backend-synthesized runtime Codex model with the same `modelId`.
 
 The picker's local and cloud catalogs are independent. The local catalog depends on the local Executor state and on the desktop preferences, so when either prerequisite fails it must degrade to local custom models only: it must not fail the whole list and must not keep the cloud catalog from loading, which has to start on its own inside the same `listModels` call. A desktop preferences file whose contents cannot be parsed is quarantined as `app-preferences.json.corrupt-<timestamp>` and the app continues with defaults, while operational read errors such as permission or sharing failures are reported instead of moving the file aside. One broken file thus costs the quarantined preferences instead of permanently hiding every model.

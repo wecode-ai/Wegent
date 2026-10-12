@@ -317,7 +317,14 @@ impl CodexRunState {
                 ExecutionOutcome::Cancelled { message: status }
             }
             other => ExecutionOutcome::Failed {
-                message: format!("codex turn ended with status {other}"),
+                message: if params
+                    .pointer("/turn/error")
+                    .is_some_and(|error| !error.is_null())
+                {
+                    codex_error_message(params.get("turn").expect("turn error exists"))
+                } else {
+                    format!("codex turn ended with status {other}")
+                },
             },
         }
     }
@@ -402,6 +409,14 @@ fn log_codex_run_state_error(params: &Value) {
         &[
             ("message", message),
             ("code", json_string_field(params, "code")),
+            ("will_retry", codex_error_will_retry(params).to_string()),
+            (
+                "codex_error_info",
+                params
+                    .pointer("/error/codexErrorInfo")
+                    .map(Value::to_string)
+                    .unwrap_or_default(),
+            ),
             (
                 "params_len",
                 serialized_json_len(params)

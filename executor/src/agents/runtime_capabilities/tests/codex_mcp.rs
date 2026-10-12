@@ -4,6 +4,61 @@
 use super::*;
 
 #[test]
+fn remote_mcp_with_empty_command_connects_by_url() {
+    for command in [json!(""), json!(" \t"), Value::Null] {
+        for server_type in [None, Some("http"), Some("streamable-http"), Some("sse")] {
+            let home = tempfile::tempdir().unwrap();
+            let mut server = json!({
+                "name": "remote", "command": command, "args": [], "env": {},
+                "url": "https://example.test/mcp", "headers": {"X-Test": "remote"}
+            });
+            if let Some(server_type) = server_type {
+                server["type"] = json!(server_type);
+            }
+            let request = ExecutionRequest {
+                mcp_servers: vec![server],
+                ..Default::default()
+            };
+            let mut runtime = Map::new();
+            prepare(home.path(), &request, &mut runtime).unwrap();
+            let expected = json!({
+                "url": "https://example.test/mcp", "http_headers": {"X-Test": "remote"},
+                "default_tools_approval_mode": "approve"
+            });
+            assert_eq!(runtime["mcp_servers.remote"], expected);
+            assert!(!runtime.contains_key("mcp_servers.remote.env"));
+            let content = fs::read_to_string(home.path().join("config.toml")).unwrap();
+            let persisted: Value = toml_edit::de::from_str(&content).unwrap();
+            assert_eq!(persisted["mcp_servers"]["remote"], expected);
+        }
+    }
+}
+
+#[test]
+fn explicit_transport_is_authoritative_and_invalid_stdio_is_rejected() {
+    assert_eq!(
+        native_definition(
+            json!({"type": "http", "command": "node", "url": "https://example.test/mcp"})
+        )
+        .unwrap(),
+        json!({"url": "https://example.test/mcp", "default_tools_approval_mode": "approve"})
+    );
+    for command in [json!(""), json!(" \t"), Value::Null] {
+        assert_eq!(
+            native_definition(
+                json!({"type": "stdio", "command": command, "url": "https://example.test/mcp"})
+            )
+            .unwrap_err(),
+            "MCP definition requires command"
+        );
+        assert_eq!(
+            native_definition(json!({"command": command})).unwrap_err(),
+            "MCP definition requires url"
+        );
+    }
+}
+
+#[test]
 fn stable_config_retains_omitted_services_and_refreshes_context() {
     let home = tempfile::tempdir().unwrap();
     let path = home.path().join("config.toml");
