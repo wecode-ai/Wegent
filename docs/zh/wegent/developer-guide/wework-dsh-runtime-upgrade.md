@@ -10,8 +10,11 @@ Wework Core、内置 DSH 插件和新 Smart app 模板使用官方 `0.2.0-rc.2`�
 
 构建时实际查询打包 Executor 的 Workbench schema，并将响应写入组件描述。
 启动时必须同时验证 schema 和二进制内容哈希；只允许相同内容的 Executor 使用
-这份响应。未携带响应的旧组件或自定义 Executor 仍执行只读 schema 查询。
+这份响应。旧组件未携带响应时，可在实际内容哈希相同的前提下使用打包响应；
+不同内容的自定义 Executor 仍执行只读 schema 查询。
 不兼容或校验失败时禁止迁移 Home。在线组件发布必须保留 schema 响应和内容哈希。
+共享 E2E 归档必须保留打包 Executor 的原始字节，不得在生成证明后再次 strip；
+归档发布前校验实际 Executor 与组件描述的内容哈希。
 
 浏览器认证只交换一次 token。Electron 将 DSH 响应的 Set-Cookie 保存到原有浏览器
 分区，保留 Cookie 的域、路径、有效期、Secure、HttpOnly 和 SameSite 属性。

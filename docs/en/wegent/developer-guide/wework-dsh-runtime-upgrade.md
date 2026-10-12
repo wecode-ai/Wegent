@@ -12,10 +12,14 @@ the legacy runtime is not bundled in the installer.
 
 The build queries the actual packaged Executor's Workbench schema and records
 its response in component metadata. Startup verifies both the schema and binary
-content hash before using that response. Old components without this response and
-custom executors still perform a read-only schema query. Incompatible executors
+content hash before using that response. Old components without this response may
+reuse the packaged response only when their actual content hash matches. Custom
+executors with different bytes still perform a read-only schema query. Incompatible executors
 or failed integrity checks must prevent Home migration. Component releases must
 preserve the schema response and content hash.
+Shared E2E archives must preserve the packaged Executor's original bytes without
+stripping it after generating the proof. Verify its actual content hash against
+component metadata before publishing the archive.
 
 Browser authentication exchanges a token once. Electron saves DSH's Set-Cookie
 headers in the existing browser partition, preserving domain, path, expiration,
