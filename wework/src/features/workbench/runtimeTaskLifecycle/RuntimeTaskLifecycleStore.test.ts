@@ -256,6 +256,22 @@ describe('RuntimeTaskLifecycleStore', () => {
     })
     restored.syncRuntimeWork(runtimeWork(completedTask))
     restored.sendRequested(address)
+    expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    restored.sendRejected(address)
+    expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    restored.sendRequested(address)
+    restored.sendAccepted(address)
+    restored.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          threadStatus: 'active',
+          updatedAt: 124,
+          interactionStatus: null,
+        })
+      )
+    )
     expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
   })
 

@@ -109,7 +109,8 @@ export function reduceRuntimeTaskLifecycle(
         turnPhase: 'submitting',
         turnOutcome: null,
         expectedExecutorRunning: true,
-        interactionStatus: null,
+        interactionStatus:
+          state.interactionStatus === 'awaitingUserReply' ? state.interactionStatus : null,
         unread: false,
       }
 
