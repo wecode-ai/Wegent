@@ -13,6 +13,7 @@ const CLOUD_COLLABORATION_ROUND_KEY: &str = "cloudCollaborationRound";
 const TERMINAL_EXECUTION_STATUSES: &[&str] = &["completed", "failed", "cancelled"];
 const CLOUD_COLLABORATION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const CLOUD_COLLABORATION_LAUNCH_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+const CLOUD_COLLABORATION_LAUNCH_MAX_ATTEMPTS: u32 = 5;
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn register_cloud_collaboration_dispatcher(&self) {
@@ -105,17 +106,43 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        let result = match self.launch_cloud_collaboration_assignments(&command).await {
-            Ok(()) => self.wait_for_cloud_collaboration_round(&command).await,
-            Err(error) => Err(error),
+        // A dispatched round must always converge: every member either reaches
+        // a terminal state or is reported as failed, and the manager is always
+        // resumed. Otherwise the Issue would hang silently with no owner work.
+        let mut outcomes = match self
+            .launch_cloud_collaboration_assignments_with_retry(&command)
+            .await
+        {
+            Ok(()) => Vec::new(),
+            Err(error) => {
+                log_executor_event(
+                    "cloud collaboration round launch failed",
+                    &[
+                        ("dispatch_id", command.dispatch_id.clone()),
+                        ("round_id", command.round_id.clone()),
+                        ("error", error.clone()),
+                    ],
+                );
+                self.fail_unstarted_collaboration_assignments(&command, &error)
+                    .await
+            }
         };
-        let result = match result {
-            Ok(outcomes) => self.launch_fresh_cloud_manager(&command, outcomes).await,
-            Err(error) => Err(error),
-        };
-        if let Err(error) = result {
+        match self.wait_for_cloud_collaboration_round(&command).await {
+            Ok(round_outcomes) => outcomes.extend(round_outcomes),
+            Err(error) => {
+                log_executor_event(
+                    "cloud collaboration round wait failed",
+                    &[
+                        ("dispatch_id", command.dispatch_id.clone()),
+                        ("round_id", command.round_id.clone()),
+                        ("error", error),
+                    ],
+                );
+            }
+        }
+        if let Err(error) = self.launch_fresh_cloud_manager(&command, outcomes).await {
             log_executor_event(
-                "cloud collaboration round failed",
+                "fresh cloud collaboration manager launch failed",
                 &[
                     ("dispatch_id", command.dispatch_id.clone()),
                     ("round_id", command.round_id.clone()),
@@ -127,6 +154,82 @@ impl RuntimeWorkRpcHandler {
             .lock()
             .expect("collaboration round registry lock should not be poisoned")
             .remove(&key);
+    }
+
+    /// Retry the member launch so a transient Backend or Runtime failure does
+    /// not abandon the round before every member has started.
+    async fn launch_cloud_collaboration_assignments_with_retry(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+    ) -> Result<(), String> {
+        let mut last_error = String::new();
+        for attempt in 1..=CLOUD_COLLABORATION_LAUNCH_MAX_ATTEMPTS {
+            match self.launch_cloud_collaboration_assignments(command).await {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    log_executor_event(
+                        "cloud collaboration assignment launch attempt failed",
+                        &[
+                            ("round_id", command.round_id.clone()),
+                            ("attempt", attempt.to_string()),
+                            ("error", error.clone()),
+                        ],
+                    );
+                    last_error = error;
+                }
+            }
+            if attempt < CLOUD_COLLABORATION_LAUNCH_MAX_ATTEMPTS {
+                sleep(CLOUD_COLLABORATION_LAUNCH_RETRY_INTERVAL).await;
+            }
+        }
+        Err(last_error)
+    }
+
+    /// Report every member that never started so the Backend activity reflects
+    /// reality, and hand the resumed manager a matching failed outcome.
+    async fn fail_unstarted_collaboration_assignments(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+        error: &str,
+    ) -> Vec<Value> {
+        let Ok(dispatch_task_id) = self.collaboration_dispatch_task_id(command) else {
+            return Vec::new();
+        };
+        let mut outcomes = Vec::new();
+        for assignment in command.assignments.iter().filter(|assignment| {
+            assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
+        }) {
+            let Ok(runtime_task_id) =
+                collaboration_member_task_id(&dispatch_task_id, command, assignment)
+            else {
+                continue;
+            };
+            if self.local_task_link(&runtime_task_id).is_some() {
+                continue;
+            }
+            self.report_cloud_collaboration_assignment_best_effort(
+                command,
+                assignment,
+                &runtime_task_id,
+                "failed",
+                "",
+                error,
+            )
+            .await;
+            outcomes.push(json!({
+                "assignee_type": "agent",
+                "work_id": assignment.get("work_id"),
+                "runtime_task_id": runtime_task_id,
+                "assignment_id": assignment.get("assignment_id"),
+                "task_title": assignment.get("task_title"),
+                "agent_id": assignment.get("agent_id"),
+                "agent_name": assignment.get("agent_name"),
+                "status": "failed",
+                "result": "",
+                "error": error,
+            }));
+        }
+        outcomes
     }
 
     async fn launch_cloud_collaboration_assignments(
@@ -199,7 +302,9 @@ impl RuntimeWorkRpcHandler {
                     "Collaboration member Runtime rejected task {runtime_task_id}: {response}"
                 ));
             }
-            self.report_cloud_collaboration_assignment(
+            // Member progress reporting is a display side channel: a Backend
+            // blip must not abort a round whose member has already started.
+            self.report_cloud_collaboration_assignment_best_effort(
                 command,
                 assignment,
                 &runtime_task_id,
@@ -207,7 +312,7 @@ impl RuntimeWorkRpcHandler {
                 "",
                 "",
             )
-            .await?;
+            .await;
         }
         Ok(())
     }
@@ -240,7 +345,7 @@ impl RuntimeWorkRpcHandler {
                         .ok_or_else(|| {
                             format!("Collaboration assignment {assignment_id} is unavailable")
                         })?;
-                    self.report_cloud_collaboration_assignment(
+                    self.report_cloud_collaboration_assignment_best_effort(
                         command,
                         assignment,
                         outcome
@@ -257,7 +362,7 @@ impl RuntimeWorkRpcHandler {
                             .and_then(Value::as_str)
                             .unwrap_or_default(),
                     )
-                    .await?;
+                    .await;
                 }
             }
             outcomes.extend(self.human_collaboration_outcomes(command).await?);
@@ -320,41 +425,72 @@ impl RuntimeWorkRpcHandler {
         ))
     }
 
+    async fn report_cloud_collaboration_assignment_best_effort(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+        assignment: &Value,
+        runtime_task_id: &str,
+        status: &str,
+        result: &str,
+        error: &str,
+    ) {
+        if let Err(report_error) = self
+            .report_cloud_collaboration_assignment(
+                command,
+                assignment,
+                runtime_task_id,
+                status,
+                result,
+                error,
+            )
+            .await
+        {
+            log_executor_event(
+                "cloud collaboration assignment report failed",
+                &[
+                    ("round_id", command.round_id.clone()),
+                    ("status", status.to_owned()),
+                    ("error", report_error),
+                ],
+            );
+        }
+    }
+
     fn local_collaboration_outcomes(
         &self,
         command: &CloudCollaborationRoundCommand,
     ) -> Result<Vec<Value>, String> {
         let dispatch_task_id = self.collaboration_dispatch_task_id(command)?;
-        command
-            .assignments
-            .iter()
-            .filter(|assignment| {
-                assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
-            })
-            .map(|assignment| {
-                let runtime_task_id =
-                    collaboration_member_task_id(&dispatch_task_id, command, assignment)?;
-                let link = self.local_task_link(&runtime_task_id).ok_or_else(|| {
-                    format!("Collaboration member Runtime task {runtime_task_id} is unavailable")
-                })?;
-                let status = collaboration_member_status(&link);
-                Ok(json!({
-                    "assignee_type": "agent",
-                    "work_id": assignment.get("work_id"),
-                    "runtime_task_id": runtime_task_id,
-                    "assignment_id": assignment.get("assignment_id"),
-                    "task_title": assignment.get("task_title"),
-                    "agent_id": assignment.get("agent_id"),
-                    "agent_name": assignment.get("agent_name"),
-                    "status": status,
-                    "result": collaboration_member_result(&link),
-                    "error": link.runtime_handle
-                        .get("lastError")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                }))
-            })
-            .collect()
+        let mut outcomes = Vec::new();
+        for assignment in command.assignments.iter().filter(|assignment| {
+            assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
+        }) {
+            let runtime_task_id =
+                collaboration_member_task_id(&dispatch_task_id, command, assignment)?;
+            // A member that never started is reported as failed by the launch
+            // failure path and excluded here, so the barrier always converges
+            // instead of aborting the round.
+            let Some(link) = self.local_task_link(&runtime_task_id) else {
+                continue;
+            };
+            let status = collaboration_member_status(&link);
+            outcomes.push(json!({
+                "assignee_type": "agent",
+                "work_id": assignment.get("work_id"),
+                "runtime_task_id": runtime_task_id,
+                "assignment_id": assignment.get("assignment_id"),
+                "task_title": assignment.get("task_title"),
+                "agent_id": assignment.get("agent_id"),
+                "agent_name": assignment.get("agent_name"),
+                "status": status,
+                "result": collaboration_member_result(&link),
+                "error": link.runtime_handle
+                    .get("lastError")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            }));
+        }
+        Ok(outcomes)
     }
 
     fn collaboration_dispatch_task_id(
