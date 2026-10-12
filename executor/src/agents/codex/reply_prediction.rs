@@ -214,6 +214,8 @@ fn log_prediction_usage(params: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::agents::codex::tests::environment::LaunchEnvironment;
 
     #[test]
     fn prediction_requires_the_latest_completed_turn() {
@@ -249,12 +251,14 @@ mod tests {
         _directory: tempfile::TempDir,
         client: CodexAppServerClient,
         log: PathBuf,
+        _environment: LaunchEnvironment,
     }
 
     #[cfg(unix)]
     impl Fixture {
         fn new(mode: &str) -> Self {
             use std::os::unix::fs::PermissionsExt;
+            let environment = LaunchEnvironment::new();
             let directory = tempfile::tempdir().unwrap();
             let binary = directory.path().join("codex");
             let log = directory.path().join("requests.jsonl");
@@ -300,6 +304,7 @@ done
                 _directory: directory,
                 client,
                 log,
+                _environment: environment,
             }
         }
 
