@@ -74,17 +74,21 @@ export async function applyWorkbenchModeToCorePlugins(
   plugins: Pick<CoreDshPluginManager, 'list' | 'setEnabled'>
 ): Promise<void> {
   const inventory = await plugins.list()
-  const desiredStates = new Map([
-    [MODE_MANAGED_GIT_PLUGIN, mode === 'developer'],
-    [MODE_MANAGED_FOCUS_HOME_PLUGIN, mode === 'focus'],
-    [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, mode === 'developer'],
-  ])
+  const desiredStates = workbenchModePluginStates(mode)
   for (const plugin of inventory) {
     const shouldEnable = desiredStates.get(plugin.name)
     if (shouldEnable !== undefined && plugin.enabled !== shouldEnable) {
       await plugins.setEnabled(plugin.name, shouldEnable)
     }
   }
+}
+
+export function workbenchModePluginStates(mode: WorkbenchMode): ReadonlyMap<string, boolean> {
+  return new Map([
+    [MODE_MANAGED_GIT_PLUGIN, mode === 'developer'],
+    [MODE_MANAGED_FOCUS_HOME_PLUGIN, mode === 'focus'],
+    [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, mode === 'developer'],
+  ])
 }
 
 function developmentCommandEnvironment(

@@ -108,6 +108,21 @@ export async function createDesktopScenario({ resultDir }) {
         'executor-start',
         'completed'
       )
+      const homePrepared = startupEventIndex(
+        runtimeStartupEvents,
+        'executor-home-preparation',
+        'completed'
+      )
+      const coreProcessCompleted = startupEventIndex(
+        runtimeStartupEvents,
+        'core-dsh-process-start',
+        'completed'
+      )
+      const rendererLoading = startupEventIndex(
+        runtimeStartupEvents,
+        'primary-renderer-load',
+        'started'
+      )
       const portAllocationStarted = startupEventIndex(
         runtimeStartupEvents,
         'core-dsh-port-allocation',
@@ -134,8 +149,15 @@ export async function createDesktopScenario({ resultDir }) {
         'Core DSH preparation did not overlap managed Executor startup'
       )
       assert.ok(
-        executorCompleted < portAllocationStarted,
-        'Core DSH allocated its port before the managed Executor bound its startup ports'
+        homePrepared >= 0 && homePrepared < executorStarted && homePrepared < portAllocationStarted,
+        'The managed runtime started before Home compatibility preparation completed'
+      )
+      // Endpoint authentication finishes after listeners bind; it is not a port allocation gate.
+      assert.ok(
+        coreProcessCompleted >= 0 &&
+          rendererLoading > coreProcessCompleted &&
+          rendererLoading > executorCompleted,
+        'The workbench loaded before both managed runtimes became ready'
       )
       assert.ok(
         portAllocationStarted <= portAllocationCompleted &&

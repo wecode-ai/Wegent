@@ -365,10 +365,14 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(prepareState.prepareCalls).toBe(1)
     expect(executor.startCalls).toBe(0)
     expect(startupSteps).toContain('core-dsh-prepare:started')
+    expect(startupSteps).not.toContain('executor-home-preparation:completed')
     expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
 
     deviceIdentityState.resolve?.('test-device-id')
     await vi.waitFor(() => expect(executor.startCalls).toBe(1))
+    expect(startupSteps.indexOf('executor-home-preparation:completed')).toBeLessThan(
+      startupSteps.indexOf('executor-start:started')
+    )
     expect(created).toHaveLength(0)
     expect(runtime.state().ready).toBe(false)
     expect(startupSteps).not.toContain('core-dsh-port-allocation:started')

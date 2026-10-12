@@ -30,6 +30,62 @@ async function prepareCoreDshLaunch(
 }
 
 describe('core DSH runtime', () => {
+  test.each(['focus', 'developer'] as const)(
+    'writes the selected %s mode during profile creation and upgrade',
+    async workbenchMode => {
+      const root = await temporaryDirectory('core-dsh-mode-profile-')
+      try {
+        const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+        const options = {
+          runtimeRoot: runtime.root,
+          dataDirectory: join(root.path, 'data'),
+          environment: {
+            WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+            WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+          },
+          workbenchMode,
+        }
+        const launch = await prepareCoreDshRuntime(options)
+        const profileRoot = join(launch.dshHome, 'profiles', 'wework-core')
+        const manifestPath = join(profileRoot, 'package.json')
+        const expected = {
+          '@wegent/dsh-ui-git': workbenchMode === 'developer',
+          '@wegent/dsh-ui-home-focus': workbenchMode === 'focus',
+          '@wegent/dsh-ui-home-developer': workbenchMode === 'developer',
+        }
+        const assertMode = async () => {
+          const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+          for (const [name, enabled] of Object.entries(expected)) {
+            expect(manifest.dsh.profile.bundles.includes(name)).toBe(enabled)
+          }
+        }
+        await assertMode()
+
+        const statePath = join(profileRoot, '.wework-core-plugins.json')
+        await writeFile(
+          statePath,
+          JSON.stringify({
+            version: 1,
+            order: ['user-plugin'],
+            disabled: ['user-plugin', ...Object.keys(expected)],
+          })
+        )
+        await rm(join(profileRoot, '.wework-runtime.json'))
+        await prepareCoreDshRuntime(options)
+        await assertMode()
+        const state = JSON.parse(await readFile(statePath, 'utf8'))
+        expect(state.order[0]).toBe('user-plugin')
+        expect(state.disabled).toContain('user-plugin')
+        for (const [name, enabled] of Object.entries(expected)) {
+          expect(state.order).toContain(name)
+          expect(state.disabled.includes(name)).toBe(!enabled)
+        }
+      } finally {
+        await root.remove()
+      }
+    }
+  )
+
   test.each([false, true])(
     'resolves profile dependencies from a composed source (linked=%s)',
     async linked => {

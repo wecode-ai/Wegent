@@ -274,6 +274,7 @@ export class DesktopRuntime {
     if (!executorPath) return null
     const generation = this.lifecycleGeneration
     // Device identity and managed auth preparation may write Homes. Gate both first.
+    this.startupStep('executor-home-preparation', 'started')
     await assertExecutorWorkbenchCompatibility(this.options.environment)
     if (this.lifecycleGeneration !== generation) return null
     const deviceId = await this.resolveDesktopDeviceId()
@@ -282,6 +283,7 @@ export class DesktopRuntime {
       environment: this.options.environment,
     })
     if (this.lifecycleGeneration !== generation) return null
+    this.startupStep('executor-home-preparation', 'completed')
     const executorOptions: ManagedExecutorRuntimeOptions = {
       command: executorPath,
       args: jsonArrayEnvironment(this.options.environment, 'WEWORK_EXECUTOR_ARGS_JSON'),
@@ -352,6 +354,7 @@ export class DesktopRuntime {
         runtimeRoot: managedRoot,
         dataDirectory: this.options.dataDirectory,
         environment: this.options.environment,
+        workbenchMode: await this.options.readWorkbenchMode?.(),
         onStartupStep: (step, status) => this.startupStep(step, status),
       })
       if (this.lifecycleGeneration !== generation) return null

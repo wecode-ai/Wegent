@@ -46,11 +46,18 @@ retains the current description and callbacks; task creation and editing use
 the same editor.
 
 内置插件组合目录引用不可变组件源，避免在写入 Core profile 前重复复制代码。
+原生准备窗口加载与运行时准备并行执行，两者都完成后才载入工作台。
+创建或升级 Core profile 时直接写入当前工作模式的插件组合，避免随后启动额外的
+DSH 校验进程来重复调整同一组插件；运行时启动仍校验实际生效的配置。
 Core profile 使用有界并发准备内置插件，代码保留独立副本以继续从 profile 解析依赖，
 静态网页资源使用目录链接。所有插件准备完成后才写入版本标记；任何复制失败都会阻止启动。
 
 The bundled plugin composition references immutable component sources, avoiding
-a duplicate code copy before profile preparation. Core profile preparation uses
+a duplicate code copy before profile preparation. Native startup windows load
+alongside runtime preparation; the workbench loads only after both complete.
+Profile creation and upgrades write the selected workbench mode directly,
+avoiding a separate DSH validation process to adjust the same plugins afterwards.
+Runtime startup still validates the effective configuration. Core profile preparation uses
 bounded concurrency for bundled plugins. Plugin code
 remains an independent copy so dependencies resolve from the profile; static web
 resources use directory links. The version stamp is written only after every plugin

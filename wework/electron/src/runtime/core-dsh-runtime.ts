@@ -16,6 +16,7 @@ import { hashComponentPath } from './component-content-hash.js'
 import { copyComponentTree } from './component-copy.js'
 import { createFileOperationQueue } from './file-operation-queue.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
+import { workbenchModePluginStates, type WorkbenchMode } from './workbench-mode.js'
 
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
@@ -129,6 +130,7 @@ export interface PrepareCoreDshRuntimeOptions {
   runtimeRoot: string
   dataDirectory: string
   environment: NodeJS.ProcessEnv
+  workbenchMode?: WorkbenchMode
   onStartupStep?: (step: string, status: 'started' | 'completed') => void
 }
 
@@ -160,6 +162,7 @@ export async function prepareCoreDshRuntime(
     dshHome,
     managedUiPlugins,
     corePluginsFingerprint,
+    workbenchMode: options.workbenchMode,
     onStartupStep: options.onStartupStep,
   })
   options.onStartupStep?.('core-dsh-profile-prepare', 'completed')
@@ -286,6 +289,7 @@ async function prepareProfile(options: {
   dshHome: string
   managedUiPlugins: boolean
   corePluginsFingerprint: string
+  workbenchMode?: WorkbenchMode
   onStartupStep?: PrepareCoreDshRuntimeOptions['onStartupStep']
 }): Promise<void> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
@@ -299,9 +303,14 @@ async function prepareProfile(options: {
   }
   const managedDependencies = managedCoreDependencies(options.runtime, options.managedUiPlugins)
   const managedDependencyNames = Object.keys(managedDependencies)
-  const managedBundles: string[] = options.managedUiPlugins
-    ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
-    : [...CORE_HOST_BUNDLES]
+  const modeStates = options.workbenchMode
+    ? workbenchModePluginStates(options.workbenchMode)
+    : new Map<string, boolean>()
+  const managedBundles: string[] = (
+    options.managedUiPlugins
+      ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
+      : [...CORE_HOST_BUNDLES]
+  ).filter(name => modeStates.get(name) !== false)
   const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
   const currentManifestRoot = objectRecord(currentManifest)
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
@@ -375,6 +384,7 @@ async function prepareProfile(options: {
   )
   await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
   await writeFile(join(profileRoot, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
+  await synchronizeModePluginState(profileRoot, modeStates, managedDependencyNames)
   await ensureCoreWorkspace(workspacePath)
   const preparePlugin = createFileOperationQueue(4)
   const results = await Promise.allSettled(
@@ -397,6 +407,33 @@ async function prepareProfile(options: {
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
     mode: 0o600,
   })
+}
+
+async function synchronizeModePluginState(
+  profileRoot: string,
+  modeStates: ReadonlyMap<string, boolean>,
+  installedNames: string[]
+): Promise<void> {
+  if (!modeStates.size) return
+  const path = join(profileRoot, '.wework-core-plugins.json')
+  const stored = await readJsonFile(path)
+  if (!stored) return
+  const state = objectRecord(stored)
+  const order = stringArray(state.order)
+  const disabled = new Set(stringArray(state.disabled))
+  for (const [name, enabled] of modeStates) {
+    if (!installedNames.includes(name)) continue
+    if (!order.includes(name)) order.push(name)
+    if (enabled) disabled.delete(name)
+    else disabled.add(name)
+  }
+  await writeFile(
+    path,
+    `${JSON.stringify({ ...state, order, disabled: [...disabled] }, null, 2)}\n`,
+    {
+      mode: 0o600,
+    }
+  )
 }
 
 export async function copyManagedPlugin(

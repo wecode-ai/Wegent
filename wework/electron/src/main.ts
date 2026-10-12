@@ -1911,7 +1911,7 @@ function notifyRuntimeChanged(): void {
   mainWindow?.webContents.send('runtime:changed')
 }
 
-function startDesktopRuntime(): Promise<void> {
+function startDesktopRuntime(createStartupWindow?: () => Promise<void>): Promise<void> {
   if (runtimeStartPromise) return runtimeStartPromise
   logStartupStep('desktop-runtime-start', 'started')
   runtimePhase = 'initializing'
@@ -1919,10 +1919,15 @@ function startDesktopRuntime(): Promise<void> {
   void pluginDevelopmentChildRuntime?.writeState('starting')
   notifyRuntimeChanged()
   runtimeStartPromise = (async () => {
-    await configureDesktopRuntime()
-    logStartupStep('core-dsh-start', 'started')
-    await desktopRuntime?.start()
-    logStartupStep('core-dsh-start', 'completed')
+    await Promise.all([
+      (async () => {
+        await configureDesktopRuntime()
+        logStartupStep('core-dsh-start', 'started')
+        await desktopRuntime?.start()
+        logStartupStep('core-dsh-start', 'completed')
+      })(),
+      createStartupWindow?.(),
+    ])
     trayNativeStatus?.start()
     await loadPrimaryDshView()
     await restoreFixedWorkspaceWindows()
@@ -2062,10 +2067,14 @@ if (hasSingleInstanceLock) {
     } catch (error) {
       console.warn('[popout-window] failed to register global shortcut', error)
     }
-    await createWindow(
-      resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
+    void startDesktopRuntime(() =>
+      createWindow(
+        resolveStartupSplashTheme(
+          startupPreferences.appearanceMode,
+          nativeTheme.shouldUseDarkColors
+        )
+      )
     )
-    void startDesktopRuntime()
   })
 }
 

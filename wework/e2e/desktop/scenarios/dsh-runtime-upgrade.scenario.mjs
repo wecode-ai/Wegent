@@ -112,9 +112,18 @@ async function verifySmartAppTemplates(control, resultDir) {
 async function assertStartupBudget(control, resultDir, label) {
   await waitForClosedStartupSplash(control)
   const log = await waitForStartupLogs(resultDir)
-  const stages = [...log.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)]
-    .map(match => match[1])
-    .filter(stage => stage.includes("step: 'startup-splash-close'"))
+  const startupStages = [...log.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)].map(match => match[1])
+  const runtimeConfiguration = startupStages.findLastIndex(
+    stage => stage.includes("step: 'runtime-configure'") && stage.includes("status: 'started'")
+  )
+  const windowsReady = startupStages.findLastIndex(
+    stage => stage.includes("step: 'windows-create'") && stage.includes("status: 'completed'")
+  )
+  assert.ok(
+    runtimeConfiguration >= 0 && runtimeConfiguration < windowsReady,
+    'Runtime preparation must overlap startup window loading'
+  )
+  const stages = startupStages.filter(stage => stage.includes("step: 'startup-splash-close'"))
   assert.ok(stages.length > 0, 'Startup must reach the usable renderer')
   const durationMs = Number(stages.at(-1).match(/elapsedMs:\s*(\d+)/)?.[1])
   assert.ok(Number.isFinite(durationMs) && durationMs < 5000, `${label}: ${durationMs}ms >= 5s`)
