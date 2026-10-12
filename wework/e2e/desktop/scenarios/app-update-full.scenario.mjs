@@ -8,6 +8,10 @@ import { hashComponentPath } from '../../../scripts/lib/component-content-hash.m
 
 const TEST_TRAILER = Buffer.from('\nwework-e2e-full-update\n')
 const UPDATE_CHANNEL = 'stable'
+// Hold the Host ZIP response open so the transfer clearly outlives the moment
+// the desktop host accepts appUpdate.download. Reproduces a download that is
+// slower than a single host request instead of completing near-instantly.
+const HOST_ZIP_RESPONSE_DELAY_MS = 6_000
 
 export async function createDesktopScenario({ homePath, resultDir, workbenchReadyTimeoutMs }) {
   assert.equal(process.platform, 'darwin', 'App full update E2E requires macOS')
@@ -78,7 +82,12 @@ export async function createDesktopScenario({ homePath, resultDir, workbenchRead
         response.end('Full updates must not request byte ranges')
         return
       }
-      sendBytes(response, targetZipBytes, 'application/zip')
+      response.setHeader('content-type', 'application/zip')
+      response.setHeader('content-length', String(targetZipBytes.length))
+      const timer = setTimeout(() => {
+        if (!response.writableEnded && !response.destroyed) response.end(targetZipBytes)
+      }, HOST_ZIP_RESPONSE_DELAY_MS)
+      response.once('close', () => clearTimeout(timer))
       return
     }
     response.statusCode = 404
@@ -108,6 +117,20 @@ export async function createDesktopScenario({ homePath, resultDir, workbenchRead
       })
       const update = JSON.parse(await control.command('checkForAppUpdate', 'body'))
       assert.equal(update.version, targetVersion)
+
+      // The host must accept the download and return before the transfer
+      // finishes. When the capability response was tied to the whole download,
+      // a transfer longer than the desktop host's fixed request timeout made
+      // the renderer report a failed download while the host kept downloading.
+      await control.command('startAppUpdateDownload', 'body', { timeoutMs: 30_000 })
+      const accepted = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
+      assert.notEqual(
+        accepted.phase,
+        'ready',
+        'The desktop host held the app update download request open until the transfer finished'
+      )
+      assert.notEqual(accepted.phase, 'failed', 'The app update download failed to start')
+
       await control.command('downloadPendingAppUpdate', 'body', { timeoutMs: 120_000 })
 
       const zipRequests = requests.filter(request => request.path === `/${targetZipName}`)
@@ -213,10 +236,4 @@ function yamlScalar(source, key) {
   const match = new RegExp(`^${key}:\\s*['"]?([^'"\\s]+)['"]?\\s*$`, 'm').exec(source)
   assert.ok(match, `Missing ${key} in app-update.yml`)
   return match[1]
-}
-
-function sendBytes(response, bytes, contentType) {
-  response.setHeader('content-type', contentType)
-  response.setHeader('content-length', String(bytes.length))
-  response.end(bytes)
 }
