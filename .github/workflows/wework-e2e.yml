@@ -400,6 +400,25 @@ jobs:
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
+          case ",$WEWORK_E2E_SEGMENTS," in
+          *,dsh-runtime-upgrade,*)
+            resource_log="$RUNNER_TEMP/wework-startup-runner-resources.log"
+            (
+              while true; do
+                date -u '+[startup-runner-resources] %FT%TZ'
+                for resource in /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu.stat /proc/pressure/cpu /proc/pressure/io; do
+                  if test -r "$resource"; then
+                    echo "$resource"
+                    cat "$resource"
+                  fi
+                done
+                sleep 1
+              done
+            ) > "$resource_log" &
+            resource_monitor_pid=$!
+            trap 'kill "$resource_monitor_pid"; wait "$resource_monitor_pid" || true; cat "$resource_log"' EXIT
+            ;;
+          esac
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
 
