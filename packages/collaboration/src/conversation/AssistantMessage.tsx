@@ -416,7 +416,8 @@ export function AssistantMessage({
                 : t("assistant_status.stopped")}
             </div>
           ) : null}
-          {hasProcessingActivity &&
+          {(hasProcessingActivity ||
+            (message.status === "failed" && hasTurnDuration)) &&
           !isCancelled &&
           !usesFinalProcessingShell ? (
             <div

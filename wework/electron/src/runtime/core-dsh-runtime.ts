@@ -70,6 +70,16 @@ const CORE_UI_BUNDLES = [
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 
+// User plugin packages and their manifests must survive a runtime-only reset.
+export async function resetCoreDshRuntime(dataDirectory: string): Promise<void> {
+  const profileRoot = join(dataDirectory, 'dsh-core', 'profiles', PROFILE_NAME)
+  const paths = [
+    join(profileRoot, PROFILE_STAMP),
+    ...CORE_PLUGIN_PACKAGES.map(([name]) => join(profileRoot, 'node_modules', name)),
+  ]
+  for (const path of paths) await rm(path, { recursive: true, force: true })
+}
+
 interface RuntimeIdentity {
   dshVersion: string
   role: string
