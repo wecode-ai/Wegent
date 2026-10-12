@@ -4,7 +4,7 @@ sidebar_position: 35
 
 # 项目角色与 Issue 可见性
 
-云端项目使用一套项目角色：Owner、Maintainer、Developer、Viewer。Owner 管理项目及成员；Maintainer 管理项目设置、成员、指派和 Issue 安全级别；Developer 创建和修改可见 Issue；Viewer 只读。创建者保留 Owner 权限。工作区成员通过已有项目关联获得 Viewer 权限；项目直接授权可提高权限。
+云端项目使用一套项目角色：Owner、Maintainer、Developer、Viewer。Owner 管理项目及成员；Maintainer 管理项目设置、成员和 Issue 安全级别；Developer 创建和修改可见 Issue，并可指派负责人；Issue 创建者也可以指派自己的 Issue；Viewer 只读。项目创建者保留 Owner 权限。工作区成员通过已有项目关联获得 Viewer 权限；项目直接授权可提高权限。
 
 项目的“私有”或“公开”由 `resource_members` 中的授权决定。公开项目向所有登录用户授予 Viewer 或 Developer；私有项目没有这条授权。项目成员、工作区继承授权和所有登录用户授权取最高角色。待审批、被拒绝或无效的授权不生效。已归档项目不可访问。
 

@@ -358,6 +358,7 @@ def test_external_loop_item_update_allows_unchanged_null_schedule_fields(
 
     issue = {"number": 7, "title": "Old title"}
     response = {
+        "can_view_detail": True,
         "can_edit": True,
         "start_at": None,
         "due_at": None,

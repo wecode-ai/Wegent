@@ -340,6 +340,88 @@ describe('ChatInput', () => {
     }
   )
 
+  test.each(['desktop', 'compact'] as const)(
+    'keeps the %s model selector usable with an empty unresolved catalog',
+    async variant => {
+      const props = {
+        value: 'follow-up draft',
+        onChange: vi.fn(),
+        onSubmit: vi.fn(),
+        disabled: false,
+        variant,
+      }
+      const { rerender } = render(
+        <ChatInput
+          {...props}
+          projectChat={projectChatControls({
+            models: [],
+            selectedModel: null,
+            isModelSelectionReady: false,
+          })}
+        />
+      )
+
+      const trigger = screen.getByTestId('model-selector-button')
+      expect(trigger).toHaveTextContent('No models available')
+      expect(trigger).toBeEnabled()
+      expect(screen.getByTestId('send-message-button')).toBeDisabled()
+      await userEvent.click(trigger)
+      expect(screen.getByTestId('model-selector-empty-state')).toBeInTheDocument()
+      expect(screen.getByTestId('model-selector-add-custom-model')).toBeInTheDocument()
+      await userEvent.keyboard('{Escape}')
+
+      const model: UnifiedModel = { name: 'replacement', type: 'runtime' }
+      const setSelectedModel = vi.fn()
+      rerender(
+        <ChatInput
+          {...props}
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: null,
+            isModelSelectionReady: false,
+            setSelectedModel,
+          })}
+        />
+      )
+      expect(screen.getByTestId('model-selector-button')).toBe(trigger)
+      await userEvent.click(trigger)
+      await userEvent.click(screen.getByTestId('model-option-replacement'))
+      expect(setSelectedModel).toHaveBeenCalledWith(model)
+
+      rerender(
+        <ChatInput
+          {...props}
+          projectChat={projectChatControls({ models: [model], selectedModel: model })}
+        />
+      )
+      expect(screen.getByTestId('send-message-button')).toBeEnabled()
+    }
+  )
+
+  test('keeps model recovery visible in the fullscreen compact editor', async () => {
+    render(
+      <ChatInput
+        value={'line 1\nline 2\nline 3\nline 4\nline 5'}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="compact"
+        projectChat={projectChatControls({
+          models: [],
+          selectedModel: null,
+          isModelSelectionReady: false,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('expand-input-button'))
+    const trigger = screen.getByTestId('model-selector-button')
+    expect(screen.getByTestId('fullscreen-input-sheet')).toContainElement(trigger)
+    expect(trigger).toBeEnabled()
+    await userEvent.click(trigger)
+    expect(screen.getByTestId('model-selector-empty-state')).toBeInTheDocument()
+  })
+
   test('does not move selection when an unfocused composer syncs its value', async () => {
     const renderComposers = (backgroundValue?: string) => (
       <>
@@ -843,6 +925,53 @@ describe('ChatInput', () => {
 
     expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
     expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+  })
+
+  test('recovers a deleted model in the same conversation despite its unavailable placeholder', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'codex-official-unavailable',
+      type: 'runtime',
+      provider: 'local',
+      isActive: false,
+      config: { weworkModelKind: 'codex-official' },
+    }
+    const targetModel: UnifiedModel = {
+      name: 'replacement-model',
+      type: 'public',
+      provider: 'openai',
+      displayName: 'Replacement Model',
+      isActive: true,
+    }
+    const setSelectedModel = vi.fn()
+    const continueInNewConversation = vi.fn()
+
+    render(
+      <ChatInput
+        value="Continue the original task"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [targetModel],
+          activeModel,
+          selectedModel: null,
+          isModelSelectionReady: false,
+          setSelectedModel,
+          continueInNewConversation,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-option-replacement-model'))
+    expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+      'Switching to Replacement Model may change how the existing context is understood.'
+    )
+    await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
+    expect(continueInNewConversation).not.toHaveBeenCalled()
   })
 
   test('continues in a new referenced conversation when switching Codex providers', async () => {

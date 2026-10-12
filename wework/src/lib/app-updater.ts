@@ -53,24 +53,8 @@ export async function checkForWeworkUpdate(
     pendingUpdate = {
       ...update,
       download: async onProgress => {
-        const timer = onProgress
-          ? window.setInterval(() => {
-              void invokeDesktopHost<WeworkUpdateDownloadProgress>('appUpdate.downloadProgress')
-                .then(onProgress)
-                .catch(() => undefined)
-            }, 250)
-          : null
-        try {
-          await invokeDesktopHost<void>('appUpdate.download')
-        } finally {
-          if (timer !== null) window.clearInterval(timer)
-          if (onProgress) {
-            const progress = await invokeDesktopHost<WeworkUpdateDownloadProgress>(
-              'appUpdate.downloadProgress'
-            ).catch(() => null)
-            if (progress) onProgress(progress)
-          }
-        }
+        await invokeDesktopHost<void>('appUpdate.download')
+        await waitForDownloadCompletion(onProgress)
       },
       install: () => invokeDesktopHost<void>('appUpdate.install'),
     }
@@ -106,4 +90,35 @@ export async function installDownloadedWeworkUpdate(): Promise<void> {
     pendingUpdate = null
     throw new Error(errorMessage(error), { cause: error })
   }
+}
+
+const DOWNLOAD_PROGRESS_POLL_MS = 250
+
+/**
+ * The desktop host owns the download, so the renderer follows the reported
+ * progress until it reaches a terminal phase instead of holding one request
+ * open for the whole download.
+ */
+async function waitForDownloadCompletion(
+  onProgress?: (progress: WeworkUpdateDownloadProgress) => void
+): Promise<void> {
+  for (;;) {
+    const progress = await invokeDesktopHost<WeworkUpdateDownloadProgress>(
+      'appUpdate.downloadProgress'
+    )
+    if (progress.phase === 'failed') throw downloadFailureError(progress.failure)
+    onProgress?.(progress)
+    if (progress.phase === 'ready') return
+    await delay(DOWNLOAD_PROGRESS_POLL_MS)
+  }
+}
+
+function downloadFailureError(failure: WeworkUpdateDownloadProgress['failure']): Error {
+  const error = new Error(failure?.message || 'Wework update download failed')
+  if (failure?.code) Object.assign(error, { code: failure.code })
+  return error
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
 }

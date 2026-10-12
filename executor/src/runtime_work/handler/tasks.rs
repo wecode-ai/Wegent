@@ -948,6 +948,22 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
+    pub(super) fn record_overload_recovery_turn(&self, local_task_id: &str, turn_id: &str) {
+        self.store.update_task(local_task_id, |link| {
+            let turns = link
+                .runtime_handle
+                .as_object_mut()
+                .expect("Codex task runtime handle must be an object")
+                .entry("overloadRecoveryTurnIds")
+                .or_insert_with(|| json!([]))
+                .as_array_mut()
+                .expect("overload recovery turn IDs must be an array");
+            if !turns.iter().any(|value| value.as_str() == Some(turn_id)) {
+                turns.push(json!(turn_id));
+            }
+        });
+    }
+
     pub(super) async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;

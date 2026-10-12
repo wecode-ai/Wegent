@@ -84,7 +84,6 @@ export function ComposerToolbar({
   selectedModelOptions,
   modelSelectorOpenSignal,
   onModelSelectorOpenChange,
-  isModelSelectionReady,
   onSelectModel,
   onSelectModelAndOptions,
   onSelectModelOption,
@@ -202,25 +201,21 @@ export function ComposerToolbar({
             />
             {contextUsageIndicator}
             {modelSelectorOverride ??
-              (isModelSelectionReady || models.length > 0 ? (
-                renderModelSelector({
-                  models: models,
-                  selectedModel: displayedSelectedModel,
-                  selectedModelOptions: selectedModelOptions,
-                  nextTurn: isStreaming && modelChangePending,
-                  openSignal: modelSelectorOpenSignal,
-                  onOpenChange: onModelSelectorOpenChange,
-                  disabled: disabled,
-                  onSelectModel: onSelectModel,
-                  onSelectModelAndOptions: onSelectModelAndOptions,
-                  onSelectModelOption: onSelectModelOption,
-                  onBlockedModelSelect: onBlockedModelSelect,
-                  buttonClassName: 'opacity-90 hover:opacity-100',
-                  maxClosedWidth: compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined,
-                })
-              ) : (
-                <div className="h-8 w-32 min-w-0 shrink" data-testid="model-selector-loading" />
-              ))}
+              renderModelSelector({
+                models: models,
+                selectedModel: displayedSelectedModel,
+                selectedModelOptions: selectedModelOptions,
+                nextTurn: isStreaming && modelChangePending,
+                openSignal: modelSelectorOpenSignal,
+                onOpenChange: onModelSelectorOpenChange,
+                disabled: disabled,
+                onSelectModel: onSelectModel,
+                onSelectModelAndOptions: onSelectModelAndOptions,
+                onSelectModelOption: onSelectModelOption,
+                onBlockedModelSelect: onBlockedModelSelect,
+                buttonClassName: 'opacity-90 hover:opacity-100',
+                maxClosedWidth: compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined,
+              })}
           </>
         ) : null}
         {workspaceMenu}

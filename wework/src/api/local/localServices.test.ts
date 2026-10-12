@@ -5575,7 +5575,7 @@ describe('createLocalAppServices', () => {
     )
   })
 
-  test('drops empty remote workspace shells when a local workspace has the same label', async () => {
+  test('preserves an empty remote project when a local workspace has the same label', async () => {
     const request = vi.fn().mockResolvedValue({
       success: true,
       workspaces: [
@@ -5609,7 +5609,15 @@ describe('createLocalAppServices', () => {
 
     const response = await services.runtimeWorkApi?.listRuntimeWork()
 
-    expect(response?.projects.map(project => project.project.key)).toEqual(['local:/Users/me'])
+    expect(response?.projects.map(project => project.project.key)).toEqual([
+      'local:/Users/me',
+      'local:/home/me',
+    ])
+    expect(response?.projects[1].deviceWorkspaces[0]).toMatchObject({
+      deviceId: 'remote-ssh-codex-managed:host',
+      workspacePath: '/home/me',
+      remoteHostId: 'remote-ssh-codex-managed:host',
+    })
     expect(response?.projects[0].deviceWorkspaces).toHaveLength(1)
     expect(response?.projects[0].deviceWorkspaces[0]).toEqual(
       expect.objectContaining({
@@ -5891,5 +5899,69 @@ describe('createLocalAppServices', () => {
       },
       'remote-device'
     )
+  })
+})
+
+describe('runtime project response identities', () => {
+  test('assigns separate project ids to remote references sharing one device and directory', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: ['project-a', 'project-b'].map(key => ({
+        projectKey: `wegent-remote:remote-device:${key}`,
+        projectKind: 'remote',
+        projectSource: 'remote_project',
+        workspacePath: '/srv/shared',
+        workspaceSource: 'remote',
+        remoteHostId: 'remote-device',
+        label: key,
+        tasks: [],
+      })),
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+    const result = await services.runtimeWorkApi!.listRuntimeWork()
+    expect(result.projects).toHaveLength(2)
+    expect(result.projects[0].project.id).not.toBe(result.projects[1].project.id)
+    expect(result.projects.map(item => item.project.stateDeviceId)).toEqual([
+      'local-device',
+      'local-device',
+    ])
+  })
+
+  test('keeps the remote execution target when adapting an already grouped response', async () => {
+    const request = vi.fn().mockResolvedValue({
+      projects: [
+        {
+          project: { key: 'remote-entry', source: 'remote_project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              remoteHostId: 'remote-device',
+              workspaceSource: 'remote',
+              workspacePath: '/srv/work',
+              available: false,
+              tasks: [],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'viewer' }),
+      request,
+      subscribe: vi.fn(),
+    })
+    const result = await services.runtimeWorkApi!.listRuntimeWork()
+    expect(result.projects[0].project.stateDeviceId).toBe('viewer')
+    expect(result.projects[0].deviceWorkspaces[0]).toMatchObject({
+      deviceId: 'remote-device',
+      remoteHostId: 'remote-device',
+      available: false,
+    })
   })
 })
