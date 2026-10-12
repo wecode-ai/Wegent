@@ -3011,7 +3011,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         return
       }
       await control.command('waitFor', '[data-testid="processing-duration-label"]')
-      await control.command('scrollIntoView', '[data-testid="processing-duration-label"]')
+      await control.command('scrollIntoViewAsUser', '[data-testid="processing-duration-label"]')
       await control.command('waitFor', '[data-testid="processing-duration-label"]', {
         visible: true,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
