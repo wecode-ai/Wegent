@@ -5286,6 +5286,83 @@ describe('DesktopSidebar', () => {
     expect(projectSpaceApi.listCloudProjects).not.toHaveBeenCalled()
   })
 
+  test.each([
+    ['remote', 'relay'],
+    ['cloud', 'runtime'],
+  ])(
+    'keeps an online %s project editable through its %s owner alias',
+    async (deviceType, ownerAlias) => {
+      const pluginApi = {
+        readState: vi.fn().mockResolvedValue({ marketplaceItems: [] }),
+        installAvailablePlugin: vi.fn(),
+      }
+      const save = vi.fn().mockResolvedValue(undefined)
+      const listDirectories = vi.fn().mockResolvedValue([])
+      const canonicalDevice = {
+        device_id: 'executor',
+        socket_device_id: 'relay',
+        runtime_instance_id: 'runtime',
+        device_type: deviceType,
+        status: 'online',
+        name: 'Owner',
+      }
+      const projectWork = {
+        project: {
+          id: 7,
+          key: 'real',
+          sidebarStateKey: 'mirror',
+          ownerDeviceId: ownerAlias,
+          ownerProjectKey: 'real',
+          stateDeviceId: 'local-device',
+          name: 'Device project',
+          source: 'remote_project',
+          roots: [{ kind: 'local', path: '/owner' }],
+        },
+        deviceWorkspaces: [
+          {
+            deviceId: 'executor',
+            remoteHostId: 'relay',
+            workspaceSource: 'remote',
+            workspacePath: '/owner',
+            available: true,
+            tasks: [],
+          },
+        ],
+      }
+      const projectDevicePluginApi = vi.fn().mockReturnValue(pluginApi)
+      renderSidebar({
+        projects: [],
+        devices: [canonicalDevice] as never,
+        runtimeWork: { projects: [projectWork], chats: [], totalTasks: 0 },
+        onUpdateLocalRuntimeProject: save,
+        onListDeviceDirectories: listDirectories,
+        projectDevicePluginApi,
+      })
+      await userEvent.click(screen.getByTestId('project-menu-7'))
+      await userEvent.click(screen.getByTestId('rename-project-7'))
+      expect(screen.getByTestId('save-local-project-button')).toBeEnabled()
+      expect(screen.queryByTestId('project-device-offline')).not.toBeInTheDocument()
+      await userEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
+      await waitFor(() =>
+        expect(pluginApi.readState).toHaveBeenCalledWith({
+          mergeAllMarketplaces: true,
+          refresh: true,
+        })
+      )
+      await userEvent.click(screen.getByTestId('local-project-settings-basic-tab'))
+      await userEvent.click(screen.getByTestId('add-local-project-folders'))
+      expect(screen.getByTestId('local-project-folder-picker')).toBeInTheDocument()
+      await waitFor(() => expect(listDirectories).toHaveBeenCalledWith('executor', '/owner'))
+      await userEvent.click(screen.getByTestId('save-local-project-button'))
+      await waitFor(() =>
+        expect(save).toHaveBeenCalledWith(
+          expect.objectContaining({ deviceId: ownerAlias, projectKey: 'real', roots: ['/owner'] })
+        )
+      )
+      expect(projectDevicePluginApi).toHaveBeenCalledWith(ownerAlias)
+    }
+  )
+
   test.each(['remote', 'cloud'])(
     'opens full project settings for an offline %s device',
     async deviceType => {

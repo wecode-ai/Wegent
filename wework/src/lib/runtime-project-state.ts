@@ -1,3 +1,11 @@
+import {
+  buildRuntimeRemoteProjectStateId,
+  parseRuntimeRemoteProjectStateId,
+  getRuntimeProjectSyncTarget,
+  runtimeProjectTargetKey,
+  type RuntimeProjectSyncTarget,
+} from './runtime-project-identity'
+import { createWorkbenchDeviceResolver, type WorkbenchDeviceResolver } from './workbench-device'
 import type {
   DeviceInfo,
   RuntimeProjectActivateRequest,
@@ -53,37 +61,24 @@ export function getRuntimeProjectSidebarStateKey(project: RuntimeProjectRef): st
   return project.sidebarStateKey?.trim() || project.key
 }
 
-export function buildRuntimeRemoteProjectStateId(hostId: string, projectKey: string): string {
-  return `wegent-remote:${encodeURIComponent(hostId)}:${encodeURIComponent(projectKey)}`
-}
-
-export function parseRuntimeRemoteProjectStateId(
-  stateId: string
-): { hostId: string; projectKey: string } | null {
-  const prefix = 'wegent-remote:'
-  if (!stateId.startsWith(prefix)) return null
-  const encodedIdentity = stateId.slice(prefix.length)
-  const separatorIndex = encodedIdentity.indexOf(':')
-  if (separatorIndex <= 0 || separatorIndex === encodedIdentity.length - 1) return null
-
-  try {
-    const hostId = decodeURIComponent(encodedIdentity.slice(0, separatorIndex)).trim()
-    const projectKey = decodeURIComponent(encodedIdentity.slice(separatorIndex + 1)).trim()
-    return hostId && projectKey ? { hostId, projectKey } : null
-  } catch {
-    return null
-  }
-}
-
 export function getRuntimeRemoteProjectRegistrations(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
-  localStateDeviceId: string | null | undefined
+  localStateDeviceId: string | null | undefined,
+  options: { devices?: DeviceInfo[]; excludedTargets?: RuntimeProjectSyncTarget[] } = {}
 ): RuntimeRemoteProjectRegistration[] {
   if (!runtimeWork || !localStateDeviceId) return []
 
+  const devices = createWorkbenchDeviceResolver(options.devices ?? [])
+  const excluded = new Set(
+    (options.excludedTargets ?? []).map(target =>
+      runtimeProjectTargetKey(target.deviceId, target.projectKey, devices)
+    )
+  )
   const registrations = new Map<string, RuntimeRemoteProjectRegistration>()
   runtimeWork.projects.forEach(projectWork => {
-    const workspace = getRemoteProjectWorkspace(projectWork, localStateDeviceId)
+    const target = getRuntimeProjectSyncTarget(projectWork)
+    if (excluded.has(runtimeProjectTargetKey(target.deviceId, target.projectKey, devices))) return
+    const workspace = getRemoteProjectWorkspace(projectWork, localStateDeviceId, devices)
     if (!workspace) return
     const owner = getRuntimeProjectOwner(projectWork)
     const hostId = owner.deviceId
@@ -106,7 +101,8 @@ export function getRuntimeRemoteProjectRegistrations(
 export function getRuntimeProjectActivation(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   projectId: number | null | undefined,
-  localStateDeviceId: string | null | undefined
+  localStateDeviceId: string | null | undefined,
+  devices: DeviceInfo[] = []
 ): RuntimeProjectActivateRequest | null {
   if (!runtimeWork || !projectId || !localStateDeviceId) return null
   const projectWork = runtimeWork.projects.find(
@@ -115,7 +111,11 @@ export function getRuntimeProjectActivation(
   if (!projectWork) return null
   const workspace = projectWork.deviceWorkspaces[0]
   if (!workspace) return null
-  const remoteWorkspace = getRemoteProjectWorkspace(projectWork, localStateDeviceId)
+  const remoteWorkspace = getRemoteProjectWorkspace(
+    projectWork,
+    localStateDeviceId,
+    createWorkbenchDeviceResolver(devices)
+  )
   const remoteHostId = remoteWorkspace
     ? remoteWorkspace.remoteHostId?.trim() || remoteWorkspace.deviceId.trim()
     : null
@@ -159,12 +159,16 @@ export function findActiveRuntimeProjectId(
   return project ? runtimeProjectUiId(project.project) : null
 }
 
-function getRemoteProjectWorkspace(projectWork: RuntimeProjectWork, localStateDeviceId: string) {
+function getRemoteProjectWorkspace(
+  projectWork: RuntimeProjectWork,
+  localStateDeviceId: string,
+  devices: WorkbenchDeviceResolver
+) {
   return (
-    projectWork.deviceWorkspaces.find(workspace => Boolean(workspace.remoteHostId?.trim())) ??
     projectWork.deviceWorkspaces.find(
-      workspace => workspace.deviceId.trim() !== localStateDeviceId
-    ) ??
-    null
+      workspace =>
+        devices.identityKey(workspace.remoteHostId?.trim() || workspace.deviceId) !==
+        devices.identityKey(localStateDeviceId)
+    ) ?? null
   )
 }

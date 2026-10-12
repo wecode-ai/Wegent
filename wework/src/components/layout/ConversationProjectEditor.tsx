@@ -4,6 +4,7 @@ import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import type { RuntimeProjectWork } from '@/types/api'
 
 export function ConversationProjectEditor({
@@ -27,7 +28,7 @@ export function ConversationProjectEditor({
     <LocalProjectEditDialog
       open
       projectWork={projectWork}
-      device={workbench.state.devices.find(device => device.device_id === owner.deviceId) ?? null}
+      device={findWorkbenchDevice(workbench.state.devices, owner.deviceId)}
       onGetDeviceHomeDirectory={workbench.getDeviceHomeDirectory}
       onListDeviceDirectories={workbench.listDeviceDirectories}
       onCreateDeviceDirectory={workbench.createDeviceDirectory}

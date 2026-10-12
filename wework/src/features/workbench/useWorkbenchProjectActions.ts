@@ -4,6 +4,10 @@ import {
   getLocalRuntimeStateDeviceId,
   getRuntimeRemoteProjectRegistrations,
 } from '@/lib/runtime-project-state'
+import {
+  getRuntimeProjectSyncTarget,
+  type RuntimeProjectSyncTarget,
+} from '@/lib/runtime-project-identity'
 import { useCallback, useRef } from 'react'
 import type { Dispatch } from 'react'
 import {
@@ -67,8 +71,8 @@ interface UseWorkbenchProjectActionsOptions {
     projectId: number,
     workspace?: { deviceId: string; workspacePath: string }
   ) => void
-  invalidateRemoteProjectSync: (workspacePath: string) => void
-  clearRemoteProjectSyncRemoval: (workspacePath: string) => void
+  invalidateRemoteProjectSync: (target: RuntimeProjectSyncTarget) => void
+  clearRemoteProjectSyncRemoval: (target: RuntimeProjectSyncTarget) => void
   enqueueRemoteProjectStateMutation: <T>(mutation: () => Promise<T>) => Promise<T>
 }
 
@@ -165,7 +169,10 @@ export function useWorkbenchProjectActions({
       if (!response.accepted) {
         throw new Error(response.error || 'Failed to create local project')
       }
-      response.roots.forEach(clearRemoteProjectSyncRemoval)
+      clearRemoteProjectSyncRemoval({
+        deviceId: response.deviceId,
+        projectKey: response.projectKey,
+      })
       await refreshWorkLists()
       return {
         id: runtimeProjectUiId({
@@ -322,7 +329,10 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
       }
-      response.roots.forEach(clearRemoteProjectSyncRemoval)
+      clearRemoteProjectSyncRemoval({
+        deviceId: response.deviceId,
+        projectKey: response.projectKey,
+      })
       const update: RuntimeProjectUpdate = {
         deviceId: data.deviceId,
         projectKey: response.projectKey,
@@ -376,9 +386,12 @@ export function useWorkbenchProjectActions({
       )
       if (!runtimeWorkspace) return false
 
-      const runtimeProject = state.runtimeWork?.projects.find(
+      const projectWork = state.runtimeWork?.projects.find(
         item => runtimeProjectUiId(item.project) === projectId
-      )?.project
+      )
+      if (!projectWork) return false
+      const runtimeProject = projectWork.project
+      const syncTarget = getRuntimeProjectSyncTarget(projectWork)
       const removesOfflineRemoteProject =
         !runtimeWorkspace.available && isRemoteRuntimeWorkspace(runtimeWorkspace)
       const removePrimaryProject = () =>
@@ -401,7 +414,7 @@ export function useWorkbenchProjectActions({
           throw new Error(message)
         }
       }
-      invalidateRemoteProjectSync(runtimeWorkspace.workspacePath)
+      invalidateRemoteProjectSync(syncTarget)
       if (
         runtimeProject?.sidebarStateKey &&
         runtimeProject.stateDeviceId &&
@@ -423,7 +436,7 @@ export function useWorkbenchProjectActions({
             throw new Error(response.error || 'Failed to remove runtime workspace')
           }
         } catch (error) {
-          clearRemoteProjectSyncRemoval(runtimeWorkspace.workspacePath)
+          clearRemoteProjectSyncRemoval(syncTarget)
           const message =
             error instanceof Error ? error.message : 'Failed to remove runtime workspace'
           dispatch({ type: 'error_set', error: message })
@@ -498,7 +511,10 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
       }
-      invalidateRemoteProjectSync(standaloneWorkspacePath)
+      invalidateRemoteProjectSync({
+        deviceId: standaloneDeviceId,
+        projectKey: standaloneRuntimeProjectKey(standaloneWorkspacePath),
+      })
       markRuntimeProjectRemoved(projectId, {
         deviceId: standaloneDeviceId,
         workspacePath: standaloneWorkspacePath,

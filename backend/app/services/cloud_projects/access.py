@@ -4,6 +4,7 @@
 
 """Role-aware authorization for cloud collaboration resources."""
 
+from collections.abc import Set
 from dataclasses import dataclass
 from enum import Enum
 
@@ -37,6 +38,47 @@ class IssueAction(str, Enum):
     EXECUTE = "execute"
 
 
+# LoopItemUpdate fields that change Issue content rather than its assignee.
+ISSUE_CONTENT_FIELDS = frozenset(
+    {
+        "title",
+        "description",
+        "status",
+        "priority",
+        "start_at",
+        "due_at",
+        "parent_id",
+        "tags",
+        "workflow",
+        "execution_config",
+    }
+)
+# LoopItemUpdate fields that select the Issue assignee.
+ISSUE_ASSIGNMENT_FIELDS = frozenset(
+    {
+        "assignee_user_id",
+        "assignee_agent_id",
+        "assignee_team_id",
+        "assignee_group_id",
+    }
+)
+
+
+def issue_update_actions(changed_fields: Set[str]) -> list[IssueAction]:
+    """List the actions required for an update touching ``changed_fields``.
+
+    Assignment and content changes are authorized independently, so an update
+    that mixes both kinds of fields must satisfy every action it implies.
+    """
+
+    actions: list[IssueAction] = []
+    if changed_fields & ISSUE_ASSIGNMENT_FIELDS:
+        actions.append(IssueAction.ASSIGN)
+    if changed_fields & ISSUE_CONTENT_FIELDS:
+        actions.append(IssueAction.EDIT_CONTENT)
+    return actions
+
+
 @dataclass(frozen=True)
 class IssuePermissions:
     edit_content: bool
@@ -54,13 +96,20 @@ def issue_permissions(
     issue_creator_user_id: int | None,
     user_id: int,
 ) -> IssuePermissions:
-    """Resolve action-specific permissions without a generic edit shortcut."""
+    """Resolve action-specific permissions without a generic edit shortcut.
 
+    Assignment follows the role hierarchy, but the Issue creator always keeps
+    control of their own assignee.
+    """
+
+    is_developer = has_permission(access.role, BaseRole.Developer)
+    # The Issue creator keeps control of their own assignee regardless of role.
+    is_creator = issue_creator_user_id is not None and issue_creator_user_id == user_id
     return IssuePermissions(
-        edit_content=has_permission(access.role, BaseRole.Developer),
-        comment=has_permission(access.role, BaseRole.Developer),
-        assign=has_permission(access.role, BaseRole.Maintainer),
-        execute=has_permission(access.role, BaseRole.Developer),
+        edit_content=is_developer,
+        comment=is_developer,
+        assign=is_developer or is_creator,
+        execute=is_developer,
     )
 
 

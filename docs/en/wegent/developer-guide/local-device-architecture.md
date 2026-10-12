@@ -36,6 +36,8 @@ flowchart LR
 
 ### Wework Packaged App Local-First Channel
 
+Local Electron packages reuse the release package's brand metadata and update source configuration. They must also include `app-update.yml` in Resources with `updaterCacheDirName` derived from the package name, allowing startup to migrate the actual updater cache directory. Write this file before signing the macOS app.
+
 The packaged Wework Electron app defaults to local-first mode. This mode does not start the frontend Node dev server and does not start an extra local HTTP Backend service. The React UI runs inside the Electron renderer, while the Electron main process provides the app's internal command layer.
 
 Local-first mode has three local runtime roles: the Electron main process, the executor sidecar, and core DSH:

@@ -55,6 +55,7 @@ import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
 import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDialog'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
@@ -5213,13 +5214,10 @@ export function DesktopSidebar({
           <LocalProjectEditDialog
             open={editingLocalProject !== null}
             projectWork={editingProjectWork}
-            device={
-              devices.find(
-                device =>
-                  device.device_id ===
-                  (editingProjectWork ? getRuntimeProjectOwner(editingProjectWork).deviceId : '')
-              ) ?? null
-            }
+            device={findWorkbenchDevice(
+              devices,
+              editingProjectWork ? getRuntimeProjectOwner(editingProjectWork).deviceId : null
+            )}
             onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}

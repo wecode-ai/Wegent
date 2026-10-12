@@ -1,3 +1,4 @@
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import { isUsableDevice } from '@/lib/device-capabilities'
 import type {
   DeviceInfo,
@@ -10,7 +11,8 @@ import type {
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
 } from '@/types/api'
-import { EMPTY_RUNTIME_WORK, mergeRuntimeWorkLists } from './workbenchCloudStatus'
+import { EMPTY_RUNTIME_WORK } from './workbenchCloudStatus'
+import { mergeRuntimeWorkLists } from './runtimeWorkMerge'
 
 const REMOTE_RUNTIME_WORK_CACHE_VERSION = 3
 const REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX = 'wework.workbench.remoteRuntimeWork.v3'
@@ -475,20 +477,6 @@ function runtimeWorkspaces(runtimeWork: RuntimeWorkListResponse): RuntimeDeviceW
   ]
 }
 
-function deviceAliases(device: DeviceInfo): Set<string> {
-  return new Set(
-    [
-      device.device_id,
-      device.app_device_id,
-      device.socket_device_id,
-      device.runtime_instance_id,
-      ...(device.runtime_routes ?? []).flatMap(route => [route.device_id, route.runtime_device_id]),
-    ]
-      .map(value => value?.trim())
-      .filter((value): value is string => Boolean(value))
-  )
-}
-
 function workspaceAliases(workspace: RuntimeDeviceWorkspace): Set<string> {
   return new Set(
     [workspace.deviceId, workspace.remoteHostId]
@@ -523,7 +511,7 @@ function withCachedDeviceLabels(
   if (!devices) return runtimeWork
   const deviceRecords = devices.map(device => ({
     device,
-    aliases: deviceAliases(device),
+    aliases: new Set(getWorkbenchDeviceIds(device)),
   }))
   const annotateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
     const aliases = workspaceAliases(workspace)
@@ -579,7 +567,7 @@ export function reconcileCachedRemoteRuntimeWork(
   const cachedSnapshot = createRemoteRuntimeWorkCacheSnapshot(cachedRuntimeWork)
   const liveWorkspaceAliases = runtimeWorkspaces(liveRuntimeWork).map(workspaceAliases)
   const deviceRecords = devices?.map(device => ({
-    aliases: deviceAliases(device),
+    aliases: new Set(getWorkbenchDeviceIds(device)),
     available: isUsableDevice(device),
   }))
 

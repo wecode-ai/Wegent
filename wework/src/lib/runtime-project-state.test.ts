@@ -1,13 +1,15 @@
+import {
+  buildRuntimeRemoteProjectStateId,
+  parseRuntimeRemoteProjectStateId,
+} from './runtime-project-identity'
 import { describe, expect, test } from 'vitest'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import {
-  buildRuntimeRemoteProjectStateId,
   findActiveRuntimeProjectId,
   getLocalRuntimeStateDeviceId,
   getRuntimeProjectActivation,
   getRuntimeProjectReorderRequest,
   getRuntimeRemoteProjectRegistrations,
-  parseRuntimeRemoteProjectStateId,
 } from './runtime-project-state'
 
 const runtimeWork: RuntimeWorkListResponse = {
@@ -162,5 +164,74 @@ describe('runtime project state', () => {
       beforeProjectKey: '/repo/local',
       insertAtEnd: false,
     })
+  })
+})
+
+describe('remote project sync identity', () => {
+  test('removing one remote project does not suppress the same path on another device or project', () => {
+    const remote = structuredClone(runtimeWork.projects[1])
+    remote.project.stateDeviceId = 'viewer'
+    const otherDevice = structuredClone(remote)
+    otherDevice.project.sidebarStateKey = 'other-device-entry'
+    otherDevice.deviceWorkspaces[0].deviceId = 'other-device'
+    otherDevice.deviceWorkspaces[0].remoteHostId = 'other-device'
+    const otherProject = structuredClone(remote)
+    otherProject.project.key = 'another-project'
+    otherProject.project.sidebarStateKey = 'another-project-entry'
+    const work = { projects: [remote, otherDevice, otherProject], chats: [], totalTasks: 0 }
+    const registrations = getRuntimeRemoteProjectRegistrations(work, 'viewer', {
+      excludedTargets: [{ deviceId: 'remote-device', projectKey: '/srv/remote' }],
+    })
+    expect(registrations.map(item => item.id)).toEqual([
+      'other-device-entry',
+      'another-project-entry',
+    ])
+    expect(registrations.every(item => item.remotePath === '/srv/remote')).toBe(true)
+  })
+
+  test('matches a removed project through a known device alias while preserving the external host value', () => {
+    const work = structuredClone(runtimeWork)
+    work.projects[1].deviceWorkspaces[0].remoteHostId = 'relay'
+    const devices = [
+      {
+        id: 1,
+        device_id: 'remote-device',
+        socket_device_id: 'relay',
+        status: 'online' as const,
+        name: 'Remote',
+        is_default: false,
+        device_type: 'remote' as const,
+      },
+    ]
+    expect(
+      getRuntimeRemoteProjectRegistrations(work, 'local-device', {
+        devices,
+        excludedTargets: [{ deviceId: 'remote-device', projectKey: '/srv/remote' }],
+      })
+    ).toEqual([])
+    expect(getRuntimeRemoteProjectRegistrations(work, 'local-device', { devices })[0].hostId).toBe(
+      'relay'
+    )
+  })
+
+  test('does not register another connection to the local executor as a remote project', () => {
+    const work = structuredClone(runtimeWork)
+    work.projects = [work.projects[0]]
+    work.projects[0].deviceWorkspaces[0].deviceId = 'local-relay'
+    const devices = [
+      {
+        id: 1,
+        device_id: 'local-device',
+        socket_device_id: 'local-relay',
+        status: 'online' as const,
+        name: 'Local',
+        is_default: false,
+        device_type: 'local' as const,
+      },
+    ]
+    expect(getRuntimeRemoteProjectRegistrations(work, 'local-device', { devices })).toEqual([])
+    expect(
+      getRuntimeProjectActivation(work, 1, 'local-device', devices)?.remoteHostId
+    ).toBeUndefined()
   })
 })

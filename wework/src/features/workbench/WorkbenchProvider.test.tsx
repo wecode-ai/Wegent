@@ -10555,7 +10555,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     const localRuntimeWork: RuntimeWorkListResponse = {
       projects: [
         {
-          project: { key: 'local-project', name: 'Cloud Repo' },
+          project: { key: 'local-project', name: 'Cloud Repo', source: 'local_project' },
           deviceWorkspaces: [
             {
               id: null,
@@ -10585,7 +10585,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     const cloudRuntimeWork: RuntimeWorkListResponse = {
       projects: [
         {
-          project: { id: 50, key: 'cloud-project', name: 'Cloud Repo' },
+          project: { id: 50, key: 'cloud-project', name: 'Cloud Repo', source: 'legacy_root' },
           deviceWorkspaces: [
             {
               id: 51,
@@ -10643,7 +10643,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1))
     await waitFor(() => expect(cloudListDevices.mock.calls.length).toBeGreaterThan(1))
 
-    // The local and cloud copies of the same workspace must collapse into one project.
+    // The legacy directory record attaches to its unique named project after alias discovery.
     expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1')
     expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('device-local')
   })

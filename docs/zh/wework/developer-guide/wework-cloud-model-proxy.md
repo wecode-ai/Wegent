@@ -55,6 +55,27 @@ executor 的 Codex compat proxy 在上游尚未开始返回响应流、且模型
 
 如果上游返回标准 `Retry-After` 响应头，proxy 会优先采用该等待时间，并将单次等待限制在 60 秒以内。非 429 响应不会触发这项策略；重试耗尽后，proxy 会把最后一次 429 状态和错误正文返回给 Codex。已经开始输出的流不会通过这项机制重放，避免重复生成或重复执行工具。
 
+### Codex 直连模型过载恢复
+
+使用原生 Codex provider 直连模型时，请求不经过 compat proxy。Codex
+app-server 报告结构化 `serverOverloaded` 错误后，executor 会等待该轮
+`turn/completed` 确认失败轮次已经结束，再在同一 thread、同一模型下恢复。
+最多恢复 5 次，等待时间依次为 5、10、20、40 和 60 秒。
+
+恢复使用原生 `turn/start` 的空 `input`，继续已保存的会话历史，不重发原任务、
+附件、用户消息 ID 或已合并的 additional context。已经完成的工具结果仍留在
+历史中。等待期间任务保持运行并显示重连状态；用户取消会立即终止等待，恢复
+耗尽后才向用户返回最终失败。额度不足、认证错误、上下文超限、子智能体失败，
+以及 Codex 自己正在重试的错误不会触发这项恢复。
+
+executor 持久化已进入恢复的失败轮次 ID。读取原生或缓存历史时，仅清除这些
+轮次的终止错误状态，保留用户消息和工具输出，避免重新打开任务后出现已处理
+的失败提示。最终耗尽恢复的轮次及其他错误不受影响。
+
+诊断日志 `codex overloaded turn recovery` 记录 thread、重试序号、上限和等待
+毫秒数。桌面检查点 `model-overload-recovery` 使用真实 Electron、Codex 和
+executor 验证工具结果保留、无重复用户消息、自动恢复与取消。
+
 ### Anthropic 空输出恢复
 
 部分 Anthropic Messages 兼容服务可能在 `message_delta` 中返回结束原因和大于零的 `output_tokens`，却没有发送任何文本、思考内容或工具调用。executor 的 Codex compat proxy 会把这种不完整响应转换为失败事件，而不是错误地发出成功完成事件。Codex 随后按流错误恢复机制重试当前模型请求，避免 Wework 在没有 assistant 回复时提前结束任务。

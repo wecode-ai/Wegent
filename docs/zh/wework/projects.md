@@ -48,7 +48,7 @@ Wework 会在本地空间中自动维护 **当前设备智能体**，无需用�
 
 ### 设置云端看板权限
 
-云端项目只有 **私有** 和 **公开** 两种访问方式。公开项目可为所有登录用户授予 Viewer（只读）或 Developer（可创建和修改 Issue）角色；私有项目只允许已有授权的用户进入。项目角色统一为 Owner、Maintainer、Developer、Viewer。Owner 管理项目和成员，Maintainer 还可管理 Issue 安全级别和指派。
+云端项目只有 **私有** 和 **公开** 两种访问方式。公开项目可为所有登录用户授予 Viewer（只读）或 Developer（可创建和修改 Issue）角色；私有项目只允许已有授权的用户进入。项目角色统一为 Owner、Maintainer、Developer、Viewer。Owner 管理项目和成员，Maintainer 还可管理 Issue 安全级别；Developer 及以上可以指派负责人，Issue 创建者也可以指派自己的 Issue。
 
 Issue 的可见范围在创建项目、项目设置和单个 Issue 中配置。创建时可选择新 Issue 默认是 **项目成员可见** 还是 **仅相关人员可见**；Maintainer 可在项目设置或 Issue 中调整。Owner 和 Maintainer 可查看全部 Issue，其余用户只可查看公开给项目成员的 Issue，或与自己相关的 Issue。相关人员包括创建者、负责人、协作者、有效任务关联用户，以及被指派机器人的创建者。无关 Issue 不会出现在看板、表格、执行列表或项目会话中，直接打开也会显示为不存在。
 

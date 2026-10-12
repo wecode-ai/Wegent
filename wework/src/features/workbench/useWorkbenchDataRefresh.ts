@@ -1,4 +1,6 @@
 import { updateRuntimeWorkProject, type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
+import { mergeDeviceLists } from '@/lib/workbench-device'
+import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch } from 'react'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
@@ -27,8 +29,6 @@ import {
   clearCloudRuntimeSync,
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
-  mergeDeviceLists,
-  mergeRuntimeWorkLists,
   nowMs,
   readCachedDeviceList,
   resolveDeviceListWithCache,

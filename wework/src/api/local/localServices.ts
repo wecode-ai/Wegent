@@ -26,7 +26,8 @@ import { listLocalInstalledPluginsFromDisk } from '@/api/local/codexPlugins'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import type { RuntimeWorkListRequestOptions } from '@/api/runtimeWork'
 import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
-import { parseRuntimeRemoteProjectStateId } from '@/lib/runtime-project-state'
+import { parseRuntimeRemoteProjectStateId } from '@/lib/runtime-project-identity'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import i18n from '@/i18n'
 import type {
   ArchivedConversationsListRequest,
@@ -2016,7 +2017,10 @@ function normalizeRuntimeWorkDeviceId(
 
     return {
       ...workspace,
-      deviceId: localDeviceId,
+      deviceId:
+        workspace.workspaceSource === 'remote' && workspace.remoteHostId
+          ? workspace.remoteHostId
+          : localDeviceId,
       deviceName:
         stringValue(workspaceRecord.deviceName) ??
         stringValue(workspaceRecord.device_name) ??
@@ -2103,22 +2107,6 @@ function adaptRuntimeWorkListResponse(
   const projectsByKey = new Map<string, RuntimeWorkListResponse['projects'][number]>()
   const chats: RuntimeWorkListResponse['chats'] = []
   let totalTasks = 0
-  const localWorkspaceLabels = new Set<string>()
-  for (const rawWorkspace of workspaces) {
-    const workspace = recordValue(rawWorkspace)
-    const workspacePath =
-      stringValue(workspace.workspacePath) ??
-      stringValue(workspace.workspace_path) ??
-      stringValue(workspace.projectWorkspacePath) ??
-      stringValue(workspace.project_workspace_path) ??
-      stringValue(workspace.cwd) ??
-      stringValue(workspace.path)
-    if (!workspacePath) continue
-    const workspaceSource =
-      stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source)
-    if (workspaceSource && workspaceSource !== 'local') continue
-    localWorkspaceLabels.add(workspaceLabel(workspacePath, workspace.label))
-  }
 
   for (const rawWorkspace of workspaces) {
     const workspace = recordValue(rawWorkspace)
@@ -2154,9 +2142,6 @@ function adaptRuntimeWorkListResponse(
       stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id)
     const workspaceDeviceId =
       workspaceSource === 'remote' && remoteHostId ? remoteHostId : localDeviceId
-    if (rawTasks.length === 0 && workspaceSource === 'remote' && localWorkspaceLabels.has(label)) {
-      continue
-    }
     const workspaceId = stableLocalId(`${workspaceDeviceId}\0${workspacePath}`)
     const deviceWorkspace: RuntimeDeviceWorkspace = {
       id: workspaceId,
@@ -2265,21 +2250,21 @@ function adaptRuntimeWorkListResponse(
             ...(projectQuickPhrases.length > 0 ? { quickPhrases: projectQuickPhrases } : {}),
           }
         : null
+    const remoteTarget =
+      projectSource === 'remote_project' ? parseRuntimeRemoteProjectStateId(projectKey) : null
     const ownerProjectKey =
       stringValue(workspace.ownerProjectKey) ??
-      (projectSource === 'remote_project'
-        ? parseRuntimeRemoteProjectStateId(projectKey)?.projectKey
-        : projectKey)
+      remoteTarget?.projectKey ??
+      (projectSource === 'remote_project' ? null : projectKey)
     const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
         key: projectKey,
         ...(projectSource === 'remote_project' ? { sidebarStateKey: projectKey } : {}),
-        id:
-          projectSource === 'remote_project'
-            ? ownerProjectKey
-              ? stableLocalId(`${workspaceDeviceId}\0${ownerProjectKey}`)
-              : workspaceId
-            : stableLocalId(`${localDeviceId}\0${projectKey}`),
+        id: runtimeProjectUiId({
+          key: ownerProjectKey ?? projectKey,
+          stateDeviceId: ownerProjectKey ? workspaceDeviceId : localDeviceId,
+          name: label,
+        }),
         name: label,
         kind: projectKind,
         source: projectSource,

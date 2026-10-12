@@ -36,6 +36,7 @@ from app.services.cloud_project_visibility import explicit_project_member_ids
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
+    issue_update_actions,
     require_cloud_project_role,
     require_issue_action,
 )
@@ -695,10 +696,19 @@ class ExternalLoopItemProvider:
             )
         current = self._get_issue(project, number)
         current_response = self._response(db, project, current, access, user_id)
-        if not current_response["can_edit"]:
+        if not current_response["can_view_detail"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         if "security_level" in values.model_fields_set:
             require_cloud_project_role(db, project.id, user_id, BaseRole.Maintainer)
+        for action in issue_update_actions(values.model_fields_set) or [
+            IssueAction.EDIT_CONTENT
+        ]:
+            require_issue_action(
+                access,
+                action=action,
+                issue_creator_user_id=self._creator_id(self._labels(current)),
+                user_id=user_id,
+            )
         payload: dict[str, object] = {}
         dumped = values.model_dump(exclude_unset=True)
         if "title" in dumped:
@@ -1204,12 +1214,16 @@ class ExternalLoopItemProvider:
 
         project, number = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
-        if access.is_viewer:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
-        if not has_permission(access.role, BaseRole.Maintainer):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         current = self._get_issue(project, number)
         current_labels = self._labels(current)
+        if not self._response(db, project, current, access, user_id)["can_view_detail"]:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        require_issue_action(
+            access,
+            action=IssueAction.ASSIGN,
+            issue_creator_user_id=self._creator_id(current_labels),
+            user_id=user_id,
+        )
         previous_assignee = self._assignee_from_labels(current_labels)
         agent: ProjectChatAgent | None = None
         team: Kind | None = None
@@ -1295,12 +1309,18 @@ class ExternalLoopItemProvider:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
             )
+        # Preserve the creator label: provider label writes replace the whole
+        # set, and a dropped creator would lose access to their own Issue.
+        write_tags = self._public_tags(current_labels)
+        creator_label = self._creator_label(current_labels)
+        if creator_label:
+            write_tags.append(creator_label)
         issue = self._update_issue(
             project,
             number,
             {
                 "labels": self._labels_for_write(
-                    self._public_tags(current_labels),
+                    write_tags,
                     self._priority(current_labels),
                     self._status(current_labels, str(current.get("state") or "")),
                     assignee=assignee_label,

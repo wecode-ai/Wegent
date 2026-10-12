@@ -52,6 +52,7 @@ core_segments=(
   running-plan-history
   codex-notification-isolation
   executor-stream-recovery
+  model-overload-recovery
   transcript-sync
   context-compaction
   split-workbench
@@ -101,6 +102,7 @@ cloud_worktree_segments=(
 )
 cloud_segments=(
   cloud-model-recovery
+  task-model-deletion
   cloud-model-presets
   cloud-project-creation
   cloud-device-lifecycle
@@ -143,7 +145,7 @@ cloud_shards=(
   cloud-worktree-create,automation-lifecycle,browser-multi-tabs
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
-  model-routing,cloud-model-recovery,cloud-model-presets
+  model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion
   plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
@@ -168,7 +170,7 @@ core_shards=(
   rendering-extensions,transcript-sync
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery
+  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate
 )
@@ -529,6 +531,11 @@ classify_wework_path() {
       wework/src/components/chat/composer/composerMentionCandidates*)
       select_target "plugins:skill-mention-rendering"
       select_target "core:core-task-flow"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/task-model-deletion.scenario.mjs)
+      select_target "cloud:task-model-deletion"
       return
       ;;
 
@@ -930,6 +937,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs)
       select_target "core:executor-stream-recovery"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/model-overload-recovery.scenario.mjs)
+      select_target "core:model-overload-recovery"
       return
       ;;
     wework/e2e/desktop/scenarios/send-key-preference.scenario.mjs)
