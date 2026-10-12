@@ -1152,6 +1152,7 @@ mod tests {
 
     #[test]
     fn ignores_a_prepared_workspace_path_that_is_not_the_primary_repository() {
+        let _lock = crate::test_env::lock();
         let mut request = ExecutionRequest {
             task_id: "task-1".to_owned(),
             project_workspace_path: Some("/tmp/unrelated-workspace".to_owned()),
