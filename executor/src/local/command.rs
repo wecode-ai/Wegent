@@ -161,6 +161,13 @@ impl DeviceCommandHandler for CommandHandler {
 impl CommandHandler {
     pub async fn execute(&self, request: CommandRequest) -> CommandResult {
         let started_at = Instant::now();
+        if request.command_key.as_deref() == Some("project_workspace_root") {
+            return CommandResult::ok(
+                crate::workspace_paths::projects_root()
+                    .display()
+                    .to_string(),
+            );
+        }
         if request.command.trim().is_empty() {
             return CommandResult::error(
                 "command is required".to_owned(),
@@ -283,16 +290,8 @@ fn execute_windows_builtin_command(request: &CommandRequest) -> Option<CommandRe
                     .unwrap_or_else(|_| ".".to_owned())
             },
         ))),
-        Some("project_workspace_root") => Some(CommandResult::ok(project_workspace_root_path())),
         _ => None,
     }
-}
-
-#[cfg(windows)]
-fn project_workspace_root_path() -> String {
-    crate::workspace_paths::workspace_root()
-        .display()
-        .to_string()
 }
 
 pub fn build_env(extra_env: &HashMap<String, String>) -> HashMap<String, String> {

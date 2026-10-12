@@ -85,6 +85,7 @@ export interface SharedIssueDetailCreateInput {
   description?: string;
   status?: string;
   priority?: CollaborationIssue["priority"];
+  start_at?: string;
   due_at?: string;
   parent_id?: string | null;
   tags?: string[];
@@ -107,6 +108,7 @@ export interface SharedIssueDetailUpdateInput {
   assignee_agent_id?: string | null;
   assignee_team_id?: number | null;
   assignee_group_id?: string | null;
+  start_at?: string | null;
   due_at?: string | null;
   tags?: string[];
 }
@@ -287,6 +289,7 @@ export function createSharedIssueDetailPort(
             : {}),
           ...(input.status !== undefined ? { status: input.status } : {}),
           ...(input.priority !== undefined ? { priority: input.priority } : {}),
+          ...(input.start_at !== undefined ? { startAt: input.start_at } : {}),
           ...(input.due_at !== undefined ? { dueAt: input.due_at } : {}),
           ...(input.parent_id !== undefined
             ? { parentId: input.parent_id }
@@ -332,6 +335,7 @@ export function createSharedIssueDetailPort(
           ...(input.assignee_group_id !== undefined
             ? { assigneeGroupId: input.assignee_group_id }
             : {}),
+          ...(input.start_at !== undefined ? { startAt: input.start_at } : {}),
           ...(input.due_at !== undefined ? { dueAt: input.due_at } : {}),
           ...(input.tags !== undefined ? { tags: input.tags } : {}),
         }),

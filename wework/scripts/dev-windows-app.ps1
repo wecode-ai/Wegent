@@ -6,11 +6,12 @@ $SCRIPT_DIR = $PSScriptRoot
 $WEWORK_DIR = (Resolve-Path (Join-Path $SCRIPT_DIR '..')).Path
 $PROJECT_DIR = (Resolve-Path (Join-Path $WEWORK_DIR '..')).Path
 $ENV_FILE = Join-Path $PROJECT_DIR '.env'
-$EXECUTOR_ISOLATION = $false
 $ELECTRON_ARGS = @()
-$ISOLATED_EXECUTOR_HOME = ''
+$MANAGED_SOURCE_EXECUTOR = $false
 $MANAGED_DWS_BINARY = $false
 $MANAGED_HARNESS_RUNTIME = $false
+$MANAGED_SOURCE_EXECUTOR_BINARY = ''
+$EXECUTOR_BINARY_TEMP = ''
 $WATCH_PROCESS = $null
 $WATCH_READY_FILE = ''
 
@@ -19,14 +20,12 @@ function Show-Usage {
 Usage: pwsh -File wework/scripts/dev-windows-app.ps1 [options] [-- electron-options]
 
 Options:
-  --executor-isolation      Use a temporary Executor Home for this launch.
-  --shared-executor-home    Use the release app's Executor Home (default).
-  --no-executor-isolation   Alias for --shared-executor-home.
+  --executor-isolation      Use persistent worktree-isolated data (always enabled).
   -h, --help                Show this help message.
 
 Environment:
   VITE_WEGENT_BACKEND_URL          Backend URL. Defaults to WEWORK_HOST/BACKEND_PORT.
-  WEWORK_DEV_USER_DATA_DIR         Override Electron user data for this launch.
+  WEWORK_DEV_USER_DATA_DIR         Override within the development app data directory.
   WEWORK_DEV_APP_IDENTIFIER        Override the application identity for this launch.
   WEWORK_DEV_EXECUTOR_PATH         Executor command. Defaults to the source sidecar.
   WEWORK_DEV_CACHE_ROOT            Shared immutable dev cache. Defaults to
@@ -209,6 +208,13 @@ function Configure-Sccache([string]$ProjectDir, [string]$TargetDir) {
   }
 }
 
+function Get-ExecutorBinaryPath {
+  if ($env:CARGO_TARGET_DIR) {
+    return Join-Path $env:CARGO_TARGET_DIR 'debug\wegent-executor.exe'
+  }
+  return Join-Path $PROJECT_DIR 'executor\target\debug\wegent-executor.exe'
+}
+
 function Start-PrepareStep([string]$Name, [string]$Command) {
   $stdout = Join-Path $env:TEMP "wework-dev-$Name-$PID.out.log"
   $stderr = Join-Path $env:TEMP "wework-dev-$Name-$PID.err.log"
@@ -233,13 +239,13 @@ $index = 0
 while ($index -lt $args.Count) {
   switch ($args[$index]) {
     '--executor-isolation' {
-      $EXECUTOR_ISOLATION = $true
+      # Isolation is mandatory and persistent.
     }
     '--shared-executor-home' {
-      $EXECUTOR_ISOLATION = $false
+      Fail "Error: development apps cannot share the release app's Executor Home."
     }
     '--no-executor-isolation' {
-      $EXECUTOR_ISOLATION = $false
+      Fail "Error: development apps cannot share the release app's Executor Home."
     }
     '-h' {
       Show-Usage
@@ -269,7 +275,6 @@ if ($env:OS -ne 'Windows_NT') {
   Fail 'Error: dev-windows-app.ps1 only supports Windows.'
 }
 
-$REQUESTED_EXECUTOR_ISOLATION = $EXECUTOR_ISOLATION
 if (Test-Path $ENV_FILE) {
   Get-Content $ENV_FILE | ForEach-Object {
     if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$') {
@@ -279,7 +284,6 @@ if (Test-Path $ENV_FILE) {
     }
   }
 }
-$EXECUTOR_ISOLATION = $REQUESTED_EXECUTOR_ISOLATION
 
 Require-Command git
 Require-Command node
@@ -308,6 +312,9 @@ $USER_DATA_OUTPUT = Get-DevUserDataDirectory
 if (-not $USER_DATA_OUTPUT) {
   Fail 'Error: failed to resolve the development user data directory.'
 }
+if (-not $env:WEWORK_APP_IDENTIFIER.StartsWith('io.wecode.wework.dev.')) {
+  Fail 'Error: development app identifiers must start with io.wecode.wework.dev.'
+}
 $env:WEWORK_USER_DATA_DIR = $USER_DATA_OUTPUT
 Remove-Item Env:WEWORK_DEV_APP_IDENTIFIER -ErrorAction SilentlyContinue
 Remove-Item Env:WEWORK_DEV_USER_DATA_DIR -ErrorAction SilentlyContinue
@@ -327,7 +334,7 @@ $PREBUILD_SOURCE_EXECUTOR = $false
 if ($env:WEWORK_DEV_EXECUTOR_PATH) {
   $env:WEWORK_EXECUTOR_PATH = $env:WEWORK_DEV_EXECUTOR_PATH
 } else {
-  $env:WEWORK_EXECUTOR_PATH = Join-Path $SCRIPT_DIR 'dev-executor-sidecar.cmd'
+  $MANAGED_SOURCE_EXECUTOR = $true
   if (-not $env:WEGENT_DISABLE_SHARED_CARGO_TARGET -and -not $env:CARGO_TARGET_DIR) {
     $cacheRoot = Select-BestCacheDir (Get-CargoCacheCandidates 'executor-dev')
     if ($cacheRoot) {
@@ -338,11 +345,9 @@ if ($env:WEWORK_DEV_EXECUTOR_PATH) {
     New-Item -ItemType Directory -Force -Path $env:CARGO_TARGET_DIR | Out-Null
     Configure-Sccache $PROJECT_DIR $env:CARGO_TARGET_DIR
   }
-  $env:WEGENT_EXECUTOR_DEV_RELOAD = if ($env:WEGENT_EXECUTOR_DEV_RELOAD) {
-    $env:WEGENT_EXECUTOR_DEV_RELOAD
-  } else {
-    '1'
-  }
+  $MANAGED_SOURCE_EXECUTOR_BINARY = Get-ExecutorBinaryPath
+  $env:WEGENT_EXECUTOR_BINARY = Join-Path $WEWORK_DIR 'node_modules\.cache\wework-executor-dev\wegent-executor.exe'
+  $env:WEWORK_EXECUTOR_PATH = $env:WEGENT_EXECUTOR_BINARY
   $env:WEGENT_EXECUTOR_DEV_BUILD_ID = $env:WEWORK_DEV_INSTANCE_ID
   $PREBUILD_SOURCE_EXECUTOR = $true
 }
@@ -392,12 +397,6 @@ if ($env:WEWORK_DEV_DWS_BINARY) {
   $MANAGED_DWS_BINARY = $true
 }
 
-if ($EXECUTOR_ISOLATION) {
-  $ISOLATED_EXECUTOR_HOME = Join-Path ([System.IO.Path]::GetTempPath()) ("wework-dev-executor-" + [guid]::NewGuid().ToString('N'))
-  New-Item -ItemType Directory -Force -Path $ISOLATED_EXECUTOR_HOME | Out-Null
-  $env:WEGENT_EXECUTOR_HOME = $ISOLATED_EXECUTOR_HOME
-}
-
 function Print-Configuration {
   Write-Host 'Starting Wework Windows app'
   Write-Host "  WEWORK_DEV_TITLE=$env:WEWORK_DEV_TITLE"
@@ -411,7 +410,7 @@ function Print-Configuration {
   Write-Host "  VITE_WEGENT_BACKEND_URL=$env:VITE_WEGENT_BACKEND_URL"
   Write-Host "  WEWORK_EXECUTOR_PATH=$env:WEWORK_EXECUTOR_PATH"
   Write-Host "  WEGENT_EXECUTOR_BINARY=$(if ($env:WEGENT_EXECUTOR_BINARY) { $env:WEGENT_EXECUTOR_BINARY } else { '<managed by command>' })"
-  Write-Host "  WEGENT_EXECUTOR_HOME=$(if ($env:WEGENT_EXECUTOR_HOME) { $env:WEGENT_EXECUTOR_HOME } else { '<release app default>' })"
+  Write-Host "  Development data: $env:WEWORK_USER_DATA_DIR/runtime-data (enforced by Electron)"
   Write-Host "  CARGO_TARGET_DIR=$env:CARGO_TARGET_DIR"
   Write-Host "  RUSTC_WRAPPER=$env:RUSTC_WRAPPER"
   Write-Host "  WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT=$env:WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT"
@@ -472,6 +471,13 @@ try {
       Wait-PrepareStep $job
       Write-Host "Prepared $($job.Name)"
     }
+    if ($MANAGED_SOURCE_EXECUTOR) {
+      New-Item -ItemType Directory -Force -Path (Split-Path $env:WEGENT_EXECUTOR_BINARY -Parent) | Out-Null
+      $EXECUTOR_BINARY_TEMP = "$($env:WEGENT_EXECUTOR_BINARY).tmp.$PID"
+      Copy-Item -LiteralPath $MANAGED_SOURCE_EXECUTOR_BINARY -Destination $EXECUTOR_BINARY_TEMP -Force
+      Move-Item -LiteralPath $EXECUTOR_BINARY_TEMP -Destination $env:WEGENT_EXECUTOR_BINARY -Force
+      $EXECUTOR_BINARY_TEMP = ''
+    }
     if (-not (Test-Path $env:WEWORK_EXECUTOR_PATH)) {
       Fail "Error: Executor command is not available: $env:WEWORK_EXECUTOR_PATH"
     }
@@ -529,7 +535,7 @@ try {
   if ($WATCH_READY_FILE -and (Test-Path $WATCH_READY_FILE)) {
     Remove-Item -LiteralPath $WATCH_READY_FILE -Force -ErrorAction SilentlyContinue
   }
-  if ($ISOLATED_EXECUTOR_HOME) {
-    Remove-Item -LiteralPath $ISOLATED_EXECUTOR_HOME -Recurse -Force -ErrorAction SilentlyContinue
+  if ($EXECUTOR_BINARY_TEMP -and (Test-Path $EXECUTOR_BINARY_TEMP)) {
+    Remove-Item -LiteralPath $EXECUTOR_BINARY_TEMP -Force -ErrorAction SilentlyContinue
   }
 }

@@ -277,6 +277,7 @@ import {
 } from './shared.mjs'
 
 import {
+  verifyAsyncRequestUserInput,
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
   verifyForkProviderModelPreservation,
@@ -319,14 +320,14 @@ const PROJECT_AI_INITIAL_INSTRUCTIONS =
   'WEWORK_DESKTOP_E2E_PROJECT_AI_INITIAL: preserve this instruction for the existing conversation.'
 const PROJECT_AI_UPDATED_INSTRUCTIONS =
   'WEWORK_DESKTOP_E2E_PROJECT_AI_UPDATED: apply this instruction only to new conversations.'
-const PROJECT_AI_MODEL_ID = 'wework-deepseek-v4-pro'
-const PROJECT_AI_MODEL_LABEL = 'wework-deepseek-v4-pro'
+const PROJECT_AI_MODEL_ID = 'local-model:desktop-e2e-vision-main'
+const PROJECT_AI_MODEL_LABEL = 'Desktop E2E DeepSeek Pro Vision Main'
 const PROJECT_AI_MODEL_VALUE = `runtime:${PROJECT_AI_MODEL_ID}`
 const PROJECT_AI_UPSTREAM_MODEL_ID = 'deepseek-v4-pro'
-const REMEMBERED_TASK_MODEL_ID = 'gpt-5.6-sol'
-const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
+const REMEMBERED_TASK_MODEL_ID = 'gpt-6.1-sol'
+const REMEMBERED_TASK_MODEL_LABEL = 'GPT-6.1 Sol'
 const REMEMBERED_TASK_REASONING = 'high'
-const GPT_6_SOL_MODEL_ID = 'gpt-6-sol'
+const GPT_6_1_SOL_MODEL_ID = 'gpt-6.1-sol'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
 const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
@@ -505,16 +506,15 @@ async function waitForProjectComposerPlugin(control) {
 async function selectRememberedTaskModel(control) {
   await selectE2EModel(control, REMEMBERED_TASK_MODEL_ID, REMEMBERED_TASK_MODEL_LABEL)
   await control.command('click', '[data-testid="model-selector-button"]')
-  await control.command('click', '[data-testid="model-control-menu-reasoning"]')
   await control.command('waitFor', '[data-testid="model-control-reasoning-high"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     visible: true,
   })
   await control.command('click', '[data-testid="model-control-reasoning-high"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
-    'The task composer did not select GPT 5.6 Sol with high reasoning'
+    'The task composer did not select GPT-6.1 Sol with high reasoning'
   )
   await control.command('press', 'body', { key: 'Escape' })
 }
@@ -568,7 +568,7 @@ async function verifyProjectAiSettings({
   await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
     'The follow-global project did not remember the selected model and reasoning effort'
   )
@@ -803,7 +803,7 @@ async function verifyProjectAiSettings({
   await waitForE2EModelLabel(control, [PROJECT_AI_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
     'The next task did not restore the project model and reasoning effort'
   )
@@ -848,11 +848,38 @@ async function verifyLocalModelRouting({
     'The model selector did not expose its selected model before refresh'
   )
 
-  setPhase('model-catalog-gpt-6-sol')
-  const gpt6SolMenu = await ensureModelOptionVisible(control, GPT_6_SOL_MODEL_ID, modelSelector)
+  setPhase('model-catalog-chatgpt-picker')
+  await control.command('clickWhenEnabled', modelSelector, {
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="model-simple-header"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="model-simple-source"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
   assert.ok(
-    gpt6SolMenu.testIds.includes(`model-option-${GPT_6_SOL_MODEL_ID}`),
-    'The Codex model selector did not expose GPT-6 Sol'
+    (await control.command('getText', '[data-testid="model-simple-source"]')).trim(),
+    'The compact model picker did not identify the selected model source'
+  )
+  const compactPicker = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    compactPicker.testIds.includes('model-advanced-panel'),
+    'The ChatGPT-style compact model picker did not expose its model power slider'
+  )
+
+  const gpt61SolMenu = await ensureModelOptionVisible(control, GPT_6_1_SOL_MODEL_ID, modelSelector)
+  assert.ok(
+    gpt61SolMenu.testIds.includes(`model-option-${GPT_6_1_SOL_MODEL_ID}`),
+    'The Codex model selector did not expose GPT-6.1 Sol'
+  )
+  assert.ok(
+    gpt61SolMenu.testIds.includes('model-source-local-chatgpt'),
+    'The advanced model picker did not expose the local ChatGPT account source'
   )
   await control.command('press', 'body', { key: 'Escape' })
   await control.command('waitFor', modelSelector, {
@@ -1070,7 +1097,14 @@ async function main() {
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
     mkdir(codexSqliteHome, { recursive: true }),
+    mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  // Exercise consent explicitly; the product default already marks it as asked.
+  await writeFile(
+    join(electronUserDataDirectory, 'app-preferences.json'),
+    `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
+    { flag: 'wx', mode: 0o600 }
+  )
   await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
   await Promise.all([
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
@@ -1334,6 +1368,10 @@ async function main() {
       'WEGENT_RUNTIME_AUTH_TOKEN',
       'WEGENT_TASK_ID',
       'WEGENT_TASK_WORKSPACE',
+      'WEGENT_WORKBENCH_HOME',
+      'WEGENT_CAPABILITIES_HOME',
+      'WEGENT_CLAUDE_HOME',
+      'CLAUDE_CONFIG_DIR',
       'WEWORK_CORE_DSH_COMMAND',
       'WEWORK_CORE_DSH_URL',
       'WEWORK_CORE_PLUGIN_ROOT',
@@ -1356,6 +1394,7 @@ async function main() {
       delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
     }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
+    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: desktopScenario?.electronLaunchArguments ?? [],
     })
@@ -1941,6 +1980,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyWorktreeCreationStatus({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorHome,
         workspacePath,
         restartDesktopApp,
       })
@@ -2173,7 +2213,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'workspace-issue-creation'
       await verifyWorkspaceIssueCreation(control)
       phase = 'workspace-tab-isolation'
-      await verifyWorkspaceTabIsolation(control)
+      await verifyWorkspaceTabIsolation(control, restartDesktopApp)
       if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
         console.log(`Wework desktop workspace-tabs checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -2183,6 +2223,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (shouldRunDesktopCheckpoint('priority-filter')) {
       phase = 'priority-filter'
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      phase = 'request-user-input-async'
+      await verifyAsyncRequestUserInput({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
       phase = 'runtime-task-order-unread'
       await verifyRuntimeTaskOrderAndUnreadVisibility({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
@@ -2224,7 +2270,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
-      if (!GUIDANCE_SCROLL_ONLY) {
+      if (!GUIDANCE_SCROLL_ONLY && !GUIDANCE_BACKGROUND_ONLY && !SIDE_CHAT_ONLY) {
         phase = 'workspace-document-tabs'
         await verifyWorkspaceDocumentTabs(control)
 
@@ -2301,6 +2347,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyWorktreeCreationStatus({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorHome,
         workspacePath,
         restartDesktopApp,
       })
@@ -4664,6 +4711,17 @@ async function verifyMcpElicitationInFullAccess(control) {
     MCP_ELICITATION_PROMPT,
     'mcp_elicitation'
   )
+  await control.command('waitFor', '[data-testid="mcp-url-authorization-card"]', {
+    text: 'example.com',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await pathExists(evidencePath),
+    false,
+    'The URL elicitation was acknowledged without user consent'
+  )
+  await control.command('click', '[data-testid="mcp-url-authorization-cancel"]')
   await control.command('waitFor', '[data-testid="request-user-input-card"]', {
     text: '访问范围',
     visible: true,
@@ -4680,10 +4738,14 @@ async function verifyMcpElicitationInFullAccess(control) {
     false,
     'The MCP tool call displayed an execution approval card instead of the business form'
   )
-  assert.equal(
-    await pathExists(evidencePath),
-    false,
-    'Codex resolved the MCP elicitation before the user answered the visible form'
+  const urlRecords = (await readFile(evidencePath, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line))
+  assert.deepEqual(
+    urlRecords,
+    [{ event: 'url_elicitation_result', result: { action: 'cancel' } }],
+    'The real MCP server must receive only cancellation before the business form is answered'
   )
   await captureVerificationScreenshot(control, 'permission-07-mcp-elicitation-form.png')
 

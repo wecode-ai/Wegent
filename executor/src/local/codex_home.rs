@@ -12,7 +12,6 @@ use toml_edit::{table, value, DocumentMut};
 
 use crate::agents::replace_config;
 
-const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const E2E_NATIVE_CODEX_HOME_ENV: &str = "WEWORK_E2E_NATIVE_CODEX_HOME";
 const WEWORK_PERSONAL_MARKETPLACE_ID: &str = "wework-personal";
@@ -157,9 +156,7 @@ fn wework_codex_home_path() -> Result<PathBuf, String> {
     if let Some(path) = non_empty_path(CODEX_HOME_ENV) {
         return Ok(path);
     }
-    let executor_home = non_empty_path(EXECUTOR_HOME_ENV)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .ok_or_else(|| "Unable to resolve executor home".to_owned())?;
+    let executor_home = crate::config::paths::executor_home();
     Ok(executor_home.join("codex"))
 }
 

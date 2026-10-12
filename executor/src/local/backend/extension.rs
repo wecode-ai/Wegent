@@ -7,6 +7,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
+    sync::Arc,
     time::Duration,
 };
 
@@ -14,6 +15,20 @@ use serde_json::{json, Value};
 use tokio::{process::Command, time::timeout};
 
 const EXTENSION_TIMEOUT: Duration = Duration::from_secs(60);
+
+type TaskSkillsResolver = dyn Fn(&str, &str, &str) -> Result<PathBuf, String> + Send + Sync;
+
+#[derive(Clone)]
+enum BackendIdentity {
+    Authenticated {
+        backend_url: String,
+        user_id: String,
+    },
+    Connection {
+        backend_url: String,
+        auth_token: String,
+    },
+}
 
 pub trait DeviceExtensionHandler: Send + Sync + 'static {
     fn handle_run_extension<'a>(
@@ -24,23 +39,106 @@ pub trait DeviceExtensionHandler: Send + Sync + 'static {
 
 #[derive(Clone)]
 pub struct DeviceExtensionRunner {
-    workspace_root: PathBuf,
+    task_skills_resolver: Arc<TaskSkillsResolver>,
     global_skills_root: PathBuf,
+    backend_identity: Option<BackendIdentity>,
 }
 
 impl DeviceExtensionRunner {
-    pub fn new(workspace_root: PathBuf) -> Self {
+    pub fn new() -> Self {
         let runtime_home = env::var("HOME")
             .or_else(|_| env::var("USERPROFILE"))
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("."));
-        Self::with_global_skills_root(workspace_root, runtime_home.join(".claude").join("skills"))
+        let claude_home = env::var_os("WEGENT_CLAUDE_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| runtime_home.join(".claude"));
+        Self::with_global_skills_root(claude_home.join("skills"))
     }
 
-    pub fn with_global_skills_root(workspace_root: PathBuf, global_skills_root: PathBuf) -> Self {
+    pub fn with_global_skills_root(global_skills_root: PathBuf) -> Self {
         Self {
-            workspace_root,
+            task_skills_resolver: Arc::new(crate::agents::task_skills_directory),
             global_skills_root,
+            backend_identity: None,
+        }
+    }
+
+    pub fn with_task_skills_resolver<F>(mut self, resolver: F) -> Self
+    where
+        F: Fn(&str, &str, &str) -> Result<PathBuf, String> + Send + Sync + 'static,
+    {
+        self.task_skills_resolver = Arc::new(resolver);
+        self
+    }
+
+    /// Bind only identity obtained by the transport, never extension payload fields.
+    pub fn with_authenticated_identity(mut self, backend_url: String, user_id: String) -> Self {
+        self.backend_identity = Some(BackendIdentity::Authenticated {
+            backend_url,
+            user_id,
+        });
+        self
+    }
+
+    pub fn with_backend_connection(mut self, backend_url: String, auth_token: String) -> Self {
+        self.backend_identity = Some(BackendIdentity::Connection {
+            backend_url,
+            auth_token,
+        });
+        self
+    }
+
+    pub fn with_workbench_root(self, root: PathBuf) -> Self {
+        self.with_task_skills_resolver(move |task_id, backend_url, user_id| {
+            crate::agents::task_skills_directory_at(&root, task_id, backend_url, user_id)
+        })
+    }
+
+    async fn authenticated_identity(&self) -> Result<(String, String), String> {
+        match self
+            .backend_identity
+            .as_ref()
+            .ok_or("Task extension requires authenticated backend/user binding")?
+        {
+            BackendIdentity::Authenticated {
+                backend_url,
+                user_id,
+            } => Ok((backend_url.clone(), user_id.clone())),
+            BackendIdentity::Connection {
+                backend_url,
+                auth_token,
+            } => {
+                if auth_token.trim().is_empty() {
+                    return Err("Task extension authentication is missing".to_owned());
+                }
+                // The existing extension event has no authenticated user field.
+                // Resolve it using the same credential as the socket connection.
+                let client = reqwest::Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .timeout(Duration::from_secs(10))
+                    .build()
+                    .map_err(|_| "Cannot initialize extension identity lookup")?;
+                let response = client
+                    .get(current_user_url(backend_url)?)
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|_| "Cannot authenticate extension account")?
+                    .error_for_status()
+                    .map_err(|_| "Extension account authentication failed")?;
+                let user: Value = response
+                    .json()
+                    .await
+                    .map_err(|_| "Invalid extension account response")?;
+                let id = user
+                    .get("id")
+                    .and_then(Value::as_u64)
+                    .filter(|id| *id > 0)
+                    .ok_or("Extension account response has no valid user identity")?;
+                Ok((backend_url.clone(), id.to_string()))
+            }
         }
     }
 
@@ -73,14 +171,13 @@ impl DeviceExtensionRunner {
             return Err("payload must be an object".to_owned());
         }
 
-        let script = resolve_script_path(
-            &self.workspace_root,
-            &self.global_skills_root,
-            task_id,
-            &extension_scope,
-            &extension_name,
-            &script_path,
-        )?;
+        let skills_root = if extension_scope == "global" {
+            self.global_skills_root.clone()
+        } else {
+            let (backend_url, user_id) = self.authenticated_identity().await?;
+            (self.task_skills_resolver)(&task_id.to_string(), &backend_url, &user_id)?
+        };
+        let script = resolve_script_path(&skills_root, &extension_name, &script_path)?;
         let output = run_script(&script, &action, &extension_name, &extension_payload).await?;
         let response: Value = serde_json::from_str(&output)
             .map_err(|error| format!("Extension returned invalid JSON: {error}"))?;
@@ -101,8 +198,35 @@ impl DeviceExtensionHandler for DeviceExtensionRunner {
     }
 }
 
-pub(super) fn default_extension_handler(workspace_root: PathBuf) -> DeviceExtensionRunner {
-    DeviceExtensionRunner::new(workspace_root)
+impl Default for DeviceExtensionRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub(super) fn default_extension_handler() -> DeviceExtensionRunner {
+    DeviceExtensionRunner::new()
+}
+
+fn current_user_url(backend_url: &str) -> Result<reqwest::Url, String> {
+    let mut url = reqwest::Url::parse(backend_url).map_err(|_| "Invalid extension backend URL")?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("Invalid extension backend URL".to_owned());
+    }
+    let path = url.path().trim_end_matches('/');
+    let api = if path.ends_with("/api/v1") || path.ends_with("/api") {
+        path.to_owned()
+    } else {
+        format!("{path}/api")
+    };
+    url.set_path(&format!("{api}/users/me"));
+    Ok(url)
 }
 
 async fn run_script(
@@ -158,22 +282,11 @@ async fn run_script(
 }
 
 fn resolve_script_path(
-    workspace_root: &Path,
-    global_skills_root: &Path,
-    task_id: i64,
-    extension_scope: &str,
+    skills_root: &Path,
     extension_name: &str,
     script_path: &str,
 ) -> Result<PathBuf, String> {
-    let extension_dir = if extension_scope == "global" {
-        global_skills_root.join(extension_name)
-    } else {
-        workspace_root
-            .join(task_id.to_string())
-            .join(".claude")
-            .join("skills")
-            .join(extension_name)
-    };
+    let extension_dir = skills_root.join(extension_name);
     let resolved_script = extension_dir.join(script_path);
     if !resolved_script.is_file() {
         return Err(format!(
@@ -276,5 +389,26 @@ fn env_value(value: &Value) -> String {
         Value::Null => String::new(),
         Value::String(value) => value.clone(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod identity_url_tests {
+    use super::current_user_url;
+
+    #[test]
+    fn connection_urls_preserve_explicit_api_prefixes() {
+        for (base, path) in [
+            ("https://backend.example", "/api/users/me"),
+            ("https://backend.example/api", "/api/users/me"),
+            ("https://backend.example/api/v1/", "/api/v1/users/me"),
+            (
+                "https://backend.example/prefix/api/v1",
+                "/prefix/api/v1/users/me",
+            ),
+        ] {
+            assert_eq!(current_user_url(base).unwrap().path(), path);
+        }
+        assert!(current_user_url("https://user:secret@backend.example").is_err());
     }
 }

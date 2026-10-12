@@ -72,6 +72,10 @@ import {
   buildCollaborationProjectViewOptions,
   collaborationProjectViewIds,
 } from "./project-shell";
+import {
+  ProjectCalendarView,
+  ProjectGanttView,
+} from "./project-schedule/ProjectScheduleViews";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import type {
   CollaborationCapabilities,
@@ -158,6 +162,7 @@ function createProject(version: number): CollaborationProject {
     project_store: "backend",
     task_provider: "local",
     provider_config: {},
+    access_role: "Maintainer",
     created_by_user_id: 1,
     status: "active",
     tags: [],
@@ -190,6 +195,8 @@ function controllerWithProject(project: CollaborationProject) {
       reportError: vi.fn(),
       replaceProject: vi.fn(),
       markIssueRead: vi.fn().mockResolvedValue(null),
+      updateProject: vi.fn().mockResolvedValue(project),
+      updateIssue: vi.fn().mockResolvedValue(null),
     },
   };
 }
@@ -281,6 +288,119 @@ describe("CollaborationApp API boundary", () => {
     expect(collaborationProjectViewIds).not.toContain("members");
     expect(collaborationProjectViewIds).not.toContain("runs");
     expect(collaborationProjectViewIds).not.toContain("automation");
+  });
+
+  it("registers calendar and Gantt as project views that preserve their route", async () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "calendar",
+    };
+    const project = createProject(1);
+    const controller = controllerWithProject(project);
+    const issue = {
+      id: "issue-1",
+      cloud_project_id: project.id,
+      sequence_number: 1,
+      parent_id: null,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: "Scheduled issue",
+      description: "",
+      status: "pending",
+      priority: "none",
+      due_at: "2026-10-20T08:00:00Z",
+      tags: [],
+      sort_order: 0,
+      version: 1,
+      created_at: "2026-10-10T08:00:00Z",
+      updated_at: "2026-10-10T08:00:00Z",
+      completed_at: null,
+      can_edit: true,
+    } satisfies CollaborationIssue;
+    collaborationAppMocks.useController.mockReturnValue({
+      ...controller,
+      state: { ...controller.state, issues: [issue] },
+    });
+
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const calendar = shell?.props.extensions.find(
+      (extension: { id: string }) => extension.id === "calendar",
+    );
+    const gantt = shell?.props.extensions.find(
+      (extension: { id: string }) => extension.id === "gantt",
+    );
+
+    expect(calendar?.content.type).toBe(ProjectCalendarView);
+    expect(gantt?.content.type).toBe(ProjectGanttView);
+    expect(calendar?.content.props.viewOptions).toEqual({
+      status: "",
+      assignee: "",
+      tag: "",
+      groupBy: "none",
+      sortBy: "start_asc",
+    });
+    expect(calendar?.content.props.onSaveProjectViewOptions).toBeTypeOf(
+      "function",
+    );
+    calendar?.content.props.onOpen(issue);
+    gantt?.content.props.onOpen(issue);
+    await calendar?.content.props.onSchedule(issue, {
+      startAt: "2026-10-19",
+      dueAt: "2026-10-21",
+    });
+    await gantt?.content.props.onSchedule(issue, {
+      startAt: "2026-10-20",
+      dueAt: "2026-10-22",
+    });
+    expect(host.navigate).toHaveBeenNthCalledWith(1, {
+      projectId: project.id,
+      issueId: issue.id,
+      view: "calendar",
+    });
+    expect(host.navigate).toHaveBeenNthCalledWith(2, {
+      projectId: project.id,
+      issueId: issue.id,
+      view: "gantt",
+    });
+    expect(controller.commands.updateIssue).toHaveBeenNthCalledWith(
+      1,
+      issue.id,
+      {
+        version: issue.version,
+        startAt: "2026-10-19",
+        dueAt: "2026-10-21",
+      },
+    );
+    expect(controller.commands.updateIssue).toHaveBeenNthCalledWith(
+      2,
+      issue.id,
+      {
+        version: issue.version,
+        startAt: "2026-10-20",
+        dueAt: "2026-10-22",
+      },
+    );
+    await calendar?.content.props.onSaveProjectViewOptions({
+      status: "pending",
+      assignee: "",
+      tag: "",
+      groupBy: "status",
+      sortBy: "due_asc",
+    });
+    expect(controller.commands.updateProject).toHaveBeenCalledWith(project.id, {
+      version: project.version,
+      boardConfig: expect.objectContaining({
+        schedule_view: {
+          status_filter: "pending",
+          assignee_filter: null,
+          tag_filter: null,
+          group_by: "status",
+          sort_by: "due_asc",
+        },
+      }),
+    });
   });
 
   it("keeps project settings mounted across polling refreshes", () => {

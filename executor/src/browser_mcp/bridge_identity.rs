@@ -97,17 +97,11 @@ fn default_identity() -> BridgeIdentity {
 }
 
 fn runtime_file_path() -> Option<PathBuf> {
-    if let Some(path) = non_empty_env(BRIDGE_RUNTIME_FILE_ENV) {
-        return Some(PathBuf::from(path));
-    }
-    if let Some(home) = non_empty_env("WEGENT_EXECUTOR_HOME") {
-        return Some(PathBuf::from(home).join(BRIDGE_RUNTIME_FILE));
-    }
-    non_empty_env("HOME").map(|home| {
-        PathBuf::from(home)
-            .join(".wegent-executor")
-            .join(BRIDGE_RUNTIME_FILE)
-    })
+    Some(
+        non_empty_env(BRIDGE_RUNTIME_FILE_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| crate::config::paths::executor_home().join(BRIDGE_RUNTIME_FILE)),
+    )
 }
 
 fn non_empty_env(name: &str) -> Option<String> {

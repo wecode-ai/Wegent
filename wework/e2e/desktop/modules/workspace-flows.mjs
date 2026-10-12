@@ -1588,7 +1588,7 @@ async function waitForAttribute(control, selector, name, expected, message) {
   throw new Error(`${message}: expected ${name}=${expected}, received ${received}`)
 }
 
-async function verifyWorkspaceTabIsolation(control) {
+async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
   await ensureExperimentalFeaturesEnabled(control)
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -2014,10 +2014,54 @@ async function verifyWorkspaceTabIsolation(control) {
   })
   await captureVerificationScreenshot(control, 'workspace-tabs-isolation-04-route-replacement.png')
 
-  await control.command('press', `[data-testid="workspace-tab-select-${secondTaskId}"]`, {
-    key: 'Shift+F10',
+  await control.command('contextMenu', `[data-testid="workspace-tab-select-${fourthTaskId}"]`)
+  await control.command('waitFor', '[data-testid="workspace-tab-pin"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', '[data-testid="workspace-tab-pin"]')
+  const pinnedFourthTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`workspace-tab-close-${fourthTaskId}`),
+    'Pinning a workspace tab did not remove its close action',
+    DEFAULT_STEP_TIMEOUT_MS,
+    `[data-testid="workspace-tab-${fourthTaskId}"]`
+  )
+  assert.equal(
+    pinnedFourthTaskSnapshot.testIds.includes(`workspace-tab-close-${fourthTaskId}`),
+    false,
+    'Pinning a workspace tab did not remove its close action'
+  )
+  await control.command('contextMenu', `[data-testid="workspace-tab-select-${fourthTaskId}"]`)
+  await control.command('waitFor', '[data-testid="workspace-tab-unpin"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-tab-unpin"]')
+  await control.command('waitFor', `[data-testid="workspace-tab-close-${fourthTaskId}"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await control.command('contextMenu', `[data-testid="workspace-tab-select-${secondTaskId}"]`)
+  await control.command('waitFor', '[data-testid="workspace-tab-pin"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-tab-pin"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`workspace-tab-close-${secondTaskId}`),
+    'Pinning the task tab before detaching did not settle',
+    DEFAULT_STEP_TIMEOUT_MS,
+    `[data-testid="workspace-tab-${secondTaskId}"]`
+  )
+  await control.command('contextMenu', `[data-testid="workspace-tab-select-${secondTaskId}"]`)
   await control.command('waitFor', '[data-testid="workspace-tab-context-menu"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="workspace-tab-unpin"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -2081,7 +2125,67 @@ async function verifyWorkspaceTabIsolation(control) {
   assert.equal(
     sourceTabs.some(tab => tab.id === secondTaskId),
     false,
-    'The transferred task tab remained open in the source window'
+    'The transferred fixed task tab remained open in the source window'
+  )
+
+  const detachedWindowLabel = detachedReady.windowLabel
+  const readyCountBeforeRestart = control.readyCount
+  control.activateWindow('main')
+  await restartDesktopApp()
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeRestart + 1),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The fixed workspace window did not reconnect after restarting Wework'
+  )
+  const restoredDetachedControl = {
+    command: (...args) => control.commandForWindow(detachedWindowLabel, ...args),
+  }
+  await restoredDetachedControl.command(
+    'waitFor',
+    `[data-testid="workspace-tab-select-${secondTaskId}"]`,
+    {
+      visible: true,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
+  )
+  const restoredDetachedSnapshot = await waitForSnapshot(
+    restoredDetachedControl,
+    snapshot => !snapshot.testIds.includes(`workspace-tab-close-${secondTaskId}`),
+    'The restored detached tab did not regain its fixed state',
+    DEFAULT_STEP_TIMEOUT_MS,
+    `[data-testid="workspace-tab-${secondTaskId}"]`
+  )
+  assert.deepEqual(
+    allWorkspaceTabIds(restoredDetachedSnapshot),
+    [`workspace-tab-${secondTaskId}`],
+    'Restarting Wework did not restore the fixed tab in its detached window'
+  )
+  assert.equal(
+    restoredDetachedSnapshot.testIds.includes(`workspace-tab-close-${secondTaskId}`),
+    false,
+    'The restored detached tab lost its fixed state'
+  )
+  await captureVerificationScreenshot(
+    restoredDetachedControl,
+    'workspace-tabs-isolation-06-fixed-window-restored.png',
+    `[data-testid="workspace-tab-content-${secondTaskId}"]`
+  )
+  await restoredDetachedControl.command(
+    'contextMenu',
+    `[data-testid="workspace-tab-select-${secondTaskId}"]`
+  )
+  await restoredDetachedControl.command('waitFor', '[data-testid="workspace-tab-unpin"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await restoredDetachedControl.command('click', '[data-testid="workspace-tab-unpin"]')
+  await restoredDetachedControl.command(
+    'waitFor',
+    `[data-testid="workspace-tab-close-${secondTaskId}"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
   )
   control.activateWindow('main')
 }

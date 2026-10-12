@@ -4,10 +4,13 @@
 
 use std::{
     fs,
-    io::Cursor,
+    io::{Cursor, Read},
     path::{Component, Path, PathBuf},
+    time::Instant,
 };
 
+use super::{archive_repository, archive_sessions::SessionArchiveRoots};
+use crate::logging::log_executor_event;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use tar::{Archive, Builder, EntryType};
 use thiserror::Error;
@@ -57,12 +60,40 @@ pub enum ArchiveError {
 }
 
 pub fn create_runtime_archive(options: ArchiveOptions) -> Result<RuntimeArchive, ArchiveError> {
-    if options.mode == ArchiveMode::Executor && !options.workspace_path.is_dir() {
+    create_runtime_archive_with_repository(options, None)
+}
+
+/// Record the shared checkout binding alongside its task-relative archive members.
+pub fn create_runtime_archive_with_repository(
+    options: ArchiveOptions,
+    repository: Option<(&Path, &str)>,
+) -> Result<RuntimeArchive, ArchiveError> {
+    let roots = SessionArchiveRoots::for_home(&options.home_path);
+    create_runtime_archive_with_roots(options, repository, &roots)
+}
+
+pub fn create_runtime_archive_with_roots(
+    options: ArchiveOptions,
+    repository: Option<(&Path, &str)>,
+    roots: &SessionArchiveRoots,
+) -> Result<RuntimeArchive, ArchiveError> {
+    if let Some((path, name)) = repository {
+        if !path.is_dir() || options.workspace_path.join(name).exists() {
+            return Err(ArchiveError::Io(std::io::Error::other(
+                "Missing or conflicting task repository archive source",
+            )));
+        }
+    }
+    if options.mode == ArchiveMode::Executor
+        && !options.workspace_path.is_dir()
+        && repository.is_none()
+    {
         return Err(ArchiveError::MissingWorkspace(options.workspace_path));
     }
     if options.mode == ArchiveMode::Sandbox
         && !options.workspace_path.is_dir()
         && !options.home_path.is_dir()
+        && repository.is_none()
     {
         return Err(ArchiveError::EmptyArchiveRoots {
             workspace_path: options.workspace_path,
@@ -70,14 +101,45 @@ pub fn create_runtime_archive(options: ArchiveOptions) -> Result<RuntimeArchive,
         });
     }
 
+    let _session_leases = archive_stage(&options.task_id, "lock_sessions", || {
+        Ok(roots.lock_task_homes(&options.task_id)?)
+    })?;
+    let sessions = archive_stage(&options.task_id, "collect_sessions", || {
+        Ok(roots.collect(&options.task_id)?)
+    })?;
     let encoder = GzEncoder::new(Vec::new(), Compression::default());
     let mut builder = Builder::new(encoder);
     // Store symlinks as symlink entries instead of dereferencing their targets.
     // Dereferencing a dangling symlink fails to read the (missing) target and
     // aborts the whole archive; storing the link itself always succeeds.
     builder.follow_symlinks(false);
+    if let Some((path, name)) = repository {
+        let bytes = archive_repository::encode(&options.workspace_path, path, name)?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o600);
+        header.set_cksum();
+        builder.append_data(&mut header, archive_repository::MEMBER, bytes.as_slice())?;
+    }
     let mut contents = ArchiveContents::default();
     let mut member_count = 0usize;
+    let managed_roots = [
+        roots.executor.clone(),
+        roots.workbench.clone(),
+        roots.claude.clone(),
+        roots.codex.clone(),
+        roots.legacy_executor.clone(),
+    ];
+    archive_stage(&options.task_id, "pack_sessions", || {
+        for (member, source) in &sessions {
+            builder.append_path_with_name(source, member)?;
+            member_count += 1;
+            if member.starts_with("executor-state") {
+                contents.session_file_included = true;
+            }
+        }
+        Ok(())
+    })?;
 
     if options.home_path.exists() {
         member_count += append_tree(
@@ -88,6 +150,7 @@ pub fn create_runtime_archive(options: ArchiveOptions) -> Result<RuntimeArchive,
                 kind: TreeKind::Home,
                 mode: options.mode,
                 task_id: &options.task_id,
+                excluded_roots: &managed_roots,
             },
             &mut contents,
         )?;
@@ -102,6 +165,21 @@ pub fn create_runtime_archive(options: ArchiveOptions) -> Result<RuntimeArchive,
                 kind: TreeKind::Workspace,
                 mode: options.mode,
                 task_id: &options.task_id,
+                excluded_roots: &[],
+            },
+            &mut contents,
+        )?;
+    }
+    if let Some((path, name)) = repository {
+        member_count += append_tree(
+            &mut builder,
+            ArchiveTreeContext {
+                source_root: path,
+                archive_root: &Path::new("workspace").join(name),
+                kind: TreeKind::Workspace,
+                mode: options.mode,
+                task_id: &options.task_id,
+                excluded_roots: &[],
             },
             &mut contents,
         )?;
@@ -113,7 +191,18 @@ pub fn create_runtime_archive(options: ArchiveOptions) -> Result<RuntimeArchive,
         });
     }
 
-    let bytes = builder.into_inner()?.finish()?;
+    let bytes = archive_stage(&options.task_id, "finish_compression", || {
+        Ok(builder.into_inner()?.finish()?)
+    })?;
+    log_executor_event(
+        "archive packed",
+        &[
+            ("task_id", options.task_id.clone()),
+            ("entries", member_count.to_string()),
+            ("session_entries", sessions.len().to_string()),
+            ("compressed_bytes", bytes.len().to_string()),
+        ],
+    );
     if bytes.len() as u64 > options.max_size_bytes {
         return Err(ArchiveError::TooLarge {
             actual: bytes.len() as u64,
@@ -135,6 +224,24 @@ pub fn restore_runtime_archive(
     workspace_path: &Path,
     home_path: &Path,
 ) -> Result<RestoreResult, ArchiveError> {
+    restore_runtime_archive_with_roots(
+        bytes,
+        mode,
+        task_id,
+        workspace_path,
+        home_path,
+        &SessionArchiveRoots::for_home(home_path),
+    )
+}
+
+pub fn restore_runtime_archive_with_roots(
+    bytes: &[u8],
+    mode: ArchiveMode,
+    task_id: &str,
+    workspace_path: &Path,
+    home_path: &Path,
+    roots: &SessionArchiveRoots,
+) -> Result<RestoreResult, ArchiveError> {
     fs::create_dir_all(workspace_path)?;
     fs::create_dir_all(home_path)?;
 
@@ -142,30 +249,99 @@ pub fn restore_runtime_archive(
     let mut archive = Archive::new(decoder);
     let mut session_restored = false;
     let mut git_restored = false;
+    let mut repository = None;
 
-    for entry in archive.entries()? {
+    for (index, entry) in archive.entries()?.enumerate() {
         let mut entry = entry?;
         let entry_type = entry.header().entry_type();
+        let path = entry.path()?.to_path_buf();
+        if path == Path::new(archive_repository::MEMBER) {
+            if index != 0 || !entry_type.is_file() || entry.size() > 4096 {
+                return Err(std::io::Error::other("Invalid repository archive metadata").into());
+            }
+            let mut metadata = Vec::new();
+            entry.read_to_end(&mut metadata)?;
+            repository = Some(archive_repository::decode(
+                &metadata,
+                workspace_path,
+                task_id,
+            )?);
+            continue;
+        }
         if !is_restorable_entry(entry_type) {
             continue;
         }
 
-        let path = entry.path()?.to_path_buf();
-        let session_member = is_session_archive_member(&path, task_id);
+        let portable = [
+            "executor-state",
+            "agent-homes",
+            "native-claude",
+            "native-codex",
+        ]
+        .iter()
+        .any(|prefix| path.starts_with(prefix));
+        let session_member =
+            is_session_archive_member(&path, task_id) || path.starts_with("executor-state");
         if session_member && !entry_type.is_file() {
             continue;
         }
-        let Some(destination) =
-            destination_for_member(&path, mode, task_id, workspace_path, home_path)
+        if portable && !entry_type.is_file() {
+            continue;
+        }
+        let Some(mut destination) = roots
+            .destination(&path, task_id)
+            .map(|path| Destination { path })
+            .or_else(|| {
+                if portable {
+                    None
+                } else {
+                    destination_for_member(&path, mode, task_id, workspace_path, home_path)
+                }
+            })
         else {
             continue;
         };
+        if let Some(binding) = &repository {
+            if let Ok(relative) = destination
+                .path
+                .strip_prefix(workspace_path.join(&binding.name))
+            {
+                destination.path = workspace_path
+                    .parent()
+                    .unwrap()
+                    .join(&binding.key)
+                    .join(relative);
+            }
+        }
         if has_component(&path, ".git") {
             git_restored = true;
         }
 
         if let Some(parent) = destination.path.parent() {
+            let bases: [&Path; 7] = [
+                &roots.executor,
+                &roots.workbench,
+                &roots.claude,
+                &roots.codex,
+                workspace_path,
+                home_path,
+                // Shared repository members have already been validated and remapped.
+                repository
+                    .as_ref()
+                    .map_or(workspace_path, |_| workspace_path.parent().unwrap()),
+            ];
+            let base = bases
+                .into_iter()
+                .filter(|root| destination.path.starts_with(root))
+                .max_by_key(|root| root.components().count())
+                .ok_or_else(|| std::io::Error::other("Archive destination has no runtime root"))?;
+            reject_symlink_ancestors(parent, base)?;
             fs::create_dir_all(parent)?;
+        }
+        if fs::symlink_metadata(&destination.path)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(std::io::Error::other("Refusing to restore over a symlink").into());
         }
         entry.unpack(&destination.path)?;
         if session_member {
@@ -177,11 +353,41 @@ pub fn restore_runtime_archive(
         }
     }
 
+    if session_restored {
+        roots.collect(task_id)?;
+    }
+    if let Some(binding) = &repository {
+        archive_repository::publish(binding, workspace_path, task_id)?;
+        log_executor_event(
+            "archive repository restored",
+            &[
+                ("task_id", task_id.to_owned()),
+                (
+                    "repository_path",
+                    workspace_path
+                        .parent()
+                        .unwrap()
+                        .join(&binding.key)
+                        .display()
+                        .to_string(),
+                ),
+            ],
+        );
+    }
     Ok(RestoreResult {
         success: true,
         session_restored,
         git_restored,
     })
+}
+
+fn reject_symlink_ancestors(path: &Path, root: &Path) -> Result<(), ArchiveError> {
+    for parent in path.ancestors().take_while(|parent| *parent != root) {
+        if fs::symlink_metadata(parent).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err(std::io::Error::other("Archive destination contains a symlink").into());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,6 +407,7 @@ struct ArchiveTreeContext<'a> {
     kind: TreeKind,
     mode: ArchiveMode,
     task_id: &'a str,
+    excluded_roots: &'a [PathBuf],
 }
 
 #[derive(Default)]
@@ -214,16 +421,46 @@ fn append_tree(
     context: ArchiveTreeContext<'_>,
     contents: &mut ArchiveContents,
 ) -> Result<usize, ArchiveError> {
-    let mut member_count = 0;
-    for path in collect_direct_children(context.source_root)? {
-        let relative = path.strip_prefix(context.source_root).unwrap_or(&path);
-        if should_skip_archive_member(context.kind, context.mode, context.task_id, relative) {
-            continue;
-        }
+    let phase = match context.kind {
+        TreeKind::Home => "pack_home",
+        TreeKind::Workspace if context.archive_root == Path::new("workspace") => "pack_workspace",
+        TreeKind::Workspace => "pack_repository",
+    };
+    archive_stage(context.task_id, phase, || {
+        let mut member_count = 0;
+        for path in collect_direct_children(context.source_root)? {
+            let relative = path.strip_prefix(context.source_root).unwrap_or(&path);
+            if should_skip_archive_member(context.kind, context.mode, context.task_id, relative) {
+                continue;
+            }
 
-        member_count += append_path_recursive(builder, &path, context, contents)?;
-    }
-    Ok(member_count)
+            member_count += append_path_recursive(builder, &path, context, contents)?;
+        }
+        log_executor_event(
+            "archive tree packed",
+            &[
+                ("task_id", context.task_id.to_owned()),
+                ("phase", phase.to_owned()),
+                ("entries", member_count.to_string()),
+            ],
+        );
+        Ok(member_count)
+    })
+}
+
+fn archive_stage<T>(
+    task_id: &str,
+    phase: &str,
+    operation: impl FnOnce() -> Result<T, ArchiveError>,
+) -> Result<T, ArchiveError> {
+    let started = Instant::now();
+    let mut fields = vec![("task_id", task_id.to_owned()), ("phase", phase.to_owned())];
+    log_executor_event("archive stage started", &fields);
+    let result = operation();
+    fields.push(("elapsed_ms", started.elapsed().as_millis().to_string()));
+    fields.push(("success", result.is_ok().to_string()));
+    log_executor_event("archive stage finished", &fields);
+    result
 }
 
 fn collect_direct_children(root: &Path) -> Result<Vec<PathBuf>, ArchiveError> {
@@ -240,6 +477,13 @@ fn append_path_recursive(
     context: ArchiveTreeContext<'_>,
     contents: &mut ArchiveContents,
 ) -> Result<usize, ArchiveError> {
+    if context
+        .excluded_roots
+        .iter()
+        .any(|root| path.starts_with(root))
+    {
+        return Ok(0);
+    }
     let relative = path.strip_prefix(context.source_root).unwrap_or(path);
     if should_skip_archive_member(context.kind, context.mode, context.task_id, relative) {
         return Ok(0);
@@ -317,6 +561,20 @@ fn should_skip_archive_member(
     relative: &Path,
 ) -> bool {
     if relative.as_os_str().is_empty() {
+        return true;
+    }
+    // Managed homes are collected by task, including their native session files.
+    if kind == TreeKind::Home
+        && [
+            ".wegent",
+            ".wegent-executor",
+            ".claude",
+            ".claude.json",
+            ".codex",
+        ]
+        .iter()
+        .any(|root| relative.starts_with(root))
+    {
         return true;
     }
     if kind == TreeKind::Home
@@ -437,7 +695,7 @@ fn is_session_relative_path(kind: TreeKind, relative: &Path, task_id: &str) -> b
     }
 }
 
-fn is_session_marker_name(name: &std::ffi::OsStr) -> bool {
+pub(super) fn is_session_marker_name(name: &std::ffi::OsStr) -> bool {
     let name = name.to_string_lossy();
     [".claude_session_id", ".codex_thread_id"]
         .iter()

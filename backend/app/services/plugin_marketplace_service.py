@@ -2219,7 +2219,7 @@ class PluginMarketplaceService:
                 self._device_installation_item(device_row).model_copy(
                     update={"deviceId": device_id or device_row.device_id}
                 )
-                if device_row
+                if device_row and installed and installed.is_active
                 else None
             ),
         )

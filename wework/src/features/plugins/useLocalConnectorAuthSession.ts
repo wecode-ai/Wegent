@@ -124,6 +124,8 @@ export function useLocalConnectorAuthSession({
     let startTimer: ReturnType<typeof setTimeout> | null = null
     let pollTimer: ReturnType<typeof setTimeout> | null = null
     let authSessionId: string | null = null
+    let disposed = false
+    let authenticated = false
     const authTarget: LocalConnectorAuthTarget = {
       pluginKey,
       connectorSlug,
@@ -143,7 +145,7 @@ export function useLocalConnectorAuthSession({
         // executor reading the installed plugin manifest by pluginKey/slug.
         const started = await localConnectorAuthStart(authTarget)
         if (!isCurrent()) {
-          if (cancelRequestedRef.current && started.sessionId) {
+          if ((disposed || cancelRequestedRef.current) && started.sessionId) {
             cancelAuthSession(authTarget, started.sessionId)
           }
           return
@@ -153,6 +155,7 @@ export function useLocalConnectorAuthSession({
         setError(null)
         setStatus(started)
         if (started.status === 'ok') {
+          authenticated = true
           attempt.succeed()
           onSuccessRef.current(started)
           return
@@ -190,6 +193,7 @@ export function useLocalConnectorAuthSession({
               qrPath: next.qrPath ?? previous?.qrPath ?? null,
             }))
             if (next.status === 'ok') {
+              authenticated = true
               attempt.succeed()
               onSuccessRef.current(next)
               return
@@ -248,12 +252,14 @@ export function useLocalConnectorAuthSession({
     // second authorization session or opens another browser window.
     startTimer = setTimeout(() => void start(), 0)
     return () => {
+      disposed = true
       attempt.cancel()
       if (sessionRef.current === session) {
         sessionRef.current += 1
       }
       if (startTimer) clearTimeout(startTimer)
       if (pollTimer) clearTimeout(pollTimer)
+      if (authSessionId && !authenticated) cancelAuthSession(authTarget, authSessionId)
     }
   }, [
     enabled,

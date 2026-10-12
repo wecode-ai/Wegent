@@ -46,6 +46,7 @@ import {
 } from '../issue-detail/AttachmentImageView'
 import { CodeCommentPreview } from './CodeCommentPreview'
 import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from '@wegent/chat-core/runtime-user-input'
+import type { AsyncRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
 import {
   classifyComposerReference,
   composerSkillName,
@@ -91,6 +92,7 @@ const LOCAL_IMAGE_MIME_TYPES: Record<string, string> = {
 export function UserMessage({
   services,
   message,
+  replyQuestions,
   onBeforeToggle,
   onOpenWorkspaceFile,
   onOpenLocalSkillFile,
@@ -103,6 +105,8 @@ export function UserMessage({
 }: {
   services: UserMessageServices
   message: WorkbenchMessage
+  /** Questions this message answered, for non-blocking questions answered by the next user message. */
+  replyQuestions?: AsyncRequestUserInputReply[]
   onBeforeToggle?: () => void
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenLocalSkillFile?: (path: string) => void
@@ -278,11 +282,22 @@ export function UserMessage({
                 shouldCollapse && !isExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
-              {renderUserContent(
-                displayContent,
-                services,
-                onOpenLocalSkillFile,
-                onOpenWorkspaceFile
+              {replyQuestions && replyQuestions.length > 0 ? (
+                <div data-testid="user-message-question-reply" className="flex flex-col gap-2">
+                  {replyQuestions.map((row, index) => (
+                    <div key={index} className="flex flex-col gap-0.5">
+                      <span className="text-xs text-text-muted">{row.question}</span>
+                      <span className="whitespace-pre-wrap text-sm">{row.answer}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                renderUserContent(
+                  displayContent,
+                  services,
+                  onOpenLocalSkillFile,
+                  onOpenWorkspaceFile
+                )
               )}
               {showGoalRequestBadge && (
                 <div className="mt-1.5 flex">

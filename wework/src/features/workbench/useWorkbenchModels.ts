@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import {
+  logModelLoading,
+  observeModelLoadingMainThread,
+  traceModelLoading,
+} from '@/lib/model-loading-diagnostics'
 import type { ModelApi } from '@/api/models'
 import {
   getDefaultModelOptions,
@@ -87,6 +92,8 @@ export function useWorkbenchModels({
   onSelectionChange,
   onSelectionBlocked,
 }: UseWorkbenchModelsOptions) {
+  const traceId = useId()
+  useEffect(() => observeModelLoadingMainThread(traceId), [traceId])
   const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
   const models = useMemo(
     () => (filterModel ? availableModels.filter(filterModel) : availableModels),
@@ -167,6 +174,18 @@ export function useWorkbenchModels({
     ]
   )
 
+  useEffect(() => {
+    logModelLoading(traceId, 'workbench.gates', { enabled, selectionReady })
+  }, [traceId, enabled, selectionReady])
+
+  useEffect(() => {
+    logModelLoading(traceId, 'workbench.selection', {
+      isSelectionReady,
+      selectedModelAvailable,
+      modelCount: models.length,
+    })
+  }, [traceId, isSelectionReady, selectedModelAvailable, models.length])
+
   const restoreSelection = useCallback(
     (availableModels: UnifiedModel[], nextSelectionConfig?: ModelSelectionConfig | null) => {
       const model = findModelForSelection(availableModels, nextSelectionConfig)
@@ -230,10 +249,17 @@ export function useWorkbenchModels({
   const loadModels = useCallback(async () => {
     if (!enabled) return
     const revision = ++modelLoadRevisionRef.current
+    const loadTraceId = `${traceId}-${revision}`
     setIsLoading(true)
     setError(null)
     try {
-      const response = await api.listModels()
+      const response = await traceModelLoading(loadTraceId, 'workbench.catalog', () =>
+        api.listModels()
+      )
+      logModelLoading(loadTraceId, 'workbench.catalog_received', {
+        modelCount: response.data.length,
+        discarded: revision !== modelLoadRevisionRef.current,
+      })
       if (revision === modelLoadRevisionRef.current) {
         const filtered = response.data.filter(isSupportedModelFamily)
         reconcileSelectedModels(filterModel ? filtered.filter(filterModel) : filtered)
@@ -249,7 +275,7 @@ export function useWorkbenchModels({
         setIsLoading(false)
       }
     }
-  }, [api, enabled, filterModel, reconcileSelectedModels])
+  }, [api, enabled, filterModel, reconcileSelectedModels, traceId])
 
   const refreshModels = useCallback(() => {
     if (!enabled) return

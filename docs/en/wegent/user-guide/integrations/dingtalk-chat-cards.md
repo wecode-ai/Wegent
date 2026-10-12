@@ -55,7 +55,7 @@ For a layout that separates the notification type, item, detail, and actions, im
 
 1. In the [DingTalk card platform](https://open-dev.dingtalk.com/fe/card), create an ordinary message card for the robot application that sends notifications. Import the JSON in the editor, review the preview, then save and publish it.
 2. Copy the ID of the **new template in your organization**. Turn on "Send task notifications as cards" for the DingTalk channel and enter that ID. The test organization's template ID cannot be reused across organizations.
-3. Ensure production `FRONTEND_URL` is a reachable HTTPS address. In a real DingTalk client, check mentions, assignments, each run state, and both actions. The custom card's Wework action opens a Wegent handoff page; the recipient then clicks its desktop action. If the page cannot launch Wework inside DingTalk, open it in a system browser and try again.
+3. Ensure production `FRONTEND_URL` is a reachable HTTPS address. In a real DingTalk client, check mentions, assignments, each run state, and both actions. The custom card's Wework action carries a validated `wework://` deep link, which the system opens with the associated Wework desktop application. When multiple versions are installed, the system's default association determines which application opens.
 
 The custom template defines these 13 ordinary variables, which the backend fills when delivering a card:
 
@@ -73,9 +73,9 @@ The custom template defines these 13 ordinary variables, which the backend fills
 | `primaryLabel` | Web action label, "查看任务" (View task) |
 | `primaryUrl` | Task web URL |
 | `secondaryLabel` | Desktop action label, "在 Wework 中打开" (Open in Wework) |
-| `secondaryUrl` | Wegent web handoff page, which constructs a Wework deep link only from valid board, task, and comment identifiers |
+| `secondaryUrl` | Validated Wework `wework://` desktop deep link |
 
-`tone` follows the notification type and state: mentions, assignments, and run starts are `blue`; waits for approval or a device are `orange`; completed is `green`; failed is `red`; cancelled is `gray`. The headline names the action, while the item title, key, context, and optional detail have separate areas. The handoff page also offers a web View task action. Stored in-app notification URLs, built-in cards, and Markdown notifications keep their original `wework://` links. Quotable local run notifications remain text messages so they can be quoted to continue the task.
+`tone` follows the notification type and state: mentions, assignments, and run starts are `blue`; waits for approval or a device are `orange`; completed is `green`; failed is `red`; cancelled is `gray`. The headline names the action, while the item title, key, context, and optional detail have separate areas. The card's View task action directly uses the task web URL. Stored in-app notification URLs, built-in cards, and Markdown notifications keep their original `wework://` links. Quotable local run notifications remain text messages so they can be quoted to continue the task.
 
 The configuration lives in the channel's `config.notification_card`. For a custom template:
 

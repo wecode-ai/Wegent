@@ -177,10 +177,10 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
-  const modelSubmenuMetrics = await getSingleElementMetrics(
+  const modelPickerMetrics = await getSingleElementMetrics(
     control,
-    '[data-testid="model-selector-submenu"]',
-    'The narrow-pane model submenu'
+    '[data-testid="model-selector-menu"]',
+    'The narrow-pane model picker'
   )
   const viewportMetrics = await getSingleElementMetrics(
     control,
@@ -198,25 +198,22 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     'The embedded browser host'
   )
   assert.ok(
-    modelSubmenuMetrics.top >= 64 && modelSubmenuMetrics.bottom <= viewportMetrics.bottom - 16,
-    `The narrow-pane model submenu exceeded the desktop viewport: ${JSON.stringify({
-      modelSubmenuMetrics,
+    modelPickerMetrics.top >= 64 && modelPickerMetrics.bottom <= viewportMetrics.bottom - 16,
+    `The narrow-pane model picker exceeded the desktop viewport: ${JSON.stringify({
+      modelPickerMetrics,
       viewportMetrics,
     })}`
   )
   assert.ok(
-    modelSubmenuMetrics.width >= 280 &&
-      modelSubmenuMetrics.left >= 16 &&
-      modelSubmenuMetrics.right <= viewportMetrics.right - 16 &&
-      modelSubmenuMetrics.right > rightPanelMetrics.left &&
-      modelSubmenuMetrics.right > browserHostMetrics.left &&
-      modelSubmenuMetrics.left < browserHostMetrics.right &&
-      modelSubmenuMetrics.bottom > browserHostMetrics.top &&
-      modelSubmenuMetrics.top < browserHostMetrics.bottom,
-    `The narrow-pane model submenu was compressed instead of using the browser overlay: ${JSON.stringify(
+    modelPickerMetrics.width >= 240 &&
+      modelPickerMetrics.left >= 16 &&
+      modelPickerMetrics.right <= viewportMetrics.right - 16 &&
+      modelPickerMetrics.right <= rightPanelMetrics.left - 16 &&
+      modelPickerMetrics.right <= browserHostMetrics.left - 16,
+    `The narrow-pane model picker was compressed or overlapped the right workspace panel: ${JSON.stringify(
       {
         browserHostMetrics,
-        modelSubmenuMetrics,
+        modelPickerMetrics,
         rightPanelMetrics,
       }
     )}`
@@ -350,6 +347,24 @@ async function verifyRuntimeTaskNotificationNavigation({
   assert.fail('Activating the task completion notification did not open its runtime task')
 }
 
+async function waitForCurrentRuntimeTask(control, taskId) {
+  const startedAt = Date.now()
+  let currentRuntimeTask = null
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    currentRuntimeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      .workbench?.currentRuntimeTask
+    if (currentRuntimeTask?.taskId === taskId && currentRuntimeTask.deviceId) {
+      return currentRuntimeTask
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(
+    `The running task address did not settle before notification verification: ${JSON.stringify(
+      currentRuntimeTask
+    )}`
+  )
+}
+
 async function verifyBackgroundTaskWindowLifecycle({
   app,
   appBundlePath,
@@ -416,8 +431,10 @@ async function verifyBackgroundTaskWindowLifecycle({
     'runtime-local-task-running-',
     'runtime-local-task-row-'
   )
-  const taskAddress = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    .workbench?.currentRuntimeTask
+  const taskAddress = await waitForCurrentRuntimeTask(
+    control,
+    taskRowTestId.replace('runtime-local-task-row-', '')
+  )
 
   await getSingleElementMetrics(control, ACTIVE_WORKBENCH_SELECTOR, 'The running conversation pane')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -1290,18 +1307,28 @@ async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
   throw new Error('The attachment-only tasks did not persist durable attachment previews')
 }
 
-async function waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, expectedCount) {
+async function waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, expectedCount) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const attachments = await findAttachmentFiles(runtimeAttachmentRoot)
+    const entries = await readdir(runtimeWorkspaceRoot, { withFileTypes: true })
+    const attachments = (
+      await Promise.all(
+        entries
+          .filter(entry => entry.isDirectory())
+          .map(entry => findAttachmentFiles(join(runtimeWorkspaceRoot, entry.name, 'attachments')))
+      )
+    ).flat()
     if (attachments.length >= expectedCount) return attachments
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error('The remote device did not persist attachments in its private runtime root')
+  throw new Error('The remote device did not persist attachments in its task workspace directories')
 }
 
 async function findAttachmentFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  const entries = await readdir(directory, { withFileTypes: true }).catch(error => {
+    if (error.code === 'ENOENT') return []
+    throw error
+  })
   const files = await Promise.all(
     entries.map(entry => {
       const path = join(directory, entry.name)
@@ -1324,7 +1351,7 @@ async function verifyAttachmentOnlySidebarLifecycle({
   composerSelector,
   control,
   executorHome,
-  runtimeAttachmentRoot,
+  runtimeWorkspaceRoot,
   workspacePath,
 }) {
   const gitStatusBefore = workspacePath ? readGitStatus(workspacePath) : null
@@ -1369,8 +1396,8 @@ async function verifyAttachmentOnlySidebarLifecycle({
   if (executorHome) {
     await waitForDurableAttachmentPreviews(executorHome, 2)
   }
-  if (runtimeAttachmentRoot) {
-    await waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, 2)
+  if (runtimeWorkspaceRoot) {
+    await waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, 2)
   }
   if (workspacePath) {
     assert.equal(

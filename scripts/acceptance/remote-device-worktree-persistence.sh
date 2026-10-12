@@ -14,9 +14,11 @@ DEVICE_ID="${WEGENT_ACCEPTANCE_DEVICE_ID:-acceptance-device-$RUN_ID}"
 PROBE_ID="${WEGENT_ACCEPTANCE_PROBE_ID:-git-worktree-$RUN_ID}"
 CONTAINER_PREFIX="${WEGENT_ACCEPTANCE_CONTAINER_PREFIX:-wegent-worktree-$RUN_ID}"
 VOLUME_NAME="${WEGENT_ACCEPTANCE_VOLUME_NAME:-$CONTAINER_PREFIX-home}"
+DATA_VOLUME_NAME="${VOLUME_NAME}-data"
 KEEP_ARTIFACTS="${WEGENT_ACCEPTANCE_KEEP_ARTIFACTS:-0}"
 ALLOW_EXISTING_VOLUME="${WEGENT_ACCEPTANCE_ALLOW_EXISTING_VOLUME:-0}"
 EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"
+DATA_ROOT="/home/wegent/.wegent"
 PROBE_TARGET_DIR="/opt/wegent-acceptance"
 PROBE_TARGET="$PROBE_TARGET_DIR/executor-home-persistence-probe.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -41,6 +43,8 @@ command -v "$DOCKER_BIN" >/dev/null 2>&1 || {
 
 containers=()
 volume_created=0
+data_volume_created=0
+DATA_VOLUME_ID=""
 VOLUME_ID=""
 
 run_docker() {
@@ -59,7 +63,11 @@ cleanup() {
         if [ "$volume_created" = "1" ]; then
             run_docker volume rm -f "$VOLUME_NAME" >/dev/null 2>&1 || true
         fi
+        if [ "$data_volume_created" = "1" ]; then
+            run_docker volume rm -f "$DATA_VOLUME_NAME" >/dev/null 2>&1 || true
+        fi
     else
+        echo "Acceptance data volume retained: $DATA_VOLUME_NAME" >&2
         echo "Acceptance artifacts retained with prefix: $CONTAINER_PREFIX" >&2
         echo "Acceptance volume retained: $VOLUME_NAME" >&2
     fi
@@ -87,6 +95,9 @@ start_container() {
     [ "$current_volume_id" = "$VOLUME_ID" ] || {
         fail "Docker volume identity changed during container replacement"
     }
+    [ "$(run_docker volume inspect --format '{{.Name}}|{{.CreatedAt}}' "$DATA_VOLUME_NAME")" = "$DATA_VOLUME_ID" ] || {
+        fail "Docker data volume identity changed during container replacement"
+    }
     containers+=("$name")
     run_docker run -d \
         --name "$name" \
@@ -99,6 +110,7 @@ start_container() {
         -e WEGENT_ACCEPTANCE_VOLUME_ID="$VOLUME_ID" \
         -e WEGENT_ACCEPTANCE_PROBE_ID="$PROBE_ID" \
         --mount "type=volume,src=$VOLUME_NAME,dst=$EXECUTOR_HOME" \
+        --mount "type=volume,src=$DATA_VOLUME_NAME,dst=$DATA_ROOT" \
         --mount "type=bind,src=$SCRIPT_DIR,dst=$PROBE_TARGET_DIR,readonly" \
         "$image" \
         >/dev/null
@@ -147,6 +159,10 @@ assert_volume_mount() {
     )"
     [ "$mount" = "volume|$VOLUME_NAME" ] || {
         fail "container does not use the expected named Executor Home volume"
+    }
+    mount="$(run_docker inspect --format '{{range .Mounts}}{{if eq .Destination "/home/wegent/.wegent"}}{{printf "%s|%s" .Type .Name}}{{end}}{{end}}' "$name")"
+    [ "$mount" = "volume|$DATA_VOLUME_NAME" ] || {
+        fail "container does not use the expected named Wegent data volume"
     }
 }
 
@@ -222,6 +238,15 @@ VOLUME_ID="$(
 )"
 [ -n "$VOLUME_ID" ] || fail "Docker volume does not expose a stable identity"
 
+if run_docker volume inspect "$DATA_VOLUME_NAME" >/dev/null 2>&1; then
+    [ "$ALLOW_EXISTING_VOLUME" = "1" ] || fail "data volume already exists"
+else
+    run_docker volume create "$DATA_VOLUME_NAME" >/dev/null
+    data_volume_created=1
+fi
+DATA_VOLUME_ID="$(run_docker volume inspect --format '{{.Name}}|{{.CreatedAt}}' "$DATA_VOLUME_NAME")"
+[ -n "$DATA_VOLUME_ID" ] || fail "Docker data volume does not expose a stable identity"
+
 first_container="$CONTAINER_PREFIX-first"
 first_instance="$RUN_ID-instance-a"
 start_container "$first_container" "$IMAGE" "$first_instance"
@@ -276,5 +301,6 @@ echo "ACCEPTANCE_TARGET=remote-docker-worktree-persistence"
 echo "ACCEPTANCE_RESULT=passed"
 echo "ACCEPTANCE_DEVICE_ID=$DEVICE_ID"
 echo "ACCEPTANCE_VOLUME=$VOLUME_NAME"
+echo "ACCEPTANCE_DATA_VOLUME=$DATA_VOLUME_NAME"
 echo "ACCEPTANCE_INITIAL_IMAGE=$IMAGE"
 echo "ACCEPTANCE_REBUILD_IMAGE=$REBUILD_IMAGE"

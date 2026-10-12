@@ -572,7 +572,10 @@ class TestUserScopedMcpInjection:
             }
         }
 
-    def test_get_bot_skills_resolves_agent_skill_as_agent_owner(self, test_db, mocker):
+    @pytest.mark.parametrize("preloaded", [None, 55, 56])
+    def test_get_bot_skills_resolves_agent_skill_as_agent_owner(
+        self, test_db, mocker, preloaded
+    ):
         builder = TaskRequestBuilder(test_db)
         team = SimpleNamespace(user_id=7, namespace="default")
         bot = SimpleNamespace(
@@ -605,6 +608,7 @@ class TestUserScopedMcpInjection:
                             "skill_id": 55,
                             "namespace": "default",
                             "is_public": False,
+                            "content_hash": "sha256:old-version",
                         }
                     },
                 },
@@ -615,14 +619,31 @@ class TestUserScopedMcpInjection:
             name="owner-private-skill",
             user_id=7,
             namespace="default",
-            json={},
+            json={"status": {"fileHash": "current-version"}},
+        )
+        if preloaded:
+            ghost.json["spec"]["preload_skill_refs"] = {
+                "owner-private-skill": {
+                    "skill_id": preloaded,
+                    "namespace": "other" if preloaded == 56 else "default",
+                    "content_hash": "sha256:old-preload-version",
+                }
+            }
+        other_skill = SimpleNamespace(
+            id=56,
+            name=skill.name,
+            user_id=7,
+            namespace="other",
+            json={"status": {"fileHash": "other-version"}},
         )
 
         mock_query = mocker.Mock()
         mock_query.filter.return_value.first.return_value = ghost
         mocker.patch.object(builder.db, "query", return_value=mock_query)
         find_attached_skill_by_ref = mocker.patch.object(
-            builder, "_find_attached_skill_by_ref", return_value=skill
+            builder,
+            "_find_attached_skill_by_ref",
+            side_effect=lambda name, skill_id: {55: skill, 56: other_skill}[skill_id],
         )
         mocker.patch.object(
             builder,
@@ -630,20 +651,31 @@ class TestUserScopedMcpInjection:
             return_value={"name": "owner-private-skill"},
         )
 
-        skills, preload_skills, user_selected_skills, _ = builder._get_bot_skills(
+        skills, preload_skills, user_selected_skills, refs = builder._get_bot_skills(
             bot=bot,
             team=team,
             user=SimpleNamespace(id=99, preferences="{}"),
             user_id=99,
         )
 
-        find_attached_skill_by_ref.assert_called_once_with(
+        find_attached_skill_by_ref.assert_any_call(
             "owner-private-skill",
             skill_id=55,
         )
+        assert find_attached_skill_by_ref.call_count == (2 if preloaded == 56 else 1)
         assert skills == [{"name": "owner-private-skill"}]
         assert preload_skills == ["owner-private-skill"]
         assert user_selected_skills == ["owner-private-skill"]
+        assert refs["owner-private-skill"]["content_hash"] == (
+            "sha256:other-version" if preloaded == 56 else "sha256:current-version"
+        )
+        assert refs["owner-private-skill"]["namespace"] == (
+            "other" if preloaded == 56 else "default"
+        )
+        assert (
+            ghost.json["spec"]["skill_refs"]["owner-private-skill"]["content_hash"]
+            == "sha256:old-version"
+        )
 
     def test_get_bot_skills_excludes_ghost_skills_when_following_device(
         self, test_db, mocker

@@ -94,13 +94,16 @@ class RuntimeTests(unittest.TestCase):
             capabilities = home / "capabilities"
             root = capabilities / "store/plugins/mail"
             root.mkdir(parents=True)
-            manifest = capabilities / "manifest.json"
+            manifest = capabilities / "manifest-v2.json"
             entry = {
                 "installed_plugin_id": 42,
                 "enabled": True,
                 "managed": True,
                 "store_path": "store/plugins/mail",
             }
+            (capabilities / "manifest.json").write_text(
+                json.dumps({"plugins": {"mail": {**entry, "installed_plugin_id": 99}}})
+            )
             with patch.dict(os.environ, {"WEGENT_EXECUTOR_HOME": str(home)}):
                 manifest.write_text(json.dumps({"plugins": {"mail": entry}}))
                 self.assertEqual(runtime._installed_id(root), 42)
@@ -132,7 +135,7 @@ class RuntimeTests(unittest.TestCase):
                 "store_path": str(store),
                 "runtime": {"codex_link": str(codex), "claude_link": str(claude)},
             }
-            manifest = capabilities / "manifest.json"
+            manifest = capabilities / "manifest-v2.json"
             with patch.dict(os.environ, {"WEGENT_EXECUTOR_HOME": str(home)}):
                 manifest.write_text(json.dumps({"plugins": {"mail": entry}}))
                 for root in (store, codex, claude):
@@ -159,7 +162,7 @@ class RuntimeTests(unittest.TestCase):
             root = home / "codex/plugins/cache/market/mail/1.0"
             root.mkdir(parents=True)
             capabilities.mkdir()
-            (capabilities / "manifest.json").write_text(
+            (capabilities / "manifest-v2.json").write_text(
                 json.dumps(
                     {
                         "plugins": {

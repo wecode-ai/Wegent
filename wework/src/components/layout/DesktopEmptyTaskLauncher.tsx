@@ -9,6 +9,7 @@ interface DesktopEmptyTaskLauncherProps {
   onOpenProjectSelector: (anchorElement: HTMLButtonElement) => void
   onSelectSuggestion: (prompt: string) => void
   composer: ReactNode
+  connectorAuthCard?: ReactNode
   /** Defaults to the workbench empty-state composer input. */
   composerInputTestId?: string
   compact?: boolean
@@ -19,6 +20,7 @@ export function DesktopEmptyTaskLauncher({
   onOpenProjectSelector,
   onSelectSuggestion,
   composer,
+  connectorAuthCard,
   composerInputTestId = 'chat-message-input',
   compact = false,
 }: DesktopEmptyTaskLauncherProps) {
@@ -95,6 +97,7 @@ export function DesktopEmptyTaskLauncher({
             : 'mx-auto w-[min(46rem,calc(100%_-_2rem))] min-w-0 shrink-0'
         }
       >
+        {connectorAuthCard}
         {composer}
       </div>
     </section>

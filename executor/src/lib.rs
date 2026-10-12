@@ -29,6 +29,7 @@ pub mod process_environment;
 pub mod prompt_enrichment;
 mod prompt_mentions;
 pub mod protocol;
+mod repository_identity;
 pub mod runner;
 pub mod runtime_work;
 pub mod server;
@@ -38,6 +39,7 @@ pub mod task_runtime;
 mod url_origin;
 pub mod version;
 mod workspace_paths;
+pub use workspace_paths::metadata::migrate as migrate_workspace_metadata;
 
 #[cfg(test)]
 pub(crate) mod test_env {

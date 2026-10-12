@@ -20,6 +20,10 @@ use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeW
 #[path = "support/runtime_task_project_move.rs"]
 mod runtime_task_project_move;
 
+#[cfg(unix)]
+#[path = "support/runtime_model_query_activation.rs"]
+mod runtime_model_query_activation;
+
 struct EnvLockGuard {
     _guard: OwnedMutexGuard<()>,
 }
@@ -3192,6 +3196,8 @@ async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available(
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-queued-worktree-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let workspace_root = temp_path("runtime-queued-worktree-workspace", "dir");
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _device_type = EnvGuard::set("DEVICE_TYPE", "cloud");
     let _persistent_storage = EnvGuard::set("WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED", "true");
     let _codex_home = EnvGuard::set(
@@ -3271,8 +3277,8 @@ async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available(
     assert_eq!(queued["queuePosition"], 1);
     assert_eq!(
         planned_path,
-        executor_home
-            .join("workspace/worktrees/queued-worktree-task")
+        workspace_root
+            .join("worktrees/queued-worktree-task")
             .join(source.file_name().unwrap())
     );
     assert!(

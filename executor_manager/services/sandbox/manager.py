@@ -393,7 +393,11 @@ class SandboxManager(metaclass=SingletonMeta):
             self._repository.save_sandbox(sandbox)
             return sandbox, workspace_error
 
-        await self._restore_sandbox_after_create(sandbox)
+        if not await self._restore_sandbox_after_create(sandbox):
+            error = "Sandbox archive restoration failed; refusing to start without historical state"
+            sandbox.set_failed(error)
+            self._repository.save_sandbox(sandbox)
+            return sandbox, error
 
         logger.info(
             f"[SandboxManager] Sandbox created: sandbox_id={sandbox.sandbox_id}, "
@@ -854,7 +858,11 @@ class SandboxManager(metaclass=SingletonMeta):
                 )
                 continue
 
-            await self._archive_sandbox_before_cleanup(sandbox)
+            if not await self._archive_sandbox_before_cleanup(sandbox):
+                result["failed"].append(
+                    {"sandbox_id": sandbox.sandbox_id, "reason": "archive_failed"}
+                )
+                continue
             success, message = await self.terminate_sandbox(sandbox.sandbox_id)
             if success:
                 result["deleted"].append(
@@ -1018,40 +1026,48 @@ class SandboxManager(metaclass=SingletonMeta):
         if not sandbox.base_url:
             return "Failed to initialize sandbox workspace: base_url is missing"
 
-        directory_paths = ("/home/user", f"/workspace/{task_id}")
-        directory_path = directory_paths[0]
-        url = f"{sandbox.base_url.rstrip('/')}/filesystem.Filesystem/MakeDir"
+        url = f"{sandbox.base_url.rstrip('/')}/api/runtime/prepare"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                for directory_path in directory_paths:
-                    response = await client.post(
-                        url,
-                        json={"path": directory_path},
-                        headers={"Content-Type": "application/json"},
+                response = await client.post(url, json={"task_id": int(task_id)})
+                if response.status_code == httpx.codes.NOT_FOUND:
+                    return await self._ensure_legacy_sandbox_workspace(
+                        client, sandbox, int(task_id)
                     )
-                    if response.status_code == httpx.codes.CONFLICT:
-                        logger.info(
-                            "[SandboxManager] Sandbox directory already exists "
-                            "sandbox_id=%s path=%s",
-                            sandbox.sandbox_id,
-                            directory_path,
-                        )
-                        continue
-                    response.raise_for_status()
-                    logger.info(
-                        "[SandboxManager] Sandbox directory initialized "
-                        "sandbox_id=%s path=%s",
-                        sandbox.sandbox_id,
-                        directory_path,
-                    )
+                response.raise_for_status()
+                paths = response.json()
+                logger.info(
+                    "[SandboxManager] Runtime paths resolved sandbox_id=%s "
+                    "home=%s workspace=%s executor_home=%s workbench_home=%s",
+                    sandbox.sandbox_id,
+                    paths.get("home_path"),
+                    paths.get("workspace_path"),
+                    paths.get("executor_home"),
+                    paths.get("workbench_home"),
+                )
             return None
         except httpx.HTTPStatusError as exc:
-            return (
-                f"Failed to initialize sandbox directory {directory_path}: "
-                f"HTTP {exc.response.status_code}"
-            )
+            return f"Failed to initialize sandbox workspace: HTTP {exc.response.status_code}"
         except Exception as exc:
-            return f"Failed to initialize sandbox directory {directory_path}: {exc}"
+            return f"Failed to initialize sandbox workspace: {exc}"
+
+    async def _ensure_legacy_sandbox_workspace(
+        self, client: httpx.AsyncClient, sandbox: Sandbox, task_id: int
+    ) -> None:
+        """Preserve the old protocol only when runtime/prepare is unavailable."""
+        logger.info(
+            "[SandboxManager] Legacy Executor directory protocol sandbox_id=%s",
+            sandbox.sandbox_id,
+        )
+        url = f"{sandbox.base_url.rstrip('/')}/filesystem.Filesystem/MakeDir"
+        for path in ("/home/user", f"/workspace/{task_id}"):
+            response = await client.post(
+                url,
+                json={"path": path},
+                headers={"Content-Type": "application/json"},
+            )
+            if response.status_code != httpx.codes.CONFLICT:
+                response.raise_for_status()
 
     def _build_sandbox_archive_payload(self, sandbox: Sandbox) -> Dict[str, str]:
         """Build backend archive/restore callback payload for a sandbox."""

@@ -29,6 +29,9 @@ use super::{
 
 pub(crate) use super::remote_projects::CodexGlobalRemoteProject;
 
+mod migration;
+pub use migration::run_project_state_query;
+
 const CODEX_GLOBAL_STATE_FILENAME: &str = ".codex-global-state.json";
 const CODEX_GLOBAL_STATE_OPLOG_FILENAME: &str = ".codex-global-state.oplog.jsonl";
 const CODEX_GLOBAL_STATE_OPLOG_VERSION: u64 = 1;
@@ -814,33 +817,7 @@ fn read_codex_global_state_oplog_unlocked() -> Vec<CodexGlobalStateOplogRecord> 
     };
     content
         .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            if line.is_empty() {
-                return None;
-            }
-            let mut record = serde_json::from_str::<CodexGlobalStateOplogRecord>(line).ok()?;
-            if record.version != CODEX_GLOBAL_STATE_OPLOG_VERSION {
-                return None;
-            }
-            record.workspace_path = normalize_workspace_path(&record.workspace_path);
-            if matches!(
-                record.kind.as_str(),
-                OPLOG_KIND_UPSERT
-                    | OPLOG_KIND_RENAME
-                    | OPLOG_KIND_REMOVE
-                    | OPLOG_KIND_UPSERT_REMOTE_PROJECT
-                    | OPLOG_KIND_ACTIVATE_PROJECT
-            ) && record.workspace_path.is_empty()
-            {
-                return None;
-            }
-            record.label = record
-                .label
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty());
-            Some(record)
-        })
+        .filter_map(|line| migration::parse_record(line).ok())
         .collect()
 }
 

@@ -2,6 +2,10 @@ import { Boxes, CornerDownLeft, ExternalLink, Puzzle, Search } from 'lucide-reac
 import { useCallback, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { LocalDeviceApp } from '@wegent/chat-core/runtime-composer-catalog'
+import {
+  composerAppNeedsAuthorization,
+  isComposerAppSelectable,
+} from '@wegent/chat-core/composer-plugin-metadata'
 import type { CollaborationTranslate } from '../i18n'
 import { Tooltip } from '../issue-detail/Tooltip'
 import { useCollaborationPortalTheme } from '../theme'
@@ -79,7 +83,7 @@ export function PluginPickerMenu({
     events: catalogEvents,
     isMenuOpen,
   })
-  const availableApps = apps.filter(app => app.isEnabled !== false && app.isAccessible !== false)
+  const availableApps = apps.filter(isComposerAppSelectable)
   const enabledApps = sortApps ? sortApps(availableApps) : availableApps
   const portalTheme = useCollaborationPortalTheme()
   const layout = useAnchoredPortalMenu(open, rootRef, menuRef)
@@ -192,7 +196,7 @@ export function PluginPickerMenu({
                   {t('workbench.plugins_loading_plugins', '正在加载插件')}
                 </div>
               ) : visibleApps.length > 0 ? (
-                visibleApps.slice(0, 8).map(app => {
+                visibleApps.map(app => {
                   return (
                     <button
                       key={app.id}
@@ -212,8 +216,19 @@ export function PluginPickerMenu({
                         className="plugin-icon-slot h-[22px] w-[22px] rounded-md"
                         initialClassName="text-xs font-medium leading-none text-text-secondary"
                       />
-                      <span className="min-w-0 truncate text-base leading-5">
-                        {displayAppName(app)}
+                      <span className="flex min-w-0 items-center gap-2 text-base leading-5">
+                        <span className="truncate">{displayAppName(app)}</span>
+                        {composerAppNeedsAuthorization(app) && (
+                          <span
+                            className="shrink-0 text-xs text-text-muted"
+                            data-testid={`composer-plugin-authorization-${app.id}`}
+                          >
+                            {t(
+                              'workbench.composer_plugin_authorization_required',
+                              'Authorization required'
+                            )}
+                          </span>
+                        )}
                       </span>
                       <span className="min-w-0 truncate text-base leading-5 text-text-muted">
                         {app.description}

@@ -15,7 +15,7 @@ DEFAULT_VERSION="1.0.0"
 
 # Function to show help
 show_help() {
-    echo "Build docker images for Wegent components"aass
+    echo "Build Docker images for Wegent components"
     echo ""
     echo "Usage: $0 [OPTIONS]"
     echo ""

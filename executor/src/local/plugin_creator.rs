@@ -37,6 +37,27 @@ const FILES: &[(&str, &[u8])] = &[
         )),
     ),
     (
+        "scripts/codex-plugin-creator/scripts/validate_plugin.py",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../sdk/plugin-creator/scripts/codex-plugin-creator/scripts/validate_plugin.py"
+        )),
+    ),
+    (
+        "scripts/codex-plugin-creator/README.md",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../sdk/plugin-creator/scripts/codex-plugin-creator/README.md"
+        )),
+    ),
+    (
+        "scripts/codex-plugin-creator/scripts/identifier_validation.py",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../sdk/plugin-creator/scripts/codex-plugin-creator/scripts/identifier_validation.py"
+        )),
+    ),
+    (
         "scripts/auth-sdk/tool.py",
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),

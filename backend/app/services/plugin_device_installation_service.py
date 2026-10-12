@@ -4,8 +4,11 @@
 
 """Persist device-level materialization of account plugin desired state."""
 
+import logging
+import time
 from datetime import datetime
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.constants import PLUGIN_AUTO_UPDATE_FAILURE_LIMIT
@@ -22,6 +25,11 @@ from app.services.plugin_device_identity import (
     plugin_device_id,
     reconcile_plugin_device_rows,
 )
+
+logger = logging.getLogger(__name__)
+
+MYSQL_DEADLOCK_ERROR = 1213
+DEVICE_SYNC_WRITE_ATTEMPTS = 3
 
 
 class PluginDeviceInstallationService:
@@ -70,7 +78,7 @@ class PluginDeviceInstallationService:
         db.commit()
 
     def mark_uninstalling(
-        self, db: Session, *, user_id: int, installed_kind_id: int
+        self, db: Session, *, user_id: int, installed_kind_id: int, commit: bool = True
     ) -> None:
         rows = (
             db.query(PluginDeviceInstallation)
@@ -84,7 +92,8 @@ class PluginDeviceInstallationService:
             row.state = "uninstalling"
             row.error_code = ""
             row.error_message = ""
-        db.commit()
+        if commit:
+            db.commit()
 
     def record_uninstall_response(
         self,
@@ -110,28 +119,6 @@ class PluginDeviceInstallationService:
             )
             db.commit()
 
-    def clear_installations(
-        self,
-        db: Session,
-        *,
-        user_id: int,
-        installed_kind_id: int,
-    ) -> None:
-        """Drop all device rows for an account-level uninstall.
-
-        Account desired state already excludes the plugin; leftover rows only
-        keep the UI stuck on sync-failed / uninstalling banners.
-        """
-        (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.user_id == user_id,
-                PluginDeviceInstallation.installed_kind_id == installed_kind_id,
-            )
-            .delete(synchronize_session=False)
-        )
-        db.commit()
-
     def record_sync_response(
         self,
         db: Session,
@@ -139,9 +126,26 @@ class PluginDeviceInstallationService:
         user_id: int,
         response: DeviceCapabilitySyncResponse,
     ) -> None:
-        for device_result in response.results:
-            self._record_device_sync_result(db, user_id, device_result)
-        db.commit()
+        for attempt in range(1, DEVICE_SYNC_WRITE_ATTEMPTS + 1):
+            try:
+                reconcile_plugin_device_rows(db, user_id)
+                for device_result in response.results:
+                    self._record_device_sync_result(
+                        db, user_id, device_result, reconcile=False
+                    )
+                db.commit()
+                return
+            except OperationalError as exc:
+                db.rollback()
+                if not _is_mysql_deadlock(exc) or attempt == DEVICE_SYNC_WRITE_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "Retrying plugin device sync persistence after MySQL deadlock: "
+                    "user_id=%s attempt=%s",
+                    user_id,
+                    attempt,
+                )
+                time.sleep(0.05 * attempt)
 
     def record_plugin_sync_response(
         self,
@@ -234,8 +238,11 @@ class PluginDeviceInstallationService:
         db: Session,
         user_id: int,
         result: DeviceCapabilitySyncResult,
+        *,
+        reconcile: bool = True,
     ) -> None:
-        reconcile_plugin_device_rows(db, user_id)
+        if reconcile:
+            reconcile_plugin_device_rows(db, user_id)
         result = result.model_copy(
             update={"device_id": plugin_device_id(db, user_id, result.device_id)}
         )
@@ -567,3 +574,8 @@ class PluginDeviceInstallationService:
 
 
 plugin_device_installation_service = PluginDeviceInstallationService()
+
+
+def _is_mysql_deadlock(error: OperationalError) -> bool:
+    original = error.orig
+    return bool(original.args and original.args[0] == MYSQL_DEADLOCK_ERROR)

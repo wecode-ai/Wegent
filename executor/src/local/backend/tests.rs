@@ -22,6 +22,7 @@ struct RuntimeWorkPollTransport {
     cleanup_enabled: Arc<AtomicBool>,
     claimed_cleanups: Arc<AtomicUsize>,
     accepted_cleanups: Arc<AtomicUsize>,
+    disconnect_calls: Arc<AtomicUsize>,
 }
 
 impl LocalBackendTransport for RuntimeWorkPollTransport {
@@ -30,7 +31,10 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
     }
 
     fn disconnect<'a>(&'a self) -> TransportFuture<'a, ()> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            self.disconnect_calls.fetch_add(1, AtomicOrdering::AcqRel);
+            Ok(())
+        })
     }
 
     fn call<'a>(
@@ -351,6 +355,28 @@ async fn runtime_work_poll_continues_after_one_pull_preflight_failure() {
     assert_eq!(transport.pull_calls.load(AtomicOrdering::Acquire), 2);
     assert_eq!(handler.create_calls.load(AtomicOrdering::Acquire), 1);
     assert_eq!(transport.accepted_tasks.load(AtomicOrdering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn heartbeat_reconnects_when_an_event_relay_marks_the_connection_unavailable() {
+    let transport = RuntimeWorkPollTransport::default();
+    let connection_status = Arc::new(AtomicBool::new(true));
+    let runner =
+        LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport.clone())
+            .with_connection_status(Arc::clone(&connection_status));
+
+    let mark_disconnected = async {
+        sleep(Duration::from_millis(10)).await;
+        connection_status.store(false, Ordering::Release);
+    };
+    let (stable_connection, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(runner.heartbeat_until_reconnect(), mark_disconnected)
+    })
+    .await
+    .expect("connection status should trigger reconnect before the heartbeat interval");
+
+    assert!(!stable_connection);
+    assert_eq!(transport.disconnect_calls.load(AtomicOrdering::Acquire), 1);
 }
 
 #[test]

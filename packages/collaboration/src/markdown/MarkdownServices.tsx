@@ -13,6 +13,7 @@ export interface MarkdownServices {
   copyText: (text: string) => Promise<void>;
   onCopy?: () => void;
   openExternalUrl: (url: string) => void | Promise<unknown>;
+  openAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>;
   navigateTo?: (path: string) => void;
   openHtmlFile?: (path: string) => boolean;
   fetchAttachmentBlob?: (id: number) => Promise<Blob>;

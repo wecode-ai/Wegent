@@ -445,15 +445,7 @@ fn optional_connection_field(
 }
 
 fn auth_executor_home() -> Result<std::path::PathBuf, AppIpcError> {
-    std::env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .ok_or_else(|| {
-            AppIpcError::new(
-                "plugin_auth_package_missing",
-                "Executor home is unavailable",
-            )
-        })
+    Ok(crate::config::paths::executor_home())
 }
 
 #[cfg(test)]

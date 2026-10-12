@@ -8,6 +8,12 @@ import {
   type ManagedExecutorHandle,
 } from './desktop-runtime.js'
 import type { DshRuntimeOptions } from './dsh-runtime.js'
+import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
+import { resolveDesktopDeviceId } from './desktop-device-id.js'
+
+vi.mock('./workbench-executor-schema.js', () => ({
+  assertExecutorWorkbenchCompatibility: vi.fn(),
+}))
 
 interface Deferred<T> {
   promise: Promise<T>
@@ -149,6 +155,7 @@ async function flush(): Promise<void> {
 
 describe('DesktopRuntime lifecycle generation', () => {
   beforeEach(() => {
+    vi.mocked(assertExecutorWorkbenchCompatibility).mockReset().mockResolvedValue(undefined)
     created.length = 0
     createdOptions.length = 0
     prepareState.prepareCalls = 0
@@ -160,6 +167,22 @@ describe('DesktopRuntime lifecycle generation', () => {
 
   afterEach(async () => {
     prepareState.resolveLaunch = null
+  })
+
+  test('rejects an incompatible executor before constructing its managed Home writer', async () => {
+    vi.mocked(resolveDesktopDeviceId).mockClear()
+    const createExecutor = vi.fn()
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { createExecutor }
+    )
+    vi.mocked(assertExecutorWorkbenchCompatibility).mockRejectedValue(
+      new Error('incompatible schema')
+    )
+    await expect(runtime.start()).rejects.toThrow('incompatible schema')
+    expect(createExecutor).not.toHaveBeenCalled()
+    expect(resolveDesktopDeviceId).not.toHaveBeenCalled()
+    await runtime.stop()
   })
 
   test('a restart continuation cannot publish a runtime after shutdown', async () => {

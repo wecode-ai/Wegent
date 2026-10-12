@@ -10,6 +10,8 @@ export const collaborationTestIds = {
   createProjectConfirm: "collaboration-project-create-confirm",
   project: (id: string) => `collaboration-project-${id}`,
   board: "collaboration-board",
+  calendar: "collaboration-calendar",
+  gantt: "collaboration-gantt",
   createIssue: "collaboration-issue-create",
   createIssueDialog: "collaboration-issue-create-dialog",
   createIssueConfirm: "collaboration-issue-create-confirm",

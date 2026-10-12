@@ -174,24 +174,6 @@ pub(super) fn json_scalar_field(value: &Value, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Lists object keys without exposing their values.
-pub(super) fn json_object_keys(value: &Value) -> String {
-    value
-        .as_object()
-        .map(|object| object.keys().cloned().collect::<Vec<_>>().join(","))
-        .unwrap_or_default()
-}
-
-/// Reads a nested string field for structured diagnostic metadata.
-pub(super) fn nested_json_string_field(value: &Value, object_key: &str, key: &str) -> String {
-    value
-        .get(object_key)
-        .and_then(|object| object.get(key))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned()
-}
-
 /// Truncates text on character boundaries and marks truncated output.
 pub(super) fn truncate_text(text: &str, max_chars: usize) -> String {
     let mut result = String::new();

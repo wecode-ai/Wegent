@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   dueDateTimeLocalFromSource,
   dueDateTimeLocalToSource,
+  isScheduleRangeInvalid,
 } from "./dateTime";
 
 describe("collaboration due date conversion", () => {
@@ -47,5 +48,13 @@ describe("collaboration due date conversion", () => {
     ).toBe("2026-09-12T02:30:00.000Z");
 
     vi.unstubAllEnvs();
+  });
+
+  it("compares mixed date-only and datetime-local ranges by timestamp", () => {
+    expect(isScheduleRangeInvalid("2026-09-12T00:00", "2026-09-12")).toBe(
+      false,
+    );
+    expect(isScheduleRangeInvalid("2026-09-12T00:01", "2026-09-12")).toBe(true);
+    expect(isScheduleRangeInvalid("", "2026-09-12")).toBe(false);
   });
 });

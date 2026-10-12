@@ -5,7 +5,10 @@ import type {
   RuntimeTaskAddress,
 } from '@wegent/chat-core/runtime'
 import {
+  findRequestUserInputPayload,
+  isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
+  requestUserInputResponseKey,
   requestUserInputResponseText,
 } from '@wegent/chat-core/runtime-user-input'
 import type { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
@@ -17,7 +20,7 @@ import { retryRuntimeConversation } from '../execution/retryRuntimeConversation'
 
 type Session = ReturnType<typeof createRuntimeConversationSession>
 type QuestionRuntime = Pick<SharedWorkspaceRuntimeApi, 'cancel'> & {
-  work: Pick<SharedWorkspaceRuntimeApi['work'], 'sendRuntimeMessage'>
+  work: Pick<SharedWorkspaceRuntimeApi['work'], 'sendRuntimeMessage' | 'guideRuntimeTask'>
 }
 
 /** Bind the PC question cards to the addressed runtime; rejected answers remain editable. */
@@ -92,12 +95,34 @@ export function useBrowserConversationActions(
       pending.current.add(session)
       setError(null)
       try {
+        const message = requestUserInputResponseText(response)
+        // Non-blocking Codex questions carry no runtime request to answer, so the
+        // answer only travels as the next user message.
+        const appendUserMessage = isAsyncRequestUserInputPayload(
+          findRequestUserInputPayload(
+            session.getSnapshot().messages,
+            requestUserInputResponseKey(response)
+          )
+        )
+        // Codex steers the turn that is still running and starts a new one once
+        // the model has stopped, so the answer is never rejected mid-turn.
+        if (appendUserMessage && session.getSnapshot().running) {
+          const guided = await runtime.work.guideRuntimeTask({
+            address,
+            message,
+            clientGuidanceId: `queued-runtime-pane-${Date.now()}`,
+          })
+          if (guided.accepted === false || guided.success === false)
+            throw new Error(guided.error || translate('todo.send_failed'))
+          return true
+        }
         const accepted = await runtime.work.sendRuntimeMessage({
           address,
-          message: requestUserInputResponseText(response),
-          requestUserInputResponse: response,
+          message,
+          ...(appendUserMessage ? {} : { requestUserInputResponse: response }),
         })
         if (!accepted.accepted) throw new Error(accepted.error || translate('todo.send_failed'))
+        if (appendUserMessage) return true
         session.applyUserInputResponse(response)
         return true
       } catch (cause) {

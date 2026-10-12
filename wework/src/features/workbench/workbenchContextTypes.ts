@@ -517,6 +517,7 @@ export interface WorkbenchProviderProps {
   lifecycleStore?: RuntimeTaskLifecycleStore
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
+  composerAppsSourceActive?: boolean
   debugSnapshotEnabled?: boolean
   consumePluginTrials?: boolean
   loadTaskComposerCatalogs?: boolean

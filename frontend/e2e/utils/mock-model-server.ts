@@ -1050,7 +1050,7 @@ const server = http.createServer((req, res) => {
           res,
           responseContent,
           streamRule?.chunkDelayMs ?? DEFAULT_CHUNK_DELAY_MS,
-          streamRule?.doneDelayMs ?? 0
+          scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0
         )
       } else {
         // Return non-streaming response

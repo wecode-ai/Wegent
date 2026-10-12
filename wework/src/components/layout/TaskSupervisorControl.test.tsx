@@ -28,8 +28,10 @@ function expectSelectedSupervisorModel(value: string) {
 
 function selectSupervisorModel(name: string) {
   fireEvent.click(screen.getByTestId('model-selector-button'))
-  fireEvent.click(screen.getByTestId('model-control-menu-model'))
+  const advancedToggle = screen.queryByTestId('model-advanced-toggle')
+  if (advancedToggle) fireEvent.click(advancedToggle)
   fireEvent.click(screen.getByTestId(`model-option-${name}`))
+  fireEvent.keyDown(document, { key: 'Escape' })
 }
 
 describe('TaskSupervisorControl', () => {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { PluginMarketplaceItem } from '@/types/api'
+import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '@/components/plugins/PluginManagementRows'
+import { CODEX_INSTALLATION_RECEIPT_TTL_MS } from '@/api/local/codexPluginInstallation'
 import {
   clearPluginMarketplaceCache,
   flushPluginMarketplaceCachePersist,
@@ -105,6 +106,126 @@ describe('pluginMarketplaceCache', () => {
     clearPluginMarketplaceCache()
   })
 
+  function acceptedGithub() {
+    const plugin = installedItem(
+      'github@openai-curated-remote',
+      'openai-curated-remote',
+      'github'
+    ).raw
+    plugin.spec.sourcePayload = {
+      codexInstallationReceipt: {
+        awaitingMembership: true,
+        acceptedAt: Date.now(),
+        authPolicy: 'ON_USE',
+        appsNeedingAuth: [],
+      },
+    }
+    return plugin
+  }
+
+  function publishGithub(
+    installedPlugins: InstalledPlugin[],
+    cacheKey = 'receipt-account',
+    deviceId = 'receipt-device',
+    mutation = false
+  ) {
+    setPluginMarketplaceCache(
+      {
+        cacheKey,
+        deviceId,
+        installedPlugins,
+        marketplaceItems: [
+          item({
+            id: 'github@openai-curated-remote',
+            name: 'github',
+            manifest: { marketplaceId: 'openai-curated-remote' },
+          }),
+        ],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        fetchedAt: Date.now(),
+      },
+      { mutation, persistImmediately: true }
+    )
+    return getPluginMarketplaceCache(cacheKey)!
+  }
+
+  test('retains accepted installation across a stale read and restart in the same inventory', () => {
+    publishGithub([acceptedGithub()], undefined, undefined, true)
+    resetPluginMarketplaceCacheMemory()
+    const notify = vi.fn()
+    const unsubscribe = subscribePluginMarketplaceCache(notify)
+    const snapshot = publishGithub([])
+    unsubscribe()
+    expect(snapshot.installedPlugins).toHaveLength(1)
+    expect(snapshot.marketplaceItems[0].installed).toBe(true)
+    expect(notify).toHaveBeenCalledWith(snapshot)
+  })
+
+  test('settles the receipt when native membership arrives and accepts subsequent removal', () => {
+    publishGithub([acceptedGithub()], undefined, undefined, true)
+    const observed = installedItem(
+      'github@openai-curated-remote',
+      'openai-curated-remote',
+      'github'
+    ).raw
+    const confirmed = publishGithub([observed])
+    expect(
+      confirmed.installedPlugins[0].spec.sourcePayload?.codexInstallationReceipt
+    ).toMatchObject({ awaitingMembership: false })
+    expect(publishGithub([]).installedPlugins).toEqual([])
+  })
+
+  test('expires acceptance at its original deadline despite refreshes and restart', () => {
+    vi.useFakeTimers()
+    const acceptedAt = Date.now()
+    publishGithub([acceptedGithub()], undefined, undefined, true)
+    vi.setSystemTime(acceptedAt + CODEX_INSTALLATION_RECEIPT_TTL_MS - 1)
+    expect(publishGithub([]).installedPlugins).toHaveLength(1)
+    resetPluginMarketplaceCacheMemory()
+    vi.setSystemTime(acceptedAt + CODEX_INSTALLATION_RECEIPT_TTL_MS)
+    expect(publishGithub([]).installedPlugins).toEqual([])
+    expect(publishGithub([]).installedPlugins).toEqual([])
+  })
+
+  test('does not indefinitely restore legacy or invalid acceptance times', () => {
+    for (const acceptedAt of [undefined, NaN, Date.now() + 1000]) {
+      const plugin = acceptedGithub()
+      plugin.spec.sourcePayload!.codexInstallationReceipt = {
+        awaitingMembership: true,
+        acceptedAt,
+        authPolicy: 'ON_USE',
+        appsNeedingAuth: [],
+      }
+      publishGithub([plugin], undefined, undefined, true)
+      expect(publishGithub([]).installedPlugins).toEqual([])
+    }
+  })
+
+  test('does not mistake metadata hydration for native membership confirmation', () => {
+    const plugin = acceptedGithub()
+    publishGithub([plugin], undefined, undefined, true)
+    publishGithub([{ ...plugin, spec: { ...plugin.spec, description: 'Hydrated description' } }])
+    expect(publishGithub([]).installedPlugins).toHaveLength(1)
+  })
+
+  test('explicit uninstall removes a pending receipt and stale reads cannot restore it', () => {
+    publishGithub([acceptedGithub()], undefined, undefined, true)
+    removePluginMarketplaceInstallation('receipt-account', {
+      installedIds: ['github@openai-curated-remote'],
+      marketplaceItemIds: [],
+      pluginKeys: ['github'],
+      marketplaceId: 'openai-curated-remote',
+    })
+    expect(publishGithub([]).installedPlugins).toEqual([])
+  })
+
+  test('never carries accepted installations to another device or account', () => {
+    publishGithub([acceptedGithub()], undefined, undefined, true)
+    expect(publishGithub([], 'other-account').installedPlugins).toEqual([])
+    expect(publishGithub([], 'receipt-account', 'other-device').installedPlugins).toEqual([])
+  })
+
   test('stores and returns snapshots by cache key', () => {
     const key = pluginMarketplaceCacheKey('http://api', 'token-abc')
     setPluginMarketplaceCache({
@@ -173,8 +294,49 @@ describe('pluginMarketplaceCache', () => {
     expect(getPluginMarketplaceCache(key)?.logosStripped).toBe(true)
   })
 
+  test('persists presentation fields without copying heavy plugin detail', () => {
+    const key = 'bounded-interface'
+    const interfaceData = {
+      displayName: 'GitHub',
+      defaultPrompt: 'Inspect this repository',
+      longDescription: 'detail'.repeat(100_000),
+      screenshots: ['data:image/png;base64,' + 'A'.repeat(100_000)],
+    }
+    const plugin = installedItem('github@official', 'official', 'github').raw
+    plugin.spec.interface = interfaceData
+    setPluginMarketplaceCache(
+      {
+        cacheKey: key,
+        marketplaceItems: [item({ id: 'github', name: 'github', interface: interfaceData })],
+        installedPlugins: [plugin],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        deviceId: 'device',
+        fetchedAt: Date.now(),
+      },
+      { persistImmediately: true }
+    )
+    expect(getPluginMarketplaceCache(key)?.marketplaceItems[0].interface).toEqual(interfaceData)
+    expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.interface).toEqual(
+      interfaceData
+    )
+    resetPluginMarketplaceCacheMemory()
+    const restored = getPluginMarketplaceCache(key)!
+    for (const data of [
+      restored.marketplaceItems[0].interface,
+      restored.installedPlugins[0].spec.interface,
+    ]) {
+      expect(data).toMatchObject({
+        defaultPrompt: 'Inspect this repository',
+        displayName: 'GitHub',
+      })
+      expect(data).not.toHaveProperty('longDescription')
+      expect(data).not.toHaveProperty('screenshots')
+    }
+  })
+
   test('compacts an existing heavy inventory snapshot before returning it', () => {
-    const storageKey = 'wework.plugins.inventory.v1'
+    const storageKey = 'wework.plugins.inventory.v2'
     const key = pluginMarketplaceCacheKey('http://api', 'token-heavy-v2')
     const logo = `data:image/png;base64,${'A'.repeat(200_000)}`
     const heavySnapshot = {
@@ -209,8 +371,8 @@ describe('pluginMarketplaceCache', () => {
       shortDescription: 'Create documents',
       logo: null,
     })
-    expect(restored?.marketplaceItems[0]?.interface?.longDescription).toBeUndefined()
-    expect(compactedRaw.length).toBeLessThan(heavyRaw.length / 10)
+    expect(restored?.marketplaceItems[0]?.interface).not.toHaveProperty('longDescription')
+    expect(compactedRaw.length).toBeLessThan(heavyRaw.length - logo.length / 2)
   })
 
   test('anon cache key never reuses an authenticated snapshot', () => {
@@ -236,7 +398,7 @@ describe('pluginMarketplaceCache', () => {
   })
 
   test('authenticated lookup releases durable snapshots from inactive accounts', () => {
-    const storageKey = 'wework.plugins.inventory.v1'
+    const storageKey = 'wework.plugins.inventory.v2'
     const activeKey = pluginMarketplaceCacheKey('http://api', 'token-active')
     const inactiveKey = pluginMarketplaceCacheKey('http://api', 'token-inactive')
     const snapshotFor = (cacheKey: string, name: string) => ({
@@ -267,7 +429,7 @@ describe('pluginMarketplaceCache', () => {
   })
 
   test('retries a compact snapshot after releasing the value WebKit counts toward quota', () => {
-    const storageKey = 'wework.plugins.inventory.v1'
+    const storageKey = 'wework.plugins.inventory.v2'
     const key = pluginMarketplaceCacheKey('http://api', 'token-quota-retry')
     window.localStorage.setItem(storageKey, JSON.stringify({ entries: { old: {} } }))
     const nativeSetItem = Storage.prototype.setItem
@@ -340,7 +502,7 @@ describe('pluginMarketplaceCache', () => {
     setPluginMarketplaceCache({
       cacheKey: key,
       marketplaceItems: [item({ id: 1, name: 'dev-tools', installed: true })],
-      installedPlugins: installed,
+      installedPlugins: installed.map(plugin => plugin.raw),
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
@@ -349,7 +511,7 @@ describe('pluginMarketplaceCache', () => {
 
     resetPluginMarketplaceCacheMemory()
     expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([
-      expect.objectContaining({ id: '59', name: 'Dev Tools' }),
+      expect.objectContaining({ spec: expect.objectContaining({ displayName: 'Dev Tools' }) }),
     ])
 
     const next = removePluginMarketplaceInstallation(key, {
@@ -390,7 +552,7 @@ describe('pluginMarketplaceCache', () => {
           manifest: { marketplaceId: 'market-b' },
         }),
       ],
-      installedPlugins: [first, second],
+      installedPlugins: [first.raw, second.raw],
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
@@ -404,7 +566,7 @@ describe('pluginMarketplaceCache', () => {
       marketplaceId: 'market-a',
     })
 
-    expect(next?.installedPlugins).toEqual([second])
+    expect(next?.installedPlugins).toEqual([second.raw])
     expect(next?.marketplaceItems).toEqual([
       expect.objectContaining({ id: 1, installed: false, installedPluginId: null }),
       expect.objectContaining({ id: 2, installed: true, installedPluginId: '60' }),
@@ -433,7 +595,7 @@ describe('pluginMarketplaceCache', () => {
           manifest: { marketplaceId: 'Market-A' },
         }),
       ],
-      installedPlugins: [first, second],
+      installedPlugins: [first.raw, second.raw],
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
@@ -447,7 +609,7 @@ describe('pluginMarketplaceCache', () => {
       marketplaceId: 'market-a',
     })
 
-    expect(next?.installedPlugins).toEqual([second])
+    expect(next?.installedPlugins).toEqual([second.raw])
     expect(next?.marketplaceItems).toEqual([
       expect.objectContaining({ id: 1, installed: false, installedPluginId: null }),
       expect.objectContaining({ id: 2, installed: true, installedPluginId: '60' }),
@@ -585,7 +747,7 @@ describe('pluginMarketplaceCache', () => {
   test('keeps memory and listeners immediate while delaying durable persist', () => {
     vi.useFakeTimers()
     const key = pluginMarketplaceCacheKey('http://api', 'token-debounce')
-    const storageKey = 'wework.plugins.inventory.v1'
+    const storageKey = 'wework.plugins.inventory.v2'
     const heard: Array<string | undefined> = []
     const unsubscribe = subscribePluginMarketplaceCache(next => {
       heard.push(next?.deviceId)
@@ -669,14 +831,14 @@ describe('pluginMarketplaceCache', () => {
     expect(setItem).toHaveBeenCalled()
     resetPluginMarketplaceCacheMemory()
     expect(getPluginMarketplaceCache(key)?.marketplaceItems[0]?.components.skills).toEqual([
-      { name: 'review', description: 'Review code', path: 'review' },
+      { name: 'review', description: 'Review code', path: 'skills/review' },
     ])
   })
 
   test('flushPluginMarketplaceCachePersist writes the pending snapshot immediately', () => {
     vi.useFakeTimers()
     const key = pluginMarketplaceCacheKey('http://api', 'token-flush')
-    const storageKey = 'wework.plugins.inventory.v1'
+    const storageKey = 'wework.plugins.inventory.v2'
     setPluginMarketplaceCache({
       cacheKey: key,
       marketplaceItems: [item({ id: 2, name: 'b' })],

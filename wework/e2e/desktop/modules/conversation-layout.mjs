@@ -1,3 +1,5 @@
+import { readFile, readdir } from 'node:fs/promises'
+
 import { sendPrompt } from './conversation-navigation.mjs'
 import { verifyConversationShortcuts } from './conversation-shortcuts.mjs'
 
@@ -28,6 +30,7 @@ import {
   selectE2EModel,
   sendPromptUntilScenarioRequest,
   withTimeout,
+  waitForLogPattern,
   writeFile,
 } from './shared.mjs'
 
@@ -1066,6 +1069,7 @@ async function verifyLocalWorktreeSettings(control, worktreeId, worktreePath) {
 async function verifyWorktreeCreationStatus({
   composerSelector,
   control,
+  executorHome,
   workspacePath,
   restartDesktopApp,
 }) {
@@ -1156,6 +1160,17 @@ async function verifyWorktreeCreationStatus({
       WORKBENCH_READY_TIMEOUT_MS,
       'The worktree task did not reach the model service after creation'
     )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    const pendingTranscriptSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      pendingTranscriptSnapshot.testIds.includes('runtime-transcript-error'),
+      false,
+      'The newly started Codex thread exposed a transient startup transcript error'
+    )
+    assert.ok(
+      pendingTranscriptSnapshot.text.includes(CHECKPOINT_TASK_PROMPT),
+      'The pending worktree transcript lost its optimistic user message'
+    )
   } finally {
     control.releaseScenarioResponse(scenario)
   }
@@ -1167,8 +1182,56 @@ async function verifyWorktreeCreationStatus({
   await captureVerificationScreenshot(control, 'worktree-status-05-task-started.png')
 
   const beforeRestart = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-  const restoredTaskId = currentRuntimeTaskFromDebugSnapshot(beforeRestart)?.taskId
+  const currentTask = currentRuntimeTaskFromDebugSnapshot(beforeRestart)
+  const restoredTaskId = currentTask?.taskId
+  const threadId = currentTask?.threadId ?? currentTask?.runtimeHandle?.threadId
   assert.ok(restoredTaskId, 'The project task must be selected before restarting')
+  assert.ok(threadId, 'The project task must expose its Codex thread before rollout recovery')
+  const rolloutPath = await findCodexRollout(join(executorHome, 'codex', 'sessions'), threadId)
+  assert.ok(rolloutPath, 'The project task rollout was not persisted before recovery')
+  const rollout = await readFile(rolloutPath, 'utf8')
+  assert.ok(rollout.trim(), 'The project task rollout fixture was already empty')
+  const executorLogPath = join(resultDir, 'executor.log')
+  const recoveryLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
+  let restoreRollout
+  await restartDesktopApp({
+    afterStop: async () => {
+      await writeFile(rolloutPath, '', 'utf8')
+      restoreRollout = waitForLogPattern(
+        executorLogPath,
+        /Codex rollout metadata is not ready; retrying transcript startup/,
+        {
+          fromOffset: recoveryLogOffset,
+          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+        }
+      ).then(() => writeFile(rolloutPath, rollout, 'utf8'))
+    },
+  })
+  await restoreRollout
+  await waitForLogPattern(
+    executorLogPath,
+    /Codex rollout metadata recovered after transcript startup retry/,
+    {
+      fromOffset: recoveryLogOffset,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: scenarioCompletionText,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const recoveredSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    recoveredSnapshot.testIds.includes('runtime-transcript-error'),
+    false,
+    'Recovering an initially empty Codex rollout exposed a transcript error'
+  )
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => currentRuntimeTaskFromDebugSnapshot(snapshot)?.taskId === restoredTaskId,
+    'The recovered project task was not current before restart',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   await restartDesktopApp()
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: scenarioCompletionText,
@@ -1296,6 +1359,19 @@ async function verifyWorktreeCreationStatus({
     DEFAULT_STEP_TIMEOUT_MS,
     'Archiving the worktree task left its repository or runtime container on disk'
   )
+}
+
+async function findCodexRollout(directory, threadId) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      const nested = await findCodexRollout(path, threadId)
+      if (nested) return nested
+    } else if (entry.name.endsWith(`${threadId}.jsonl`)) {
+      return path
+    }
+  }
+  return null
 }
 
 export {

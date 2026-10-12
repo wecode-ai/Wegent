@@ -18,6 +18,7 @@ const appIframeMocks = vi.hoisted(() => ({
 }))
 const workbenchProviderMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
+  composerAppsSourceActive: vi.fn(),
   loadTaskComposerCatalogs: vi.fn(),
 }))
 const portalOwnershipMocks = vi.hoisted(() => ({
@@ -93,11 +94,14 @@ vi.mock('@/lib/runtime-environment', async importOriginal => {
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({
     children,
+    composerAppsSourceActive,
     loadTaskComposerCatalogs,
   }: {
     children: React.ReactNode
+    composerAppsSourceActive?: boolean
     loadTaskComposerCatalogs?: boolean
   }) => {
+    workbenchProviderMocks.composerAppsSourceActive(composerAppsSourceActive)
     workbenchProviderMocks.loadTaskComposerCatalogs(loadTaskComposerCatalogs)
     useEffect(() => workbenchProviderMocks.cleanup, [])
     return <>{children}</>
@@ -133,6 +137,7 @@ describe('WorkspaceTabSurface', () => {
     appIframeMocks.cleanup.mockClear()
     appIframeMocks.props.mockClear()
     workbenchProviderMocks.cleanup.mockClear()
+    workbenchProviderMocks.composerAppsSourceActive.mockClear()
     workbenchProviderMocks.loadTaskComposerCatalogs.mockClear()
     portalOwnershipMocks.setActiveOwner.mockClear()
     harnessAppLauncherMocks.cleanup.mockClear()
@@ -262,6 +267,7 @@ describe('WorkspaceTabSurface', () => {
     const { unmount } = render(<WorkspaceTabSurface {...props} />)
     expect(screen.getByTestId('removed-plugin-page')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-route-unavailable')).not.toBeInTheDocument()
+    expect(workbenchProviderMocks.composerAppsSourceActive).toHaveBeenLastCalledWith(true)
 
     act(() => {
       routes = []

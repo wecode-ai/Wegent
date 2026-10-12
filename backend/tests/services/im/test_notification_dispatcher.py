@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.schemas.dingtalk_card import BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
@@ -545,10 +544,19 @@ async def test_dingtalk_markdown_escapes_link_syntax_from_a_comment(
 
 
 @pytest.mark.asyncio
-async def test_dingtalk_notification_card_uses_the_builtin_template(
+@pytest.mark.parametrize(
+    ("notification_card", "template_id"),
+    [
+        ({}, BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID),
+        ({"template_id": "wegent-custom-template"}, "wegent-custom-template"),
+    ],
+)
+async def test_dingtalk_notification_card_uses_the_selected_template(
     test_db: Session,
     test_user,
     monkeypatch: pytest.MonkeyPatch,
+    notification_card: dict[str, str],
+    template_id: str,
 ) -> None:
     """A channel that opted into cards gets a finished card instead of markdown."""
 
@@ -559,7 +567,7 @@ async def test_dingtalk_notification_card_uses_the_builtin_template(
         config={
             "client_id": "ding-client-id",
             "client_secret": encrypt_sensitive_data("ding-client-secret"),
-            "notification_card": {},
+            "notification_card": notification_card,
         },
     )
     session = _create_session(
@@ -611,7 +619,12 @@ async def test_dingtalk_notification_card_uses_the_builtin_template(
         ),
         links=[
             NotificationLink(
-                label="在 Wework 中打开", url="wework://boards/12/issues/ISSUE-1"
+                label="在 Wework 中打开",
+                url="wework://boards/12/issues/ISSUE-1/comments/c-1",
+            ),
+            NotificationLink(
+                label="查看任务",
+                url="https://wegent.example/collaboration/12/issues/ISSUE-1",
             ),
         ],
     )
@@ -619,17 +632,33 @@ async def test_dingtalk_notification_card_uses_the_builtin_template(
     assert result["success"] is True
     assert result["outTrackId"] == "track-1"
     assert calls[1]["user_id"] == "staff-1"
-    assert calls[1]["card_template_id"] == BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
+    assert calls[1]["card_template_id"] == template_id
     assert calls[1]["preview"] == "🔔 hajimi 在评论中提到了你"
     card_param_map = calls[1]["card_param_map"]
+    if template_id != BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID:
+        assert card_param_map["primaryLabel"] == "查看任务"
+        assert card_param_map["primaryUrl"] == (
+            "https://wegent.example/collaboration/12/issues/ISSUE-1"
+        )
+        assert card_param_map["secondaryLabel"] == "在 Wework 中打开"
+        assert card_param_map["secondaryUrl"] == (
+            "wework://boards/12/issues/ISSUE-1/comments/c-1"
+        )
+        assert "markdown" not in card_param_map
+        return
     assert card_param_map["title"] == "🔔 hajimi 在评论中提到了你"
     assert card_param_map["markdown"] == "**任务编号**：WORK-582"
     assert json.loads(card_param_map["sys_full_json_obj"])["msgButtons"] == [
         {
             "text": "在 Wework 中打开",
-            "url": "wework://boards/12/issues/ISSUE-1",
+            "url": "wework://boards/12/issues/ISSUE-1/comments/c-1",
             "color": "blue",
-        }
+        },
+        {
+            "text": "查看任务",
+            "url": "https://wegent.example/collaboration/12/issues/ISSUE-1",
+            "color": "gray",
+        },
     ]
 
 
@@ -705,7 +734,7 @@ async def test_dingtalk_notification_card_failure_falls_back_to_markdown(
     assert calls[0]["template_id"] == "card-template-1"
     assert calls[0]["card_param_map"]["kindLabel"] == "任务通知"
     assert calls[0]["card_param_map"]["secondaryUrl"] == (
-        f"{settings.FRONTEND_URL.rstrip('/')}/open-wework?projectId=12&itemId=ISSUE-1"
+        "wework://boards/12/issues/ISSUE-1"
     )
     assert "markdown" not in calls[0]["card_param_map"]
     assert calls[1] == {

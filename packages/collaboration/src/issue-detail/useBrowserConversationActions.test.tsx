@@ -20,6 +20,15 @@ const payload = {
     { id: 'directory', question: '工作目录？', options: [{ label: '当前目录', value: '/repo' }] },
   ],
 }
+const asyncPayload = {
+  kind: 'request_user_input',
+  requestId: 'question-async',
+  itemId: 'tool-async',
+  delivery: 'async',
+  questions: [
+    { id: 'directory', question: '工作目录？', options: [{ label: '当前目录', value: '/repo' }] },
+  ],
+}
 
 describe('browser runtime question actions', () => {
   let root: Root
@@ -27,19 +36,27 @@ describe('browser runtime question actions', () => {
   let session: ReturnType<typeof createRuntimeConversationSession>
   let actions: ReturnType<typeof useBrowserConversationActions>
   let runtime: Parameters<typeof useBrowserConversationActions>[0]
-  beforeEach(async () => {
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  async function mountQuestion(
+    question: typeof payload = payload,
+    running = true
+  ): Promise<void> {
+    if (root) act(() => root.unmount())
+    if (container) container.remove()
+    if (session) session.stop()
     container = document.createElement('div')
     document.body.append(container)
     root = createRoot(container)
     runtime = {
-      work: { sendRuntimeMessage: vi.fn().mockResolvedValue({ accepted: true }) },
+      work: {
+        sendRuntimeMessage: vi.fn().mockResolvedValue({ accepted: true }),
+        guideRuntimeTask: vi.fn().mockResolvedValue({ accepted: true, turnId: 'turn-1' }),
+      },
       cancel: vi.fn().mockResolvedValue(undefined),
     }
     const transcript: RuntimeTranscriptResponse = {
       runtime: 'codex',
       workspacePath: '/repo',
-      running: true,
+      running,
       messages: [],
       turns: [
         {
@@ -66,7 +83,7 @@ describe('browser runtime question actions', () => {
                 type: 'tool',
                 toolName: 'request_user_input',
                 status: 'pending',
-                renderPayload: payload,
+                renderPayload: question,
               },
             },
           ],
@@ -94,14 +111,18 @@ describe('browser runtime question actions', () => {
         <ConversationTranslationProvider translate={translate}>
           {actions.error && <div role="alert">{actions.error}</div>}
           <RequestUserInputCard
-            payload={payload}
+            payload={question}
             onSubmit={actions.onRequestUserInputSubmit}
-            onIgnore={() => void actions.onRequestUserInputIgnore(payload)}
+            onIgnore={() => void actions.onRequestUserInputIgnore(question)}
           />
         </ConversationTranslationProvider>
       )
     }
     await act(async () => root.render(<Harness />))
+  }
+  beforeEach(async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    await mountQuestion()
   })
   afterEach(() => {
     act(() => root.unmount())
@@ -137,6 +158,16 @@ describe('browser runtime question actions', () => {
       status: 'done',
       renderPayload: { response: { requestId: 'question-1' } },
     })
+  })
+  it('steers the running turn when a non-blocking question is answered mid-turn', async () => {
+    await mountQuestion(asyncPayload, true)
+    await act(async () => button('request-user-input-submit-button').click())
+    expect(runtime.work.guideRuntimeTask).toHaveBeenCalledWith({
+      address,
+      message: '/repo',
+      clientGuidanceId: expect.stringMatching(/^queued-runtime-pane-/),
+    })
+    expect(runtime.work.sendRuntimeMessage).not.toHaveBeenCalled()
   })
   it('keeps the answer editable and the question pending when runtime rejects it', async () => {
     vi.mocked(runtime.work.sendRuntimeMessage).mockResolvedValueOnce({

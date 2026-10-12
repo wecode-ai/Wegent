@@ -5,6 +5,7 @@ import type { InstalledPluginItem } from '../PluginManagementRows'
 import {
   keepRicherMarketplacePluginDetail,
   marketplacePluginDetailSelectionKey,
+  marketplacePluginDetailSource,
   pluginDetailActionErrorMessage,
   pluginUsesWegentConnectorOAuth,
   queueMarketplacePluginTrial,
@@ -33,6 +34,31 @@ const emptyComponents = {
   bins: [],
   connectors: [],
 }
+
+test('detail source preserves the shared inventory local path for an official marketplace', () => {
+  const item = githubMarketplaceItem()
+  item.manifest = { marketplaceId: 'openai-official' }
+  expect(
+    marketplacePluginDetailSource(item, [
+      {
+        key: 'local:openai-official',
+        id: 'openai-official',
+        name: 'OpenAI',
+        kind: 'local',
+        path: '/tmp/github-marketplace',
+      },
+    ])
+  ).toEqual({ id: 'openai-official', name: 'OpenAI', path: '/tmp/github-marketplace' })
+})
+
+test('only a declared remote catalog can resolve without a local path', () => {
+  const item = githubMarketplaceItem()
+  expect(marketplacePluginDetailSource(item, []).path).toBe('openai-curated-remote')
+  item.manifest = { marketplaceId: 'enterprise' }
+  expect(() => marketplacePluginDetailSource(item, [])).toThrow(
+    'Local plugin marketplace path is unavailable'
+  )
+})
 
 test('account connections do not require legacy login during plugin installation', () => {
   const item = githubMarketplaceItem()

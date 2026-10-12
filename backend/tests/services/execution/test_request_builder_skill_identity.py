@@ -21,9 +21,9 @@ def test_build_generates_skill_identity_token(test_db, mocker):
         executor_name="executor-1",
         executor_namespace="default",
     )
-    task = SimpleNamespace(id=1, json={"spec": {}}, project_id=None)
+    task = SimpleNamespace(id=1, user_id=7, json={"spec": {}}, project_id=None)
     user = SimpleNamespace(id=7, user_name="alice")
-    team = SimpleNamespace(id=5, user_id=7, name="team-a", namespace="default", json={})
+    team = SimpleNamespace(id=5, user_id=8, name="team-a", namespace="default", json={})
     bot = SimpleNamespace(id=9)
 
     mocker.patch(
@@ -62,6 +62,8 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     )
 
     assert result.skill_identity_token == "skill-jwt"
+    assert result.team_owner == {}
+    assert result.user_id == 7
     assert result.executor_name == "executor-1"
     assert result.executor_namespace == "default"
     assert result.backend_url == settings.BACKEND_INTERNAL_URL

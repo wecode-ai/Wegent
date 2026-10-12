@@ -36,6 +36,7 @@ export type ComposerMentionCandidate<Project = unknown, Conversation = unknown> 
       reference: string
       searchAliases: string[]
       app: LocalDeviceApp
+      statusLabel?: string
     }
   | {
       kind: 'cloud'

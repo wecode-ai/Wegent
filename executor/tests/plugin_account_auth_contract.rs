@@ -688,7 +688,7 @@ fn managed_fixture(root: &Path, checksum: &str) -> PathBuf {
     fs::rename(root.join("scripts"), package.join("scripts")).unwrap();
     fs::rename(root.join(".codex-plugin"), package.join(".codex-plugin")).unwrap();
     fs::write(
-        home.join("capabilities/manifest.json"),
+        home.join("capabilities/manifest-v2.json"),
         json!({"plugins":{"mail@wework":{
             "installed_plugin_id":42,"managed":true,"enabled":true,
             "checksum":checksum,"store_path":package

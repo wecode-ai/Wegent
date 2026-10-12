@@ -149,8 +149,9 @@ use super::{
     codex_notifications::{codex_notification, is_root_codex_turn_event},
     codex_rollout::rollout_context_usage,
     codex_transcript_page::{
-        load_codex_transcript, load_codex_transcript_navigation, CodexTranscriptDirection,
-        CodexTranscriptNavigation, CodexTranscriptPage, CodexTranscriptRequest,
+        load_codex_transcript, load_codex_transcript_navigation, read_codex_thread_metadata,
+        CodexTranscriptDirection, CodexTranscriptNavigation, CodexTranscriptPage,
+        CodexTranscriptRequest,
     },
     connectors::ConnectorRuntime,
     events::{

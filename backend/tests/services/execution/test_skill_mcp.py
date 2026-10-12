@@ -25,7 +25,7 @@ def test_skill_mcp_config_cannot_override_resolved_name() -> None:
 
     assert servers == [
         {
-            "name": "92d551f_docs",
+            "name": "demo-skill_docs",
             "url": "https://example.test/mcp",
         }
     ]

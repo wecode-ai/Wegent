@@ -263,6 +263,7 @@ class DefaultRemoteDeviceCommandProvider:
                 '  -e DEVICE_SESSION_GATEWAY_PORT="$DEVICE_SESSION_GATEWAY_PORT" \\',
                 '  -p "$DEVICE_SESSION_GATEWAY_PORT:$DEVICE_SESSION_GATEWAY_PORT" \\',
                 f"  -v {shlex.quote(context.container_name)}-home:/home/wegent/.wecode/wegent-executor \\",
+                f"  -v {shlex.quote(context.container_name)}-data:/home/wegent/.wegent \\",
                 f"  {shlex.quote(image)}",
             ]
         )

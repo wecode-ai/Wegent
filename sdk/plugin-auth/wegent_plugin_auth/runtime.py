@@ -71,7 +71,7 @@ def _installed_id(plugin_root: Path) -> int:
     if not home:
         raise AuthError("plugin_auth_package_sync_required")
     capabilities = Path(home) / "capabilities"
-    manifest = capabilities / "manifest.json"
+    manifest = capabilities / "manifest-v2.json"
     if manifest.is_symlink() or manifest.stat().st_size > 8 * 1024 * 1024:
         raise AuthError("plugin_auth_package_sync_required")
     entries = json.loads(manifest.read_text(encoding="utf-8"))["plugins"]

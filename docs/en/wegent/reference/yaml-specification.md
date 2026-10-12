@@ -209,21 +209,79 @@ spec:
 
 ### Field Description
 
-| Field                  | Type   | Required | Description                                        |
-| ---------------------- | ------ | -------- | -------------------------------------------------- |
-| `metadata.name`        | string | Yes      | Unique identifier for the Model                    |
-| `metadata.namespace`   | string | Yes      | Namespace, typically `default`                     |
-| `spec.isVisible`       | boolean | No      | Whether a public model appears in regular users' model selectors. Defaults to `true`; `false` preserves existing references and runtime resolution. |
-| `spec.allowedUsers`    | array   | No      | User-name whitelist of a public model; only enforced when `allowedUsersEnabled` is `true`. When the switch is off, the list is retained but does not restrict access. |
-| `spec.allowedUsersEnabled` | boolean | No | Explicit switch for whitelist-only mode; when `true`, access is governed strictly by `allowedUsers`, and an empty list denies everyone. When `false`/absent, the model is a normal public model and `allowedUsers` is ignored. |
-| `spec.modelGroup`      | string | No       | First-level display group used by model selectors  |
-| `spec.modelSubGroup`   | string | No       | Second-level display group under `spec.modelGroup` |
-| `spec.modelConfig`     | object | Yes      | Model configuration object                         |
-| `spec.modelConfig.env` | object | Yes      | Environment variables configuration                |
-| `spec.modelConfig.visionSidecarModel` | object | No   | Explicit reference to the model that processes images; omission disables vision delegation. |
-| `spec.protocol`        | string | No       | Upstream protocol (`openai`, `openai-responses`, `claude`, ...). Inferred from `env.model` when omitted. |
-| `spec.apiFormat`       | string | No       | Upstream API format (`responses`, `chat/completions`, ...). Derived from `spec.protocol` when omitted. |
-| `spec.isWeworkAvailable` | boolean | No     | Whether the model is distributed to the wework desktop client. |
+| Field                                 | Type    | Required | Description                                                                                                                                                                                                                    |
+| ------------------------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `metadata.name`                       | string  | Yes      | Unique identifier for the Model                                                                                                                                                                                                |
+| `metadata.namespace`                  | string  | Yes      | Namespace, typically `default`                                                                                                                                                                                                 |
+| `spec.isVisible`                      | boolean | No       | Whether a public model appears in regular users' model selectors. Defaults to `true`; `false` preserves existing references and runtime resolution.                                                                            |
+| `spec.allowedUsers`                   | array   | No       | User-name whitelist of a public model; only enforced when `allowedUsersEnabled` is `true`. When the switch is off, the list is retained but does not restrict access.                                                          |
+| `spec.allowedUsersEnabled`            | boolean | No       | Explicit switch for whitelist-only mode; when `true`, access is governed strictly by `allowedUsers`, and an empty list denies everyone. When `false`/absent, the model is a normal public model and `allowedUsers` is ignored. |
+| `spec.modelGroup`                     | string  | No       | First-level display group used by model selectors                                                                                                                                                                              |
+| `spec.modelSubGroup`                  | string  | No       | Second-level display group under `spec.modelGroup`                                                                                                                                                                             |
+| `spec.modelConfig`                    | object  | Yes      | Model configuration object                                                                                                                                                                                                     |
+| `spec.modelConfig.env`                | object  | Yes      | Environment variables configuration                                                                                                                                                                                            |
+| `spec.modelConfig.ui`                 | object  | No       | Wework model-picker presentation, default-model, and reasoning-effort configuration.                                                                                                                                           |
+| `spec.modelConfig.visionSidecarModel` | object  | No       | Explicit reference to the model that processes images; omission disables vision delegation.                                                                                                                                    |
+| `spec.protocol`                       | string  | No       | Upstream protocol (`openai`, `openai-responses`, `claude`, ...). Inferred from `env.model` when omitted.                                                                                                                       |
+| `spec.apiFormat`                      | string  | No       | Upstream API format (`responses`, `chat/completions`, ...). Derived from `spec.protocol` when omitted.                                                                                                                         |
+| `spec.isWeworkAvailable`              | boolean | No       | Whether the model is distributed to the wework desktop client.                                                                                                                                                                 |
+
+### Wework model-picker configuration
+
+Cloud models can provide model-picker metadata through `modelConfig.ui`. Mark
+the default model with `defaultModel: true`, and declare its supported reasoning
+efforts with `reasoningEfforts` and `defaultReasoningEffort`. The default model
+can also provide multiple named model sets through
+`sliderModelsConfig.presets`. Every preset with at least one available slider
+position is displayed, and
+`defaultPreset` selects the initially active model set.
+
+Each preset has a stable unique `name`, a first-line `label`, and an ordered
+`models` list. An optional `description` configures the second line. Without a
+`description`, the default preset falls back to "Recommended model set" and other
+presets fall back to "Model set". `modelName` identifies a Model resource name
+or model ID. For ambiguous names, provide `modelType`, `namespace`, and
+`resourceUserId` as the complete resource identity. Presets appear directly under
+their top-level source, such as "Cloud models", before model-family subgroups.
+An entry that omits both `reasoningEffort` and `reasoningEfforts` selects only the
+model without setting a reasoning effort; the model need not declare reasoning
+efforts. Explicitly requested efforts must be supported by the target model;
+declare them through its own `modelConfig.ui.reasoningEfforts`.
+Invisible or unavailable models and unsupported efforts are removed from the
+preset. The remaining preset is still displayed when at least one valid
+position remains, and is hidden only when no valid positions remain.
+
+```yaml
+spec:
+  isWeworkAvailable: true
+  modelConfig:
+    env:
+      model: openai
+      model_id: cloud-sol-upstream
+    ui:
+      family: cloud-openai
+      modelLabel: Cloud Sol
+      defaultModel: true
+      reasoningEfforts: [low, medium, high]
+      defaultReasoningEffort: medium
+      sliderModelsConfig:
+        defaultPreset: recommended
+        presets:
+          - name: recommended
+            label: Recommended
+            description: Recommended for everyday work
+            models:
+              - modelName: cloud-luna
+                reasoningEffort: high
+              - modelName: cloud-sol
+                reasoningEfforts: [low, medium, high]
+          - name: quality
+            label: Quality
+            description: Prioritize quality
+            models:
+              - modelName: cloud-terra
+                reasoningEfforts: [medium, high]
+```
 
 ### Vision delegation model reference
 
@@ -536,18 +594,18 @@ A knowledge base with `spec.kbType = "code_wiki"` is generated by an agent from 
 source repository. Every field below is written by the system and should not be
 edited by hand.
 
-| Field                        | Type    | Description                                                          |
-| ---------------------------- | ------- | -------------------------------------------------------------------- |
-| `spec.kbType`                | string  | `notebook`, `classic` or `code_wiki`. **Cannot move into or out of `code_wiki`** |
-| `spec.source.sourceType`     | string  | `github`, `gitlab` or `gitea`                                        |
-| `spec.source.sourceUrl`      | string  | Repository URL, derived at creation with any credentials stripped    |
-| `spec.source.projectName`    | string  | `owner/repo`                                                         |
-| `spec.source.sourceDomain`   | string  | Repository host                                                      |
-| `spec.publishedGenerationId` | integer | **Sole authority for which version is live**; 0 when nothing is      |
-| `spec.lastPublishedAt`       | string  | When that version was published, written with the pointer            |
-| `spec.lastPublishedCommit`   | string  | Commit the live version documents                                    |
+| Field                        | Type    | Description                                                                       |
+| ---------------------------- | ------- | --------------------------------------------------------------------------------- |
+| `spec.kbType`                | string  | `notebook`, `classic` or `code_wiki`. **Cannot move into or out of `code_wiki`**  |
+| `spec.source.sourceType`     | string  | `github`, `gitlab` or `gitea`                                                     |
+| `spec.source.sourceUrl`      | string  | Repository URL, derived at creation with any credentials stripped                 |
+| `spec.source.projectName`    | string  | `owner/repo`                                                                      |
+| `spec.source.sourceDomain`   | string  | Repository host                                                                   |
+| `spec.publishedGenerationId` | integer | **Sole authority for which version is live**; 0 when nothing is                   |
+| `spec.lastPublishedAt`       | string  | When that version was published, written with the pointer                         |
+| `spec.lastPublishedCommit`   | string  | Commit the live version documents                                                 |
 | `spec.pageOrder`             | array   | Page paths in display order; hierarchy comes from the paths, order only from here |
-| `spec.pendingIndexCleanup`   | array   | Vector store references owed for removed pages, retried at the next publish |
+| `spec.pendingIndexCleanup`   | array   | Vector store references owed for removed pages, retried at the next publish       |
 
 **Invariants:**
 
@@ -793,22 +851,22 @@ spec:
 
 ### Field Reference
 
-| Field                           | Type    | Required      | Description                                                               |
-| ------------------------------- | ------- | ------------- | ------------------------------------------------------------------------- |
-| `metadata.name`                 | string  | Yes           | Unique Connector App slug, also used as the tool-name prefix              |
-| `metadata.namespace`            | string  | Yes           | Currently `system`                                                        |
-| `spec.name`                     | string  | Yes           | Display name                                                              |
-| `spec.description`              | string  | No            | App description                                                           |
-| `spec.iconUrl`                  | string  | No            | Icon URL                                                                  |
+| Field                           | Type    | Required      | Description                                                                |
+| ------------------------------- | ------- | ------------- | -------------------------------------------------------------------------- |
+| `metadata.name`                 | string  | Yes           | Unique Connector App slug, also used as the tool-name prefix               |
+| `metadata.namespace`            | string  | Yes           | Currently `system`                                                         |
+| `spec.name`                     | string  | Yes           | Display name                                                               |
+| `spec.description`              | string  | No            | App description                                                            |
+| `spec.iconUrl`                  | string  | No            | Icon URL                                                                   |
 | `spec.enabled`                  | boolean | Yes           | Whether the app is enabled; disabled apps are hidden from catalogs/runtime |
-| `spec.visibility`               | string  | Yes           | `all` or `roles`                                                          |
-| `spec.allowedRoles`             | array   | No            | User roles allowed when `visibility: roles`                               |
-| `spec.authType`                 | string  | Yes           | Currently only `none` is supported                                        |
-| `spec.transport`                | string  | Yes           | `streamable-http`, `sse`, or `http`                                       |
-| `spec.mcpUrl`                   | string  | Yes           | MCP endpoint or HTTP API base URL                                         |
+| `spec.visibility`               | string  | Yes           | `all` or `roles`                                                           |
+| `spec.allowedRoles`             | array   | No            | User roles allowed when `visibility: roles`                                |
+| `spec.authType`                 | string  | Yes           | Currently only `none` is supported                                         |
+| `spec.transport`                | string  | Yes           | `streamable-http`, `sse`, or `http`                                        |
+| `spec.mcpUrl`                   | string  | Yes           | MCP endpoint or HTTP API base URL                                          |
 | `spec.providerHeadersEncrypted` | string  | No            | Fixed provider headers JSON encrypted with the project sensitive-data tool |
-| `spec.toolAllowlist`            | array   | No            | Upstream tool names allowed for discovery and invocation                  |
-| `spec.httpTools`                | array   | Conditionally | Required for `transport: http`; maps ordinary HTTP APIs to MCP tools      |
+| `spec.toolAllowlist`            | array   | No            | Upstream tool names allowed for discovery and invocation                   |
+| `spec.httpTools`                | array   | Conditionally | Required for `transport: http`; maps ordinary HTTP APIs to MCP tools       |
 
 `providerHeadersEncrypted` must be an encrypted JSON string. The administrator API accepts plaintext `provider_headers` and encrypts them before storage; do not commit plaintext API keys, service tokens, or headers in hand-written YAML.
 

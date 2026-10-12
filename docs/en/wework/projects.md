@@ -129,6 +129,16 @@ Each completed step is marked automatically, and the guide hides after all three
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
 
+## Calendar, Gantt, and table views
+
+Use the project-space header to switch among **Board**, **Calendar**, **Gantt**, and **Table**. Issue details use one date-range control for the start and end dates. If only one date is set, Calendar and Gantt treat the issue as a one-day task.
+
+- **Calendar** displays tasks by month, week, or day. Multi-day tasks use continuous bars; when a task crosses a week boundary, each row keeps its outer spacing and continues on the next row. Dragging any segment moves the whole task and highlights the destination dates. Calendar does not expose separate start or end resize handles.
+- **Gantt** displays a week, month, quarter, or year timeline. Drag the whole bar to reschedule a task while preserving its duration. Hover the bar and drag either edge to change only the start or end date. Unscheduled tasks appear below the timeline and can be dragged onto a date.
+- **Table** shows title, status, assignee, tags, start date, end date, execution state, and updated time by default. Issue IDs and assignment sources are hidden by default. Select a sortable header to toggle ascending and descending order; status, assignee, and tag headers provide filters. Selecting multiple rows enables bulk status changes and bulk archive, while a single-row archive uses an icon action.
+
+Calendar and Gantt filters, grouping, and sorting are first stored as personal settings on the current device. Choose **Restore project settings** to discard personal changes. Members with project-management permission can choose **Save as project settings** so other members open the project with the same defaults.
+
 ## Execution environment in Project settings
 
 In a collaboration project, open **Project settings → Execution environment** to add a repository and initialize an execution environment when needed. A project without a repository can use a blank workspace. Normally, selecting a repository or entering its Git URL is enough: the name and directory are derived automatically. Expand **Advanced options** only to customize the name, directory, or branch. Setup steps are optional; no placeholder fields are required to save the configuration.
