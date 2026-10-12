@@ -264,6 +264,24 @@ class TestSettings:
 
         assert s.REPO_CACHE_EXPIRED_TIME == 7200
         assert s.REPO_UPDATE_INTERVAL_SECONDS == 3600
+        assert s.ISSUE_PAGE_CACHE_SECONDS == 30
+
+    @pytest.mark.parametrize("cache_seconds", [0, 5, 120])
+    def test_issue_page_cache_reads_environment(
+        self, monkeypatch: pytest.MonkeyPatch, cache_seconds: int
+    ) -> None:
+        monkeypatch.setenv("ISSUE_PAGE_CACHE_SECONDS", str(cache_seconds))
+
+        assert build_settings_from_env().ISSUE_PAGE_CACHE_SECONDS == cache_seconds
+
+    @pytest.mark.parametrize("invalid_value", ["-1", "invalid"])
+    def test_issue_page_cache_rejects_invalid_environment_values(
+        self, monkeypatch: pytest.MonkeyPatch, invalid_value: str
+    ) -> None:
+        monkeypatch.setenv("ISSUE_PAGE_CACHE_SECONDS", invalid_value)
+
+        with pytest.raises(ValidationError, match="ISSUE_PAGE_CACHE_SECONDS"):
+            build_settings_from_env()
 
     def test_settings_share_token_encryption(self):
         """Test share token encryption configuration"""

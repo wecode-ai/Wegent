@@ -16,6 +16,16 @@ Wework builds proxy model config directly from the configured cloud URL and logi
 - `POST /api/runtime-work/llm-responses-proxy/responses`: proxy endpoint authenticated with the user's login token.
 - `/models/unified`: returns the model name, type, namespace, and resource owner ID needed to identify the Model CRD exactly.
 
+### Default Position in Cloud Model Presets
+
+The Model CRD's `spec.modelConfig.ui.defaultModel: true` marks the default model,
+and `sliderModelsConfig.defaultPreset` names the default slider preset. Selecting
+that preset first targets the model that owns the preset configuration, even when
+it is second or later in `presets[].models`. An entry without `reasoningEffort`
+selects only the model and can also be the default position. Entries with an
+explicit effort match the owner's default reasoning effort. The first preset
+entry is selected only when no matching entry exists.
+
 ### Request Flow
 
 1. Wework fetches credential-free model metadata from `/models/unified`.
