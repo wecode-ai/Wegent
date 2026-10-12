@@ -45,6 +45,21 @@ const ENV_ENABLED: &str = "WEWORK_DECISION_PROXY_ENABLED";
 const ENV_UPSTREAM_URL: &str = "WEWORK_DECISION_PROXY_UPSTREAM_URL";
 const ENV_DEFAULT_MODEL: &str = "WEWORK_DECISION_PROXY_DEFAULT_MODEL";
 const ENV_ALLOWED_MODELS_JSON: &str = "WEWORK_DECISION_PROXY_ALLOWED_MODELS_JSON";
+const ENV_CREDENTIAL: &str = "WEWORK_DECISION_PROXY_CREDENTIAL";
+const ENV_STATIC_CREDENTIAL: &str = "WEWORK_DECISION_PROXY_API_KEY";
+
+/// Where the upstream credential comes from.
+///
+/// [REV-D3] The first version defaults to [`Self::Static`]: the platform
+/// decision credential belongs to `copilot.weibo.com` and is unrelated to the
+/// Wework user session token used for the Wegent backend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DecisionCredentialMode {
+    /// Executor-controlled platform credential, read per request.
+    Static,
+    /// Current Wework login snapshot (`ConnectionConfig.auth_token`).
+    Login,
+}
 
 /// Parsed, validated decision proxy configuration.
 ///
@@ -63,6 +78,7 @@ pub(crate) struct DecisionProxySettings {
     pub upstream_url: Url,
     pub default_model: String,
     pub models: Vec<DecisionModel>,
+    pub credential: DecisionCredentialMode,
 }
 
 /// Static, client-safe reason for a rejected configuration.
@@ -138,12 +154,26 @@ impl DecisionProxyConfig {
             return Err(DecisionProxyConfigError::new("default_model_not_allowed"));
         }
 
+        let credential = parse_credential_mode(lookup(ENV_CREDENTIAL).as_deref())?;
+
         Ok(Self::Enabled(DecisionProxySettings {
             upstream_url,
             default_model,
             models,
+            credential,
         }))
     }
+}
+
+/// Reads the platform decision credential used by [`DecisionCredentialMode::Static`].
+///
+/// Returns `None` when the deployment has not provided one, so callers answer
+/// `credential_unavailable` instead of calling the upstream unauthenticated.
+pub(crate) fn static_credential_from_env() -> Option<String> {
+    env::var(ENV_STATIC_CREDENTIAL)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 /// Logs the startup summary. Tokens, the upstream URL, and the model catalogue
@@ -169,6 +199,19 @@ fn is_truthy_flag(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on"
     )
+}
+
+fn parse_credential_mode(
+    raw: Option<&str>,
+) -> Result<DecisionCredentialMode, DecisionProxyConfigError> {
+    match raw.map(str::trim) {
+        None | Some("") => Ok(DecisionCredentialMode::Static),
+        Some(value) => match value.to_ascii_lowercase().as_str() {
+            "static" => Ok(DecisionCredentialMode::Static),
+            "login" => Ok(DecisionCredentialMode::Login),
+            _ => Err(DecisionProxyConfigError::new("invalid_credential_mode")),
+        },
+    }
 }
 
 fn parse_upstream_url(raw: &str) -> Result<Url, DecisionProxyConfigError> {
@@ -392,6 +435,7 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.upstream_url.as_str(), VALID_UPSTREAM);
         assert_eq!(first.default_model, "model-a");
+        assert_eq!(first.credential, DecisionCredentialMode::Static);
         assert_eq!(
             first.models,
             vec![
@@ -404,6 +448,49 @@ mod tests {
                     display_name: "model-b".to_owned(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn credential_mode_defaults_to_static_and_accepts_login() {
+        let default = enabled_settings(&model_entries(r#"["model-a"]"#, "model-a"));
+        assert_eq!(default.credential, DecisionCredentialMode::Static);
+
+        for (value, expected) in [
+            ("static", DecisionCredentialMode::Static),
+            ("STATIC", DecisionCredentialMode::Static),
+            ("login", DecisionCredentialMode::Login),
+            (" Login ", DecisionCredentialMode::Login),
+        ] {
+            let entries = [
+                (ENV_ENABLED, "true"),
+                (ENV_UPSTREAM_URL, VALID_UPSTREAM),
+                (ENV_DEFAULT_MODEL, "model-a"),
+                (ENV_ALLOWED_MODELS_JSON, r#"["model-a"]"#),
+                (ENV_CREDENTIAL, value),
+            ];
+            assert_eq!(
+                enabled_settings(&entries).credential,
+                expected,
+                "value={value}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_credential_mode_is_invalid() {
+        let entries = [
+            (ENV_ENABLED, "true"),
+            (ENV_UPSTREAM_URL, VALID_UPSTREAM),
+            (ENV_DEFAULT_MODEL, "model-a"),
+            (ENV_ALLOWED_MODELS_JSON, r#"["model-a"]"#),
+            (ENV_CREDENTIAL, "keychain"),
+        ];
+        assert_eq!(
+            config_from(&entries)
+                .expect_err("unknown credential mode")
+                .reason(),
+            "invalid_credential_mode"
         );
     }
 
