@@ -114,7 +114,7 @@ export function shouldReplaceRuntimeTaskProjection(
       // Native completion timestamps may have only second precision.
       const completedAt = runtimeTaskTimestamp(candidate.completedAt)
       const currentTime = runtimeTaskProjectionTime(current)
-      return Math.floor(completedAt / 1000) >= Math.floor(currentTime / 1000)
+      return completedAt === 0 || Math.floor(completedAt / 1000) >= Math.floor(currentTime / 1000)
     }
     if (!isRuntimeTaskConfirmedActive(candidate)) return false
     const candidateTime = runtimeTaskProjectionTime(candidate)

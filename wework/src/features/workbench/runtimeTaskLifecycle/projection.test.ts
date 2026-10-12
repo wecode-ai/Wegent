@@ -20,6 +20,17 @@ function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
 }
 
 describe('runtimeTaskProjection', () => {
+  test('accepts completion when its timestamp cannot establish snapshot ordering', () => {
+    const active = task({ running: true, updatedAt: 1_786_676_410_200 })
+    expect(
+      shouldReplaceRuntimeTaskProjection(active, {
+        ...active,
+        running: false,
+        completedAt: 'unparseable',
+      })
+    ).toBe(true)
+  })
+
   test('rejects completion from an older turn even when its projection was updated later', () => {
     const active = task({
       running: true,
