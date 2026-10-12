@@ -52,6 +52,31 @@ describe('core DSH runtime', () => {
       await root.remove()
     }
   })
+  test('copies code independently while preserving linked static web resources', async () => {
+    const root = await temporaryDirectory('core-dsh-linked-web-')
+    try {
+      const source = join(root.path, 'source')
+      const web = join(root.path, 'web')
+      const destination = join(root.path, 'profile', 'node_modules', 'plugin')
+      await mkdir(source)
+      await mkdir(web)
+      await writeFile(join(source, 'index.js'), 'export const version = 1\n')
+      await writeFile(join(web, 'index.html'), '<html>linked web</html>\n')
+      await symlink(web, join(source, 'web'), process.platform === 'win32' ? 'junction' : 'dir')
+
+      await copyManagedPlugin(source, destination)
+      await writeFile(join(source, 'index.js'), 'export const version = 2\n')
+
+      expect(await readFile(join(destination, 'index.js'), 'utf8')).toBe(
+        'export const version = 1\n'
+      )
+      expect(await realpath(join(destination, 'web'))).toBe(await realpath(web))
+      expect(await readFile(join(destination, 'web', 'index.html'), 'utf8')).toContain('linked web')
+    } finally {
+      await root.remove()
+    }
+  })
+
   test('links static web assets as Windows junctions while copying plugin modules', async () => {
     const root = await temporaryDirectory('core-dsh-windows-links-')
     try {

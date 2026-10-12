@@ -10,9 +10,11 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import semver from 'semver'
 import { hashComponentPath } from './component-content-hash.js'
+import { copyComponentTree } from './component-copy.js'
+import { createFileOperationQueue } from './file-operation-queue.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
@@ -374,14 +376,22 @@ async function prepareProfile(options: {
   await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
   await writeFile(join(profileRoot, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
   await ensureCoreWorkspace(workspacePath)
-  for (const packageName of managedDependencyNames) {
-    const source = options.runtime.pluginRoots[packageName]
-    const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
-    const step = `core-dsh-plugin-copy:${packageName}`
-    options.onStartupStep?.(step, 'started')
-    await rm(destination, { recursive: true, force: true })
-    await copyManagedPlugin(source, destination)
-    options.onStartupStep?.(step, 'completed')
+  const preparePlugin = createFileOperationQueue(4)
+  const results = await Promise.allSettled(
+    managedDependencyNames.map(packageName =>
+      preparePlugin(async () => {
+        const source = options.runtime.pluginRoots[packageName]
+        const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
+        const step = `core-dsh-plugin-copy:${packageName}`
+        options.onStartupStep?.(step, 'started')
+        await rm(destination, { recursive: true, force: true })
+        await copyManagedPlugin(source, destination)
+        options.onStartupStep?.(step, 'completed')
+      })
+    )
+  )
+  for (const result of results) {
+    if (result.status === 'rejected') throw result.reason
   }
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
@@ -399,8 +409,20 @@ export async function copyManagedPlugin(
 ): Promise<void> {
   const platform = options.platform ?? process.platform
   const linkDirectory = options.linkDirectory ?? symlink
+  const entries = await readdir(source, { withFileTypes: true })
+  if (platform !== 'win32') {
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+    await copyComponentTree(source, destination, new Set(['web']))
+    const web = entries.find(entry => entry.name === 'web')
+    if (web?.isDirectory() || web?.isSymbolicLink()) {
+      await linkDirectory(resolve(source, 'web'), join(destination, 'web'), 'dir')
+    } else if (web) {
+      await cp(join(source, 'web'), join(destination, 'web'))
+    }
+    return
+  }
   await mkdir(destination, { recursive: true, mode: 0o700 })
-  for (const entry of await readdir(source, { withFileTypes: true })) {
+  for (const entry of entries) {
     const sourceEntry = join(source, entry.name)
     const destinationEntry = join(destination, entry.name)
     if (entry.name === 'web' && entry.isDirectory()) {
@@ -409,10 +431,8 @@ export async function copyManagedPlugin(
         destinationEntry,
         platform === 'win32' ? 'junction' : 'dir'
       )
-    } else if (platform === 'win32') {
-      await copyWindowsEntry(sourceEntry, destinationEntry, linkDirectory)
     } else {
-      await cp(sourceEntry, destinationEntry, { recursive: true })
+      await copyWindowsEntry(sourceEntry, destinationEntry, linkDirectory)
     }
   }
 }

@@ -37,6 +37,14 @@ Production builds combine statically imported Lucide icons into one shared modul
 to reduce separate local HTTP requests. Other icons used by dynamic contributions
 remain demand-loaded, and optional viewers retain their dynamic import boundaries.
 
+Core profile 使用有界并发准备内置插件，代码保留独立副本以继续从 profile 解析依赖，
+静态网页资源使用目录链接。所有插件准备完成后才写入版本标记；任何复制失败都会阻止启动。
+
+Core profile preparation uses bounded concurrency for bundled plugins. Plugin code
+remains an independent copy so dependencies resolve from the profile; static web
+resources use directory links. The version stamp is written only after every plugin
+has finished, and any copy failure prevents startup.
+
 ## Project Space Board Progress
 
 项目空间看板中的运行中卡片展示智能体当前输出的过程文本，而不是内部思考文本。标准视图按内容自然增高，最多展示两行过程文本，并在其下展示已移除 Shell 启动包装的真实命令摘要。状态分组下可启用“专注视图”，将进行中与待确认两列从 `292px` 展开到 `480px`，展示最多八行过程文本和最近三条工具活动；入口作为独立的视图操作右对齐展示。该偏好按用户和项目保存，切换到其他分组时隐藏，返回状态分组后恢复。

@@ -94,6 +94,18 @@ function localInstalledPlugin(): InstalledPlugin {
 }
 
 describe('mergeMarketplaceCatalog', () => {
+  test('preserves the cloud installation id when local materialization arrives', () => {
+    const catalog = { ...cloudPlugin(), installed: true, installedPluginId: 66 }
+    const native = localInstalledPlugin()
+    native.spec.origin = 'marketplace'
+    native.spec.sourcePayload = { cloudPluginId: 4, cloudInstalledPluginId: 66 }
+
+    const [merged] = mergeMarketplaceCatalog([catalog], [], [native])
+
+    expect(merged.installedPluginId).toBe(66)
+    expect(merged.installedLocally).toBe(true)
+  })
+
   test('treats a linked local creation as the installed cloud listing', () => {
     const merged = mergeMarketplaceCatalog(
       [cloudPlugin()],

@@ -126,7 +126,7 @@ export function mergeMarketplaceCatalog(
       ...(matchedInstall
         ? {
             installed: true,
-            installedPluginId: localPluginId(matchedInstall) ?? item.installedPluginId,
+            installedPluginId: item.installedPluginId ?? localPluginId(matchedInstall),
             installedLocally:
               Boolean(localInstall) ||
               Boolean(item.installedLocally) ||
