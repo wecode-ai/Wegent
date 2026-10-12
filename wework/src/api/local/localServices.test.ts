@@ -974,6 +974,7 @@ describe('createLocalAppServices', () => {
           convert_custom_tools: true,
           native_tool_search: false,
           native_namespace_tools: false,
+          codex_request_mode: 'auto',
           api_key: 'provider-secret',
           default_headers: [],
           proxy_url: 'socks5://127.0.0.1:7890',
@@ -4409,6 +4410,9 @@ describe('createLocalAppServices', () => {
       modelId: 'shared-model',
       modelType: 'user',
       modelOptions: {
+        weworkCloudModelCodexRequestMode: 'passthrough',
+        reasoning: 'high',
+        summary: 'detailed',
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelContextWindow: '1048576',
@@ -4421,6 +4425,8 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         model: 'openai',
         model_id: 'shared-model',
+        codex_request_mode: 'passthrough',
+        reasoning: { effort: 'high', summary: 'detailed' },
         api_format: 'responses',
         tool_profile: 'custom',
         protocol: 'openai-responses',

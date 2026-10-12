@@ -1349,6 +1349,7 @@ class RealCloudEnvironment {
           model_id: model.modelId,
           base_url: `${this.modelServerUrl}/v1`,
           api_key: MODEL_API_KEY,
+          ...(model.reasoning ? { thinking_config: { reasoning: model.reasoning } } : {}),
         },
         is_active: true,
         wework_available: true,
@@ -1386,6 +1387,17 @@ class RealCloudEnvironment {
       },
       body: JSON.stringify(items),
     })
+    for (const model of CLOUD_MODEL_CASES.filter(candidate => candidate.requestMode)) {
+      const url = `${this.backendUrl}/api/v1/namespaces/default/models/${model.optionIds[0]}`
+      const headers = {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      }
+      const resource = await fetchJson(url, { headers })
+      resource.spec.modelConfig.codex_request_mode = model.requestMode
+      resource.spec.modelConfig.max_output_tokens = 4321
+      await fetchJson(url, { method: 'PUT', headers, body: JSON.stringify(resource) })
+    }
   }
 
   async seedCloudVisionSidecarModels() {

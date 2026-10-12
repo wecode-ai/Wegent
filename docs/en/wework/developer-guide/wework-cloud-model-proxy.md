@@ -34,6 +34,39 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 - `https://proxy.example.com/v1` with Anthropic Messages still resolves to `/v1/messages`, never `/v1/v1/messages`.
 - URLs already ending in `/responses`, `/chat/completions`, or `/v1/messages` do not receive a duplicate endpoint.
 
+#### Responses Reasoning and Request Modes
+
+`modelConfig.env.thinking_config.reasoning` in a Model CRD (also accepted as `thinkingConfig`) supplies Wework's default reasoning settings. The model catalog exposes only supported `effort` and `summary` values, without the full env or provider credentials. The picker uses the configured default effort. Explicit user selections override individual fields while preserving other defaults, such as `summary: "detailed"` when the effort changes.
+
+`modelConfig.codex_request_mode` controls the complete Codex Responses request policy:
+
+| Value             | Behavior                                                                                                                                                                                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto` or omitted | Keep the existing protocol adaptation. Existing switches can still configure individual native Responses tool capabilities.                                                                                                               |
+| `standard`        | Use ordinary function tools, bridging `tool_search`, namespace and custom tools, and restoring tool identities on the return path to Codex. Use this for Kimi Responses and other services that do not support Codex's native tool types. |
+| `passthrough`     | Replace only the model ID and authentication needed for routing. Preserve all other request business fields and stream responses without protocol rewriting. Requires an OpenAI Responses upstream.                                       |
+
+Passthrough retains reasoning, history, original call IDs, encrypted content, `previous_response_id`, `include`, `store` and extension fields. It also bypasses image budget trimming, vision sidecar replacement, history enhancement, fork/model-switch cleanup and output-limit injection. The proxy does not add the configured `max_output_tokens` to the request. The upstream must support the original Codex request contents directly.
+
+For example, configure Kimi Responses with:
+
+```json
+{
+  "modelConfig": {
+    "codex_request_mode": "standard",
+    "env": {
+      "model": "openai",
+      "model_id": "moonshot-kimi-k3",
+      "thinking_config": {
+        "reasoning": { "summary": "detailed" }
+      }
+    }
+  }
+}
+```
+
+Responses services that fully support Codex requests can set this field to `"passthrough"`. The request mode takes precedence over individual tool settings such as `native_tool_search` and `native_namespace_tools`. Invalid modes and passthrough configurations for other protocols are rejected before execution.
+
 #### Kimi K3 Chat Completions Compatibility
 
 When a cloud Model CRD uses OpenAI Chat Completions and its provider model name contains the case-insensitive substring `kimi-k3`, such as `moonshot-kimi-k3`, Wework automatically selects the `wework-kimi-k3` Codex model catalog with a 1,048,576-token context window if the Model CRD does not configure `codex_catalog_model_id` or `codexCatalogModelId`. An explicitly configured catalog always takes precedence over automatic Kimi K3 selection. Codex continues to use the Responses protocol internally, while the executor translates requests to Chat Completions at the boundary and applies the following Kimi K3 compatibility behavior:

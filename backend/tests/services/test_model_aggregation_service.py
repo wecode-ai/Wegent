@@ -54,6 +54,42 @@ def _referenced_model(
 class TestModelAggregationService:
     """Tests for model_aggregation_service methods."""
 
+    @pytest.mark.parametrize("mode", ["auto", "standard", "passthrough"])
+    def test_catalog_preserves_reasoning_and_policy_without_credentials(
+        self, mode: str
+    ) -> None:
+        model = _referenced_model(User(id=42), "glm-5.3-flash")
+        model.json["spec"]["modelConfig"].update(
+            {
+                "codex_request_mode": mode,
+                "env": {
+                    "model": "openai",
+                    "model_id": "glm-5.3-flash",
+                    "api_key": "private-provider-key",
+                    "thinking_config": {
+                        "reasoning": {"effort": "high", "summary": "detailed"},
+                        "secret": "private-provider-option",
+                    },
+                },
+            }
+        )
+
+        info = model_aggregation_service._extract_model_info_from_crd(model.json)
+        catalog = UnifiedModel(
+            name=model.name, model_type=ModelType.USER, config=info["config"]
+        ).to_dict()
+        public_catalog = ModelAdapter.to_model_dict(model)
+
+        for config in (catalog["config"], public_catalog["config"]):
+            assert config["reasoning"] == {"effort": "high", "summary": "detailed"}
+            assert config["codex_request_mode"] == mode
+            assert not config.get("env")
+            assert "private-provider-key" not in str(config)
+            assert "private-provider-option" not in str(config)
+            if mode != "auto":
+                assert config["native_tool_search"] is (mode == "passthrough")
+                assert config["native_namespace_tools"] is (mode == "passthrough")
+
     def test_same_name_references_list_smallest_kind_id(
         self,
         test_db: Session,
