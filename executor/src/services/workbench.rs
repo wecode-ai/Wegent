@@ -63,7 +63,7 @@ pub fn workbench_root() -> Result<PathBuf, String> {
         env::var_os("WEGENT_WORKBENCH_HOME")
             .filter(|value| !value.to_string_lossy().trim().is_empty())
             .map(PathBuf::from),
-        dirs::home_dir(),
+        crate::local::command::configured_home_dir(),
     )
 }
 

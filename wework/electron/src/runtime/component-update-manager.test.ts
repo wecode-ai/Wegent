@@ -39,6 +39,26 @@ afterEach(async () => {
 })
 
 describe('ComponentUpdateManager', () => {
+  test('passes the selected update schema with its verified executor hash', async () => {
+    const fixture = await createFixture()
+    const update = await createExecutorUpdate(fixture.root, 'executor-schema')
+    const schema = { component: 'wegent-executor', schemaVersion: 2 }
+    Object.assign(update.manifest.components.executor, { workbenchSchema: schema })
+    const validateExecutor = vi.fn(async () => {})
+    const manager = createManager(
+      fixture,
+      componentFetch(update.manifest, update.assetName, update.archive),
+      appVersion,
+      validateExecutor
+    )
+    await manager.stageAvailableUpdate()
+    await manager.prepareStartup()
+    expect(validateExecutor).toHaveBeenLastCalledWith(expect.any(String), {
+      sha256: update.manifest.components.executor.contentSha256,
+      response: schema,
+    })
+  })
+
   test('rejects an incompatible packaged executor instead of returning startup paths', async () => {
     const fixture = await createFixture()
     const manager = createManager(

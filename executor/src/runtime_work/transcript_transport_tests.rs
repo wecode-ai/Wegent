@@ -72,6 +72,27 @@ fn large_utf8_and_structured_outputs_round_trip_in_bounded_chunks() {
 }
 
 #[test]
+fn large_transfers_round_trip_beyond_the_windows_legacy_path_limit() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root
+        .path()
+        .join("workspace".repeat(12))
+        .join("task".repeat(25));
+    let directory = snapshot_directory(&directory, &json!({"taskId":"task", "threadId":"thread"}));
+    assert!(
+        directory
+            .join(format!("{}.gz", "a".repeat(64)))
+            .as_os_str()
+            .len()
+            > 260
+    );
+    let source = large_transcript();
+    let first = encode(&directory, source.clone()).unwrap();
+    assert!(first["transfer"]["nextOffset"].is_number());
+    assert_eq!(restore(first, &directory), source);
+}
+
+#[test]
 fn interning_preserves_duplicate_bodies_and_user_controlled_keys() {
     let text = "abc🙂".repeat(1024);
     let original =

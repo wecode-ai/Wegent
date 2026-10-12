@@ -37,6 +37,7 @@
     "electron-updater": "6.8.9",
     "extract-zip": "2.0.1",
     "semver": "7.8.5",
+    "set-cookie-parser": "3.1.0",
     "tar": "7.5.22",
     "yaml": "2.9.0"
   }

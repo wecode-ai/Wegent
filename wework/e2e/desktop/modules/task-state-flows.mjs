@@ -853,6 +853,10 @@ async function verifyBackgroundCompletionRestore({
   await control.command('click', '[data-testid="runtime-task-view-board"]')
   const completedColumnSelector = '[data-testid="cloud-todo-column-in_review"]'
   await control.command('waitFor', completedColumnSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoViewAsUser', completedColumnSelector)
+  await control.command('waitFor', completedColumnSelector, {
     text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

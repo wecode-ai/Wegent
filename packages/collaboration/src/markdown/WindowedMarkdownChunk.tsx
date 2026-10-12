@@ -10,7 +10,6 @@ import {
 } from '../conversation/conversationDiagnostics'
 
 const PRE_RENDER_DISTANCE = 1_600
-const ROOT_MARGIN = `${PRE_RENDER_DISTANCE}px 0px`
 
 interface ChunkLayout {
   content: string
@@ -37,6 +36,7 @@ export function WindowedMarkdownChunk({
     () => typeof IntersectionObserver === 'undefined' || effectiveEager
   )
   const [retainedLayout, setRetainedLayout] = useState<ChunkLayout | null>(null)
+  const [viewportHeight, setViewportHeight] = useState(0)
   const renderedLayoutRef = useRef<ChunkLayout | null>(null)
   const previousEagerRef = useRef(effectiveEager)
   const diagnosticLayoutRef = useRef<{
@@ -178,6 +178,8 @@ export function WindowedMarkdownChunk({
     const chunk = chunkRef.current
     if (!chunk) return
     const root = getChunkRoot(scope, chunkRef.current)
+    const viewportHeight = (root?.getBoundingClientRect() ?? windowViewport()).height
+    setViewportHeight(viewportHeight)
     const observer = new IntersectionObserver(
       entries => {
         const entry = entries[0]
@@ -216,11 +218,18 @@ export function WindowedMarkdownChunk({
         }
         setNearViewport(near)
       },
-      { root, rootMargin: ROOT_MARGIN }
+      { root, rootMargin: `${preRenderDistance(viewportHeight)}px 0px` }
     )
     observer.observe(chunk)
     return () => observer.disconnect()
-  }, [chunkIndex, effectiveEager, scope, saveRenderedLayout, retainPlaceholderLayout])
+  }, [
+    chunkIndex,
+    effectiveEager,
+    scope,
+    saveRenderedLayout,
+    retainPlaceholderLayout,
+    viewportHeight,
+  ])
 
   useLayoutEffect(() => {
     if (typeof ResizeObserver === 'undefined') return
@@ -229,11 +238,12 @@ export function WindowedMarkdownChunk({
     const root = getChunkRoot(scope, chunkRef.current)
     const observer = new ResizeObserver(() => {
       const rect = chunk.getBoundingClientRect()
+      const viewport = root?.getBoundingClientRect() ?? windowViewport()
+      setViewportHeight(viewport.height)
       if (currentRef.current.rendered) {
         saveRenderedLayout(rect)
       } else {
         retainPlaceholderLayout(rect)
-        const viewport = root?.getBoundingClientRect() ?? windowViewport()
         const render = viewportRender(viewport)
         if (render) render()
       }
@@ -287,11 +297,16 @@ function viewportHasSize(viewport: DOMRect): boolean {
 }
 
 function isNearViewport(rect: DOMRect, viewport: DOMRect): boolean {
+  const distance = preRenderDistance(viewport.height)
   return (
     rect.width > 0 &&
-    rect.bottom >= viewport.top - PRE_RENDER_DISTANCE &&
-    rect.top <= viewport.bottom + PRE_RENDER_DISTANCE
+    rect.bottom >= viewport.top - distance &&
+    rect.top <= viewport.bottom + distance
   )
+}
+
+function preRenderDistance(viewportHeight: number): number {
+  return Math.min(PRE_RENDER_DISTANCE, Math.max(0, viewportHeight))
 }
 
 function windowViewport(): DOMRect {

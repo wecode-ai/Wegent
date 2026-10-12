@@ -75,7 +75,8 @@ describe('DSH runtime readiness', () => {
       expect(Number(new URL(origin).port)).toBeGreaterThan(0)
       expect(authenticateBrowserSession).toHaveBeenCalledWith(
         `${origin}/?token=fixture-token`,
-        'fixture=authenticated'
+        'fixture=authenticated',
+        ['fixture=authenticated']
       )
       for (const path of ['/host', '/executor']) {
         const response = await fetch(`${origin}${path}`, {
@@ -236,7 +237,8 @@ describe('DSH runtime readiness', () => {
         expect(exchanges).toBe(transientFailure ? 2 : 1)
         expect(authenticateBrowserSession).toHaveBeenCalledWith(
           `${origin}/?token=fixture-token`,
-          'fixture=authenticated'
+          'fixture=authenticated',
+          ['fixture=authenticated; HttpOnly']
         )
         expect(runtime.url()).toBe(origin)
       } finally {

@@ -1,4 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
 import { sendPrompt } from './conversation-navigation.mjs'
 import { verifyConversationShortcuts } from './conversation-shortcuts.mjs'
@@ -1311,8 +1312,8 @@ async function verifyWorktreeCreationStatus({
     'Forking a worktree task did not open the forked task'
   )
   assert.equal(
-    currentForkTask?.workspacePath,
-    worktreePath,
+    resolve(currentForkTask.workspacePath),
+    resolve(worktreePath),
     'The forked task did not inherit the managed source worktree'
   )
 

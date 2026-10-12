@@ -1,3 +1,5 @@
+import { resolve } from 'node:path'
+
 import { waitForElementWidth, waitForSnapshot } from './conversation-layout.mjs'
 
 import {
@@ -477,9 +479,17 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
   await control.command('click', '[data-testid="right-workspace-file-option"]')
   await control.command('waitFor', '[data-testid="workspace-file-path"]', {
-    text: workspacePath,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    resolve(
+      await control.command('getAttribute', '[data-testid="workspace-file-path"]', {
+        value: 'title',
+      })
+    ),
+    resolve(workspacePath),
+    'The workspace file panel did not open the task workspace'
+  )
   await control.command('waitFor', `[data-item-path="${DROPPED_PATH_FILE_NAME}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

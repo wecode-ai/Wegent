@@ -104,6 +104,9 @@ for (const [platform, architecture] of [
       archiveBytes: archive.size,
       downloadUrl: `${releaseScope === 'shared' ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
       entryPath: component.entryPath,
+      ...(component.workbenchSchema !== undefined
+        ? { workbenchSchema: component.workbenchSchema }
+        : {}),
     }
   }
   const componentChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']

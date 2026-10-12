@@ -406,6 +406,8 @@ async def execute_configured_device_command(
         "max_output_bytes": max_output_bytes,
     }
     if command_key in {
+        "home_dir",
+        "pwd",
         "environment_prepare",
         "git_apply_patch",
         "workspace_tree",

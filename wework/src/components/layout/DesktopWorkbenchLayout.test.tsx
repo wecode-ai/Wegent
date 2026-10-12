@@ -618,6 +618,7 @@ vi.mock('@pierre/trees/react', async () => {
     subscribe: () => () => void
     selectPath: (path: string) => void
     setSearch: (query: string | null) => void
+    resetPaths: (paths: string[]) => void
   }
 
   function selectModelPath(model: MockTreeModel, path: string) {
@@ -695,12 +696,15 @@ vi.mock('@pierre/trees/react', async () => {
           setSearch(query: string | null) {
             this.search = query
           },
+          resetPaths(nextPaths: string[]) {
+            this.paths = nextPaths
+            this.selectedPaths = this.selectedPaths.filter(path => nextPaths.includes(path))
+          },
         }
       }
 
       modelRef.current.paths = paths
       modelRef.current.onSelectionChange = onSelectionChange
-      modelRef.current.selectedPaths = initialSelectedPaths ?? modelRef.current.selectedPaths
 
       return { model: modelRef.current }
     },

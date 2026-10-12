@@ -121,6 +121,9 @@ const packagedExecutor = join(resourcesRoot, 'bin', executorName)
 await cp(executorPath, packagedExecutor)
 if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
 const executorSha256 = await hashComponentPath(packagedExecutor)
+const executorWorkbenchSchema = JSON.parse(
+  await capture(packagedExecutor, ['--workbench-schema', '--version'], repositoryRoot)
+)
 const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
 const packagedDws = join(resourcesRoot, 'bin', dwsName)
 const dwsSourceName = targetExecutableName(
@@ -176,6 +179,7 @@ await writeFile(
           version: weworkRuntimeVersion,
           path: `bin/${executorName}`,
           sha256: executorSha256,
+          workbenchSchema: executorWorkbenchSchema,
         },
         codex: {
           version: codexRuntime.codexVersion,

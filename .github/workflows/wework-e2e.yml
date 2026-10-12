@@ -451,7 +451,7 @@ jobs:
     name: Build Windows Wework Desktop Core E2E Artifact
     needs:
       - changes
-    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
+    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -502,6 +502,11 @@ jobs:
           WEWORK_EXECUTOR_PROFILE: debug
         run: |
           pnpm --filter wework ai:verify:electron:build
+          runtime_asset_cache="$(node --input-type=module -e "import { resolveSharedHarnessRuntimeAssetCacheRoot } from './wework/scripts/lib/harness-runtime-cache.mjs'; console.log(resolveSharedHarnessRuntimeAssetCacheRoot() + '/harness-runtime-assets')")"
+          node wework/scripts/collect-harness-runtime-release-assets.mjs \
+            "$runtime_asset_cache" \
+            wework/electron/release/WeWork-win32-x64/resources/e2e-runtime-assets \
+            wework/electron/release/WeWork-win32-x64/resources/harness-runtime/runtimes.json
           test -f wework/electron/release/WeWork-win32-x64/WeWork.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
@@ -606,7 +611,7 @@ jobs:
     needs:
       - changes
       - build-wework-desktop-windows-core-e2e
-    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
+    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: windows-latest
     timeout-minutes: 60
     strategy:
@@ -1014,7 +1019,7 @@ jobs:
         env:
           RUN_E2E: ${{ needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all')) }}
+          RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}

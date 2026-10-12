@@ -145,6 +145,9 @@ async function prepareComponentAssets() {
       assetName,
       releaseScope: componentReleaseScope(id),
       entryPath: source.isDirectory() ? '.' : basename(sourcePath),
+      ...(component.workbenchSchema !== undefined
+        ? { workbenchSchema: component.workbenchSchema }
+        : {}),
     }
   }
   await writeFile(

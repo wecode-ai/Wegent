@@ -1275,7 +1275,7 @@ async function main() {
       : await desktopAppPromise
     desktopScenario?.setCloudEnvironment?.(cloudEnvironment)
     const appBinary = desktopApp.binaryPath
-    if (process.platform === 'linux' && process.env.CI === 'true') {
+    if (['linux', 'win32'].includes(process.platform) && process.env.CI === 'true') {
       control.harnessRuntimeAssetDirectory = join(
         packagedResourcesRoot(appBinary),
         'e2e-runtime-assets'

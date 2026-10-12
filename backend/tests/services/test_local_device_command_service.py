@@ -2610,6 +2610,7 @@ async def test_execute_configured_device_command_routes_remote_home_directory_co
     )
     assert execute_mock.await_args.kwargs["device_id"] == "remote-device"
     assert execute_mock.await_args.kwargs["command"] == "printenv HOME"
+    assert execute_mock.await_args.kwargs["command_key"] == "home_dir"
 
 
 @pytest.mark.asyncio

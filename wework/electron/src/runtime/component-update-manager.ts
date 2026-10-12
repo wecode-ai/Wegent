@@ -44,6 +44,7 @@ interface PackagedComponent {
   version: string
   path: string
   sha256: string
+  workbenchSchema?: unknown
 }
 
 interface PackagedComponentManifest {
@@ -54,6 +55,7 @@ interface PackagedComponentManifest {
 }
 
 interface RemoteComponent {
+  workbenchSchema?: unknown
   version: string
   contentSha256: string
   archiveSha256: string
@@ -111,7 +113,12 @@ export interface ComponentUpdateManagerOptions {
   fetch?: typeof fetch
   retryDelay?: (attempt: number) => Promise<void>
   log?: (event: Record<string, unknown>) => void
-  validateExecutor?: (path: string) => Promise<void>
+  validateExecutor?: (path: string, schema?: PackagedExecutorSchema) => Promise<void>
+}
+
+export interface PackagedExecutorSchema {
+  sha256: string
+  response: unknown
 }
 
 export class ComponentUpdateManager {
@@ -132,7 +139,7 @@ export class ComponentUpdateManager {
     progress?: ComponentDownloadProgress
   } | null = null
   private packaged: PackagedComponentManifest | null = null
-  private readonly validateExecutor: (path: string) => Promise<void>
+  private readonly validateExecutor: NonNullable<ComponentUpdateManagerOptions['validateExecutor']>
   private usingPackagedFallback = false
 
   constructor(options: ComponentUpdateManagerOptions) {
@@ -240,7 +247,14 @@ export class ComponentUpdateManager {
     current?: ComponentSet
   ): Promise<ComponentPaths> {
     const paths = await this.resolvePaths(packaged, current)
-    await this.validateExecutor(paths.executor)
+    const executor = current?.components.executor ?? packaged.components.executor
+    const sha256 = 'contentSha256' in executor ? executor.contentSha256 : executor.sha256
+    await this.validateExecutor(
+      paths.executor,
+      paths.contentSha256.executor === sha256 && executor.workbenchSchema !== undefined
+        ? { sha256, response: executor.workbenchSchema }
+        : undefined
+    )
     return paths
   }
 

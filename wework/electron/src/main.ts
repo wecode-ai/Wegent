@@ -1,6 +1,7 @@
 import './host/process-output-bootstrap.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
+import { installDshBrowserSession } from './host/dsh-browser-session.js'
 
 import {
   app,
@@ -126,6 +127,7 @@ import {
   migrateDesktopControlRegistry,
 } from './runtime/workbench-desktop-data.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
+import { hashComponentPath } from './runtime/component-content-hash.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import {
@@ -1682,10 +1684,8 @@ async function configureDesktopRuntime(): Promise<void> {
   }
   desktopRuntime = new DesktopRuntime({
     environment,
-    authenticateBrowserSession: async url => {
-      const response = await session.defaultSession.fetch(url)
-      if (!response.ok) throw new Error('DSH browser session authentication failed')
-    },
+    authenticateBrowserSession: (url, _cookie, setCookies) =>
+      installDshBrowserSession(session.defaultSession.cookies, url, setCookies),
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
     onStartupStep: logStartupStep,
@@ -2177,12 +2177,15 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const preparedComponents = await prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
-      validateExecutor: async path => {
+      validateExecutor: async (path, schema) => {
         logStartupStep('component-executor-schema-query', 'started')
-        await assertExecutorWorkbenchCompatibility({
-          ...process.env,
-          WEWORK_EXECUTOR_PATH: process.env.WEWORK_EXECUTOR_PATH?.trim() || path,
-        })
+        const command = process.env.WEWORK_EXECUTOR_PATH?.trim() || path
+        await assertExecutorWorkbenchCompatibility(
+          { ...process.env, WEWORK_EXECUTOR_PATH: command },
+          schema && (command === path || (await hashComponentPath(command)) === schema.sha256)
+            ? schema
+            : undefined
+        )
         logStartupStep('component-executor-schema-query', 'completed')
       },
       log: event => {
@@ -2339,7 +2342,7 @@ function electronNodeRuntime(): Promise<ElectronNodeRuntime> {
         ...process.env,
         ...(nodePath ? { WEWORK_NODE_PATH: nodePath } : {}),
       },
-      helperExecPath: (process as NodeJS.Process & { helperExecPath: string }).helperExecPath,
+      helperExecPath: process.execPath,
       nodeVersion: nodePath ? await readNodeVersion(nodePath) : process.versions.node,
       platform: process.platform,
     })

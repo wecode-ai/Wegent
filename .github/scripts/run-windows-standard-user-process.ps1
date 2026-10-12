@@ -69,15 +69,23 @@ try {
     Out-Null
 
   Write-Host "[windows-standard-user] account=$env:COMPUTERNAME\$userName"
+  $diagnosticsRoot = Join-Path $workspace "wework/test-results/desktop-e2e/windows-standard-user-$PID"
+  New-Item -ItemType Directory -Path $diagnosticsRoot -Force | Out-Null
+  $stdoutPath = Join-Path $diagnosticsRoot "runner.stdout.log"
+  $stderrPath = Join-Path $diagnosticsRoot "runner.stderr.log"
   $process = Start-Process `
     -FilePath (Resolve-Path -LiteralPath $FilePath).Path `
     -ArgumentList $ArgumentList `
     -Credential $credential `
     -LoadUserProfile `
     -WorkingDirectory $workspace `
+    -RedirectStandardOutput $stdoutPath `
+    -RedirectStandardError $stderrPath `
     -NoNewWindow `
     -Wait `
     -PassThru
+  Get-Content -LiteralPath $stdoutPath
+  Get-Content -LiteralPath $stderrPath
   exit $process.ExitCode
 } finally {
   if ($userSid) {

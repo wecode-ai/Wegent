@@ -3,6 +3,7 @@ import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
+import { hashComponentFileContents } from './component-content-hash.js'
 
 import {
   EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
@@ -55,6 +56,25 @@ test('missing executors and arbitrary wrapper arguments cannot authorize migrati
   await expect(
     assertExecutorWorkbenchCompatibility({ WEWORK_EXECUTOR_PATH: '/missing' })
   ).rejects.toThrow('schema query failed')
+})
+
+test('packaged schema authorizes only its exact binary and detects later replacement', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'packaged schema '))
+  directories.push(directory)
+  const binary = join(directory, 'executor')
+  // This file cannot execute: only a verified build-time handshake may authorize it.
+  await writeFile(binary, 'packaged-native-executor')
+  const environment = { WEWORK_EXECUTOR_PATH: binary }
+  const proof = { sha256: await hashComponentFileContents(binary), response: compatible }
+  await expect(assertExecutorWorkbenchCompatibility(environment, proof)).resolves.toBeUndefined()
+  await expect(assertExecutorWorkbenchCompatibility(environment)).resolves.toBeUndefined()
+  await writeFile(binary, 'replaced-executor')
+  await expect(assertExecutorWorkbenchCompatibility(environment)).rejects.toThrow(
+    'checksum mismatch'
+  )
+  await expect(
+    assertExecutorWorkbenchCompatibility(environment, { ...proof, response: {} })
+  ).rejects.toThrow('cannot read and write')
 })
 
 test('query supports spaced paths, carries the legacy version guard and strips credentials', async () => {

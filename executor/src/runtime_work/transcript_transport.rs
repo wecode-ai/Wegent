@@ -57,9 +57,11 @@ pub(super) fn encode(directory: &Path, response: Value) -> Result<Value, AppIpcE
     let id = format!("{:x}", Sha256::digest(&bytes));
     if bytes.len() > CHUNK_BYTES {
         fs::create_dir_all(directory).map_err(transport_error)?;
-        remove_expired_snapshots(directory)?;
+        // tempfile's Windows rename needs the verbatim path for long workspace roots.
+        let directory = fs::canonicalize(directory).map_err(transport_error)?;
+        remove_expired_snapshots(&directory)?;
         // Atomic publication permits concurrent loads of identical snapshots.
-        let mut file = tempfile::NamedTempFile::new_in(directory).map_err(transport_error)?;
+        let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(transport_error)?;
         file.write_all(&bytes).map_err(transport_error)?;
         file.persist(directory.join(format!("{id}.gz")))
             .map_err(transport_error)?;

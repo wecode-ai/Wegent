@@ -18,7 +18,7 @@ export interface DshRuntimeOptions {
   logFileName?: string
   hostPipe?: HostPipeServer
   startTimeoutMs?: number
-  authenticateBrowserSession?: (url: string, cookie: string) => Promise<void>
+  authenticateBrowserSession?: (url: string, cookie: string, setCookies: string[]) => Promise<void>
   onRestarted?: () => Promise<void>
 }
 
@@ -164,7 +164,7 @@ export class DshRuntime {
       throw new Error('DSH browser session authentication failed')
     }
     const cookie = cookies.map(value => value.split(';')[0]).join('; ')
-    await this.options.authenticateBrowserSession?.(url, cookie)
+    await this.options.authenticateBrowserSession?.(url, cookie, cookies)
     return cookie
   }
 }

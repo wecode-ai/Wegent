@@ -50,6 +50,7 @@ test('generates Electron and component rolling manifests from one release', asyn
         assetName,
         releaseScope: id === 'coreDsh' ? 'shared' : 'version',
         entryPath: '.',
+        ...(id === 'executor' ? { workbenchSchema: { schemaVersion: 2 } } : {}),
       }
     }
     await writeFile(
@@ -88,6 +89,7 @@ test('generates Electron and component rolling manifests from one release', asyn
   )
   expect(components.sourceSha).toBe('a'.repeat(40))
   expect(components.capabilities).toEqual({ componentizedHostUpdate: 1 })
+  expect(components.components.executor.workbenchSchema).toEqual({ schemaVersion: 2 })
   expect(components.components.coreDsh).toMatchObject({
     version: '0.1.1-rc.2',
     contentSha256: 'a'.repeat(64),

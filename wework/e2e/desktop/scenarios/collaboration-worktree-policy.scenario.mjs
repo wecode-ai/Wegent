@@ -198,6 +198,7 @@ export function createDesktopScenario({
 
     async verify(control) {
       // The runner supplies a real Git repository, executor and isolated application.
+      await runChecked('git', ['config', 'core.autocrlf', 'false'], { cwd: workspacePath })
       await runChecked('git', ['remote', 'add', 'origin', workspacePath], { cwd: workspacePath })
       await control.command('seedLocalProject', 'body', {
         value: JSON.stringify({
