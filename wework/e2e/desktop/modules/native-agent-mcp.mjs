@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { startEmptyCommandHttpMcp } from './empty-command-http-mcp.mjs'
+import { cleanupNativeMcpResources } from './native-mcp-cleanup.mjs'
 import {
   assistantMessage,
   createSse,
@@ -39,7 +40,7 @@ export async function verifyNativeAgentMcp({
   const home = join(root, 'home')
   await mkdir(home, { mode: 0o700 })
   const probePath = join(root, 'probe.json')
-  const remoteMcp = emptyCommandHttp ? await startEmptyCommandHttpMcp(probePath) : null
+  let remoteMcp
   const executorHome = join(root, 'legacy-executor')
   const workbench = explicitWorkbench
     ? join(root, 'custom-workbench')
@@ -180,7 +181,9 @@ export async function verifyNativeAgentMcp({
   }
   const probes = []
   let firstContent, firstStat, systemInode, firstThread
+  let executionFailure
   try {
+    remoteMcp = emptyCommandHttp ? await startEmptyCommandHttpMcp(probePath) : null
     await waitFor(() => /listening on 127\.0\.0\.1:\d+/.test(output), 'Executor did not start')
     const port = output.match(/listening on 127\.0\.0\.1:(\d+)/)[1]
     for (let index = 1; index <= 3; index++) {
@@ -380,11 +383,20 @@ export async function verifyNativeAgentMcp({
     }
     await writeFile(join(root, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`)
     return evidence
+  } catch (error) {
+    executionFailure = error
   } finally {
-    await stopProcessGroup(child)
-    await remoteMcp?.close()
-    await writeFile(join(root, 'executor.log'), output, { mode: 0o600 })
-    model.closeAllConnections()
-    await new Promise(resolve => model.close(resolve))
+    await cleanupNativeMcpResources(
+      [
+        () => stopProcessGroup(child),
+        () => remoteMcp?.close(),
+        () => writeFile(join(root, 'executor.log'), output, { mode: 0o600 }),
+        async () => {
+          model.closeAllConnections()
+          await new Promise(resolve => model.close(resolve))
+        },
+      ],
+      executionFailure
+    )
   }
 }
