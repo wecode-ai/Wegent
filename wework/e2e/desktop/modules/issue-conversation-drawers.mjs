@@ -87,6 +87,8 @@ async function sampleDrawerMotion(control, scope, action, direction, timeoutMs) 
 
 // The caller owns a real Issue with at least one completed comment execution.
 export async function verifyIssueConversationDrawers(control, scope, timeoutMs) {
+  const motion = JSON.parse(await control.command('setReducedMotion', 'body', { enabled: false }))
+  assert.equal(motion.reduced, false, 'Drawer animation verification requires normal motion')
   const detail = scope('[data-testid="cloud-todo-detail"]')
   const chat = scope('[data-testid="ai-chat-modal"]')
   const detailSurface = scope('.issue-drawer-detail')

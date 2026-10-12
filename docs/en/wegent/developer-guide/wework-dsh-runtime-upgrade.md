@@ -31,6 +31,16 @@ restarts, new templates, app termination, and process cleanup. A real HTTP serve
 delivers runtime archives. Linux and Windows CI must transfer these archives with
 the shared test build instead of relying on the build user's private cache.
 These test assets must not enter production releases.
+Windows measures the startup budget with a release Executor. The standard-user
+test process must own its `PNPM_HOME` and pnpm store rather than inheriting the CI
+administrator's package storage. Stream test logs so evidence survives a hung
+process or a failed diagnostic upload.
+
+Explicitly disallow automatic downgrades after selecting the stable or beta
+Electron update channel, preventing older releases from downloading and showing
+restart prompts in the running app. Drawer animation E2E sets
+`prefers-reduced-motion: no-preference` in isolated Electron while production
+continues to respect the system's reduced-motion preference.
 
 The memory E2E compares the same task and terminal interface before and after
 rendering. Markdown prerenders at most one actual scroll viewport while retaining

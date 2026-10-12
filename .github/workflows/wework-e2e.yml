@@ -499,7 +499,7 @@ jobs:
         env:
           CI: true
           WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/executor-target
-          WEWORK_EXECUTOR_PROFILE: debug
+          WEWORK_EXECUTOR_PROFILE: release
         run: |
           pnpm --filter wework ai:verify:electron:build
           runtime_asset_cache="$(node --input-type=module -e "import { resolveSharedHarnessRuntimeAssetCacheRoot } from './wework/scripts/lib/harness-runtime-cache.mjs'; console.log(resolveSharedHarnessRuntimeAssetCacheRoot() + '/harness-runtime-assets')")"

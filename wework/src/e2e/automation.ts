@@ -1,4 +1,5 @@
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
@@ -1025,12 +1026,25 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   element.focus()
   const keyboardEvent = parseDesktopControlKey(key)
+  const events: KeyboardEvent[] = []
   for (const type of ['keydown', 'keyup']) {
-    element.dispatchEvent(
-      new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
-    )
+    const event = new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
+    events.push(event)
+    element.dispatchEvent(event)
   }
   await waitForDesktopControlTick()
+  if (keyboardEvent.key === 'Escape') {
+    logRuntimeTaskCreateStage('e2e-escape-dispatched', {
+      selector,
+      windowLabel: getDesktopWindowLabel(),
+      targetConnected: element.isConnected,
+      targetRoot: element.getRootNode() instanceof ShadowRoot ? 'shadow' : 'document',
+      keydownDefaultPrevented: events[0].defaultPrevented,
+      closePromptPresent: Boolean(
+        document.querySelector('[data-testid="runtime-task-close-confirm-overlay"]')
+      ),
+    })
+  }
   return element.textContent?.trim() ?? ''
 }
 
@@ -2221,6 +2235,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         phase: 'press',
       })
       return ''
+    case 'setReducedMotion':
+      await invokeDesktopHost('e2e.setReducedMotion', {
+        windowLabel: getDesktopWindowLabel(),
+        reduced: command.enabled === true,
+      })
+      return JSON.stringify({
+        reduced: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      })
     case 'setMainWindowSize': {
       const nextSize = JSON.parse(command.value ?? '{}') as {
         width?: number

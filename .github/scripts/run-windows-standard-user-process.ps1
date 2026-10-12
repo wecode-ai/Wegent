@@ -16,6 +16,8 @@ $password = ConvertTo-SecureString $passwordText -AsPlainText -Force
 $credential = [PSCredential]::new("$env:COMPUTERNAME\$userName", $password)
 $workspace = (Resolve-Path -LiteralPath $env:GITHUB_WORKSPACE).Path
 $userSid = $null
+$stdoutReader = $null
+$stderrReader = $null
 
 try {
   $user = New-LocalUser `
@@ -63,6 +65,8 @@ try {
   $env:HOMEPATH = $profileRoot.Substring($env:HOMEDRIVE.Length)
   $env:APPDATA = Join-Path $profileRoot "AppData/Roaming"
   $env:LOCALAPPDATA = Join-Path $profileRoot "AppData/Local"
+  $env:PNPM_HOME = Join-Path $env:LOCALAPPDATA "pnpm"
+  $env:npm_config_store_dir = Join-Path $env:PNPM_HOME "store"
   $env:TEMP = Join-Path $profileRoot "AppData/Local/Temp"
   $env:TMP = $env:TEMP
   New-Item -ItemType Directory -Path $env:APPDATA, $env:LOCALAPPDATA, $env:TEMP -Force |
@@ -82,12 +86,25 @@ try {
     -RedirectStandardOutput $stdoutPath `
     -RedirectStandardError $stderrPath `
     -NoNewWindow `
-    -Wait `
     -PassThru
-  Get-Content -LiteralPath $stdoutPath
-  Get-Content -LiteralPath $stderrPath
+  $stdoutReader = [IO.StreamReader]::new([IO.File]::Open(
+    $stdoutPath, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+    [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+  ))
+  $stderrReader = [IO.StreamReader]::new([IO.File]::Open(
+    $stderrPath, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+    [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+  ))
+  do {
+    [Console]::Out.Write($stdoutReader.ReadToEnd())
+    [Console]::Error.Write($stderrReader.ReadToEnd())
+  } while (-not $process.WaitForExit(250))
+  [Console]::Out.Write($stdoutReader.ReadToEnd())
+  [Console]::Error.Write($stderrReader.ReadToEnd())
   exit $process.ExitCode
 } finally {
+  if ($stdoutReader) { $stdoutReader.Dispose() }
+  if ($stderrReader) { $stderrReader.Dispose() }
   if ($userSid) {
     Get-CimInstance -ClassName Win32_UserProfile -ErrorAction SilentlyContinue |
       Where-Object { $_.SID -eq $userSid } |

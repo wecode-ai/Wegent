@@ -140,8 +140,9 @@ export async function initializeFirstProjectExecutionEnvironment(
   )
   if (deviceId) {
     await control.command(
-      'click',
-      `${contentSelector} [data-testid="collaboration-project-execution-environment-add"]`
+      'clickWhenEnabled',
+      `${contentSelector} [data-testid="collaboration-project-execution-environment-add"]`,
+      { timeoutMs }
     )
     await control.command(
       'clickWhenEnabled',
@@ -1177,6 +1178,10 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  await control.command('waitFor', `[data-testid="${openTaskTestId}"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', `[data-testid="${openTaskTestId}"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

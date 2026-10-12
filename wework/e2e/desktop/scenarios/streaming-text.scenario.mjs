@@ -1642,7 +1642,9 @@ export function createDesktopScenario({
         generatedImageStage === 'awaiting-tool-output' &&
         requestContainsToolOutputForCall(body, GENERATED_IMAGE_CALL_ID)
       ) {
-        const output = body.input.find(item => item.call_id === GENERATED_IMAGE_CALL_ID)?.output
+        const output = body.input.find(
+          item => item.type === 'function_call_output' && item.call_id === GENERATED_IMAGE_CALL_ID
+        ).output
         await writeFile(
           join(resultDir, 'generated-image-tool-output.json'),
           JSON.stringify(output, (key, value) =>

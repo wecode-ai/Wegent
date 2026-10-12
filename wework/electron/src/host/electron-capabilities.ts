@@ -33,7 +33,7 @@ import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
-import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
+import { sendE2EKey, sendE2EText, setE2EReducedMotion, type E2EKeyPhase } from './e2e-keyboard.js'
 import {
   extractFilePathsFromNativePayloads,
   inspectWorkspacePaths,
@@ -674,6 +674,14 @@ export function createElectronCapabilityRouter(
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
+  router.register('e2e.setReducedMotion', params => {
+    const label = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const contents = e2eHost.captureTarget(label)
+    if (!contents) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
+    }
+    return setE2EReducedMotion(contents, booleanParam(params, 'reduced') === true)
+  })
   router.register('e2e.getRendererHeapUsage', async () => {
     const contents = e2eHost.captureTarget('main')
     if (!contents || contents.isDestroyed()) {

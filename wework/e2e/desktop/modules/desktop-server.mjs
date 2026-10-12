@@ -3145,7 +3145,9 @@ class DesktopE2EServer {
       )
       const tool = selectShellToolCommand(
         body,
-        `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
+        process.platform === 'win32'
+          ? '[Console]::Write($env:WEGENT_SKILL_USER_NAME)'
+          : `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
         this.cloudWorkspacePath,
         { yieldTimeMs: 10_000 }
       )

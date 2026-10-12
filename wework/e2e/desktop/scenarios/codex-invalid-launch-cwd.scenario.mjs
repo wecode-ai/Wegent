@@ -234,6 +234,7 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   let requestCount = 0
+  const connectionResets = []
   const executorLogPath = join(resultDir, 'executor.log')
   const launchWorkingDirectory = join(resultDir, 'invalid-launch-cwd')
   const modelServerPort = process.env.WEWORK_E2E_MODEL_SERVER_PORT
@@ -247,6 +248,11 @@ export function createDesktopScenario({
   return {
     attachServer(server) {
       server.on('upgrade', (request, socket, head) => {
+        socket.on('error', error => {
+          if (error.code !== 'ECONNRESET') throw error
+          connectionResets.push({ code: error.code, at: new Date().toISOString() })
+          socket.destroy()
+        })
         const url = new URL(request.url ?? '/', modelServerUrl)
         if (!['/v1/responses', '/responses'].includes(url.pathname)) {
           socket.destroy()
@@ -323,7 +329,7 @@ export function createDesktopScenario({
     },
 
     diagnostics() {
-      return { requestCount }
+      return { requestCount, connectionResets }
     },
   }
 }

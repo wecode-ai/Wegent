@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import { describe, expect, test, vi } from 'vitest'
-import { sendE2EKey, sendE2EText } from './e2e-keyboard.js'
+import { sendE2EKey, sendE2EText, setE2EReducedMotion } from './e2e-keyboard.js'
 
 const environment = {
   WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
@@ -13,11 +13,42 @@ function fixture() {
     focus: vi.fn(),
     insertText: vi.fn(),
     sendInputEvent: vi.fn(),
+    debugger: {
+      isAttached: vi.fn(() => false),
+      attach: vi.fn(),
+      sendCommand: vi.fn().mockResolvedValue(undefined),
+    },
   }
   return { view, contents: view as unknown as WebContents, focusWindow: vi.fn() }
 }
 
 describe('isolated native keyboard verification', () => {
+  test('sets real Chromium motion preferences and reuses the attached debugger', async () => {
+    const { view, contents } = fixture()
+    await expect(setE2EReducedMotion(contents, false, environment)).resolves.toEqual({
+      reduced: false,
+    })
+    expect(view.debugger.attach).toHaveBeenCalledExactlyOnceWith('1.3')
+    expect(view.debugger.sendCommand).toHaveBeenLastCalledWith('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    })
+    view.debugger.isAttached.mockReturnValue(true)
+    await setE2EReducedMotion(contents, true, environment)
+    expect(view.debugger.attach).toHaveBeenCalledTimes(1)
+    expect(view.debugger.sendCommand).toHaveBeenLastCalledWith('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+    })
+  })
+
+  test('motion verification requires an isolated controller and propagates Chromium errors', async () => {
+    const { view, contents } = fixture()
+    await expect(setE2EReducedMotion(contents, false, {})).rejects.toThrow('isolated E2E')
+    expect(view.debugger.attach).not.toHaveBeenCalled()
+    view.debugger.sendCommand.mockRejectedValue(new Error('Chromium command failed'))
+    await expect(setE2EReducedMotion(contents, false, environment)).rejects.toThrow(
+      'Chromium command failed'
+    )
+  })
   test('waits for window activation before sending native input', async () => {
     const { view, contents } = fixture()
     let activate!: () => void
