@@ -260,6 +260,10 @@ mod tests {
         fn on(&self, _: &str, _: EventHandler) {
             panic!("no subscription")
         }
+
+        fn on_close(&self, _: crate::local::backend::ConnectionClosedHandler) {
+            panic!("no subscription")
+        }
     }
 
     #[tokio::test]
