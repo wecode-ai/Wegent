@@ -115,6 +115,14 @@ export function createDesktopScenario() {
         assert.ok(!families.testIds.some(id => id.startsWith('model-option-preset-quality')))
         await control.command('click', recommended)
 
+        // The default owner is second and has no explicit effort in this preset.
+        await control.command('waitFor', '[data-testid="model-simple-header"]', {
+          text: models[1].label,
+        })
+        await control.command('press', 'body', { key: 'Escape' })
+        await control.command('waitFor', selector, { text: models[1].label })
+        await control.command('click', selector)
+
         // Start with an explicit effort, then move to both model-only positions.
         for (const model of [models[3], models[0], models[1], models[2]]) {
           const stepId = `model-power-setting-${model.name}${model.effort ? `-${model.effort}` : ''}`

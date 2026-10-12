@@ -1,3 +1,4 @@
+import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 import { useContext, useEffect, useState } from 'react'
 import {
   Activity,
@@ -888,6 +889,67 @@ export function GeneralSettingsPage() {
             ),
           })}
           <SettingsRow
+            label={
+              <span className="flex items-center gap-2">
+                <Bell className="h-4 w-4 text-text-secondary" />
+                {t('workbench.general_settings_tray_display_content')}
+              </span>
+            }
+            description={t('workbench.general_settings_tray_display_content_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid w-[420px] max-w-full shrink-0 grid-cols-2 gap-2">
+                {trayDisplayOptions.map(option => {
+                  const Icon = option.icon
+                  const selected = Boolean(preferences[option.preferenceKey])
+                  return (
+                    <button
+                      key={option.preferenceKey}
+                      data-testid={option.testId}
+                      type="button"
+                      aria-pressed={selected}
+                      title={option.description}
+                      disabled={loading || saving}
+                      onClick={() => void handlePreferenceChange(option.preferenceKey, !selected)}
+                      className={`group flex h-9 items-center justify-between gap-2 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                        selected
+                          ? 'border-text-primary/50 bg-muted text-text-primary'
+                          : 'border-border bg-background text-text-secondary hover:border-text-muted/40 hover:bg-muted/40 hover:text-text-primary'
+                      }`}
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <Icon
+                          className={`h-4 w-4 shrink-0 ${
+                            selected ? 'text-text-primary' : 'text-text-secondary'
+                          }`}
+                        />
+                        <span className="truncate">{option.label}</span>
+                      </span>
+                      <span
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition ${
+                          selected
+                            ? 'border-text-primary bg-text-primary text-background'
+                            : 'border-border bg-surface group-hover:border-text-muted/40'
+                        }`}
+                      >
+                        {selected && <Check className="h-3 w-3" />}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
+        </SettingsGroup>
+      </section>
+
+      <section data-testid="general-settings-ai-section" className="mt-12">
+        <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
+          {t('workbench.general_settings_ai_title')}
+        </div>
+        <SettingsGroup className="rounded-xl !bg-background">
+          <SettingsRow
             label={t('workbench.friendly_task_titles_title', '使用友好标题')}
             description={t(
               'workbench.friendly_task_titles_desc',
@@ -966,59 +1028,7 @@ export function GeneralSettingsPage() {
               </div>
             </div>
           )}
-          <SettingsRow
-            label={
-              <span className="flex items-center gap-2">
-                <Bell className="h-4 w-4 text-text-secondary" />
-                {t('workbench.general_settings_tray_display_content')}
-              </span>
-            }
-            description={t('workbench.general_settings_tray_display_content_description')}
-            className={GENERAL_ROW_CLASS_NAME}
-            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
-              <div className="grid w-[420px] max-w-full shrink-0 grid-cols-2 gap-2">
-                {trayDisplayOptions.map(option => {
-                  const Icon = option.icon
-                  const selected = Boolean(preferences[option.preferenceKey])
-                  return (
-                    <button
-                      key={option.preferenceKey}
-                      data-testid={option.testId}
-                      type="button"
-                      aria-pressed={selected}
-                      title={option.description}
-                      disabled={loading || saving}
-                      onClick={() => void handlePreferenceChange(option.preferenceKey, !selected)}
-                      className={`group flex h-9 items-center justify-between gap-2 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                        selected
-                          ? 'border-text-primary/50 bg-muted text-text-primary'
-                          : 'border-border bg-background text-text-secondary hover:border-text-muted/40 hover:bg-muted/40 hover:text-text-primary'
-                      }`}
-                    >
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <Icon
-                          className={`h-4 w-4 shrink-0 ${
-                            selected ? 'text-text-primary' : 'text-text-secondary'
-                          }`}
-                        />
-                        <span className="truncate">{option.label}</span>
-                      </span>
-                      <span
-                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition ${
-                          selected
-                            ? 'border-text-primary bg-text-primary text-background'
-                            : 'border-border bg-surface group-hover:border-text-muted/40'
-                        }`}
-                      >
-                        {selected && <Check className="h-3 w-3" />}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            }
-          />
+          <ReplyPredictionSettings />
         </SettingsGroup>
       </section>
 

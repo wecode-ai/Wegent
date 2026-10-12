@@ -1,6 +1,7 @@
 import { insertComposerReference } from './insertComposerReference'
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -9,6 +10,8 @@ import {
   useImperativeHandle,
   startTransition,
 } from 'react'
+import { ComposerPredictionStatus } from './ComposerPredictionStatus'
+import { ComposerPredictionContext } from './ComposerPredictionContext'
 import type { LocalDeviceApp, LocalDeviceSkill } from '@wegent/chat-core/runtime-composer-catalog'
 import type { UnifiedModel } from '@wegent/chat-core/models'
 import type {
@@ -90,6 +93,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   disabled,
   placeholder,
   testId = 'chat-message-input',
+  predictionStatusTarget,
   rows,
   textareaRef,
   className,
@@ -120,6 +124,8 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   onSetGoal,
   onDraw,
   onSelectModel,
+  onOpenModelSelector,
+  modelSelectorOpen = false,
   onBlockedModelSelect,
   isModelSelectionReady = true,
   sendKey = 'enter',
@@ -145,6 +151,9 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   editorServices,
   transferServices,
 }: ComposerAutocompleteInputProps<Project, Conversation>) {
+  const prediction = useContext(ComposerPredictionContext)
+  const [hasDraft, setHasDraft] = useState(Boolean(value.trim()))
+  useEffect(() => setHasDraft(Boolean(value.trim())), [value])
   type ComposerMentionCandidate = Candidate<Project, Conversation>
   type MentionMenuRow = SharedMentionMenuRow<
     ComposerMentionCandidate,
@@ -280,12 +289,16 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   // `cloud://projects` capability reference.
   const cloudSpaceDirectReference = `[$${t('workbench.mention_cloud_project_space', '项目空间')}](cloud://projects)`
 
-  const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onSelectModel) && models.length > 0
+  const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onOpenModelSelector || (onSelectModel && models.length > 0))
   const openSlashModelMenu = useCallback(() => {
+    if (onOpenModelSelector) {
+      onOpenModelSelector()
+      return
+    }
     setModelQuery('')
     setModelSelectedIndex(0)
     setModelMenuOpen(true)
-  }, [])
+  }, [onOpenModelSelector])
   const closeSlashModelMenu = useCallback(
     (focusTextarea = false) => {
       setModelMenuOpen(false)
@@ -893,6 +906,9 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     services: transferServices,
   })
 
+  const predictionHidden =
+    hasDraft || disabled || isStreaming || showSkillMenu || showSlashMenu || modelMenuOpen || modelSelectorOpen
+
   return (
     <div className="relative min-w-0 flex-1 w-full">
       <ComposerErrorBanner error={transferError || actionError} />
@@ -912,6 +928,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         value={value}
         onChange={nextValue => {
           valueRef.current = nextValue
+          setHasDraft(Boolean(nextValue.trim()))
           onChange(nextValue)
         }}
         onSnapshotChange={handleEditorSnapshot}
@@ -934,6 +951,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
           }
         }}
         disabled={disabled}
+        prediction={predictionHidden ? null : prediction}
         placeholder={placeholder}
         testId={testId}
         rows={rows}
@@ -942,6 +960,15 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         scrollContainerClassName={scrollContainerClassName}
         services={editorServices}
         nativeEmptyCaret={nativeEmptyCaret}
+      />
+      <ComposerPredictionStatus
+        target={predictionStatusTarget}
+        hidden={predictionHidden}
+        testId={testId}
+        onAccept={text => {
+          editorRef.current?.setValue(text)
+          editorRef.current?.focus()
+        }}
       />
       {showSkillMenu && (
         <ComposerMentionMenu

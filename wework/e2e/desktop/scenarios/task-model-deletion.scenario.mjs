@@ -26,6 +26,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
   let deletedModelId
   let replyCount = 0
   const modelName = `task-model-deletion-${process.pid}`
+  const localModelName = `local-deletion-${process.pid}`
   const request = (path, options = {}) =>
     fetchJson(`${cloud.backendUrl}${path}`, {
       ...options,
@@ -34,6 +35,37 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         'Content-Type': 'application/json',
       },
     })
+
+  async function createLocalModel(control) {
+    await control.command('navigate', 'body', { value: '/settings/personal/models' })
+    await control.command('waitFor', '[data-testid="provider-add"]')
+    await control.command('click', '[data-testid="provider-add"]')
+    await control.command('waitFor', '[data-testid="provider-editor"]')
+    await control.command('select', '[data-testid="provider-preset"]', { value: 'custom' })
+    await control.command('fill', '[data-testid="provider-name"]', { value: modelName })
+    await control.command('fill', '[data-testid="provider-base-url"]', {
+      value: cloud.modelServerUrl,
+    })
+    await control.command('fill', '[data-testid="provider-api-key"]', { value: 'desktop-e2e' })
+    await control.command('click', '[data-testid="provider-model-add"]')
+    const editor = JSON.parse(await control.command('snapshot', '[data-testid="provider-editor"]'))
+    const input = editor.testIds.find(id => id.startsWith('provider-model-id-'))
+    assert.ok(input, 'The local deletion fixture editor is unavailable')
+    const id = input.slice('provider-model-id-'.length)
+    await control.command('fill', `[data-testid="${input}"]`, { value: localModelName })
+    await control.command('click', '[data-testid="provider-editor-save"]')
+    await control.command('waitFor', '[data-testid="provider-editor"]', { visible: false })
+    await control.command(
+      'waitFor',
+      `[data-testid^="provider-row-"]:has([data-testid="provider-model-${id}"])`
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', `[data-testid="provider-model-${id}"]`)),
+      1,
+      'The local deletion fixture was not persisted'
+    )
+    return id
+  }
 
   async function send(control, suffix) {
     const expectedReply = replyCount + 1
@@ -143,8 +175,10 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         })
         deletedModelId = created.created[0]?.id
         assert.ok(deletedModelId, 'The deletion fixture was not persisted')
+        const localModelId = await createLocalModel(control)
+        await control.command('navigate', 'body', { value: '/' })
         await createSingleRootLocalProject(control, workspacePath, 'Task model deletion')
-        await selectE2EModel(control, 'local-model:desktop-e2e-responses', 'Desktop E2E Responses')
+        await selectE2EModel(control, `local-model:${localModelId}`, localModelName)
         await send(control, 'initial local model')
         const snapshot = await waitForSnapshot(
           control,
@@ -157,8 +191,16 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
 
         // Delete the local configuration through the actual settings UI and reopen the task.
         await control.command('navigate', 'body', { value: '/settings/personal/models' })
-        await control.command('waitFor', '[data-testid="local-model-delete-desktop-e2e-responses"]')
-        await control.command('click', '[data-testid="local-model-delete-desktop-e2e-responses"]')
+        const model = `[data-testid="provider-model-${localModelId}"]`
+        const provider = `[data-testid^="provider-row-"]:has(${model})`
+        await control.command('waitFor', provider)
+        await control.command('click', `${provider} > summary`)
+        await control.command('click', `[data-testid="provider-model-edit-${localModelId}"]`)
+        await control.command('waitFor', '[data-testid="provider-editor"]')
+        await control.command('click', `[data-testid="provider-model-remove-${localModelId}"]`)
+        await control.command('click', '[data-testid="provider-editor-save"]')
+        await control.command('waitFor', '[data-testid="provider-editor"]', { visible: false })
+        assert.equal(Number(await control.command('getElementCount', model)), 0)
         await control.command('navigate', 'body', { value: '/' })
         await control.command('waitFor', taskSelector)
         await control.command('click', taskSelector)

@@ -861,6 +861,7 @@ export function TemporaryChatPanel({
         readOnly ? null : (
           <ComposerCatalogContext.Provider value={composerCatalog}>
             <BufferedChatInput
+              predictionAddress={address}
               value={input}
               replaceDraftKey={replaceDraftKey}
               onChange={setInput}

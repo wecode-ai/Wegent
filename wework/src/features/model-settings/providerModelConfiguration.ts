@@ -28,6 +28,7 @@ let state: ProviderConfigurationState = { snapshot: null, error: null }
 const listeners = new Set<() => void>()
 let initialized: Promise<void> | null = null
 let reloadSequence = 0
+let migrationWrite: Promise<unknown> | null = null
 
 /** Return the stable snapshot consumed by useSyncExternalStore. */
 export function getProviderConfigurationState(): ProviderConfigurationState {
@@ -118,11 +119,44 @@ export function resolveProviderModel(
   return config
 }
 
+/** Share a migration write across catalog refreshes triggered by native notifications. */
+async function migrateLegacySnapshot(
+  snapshot: ModelConfigurationSnapshot
+): Promise<ModelConfigurationSnapshot> {
+  if (migrationWrite) {
+    await migrationWrite
+    snapshot = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
+  }
+  if (snapshot.error) throw new Error(snapshot.error)
+  const ownedIds = new Set(
+    snapshot.providers.flatMap(provider => provider.models.map(model => model.id))
+  )
+  const unowned = listLegacyLocalModelConfigs().filter(model => !ownedIds.has(model.id))
+  if (!unowned.length) return snapshot
+  const write = invokeDesktopHost('modelConfiguration.save', {
+    revision: snapshot.revision,
+    providers: [...snapshot.providers, ...groupLegacyModels(unowned)],
+  })
+  migrationWrite = write
+  try {
+    await write
+    const saved = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
+    if (saved.error) throw new Error(saved.error)
+    return saved
+  } finally {
+    if (migrationWrite === write) migrationWrite = null
+  }
+}
+
 /** Load matching public and runtime revisions, ignoring superseded asynchronous requests. */
 export async function reloadProviderConfiguration(): Promise<void> {
   const sequence = ++reloadSequence
   try {
-    const snapshot = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
+    let snapshot = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
+    if (sequence !== reloadSequence) return
+    if (snapshot.error) throw new Error(snapshot.error)
+    const legacy = listLegacyLocalModelConfigs()
+    snapshot = await migrateLegacySnapshot(snapshot)
     const runtime = await invokeDesktopHost<{ revision: string; models: ResolvedProviderModel[] }>(
       'modelConfiguration.runtime'
     )
@@ -136,6 +170,15 @@ export async function reloadProviderConfiguration(): Promise<void> {
     const changed =
       next.length !== previous.size || next.some(model => model !== previous.get(model.id))
     replaceProviderModelConfigs(next)
+    // Only remove legacy entries after the saved configuration and runtime agree.
+    const persistedIds = new Set(
+      snapshot.providers.flatMap(provider => provider.models.map(model => model.id))
+    )
+    if (legacy.some(model => persistedIds.has(model.id))) {
+      removeMigratedLocalModelConfigs(
+        new Set(legacy.filter(model => persistedIds.has(model.id)).map(model => model.id))
+      )
+    }
     publish(snapshot, snapshot.error ?? null)
     if (changed) window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
   } catch (error) {
@@ -225,19 +268,4 @@ export function groupLegacyModels(configs: LocalModelConfig[]): ModelProvider[] 
   }
   // IPC JSON removes undefined values; doing so here also makes pure tests deterministic.
   return JSON.parse(JSON.stringify([...groups.values()])) as ModelProvider[]
-}
-
-/** Persist migrated providers before removing their legacy records, preserving existing IDs. */
-export async function migrateLegacyProviderModels(
-  snapshot: ModelConfigurationSnapshot
-): Promise<void> {
-  const ownedIds = new Set(
-    snapshot.providers.flatMap(provider => provider.models.map(model => model.id))
-  )
-  const legacy = listLegacyLocalModelConfigs().filter(model => !ownedIds.has(model.id))
-  await saveProviderConfiguration(snapshot.revision, [
-    ...snapshot.providers,
-    ...groupLegacyModels(legacy),
-  ])
-  removeMigratedLocalModelConfigs(new Set([...ownedIds, ...legacy.map(model => model.id)]))
 }
