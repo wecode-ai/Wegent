@@ -1,9 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  createSingleRootLocalProject,
-  selectE2EModel,
-  WORKBENCH_READY_TIMEOUT_MS,
-} from '../modules/shared.mjs'
+import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const INPUT = `${ACTIVE} [data-testid="chat-message-input"]`
@@ -15,7 +11,7 @@ const ANSWER = '可以先迁移当前进程，再配置后续任务的启动入�
 const SUGGESTION = '请按这个方案迁移，并配置后续启动入口，不要中断当前任务。'
 const EDITED = '请先迁移当前进程，并验证任务仍在运行。'
 const MODEL_SELECT = '[data-testid="reply-prediction-model"]'
-const PREDICTION_MODEL = 'desktop-e2e-responses-model'
+const CONVERSATION_MODEL = 'gpt-5.6-luna'
 
 function complete(response, text) {
   const id = `reply-prediction-${Date.now()}`
@@ -45,6 +41,8 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
   let active = false
   let normalRequests = 0
   let predictionRequests = 0
+  let conversationInstructions
+  let conversationTools
   let releasePrediction
   const heldPrediction = new Promise(resolve => {
     releasePrediction = resolve
@@ -63,9 +61,27 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       const input = JSON.stringify(body.input ?? body.messages ?? [])
       if (input.includes('Predict one natural next USER message')) {
         predictionRequests += 1
-        assert.equal(body.model, PREDICTION_MODEL, 'Prediction used the conversation model')
-        assert.deepEqual(body.tools ?? [], [], 'Prediction exposed tools to the model')
+        assert.equal(body.model, CONVERSATION_MODEL, 'Prediction changed the conversation model')
+        assert.equal(
+          body.instructions,
+          conversationInstructions,
+          'Prediction changed the cached instructions'
+        )
+        assert.deepEqual(
+          body.tools,
+          conversationTools,
+          'Prediction changed the cached tool definitions'
+        )
+        assert.equal(
+          body.reasoning?.effort,
+          'low',
+          'Prediction inherited the task reasoning effort'
+        )
         assert.ok(input.includes(INITIAL), 'Prediction lost the original user constraints')
+        assert.ok(
+          !input.includes('originalGoal'),
+          'Prediction rebuilt the conversation as a text summary'
+        )
         if (predictionRequests === 1) await heldPrediction
         complete(
           response,
@@ -75,6 +91,8 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       }
       if (!input.includes(INITIAL) && !input.includes(EDITED)) return false
       normalRequests += 1
+      conversationInstructions = body.instructions
+      conversationTools = body.tools
       complete(response, normalRequests === 1 ? ANSWER : '迁移完成，任务仍在运行。')
       return true
     },
@@ -87,23 +105,12 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
       await capture('reply-01-unconfigured.png')
       await control.command('click', '[data-testid="reply-prediction-enabled"]')
-      await control.command('waitFor', MODEL_SELECT)
-      await control.command(
-        'waitFor',
-        `${MODEL_SELECT} option[value="runtime:local-model:desktop-e2e-responses"]`,
-        { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
-      )
-      await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
-      assert.equal(await control.command('getValue', MODEL_SELECT), '')
-      await capture('reply-01b-task-model-default.png')
-      await control.command('select', MODEL_SELECT, {
-        value: 'runtime:local-model:desktop-e2e-responses',
-      })
       await control.command(
         'waitFor',
         '[data-testid="reply-prediction-enabled"][aria-checked="true"]'
       )
-      await capture('reply-02-model-enabled.png')
+      assert.equal(Number(await control.command('getElementCount', MODEL_SELECT)), 0)
+      await capture('reply-02-fork-predictions-enabled.png')
       await control.command('click', '[data-testid="settings-back-button"]')
       await createSingleRootLocalProject(control, workspacePath, '回复建议验证')
       await control.command('waitFor', INPUT)

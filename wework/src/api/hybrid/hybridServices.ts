@@ -1,3 +1,4 @@
+import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import {
   createWorkbenchDeviceResolver,
   getWorkbenchDeviceIds,
@@ -1457,6 +1458,17 @@ export function createHybridWorkbenchServices(
     },
     branchNameApi: localServices.branchNameApi,
     textGenerationApi: localServices.textGenerationApi,
+    replyPredictionApi: {
+      async predict(data) {
+        const api = await runtimeApiForDevice(data.address.deviceId)
+        if (api === localServices.runtimeWorkApi) {
+          return localServices.replyPredictionApi!.predict(data)
+        }
+        return createReplyPredictionApi((method, params) =>
+          cloudRuntimeIpc.request(method, params, data.address.deviceId)
+        ).predict(data)
+      },
+    },
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     localExecutionServices: localProjectServices,

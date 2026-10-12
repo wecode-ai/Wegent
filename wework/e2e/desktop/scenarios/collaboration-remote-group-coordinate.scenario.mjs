@@ -471,6 +471,7 @@ export async function createDesktopScenario({
   modelResponseTimeoutMs,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
+  verifyManagerPlanning,
 }) {
   let active = false
   let backendUrl = ''
@@ -490,6 +491,14 @@ export async function createDesktopScenario({
   let releaseThirdChild
   let resolveBothChildrenStarted
   let resolveThirdChildStarted
+  let releaseManagerPlanning
+  let resolveManagerPlanningStarted
+  const managerPlanningRelease = new Promise(resolve => {
+    releaseManagerPlanning = resolve
+  })
+  const managerPlanningStarted = new Promise(resolve => {
+    resolveManagerPlanningStarted = resolve
+  })
   const firstChildRelease = new Promise(resolve => {
     releaseFirstChild = resolve
   })
@@ -597,6 +606,10 @@ export async function createDesktopScenario({
       }
 
       if (parentStage === 'initial') {
+        if (verifyManagerPlanning) {
+          resolveManagerPlanningStarted()
+          await managerPlanningRelease
+        }
         assert.ok(
           JSON.stringify(body.input ?? body.messages ?? '').includes(GROUP_RULES),
           '项目协作规则没有作为负责人本轮用户消息的一部分传入'
@@ -734,6 +747,16 @@ export async function createDesktopScenario({
       rootIssue = await createIssue(control, request, project.id, uiTimeoutMs)
       await assignGroup(control, group.id, uiTimeoutMs)
 
+      if (verifyManagerPlanning) {
+        await waitForPromise(
+          managerPlanningStarted,
+          modelResponseTimeoutMs,
+          '远程负责人没有开始规划任务'
+        )
+        await verifyManagerPlanning(control, { groupRules: GROUP_RULES, leader: LEADER })
+        releaseManagerPlanning()
+      }
+
       await waitForPromise(
         bothChildrenStarted,
         modelResponseTimeoutMs,
@@ -870,6 +893,13 @@ export async function createDesktopScenario({
         'remote-group-coordinate-04-manager-status-decision.png',
         'body'
       )
+    },
+
+    async cleanup() {
+      releaseManagerPlanning()
+      releaseFirstChild()
+      releaseSecondChild()
+      releaseThirdChild()
     },
 
     diagnostics() {

@@ -75,10 +75,13 @@ describe('localModelProviders', () => {
         apiFormat: 'openai-responses',
         requestPath: '/responses',
         toolProfile: 'custom',
-        allowedModelIds: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+        allowedModelIds: ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-pro'],
         contextWindow: 1_048_576,
         webSearchMode: 'live',
         modelDefaults: {
+          'deepseek-flash': {
+            contextWindow: 1_048_576,
+          },
           'deepseek-v4-flash': {
             contextWindow: 1_048_576,
           },
@@ -202,7 +205,7 @@ describe('localModelProviders', () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
         JSON.stringify({
-          data: [{ id: 'deepseek-v4-pro' }, { id: 'deepseek-v4-flash' }],
+          data: [{ id: 'deepseek-v4-pro' }, { id: 'deepseek-flash' }],
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
@@ -211,7 +214,7 @@ describe('localModelProviders', () => {
     await expect(
       discoverProviderModels(findLocalModelProviderProfile('deepseek'), 'secret-key', { fetcher })
     ).resolves.toEqual([
-      { id: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' },
+      { id: 'deepseek-flash', displayName: 'deepseek-flash' },
       { id: 'deepseek-v4-pro', displayName: 'deepseek-v4-pro' },
     ])
   })
