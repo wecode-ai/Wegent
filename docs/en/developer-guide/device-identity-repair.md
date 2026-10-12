@@ -69,6 +69,10 @@ against real MySQL. It synchronizes two owners' first identity reads before thei
 inserts and verifies that eight first registrations for one owner still create
 one row. Registration relies on the existing owner row lock without a redundant
 Kind range lock, avoiding cross-owner insert deadlocks under `REPEATABLE READ`.
+The registration service finishes the authentication read transaction before
+locking the owner and commits registration independently. Identity reads then
+use a fresh snapshot, including when all eight callers had already established
+authentication snapshots. The database-wide isolation level stays unchanged.
 The executor-chromium job runs the app conversation in `tasks/agent-conversation-regression.spec.ts`.
 Desktop CI covers the existing shared-runner `remote-device-onboarding` checkpoint.
 Unit tests cover ownership, unfinished-task protection, historical references and concurrent persistence.

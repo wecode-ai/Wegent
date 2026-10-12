@@ -27,6 +27,8 @@ sidebar_position: 90
 注册使用已有用户行的事务锁，并用 Redis 锁覆盖注册到上线、删除的竞争窗口，不依赖新增唯一索引。
 注册中的设备身份查询不再重复加范围锁，避免 MySQL `REPEATABLE READ` 下不同用户首次注册时，
 因共享索引间隙锁而在插入阶段死锁。
+注册服务在获取用户行锁前结束认证读取事务，独立提交注册结果。这样身份查询使用锁后的新快照，
+不会因之前的认证读取而遗漏刚完成的注册。该事务边界不改变数据库全局隔离级别。
 
 ## 设备记录删除
 
@@ -65,7 +67,7 @@ macOS 空闲任务的可用内存计算包含可回收文件缓存，避免在�
 
 `frontend/e2e/tests/devices/app-device-identity.spec.ts` 由平台 CI 的 chromium 分片执行；
 同一分片还执行 `backend/tests/integration/device_registration_mysql.py`，在真实 MySQL 中同步两个用户的
-首次身份查询后并发插入，并验证同一用户八路首次注册仍只创建一条记录。
+首次身份查询后并发插入，并验证同一用户八路首次注册在预先建立认证快照后仍只创建一条记录。
 `tasks/agent-conversation-regression.spec.ts` 的 app 对话由 executor-chromium job 执行。
 桌面验证扩展已有共享 runner 的 `remote-device-onboarding` 检查点，由桌面 CI 执行。
 单元测试覆盖归属、未完成任务保护、历史引用及并发持久化。交付时另行记录实际执行结果，不以覆盖存在代替通过证明。

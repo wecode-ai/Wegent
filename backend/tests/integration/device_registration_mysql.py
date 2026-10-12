@@ -14,8 +14,12 @@ from app.models.user import User
 from app.services.device_service import device_service
 
 
-def register(engine: Engine, owner: int) -> int:
+def register(engine: Engine, owner: int, ready: Barrier | None = None) -> int:
     with Session(engine) as db:
+        # Authentication can establish a snapshot before registration begins.
+        assert db.query(User.id).filter(User.id == owner).scalar() == owner
+        if ready is not None:
+            ready.wait()
         return device_service.upsert_device_crd(
             db,
             user_id=owner,
@@ -55,8 +59,7 @@ def verify_shared_owner(engine: Engine) -> None:
     ready = Barrier(8, timeout=10)
 
     def concurrent_registration(_: int) -> int:
-        ready.wait()
-        return register(engine, 3)
+        return register(engine, 3, ready)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         ids = list(pool.map(concurrent_registration, range(8)))
