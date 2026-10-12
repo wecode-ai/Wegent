@@ -42,9 +42,19 @@ __all__ = ["SyncResponseEmitter", "StreamingResponseEmitter"]
 _WAITING_FOR_INPUT_CONTENT = "等待你在 Wework 中确认后继续。"
 _EMPTY_FINAL_CONTENT = "本轮已结束，未生成最终回复。"
 
+_FENCE_LINE_PATTERN = re.compile(r"^[ \t]*(`{3,}|~{3,})([^\n]*)$")
 
-def normalize_dingtalk_markdown(content: str) -> str:
-    """Remove separators that DingTalk renders as empty table rows."""
+
+def _closes_fence(marker: Optional[re.Match[str]], fence: str) -> bool:
+    """Report whether a fence line closes the currently open code block."""
+    if marker is None or marker.group(2).strip():
+        return False
+    ticks = marker.group(1)
+    return ticks[0] == fence[0] and len(ticks) >= len(fence)
+
+
+def _normalize_break_separators(content: str) -> str:
+    """Collapse the block breaks that DingTalk renders as empty table rows."""
     # DingTalk AI cards absorb a block break immediately before or after a
     # table into the table itself. Collapse those breaks to single separators.
     content = re.sub(r"(?i)<br\s*/?>[ \t]*\n?", "\n", content)
@@ -62,6 +72,38 @@ def normalize_dingtalk_markdown(content: str) -> str:
         content,
     )
     return content
+
+
+def normalize_dingtalk_markdown(content: str) -> str:
+    """Remove separators that DingTalk renders as empty table rows.
+
+    Fenced code blocks keep their original text and whitespace so that
+    literal ``<br/>`` sequences and blank lines survive untouched.
+    """
+    parts: list[str] = []
+    pending: list[str] = []
+    fence: Optional[str] = None
+
+    def flush_pending() -> None:
+        if pending:
+            parts.append(_normalize_break_separators("".join(pending)))
+            pending.clear()
+
+    for line in content.splitlines(keepends=True):
+        marker = _FENCE_LINE_PATTERN.match(line)
+        if fence is None:
+            if marker is None:
+                pending.append(line)
+                continue
+            flush_pending()
+            fence = marker.group(1)
+            parts.append(line)
+            continue
+        parts.append(line)
+        if _closes_fence(marker, fence):
+            fence = None
+    flush_pending()
+    return "".join(parts)
 
 
 class StreamingResponseEmitter(ResultEmitter):

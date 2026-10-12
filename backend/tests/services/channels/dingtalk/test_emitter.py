@@ -559,6 +559,29 @@ async def test_dingtalk_table_boundaries_do_not_render_empty_rows(
 
 
 @pytest.mark.asyncio
+async def test_dingtalk_normalization_preserves_fenced_code(emitter, card_factory):
+    await emitter.emit_start(task_id=1, subtask_id=2)
+    value = (
+        "# 示例\n"
+        "```html\n"
+        "<br/>\n"
+        "\n"
+        "\n"
+        "| 列 | 值 |\n"
+        "```\n"
+        "\n"
+        "# 说明\n"
+        "结束"
+    )
+
+    await emitter.emit_done(task_id=1, subtask_id=2, result={"value": value})
+
+    final = card_factory[0].finished[-1]
+    assert "```html\n<br/>\n\n\n| 列 | 值 |\n```" in final
+    assert "```\n\n# 说明" in final
+
+
+@pytest.mark.asyncio
 async def test_structured_terminal_output_does_not_replace_streamed_answer(
     emitter, card_factory
 ):
