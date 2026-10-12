@@ -74,7 +74,6 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_item_executions.wake import wake_robot_creator
 from app.services.loop_item_status_history import (
     STATUS_HISTORY_KEY,
-    is_processing_status,
     project_board_statuses,
     write_status_change,
 )
@@ -725,6 +724,10 @@ class LoopItemService:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
             )
+        if (agent_id or team_id) and requested_status is None:
+            started = self._robot_start_status(project, payload["status"])
+            if started is not None:
+                payload["status"] = started
         if payload["status"]:
             write_status_change(
                 task_metadata,
@@ -795,40 +798,38 @@ class LoopItemService:
                     else "automation" if automation_context is not None else "manual"
                 ),
             )
-        if agent_id and (
-            is_processing_status(project, item.status) or automation_context is not None
-        ):
+        if agent_id:
             db.flush()
             agent = db.get(ProjectChatAgent, agent_id)
             if agent is not None:
-                config = bot_config(agent)
-                loop_item_execution_service.create_for_assignment(
+                self._sync_execution_for_assignment(
                     db,
-                    loop_item_id=item.id,
-                    cloud_project_id=item.cloud_project_id,
+                    item=item,
+                    user_id=user_id,
+                    target_type="agent",
+                    target_id=str(agent.id),
                     agent=agent,
-                    assigner_user_id=user_id,
-                    environment=str(config.get("execution_environment") or "local"),
-                    execution_device_id=(
-                        config.get("execution_device_id")
-                        if isinstance(config.get("execution_device_id"), str)
-                        else None
-                    ),
+                    team=None,
                     priority=item.priority,
                     automation_context=automation_context,
                     instruction=instruction,
+                    cancel_existing=False,
                 )
         elif team_id:
             db.flush()
             team = db.get(Kind, team_id)
             if team is not None:
-                loop_item_execution_service.create_for_team_assignment(
+                self._sync_execution_for_assignment(
                     db,
-                    loop_item_id=item.id,
-                    cloud_project_id=item.cloud_project_id,
+                    item=item,
+                    user_id=user_id,
+                    target_type="team",
+                    target_id=str(team.id),
+                    agent=None,
                     team=team,
-                    assigner_user_id=user_id,
                     priority=item.priority,
+                    automation_context=automation_context,
+                    cancel_existing=False,
                 )
         self._notify_updated_assignee(
             db,
@@ -1726,6 +1727,16 @@ class LoopItemService:
                 if target_type == "user" and item.assignee_user_id != int(target_id):
                     metadata.pop("human_work", None)
                     updates["metadata_json"] = metadata
+                if target_type in {"agent", "team"} and (
+                    "status" not in values.model_fields_set
+                ):
+                    self._start_robot_assignment(
+                        project=project,
+                        item=item,
+                        user_id=user_id,
+                        metadata=metadata,
+                        updates=updates,
+                    )
                 cancelled_runs = self._sync_execution_for_assignment(
                     db,
                     item=item,
@@ -2000,6 +2011,13 @@ class LoopItemService:
                 agent.id,
                 agent.title or agent.name,
             )
+            self._start_robot_assignment(
+                project=project,
+                item=item,
+                user_id=user_id,
+                metadata=metadata,
+                updates=assignee_updates,
+            )
             effective_automation_context = automation_context
             if effective_automation_context is None:
                 from app.schemas.issue_workflow import WorkflowExecutionConfig
@@ -2130,6 +2148,13 @@ class LoopItemService:
                 "team",
                 str(team.id),
                 team.name,
+            )
+            self._start_robot_assignment(
+                project=project,
+                item=item,
+                user_id=user_id,
+                metadata=metadata,
+                updates=assignee_updates,
             )
             cancelled_runs = (
                 self._sync_execution_for_assignment(
@@ -3135,6 +3160,50 @@ class LoopItemService:
         )
         metadata[ASSIGNMENT_HISTORY_KEY] = history
 
+    def _robot_start_status(
+        self, project: CloudProject, current_status: str
+    ) -> str | None:
+        """Board status a robot-owned Issue advances into when work starts.
+
+        Assigning a robot starts its work immediately, so the Issue enters the
+        in-progress column unless it is already there, already completed, or
+        the board has no such column -- mirroring the executor's local project
+        space. Returns the status to move to, or ``None`` for no change.
+        """
+        if current_status in {"in_progress", "completed"}:
+            return None
+        if "in_progress" not in self._project_status_ids(project):
+            return None
+        return "in_progress"
+
+    def _start_robot_assignment(
+        self,
+        *,
+        project: CloudProject,
+        item: LoopItem,
+        user_id: int,
+        metadata: dict[str, Any],
+        updates: dict[str, Any],
+    ) -> None:
+        """Advance a robot-owned Issue into the in-progress column.
+
+        Assigning a robot starts its work immediately, so an Issue parked
+        before the in-progress column is moved there, the transition is
+        recorded, and ``updates`` receives the resulting column values.
+        """
+        started = self._robot_start_status(project, item.status)
+        if started is None:
+            return
+        write_status_change(
+            metadata,
+            project=project,
+            from_status=item.status,
+            to_status=started,
+            trigger="robot_assignment",
+            by_user_id=user_id,
+        )
+        updates.update(status=started, completed_at=None, sort_order=0)
+
     def _sync_execution_for_assignment(
         self,
         db: Session,
@@ -3178,17 +3247,7 @@ class LoopItemService:
                 )
                 if _execution_needs_runtime_cancellation(cancelled):
                     cancelled_runs.append(cancelled)
-        project = db.get(CloudProject, item.cloud_project_id)
-        if project is None:
-            raise RuntimeError("Assigned Issue project is unavailable")
-        if (
-            target_type == "agent"
-            and agent is not None
-            and (
-                is_processing_status(project, item.status)
-                or automation_context is not None
-            )
-        ):
+        if target_type == "agent" and agent is not None:
             config = bot_config(agent)
             loop_item_execution_service.create_for_assignment(
                 db,
@@ -3231,13 +3290,18 @@ class LoopItemService:
         if agent is None or agent.status != "active":
             return item
         from app.schemas.issue_workflow import WorkflowExecutionConfig
-        from app.services.issue_execution_configuration import execution_context
+        from app.services.issue_execution_configuration import (
+            execution_context,
+            project_robot_execution_config,
+        )
 
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
         raw_config = metadata.get("execution_config")
-        if not isinstance(raw_config, dict):
-            return item
-        config = WorkflowExecutionConfig.model_validate(raw_config)
+        config = (
+            WorkflowExecutionConfig.model_validate(raw_config)
+            if isinstance(raw_config, dict)
+            else project_robot_execution_config(db, agent)
+        )
         self._sync_execution_for_assignment(
             db,
             item=item,
