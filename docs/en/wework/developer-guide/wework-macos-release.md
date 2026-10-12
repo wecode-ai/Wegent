@@ -445,3 +445,14 @@ the existing controller connection or first UI-action budget. Address this resou
 contention by limiting formal verification concurrency, without reruns or larger
 timeouts. Regular desktop CI shards and concurrency remain unchanged, as do formal
 scenario code, assertions, and timeouts.
+
+## Apple ticket-service transport errors
+
+Notarization submission, stapling, and ticket validation share bounded transport
+retries: three attempts by default, with five- and ten-second delays. Only recognized
+connection loss and timeout failures qualify; notarization rejection, invalid tickets,
+and other validation failures stop immediately. CloudKit lookups made by
+`stapler validate` can also fail with `NSURLErrorDomain -1005`. A failed lookup must
+not be treated as a missing ticket and trigger another notarization submission.
+Exhausted transport attempts still fail the release, and final ticket validation is
+always required.
