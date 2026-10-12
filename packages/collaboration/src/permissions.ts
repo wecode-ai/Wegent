@@ -60,6 +60,14 @@ export function canStartWorkOnCollaborationIssue(
   return issue.can_view_detail !== false;
 }
 
+/** Only Maintainers and Owners may change an Issue's security level. */
+export function canManageCollaborationIssueSecurity(
+  project: ProjectRoleSource,
+): boolean {
+  const role = resolveProjectRole(project);
+  return role === "Owner" || role === "Maintainer";
+}
+
 export interface CollaborationIssueActionPermissions {
   canEdit: boolean;
   canComment: boolean;

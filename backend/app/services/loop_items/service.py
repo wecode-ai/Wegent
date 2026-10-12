@@ -58,6 +58,7 @@ from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
     issue_permissions,
+    issue_update_actions,
     require_cloud_project_role,
     require_issue_action,
 )
@@ -1435,16 +1436,16 @@ class LoopItemService:
         }
         assignee_changed = bool(assignee_fields & values.model_fields_set)
         group_changed = "assignee_group_id" in values.model_fields_set
-        self._require_item_access(
-            db,
-            item,
-            user_id,
-            action=(
-                IssueAction.ASSIGN
-                if assignee_changed or group_changed
-                else IssueAction.EDIT_CONTENT
-            ),
-        )
+        access = self._require_item_access(db, item, user_id)
+        for action in issue_update_actions(values.model_fields_set) or [
+            IssueAction.EDIT_CONTENT
+        ]:
+            require_issue_action(
+                access,
+                action=action,
+                issue_creator_user_id=item.created_by_user_id,
+                user_id=user_id,
+            )
         updates = values.model_dump(
             exclude={
                 "version",

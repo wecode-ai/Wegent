@@ -68,7 +68,10 @@ import {
 } from "./issue-detail";
 import "./issue-detail/issue-detail.css";
 import { issueDraftFromText } from "./issueDraft";
-import { canAssignCollaborationIssue } from "./permissions";
+import {
+  canAssignCollaborationIssue,
+  canManageCollaborationIssueSecurity,
+} from "./permissions";
 import type {
   CollaborationAssignment,
   CollaborationAttachment,
@@ -1574,6 +1577,8 @@ export function TodoEditor(props: TodoEditorProps) {
     (project !== undefined &&
       (item === null || item.can_view_detail !== false) &&
       canAssignCollaborationIssue(project, item ?? undefined));
+  const canManageIssueSecurity =
+    project !== undefined && canManageCollaborationIssueSecurity(project);
   const assigneeChanged =
     item !== null && assigneeTarget !== issueAssigneeTarget(item);
   const creator =
@@ -3383,7 +3388,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       {scheduleRangeControl("task-detail-state-due relative")}
                       {item &&
                       project?.project_store === "backend" &&
-                      canAssign ? (
+                      canManageIssueSecurity ? (
                         <Tooltip
                           label={t(
                             "todo.issue_security_help",

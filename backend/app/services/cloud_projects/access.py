@@ -4,6 +4,7 @@
 
 """Role-aware authorization for cloud collaboration resources."""
 
+from collections.abc import Set
 from dataclasses import dataclass
 from enum import Enum
 
@@ -35,6 +36,47 @@ class IssueAction(str, Enum):
     COMMENT = "comment"
     ASSIGN = "assign"
     EXECUTE = "execute"
+
+
+# LoopItemUpdate fields that change Issue content rather than its assignee.
+ISSUE_CONTENT_FIELDS = frozenset(
+    {
+        "title",
+        "description",
+        "status",
+        "priority",
+        "start_at",
+        "due_at",
+        "parent_id",
+        "tags",
+        "workflow",
+        "execution_config",
+    }
+)
+# LoopItemUpdate fields that select the Issue assignee.
+ISSUE_ASSIGNMENT_FIELDS = frozenset(
+    {
+        "assignee_user_id",
+        "assignee_agent_id",
+        "assignee_team_id",
+        "assignee_group_id",
+    }
+)
+
+
+def issue_update_actions(changed_fields: Set[str]) -> list[IssueAction]:
+    """List the actions required for an update touching ``changed_fields``.
+
+    Assignment and content changes are authorized independently, so an update
+    that mixes both kinds of fields must satisfy every action it implies.
+    """
+
+    actions: list[IssueAction] = []
+    if changed_fields & ISSUE_ASSIGNMENT_FIELDS:
+        actions.append(IssueAction.ASSIGN)
+    if changed_fields & ISSUE_CONTENT_FIELDS:
+        actions.append(IssueAction.EDIT_CONTENT)
+    return actions
 
 
 @dataclass(frozen=True)

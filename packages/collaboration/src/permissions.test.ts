@@ -9,6 +9,7 @@ import {
   canAssignCollaborationIssue,
   canCommentCollaborationIssue,
   canEditCollaborationIssue,
+  canManageCollaborationIssueSecurity,
   canStartWorkOnCollaborationIssue,
   getCollaborationIssueActionPermissions,
 } from "./permissions";
@@ -168,5 +169,20 @@ describe("collaboration permissions", () => {
     expect(canStartWorkOnCollaborationIssue({ can_view_detail: false })).toBe(
       false,
     );
+  });
+
+  it("restricts issue security changes to maintainers and owners", () => {
+    const role = (
+      access_role: "Owner" | "Maintainer" | "Developer" | "Viewer",
+    ) =>
+      canManageCollaborationIssueSecurity({
+        access_role,
+        project_store: "backend",
+      });
+
+    expect(role("Owner")).toBe(true);
+    expect(role("Maintainer")).toBe(true);
+    expect(role("Developer")).toBe(false);
+    expect(role("Viewer")).toBe(false);
   });
 });
