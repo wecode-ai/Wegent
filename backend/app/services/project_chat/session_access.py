@@ -9,7 +9,9 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import ProjectChatCommentExecution
 from app.schemas.runtime_work import RuntimeTaskAddress, RuntimeTranscriptRequest
-from app.services.loop_item_executions.service import execution_transcript_task_id
+from app.services.loop_item_executions.runtime_identity import (
+    execution_conversation_task_id,
+)
 from app.services.project_chat.runtime_binding import collaboration_member_assignment
 from app.services.project_chat.service import project_chat_service
 
@@ -46,7 +48,7 @@ def resolve_project_transcript(
         row
         for row in candidates
         if request.local_task_id
-        in {row.runtime_task_id, execution_transcript_task_id(row)}
+        in {row.runtime_task_id, execution_conversation_task_id(row)}
     ]
     bindings = (
         db.query(LoopItemTaskBinding)
@@ -95,7 +97,7 @@ def resolve_project_transcript(
         raise HTTPException(404, "Project session binding not found")
     if len(owners) != 1:
         raise HTTPException(409, "Project session has conflicting execution owners")
-    task_ids = {execution_transcript_task_id(row) for row in executions}
+    task_ids = {execution_conversation_task_id(row) for row in executions}
     if len(task_ids) > 1:
         raise HTTPException(
             409, "Project session has conflicting Runtime task identities"

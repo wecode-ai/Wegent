@@ -7,6 +7,7 @@ fn cached_transcript_response(
     before_cursor: Option<&str>,
     after_cursor: Option<&str>,
 ) -> Value {
+    normalize_overload_recovery_messages(&mut messages, &link.runtime_handle);
     remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
     let turn_navigation = transcript_turn_navigation(&messages);
     let history_unavailable = !running
@@ -24,12 +25,18 @@ fn cached_transcript_response(
         messages,
         context_usage,
         running,
-        pagination: transcript_pagination(
-            &link.runtime,
-            limit,
-            before_cursor.map(ToOwned::to_owned),
-            after_cursor.map(ToOwned::to_owned),
-        ),
+        pagination: if runtime_has_provider_transcript_reader(&link.runtime) {
+            let (before_cursor, after_cursor) = transcript_snapshot_pagination(link)
+                .unwrap_or((None, None));
+            TranscriptPagination::Opaque { before_cursor, after_cursor }
+        } else {
+            transcript_pagination(
+                &link.runtime,
+                limit,
+                before_cursor.map(ToOwned::to_owned),
+                after_cursor.map(ToOwned::to_owned),
+            )
+        },
         full_content: false,
         conversation_context_only: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
@@ -48,6 +55,53 @@ fn cached_transcript_response(
         }
     }
     response
+}
+
+fn overload_recovery_turn_ids(runtime_handle: &Value) -> std::collections::HashSet<&str> {
+    runtime_handle
+        .get("overloadRecoveryTurnIds")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect()
+}
+
+fn normalize_overload_recovery_thread(thread: &mut Value, runtime_handle: &Value) {
+    let ids = overload_recovery_turn_ids(runtime_handle);
+    if let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) {
+        for turn in turns {
+            if turn
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| ids.contains(id))
+            {
+                turn["status"] = json!("completed");
+                turn.as_object_mut()
+                    .expect("turn is an object")
+                    .remove("error");
+            }
+        }
+    }
+}
+
+fn normalize_overload_recovery_messages(messages: &mut [Value], runtime_handle: &Value) {
+    let ids = overload_recovery_turn_ids(runtime_handle);
+    for message in messages {
+        if message
+            .get("turnId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| ids.contains(id))
+        {
+            let object = message
+                .as_object_mut()
+                .expect("transcript message is an object");
+            object.insert("status".to_owned(), json!("done"));
+            object.insert("runtimeStatus".to_owned(), json!("completed"));
+            object.remove("error");
+            object.remove("errorType");
+        }
+    }
 }
 
 pub(super) fn remove_superseded_transcript_turns(
@@ -93,43 +147,11 @@ fn merge_latest_completed_transcript_messages(
             .iter_mut()
             .find(|message| message_id.is_some() && string_field(message, "id") == message_id)
         {
-            *existing = merge_completed_transcript_message(existing, completed);
+            *existing = merge_assistant_transcript_message(existing, completed);
         } else {
             messages.push(completed);
         }
     }
-}
-
-fn merge_completed_transcript_message(existing: &Value, mut completed: Value) -> Value {
-    let (Some(existing), Some(completed_object)) =
-        (existing.as_object(), completed.as_object_mut())
-    else {
-        return completed;
-    };
-    for (key, value) in existing {
-        completed_object
-            .entry(key.clone())
-            .or_insert_with(|| value.clone());
-    }
-    let completed_has_blocks = completed_object
-        .get("blocks")
-        .and_then(Value::as_array)
-        .is_some_and(|blocks| !blocks.is_empty());
-    let existing_blocks = existing
-        .get("blocks")
-        .filter(|value| value.as_array().is_some_and(|blocks| !blocks.is_empty()));
-    if !completed_has_blocks {
-        if let Some(existing_blocks) = existing_blocks {
-            completed_object.insert("blocks".to_owned(), existing_blocks.clone());
-            if let Some(existing_runtime_items) = existing
-                .get("runtimeItems")
-                .filter(|value| value.as_array().is_some_and(|items| !items.is_empty()))
-            {
-                completed_object.insert("runtimeItems".to_owned(), existing_runtime_items.clone());
-            }
-        }
-    }
-    completed
 }
 
 #[derive(Clone, Copy)]

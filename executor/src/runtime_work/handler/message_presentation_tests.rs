@@ -1,6 +1,76 @@
 use super::*;
 
 #[test]
+fn overload_recovery_transcript_preserves_user_and_tools_without_terminal_failure() {
+    let handle = json!({"overloadRecoveryTurnIds": ["overloaded-turn"]});
+    let mut thread = json!({"turns": [
+        {"id": "overloaded-turn", "status": "failed", "error": {
+            "message": "Selected model is at capacity.",
+            "codexErrorInfo": "serverOverloaded"
+        }, "items": [
+            {"id": "user-1", "type": "userMessage", "content": [
+                {"type": "text", "text": "Original task"}
+            ]},
+            {"id": "tool-1", "type": "commandExecution", "command": "echo done",
+                "status": "completed", "aggregatedOutput": "done"}
+        ]},
+        {"id": "unrelated-failure", "status": "failed", "error": {
+            "message": "Permission denied"
+        }, "items": []}
+    ]});
+    let items = thread["turns"][0]["items"].clone();
+    normalize_overload_recovery_thread(&mut thread, &handle);
+    assert_eq!(thread["turns"][0]["status"], "completed");
+    assert!(thread["turns"][0].get("error").is_none());
+    assert_eq!(thread["turns"][0]["items"], items);
+    assert_eq!(thread["turns"][1]["status"], "failed");
+    assert_eq!(thread["turns"][1]["error"]["message"], "Permission denied");
+    let messages = transcript_messages(&thread, "device-1");
+    assert!(messages.iter().any(|message| message["role"] == "user"));
+    assert!(serde_json::to_string(&messages).unwrap().contains("tool-1"));
+    assert!(!messages.iter().any(|message| {
+        message["turnId"] == "overloaded-turn" && message["status"] == "failed"
+    }));
+
+    let mut cached = vec![
+        json!({"turnId": "overloaded-turn", "role": "user", "content": "Original task"}),
+        json!({"turnId": "overloaded-turn", "role": "assistant", "status": "failed",
+        "error": "Selected model is at capacity.", "blocks": [
+            {"type": "tool", "tool_output": "done"}
+        ]}),
+        json!({"turnId": "unrelated-failure", "role": "assistant", "status": "failed",
+            "error": "Permission denied"}),
+    ];
+    normalize_overload_recovery_messages(&mut cached, &handle);
+    assert_eq!(cached.len(), 3);
+    assert_eq!(cached[0]["content"], "Original task");
+    assert_eq!(cached[1]["status"], "done");
+    assert_eq!(cached[1]["blocks"][0]["tool_output"], "done");
+    assert!(cached[1].get("error").is_none());
+    assert_eq!(cached[2]["status"], "failed");
+}
+
+#[test]
+fn overload_recovery_turn_identity_survives_store_reload_without_duplicates() {
+    let index_path = temp_runtime_work_index_path("overload-recovery-store");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+    handler.record_overload_recovery_turn("task-1", "failed-turn");
+    handler.record_overload_recovery_turn("task-1", "failed-turn");
+    let reloaded = RuntimeWorkStore::new(index_path.clone());
+    assert_eq!(
+        reloaded.get_task("task-1").unwrap().runtime_handle["overloadRecoveryTurnIds"],
+        json!(["failed-turn"])
+    );
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn transcript_restores_native_references_from_saved_user_content() {
     for (original, provider) in [
         (
@@ -94,4 +164,95 @@ fn transcript_does_not_apply_provider_ranges_after_restoring_attachment_content(
     assert_eq!(messages[0]["content"], original);
     assert!(messages[0].get("presentationReferences").is_none());
     assert_eq!(messages[0]["attachments"][0]["filename"], "abc.pdf");
+}
+
+#[tokio::test]
+async fn goal_continuation_events_do_not_reuse_initial_user_presentation() {
+    let (event_tx, mut event_rx) = broadcast::channel(16);
+    let index_path = temp_runtime_work_index_path("goal-continuation-event-presentation");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.record_runtime_turn_id("task-1", "subtask-1", "turn-initial", Some("client-1"));
+    handler.record_runtime_turn_id("task-1", "turn-next", "turn-next", None);
+    let request = ExecutionRequest {
+        task_id: "task-1".to_owned(),
+        subtask_id: "subtask-1".to_owned(),
+        extra: serde_json::from_value(json!({
+            "client_user_message_id": "client-1",
+            "clientUserMessageId": "client-1",
+            "runtime_generated_user_message": true,
+        }))
+        .unwrap(),
+        ..ExecutionRequest::default()
+    };
+    let active = ActiveCodexTurn {
+        execution_id,
+        thread_id: "thread-1".to_owned(),
+        turn_id: "turn-next".to_owned(),
+    };
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-next");
+    let mut mapper = CodexNotificationEventMapper::default();
+    handler.map_execution_codex_notification(
+        "task-1", execution_id, &request, Some(active.clone()), &mut mapper,
+        json!({"method": "item/started", "params": {
+            "threadId": "thread-1", "turnId": "turn-next",
+            "item": {"id": "message-next", "type": "agentMessage", "phase": "final_answer", "text": ""},
+        }}),
+    ).await;
+    handler
+        .map_execution_codex_notification(
+            "task-1",
+            execution_id,
+            &request,
+            Some(active.clone()),
+            &mut mapper,
+            json!({"method": "item/agentMessage/delta", "params": {
+                "threadId": "thread-1", "turnId": "turn-next", "itemId": "message-next",
+                "delta": "Continuation output",
+            }}),
+        )
+        .await;
+    handler.handle_turn_result(
+        "task-1",
+        execution_id,
+        &request,
+        Some(&active),
+        Ok(crate::agents::CodexAppServerTurn {
+            thread_id: "thread-1".to_owned(),
+            outcome: ExecutionOutcome::Completed {
+                content: "Continuation output".to_owned(),
+            },
+            response_item_id: Some("message-next".to_owned()),
+            response_value_origin: crate::agents::CodexResponseValueOrigin::Final,
+            goal_status: None,
+            goal_status_observed: false,
+            started_at_ms: None,
+            completed_at_ms: None,
+            duration_ms: None,
+        }),
+    );
+    let mut events = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        events.push(event);
+    }
+    assert!(events
+        .iter()
+        .any(|event| event["event"] == "response.completed"));
+    assert!(events
+        .iter()
+        .any(|event| event["event"] == "response.output_text.delta"));
+    for event in events {
+        assert_eq!(event["payload"]["subtaskId"], "turn-next");
+        assert!(event["payload"].get("clientUserMessageId").is_none());
+        assert!(event["payload"]
+            .get("runtimeGeneratedUserMessage")
+            .is_none());
+    }
+    let _ = fs::remove_file(index_path);
 }

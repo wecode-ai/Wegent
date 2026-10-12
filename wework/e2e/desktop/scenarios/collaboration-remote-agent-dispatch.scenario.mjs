@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -802,6 +803,7 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await captureScreenshot(control, 'remote-agent-dispatch-01-running.png', CONTENT)
+        await verifyExecutionActivityOrder(control, scoped, 'running', uiTimeoutMs)
       } finally {
         releaseModel()
       }
@@ -855,6 +857,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'remote-agent-dispatch-02-in-review.png', CONTENT)
+      await verifyExecutionActivityOrder(control, scoped, 'completed', uiTimeoutMs)
 
       const executions = await request(
         `/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`

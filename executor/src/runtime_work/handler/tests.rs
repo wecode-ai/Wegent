@@ -74,33 +74,42 @@ fn runtime_proxy_configuration_precedes_persisted_turn_recovery() {
     ));
 }
 
-#[tokio::test]
-async fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
-    let (event_tx, _) = broadcast::channel(1);
-    let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
-        "device-1",
-        "/bin/false",
-        event_tx,
-    );
-    assert!(handler.startup_recovery_deferred.load(Ordering::Acquire));
+#[test]
+fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let (event_tx, _) = broadcast::channel(1);
+            let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+                "device-1",
+                "/bin/false",
+                event_tx,
+            );
+            assert!(handler.startup_recovery_deferred.load(Ordering::Acquire));
 
-    handler
-        .dispatch(
-            "runtime.codex.runtime_config.update",
-            json!({"proxyUrl": "http://127.0.0.1:7890"}),
-        )
-        .await
-        .expect("runtime proxy configuration should succeed before recovery");
+            handler
+                .dispatch(
+                    "runtime.codex.runtime_config.update",
+                    json!({"proxyUrl": "http://127.0.0.1:7890"}),
+                )
+                .await
+                .expect("runtime proxy configuration should succeed before recovery");
 
-    let config = handler.codex_runtime_proxy_config.lock().await;
-    assert!(config.initialized);
-    assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
-    drop(config);
-    assert!(
-        handler.worktree_reconciliation_state.lock().await.completed,
-        "successful runtime proxy configuration should release deferred recovery"
-    );
-    assert!(!handler.startup_recovery_deferred.load(Ordering::Acquire));
+            let config = handler.codex_runtime_proxy_config.lock().await;
+            assert!(config.initialized);
+            assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+            drop(config);
+            assert!(
+                handler.worktree_reconciliation_state.lock().await.completed,
+                "successful runtime proxy configuration should release deferred recovery"
+            );
+            assert!(!handler.startup_recovery_deferred.load(Ordering::Acquire));
+        });
 }
 
 #[test]
@@ -1271,6 +1280,39 @@ fn codex_cached_transcripts_never_expose_offset_pagination() {
     ));
 }
 
+#[tokio::test]
+async fn running_codex_older_page_bypasses_live_cache() {
+    let (handler, root) = isolated_runtime_work_handler("running-older-page");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    set_transcript_snapshot_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "latest", "role": "assistant", "content": "Cached output"
+        })],
+        Some("native-before".to_owned()),
+        None,
+    );
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+    let result = handler.handle_runtime_rpc(json!({
+        "method": "runtime.tasks.transcript",
+        "payload": {"taskId": "task-1", "workspacePath": "/tmp/project", "beforeCursor": "native-before"}
+    })).await;
+    // /bin/false cannot provide older records: returning cached latest records
+    // would incorrectly hide this provider read failure.
+    assert!(
+        result.is_err(),
+        "older pages must be read from native history"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn latest_codex_transcript_prefers_completed_notification_cache() {
     let mut link = RuntimeTaskLink::new_pending(
@@ -1487,6 +1529,30 @@ fn active_codex_items_replace_stale_paginated_items() {
 }
 
 #[test]
+fn live_codex_items_do_not_mark_partial_history_complete() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed",
+            "params": {"turnId": "turn-1", "item": {
+                "id": "latest", "type": "agentMessage", "text": "Latest output"
+            }}
+        }),
+    );
+    for view in ["summary", "notLoaded", "full"] {
+        let mut thread = json!({"turns": [{
+            "id": "turn-1", "itemsView": view, "items": []
+        }]});
+        handler.merge_active_codex_transcript("task-1", &mut thread);
+        assert_eq!(thread["turns"][0]["itemsView"], view);
+        assert_eq!(thread["turns"][0]["items"].as_array().unwrap().len(), 1);
+    }
+}
+
+#[test]
 fn active_codex_plan_deltas_restore_complete_streaming_content() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
@@ -1656,6 +1722,8 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
                 "createdAt": 1_779_999_999_500_i64,
             }),
         ],
+        Some("native-before".to_owned()),
+        None,
     );
     set_runtime_handle_messages(
         &mut link.runtime_handle,
@@ -1742,6 +1810,8 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         .expect("running transcript should use the live cache");
 
     assert_eq!(transcript["running"], true);
+    assert_eq!(transcript["hasMoreBefore"], true);
+    assert_eq!(transcript["beforeCursor"], "native-before");
     assert_eq!(transcript["messages"].as_array().unwrap().len(), 5);
     assert_eq!(transcript["messages"][0]["content"], "Explain the approach");
     assert_eq!(
@@ -1782,6 +1852,8 @@ async fn running_codex_transcript_deduplicates_cached_and_live_user_aliases() {
         "Task".to_owned(),
     );
     link.thread_id = Some("thread-1".to_owned());
+    // Native history was loaded before the subsequent notification-only updates.
+    set_transcript_snapshot_messages(&mut link.runtime_handle, "thread-1", Vec::new(), None, None);
     set_runtime_handle_messages(
         &mut link.runtime_handle,
         vec![json!({
@@ -1862,6 +1934,8 @@ async fn running_codex_transcript_binds_same_second_presentations_to_provider_tu
         "Task".to_owned(),
     );
     link.thread_id = Some("thread-1".to_owned());
+    // Native history was loaded before the subsequent notification-only updates.
+    set_transcript_snapshot_messages(&mut link.runtime_handle, "thread-1", Vec::new(), None, None);
     for (index, content) in [
         "First instruction",
         "Second instruction",
@@ -1983,6 +2057,8 @@ async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes()
         "Task".to_owned(),
     );
     link.thread_id = Some("thread-1".to_owned());
+    // Native history was loaded before the subsequent notification-only updates.
+    set_transcript_snapshot_messages(&mut link.runtime_handle, "thread-1", Vec::new(), None, None);
     set_runtime_handle_messages(
         &mut link.runtime_handle,
         vec![json!({
@@ -2077,6 +2153,8 @@ fn recording_a_new_provider_thread_clears_completed_transcript_cache() {
         &mut link.runtime_handle,
         "thread-1",
         vec![json!({"id": "snapshot-message-1", "role": "assistant"})],
+        Some("native-before".to_owned()),
+        None,
     );
     handler.upsert_local_task(link);
 

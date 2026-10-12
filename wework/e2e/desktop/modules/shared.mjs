@@ -192,6 +192,7 @@ const BACKGROUND_FOLLOW_UP_RESTORE_TEXT = 'WEWORK_DESKTOP_E2E_BACKGROUND_FOLLOW_
 const WINDOW_LIFECYCLE_SCROLL_MARKER = 'WEWORK_DESKTOP_E2E_SCROLL_POSITION_MARKER'
 const GOAL_IDLE_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_IDLE: create an active goal and keep it active for one continuation.'
+const GOAL_IDLE_CONTINUATION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_CONTINUATION_RUNNING'
 const GOAL_IDLE_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
 const GOAL_IDLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_COMPLETE'
 const GOAL_IDLE_FOLLOW_UP_PROMPT =
@@ -414,7 +415,19 @@ const CLOUD_MODEL_CASES = MODEL_PROTOCOLS.map(protocol => ({
       : protocol === 'chat'
         ? 'moonshot-kimi-k3'
         : `desktop-e2e-cloud-${protocol}-upstream`,
+  ...(protocol === 'responses'
+    ? { requestMode: 'passthrough', reasoning: { effort: 'high', summary: 'detailed' } }
+    : {}),
 }))
+CLOUD_MODEL_CASES.push({
+  source: 'cloud',
+  protocol: 'responses',
+  optionIds: ['desktop-e2e-cloud-responses-standard'],
+  labels: ['moonshot-kimi-k3-responses'],
+  modelId: 'moonshot-kimi-k3-responses',
+  requestMode: 'standard',
+  reasoning: { summary: 'detailed' },
+})
 const MODEL_PROTOCOL_MATRIX_CASES = [
   ...LOCAL_MODEL_CASES.map(model => ({ ...model, source: 'local' })),
   ...MODEL_PROTOCOLS.map(protocol => ({
@@ -1691,6 +1704,7 @@ export {
   WINDOW_LIFECYCLE_SCROLL_MARKER,
   GOAL_IDLE_PROMPT,
   GOAL_IDLE_INITIAL_TEXT,
+  GOAL_IDLE_CONTINUATION_TEXT,
   GOAL_IDLE_COMPLETION_TEXT,
   GOAL_IDLE_FOLLOW_UP_PROMPT,
   GOAL_IDLE_FOLLOW_UP_TEXT,

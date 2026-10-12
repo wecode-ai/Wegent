@@ -1101,6 +1101,7 @@ def test_issue_actions_are_authorized_independently(
 ) -> None:
     reporter, reporter_token = _user(test_db, f"reporter-{uuid.uuid4().hex[:8]}")
     maintainer, maintainer_token = _user(test_db, f"maintainer-{uuid.uuid4().hex[:8]}")
+    viewer, viewer_token = _user(test_db, f"viewer-{uuid.uuid4().hex[:8]}")
     workspace = test_client.post(
         "/api/v1/workspaces",
         headers=_auth(test_token),
@@ -1113,7 +1114,11 @@ def test_issue_actions_are_authorized_independently(
     )
     assert project_response.status_code == 201
     project = project_response.json()
-    for user, role in ((reporter, "Developer"), (maintainer, "Maintainer")):
+    for user, role in (
+        (reporter, "Developer"),
+        (maintainer, "Maintainer"),
+        (viewer, "Viewer"),
+    ):
         response = test_client.post(
             f"/api/v1/cloud-projects/{project['id']}/members",
             headers=_auth(test_token),
@@ -1137,8 +1142,19 @@ def test_issue_actions_are_authorized_independently(
     assert reporter_view.json()["permissions"] == {
         "edit_content": True,
         "comment": True,
-        "assign": False,
+        "assign": True,
         "execute": True,
+    }
+    viewer_view = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=_auth(viewer_token),
+    )
+    assert viewer_view.status_code == 200
+    assert viewer_view.json()["permissions"] == {
+        "edit_content": False,
+        "comment": False,
+        "assign": False,
+        "execute": False,
     }
     assert (
         test_client.post(
@@ -1160,6 +1176,18 @@ def test_issue_actions_are_authorized_independently(
         test_client.post(
             f"/api/v1/loop-items/{issue['id']}/assignments",
             headers=_auth(reporter_token),
+            json={
+                "target_type": "human",
+                "target_id": str(test_user.id),
+                "workflow_step": "开发",
+            },
+        ).status_code
+        == 201
+    )
+    assert (
+        test_client.post(
+            f"/api/v1/loop-items/{issue['id']}/assignments",
+            headers=_auth(viewer_token),
             json={
                 "target_type": "human",
                 "target_id": str(reporter.id),

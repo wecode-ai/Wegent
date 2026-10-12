@@ -378,8 +378,8 @@ jobs:
         with:
           setup-toolchain: "false"
 
-      - name: Install Electron for workbench schema verification
-        if: contains(matrix.segments, 'workbench-mode')
+      - name: Install Electron for native startup and schema verification
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         run: pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Run Wework desktop Core shard E2E
@@ -682,6 +682,10 @@ jobs:
           }
           "WEWORK_E2E_MYSQLD_BIN=$mysqlServerPath" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install Electron for native startup and schema verification
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        run: pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e

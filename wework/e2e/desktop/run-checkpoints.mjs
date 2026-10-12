@@ -36,6 +36,10 @@ const CHECKPOINT_RESOURCES = new Map([
   ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  [
+    'collaboration-remote-group-planning-details',
+    ['collaboration-runtime', 'desktop-runtime-intensive'],
+  ],
   ['collaboration-human-round-resume', ['collaboration-runtime', 'desktop-runtime-intensive']],
   [
     'collaboration-local-group-cancellation',
@@ -47,6 +51,7 @@ const CHECKPOINT_RESOURCES = new Map([
 const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
+  'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
   'cloud-model-presets': './scenarios/cloud-model-presets.scenario.mjs',
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
   'plugin-uninstall-resilience': './scenarios/plugin-uninstall-resilience.scenario.mjs',
@@ -70,6 +75,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'codex-invalid-launch-cwd': './scenarios/codex-invalid-launch-cwd.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
+  'model-overload-recovery': './scenarios/model-overload-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
   'running-plan-history': './scenarios/running-plan-history.scenario.mjs',
@@ -100,6 +106,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-group-coordinate.scenario.mjs',
   'collaboration-remote-group-coordinate':
     './scenarios/collaboration-remote-group-coordinate.scenario.mjs',
+  'collaboration-remote-group-planning-details':
+    './scenarios/collaboration-remote-group-planning-details.scenario.mjs',
   'collaboration-human-round-resume': './scenarios/collaboration-human-round-resume.scenario.mjs',
   'collaboration-local-group-cancellation':
     './scenarios/collaboration-local-group-cancellation.scenario.mjs',
@@ -113,6 +121,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'drawing-attachment': './scenarios/drawing-attachment.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
   'send-key-preference': './scenarios/send-key-preference.scenario.mjs',
+  'reply-predictions': './scenarios/reply-predictions.scenario.mjs',
+  'model-settings': './scenarios/model-settings.scenario.mjs',
   'system-proxy': './scenarios/system-proxy.scenario.mjs',
   'system-pac': './scenarios/system-pac.scenario.mjs',
   'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
@@ -120,8 +130,11 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'model-settings',
+  'reply-predictions',
   'collaboration-worktree-policy',
   'cloud-model-recovery',
+  'task-model-deletion',
   'cloud-model-presets',
   'plugin-account-auth',
   'plugin-uninstall-resilience',
@@ -143,6 +156,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
   'collaboration-remote-group-coordinate',
+  'collaboration-remote-group-planning-details',
   'collaboration-human-round-resume',
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
@@ -155,6 +169,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'runtime-task-queue',
   'codex-invalid-launch-cwd',
   'executor-stream-recovery',
+  'model-overload-recovery',
   'transcript-sync',
   'running-conversation-history',
   'running-plan-history',

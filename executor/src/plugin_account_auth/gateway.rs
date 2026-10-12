@@ -365,6 +365,10 @@ mod tests {
         fn on(&self, _: &str, _: EventHandler) {
             panic!("credentials must not use subscriptions")
         }
+
+        fn on_close(&self, _: crate::local::backend::ConnectionClosedHandler) {
+            panic!("credentials must not use subscriptions")
+        }
     }
 
     fn connection() -> ConnectionMetadata {

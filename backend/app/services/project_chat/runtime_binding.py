@@ -42,9 +42,11 @@ def collaboration_manager_task_id(
     db: Session, dispatch: LoopItemExecution, activity: ProjectChatMessage
 ) -> str:
     """Resolve manager identity from recorded rounds, including historical cards."""
-    from app.services.loop_item_executions.service import execution_transcript_task_id
+    from app.services.loop_item_executions.runtime_identity import (
+        execution_conversation_task_id,
+    )
 
-    initial = execution_transcript_task_id(dispatch)
+    initial = execution_conversation_task_id(dispatch)
     current = initial
     known_ids = {initial}
     dispatch_id = dispatch.runtime_origin_context.get("dispatch_id")

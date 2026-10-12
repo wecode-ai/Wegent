@@ -73,6 +73,8 @@ pub(super) async fn invoke(
         .current_dir(working_directory.unwrap_or(&adapter.root))
         .env_clear()
         .envs(native_environment())
+        // Imports must not mutate the verified, shared plugin package.
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("WEGENT_PLUGIN_AUTH_PORT", port.to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

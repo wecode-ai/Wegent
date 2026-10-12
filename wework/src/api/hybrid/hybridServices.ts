@@ -1,3 +1,10 @@
+import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
+import {
+  createWorkbenchDeviceResolver,
+  getWorkbenchDeviceIds,
+  mergeDeviceLists,
+} from '@/lib/workbench-device'
+import { mergeRuntimeWorkLists as mergeRuntimeWorkPair } from '@/features/workbench/runtimeWorkMerge'
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { runtimeExecutionSnapshot } from '@wegent/chat-core/runtime-execution-snapshot'
 import { ApiError, createHttpClient } from '@/api/http'
@@ -33,13 +40,8 @@ import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capa
 import { shouldUseCloudDeviceCommand } from '@extensions/device-command-routing'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
-import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
-import {
-  EMPTY_RUNTIME_WORK,
-  mergeDeviceLists,
-  mergeRuntimeWorkLists as mergeRuntimeWorkPair,
-} from '@/features/workbench/workbenchCloudStatus'
+import { EMPTY_RUNTIME_WORK } from '@/features/workbench/workbenchCloudStatus'
 import { supportsCloudExecution } from '@/features/cloud-connection/modelExecution'
 import type {
   Attachment,
@@ -330,7 +332,7 @@ function projectCloudRuntimeEventDeviceId(
   const eventDeviceId = cloudDeviceIdFromData(event.payload)
   if (!eventDeviceId) return event
 
-  const device = devices.find(candidate => getWorkbenchDeviceIds(candidate).includes(eventDeviceId))
+  const device = createWorkbenchDeviceResolver(devices).resolve(eventDeviceId)
   const logicalDeviceId = device?.device_id.trim()
   if (!logicalDeviceId || logicalDeviceId === eventDeviceId) return event
 
@@ -606,43 +608,31 @@ export function createHybridWorkbenchServices(
       throw new Error('executor-not-found:missing-device-id')
     }
 
-    let localDevice = rememberedLocalDevices.find(device =>
-      deviceMatchesId(device, normalizedDeviceId)
-    )
-    let remoteDevice = rememberedCloudDevices.find(device =>
-      deviceMatchesId(device, normalizedDeviceId)
-    )
-    let currentAppDevice = currentAppDeviceRegistrations().find(device =>
-      deviceMatchesId(device, normalizedDeviceId)
-    )
-
-    if (!localDevice && !remoteDevice && !currentAppDevice) {
-      localDevice = (await listLocalDevices()).find(device =>
-        deviceMatchesId(device, normalizedDeviceId)
-      )
-      currentAppDevice = currentAppDeviceRegistrations().find(device =>
-        deviceMatchesId(device, normalizedDeviceId)
-      )
+    const resolveDevice = () =>
+      createWorkbenchDeviceResolver([
+        ...rememberedLocalDevices,
+        ...currentAppDeviceRegistrations(),
+        ...rememberedCloudDevices,
+      ]).resolve(normalizedDeviceId)
+    let device = resolveDevice()
+    if (!device) {
+      await listLocalDevices()
+      device = resolveDevice()
     }
-    if (!localDevice && !remoteDevice && !currentAppDevice) {
-      remoteDevice = (await listCloudDevices()).find(device =>
-        deviceMatchesId(device, normalizedDeviceId)
-      )
-      currentAppDevice = currentAppDeviceRegistrations().find(device =>
-        deviceMatchesId(device, normalizedDeviceId)
-      )
+    if (!device) {
+      await listCloudDevices()
+      device = resolveDevice()
     }
-
-    const device = localDevice ?? currentAppDevice ?? remoteDevice
     if (!device) {
       throw new Error(`executor-not-found:${normalizedDeviceId}`)
     }
     if (!isUsableDevice(device)) {
       throw new Error(`executor-offline:${normalizedDeviceId}`)
     }
-    if (localDevice || currentAppDevice) return localServices.runtimeWorkApi!
+    if (device.device_type === 'local' || device.device_type === 'app')
+      return localServices.runtimeWorkApi!
     if (isCloudDevice(device) || isRemoteDevice(device)) {
-      return cloudRuntimeApi(normalizedDeviceId)
+      return cloudRuntimeApi(device.device_id)
     }
     throw new Error(`executor-not-found:${normalizedDeviceId}`)
   }
@@ -700,7 +690,11 @@ export function createHybridWorkbenchServices(
     return removeCurrentAppCloudRuntimeWork(
       results.reduce(
         (merged, result) =>
-          result.status === 'fulfilled' ? mergeRuntimeWorkPair(merged, result.value) : merged,
+          result.status === 'fulfilled'
+            ? mergeRuntimeWorkPair(merged, result.value, {
+                devices: mergeKnownDevices(localDevices, devices),
+              })
+            : merged,
         EMPTY_RUNTIME_WORK
       ),
       localDeviceIds
@@ -1469,6 +1463,17 @@ export function createHybridWorkbenchServices(
     },
     branchNameApi: localServices.branchNameApi,
     textGenerationApi: localServices.textGenerationApi,
+    replyPredictionApi: {
+      async predict(data) {
+        const api = await runtimeApiForDevice(data.address.deviceId)
+        if (api === localServices.runtimeWorkApi) {
+          return localServices.replyPredictionApi!.predict(data)
+        }
+        return createReplyPredictionApi((method, params) =>
+          cloudRuntimeIpc.request(method, params, data.address.deviceId)
+        ).predict(data)
+      },
+    },
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     localExecutionServices: localProjectServices,

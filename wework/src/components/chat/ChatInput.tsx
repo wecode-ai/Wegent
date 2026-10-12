@@ -56,6 +56,8 @@ import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/mo
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
+import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -145,6 +147,7 @@ export interface ProjectWorkControls {
 }
 
 export interface ChatInputProps {
+  predictionAddress?: RuntimeTaskAddress | null
   presentation?: 'chat' | 'document'
   value: string
   onChange: (value: string) => void
@@ -254,7 +257,7 @@ function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel 
 function codexConversationProvider(
   model: UnifiedModel | null | undefined
 ): 'openai' | 'router' | null {
-  if (!model) return null
+  if (!model || model.name === CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME) return null
   const configuredKind =
     typeof model.config?.weworkModelKind === 'string'
       ? model.config.weworkModelKind
@@ -275,7 +278,33 @@ function requiresNewConversationForModelSwitch(
   return Boolean(activeProvider && targetProvider && activeProvider !== targetProvider)
 }
 
-export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
+export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
+  function ChatInput(props, ref) {
+    return (
+      <ReplyPredictionProvider
+        address={
+          props.predictionAddress === undefined
+            ? props.projectWork?.currentRuntimeTask
+            : props.predictionAddress
+        }
+        blocked={
+          props.disabled ||
+          props.isStreaming ||
+          Boolean(
+            props.projectChat?.attachments.length ||
+            props.projectChat?.uploadingFiles.size ||
+            props.codeComments?.length ||
+            props.projectChat?.selectedSkills.length
+          )
+        }
+      >
+        <ChatInputBody {...props} ref={ref} />
+      </ReplyPredictionProvider>
+    )
+  }
+)
+
+const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInputBody(
   {
     value,
     presentation,
@@ -828,6 +857,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           onSelectModelOption={controls.setSelectedModelOption}
           onBlockedModelSelect={controls.onBlockedModelSelect}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
+          modelSelectorOverride={modelSelectorOverride}
           isStreaming={isStreaming}
           onPause={onPause}
           projectPhrases={projectQuickPhrases}

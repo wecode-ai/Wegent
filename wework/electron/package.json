@@ -1,7 +1,8 @@
 {
   "name": "@wegent/wework-electron",
   "private": true,
-  "version": "0.5.7",
+  "packageManager": "pnpm@11.7.0",
+  "version": "0.5.8",
   "description": "Wework desktop workbench",
   "author": "Wecode",
   "type": "module",

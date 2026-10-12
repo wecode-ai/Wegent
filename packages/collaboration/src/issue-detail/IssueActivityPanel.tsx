@@ -14,9 +14,12 @@ import { isSingleActivityExecution } from "@wegent/chat-core/activity-execution-
 import { IssueActivityFeed } from "./IssueActivityFeed";
 import { IssueMarkdownProvider } from "./IssueMarkdownProvider";
 import { IssueWebCommentComposer } from "./IssueWebCommentComposer";
-import { groupIssueActivityThreads } from "./IssueActivityThread";
+import { groupIssueTimelineThreads } from "./IssueActivityThread";
 import { IssueActivityContent } from "./IssueActivityContent";
-import { compareIssueTimestamps } from "./issueTimestamp";
+import {
+  compareIssueTimestamps,
+  issueThreadActivityTimestamp,
+} from "./issueTimestamp";
 import { IssueActivityMarkdown } from "./IssueActivityMarkdown";
 import { IssueProjectChatThread } from "./IssueProjectChatThread";
 import { useIssueProjectChat } from "./useIssueProjectChat";
@@ -144,7 +147,7 @@ export function IssueActivityPanel({
     cardTestIdPrefix: "collaboration-chat-card-",
   });
   const threads = useMemo(
-    () => groupIssueActivityThreads(chat.messages),
+    () => groupIssueTimelineThreads(chat.messages),
     [chat.messages],
   );
   const addressedMessages = useMemo(
@@ -265,12 +268,17 @@ export function IssueActivityPanel({
           {[
             ...threads.map((thread) => ({
               kind: "thread" as const,
-              at: thread.root.createdAt,
+              at: issueThreadActivityTimestamp(thread),
               thread,
             })),
             ...entries,
           ]
-            .sort((left, right) => compareIssueTimestamps(left.at, right.at))
+            .sort(
+              (left, right) =>
+                compareIssueTimestamps(left.at, right.at) ||
+                Number(left.kind === "thread") -
+                  Number(right.kind === "thread"),
+            )
             .map((entry) => {
               if (entry.kind === "thread")
                 return (

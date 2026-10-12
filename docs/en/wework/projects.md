@@ -78,7 +78,7 @@ When two or more agents are selected, the creation flow recommends organizing th
 
 ### Set cloud board access
 
-Cloud projects have two access modes: **Private** and **Public**. A public project grants every signed-in user the Viewer (read-only) or Developer (create and edit issues) role. A private project is available only through existing grants. Project roles are Owner, Maintainer, Developer, and Viewer. Owners manage the project and members; Maintainers can also manage issue security and assignments.
+Cloud projects have two access modes: **Private** and **Public**. A public project grants every signed-in user the Viewer (read-only) or Developer (create and edit issues) role. A private project is available only through existing grants. Project roles are Owner, Maintainer, Developer, and Viewer. Owners manage the project and members; Maintainers can also manage issue security. Developers and above can assign the issue owner, and the issue creator can always assign their own issue.
 
 Issue visibility is set separately during project creation, in project settings, and on each issue. Choose whether new issues default to **Visible to project members** or **Related people only** when creating the project; Maintainers can change the default or individual issues later. Owners and Maintainers see every issue. Other users see open issues and issues related to them: issues they created, are assigned to, collaborate on, have an active execution task for, or that are assigned to a robot they created. Unrelated issues are omitted from boards, tables, execution lists, and project conversations. Opening one directly returns not found.
 

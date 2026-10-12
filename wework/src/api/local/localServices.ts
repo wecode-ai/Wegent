@@ -6,7 +6,12 @@ import {
   type RunnerSelection,
 } from '@wegent/collaboration'
 import type { RunnerEnvironment, RunnerModel } from '@wegent/collaboration'
+import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import { createLocalProjectAutomationApi } from './localProjectAutomations'
+import {
+  cancellableTextGeneration,
+  textGenerationRequest,
+} from '@/features/reply-predictions/textGenerationCancellation'
 import {
   createRuntimeComposerApi,
   decodeRuntimeSkills,
@@ -33,7 +38,8 @@ import { listLocalInstalledPluginsFromDisk } from '@/api/local/codexPlugins'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import type { RuntimeWorkListRequestOptions } from '@/api/runtimeWork'
 import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
-import { parseRuntimeRemoteProjectStateId } from '@/lib/runtime-project-state'
+import { parseRuntimeRemoteProjectStateId } from '@/lib/runtime-project-identity'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import i18n from '@/i18n'
 import type {
   ArchivedConversationsListRequest,
@@ -216,6 +222,7 @@ import {
   CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION,
   CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
   CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
+  CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
@@ -1054,6 +1061,13 @@ function localRuntimeModelConfig(
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
     const nativeByDefault = upstreamApiFormat === 'openai-responses'
+    const codexRequestMode = modelOptions?.[CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION] ?? 'auto'
+    if (
+      !['auto', 'standard', 'passthrough'].includes(codexRequestMode) ||
+      (codexRequestMode === 'passthrough' && upstreamApiFormat !== 'openai-responses')
+    ) {
+      throw new Error('Invalid Codex request mode for the selected model protocol')
+    }
     const nativeToolSearch =
       modelOptions?.[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION] == null
         ? nativeByDefault
@@ -1072,6 +1086,7 @@ function localRuntimeModelConfig(
       codex_catalog_model_id: primaryCodexCatalogModelId,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: upstreamApiFormat,
+      codex_request_mode: codexRequestMode,
       native_tool_search: nativeToolSearch,
       native_namespace_tools: nativeNamespaceTools,
       tool_profile: 'custom',
@@ -1174,6 +1189,7 @@ async function harnessProxyUpstream(
     convert_custom_tools: config.tool_profile === 'function',
     native_tool_search: nativeToolSearch,
     native_namespace_tools: nativeNamespaceTools,
+    codex_request_mode: recordString(config.codex_request_mode) ?? 'auto',
     api_key: apiKey,
     default_headers: headers,
     proxy_url: await resolveLocalCodexProxyUrl(requestUrl),
@@ -2044,7 +2060,10 @@ function normalizeRuntimeWorkDeviceId(
 
     return {
       ...workspace,
-      deviceId: localDeviceId,
+      deviceId:
+        workspace.workspaceSource === 'remote' && workspace.remoteHostId
+          ? workspace.remoteHostId
+          : localDeviceId,
       deviceName:
         stringValue(workspaceRecord.deviceName) ??
         stringValue(workspaceRecord.device_name) ??
@@ -2131,22 +2150,6 @@ function adaptRuntimeWorkListResponse(
   const projectsByKey = new Map<string, RuntimeWorkListResponse['projects'][number]>()
   const chats: RuntimeWorkListResponse['chats'] = []
   let totalTasks = 0
-  const localWorkspaceLabels = new Set<string>()
-  for (const rawWorkspace of workspaces) {
-    const workspace = recordValue(rawWorkspace)
-    const workspacePath =
-      stringValue(workspace.workspacePath) ??
-      stringValue(workspace.workspace_path) ??
-      stringValue(workspace.projectWorkspacePath) ??
-      stringValue(workspace.project_workspace_path) ??
-      stringValue(workspace.cwd) ??
-      stringValue(workspace.path)
-    if (!workspacePath) continue
-    const workspaceSource =
-      stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source)
-    if (workspaceSource && workspaceSource !== 'local') continue
-    localWorkspaceLabels.add(workspaceLabel(workspacePath, workspace.label))
-  }
 
   for (const rawWorkspace of workspaces) {
     const workspace = recordValue(rawWorkspace)
@@ -2182,9 +2185,6 @@ function adaptRuntimeWorkListResponse(
       stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id)
     const workspaceDeviceId =
       workspaceSource === 'remote' && remoteHostId ? remoteHostId : localDeviceId
-    if (rawTasks.length === 0 && workspaceSource === 'remote' && localWorkspaceLabels.has(label)) {
-      continue
-    }
     const workspaceId = stableLocalId(`${workspaceDeviceId}\0${workspacePath}`)
     const deviceWorkspace: RuntimeDeviceWorkspace = {
       id: workspaceId,
@@ -2293,14 +2293,17 @@ function adaptRuntimeWorkListResponse(
             ...(projectQuickPhrases.length > 0 ? { quickPhrases: projectQuickPhrases } : {}),
           }
         : null
+    const remoteTarget =
+      projectSource === 'remote_project' ? parseRuntimeRemoteProjectStateId(projectKey) : null
     const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
         key: projectKey,
         ...(projectSource === 'remote_project' ? { sidebarStateKey: projectKey } : {}),
-        id:
-          projectSource === 'remote_project'
-            ? workspaceId
-            : stableLocalId(`${localDeviceId}\0${projectKey}`),
+        id: runtimeProjectUiId({
+          key: remoteTarget?.projectKey ?? projectKey,
+          stateDeviceId: remoteTarget ? workspaceDeviceId : localDeviceId,
+          name: label,
+        }),
         name: label,
         kind: projectKind,
         source: projectSource,
@@ -4162,99 +4165,111 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return { data }
     },
   }
+  const replyPredictionApi = createReplyPredictionApi(async (method, params, signal) => {
+    const normalized = normalizeLocalDeviceRecord(params, await getLocalDeviceId())
+    signal?.throwIfAborted()
+    return request(method, normalized)
+  })
   const textGenerationApi: NonNullable<WorkbenchServices['textGenerationApi']> = {
     async generateText(data) {
-      const deviceId = data.deviceId?.trim() || (await getLocalDeviceId())
-      data.onProgress?.('preparing')
-      if (!(await runtimeWorkApi.prepareRuntimeModel({ deviceId, modelId: data.modelId }))) {
-        throw modelCatalogSyncCancelled()
-      }
-      const prompt = data.prompt.trim()
-      if (!prompt) throw new Error('Text generation prompt is required')
-      const generationTaskId = `text-generation-${createRuntimeTurnSeed()}`
-      const executionRequest = await buildLocalRuntimeExecutionRequest({
-        taskId: generationTaskId,
-        runtime: 'codex',
-        title: data.title?.trim() || 'Generate text',
-        message: prompt,
-        turnSeed: createRuntimeTurnSeed(),
-        modelId: data.modelId,
-        modelType: data.modelType,
-        modelOptions: data.modelOptions,
-        cloudModelGateway: deps.cloudModelGateway,
-        resolveProxy,
-        localDeviceId: deviceId,
-        workspaceSource: 'local_path',
-        newSession: true,
-        ephemeral: true,
-        requireLocalCodexCatalog: true,
-        user: deps.user ?? getLocalUser(),
-      })
-      executionRequest.enable_tools = false
-      executionRequest.enable_deep_thinking = false
-      if (data.outputSchema) {
-        executionRequest.output_schema = data.outputSchema
-      }
-      data.onProgress?.('generating')
-      let receivedDelta = false
-      let deltaCount = 0
-      let deltaCharacters = 0
-      console.debug('[Wework] Text generation stream', {
-        event: 'subscribing',
-        taskId: generationTaskId,
-      })
-      const unlisten = data.onDelta
-        ? await subscribe(event => {
-            if (
-              event.event !== 'response.output_text.delta' ||
-              String(event.payload.taskId ?? '') !== generationTaskId
-            ) {
-              return
-            }
-            const eventData = event.payload.data
-            if (!eventData || typeof eventData !== 'object' || Array.isArray(eventData)) return
-            const delta = (eventData as Record<string, unknown>).delta
-            if (typeof delta === 'string' && delta) {
-              receivedDelta = true
-              deltaCount += 1
-              deltaCharacters += delta.length
-              console.debug('[Wework] Text generation stream', {
-                event: 'delta',
-                taskId: generationTaskId,
-                deltaCount,
-                deltaLength: delta.length,
-                totalCharacters: deltaCharacters,
-                sequence: event.sequence,
-              })
-              data.onDelta?.(delta)
-            }
-          })
-        : undefined
-      try {
-        const response = await request<{ content?: string }>('runtime.text.generate', {
-          executionRequest,
-        })
-        const content = response.content?.trim() ?? ''
-        if (data.onDelta && content && !receivedDelta) {
-          console.debug('[Wework] Text generation stream', {
-            event: 'final-content-fallback',
-            taskId: generationTaskId,
-            contentLength: content.length,
-          })
-          data.onDelta(content)
-        } else {
-          console.debug('[Wework] Text generation stream', {
-            event: 'completed',
-            taskId: generationTaskId,
-            deltaCount,
-            totalCharacters: deltaCharacters,
-            contentLength: content.length,
-          })
+      return cancellableTextGeneration(data.signal, data.timeoutMs, async signal => {
+        const deviceId = data.deviceId?.trim() || (await getLocalDeviceId())
+        data.onProgress?.('preparing')
+        if (!(await runtimeWorkApi.prepareRuntimeModel({ deviceId, modelId: data.modelId }))) {
+          throw modelCatalogSyncCancelled()
         }
-        return content
-      } finally {
-        unlisten?.()
-      }
+        const prompt = data.prompt.trim()
+        signal.throwIfAborted()
+        if (!prompt) throw new Error('Text generation prompt is required')
+        const generationTaskId = `text-generation-${createRuntimeTurnSeed()}`
+        const executionRequest = await buildLocalRuntimeExecutionRequest({
+          taskId: generationTaskId,
+          runtime: 'codex',
+          title: data.title?.trim() || 'Generate text',
+          message: prompt,
+          turnSeed: createRuntimeTurnSeed(),
+          modelId: data.modelId,
+          modelType: data.modelType,
+          modelOptions: data.modelOptions,
+          cloudModelGateway: deps.cloudModelGateway,
+          resolveProxy,
+          localDeviceId: deviceId,
+          workspaceSource: 'local_path',
+          newSession: true,
+          ephemeral: true,
+          requireLocalCodexCatalog: true,
+          user: deps.user ?? getLocalUser(),
+        })
+        executionRequest.enable_tools = false
+        signal.throwIfAborted()
+        executionRequest.enable_deep_thinking = false
+        if (data.outputSchema) {
+          executionRequest.output_schema = data.outputSchema
+        }
+        data.onProgress?.('generating')
+        let receivedDelta = false
+        let deltaCount = 0
+        let deltaCharacters = 0
+        console.debug('[Wework] Text generation stream', {
+          event: 'subscribing',
+          taskId: generationTaskId,
+        })
+        const unlisten = data.onDelta
+          ? await subscribe(event => {
+              if (
+                event.event !== 'response.output_text.delta' ||
+                String(event.payload.taskId ?? '') !== generationTaskId
+              ) {
+                return
+              }
+              const eventData = event.payload.data
+              if (!eventData || typeof eventData !== 'object' || Array.isArray(eventData)) return
+              const delta = (eventData as Record<string, unknown>).delta
+              if (typeof delta === 'string' && delta) {
+                receivedDelta = true
+                deltaCount += 1
+                deltaCharacters += delta.length
+                console.debug('[Wework] Text generation stream', {
+                  event: 'delta',
+                  taskId: generationTaskId,
+                  deltaCount,
+                  deltaLength: delta.length,
+                  totalCharacters: deltaCharacters,
+                  sequence: event.sequence,
+                })
+                data.onDelta?.(delta)
+              }
+            })
+          : undefined
+        try {
+          const response = await textGenerationRequest(
+            signal,
+            () => request<{ content?: string }>('runtime.text.generate', { executionRequest }),
+            () => request('runtime.text.cancel', { taskId: generationTaskId })
+          )
+          signal.throwIfAborted()
+          const content = response.content?.trim() ?? ''
+          if (data.onDelta && content && !receivedDelta) {
+            console.debug('[Wework] Text generation stream', {
+              event: 'final-content-fallback',
+              taskId: generationTaskId,
+              contentLength: content.length,
+            })
+            data.onDelta(content)
+          } else {
+            console.debug('[Wework] Text generation stream', {
+              event: 'completed',
+              taskId: generationTaskId,
+              deltaCount,
+              totalCharacters: deltaCharacters,
+              contentLength: content.length,
+            })
+          }
+          return content
+        } finally {
+          unlisten?.()
+        }
+      })
     },
   }
   const branchNameApi: NonNullable<WorkbenchServices['branchNameApi']> = {
@@ -4382,6 +4397,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     pluginApi: projectPluginApi,
     branchNameApi,
     textGenerationApi,
+    replyPredictionApi,
     automationApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({

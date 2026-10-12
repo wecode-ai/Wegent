@@ -26,7 +26,7 @@ use crate::{
         bind_codex_thread_model_route, codex_notification_requires_user_input,
         codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
         AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexAuthMutationError,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError,
         CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
@@ -81,6 +81,9 @@ impl RestoreStartupGate {
             .state
             .lock()
             .expect("restore startup state lock should not be poisoned");
+        if matches!(*state, RestoreStartupState::Active) {
+            return true;
+        }
         if !matches!(*state, RestoreStartupState::Waiting { .. }) {
             return false;
         }
@@ -134,6 +137,7 @@ mod sidebar;
 mod supervisor;
 mod system;
 mod tasks;
+mod text_generation;
 mod transcript_sync;
 mod turns;
 mod workspaces;
@@ -174,8 +178,9 @@ use super::{
         bind_runtime_handle_user_message_presentation_to_turn, cached_messages,
         clear_completed_transcript_messages, clear_runtime_handle_messages,
         clear_transcript_snapshot_messages, completed_transcript_messages,
-        set_runtime_handle_messages, set_transcript_snapshot_messages,
-        transcript_snapshot_messages, user_message_presentations,
+        merge_assistant_transcript_message, set_runtime_handle_messages,
+        set_transcript_snapshot_messages, transcript_snapshot_messages,
+        transcript_snapshot_pagination, user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
@@ -605,6 +610,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
+    active_text_generations: Arc<Mutex<HashMap<String, Option<oneshot::Sender<()>>>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     codex_transcript_navigation_cache: Arc<Mutex<HashMap<String, CachedCodexTranscriptNavigation>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
@@ -876,6 +882,7 @@ impl RuntimeWorkRpcHandler {
             turn_queue_path: Arc::new(turn_queue_path),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
+            active_text_generations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             codex_transcript_navigation_cache: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
@@ -1113,6 +1120,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.collaboration.dispatch" => self.create_collaboration_dispatch(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
+            "runtime.text.predict_reply" => self.predict_reply(payload).await,
+            "runtime.text.cancel" => self.cancel_text_generation(payload),
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,
@@ -1180,6 +1189,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
+            "runtime.codex.plugin.sync_bundled" => self.sync_bundled_plugin(payload).await,
             "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
             "runtime.codex.plugin.reconcile_bundled_marketplace" => {
                 self.reconcile_bundled_plugin_marketplace(payload).await

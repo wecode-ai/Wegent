@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    fs::{self, File},
+    fs,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -14,6 +14,7 @@ use super::{
     validate_existing_git_repository,
 };
 use crate::{
+    file_lease::FileLease,
     protocol::ExecutionRequest,
     repository_identity::RepositoryIdentity,
     workspace_paths::{
@@ -24,7 +25,9 @@ use crate::{
 
 /// Plain shared checkouts are single-writer. Explicit workspaces/worktrees keep
 /// their existing execution policy; no automatic worktree mode is introduced.
-pub(crate) fn acquire_execution_lease(request: &ExecutionRequest) -> Result<Option<File>, String> {
+pub(crate) fn acquire_execution_lease(
+    request: &ExecutionRequest,
+) -> Result<Option<FileLease>, String> {
     if (request.skip_git_clone && task_repository::read(&request.task_id)?.is_none())
         || request
             .project_workspace_path
@@ -44,21 +47,21 @@ pub(crate) fn acquire_execution_lease(request: &ExecutionRequest) -> Result<Opti
     repository_lease(&identity).map(Some)
 }
 
-pub(crate) async fn acquire_archive_lease(path: &Path) -> Result<File, String> {
+pub(crate) async fn acquire_archive_lease(path: &Path) -> Result<FileLease, String> {
     let identity = checkout_identity(path)
         .await?
         .ok_or("Archive repository has no origin")?;
     repository_lease(&identity)
 }
 
-fn repository_lease(identity: &RepositoryIdentity) -> Result<File, String> {
+fn repository_lease(identity: &RepositoryIdentity) -> Result<FileLease, String> {
     let locks = metadata::path(&workspace_root(), Entry::Locks)?;
     fs::create_dir_all(&locks).map_err(|error| error.to_string())?;
     lock_file(&locks.join(format!("{}.lock", identity.digest)))
         .map_err(|_| "Repository is already in use or cannot be locked; use a separate worktree for parallel tasks".into())
 }
 
-async fn publication_lease(root: &Path) -> Result<File, String> {
+async fn publication_lease(root: &Path) -> Result<FileLease, String> {
     let path = metadata::path(root, Entry::Publish)?;
     fs::create_dir_all(path.parent().unwrap()).map_err(|error| error.to_string())?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);

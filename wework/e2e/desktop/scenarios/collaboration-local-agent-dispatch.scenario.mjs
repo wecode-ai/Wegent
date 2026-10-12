@@ -9,6 +9,7 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
@@ -333,6 +334,7 @@ export async function createDesktopScenario({
 
       await waitForModelRequest(modelStarted, modelResponseTimeoutMs)
       await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
+      await verifyExecutionActivityOrder(control, scoped, 'running', uiTimeoutMs)
       await renameIssueWhileRunning(control, uiTimeoutMs)
       await captureScreenshot(control, 'local-agent-dispatch-01-running.png', CONTENT)
 
@@ -417,6 +419,7 @@ export async function createDesktopScenario({
         'Direct Agent assignment did not complete exactly one initial run'
       )
       await captureScreenshot(control, 'local-agent-dispatch-02-in-review.png', CONTENT)
+      await verifyExecutionActivityOrder(control, scoped, 'completed', uiTimeoutMs)
       await control.command('click', openTask, { visible: true, timeoutMs: uiTimeoutMs })
       await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
         visible: true,
@@ -470,9 +473,13 @@ export async function createDesktopScenario({
         visible: true,
       })
       await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'), {
-        text: RENAMED_ISSUE,
         timeoutMs: uiTimeoutMs,
       })
+      assert.equal(
+        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+        RENAMED_ISSUE,
+        'Returning to the Issue did not retain its saved title'
+      )
 
       await sendIssueReply(control, activityId, FOLLOW_UP_ONE, uiTimeoutMs)
       await waitForModelRequestCount(modelRequests, 2, modelResponseTimeoutMs)

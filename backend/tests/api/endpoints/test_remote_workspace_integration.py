@@ -182,12 +182,9 @@ def test_remote_workspace_tree_root_path_and_escape_guard_integration(
 
     escape_response = test_client.get(
         f"/api/tasks/{task.id}/remote-workspace/tree",
-        params={"path": "/workspace/../etc"},
+        params={"path": "/srv/workspaces/demo-12345678/../other"},
         headers=_auth_header(test_token),
     )
 
     assert escape_response.status_code == 400
-    assert (
-        escape_response.json()["detail"]
-        == f"Path must stay within /workspace/{task.id}"
-    )
+    assert escape_response.json()["detail"] == "Parent traversal is not allowed"

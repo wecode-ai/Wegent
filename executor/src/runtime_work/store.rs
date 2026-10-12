@@ -39,6 +39,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "modelSelection",
     "model_selection",
     "origin",
+    "overloadRecoveryTurnIds",
     "runtime",
     "supersededTranscriptTurnIds",
     "threadPath",

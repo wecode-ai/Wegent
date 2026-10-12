@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
+import { DatabaseSync } from 'node:sqlite'
 
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
 
@@ -15,6 +16,9 @@ const SWITCH_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH'
 const SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH_COMPLETE'
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
+const PAGED_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED'
+const PAGED_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED_COMPLETE'
+const PAGED_ITEM_COUNT = 650
 const LONG_HISTORY_ITEM_COUNT = 1_200
 // High-entropy output forces several transport chunks even after compression.
 const LARGE_TOOL_OUTPUT = Array.from(
@@ -103,6 +107,79 @@ function appendLongRunningHistory(rollout, threadId) {
   ).join('\n')
 }
 
+async function requestExecutor(control, method, params, timeoutMs) {
+  const origin = await control.command('getLocationOrigin', 'body')
+  const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ id: `running-history-${method}`, method, params }),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  const payload = await response.json()
+  assert.equal(
+    response.ok,
+    true,
+    `${method} returned HTTP ${response.status}: ${payload.error?.message}`
+  )
+  assert.equal(payload.ok, true, `${method} failed: ${payload.error?.message}`)
+  return payload.result
+}
+
+async function seedPaginatedTurnHistory(sqliteHome, threadId, cwd, timeoutMs) {
+  const database = new DatabaseSync(join(sqliteHome, 'thread_history_1.sqlite'))
+  try {
+    database.exec('PRAGMA busy_timeout = 10000')
+    const readTurn = database.prepare(
+      'SELECT turn_id FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 1'
+    )
+    const deadline = Date.now() + timeoutMs
+    let turn = readTurn.get(threadId)
+    while (!turn && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+      turn = readTurn.get(threadId)
+    }
+    assert.ok(turn, 'The native running turn was not persisted')
+    const ordinal = database
+      .prepare(
+        'SELECT COALESCE(MAX(rollout_ordinal), 0) AS value FROM thread_items WHERE thread_id = ?'
+      )
+      .get(threadId).value
+    const insert = database.prepare(`INSERT INTO thread_items
+      (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    database.exec('BEGIN IMMEDIATE')
+    for (let index = 0; index < PAGED_ITEM_COUNT; index += 1) {
+      const id = `paged-history-command-${index}`
+      insert.run(
+        threadId,
+        turn.turn_id,
+        id,
+        ordinal + index + 1,
+        Date.now(),
+        JSON.stringify({
+          type: 'commandExecution',
+          id,
+          command: `printf ${index}`,
+          cwd,
+          pluginId: null,
+          scriptPath: null,
+          processId: null,
+          source: 'agent',
+          status: 'completed',
+          commandActions: [],
+          aggregatedOutput: String(index),
+          exitCode: 0,
+          durationMs: 0,
+        }),
+        'commandExecution'
+      )
+    }
+    database.exec('COMMIT')
+  } finally {
+    database.close()
+  }
+}
+
 async function assertLargeHistoryTransfer(executorHome, taskId, threadId) {
   const scope = createHash('sha256')
     .update(JSON.stringify([taskId, threadId]))
@@ -189,12 +266,15 @@ async function waitForTaskAddress(control, taskId, timeoutMs) {
   while (Date.now() < deadline) {
     const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
     const address = state?.currentRuntimeTask
-    if (
-      address?.taskId === taskId &&
-      state.activeTask?.taskId === taskId &&
-      state.activeTask.threadId
-    ) {
-      return { ...address, threadId: state.activeTask.threadId }
+    if (address?.taskId === taskId) {
+      const result = await requestExecutor(control, 'runtime.tasks.get', { address }, timeoutMs)
+      if (result.task?.threadId) {
+        return {
+          ...address,
+          threadId: result.task.threadId,
+          workspacePath: result.task.workspacePath,
+        }
+      }
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
@@ -219,6 +299,7 @@ async function assertMovedProject(control, projectKey, address, timeoutMs) {
 
 export function createDesktopScenario({
   captureScreenshot,
+  codexSqliteHome,
   executorHome,
   uiTimeoutMs,
   workspacePath,
@@ -226,6 +307,10 @@ export function createDesktopScenario({
   let active = false
   let restartDesktopApp
   let secondRequestReceivedResolve
+  let releasePagedResponseResolve
+  const releasePagedResponse = new Promise(resolve => {
+    releasePagedResponseResolve = resolve
+  })
   let releaseSecondResponseResolve
   const secondRequestReceived = new Promise(resolve => {
     secondRequestReceivedResolve = resolve
@@ -252,6 +337,16 @@ export function createDesktopScenario({
         Connection: 'keep-alive',
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
+
+      if (body.includes(PAGED_PROMPT)) {
+        response.flushHeaders()
+        response.write(sse([responseCreated(responseId)]))
+        await releasePagedResponse
+        response.end(
+          sse([assistantMessage(responseId, PAGED_COMPLETION), responseCompleted(responseId)])
+        )
+        return true
+      }
 
       if (body.includes(SECOND_PROMPT)) {
         response.flushHeaders()
@@ -453,6 +548,112 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="pause-response-button"]', {
         timeoutMs: uiTimeoutMs,
       })
+
+      // Publish capabilities while model work is deliberately held open, then
+      // start another real task. This reproduces the queued-writer startup stall.
+      const cleared = await requestExecutor(
+        control,
+        'runtime.connectors.clear',
+        { syncRevision: Date.now() },
+        uiTimeoutMs
+      )
+      assert.equal(cleared.configured, false)
+      const rowsBeforePagedTask = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds
+      )
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('fill', COMPOSER_SELECTOR, { value: PAGED_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      const pagedRowId = await waitForNewTaskRow(control, rowsBeforePagedTask, uiTimeoutMs)
+      const pagedTaskId = pagedRowId.replace('runtime-local-task-row-', '')
+      const pagedAddress = await waitForTaskAddress(control, pagedTaskId, uiTimeoutMs)
+      await control.command('waitFor', '[data-testid="pause-response-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await seedPaginatedTurnHistory(
+        codexSqliteHome,
+        pagedAddress.threadId,
+        pagedAddress.workspacePath,
+        uiTimeoutMs
+      )
+      const pageRequest = { address: pagedAddress, limit: 50 }
+      const nativePage = await requestExecutor(
+        control,
+        'runtime.tasks.transcript',
+        {
+          ...pageRequest,
+          refresh: true,
+        },
+        uiTimeoutMs
+      )
+      assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
+      assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-items:'))
+      const cachedPage = await requestExecutor(
+        control,
+        'runtime.tasks.transcript',
+        pageRequest,
+        uiTimeoutMs
+      )
+      assert.equal(cachedPage.hasMoreBefore, true, 'The live cache hid older native items')
+      assert.equal(
+        cachedPage.beforeCursor,
+        nativePage.beforeCursor,
+        'The live cache lost the native cursor'
+      )
+      const olderPage = await requestExecutor(
+        control,
+        'runtime.tasks.transcript',
+        {
+          ...pageRequest,
+          beforeCursor: cachedPage.beforeCursor,
+        },
+        uiTimeoutMs
+      )
+      assert.ok(olderPage.messages.length > 0, 'The older native page was not loaded')
+      assert.notEqual(
+        olderPage.beforeCursor,
+        cachedPage.beforeCursor,
+        'Pagination returned the live cache again'
+      )
+
+      const pagedReadyCount = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await Promise.race([
+        control.awaitReadyAfter(pagedReadyCount),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error('The paginated conversation did not reconnect')),
+            uiTimeoutMs
+          )
+        ),
+      ])
+      await control.command('waitFor', `[data-testid="${pagedRowId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="${pagedRowId}"]`)
+      const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
+      await control.command('waitFor', loadOlder, { timeoutMs: uiTimeoutMs })
+      for (let page = 0; page < 2; page += 1) {
+        await control.command('click', loadOlder)
+        await waitForTranscriptState(
+          control,
+          snapshot => snapshot.pane?.transcript?.loadingMoreBefore === false,
+          'Native item pagination did not finish',
+          uiTimeoutMs
+        )
+      }
+      const pagedSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
+      assert.ok(
+        pagedSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
+        'The UI did not restore the middle of the running native turn'
+      )
+      releasePagedResponseResolve()
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: PAGED_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', taskRow)
 
       const readyCountBeforeReload = control.readyCount
       await control.command('reloadMainWindow', 'body')

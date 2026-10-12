@@ -17,6 +17,26 @@ import {
 import type { UnifiedModel } from '@/types/api'
 
 describe('model-ui', () => {
+  test('uses configured thinking effort ahead of catalog defaults', () => {
+    const model: UnifiedModel = {
+      name: 'thudm-glm-5.3-flash-responses',
+      type: 'public',
+      config: {
+        protocol: 'openai-responses',
+        codex_catalog_model_id: 'wework-gpt-5.6-sol',
+        reasoning: { effort: 'high' },
+      },
+    }
+    expect(getDefaultModelOptions(model).reasoning).toBe('high')
+    expect(normalizeModelOptions(model, { reasoning: 'low' }).reasoning).toBe('low')
+    expect(
+      getDefaultModelOptions({
+        ...model,
+        config: { ...model.config, ui: { defaultReasoningEffort: 'medium' } },
+      }).reasoning
+    ).toBe('medium')
+  })
+
   test('treats same-name Codex models from different providers as different selections', () => {
     const official: UnifiedModel = {
       name: 'gpt-5.6-luna',

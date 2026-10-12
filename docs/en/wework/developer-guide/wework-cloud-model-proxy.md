@@ -16,6 +16,16 @@ Wework builds proxy model config directly from the configured cloud URL and logi
 - `POST /api/runtime-work/llm-responses-proxy/responses`: proxy endpoint authenticated with the user's login token.
 - `/models/unified`: returns the model name, type, namespace, and resource owner ID needed to identify the Model CRD exactly.
 
+### Default Position in Cloud Model Presets
+
+The Model CRD's `spec.modelConfig.ui.defaultModel: true` marks the default model,
+and `sliderModelsConfig.defaultPreset` names the default slider preset. Selecting
+that preset first targets the model that owns the preset configuration, even when
+it is second or later in `presets[].models`. An entry without `reasoningEffort`
+selects only the model and can also be the default position. Entries with an
+explicit effort match the owner's default reasoning effort. The first preset
+entry is selected only when no matching entry exists.
+
 ### Request Flow
 
 1. Wework fetches credential-free model metadata from `/models/unified`.
@@ -33,6 +43,45 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 - `https://api.anthropic.com` with Anthropic Messages resolves to `/v1/messages`.
 - `https://proxy.example.com/v1` with Anthropic Messages still resolves to `/v1/messages`, never `/v1/v1/messages`.
 - URLs already ending in `/responses`, `/chat/completions`, or `/v1/messages` do not receive a duplicate endpoint.
+
+#### Responses Reasoning and Request Modes
+
+`modelConfig.env.thinking_config.reasoning` in a Model CRD (also accepted as `thinkingConfig`) supplies Wework's default reasoning settings. The model catalog exposes only supported `effort` and `summary` values, without the full env or provider credentials. The picker uses the configured default effort. Explicit user selections override individual fields while preserving other defaults, such as `summary: "detailed"` when the effort changes.
+
+`modelConfig.codex_request_mode` controls the complete Codex Responses request policy:
+
+| Value             | Behavior                                                                                                                                                                                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto` or omitted | Keep the existing protocol adaptation. Existing switches can still configure individual native Responses tool capabilities.                                                                                                               |
+| `standard`        | Use ordinary function tools, bridging `tool_search`, namespace and custom tools, and restoring tool identities on the return path to Codex. Use this for Kimi Responses and other services that do not support Codex's native tool types. |
+| `passthrough`     | Replace only the model ID and authentication needed for routing. Preserve all other request business fields and stream responses without protocol rewriting. Requires an OpenAI Responses upstream.                                       |
+
+Passthrough retains reasoning, history, original call IDs, encrypted content, `previous_response_id`, `include`, `store` and extension fields. It also bypasses image budget trimming, vision sidecar replacement, history enhancement, fork/model-switch cleanup and output-limit injection. The proxy does not add the configured `max_output_tokens` to the request. The upstream must support the original Codex request contents directly.
+
+For example, configure Kimi Responses with:
+
+```json
+{
+  "modelConfig": {
+    "codex_request_mode": "standard",
+    "env": {
+      "model": "openai",
+      "model_id": "moonshot-kimi-k3",
+      "thinking_config": {
+        "reasoning": { "summary": "detailed" }
+      }
+    }
+  }
+}
+```
+
+Responses services that fully support Codex requests can set this field to `"passthrough"`. The request mode takes precedence over individual tool settings such as `native_tool_search` and `native_namespace_tools`. Invalid modes and passthrough configurations for other protocols are rejected before execution.
+
+The model catalog omits invalid `codex_request_mode` values while preserving other valid model metadata, so one misconfigured model cannot break the entire list. Catalog reads do not modify the stored Model CRD. Actual calls still validate the original configuration: both local and cloud execution return HTTP 400 before sending a request to the model provider.
+
+Passthrough preserves the original bytes of normal upstream chunks. A read error or EOF before a Responses terminal event only appends `response.failed`; no additional failure is emitted after `response.completed`, `response.failed`, or `response.incomplete`. A standalone `[DONE]` marker does not replace a Responses terminal event.
+
+`standard` mode advertises only client-executable function tools. It omits provider-hosted tools such as `web_search` and `image_generation`. If `tool_choice` forces a hosted tool, the proxy returns HTTP 400. `auto` and `passthrough` continue to preserve these tools.
 
 #### Kimi K3 Chat Completions Compatibility
 
@@ -54,6 +103,33 @@ Generic cloud models can reuse the Wework GPT 5.6 compatibility catalog as a cap
 When the upstream has not started a response stream and the model service returns HTTP `429 Too Many Requests`, the executor Codex compatibility proxy automatically resends the same model request. It retries at most five times, waiting 1, 5, 10, 30, and 60 seconds between attempts.
 
 If the upstream returns a standard `Retry-After` header, the proxy uses that delay instead, capped at 60 seconds for one wait. Non-429 responses do not activate this policy. After the retry budget is exhausted, the proxy returns the final 429 status and error body to Codex. A stream that has already started is never replayed by this mechanism, preventing duplicate generation or tool execution.
+
+### Codex Direct-Provider Overload Recovery
+
+Native Codex providers can bypass the compatibility proxy. When the app-server
+reports a structured `serverOverloaded` error, the executor waits for the failed
+turn's `turn/completed` event before continuing in the same thread with the same
+model. Recovery is bounded to five attempts, delayed by 5, 10, 20, 40, and 60
+seconds.
+
+Recovery submits an empty native `turn/start` input against the saved history. It
+does not replay the original task, attachments, user-message identity, or already
+merged additional context. Completed tool results remain in history. The task
+stays running and exposes reconnecting status during recovery; cancellation stops
+the wait immediately, and exhausted recovery returns the final failure. Quota,
+authentication, context-window, and subagent errors, as well as errors already
+being retried by Codex, do not trigger this policy.
+
+The executor persists the IDs of failed turns that entered recovery. Native and
+cached transcript reads clear only those turns' terminal error state while
+preserving user messages and tool output, so reopening a task does not restore
+handled failure cards. The final exhausted turn and unrelated failures remain
+unchanged.
+
+The `codex overloaded turn recovery` diagnostic records the thread, retry number,
+limit, and delay in milliseconds. The `model-overload-recovery` desktop checkpoint
+uses real Electron, Codex, and executor processes to verify tool-history retention,
+automatic continuation, no duplicate user messages, and cancellation.
 
 ### Anthropic Empty-Output Recovery
 

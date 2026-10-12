@@ -63,6 +63,7 @@ export interface AppPreferences {
   popoutWindowProjectlessDefaultEnabled: boolean
   friendlyTaskTitlesEnabled: boolean
   friendlyTaskTitleModel: FriendlyTaskTitleModelConfig | null
+  replyPredictionsEnabled: boolean
   changeRequestStatusEnabled: boolean
   quickPhrases: QuickPhrase[]
   localHarnesses: LocalHarnessPreference[]
@@ -144,6 +145,7 @@ export interface AppPreferencesPatch {
   popoutWindowProjectlessDefaultEnabled?: boolean
   friendlyTaskTitlesEnabled?: boolean
   friendlyTaskTitleModel?: FriendlyTaskTitleModelConfig | null
+  replyPredictionsEnabled?: boolean
   changeRequestStatusEnabled?: boolean
   quickPhrases?: QuickPhrase[]
   localHarnesses?: LocalHarnessPreference[]
@@ -189,6 +191,7 @@ export const defaultAppPreferences: AppPreferences = {
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
+  replyPredictionsEnabled: false,
   changeRequestStatusEnabled: true,
   quickPhrases: defaultQuickPhrases,
   localHarnesses: defaultLocalHarnessPreferences,
@@ -406,6 +409,7 @@ function mergeAppPreferences(value: unknown): AppPreferences {
         ? record.friendlyTaskTitlesEnabled
         : defaultAppPreferences.friendlyTaskTitlesEnabled,
     friendlyTaskTitleModel: normalizeFriendlyTaskTitleModel(record.friendlyTaskTitleModel),
+    replyPredictionsEnabled: record.replyPredictionsEnabled === true,
     changeRequestStatusEnabled:
       typeof record.changeRequestStatusEnabled === 'boolean'
         ? record.changeRequestStatusEnabled

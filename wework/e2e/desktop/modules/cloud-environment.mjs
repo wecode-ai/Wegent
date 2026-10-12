@@ -1349,6 +1349,7 @@ class RealCloudEnvironment {
           model_id: model.modelId,
           base_url: `${this.modelServerUrl}/v1`,
           api_key: MODEL_API_KEY,
+          ...(model.reasoning ? { thinking_config: { reasoning: model.reasoning } } : {}),
         },
         is_active: true,
         wework_available: true,
@@ -1378,7 +1379,7 @@ class RealCloudEnvironment {
         api_format: 'responses',
       },
     ]
-    await fetchJson(`${this.backendUrl}/api/models/batch`, {
+    const seeded = await fetchJson(`${this.backendUrl}/api/models/batch`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.authToken}`,
@@ -1386,6 +1387,27 @@ class RealCloudEnvironment {
       },
       body: JSON.stringify(items),
     })
+    const savedModels = [...seeded.created, ...seeded.updated]
+    for (const model of CLOUD_MODEL_CASES.filter(candidate => candidate.requestMode)) {
+      const saved = savedModels.find(candidate => candidate.name === model.optionIds[0])
+      assert.ok(saved?.id, `The public cloud model ${model.optionIds[0]} was not seeded`)
+      const url = `${this.backendUrl}/api/models/${saved.id}`
+      const headers = {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      }
+      await fetchJson(url, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          config: {
+            ...saved.config,
+            codex_request_mode: model.requestMode,
+            max_output_tokens: 4321,
+          },
+        }),
+      })
+    }
   }
 
   async seedCloudVisionSidecarModels() {
@@ -1562,40 +1584,6 @@ class RealCloudEnvironment {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
     }
     throw new Error('The real cloud backend still returned the removed project')
-  }
-
-  async aliasCloudDeviceToCurrentApp() {
-    const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    })
-    const localCandidates = (devices.items ?? []).filter(
-      device => device.device_id !== CLOUD_DEVICE_ID && device.status === 'online'
-    )
-    const localDevice =
-      localCandidates.find(device => device.device_type === 'app') ?? localCandidates[0]
-    assert.ok(localDevice?.device_id, 'The connected local app device was not registered')
-    assert.match(
-      localDevice.device_id,
-      /^[A-Za-z0-9._-]+$/,
-      'The connected local app device ID is not safe for the database fixture'
-    )
-
-    await this.executeDatabase(
-      `UPDATE kinds
-       SET json = JSON_SET(json, '$.spec.appDeviceId', %s)
-       WHERE kind = 'Device' AND name = %s`,
-      [localDevice.device_id, CLOUD_DEVICE_ID]
-    )
-
-    const updated = await fetchJson(`${this.backendUrl}/api/devices`, {
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    })
-    const cloudDevice = updated.items?.find(device => device.device_id === CLOUD_DEVICE_ID)
-    assert.equal(
-      cloudDevice?.app_device_id,
-      localDevice.device_id,
-      'The cloud route was not associated with the connected local app device'
-    )
   }
 
   async cancelRunningTasks() {

@@ -209,13 +209,58 @@ async fn auth_mutation_is_rejected_while_a_turn_is_active() {
 
     assert_eq!(
         result,
-        Err(CodexAuthMutationError::Busy {
+        Err(CodexIdleMutationError::Busy {
             active_turn_count: 1,
             pending_request_count: 0,
         })
     );
     assert!(!mutation_called.load(std::sync::atomic::Ordering::SeqCst));
     client.mark_thread_idle("thread-1", false).await;
+}
+
+#[tokio::test]
+async fn plugin_mutation_waits_for_idle_and_unchanged_sync_preserves_thread_generations() {
+    let client = CodexAppServerClient::new("codex-plugin-mutation-active-test");
+    client.mark_thread_active("thread-1").await;
+    assert_eq!(
+        client
+            .mutate_configuration_if_idle(|| async { Ok((true, true)) })
+            .await,
+        Err(CodexIdleMutationError::Busy {
+            active_turn_count: 1,
+            pending_request_count: 0
+        })
+    );
+    client.mark_thread_idle("thread-1", false).await;
+    client
+        .state
+        .lock()
+        .await
+        .thread_generations
+        .insert("existing-thread".to_owned(), 42);
+
+    assert_eq!(
+        client
+            .mutate_configuration_if_idle(|| async { Ok((false, false)) })
+            .await,
+        Ok(false)
+    );
+    assert_eq!(
+        client
+            .state
+            .lock()
+            .await
+            .thread_generations
+            .get("existing-thread"),
+        Some(&42)
+    );
+    assert_eq!(
+        client
+            .mutate_configuration_if_idle(|| async { Ok((true, true)) })
+            .await,
+        Ok(true)
+    );
+    assert!(client.state.lock().await.thread_generations.is_empty());
 }
 
 #[tokio::test]
@@ -4660,6 +4705,7 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
 #[test]
 fn codex_thread_binds_project_space_through_context_grant() {
     let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let mut request = ExecutionRequest {
         task_id: "runtime-task-1".to_owned(),
         backend_url: Some("https://wework.example.com".to_owned()),
@@ -4682,17 +4728,14 @@ fn codex_thread_binds_project_space_through_context_grant() {
 
     assert!(request.mcp_servers.is_empty());
     assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(
-        config["mcp_servers.wework_space.url"],
-        "http://127.0.0.1:1/mcp"
-    );
+    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
     assert_eq!(
         config["mcp_servers.wework_space.env_http_headers.Authorization"],
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"
     );
     assert_eq!(
         launch_config.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
-        "Bearer test-space-mcp-instance-token"
+        format!("Bearer {}", endpoint.token)
     );
     assert!(!config.contains_key("mcp_servers.wework_space.command"));
     assert!(!config.contains_key("mcp_servers.wework_space.args"));
@@ -4702,9 +4745,11 @@ fn codex_thread_binds_project_space_through_context_grant() {
         config["mcp_servers.wework_space.default_tools_approval_mode"],
         "approve"
     );
-    assert_eq!(
-        config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"],
-        "test-space-mcp-context-handle"
+    assert!(
+        !config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty()
     );
     let mcp_config = config
         .iter()
@@ -4720,6 +4765,8 @@ fn codex_thread_binds_project_space_through_context_grant() {
 
 #[test]
 fn codex_thread_exposes_project_space_to_issue_automation_executor() {
+    let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let mut request = ExecutionRequest {
         task_id: "runtime-executor-1".to_owned(),
         ..ExecutionRequest::default()
@@ -4740,15 +4787,13 @@ fn codex_thread_exposes_project_space_to_issue_automation_executor() {
     let config = params["config"].as_object().expect("thread config");
 
     assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(
-        config["mcp_servers.wework_space.url"],
-        "http://127.0.0.1:1/mcp"
-    );
+    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
 }
 
 #[test]
 fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
     let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let request = ExecutionRequest::default();
 
     let launch_config =
@@ -4766,13 +4811,14 @@ fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
         .all(|name| !name.starts_with("WEGENT_CODEX_SPACE_MCP_HEADER_")));
     assert_eq!(
         launch_config.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
-        "Bearer test-space-mcp-instance-token"
+        format!("Bearer {}", endpoint.token)
     );
 }
 
 #[test]
 fn codex_thread_exposes_notifications_without_project_context() {
     let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let request = ExecutionRequest {
         task_id: "runtime-task-notification".to_owned(),
         backend_url: Some("https://wework.example.com".to_owned()),
@@ -4789,11 +4835,16 @@ fn codex_thread_exposes_notifications_without_project_context() {
     assert_eq!(config["mcp_servers.wework_notifications.enabled"], true);
     assert_eq!(
         config["mcp_servers.wework_notifications.url"],
-        "http://127.0.0.1:1/notifications/mcp"
+        format!(
+            "{}/notifications/mcp",
+            endpoint.url.trim_end_matches("/mcp")
+        )
     );
-    assert_eq!(
-        config["mcp_servers.wework_notifications.http_headers.X-Wework-Mcp-Context"],
-        "test-space-mcp-context-handle"
+    assert!(
+        !config["mcp_servers.wework_notifications.http_headers.X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty()
     );
     assert_eq!(
         config["mcp_servers.wework_notifications.env_http_headers.Authorization"],

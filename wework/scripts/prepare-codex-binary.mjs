@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
+import { get as httpGet } from 'node:http'
+import { get as httpsGet } from 'node:https'
 import { chmod, cp, mkdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import { extract } from 'tar'
+import { acquireProcessLock } from './lib/process-lock.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -126,6 +129,38 @@ async function download(url, destination, fetchImpl) {
   await pipeline(response.body, createWriteStream(destination))
 }
 
+function openDownload(url, redirects = 0) {
+  return new Promise((resolveResponse, reject) => {
+    const address = new URL(url)
+    const get = address.protocol === 'https:' ? httpsGet : httpGet
+    if (!['http:', 'https:'].includes(address.protocol)) {
+      reject(new Error(`Unsupported download protocol: ${address.protocol}`))
+      return
+    }
+    const request = get(address, response => {
+      const status = response.statusCode ?? 0
+      response.on('error', reject)
+      if (status >= 300 && status < 400 && response.headers.location) {
+        response.resume()
+        if (redirects >= 5) {
+          reject(new Error('Too many download redirects'))
+          return
+        }
+        resolveResponse(openDownload(new URL(response.headers.location, address), redirects + 1))
+        return
+      }
+      if (status < 200 || status >= 300) response.resume()
+      resolveResponse({
+        ok: status >= 200 && status < 300,
+        status,
+        statusText: response.statusMessage ?? '',
+        body: response,
+      })
+    })
+    request.on('error', reject)
+  })
+}
+
 function sleep(delayMs) {
   return new Promise(resolvePromise => setTimeout(resolvePromise, delayMs))
 }
@@ -136,7 +171,7 @@ export async function downloadWithRetry(
   {
     attempts = DOWNLOAD_ATTEMPTS,
     retryDelayMs = DOWNLOAD_RETRY_DELAY_MS,
-    fetchImpl = fetch,
+    fetchImpl = openDownload,
     sleepImpl = sleep,
   } = {}
 ) {
@@ -250,9 +285,7 @@ async function ensureTarballIntegrity(tarballPath, entry, target) {
   if (actualIntegrity === entry.integrity) return
 
   if (skipDownloads) {
-    throw new Error(
-      `Cached Codex archive is invalid for ${target}; downloads are disabled`
-    )
+    throw new Error(`Cached Codex archive is invalid for ${target}; downloads are disabled`)
   }
   await rm(tarballPath, { force: true })
   console.log(`Cached Codex archive is invalid for ${target}; downloading a fresh copy`)
@@ -337,7 +370,7 @@ async function copyLegalFiles() {
   await cp(bundledRatatuiLicense, join(legalDir, 'RATATUI-LICENSE.txt'))
 }
 
-async function main() {
+async function prepareBinaries() {
   const args = parseArgs(process.argv.slice(2))
   if (args.materialize) {
     process.env.WEWORK_CODEX_MATERIALIZE = '1'
@@ -363,6 +396,16 @@ async function main() {
     await prepareTarget(target, entry)
   }
   await copyLegalFiles()
+}
+
+async function main() {
+  await mkdir(outputRoot, { recursive: true })
+  const release = await acquireProcessLock(join(outputRoot, '.prepare.lock'))
+  try {
+    await prepareBinaries()
+  } finally {
+    await release()
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

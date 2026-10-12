@@ -2253,6 +2253,29 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     false,
     'The restored detached tab lost its fixed state'
   )
+  const restoredLocation = new URL(restoredDetachedSnapshot.location)
+  assert.equal(
+    restoredLocation.pathname,
+    '/wework/app/',
+    'The restored workspace window bypassed the Wework app route'
+  )
+  assert.equal(
+    restoredLocation.searchParams.get('workspaceTab'),
+    secondTaskId,
+    'The restored workspace window lost its tab identity'
+  )
+  await restoredDetachedControl.command('waitFor', detachedTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await restoredDetachedControl.command('fill', detachedTaskComposer, {
+    value: '重启后的窗口可以继续输入',
+  })
+  assert.equal(
+    await restoredDetachedControl.command('getValue', detachedTaskComposer),
+    '重启后的窗口可以继续输入',
+    'The restored workspace window composer is not editable'
+  )
   await captureVerificationScreenshot(
     restoredDetachedControl,
     'workspace-tabs-isolation-06-fixed-window-restored.png',

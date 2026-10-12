@@ -10,8 +10,7 @@
 //! another, which surfaced as an empty file tree.
 
 use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(crate) mod metadata;
 pub(crate) mod task_repository;
@@ -107,25 +106,6 @@ pub(crate) fn resolve_logical_path(raw_path: &str) -> PathBuf {
     }
 }
 
-/// Render a real path in the logical form API callers expect.
-///
-/// Returns `None` when the path is outside the workspace root, which keeps
-/// callers free to fall back to the real path for unrelated locations.
-pub(crate) fn display_workspace_path(path: &Path) -> Option<String> {
-    let root = fs::canonicalize(workspace_root()).ok()?;
-    let relative = path.strip_prefix(root).ok()?;
-    let suffix = relative
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/");
-    if suffix.is_empty() {
-        Some(LOGICAL_WORKSPACE_ROOT.to_owned())
-    } else {
-        Some(format!("{LOGICAL_WORKSPACE_ROOT}/{suffix}"))
-    }
-}
-
 fn env_path(key: &str) -> Option<PathBuf> {
     let value = env::var_os(key)?;
     if value.is_empty() {
@@ -162,9 +142,10 @@ mod tests {
     }
 
     struct WorkspaceEnv {
-        _lock: std::sync::MutexGuard<'static, ()>,
         _guards: Vec<EnvGuard>,
         _home: tempfile::TempDir,
+        // Restore the environment before releasing its shared test lock.
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     fn clear_workspace_env() -> WorkspaceEnv {
@@ -332,24 +313,5 @@ mod tests {
             resolve_logical_path("/srv/other"),
             PathBuf::from("/srv/other")
         );
-    }
-
-    #[test]
-    fn display_workspace_path_round_trips_real_paths() {
-        let _env = clear_workspace_env();
-        let directory =
-            env::temp_dir().join(format!("wegent-workspace-paths-{}", std::process::id()));
-        fs::create_dir_all(directory.join("42/lottery")).unwrap();
-        // Canonicalize so the round trip also holds where the temp directory is
-        // reached through a symlink.
-        let root = fs::canonicalize(&directory).unwrap();
-        env::set_var("WORKSPACE_ROOT", &root);
-
-        assert_eq!(display_workspace_path(&root), Some("/workspace".to_owned()));
-        assert_eq!(
-            display_workspace_path(&root.join("42/lottery")),
-            Some("/workspace/42/lottery".to_owned())
-        );
-        let _ = fs::remove_dir_all(&directory);
     }
 }

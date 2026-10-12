@@ -1553,11 +1553,29 @@ describe('TodoEditor create parent resolution', () => {
     expect(onAddAssigneeAgent).toHaveBeenCalledTimes(1)
   })
 
+  it('offers the assignee selector to a Developer creating an Issue', () => {
+    render(
+      <TodoEditor
+        mode="create"
+        project={{ ...project, access_role: 'Developer' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-create-assignee')).not.toHaveAttribute('disabled')
+  })
+
   it.each([
-    { mode: 'create' as const, accessRole: 'Developer' },
-    { mode: 'create' as const, accessRole: 'Reporter' },
+    { mode: 'create' as const, accessRole: 'Viewer' },
     { mode: 'edit' as const, accessRole: 'Owner' },
-  ])('hides assignee management actions outside authorized creation: %j', async values => {
+    { mode: 'edit' as const, accessRole: 'Developer' },
+  ])('hides create-only assignee management actions: %j', async values => {
     const user = userEvent.setup()
     render(
       values.mode === 'create' ? (

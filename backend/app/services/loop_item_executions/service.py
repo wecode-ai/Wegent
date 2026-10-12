@@ -46,6 +46,11 @@ from app.services.loop_item_executions.profile import (
     WeworkExecutionProfileError,
     validate_wework_execution_target,
 )
+from app.services.loop_item_executions.runtime_identity import (
+    execution_conversation_task_id,
+    execution_runtime_task_id,
+    runtime_task_id_for,
+)
 from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
 from app.services.workspaces.storage import workspace_id_for_project
 
@@ -119,33 +124,6 @@ SYNC_PENDING = "pending"
 SYNC_IN_SYNC = "in_sync"
 SYNC_STALE = "stale"
 SYNC_DIVERGED = "diverged"
-
-# Canonical runtime task identity. The backend owns the name so every channel
-# (cloud RPC, local App puller) reports the same task id and events always
-# match the execution row before any output can arrive.
-RUNTIME_TASK_ID_PREFIX = "codex-queue"
-
-
-def runtime_task_id_for(execution_id: int) -> str:
-    """Return the canonical runtime task id for one execution."""
-
-    return f"{RUNTIME_TASK_ID_PREFIX}-{execution_id}"
-
-
-def execution_runtime_task_id(execution: LoopItemExecution) -> str:
-    """A queued reply resumes its thread; a root execution gets a new task."""
-    return str(
-        execution.runtime_origin_context.get("comment_continue_task_id")
-        or runtime_task_id_for(execution.id)
-    )
-
-
-def execution_transcript_task_id(execution: LoopItemExecution) -> str:
-    """Keep a group dispatch identity separate from its initial manager session."""
-    task_id = execution.runtime_task_id or execution_runtime_task_id(execution)
-    if execution.executor_type == "collaboration_group_dispatch":
-        return f"{task_id}-manager-initial"
-    return task_id
 
 
 def runtime_device_identity_ids(
@@ -594,7 +572,7 @@ def _agent_text_produced(db: Session, execution: LoopItemExecution) -> bool | No
         identity = (
             ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
             ProjectChatMessage.runtime_task_id
-            == execution_transcript_task_id(execution),
+            == execution_conversation_task_id(execution),
         )
     elif execution.agent_id:
         identity = (
@@ -1813,7 +1791,7 @@ class LoopItemExecutionService:
             item_id=item.id,
             values=LoopItemTaskBind(
                 deviceId=execution.runtime_device_id,
-                taskId=execution_transcript_task_id(execution),
+                taskId=execution_conversation_task_id(execution),
                 taskTitle=item.title or "",
                 backendTaskId=execution.backend_task_id or None,
                 modelSelection=(
@@ -2124,6 +2102,7 @@ class LoopItemExecutionService:
         execution = current
         if not execution.runtime_device_id or not execution.runtime_task_id:
             return None
+        conversation_task_id = execution_conversation_task_id(execution)
         import uuid
 
         from app.services.project_chat.service import project_chat_service
@@ -2132,8 +2111,7 @@ class LoopItemExecutionService:
             db.query(ProjectChatMessage)
             .filter(
                 ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
-                ProjectChatMessage.runtime_task_id
-                == execution_transcript_task_id(execution),
+                ProjectChatMessage.runtime_task_id == conversation_task_id,
                 ProjectChatMessage.sender_type == "agent",
                 ProjectChatMessage.status.in_(["pending", "streaming"]),
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
@@ -2233,10 +2211,10 @@ class LoopItemExecutionService:
         row.message_type = "agent_chunk"
         row.metadata_json = metadata
         row.runtime_device_id = execution.runtime_device_id
-        row.runtime_task_id = execution_transcript_task_id(execution)
+        row.runtime_task_id = conversation_task_id
         row.runtime_activity_key = project_chat_service._runtime_activity_key(
             execution.runtime_device_id,
-            row.runtime_task_id,
+            conversation_task_id,
             row.trigger_message_id or "",
         )
         row.status = activity_status
@@ -2878,7 +2856,7 @@ class LoopItemExecutionService:
                 .filter(
                     ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
                     ProjectChatMessage.runtime_task_id
-                    == execution_transcript_task_id(execution),
+                    == execution_conversation_task_id(execution),
                     ProjectChatMessage.sender_type == "agent",
                     ProjectChatMessage.status == "streaming",
                     loop_datetime_is_unset(ProjectChatMessage.deleted_at),
@@ -3019,7 +2997,7 @@ class LoopItemExecutionService:
                 .filter(
                     ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
                     ProjectChatMessage.runtime_task_id
-                    == execution_transcript_task_id(execution),
+                    == execution_conversation_task_id(execution),
                     ProjectChatMessage.sender_type == "agent",
                     loop_datetime_is_unset(ProjectChatMessage.deleted_at),
                 )
