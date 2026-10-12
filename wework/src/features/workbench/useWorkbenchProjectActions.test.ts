@@ -1,4 +1,8 @@
 import { updateRuntimeWorkProject } from '@/lib/runtime-project-update'
+import {
+  getLocalRuntimeStateDeviceId,
+  getRuntimeRemoteProjectRegistrations,
+} from '@/lib/runtime-project-state'
 import '@/i18n'
 import { describe, expect, test, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
@@ -144,8 +148,18 @@ describe('device project settings save', () => {
         queue ?? (async (mutation: () => Promise<unknown>) => mutation()),
     }
     const getRuntimeWorkSnapshot = () => options.state.runtimeWork
+    const getRemoteProjectRegistrations = () =>
+      getRuntimeRemoteProjectRegistrations(
+        getRuntimeWorkSnapshot() as never,
+        getLocalRuntimeStateDeviceId(options.state.devices as never),
+        { devices: options.state.devices as never }
+      )
     const { result } = renderHook(() =>
-      useWorkbenchProjectActions({ ...options, getRuntimeWorkSnapshot } as never)
+      useWorkbenchProjectActions({
+        ...options,
+        getRuntimeWorkSnapshot,
+        getRemoteProjectRegistrations,
+      } as never)
     )
     return { result, upsert, sync, updateRuntimeProject, refreshWorkLists, events }
   }
