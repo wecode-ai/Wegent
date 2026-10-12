@@ -21,6 +21,7 @@ from app.schemas.remote_workspace import (
     RemoteWorkspaceTreeResponse,
 )
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.remote_workspace_paths import resolve_executor_workspace_root
 
 WORKSPACE_ROOT = "/workspace"
 SANDBOX_HOME_ROOT = "/home/user"
@@ -75,9 +76,15 @@ class RemoteWorkspaceService:
         )
         available = bool(base_url)
         reason = None if available else "sandbox_not_running"
-        root_path = self._resolve_root_path(
-            task_id=task_id, sandbox_payload=sandbox_payload
-        )
+        root_path = _build_task_workspace_root(task_id)
+        if base_url:
+            try:
+                root_path = self._resolve_root_path(task_id, sandbox_payload, base_url)
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                available = False
+                reason = "starting"
         logger.info(
             "[remote_workspace] status resolved task_id=%s user_id=%s connected=%s available=%s base_url=%s reason=%s root_path=%s",
             task_id,
@@ -103,14 +110,9 @@ class RemoteWorkspaceService:
         user_id: int,
         path: Optional[str] = None,
     ) -> RemoteWorkspaceTreeResponse:
-        sandbox_payload = self._get_sandbox_payload(task_id=task_id)
-        root_path = self._resolve_root_path(
-            task_id=task_id, sandbox_payload=sandbox_payload
+        sandbox_payload, executor_name, root_path, normalized_path = (
+            self._resolve_request_path(db, task_id, user_id, path)
         )
-        normalized_path = self.normalize_and_validate_workspace_path(
-            path, root_path=root_path
-        )
-        self._get_task_detail(db=db, task_id=task_id, user_id=user_id)
         logger.info(
             "[remote_workspace] list_tree start task_id=%s user_id=%s path=%s normalized_path=%s root_path=%s",
             task_id,
@@ -126,11 +128,6 @@ class RemoteWorkspaceService:
                 path=normalized_path,
             )
         else:
-            executor_name = self._ensure_sandbox_available(
-                db=db,
-                task_id=task_id,
-                user_id=user_id,
-            )
             entries_payload = self._list_directory(
                 task_id=task_id,
                 executor_name=executor_name,
@@ -170,14 +167,9 @@ class RemoteWorkspaceService:
         if disposition not in {"inline", "attachment"}:
             raise HTTPException(status_code=400, detail="Invalid disposition")
 
-        sandbox_payload = self._get_sandbox_payload(task_id=task_id)
-        root_path = self._resolve_root_path(
-            task_id=task_id, sandbox_payload=sandbox_payload
+        sandbox_payload, executor_name, root_path, normalized_path = (
+            self._resolve_request_path(db, task_id, user_id, path)
         )
-        normalized_path = self.normalize_and_validate_workspace_path(
-            path, root_path=root_path
-        )
-        self._get_task_detail(db=db, task_id=task_id, user_id=user_id)
         logger.info(
             "[remote_workspace] stream_file start task_id=%s user_id=%s path=%s normalized_path=%s disposition=%s root_path=%s",
             task_id,
@@ -194,11 +186,6 @@ class RemoteWorkspaceService:
                 path=normalized_path,
             )
         else:
-            executor_name = self._ensure_sandbox_available(
-                db=db,
-                task_id=task_id,
-                user_id=user_id,
-            )
             content, content_type = self._download_file(
                 task_id=task_id,
                 executor_name=executor_name,
@@ -304,10 +291,8 @@ class RemoteWorkspaceService:
         self,
         task_id: int,
         task_detail: dict[str, Any],
-        sandbox_payload: Optional[dict[str, Any]] = None,
+        sandbox_payload: Optional[dict[str, Any]],
     ) -> Optional[str]:
-        if sandbox_payload is None:
-            sandbox_payload = self._get_sandbox_payload(task_id=task_id)
         if self._is_sandbox_available(sandbox_payload):
             sandbox_base_url = sandbox_payload.get("base_url")
             if isinstance(sandbox_base_url, str) and sandbox_base_url:
@@ -438,11 +423,28 @@ class RemoteWorkspaceService:
         return bool(status == SANDBOX_RUNNING_STATUS and base_url)
 
     def _resolve_root_path(
-        self, task_id: int, sandbox_payload: Optional[dict[str, Any]]
+        self, task_id: int, sandbox_payload: Optional[dict[str, Any]], base_url: str
     ) -> str:
         if self._is_sandbox_available(sandbox_payload):
             return SANDBOX_HOME_ROOT
-        return _build_task_workspace_root(task_id)
+        return resolve_executor_workspace_root(base_url, task_id, self.request_timeout)
+
+    def _resolve_request_path(
+        self, db: Session, task_id: int, user_id: int, path: Optional[str]
+    ) -> tuple[Optional[dict[str, Any]], Optional[str], str, str]:
+        if path and ".." in path.split("/"):
+            raise HTTPException(400, "Parent traversal is not allowed")
+        task_detail = self._get_task_detail(db=db, task_id=task_id, user_id=user_id)
+        sandbox_payload = self._get_sandbox_payload(task_id=task_id)
+        base_url = self._resolve_workspace_base_url(
+            task_id=task_id, task_detail=task_detail, sandbox_payload=sandbox_payload
+        )
+        if not base_url:
+            raise HTTPException(409, "Remote workspace is unavailable")
+        root_path = self._resolve_root_path(task_id, sandbox_payload, base_url)
+        normalized_path = self.normalize_and_validate_workspace_path(path, root_path)
+        executor_name = self._get_connected_executor_name(task_detail)
+        return sandbox_payload, executor_name, root_path, normalized_path
 
     def _get_executor_payload(
         self,
@@ -538,45 +540,6 @@ class RemoteWorkspaceService:
             )
             return False
         return True
-
-    def _ensure_sandbox_available(
-        self,
-        db: Session,
-        task_id: int,
-        user_id: int,
-    ) -> Optional[str]:
-        task_detail = self._get_task_detail(db=db, task_id=task_id, user_id=user_id)
-        executor_name = self._get_connected_executor_name(task_detail)
-        base_url = self._resolve_workspace_base_url(
-            task_id=task_id,
-            task_detail=task_detail,
-        )
-        if not base_url:
-            logger.info(
-                "[remote_workspace] unavailable task_id=%s user_id=%s reason=no_runtime_base_url",
-                task_id,
-                user_id,
-            )
-            raise HTTPException(
-                status_code=409, detail="Remote workspace is unavailable"
-            )
-
-        if executor_name:
-            logger.info(
-                "[remote_workspace] resolved executor binding task_id=%s user_id=%s executor_name=%s base_url=%s",
-                task_id,
-                user_id,
-                executor_name,
-                base_url,
-            )
-        else:
-            logger.info(
-                "[remote_workspace] resolved sandbox runtime without executor binding task_id=%s user_id=%s base_url=%s",
-                task_id,
-                user_id,
-                base_url,
-            )
-        return executor_name
 
     def _list_directory_via_sandbox(
         self,
@@ -891,24 +854,11 @@ class RemoteWorkspaceService:
         normalized = posixpath.normpath(normalized)
 
         # Compatibility: remap legacy /workspace paths to /home/user in sandbox runtime.
-        if normalized_root == SANDBOX_HOME_ROOT and normalized.startswith(
-            WORKSPACE_ROOT
+        if normalized_root == SANDBOX_HOME_ROOT and (
+            normalized == WORKSPACE_ROOT or normalized.startswith(f"{WORKSPACE_ROOT}/")
         ):
             suffix = normalized[len(WORKSPACE_ROOT) :]
             normalized = posixpath.normpath(f"{SANDBOX_HOME_ROOT}{suffix}")
-
-        # Compatibility: remap legacy /workspace paths to task-scoped workspace root.
-        is_task_scoped_workspace_root = normalized_root.startswith(f"{WORKSPACE_ROOT}/")
-        already_under_root = normalized == normalized_root or normalized.startswith(
-            f"{normalized_root}/"
-        )
-        if (
-            is_task_scoped_workspace_root
-            and not already_under_root
-            and normalized.startswith(WORKSPACE_ROOT)
-        ):
-            suffix = normalized[len(WORKSPACE_ROOT) :]
-            normalized = posixpath.normpath(f"{normalized_root}{suffix}")
 
         if normalized == normalized_root:
             return normalized

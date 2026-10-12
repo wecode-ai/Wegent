@@ -287,52 +287,66 @@ fn valid_unconfigured_models_keep_the_direct_provider_path() {
 
 #[tokio::test]
 async fn passthrough_http_forwards_business_fields_and_raw_response_with_provider_auth() {
-    let captured = Arc::new(Mutex::new(None));
-    let capture = Arc::clone(&captured);
-    let raw_response =
-        b"data: {\"type\":\"provider.extension\",\"unknown\":true}\n\ndata: [DONE]\n\n";
-    let app = Router::new().route(
-        "/responses",
-        post(move |headers: HeaderMap, body: Bytes| {
-            let capture = Arc::clone(&capture);
-            async move {
-                *capture.lock().await =
-                    Some((headers, serde_json::from_slice::<Value>(&body).unwrap()));
-                (
-                    [(header::CONTENT_TYPE, "text/event-stream")],
-                    raw_response.as_slice(),
-                )
-            }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let mut config = upstream("passthrough");
-    config.base_url = format!("http://{address}");
-    let token = super::super::register("request-policy-http", config);
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
-    );
-    headers.insert(
-        "x-codex-forked-from-thread-id",
-        HeaderValue::from_static("parent-thread"),
-    );
-    let original = codex_request();
-    let response =
-        super::super::handle(headers, Bytes::from(serde_json::to_vec(&original).unwrap()))
-            .await
-            .expect("proxy response");
-    assert_eq!(
-        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
-        raw_response.as_slice()
-    );
-    let (headers, mut received) = captured.lock().await.take().expect("upstream request");
-    assert_eq!(headers[header::AUTHORIZATION], "Bearer model-key");
-    received["model"] = original["model"].clone();
-    assert_eq!(received, original);
-    super::super::unregister(&token);
-    server.abort();
+    for text_only in [false, true] {
+        let captured = Arc::new(Mutex::new(None));
+        let capture = Arc::clone(&captured);
+        let raw_response =
+            b"data: {\"type\":\"provider.extension\",\"unknown\":true}\n\ndata: [DONE]\n\n";
+        let app = Router::new().route(
+            "/responses",
+            post(move |headers: HeaderMap, body: Bytes| {
+                let capture = Arc::clone(&capture);
+                async move {
+                    *capture.lock().await =
+                        Some((headers, serde_json::from_slice::<Value>(&body).unwrap()));
+                    (
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        raw_response.as_slice(),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut config = upstream("passthrough");
+        config.base_url = format!("http://{address}");
+        let token = super::super::register("request-policy-http", config);
+        if text_only {
+            super::super::set_text_only(&token);
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        headers.insert(
+            "x-codex-forked-from-thread-id",
+            HeaderValue::from_static("parent-thread"),
+        );
+        let original = codex_request();
+        let response =
+            super::super::handle(headers, Bytes::from(serde_json::to_vec(&original).unwrap()))
+                .await
+                .expect("proxy response");
+        assert_eq!(
+            to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            raw_response.as_slice()
+        );
+        let (headers, mut received) = captured.lock().await.take().expect("upstream request");
+        assert_eq!(headers[header::AUTHORIZATION], "Bearer model-key");
+        received["model"] = original["model"].clone();
+        let mut expected = original.clone();
+        if text_only {
+            expected["tools"] = json!([]);
+            expected["tool_choice"] = json!("none");
+            expected
+                .as_object_mut()
+                .unwrap()
+                .remove("parallel_tool_calls");
+        }
+        assert_eq!(received, expected);
+        super::super::unregister(&token);
+        server.abort();
+    }
 }

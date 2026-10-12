@@ -155,6 +155,7 @@ pub(crate) fn register_harness(route_scope: &str, mut upstream: LocalModelProxyU
         RegisteredUpstream {
             upstream,
             vision_sidecar: None,
+            text_only: false,
             history: Default::default(),
             thread_ids: HashSet::new(),
             last_routed_model: None,
@@ -322,6 +323,7 @@ pub(crate) struct VisionSidecarUpstream {
 
 #[derive(Debug, Clone)]
 struct RegisteredUpstream {
+    text_only: bool,
     upstream: LocalModelProxyUpstream,
     vision_sidecar: Option<VisionSidecarUpstream>,
     history: std::sync::Arc<history::CodexToolHistory>,
@@ -419,6 +421,7 @@ pub(crate) fn register_with_vision_sidecar(
         RegisteredUpstream {
             upstream,
             vision_sidecar,
+            text_only: false,
             history,
             thread_ids,
             last_routed_model,
@@ -451,6 +454,55 @@ pub(crate) fn mark_model_switch(token: &str) {
     if let Some(registered) = registry.routes.get_mut(token) {
         registered.pending_model_switch_cleanup = true;
         registered.last_used = Instant::now();
+    }
+}
+
+pub(crate) fn set_text_only(token: &str) {
+    if let Some(route) = registry()
+        .lock()
+        .expect("model registry lock")
+        .routes
+        .get_mut(token)
+    {
+        route.text_only = true;
+    }
+}
+
+fn text_only_request(body: &[u8]) -> Result<Vec<u8>, HttpError> {
+    let mut value: Value = serde_json::from_slice(body).map_err(|error| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: format!("invalid text generation request: {error}"),
+    })?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("tools".to_owned(), json!([]));
+        object.insert("tool_choice".to_owned(), json!("none"));
+        object.remove("parallel_tool_calls");
+    }
+    Ok(serde_json::to_vec(&value).expect("JSON request serializes"))
+}
+
+#[cfg(test)]
+mod text_only_tests {
+    use super::*;
+
+    #[test]
+    fn text_only_request_preserves_prompt_schema_and_model_without_tools() {
+        let body = json!({
+            "model": "independent-predictor", "input": "Predict next reply",
+            "tools": [{"type": "function", "name": "exec_command"}],
+            "tool_choice": "required", "parallel_tool_calls": true,
+            "text": {"format": {"type": "json_schema"}}
+        });
+        let sanitized: Value = serde_json::from_slice(
+            &text_only_request(&serde_json::to_vec(&body).unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(sanitized["tools"], json!([]));
+        assert_eq!(sanitized["tool_choice"], "none");
+        assert!(sanitized.get("parallel_tool_calls").is_none());
+        assert_eq!(sanitized["input"], body["input"]);
+        assert_eq!(sanitized["model"], body["model"]);
+        assert_eq!(sanitized["text"], body["text"]);
     }
 }
 
@@ -802,7 +854,7 @@ async fn handle_for_token(
 ) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
     let forked_from_thread_id = codex_forked_from_thread_id(&headers);
-    let (upstream, vision_sidecar, history, model_routing) = {
+    let (upstream, vision_sidecar, history, model_routing, text_only) = {
         let mut registry = registry()
             .lock()
             .expect("local model proxy registry should not be poisoned");
@@ -818,6 +870,7 @@ async fn handle_for_token(
             registered.vision_sidecar.clone(),
             registered.history.clone(),
             begin_model_request(registered, &body),
+            registered.text_only,
         )
     };
     log_stale_requested_model(&upstream, &body);
@@ -826,6 +879,11 @@ async fn handle_for_token(
         .clone()
         .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
     let normalized_inter_agent_content = 0;
+    let request_body = if text_only {
+        text_only_request(&body)?
+    } else {
+        body.to_vec()
+    };
     let request_policy::PreparedRequest {
         body: request_body,
         conversion,
@@ -833,7 +891,7 @@ async fn handle_for_token(
         stripped_encrypted_content,
     } = request_policy::prepare(
         &upstream,
-        &body,
+        &request_body,
         vision_sidecar.as_ref(),
         history.as_ref(),
         model_routing.model_switched,

@@ -64,6 +64,8 @@ core_segments=(
   tray-lifecycle
   conversation-state
   send-key-preference
+  reply-predictions
+  model-settings
   system-proxy
   system-pac
   environment-panel-scroll
@@ -157,7 +159,7 @@ cloud_shards=(
 core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
@@ -967,6 +969,18 @@ classify_wework_path() {
       wework/src/types/gitCredentials.ts | \
       wework/e2e/desktop/scenarios/change-request-status.scenario.mjs)
       select_target "core:change-request-status"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/model-settings.scenario.mjs | \
+      wework/src/components/settings/ProviderSettingsSection* | \
+      wework/src/components/settings/ProviderEditor* | \
+      wework/src/components/settings/ProviderModelFields* | \
+      wework/src/components/settings/ModelSettingsPage* | \
+      wework/src/features/model-settings/provider*)
+      select_target "core:model-settings"
+      select_target "core:codex-account-login"
+      select_target "core:model-routing"
       return
       ;;
 
