@@ -304,6 +304,9 @@ if [ "$WEGENT_EXECUTOR_HOME" != "$EXPECTED_EXECUTOR_HOME" ] && [ "$WEGENT_EXECUT
     echo "WEGENT_EXECUTOR_HOME must remain at the stable mount path $EXPECTED_EXECUTOR_HOME" >&2
     exit 1
 fi
+# Keep project state and app-server configuration in the same persisted home.
+export CODEX_HOME="${CODEX_HOME:-${WEGENT_CODEX_HOME:-$WEGENT_EXECUTOR_HOME/codex}}"
+export WEGENT_CODEX_HOME="${WEGENT_CODEX_HOME:-$CODEX_HOME}"
 case "$LOCAL_WORKSPACE_ROOT/" in
     "$EXPECTED_DATA_ROOT/workspace/"* | "$WEGENT_EXECUTOR_HOME/workspace/"*) ;;
     *)
