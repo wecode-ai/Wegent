@@ -960,7 +960,8 @@ impl RuntimeWorkRpcHandler {
         if let Some(active_turn) = active_turn {
             event_mapper.observe_root_thread_id(&active_turn.thread_id);
             self.record_active_codex_transcript_item(local_task_id, &active_turn.turn_id, &message);
-            event_request.subtask_id = active_turn.turn_id;
+            event_request =
+                self.request_for_codex_turn(local_task_id, request, &active_turn.turn_id);
         }
         event_mapper.map(
             &self.event_tx,
@@ -969,6 +970,29 @@ impl RuntimeWorkRpcHandler {
             &event_request,
             message,
         );
+    }
+
+    fn request_for_codex_turn(
+        &self,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        turn_id: &str,
+    ) -> ExecutionRequest {
+        let mut event_request = request.clone();
+        event_request.subtask_id = turn_id.to_owned();
+        let initial_turn_id = self.local_task_link(local_task_id).and_then(|link| {
+            link.runtime_handle
+                .get("turnIdsBySubtask")
+                .and_then(|mappings| mappings.get(request.subtask_id.as_str()))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        });
+        if initial_turn_id.is_some_and(|initial| initial != turn_id) {
+            event_request.extra.remove("client_user_message_id");
+            event_request.extra.remove("clientUserMessageId");
+            event_request.extra.remove("runtime_generated_user_message");
+        }
+        event_request
     }
 
     pub(super) fn start_turn(&self, turn: SpawnTurnRequest) {
@@ -1319,7 +1343,11 @@ impl RuntimeWorkRpcHandler {
                     .expect("hook turn context lock should not be poisoned")
                     .as_ref()
                 {
-                    event_request.subtask_id = active_turn.turn_id.clone();
+                    event_request = handler.request_for_codex_turn(
+                        &turn_local_task_id,
+                        &request,
+                        &active_turn.turn_id,
+                    );
                 }
                 handler.persist_and_clear_active_codex_transcript(&turn_local_task_id, "cancelled");
                 if handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id)
@@ -1571,7 +1599,8 @@ impl RuntimeWorkRpcHandler {
         }
         let mut event_request = request.clone();
         if let Some(active_turn) = active_turn {
-            event_request.subtask_id = active_turn.turn_id.clone();
+            event_request =
+                self.request_for_codex_turn(local_task_id, request, &active_turn.turn_id);
         }
         let automation_result = match &result {
             Ok(turn) => match &turn.outcome {

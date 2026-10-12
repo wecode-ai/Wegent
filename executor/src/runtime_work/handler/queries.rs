@@ -737,6 +737,10 @@ impl RuntimeWorkRpcHandler {
             }
             Err(error) => return Err(AppIpcError::new("codex_error", error)),
         };
+        // Native history reads can overlap terminal events. Merge the latest
+        // completed items and execution state rather than the pre-read snapshot.
+        let local_link = self.local_task_link(&local_task_id).or(local_link);
+        let local_execution_running = self.is_active_local_task(&local_task_id);
         if let Some(workspace_path) = local_link
             .as_ref()
             .map(|link| link.workspace_path.as_str())

@@ -149,7 +149,7 @@ describe('runtime goal continuation', () => {
     ).toBe(false)
   })
 
-  test('requests transcript reconciliation until the previous Goal result is visible', () => {
+  test('keeps reconciliation active while earlier Goal results are visible', () => {
     expect(
       shouldReconcileActiveRuntimeGoalTranscript({
         goalContinuing: true,
@@ -171,6 +171,22 @@ describe('runtime goal continuation', () => {
             turnId: 'turn-1',
             subtaskId: 'turn-1',
             createdAt: '2026-08-25T00:00:01.000Z',
+          },
+          continuedAssistantMessage,
+        ],
+        activeAssistantMessage: continuedAssistantMessage,
+      })
+    ).toBe(true)
+    expect(
+      shouldReconcileActiveRuntimeGoalTranscript({
+        goalContinuing: true,
+        messages: [
+          initialUserMessage,
+          {
+            ...continuedAssistantMessage,
+            id: 'settled-current-turn',
+            status: 'done',
+            content: 'Current result',
           },
           continuedAssistantMessage,
         ],

@@ -317,7 +317,14 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     /正在开始下一轮|Starting next turn/,
     'A continuation producing output must leave the startup state'
   )
-  const outputDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const outputDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => {
+      const subtaskId = snapshot.pane?.messageStyleComparison?.currentStreaming?.subtaskId
+      return Boolean(subtaskId && subtaskId === snapshot.workbench?.activeLifecycle?.turn?.id)
+    },
+    'Continuation output did not reach the active turn debug projection'
+  )
   assert.equal(
     outputDebugSnapshot.pane?.messageStyleComparison?.currentStreaming?.subtaskId,
     outputDebugSnapshot.workbench?.activeLifecycle?.turn?.id,
