@@ -32,6 +32,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['workspace-attachments', ['desktop-runtime-intensive']],
   ['automation-lifecycle', ['desktop-runtime-intensive']],
   ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-issue-task-discovery', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
@@ -92,6 +93,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
+  'collaboration-issue-task-discovery':
+    './scenarios/collaboration-issue-task-discovery.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-dispatch':
@@ -144,6 +147,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-context-resilience',
   'cloud-login-proxy',
   'collaboration-shared-core',
+  'collaboration-issue-task-discovery',
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',

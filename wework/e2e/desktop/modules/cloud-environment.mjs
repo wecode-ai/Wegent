@@ -1304,6 +1304,7 @@ class RealCloudEnvironment {
     deviceId,
     deviceName,
     authToken,
+    deviceType = 'remote',
     interactiveSessions = null,
   }) {
     assert.ok(this.executorBinary, 'Remote executor binary is not ready')
@@ -1314,7 +1315,7 @@ class RealCloudEnvironment {
     const env = this.executorEnv({
       deviceId,
       deviceName,
-      deviceType: 'remote',
+      deviceType,
       home,
       codexHome,
       logFile: `generated-remote-device-${deviceId}-runtime.log`,
