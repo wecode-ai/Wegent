@@ -52,6 +52,7 @@ core_segments=(
   running-plan-history
   codex-notification-isolation
   executor-stream-recovery
+  model-overload-recovery
   transcript-sync
   context-compaction
   split-workbench
@@ -168,7 +169,7 @@ core_shards=(
   rendering-extensions,transcript-sync
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery
+  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate
 )
@@ -930,6 +931,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs)
       select_target "core:executor-stream-recovery"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/model-overload-recovery.scenario.mjs)
+      select_target "core:model-overload-recovery"
       return
       ;;
     wework/e2e/desktop/scenarios/send-key-preference.scenario.mjs)

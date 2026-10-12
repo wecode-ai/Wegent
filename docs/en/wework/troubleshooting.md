@@ -15,6 +15,19 @@ sidebar_position: 10
   to open **Settings → Proxy**, save the local proxy, and restart Codex when prompted.
 - For task or terminal failures, check whether the device is online, busy, or requires an update.
 
+### Model at capacity
+
+`Selected model is at capacity. Please try a different model.` indicates model
+service overload, not a task-code failure. For structured overload errors in
+direct Codex tasks, Wework keeps the original conversation and model, waits 5,
+10, 20, 40, and 60 seconds, and automatically continues up to five times. You can
+stop the task during recovery. Recovery does not replay the original task or add
+a user message.
+
+If recovery is exhausted, retry later or select **Switch model and retry**.
+Authentication, quota, and context-window errors are not automatically recovered
+under the overload policy.
+
 ### Unable to connect to the model service
 
 When the local model proxy cannot send a request to the model service, the conversation shows **Unable to connect to the model service** and includes the complete failed endpoint directly in the error card. `Failed to send a request` means that the client did not receive a usable HTTP response. Check the current network, VPN, proxy, and DNS settings. For an internal endpoint, also confirm that the device is connected to the corporate network or VPN.

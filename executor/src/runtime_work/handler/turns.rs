@@ -1280,6 +1280,11 @@ impl RuntimeWorkRpcHandler {
                 finished_turn_handler
                     .clear_active_codex_turn(&finished_turn_local_task_id, execution_id);
             });
+            let recovery_handler = handler.clone();
+            let recovery_local_task_id = turn_local_task_id.clone();
+            let overload_turn_recovering: CodexActiveTurnCallback = Box::new(move |_, turn_id| {
+                recovery_handler.record_overload_recovery_turn(&recovery_local_task_id, &turn_id);
+            });
             let result = async {
                 crate::agents::runtime_capabilities::prepare_codex_runtime(&request).await?;
                 handler
@@ -1304,6 +1309,7 @@ impl RuntimeWorkRpcHandler {
                             thread_started: Some(thread_started),
                             active_turn_started: Some(active_turn_started),
                             active_turn_finished: Some(active_turn_finished),
+                            overload_turn_recovering: Some(overload_turn_recovering),
                         },
                     )
                     .await
