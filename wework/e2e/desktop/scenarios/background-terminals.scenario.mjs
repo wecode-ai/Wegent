@@ -51,6 +51,31 @@ async function changeTheme(control, mode) {
   await control.command('click', '[data-testid="settings-back-button"]')
 }
 
+async function verifyTerminalHistory(control, timeoutMs) {
+  const panel = '[data-testid="background-terminal-output-panel"]'
+  const tree = `${panel} .xterm-accessibility-tree`
+  const textarea = `${panel} .xterm-helper-textarea`
+  await control.command('waitFor', tree, { text: MARKERS[0] })
+  const deadline = Date.now() + timeoutMs
+  let pages = 0
+  while (
+    !(await control.command('getText', `${tree} > div`))
+      .split('\n')
+      .includes(`${MARKERS[0]}_TICK_1`) &&
+    Date.now() < deadline
+  ) {
+    await control.command('nativePress', textarea, { key: 'Shift+PageUp' })
+    pages += 1
+  }
+  await control.command('waitFor', tree, { text: `${MARKERS[0]}_TICK_12` })
+  const lines = (await control.command('getText', `${tree} > div`)).split('\n')
+  for (let tick = 1; tick <= 12; tick += 1)
+    assert.ok(lines.includes(`${MARKERS[0]}_TICK_${tick}`), `Missing terminal output tick ${tick}`)
+  for (let page = 0; page <= pages; page += 1) {
+    await control.command('nativePress', textarea, { key: 'Shift+PageDown' })
+  }
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   resultDir,
@@ -128,6 +153,9 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
+      await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1280, height: 800 }),
+      })
       await createSingleRootLocalProject(control, workspacePath, 'background-terminals-e2e')
       const composer = `${PANE} [data-testid="chat-message-input"][contenteditable="true"]`
       await control.command('waitFor', composer)
@@ -165,23 +193,7 @@ export function createDesktopScenario({
         `${SECTION} [data-testid^="open-background-terminal-"][title*="${MARKERS[0]}"]`
       )
       await control.command('waitFor', '[data-testid="background-terminal-output-panel"] .xterm')
-      await control.command(
-        'waitFor',
-        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
-        { text: MARKERS[0] }
-      )
-      await control.command(
-        'waitFor',
-        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
-        { text: `${MARKERS[0]}_TICK_12` }
-      )
-      for (let tick = 1; tick <= 12; tick += 1) {
-        await control.command(
-          'waitFor',
-          '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
-          { text: `${MARKERS[0]}_TICK_${tick}` }
-        )
-      }
+      await verifyTerminalHistory(control, uiTimeoutMs)
       await control.command('waitFor', '[data-testid^="right-workspace-background-terminal:"]', {
         text: MARKERS[0],
       })
@@ -226,11 +238,7 @@ export function createDesktopScenario({
         'click',
         `${SECTION} [data-testid^="open-background-terminal-"][title*="${MARKERS[0]}"]`
       )
-      await control.command(
-        'waitFor',
-        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
-        { text: `${MARKERS[0]}_TICK_12` }
-      )
+      await verifyTerminalHistory(control, uiTimeoutMs)
       await capture(control, 'background-terminals-04b-restored-output.png')
       await showSummary(control)
       await control.command('hover', `${SECTION} [data-testid^="open-background-terminal-"]`)
