@@ -421,3 +421,16 @@ workflow repairs an incomplete equal version and fails for an incomplete newer
 version instead of overwriting it with an older release. Component archives
 are never overwritten and are uploaded only when their content-addressed asset
 name is absent.
+
+## Component preparation I/O concurrency
+
+Formal package verification requires `component-update` to stage the complete
+component set within its existing budget. Release scripts and Electron share
+one hashing implementation: read at most eight files concurrently per directory
+tree, then feed records to the hash in sorted path order. Directory records,
+file digests, and path separators remain consistent, preserving existing
+component digests. Unsupported entries such as symbolic links still fail
+validation. Independent components validate and prepare their caches in
+parallel; missing downloads and pending-state publication follow only after
+all preparations succeed. Do not increase E2E timeouts or omit digest checks
+to hide serial I/O costs.

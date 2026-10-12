@@ -610,14 +610,8 @@ describe('shared IssueDetail', () => {
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith('issue-1', {
         version: 1,
-        title: '共享详情',
         description: '新描述',
-        status: 'pending',
         priority: 'high',
-        parentId: null,
-        startAt: null,
-        dueAt: null,
-        tags: [],
       })
     )
     await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
@@ -1062,13 +1056,6 @@ describe('shared IssueDetail', () => {
       expect(update).toHaveBeenCalledWith('issue-1', {
         version: 1,
         title: '仅修改标题',
-        description: '原描述',
-        status: 'pending',
-        priority: 'none',
-        parentId: null,
-        startAt: null,
-        dueAt: '2026-09-12',
-        tags: [],
       })
     )
   })

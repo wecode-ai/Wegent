@@ -1,8 +1,30 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+
+const reads = vi.hoisted(() => ({ active: 0, peak: 0 }))
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    createReadStream: (...args) => {
+      const stream = actual.createReadStream(...args)
+      reads.active += 1
+      reads.peak = Math.max(reads.peak, reads.active)
+      stream.once('close', () => {
+        reads.active -= 1
+      })
+      return stream
+    },
+  }
+})
+
+beforeEach(() => {
+  reads.active = 0
+  reads.peak = 0
+})
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal()
@@ -23,6 +45,28 @@ afterEach(async () => {
 })
 
 describe('hashComponentPath', () => {
+  test('reads files concurrently with a bounded number of open streams and an unchanged digest', async () => {
+    const root = await temporaryDirectory()
+    const entries = Array.from({ length: 40 }, (_, index) => `${index}.txt`).sort((a, b) =>
+      a.localeCompare(b)
+    )
+    await Promise.all(entries.map(name => writeFile(join(root, name), name)))
+    const expected = createHash('sha256')
+    for (const name of entries) expected.update(`file:${name}\0${sha256(name)}\0`)
+
+    await expect(hashComponentPath(root)).resolves.toBe(expected.digest('hex'))
+    expect(reads.peak).toBeGreaterThan(1)
+    expect(reads.peak).toBeLessThanOrEqual(8)
+    expect(reads.active).toBe(0)
+  })
+
+  test('rejects symbolic links instead of omitting unverified content', async () => {
+    const root = await temporaryDirectory()
+    await writeFile(join(root, 'target'), 'content')
+    await symlink(join(root, 'target'), join(root, 'link'))
+    await expect(hashComponentPath(root)).rejects.toThrow('Unsupported component tree entry')
+  })
+
   test('hashes a file by its bytes', async () => {
     const root = await temporaryDirectory()
     const path = join(root, 'component.bin')

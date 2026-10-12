@@ -136,7 +136,7 @@ describe('workspace Issue assignee', () => {
     await user.click(inlineSave)
     await vi.waitFor(() => {
       expect(api.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
-        version: 2,
+        version: 1,
         assigneeType: 'user',
         assigneeId: '5',
         notifyAssignee: notify,
@@ -144,6 +144,7 @@ describe('workspace Issue assignee', () => {
       expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
     })
     expect(owner.querySelector('strong')).toHaveTextContent('张三')
+    expect(api.updateLoopItem).not.toHaveBeenCalled()
   })
 
   it('clears the owner and shows the add-owner entry', async () => {
@@ -156,7 +157,7 @@ describe('workspace Issue assignee', () => {
     await user.click(screen.getByTestId('cloud-todo-save'))
     await vi.waitFor(() =>
       expect(api.updateLoopItem).toHaveBeenLastCalledWith('WEG-1', {
-        version: 2,
+        version: 1,
         assignee_user_id: null,
         assignee_agent_id: null,
         assignee_team_id: null,
