@@ -1414,6 +1414,7 @@ async function main() {
     }
     if (electronCoreRuntimeRoot) {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
+      appEnvironment.WEWORK_HARNESS_RESOURCE_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
     if (DESKTOP_SEGMENT === 'running-conversation-history') {

@@ -129,6 +129,10 @@ export class DesktopRuntime {
 
   private async performStart(generation: number): Promise<void> {
     try {
+      if (this.options.environment.WEWORK_EXECUTOR_PATH?.trim()) {
+        await assertExecutorWorkbenchCompatibility(this.options.environment)
+        if (this.lifecycleGeneration !== generation) return
+      }
       const executorPreparation = this.prepareExecutor()
       const executorReady = executorPreparation.then(async executor => {
         await this.startPreparedExecutor(executor, generation)
@@ -141,7 +145,10 @@ export class DesktopRuntime {
           await this.startPreparedCoreDsh(this.createPreparedCoreDsh(launch, executor), generation)
         }
       )
-      await Promise.all([coreDshReady, executorReady])
+      const results = await Promise.allSettled([coreDshReady, executorReady])
+      for (const result of results) {
+        if (result.status === 'rejected') throw result.reason
+      }
       if (this.lifecycleGeneration !== generation) return
       this.started = true
     } catch (error) {
@@ -275,8 +282,6 @@ export class DesktopRuntime {
     const generation = this.lifecycleGeneration
     // Device identity and managed auth preparation may write Homes. Gate both first.
     this.startupStep('executor-home-preparation', 'started')
-    await assertExecutorWorkbenchCompatibility(this.options.environment)
-    if (this.lifecycleGeneration !== generation) return null
     const deviceId = await this.resolveDesktopDeviceId()
     if (this.lifecycleGeneration !== generation) return null
     const deviceName = await resolveDesktopDeviceName({
@@ -316,6 +321,7 @@ export class DesktopRuntime {
       this.startupStep('executor-start', 'completed')
     } catch (error) {
       if (this.executor === executor) this.executor = null
+      await executor.stop().catch(() => {})
       this.startupStep('executor-start', 'failed')
       throw error
     }
@@ -388,7 +394,7 @@ export class DesktopRuntime {
     if (!externalDshUrl) {
       this.startupStep('core-dsh-port-allocation', 'started')
       try {
-        port = await freePort(this.coreDshPort)
+        port = managedRuntime ? 0 : await freePort(this.coreDshPort)
         if (this.lifecycleGeneration !== generation) return null
         this.startupStep('core-dsh-port-allocation', 'completed')
       } catch (error) {
@@ -424,6 +430,7 @@ export class DesktopRuntime {
         ...runtimeEnvironment,
         ...this.options.hostPipe.environment(),
         ...(dshHome ? { DSH_HOME: dshHome } : {}),
+        ...(managedRuntime ? { WEWORK_DSH_MANAGED_ENDPOINT: '1' } : {}),
         WEGENT_APP_IPC_DEVICE_ID: deviceId,
       },
       hostPipe: this.options.hostPipe,
@@ -472,7 +479,7 @@ export class DesktopRuntime {
         if (this.coreDshPlugins === plugins) this.coreDshPlugins = null
         return
       }
-      this.coreDshPort = port
+      this.coreDshPort = port === 0 ? Number(new URL(runtime.url()).port) : port
       this.startupStep('core-dsh-process-start', 'completed')
     } catch (error) {
       if (this.coreDsh === runtime) this.coreDsh = null

@@ -21,6 +21,71 @@ afterEach(async () => {
 })
 
 describe('DSH runtime readiness', () => {
+  test.each(['stdout', 'pipe'])('discovers the child-bound port through %s', async transport => {
+    const authenticateBrowserSession = vi.fn(async () => {})
+    const hostPipe = new HostPipeServer(new HostCapabilityRouter())
+    const runtime = new DshRuntime({
+      url: 'http://127.0.0.1:0',
+      command: process.execPath,
+      args: [
+        '--input-type=module',
+        '-e',
+        `
+        import { createServer } from 'node:http'
+        const server = createServer((request, response) => {
+          if (request.url === '/?token=fixture-token') {
+            response.writeHead(303, { location: '/', 'set-cookie': 'fixture=authenticated' })
+          } else {
+            response.writeHead(request.headers.cookie === 'fixture=authenticated' ? 200 : 401)
+          }
+          response.end()
+        })
+        server.listen(0, '127.0.0.1', () => {
+          const url = 'http://127.0.0.1:' + server.address().port + '/?token=fixture-token'
+          if (process.env.ENDPOINT_TRANSPORT === 'stdout') {
+            console.log('dsh web: ' + url)
+          } else {
+            import('node:fs').then(async fs => {
+              const { createInterface } = await import('node:readline')
+              const input = fs.createReadStream(null, { fd: 3, autoClose: false })
+              const output = fs.createWriteStream(null, { fd: 4, autoClose: false })
+              const send = value => output.write(JSON.stringify(value) + '\\n')
+              createInterface({ input }).on('line', line => {
+                if (JSON.parse(line).type === 'hello') send({ type: 'runtimeEndpoint', url })
+              })
+              send({ type: 'hello', protocolVersion: 1,
+                token: process.env.WEWORK_ELECTRON_HOST_TOKEN, principal: '@wegent/dsh-app-wework' })
+            })
+            setTimeout(() => console.log('dsh web: ' + url), 3000)
+          }
+        })
+      `,
+      ],
+      probeUrls: ['http://127.0.0.1:0/host', 'http://127.0.0.1:0/executor'],
+      startTimeoutMs: 1000,
+      authenticateBrowserSession,
+      hostPipe,
+      env: { ...process.env, ...hostPipe.environment(), ENDPOINT_TRANSPORT: transport },
+    })
+    try {
+      await runtime.start()
+      const origin = runtime.url()
+      expect(Number(new URL(origin).port)).toBeGreaterThan(0)
+      expect(authenticateBrowserSession).toHaveBeenCalledWith(
+        `${origin}/?token=fixture-token`,
+        'fixture=authenticated'
+      )
+      for (const path of ['/host', '/executor']) {
+        const response = await fetch(`${origin}${path}`, {
+          headers: { cookie: 'fixture=authenticated' },
+        })
+        expect(response.ok).toBe(true)
+      }
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   test('preserves the timeout reason while a probe request is still in flight', async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
       return new Promise<Response>((_resolve, reject) => {
@@ -85,46 +150,56 @@ describe('DSH runtime readiness', () => {
     await runtime.stop()
   })
 
-  test('exchanges the managed launch token and authenticates clean readiness URLs', async () => {
-    let exchanges = 0
-    const server = createServer((request, response) => {
-      if (request.url === '/?token=fixture-token') {
-        exchanges += 1
-        response.writeHead(303, { location: '/', 'set-cookie': 'fixture=authenticated; HttpOnly' })
-      } else {
-        response.writeHead(request.headers.cookie === 'fixture=authenticated' ? 200 : 401)
+  test.each([false, true])(
+    'authenticates clean readiness URLs (transient failure=%s)',
+    async transientFailure => {
+      let exchanges = 0
+      const server = createServer((request, response) => {
+        if (request.url === '/?token=fixture-token') {
+          exchanges += 1
+          if (transientFailure && exchanges === 1) {
+            response.writeHead(503)
+          } else {
+            response.writeHead(303, {
+              location: '/',
+              'set-cookie': 'fixture=authenticated; HttpOnly',
+            })
+          }
+        } else {
+          response.writeHead(request.headers.cookie === 'fixture=authenticated' ? 200 : 401)
+        }
+        response.end()
+      })
+      servers.push(server)
+      await listen(server)
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
+      const origin = `http://127.0.0.1:${address.port}`
+      const authenticateBrowserSession = vi.fn(async () => {})
+      const runtime = new DshRuntime({
+        url: origin,
+        command: process.execPath,
+        args: [
+          '-e',
+          `console.log('dsh web: ${origin}/?token=fixture-token'); setInterval(() => {}, 1000)`,
+        ],
+        probeUrls: [origin, `${origin}/api-ready`],
+        startTimeoutMs: 2000,
+        authenticateBrowserSession,
+      })
+      try {
+        await runtime.start()
+        expect(exchanges).toBe(transientFailure ? 2 : 1)
+        expect(authenticateBrowserSession).toHaveBeenCalledWith(
+          `${origin}/?token=fixture-token`,
+          'fixture=authenticated'
+        )
+        expect(runtime.url()).toBe(origin)
+      } finally {
+        await runtime.stop()
       }
-      response.end()
-    })
-    servers.push(server)
-    await listen(server)
-    const address = server.address()
-    if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
-    const origin = `http://127.0.0.1:${address.port}`
-    const authenticateBrowserSession = vi.fn(async () => {})
-    const runtime = new DshRuntime({
-      url: origin,
-      command: process.execPath,
-      args: [
-        '-e',
-        `console.log('dsh web: ${origin}/?token=fixture-token'); setInterval(() => {}, 1000)`,
-      ],
-      probeUrls: [origin, `${origin}/api-ready`],
-      startTimeoutMs: 2000,
-      authenticateBrowserSession,
-    })
-    try {
-      await runtime.start()
-      expect(exchanges).toBe(1)
-      expect(authenticateBrowserSession).toHaveBeenCalledWith(
-        `${origin}/?token=fixture-token`,
-        'fixture=authenticated'
-      )
-      expect(runtime.url()).toBe(origin)
-    } finally {
-      await runtime.stop()
     }
-  })
+  )
 })
 
 function listen(server: ReturnType<typeof createServer>): Promise<void> {

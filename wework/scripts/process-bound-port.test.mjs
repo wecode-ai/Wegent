@@ -58,9 +58,11 @@ test('uses the port owned by the new process instead of an earlier startup log',
     assert.notEqual(port, 1)
     assert.equal(await (await fetch(`http://127.0.0.1:${port}`)).text(), 'ready')
   } finally {
-    const exited = once(child, 'exit')
-    child.kill()
-    await exited
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit')
+      child.kill()
+      await exited
+    }
     await rm(root, { recursive: true, force: true })
   }
 })

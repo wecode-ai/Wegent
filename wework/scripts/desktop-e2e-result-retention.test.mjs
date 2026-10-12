@@ -106,6 +106,8 @@ describe('desktop E2E result retention', () => {
     await mkdir(join(evidence, 'logs'), { recursive: true })
     await writeFile(join(evidence, 'verification.json'), '{"status":"failed"}')
     await writeFile(join(evidence, 'logs', 'runtime.log'), 'Runtime failure')
+    await mkdir(join(evidence, 'logs', 'package'))
+    await writeFile(join(evidence, 'logs', 'package', 'runtime.log'), 'Package runtime failure')
 
     await compactDesktopE2EResult(resultDirectory)
 
@@ -115,6 +117,9 @@ describe('desktop E2E result retention', () => {
     )
     await expectExists(
       join(resultDirectory, 'smart-app-verification', 'development-app', 'runtime.log')
+    )
+    await expectExists(
+      join(resultDirectory, 'smart-app-verification', 'development-app', 'package', 'runtime.log')
     )
   })
 

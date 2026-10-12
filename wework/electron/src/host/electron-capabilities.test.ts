@@ -818,6 +818,29 @@ describe('registerDesktopServiceCapabilities', () => {
 })
 
 describe('isolated surface clipboard capabilities', () => {
+  test.each(['read', 'item'])(
+    'preserves supplied workspace paths when native clipboard %s fails',
+    async failure => {
+      const { router } = createIsolatedClipboardRouter()
+      const path = resolve('.')
+      if (failure === 'read') {
+        electronMocks.clipboardRead.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+      } else {
+        electronMocks.clipboardRead.mockResolvedValueOnce([
+          {
+            types: ['text/uri-list'],
+            getType: vi.fn().mockRejectedValue(new Error('Item unavailable')),
+          },
+        ] as never)
+      }
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readWorkspacePaths', {
+          fallbackPaths: [path],
+        })
+      ).resolves.toEqual([{ path, isDirectory: true }])
+    }
+  )
+
   test('reads native file payloads through asynchronous Electron clipboard items', async () => {
     const { router } = createIsolatedClipboardRouter()
     const path = resolve('.')

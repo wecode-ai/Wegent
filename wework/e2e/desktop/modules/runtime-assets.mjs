@@ -84,7 +84,15 @@ export async function serveHarnessRuntimeAsset(request, response, url, assetDire
     assetDirectory ?? join(resolveSharedHarnessRuntimeAssetCacheRoot(), 'harness-runtime-assets'),
     assetName
   )
-  const metadata = await stat(path)
+  let metadata
+  try {
+    metadata = await stat(path)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+    response.writeHead(404)
+    response.end('Runtime asset not found')
+    return true
+  }
   response.writeHead(200, {
     'content-type': 'application/gzip',
     'content-length': metadata.size,

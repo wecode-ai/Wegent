@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { lstat, readFile, readdir, readlink } from 'node:fs/promises'
+import { lstat, readdir, readlink } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative as relativePath, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
@@ -50,9 +50,7 @@ function createFileHasher() {
     if (active >= 8) await new Promise(resolve => waiting.push(resolve))
     else active += 1
     try {
-      return createHash('sha256')
-        .update(await readFile(path))
-        .digest('hex')
+      return await fileSha256(path)
     } finally {
       const next = waiting.shift()
       if (next) next()

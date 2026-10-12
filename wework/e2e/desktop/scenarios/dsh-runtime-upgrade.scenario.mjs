@@ -126,6 +126,13 @@ async function assertStartupBudget(control, resultDir, label) {
   const stages = startupStages.filter(stage => stage.includes("step: 'startup-splash-close'"))
   assert.ok(stages.length > 0, 'Startup must reach the usable renderer')
   const durationMs = Number(stages.at(-1).match(/elapsedMs:\s*(\d+)/)?.[1])
+  const start = startupStages.findLastIndex(stage => stage.includes("step: 'electron-ready'"))
+  const timings = startupStages.slice(start).map(stage => ({
+    step: stage.match(/step:\s*'([^']+)'/)?.[1],
+    status: stage.match(/status:\s*'([^']+)'/)?.[1],
+    elapsedMs: Number(stage.match(/elapsedMs:\s*(\d+)/)?.[1]),
+  }))
+  console.info('[startup-budget]', JSON.stringify({ label, durationMs, timings }))
   assert.ok(Number.isFinite(durationMs) && durationMs < 5000, `${label}: ${durationMs}ms >= 5s`)
   return { label, durationMs }
 }

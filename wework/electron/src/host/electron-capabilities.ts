@@ -524,13 +524,17 @@ export function createElectronCapabilityRouter(
   router.register('clipboard.readWorkspacePaths', async params => {
     const fallbackPaths = stringArrayParam(params, 'fallbackPaths') ?? []
     const nativePayloads: string[] = []
-    for (const item of await clipboard.read()) {
-      for (const type of item.types.filter(type => /(file|filename|uri)/i.test(type))) {
-        const payload = await item.getType(type)
-        if (!(payload instanceof Blob)) continue
-        const buffer = Buffer.from(await payload.arrayBuffer())
-        nativePayloads.push(buffer.toString('utf8'), buffer.toString('utf16le'))
+    try {
+      for (const item of await clipboard.read()) {
+        for (const type of item.types.filter(type => /(file|filename|uri)/i.test(type))) {
+          const payload = await item.getType(type)
+          if (!(payload instanceof Blob)) continue
+          const buffer = Buffer.from(await payload.arrayBuffer())
+          nativePayloads.push(buffer.toString('utf8'), buffer.toString('utf16le'))
+        }
       }
+    } catch (error) {
+      if (!fallbackPaths.length) throw error
     }
     return inspectWorkspacePaths([
       ...extractFilePathsFromNativePayloads(nativePayloads),

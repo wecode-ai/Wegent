@@ -185,6 +185,49 @@ describe('DesktopRuntime lifecycle generation', () => {
     await runtime.stop()
   })
 
+  test('does not prepare the Core profile when the executor is incompatible', async () => {
+    const runtime = createRuntime({
+      WEWORK_EXECUTOR_PATH: '/executor',
+      WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime',
+    })
+    vi.mocked(assertExecutorWorkbenchCompatibility).mockRejectedValue(
+      new Error('incompatible schema')
+    )
+    await expect(runtime.start()).rejects.toThrow('incompatible schema')
+    expect(prepareState.prepareCalls).toBe(0)
+    expect(created).toHaveLength(0)
+  })
+
+  test('settles Core profile preparation before cleaning up a failed executor startup', async () => {
+    const executor = new FakeExecutor()
+    vi.spyOn(executor, 'start').mockRejectedValue(new Error('executor start failed'))
+    const runtime = createRuntime(
+      {
+        WEWORK_EXECUTOR_PATH: '/executor',
+        WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime',
+      },
+      { createExecutor: () => executor }
+    )
+    const cleanup = vi.spyOn(runtime, 'stop')
+    const failure = expect(runtime.start()).rejects.toThrow('executor start failed')
+    await vi.waitFor(() => expect(executor.start).toHaveBeenCalled())
+    expect(cleanup).not.toHaveBeenCalled()
+    prepareState.resolveLaunch?.({
+      command: 'node',
+      entry: 'entry.js',
+      cwd: '/managed/runtime',
+      dshHome: '/managed/home',
+      environment: {},
+      profile: 'test',
+      version: '0.0.0',
+      sourceFingerprint: 'test',
+    })
+    await failure
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(executor.stopCalls).toBe(1)
+    expect(runtime.state().ready).toBe(false)
+  })
+
   test('a restart continuation cannot publish a runtime after shutdown', async () => {
     const runtime = createRuntime(EXTERNAL_DSH)
     await runtime.start()
@@ -391,6 +434,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     })
     await vi.waitFor(() => expect(created).toHaveLength(1))
     expect(created[0].startCalls).toBe(1)
+    expect(createdOptions[0].args?.slice(-2)).toEqual(['--port', '0'])
     expect(runtime.state().ready).toBe(false)
     expect(startupSteps.indexOf('core-dsh-port-allocation:completed')).toBeLessThan(
       startupSteps.indexOf('core-dsh-process-start:started')

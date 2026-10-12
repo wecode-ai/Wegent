@@ -1224,9 +1224,6 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     primaryDshSecurityInstalled = false
     mainWindow = null
   })
-  const mainShellLoading = mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'), {
-    query: { theme: startupTheme },
-  })
   logStartupStep('startup-splash-load', 'started')
   await startupSplashWindow.loadFile(resolve(packageRoot, 'dist/shell/startup-splash/index.html'), {
     query: { theme: startupTheme },
@@ -1235,9 +1232,6 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   logStartupStep('startup-splash-show', 'started')
   await startupSplash.show()
   logStartupStep('startup-splash-show', 'completed')
-  logStartupStep('main-shell-load', 'started')
-  await mainShellLoading
-  logStartupStep('main-shell-load', 'completed')
   logStartupStep('windows-create', 'completed')
 }
 
@@ -1542,15 +1536,25 @@ function downloadsDirectory(): string {
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
-  logStartupStep('workbench-mode-initialize', 'started')
-  await initializeWorkbenchModePreference(requiredPreferences(), {
-    environment: process.env,
-    homeDirectory: app.getPath('home'),
-  })
-  logStartupStep('workbench-mode-initialize', 'completed')
-  logStartupStep('desktop-environment', 'started')
-  const environment = await desktopEnvironment()
-  logStartupStep('desktop-environment', 'completed')
+  const [modeResult, environmentResult] = await Promise.allSettled([
+    (async () => {
+      logStartupStep('workbench-mode-initialize', 'started')
+      await initializeWorkbenchModePreference(requiredPreferences(), {
+        environment: process.env,
+        homeDirectory: app.getPath('home'),
+      })
+      logStartupStep('workbench-mode-initialize', 'completed')
+    })(),
+    (async () => {
+      logStartupStep('desktop-environment', 'started')
+      const environment = await desktopEnvironment()
+      logStartupStep('desktop-environment', 'completed')
+      return environment
+    })(),
+  ])
+  if (modeResult.status === 'rejected') throw modeResult.reason
+  if (environmentResult.status === 'rejected') throw environmentResult.reason
+  const environment = environmentResult.value
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
       ...currentElectronLaunch(),
@@ -1609,10 +1613,6 @@ async function configureDesktopRuntime(): Promise<void> {
     embeddedBrowser,
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
-  logStartupStep('embedded-browser-bridge', 'started')
-  environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
-  logStartupStep('embedded-browser-bridge', 'completed')
-  Object.assign(environment, embeddedBrowserBridge.environment())
   desktopControlBridge = new WeworkDesktopControlBridge({
     instanceId: desktopControlInstanceId(),
     instanceKind: pluginDevelopmentInstance ? 'core-dsh-plugin-development' : 'main',
@@ -1625,9 +1625,23 @@ async function configureDesktopRuntime(): Promise<void> {
     window: () => mainWindow,
     smartApps: () => smartApps,
   })
-  logStartupStep('desktop-control-bridge', 'started')
-  await desktopControlBridge.start()
-  logStartupStep('desktop-control-bridge', 'completed')
+  const [browserResult, controlResult] = await Promise.allSettled([
+    (async () => {
+      logStartupStep('embedded-browser-bridge', 'started')
+      const runtimeFile = await embeddedBrowserBridge.start()
+      logStartupStep('embedded-browser-bridge', 'completed')
+      return runtimeFile
+    })(),
+    (async () => {
+      logStartupStep('desktop-control-bridge', 'started')
+      await desktopControlBridge.start()
+      logStartupStep('desktop-control-bridge', 'completed')
+    })(),
+  ])
+  if (browserResult.status === 'rejected') throw browserResult.reason
+  if (controlResult.status === 'rejected') throw controlResult.reason
+  environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = browserResult.value
+  Object.assign(environment, embeddedBrowserBridge.environment())
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
@@ -1919,7 +1933,7 @@ function startDesktopRuntime(createStartupWindow?: () => Promise<void>): Promise
   void pluginDevelopmentChildRuntime?.writeState('starting')
   notifyRuntimeChanged()
   runtimeStartPromise = (async () => {
-    await Promise.all([
+    const preparations = await Promise.allSettled([
       (async () => {
         await configureDesktopRuntime()
         logStartupStep('core-dsh-start', 'started')
@@ -1928,6 +1942,9 @@ function startDesktopRuntime(createStartupWindow?: () => Promise<void>): Promise
       })(),
       createStartupWindow?.(),
     ])
+    for (const preparation of preparations) {
+      if (preparation.status === 'rejected') throw preparation.reason
+    }
     trayNativeStatus?.start()
     await loadPrimaryDshView()
     await restoreFixedWorkspaceWindows()
@@ -1984,6 +2001,9 @@ function startDesktopRuntime(createStartupWindow?: () => Promise<void>): Promise
       console.error('[runtime] startup failed', error)
       void startupSplash?.showError().catch(async splashError => {
         console.error('[startup-splash] failed to show runtime failure', splashError)
+        await mainWindow?.loadFile(resolve(packageRoot, 'dist/shell/index.html'), {
+          query: { theme: startupSplash?.snapshot().theme ?? 'light' },
+        })
         if (!keepE2EWindowInBackground) mainWindow?.show()
         await startupSplash?.close()
       })

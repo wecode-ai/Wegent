@@ -12,6 +12,12 @@ export async function apply(ctx) {
     onDisconnect: hostDisconnectHandler(ctx),
   })
   await client.start()
+  if (process.env.WEWORK_DSH_MANAGED_ENDPOINT === '1') {
+    ctx.inject(['connection'], endpointCtx => {
+      const url = `http://127.0.0.1:${endpointCtx.webServer.port}/`
+      client.reportRuntimeEndpoint(endpointCtx.connection.authenticatedUrl(url))
+    })
+  }
   const generation = createWeworkDesktopService(client)
   ctx.effect(() => {
     const unprovide = ctx.reflect.provide(WEWORK_DESKTOP_SERVICE_KEY, generation.service)

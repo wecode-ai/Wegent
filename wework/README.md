@@ -47,6 +47,11 @@ the same editor.
 
 内置插件组合目录引用不可变组件源，避免在写入 Core profile 前重复复制代码。
 原生准备窗口加载与运行时准备并行执行，两者都完成后才载入工作台。
+工作模式检测与组件准备、两个独立的桌面桥接服务分别并行初始化。
+正常启动直接加载 Core 页面；旧错误页面仅在准备窗口无法显示错误时加载。
+Core 进程使用 `--port 0` 直接绑定系统分配的端口，通过已认证的宿主管道传回实际地址，
+再完成认证并校验全部必需接口，避免预选端口在进程启动前被其他进程占用。
+管道中的会话地址不写入日志，也不等待非首屏插件完成全部启动。
 创建或升级 Core profile 时直接写入当前工作模式的插件组合，避免随后启动额外的
 DSH 校验进程来重复调整同一组插件；运行时启动仍校验实际生效的配置。
 Core profile 使用有界并发准备内置插件，代码保留独立副本以继续从 profile 解析依赖，
@@ -55,6 +60,13 @@ Core profile 使用有界并发准备内置插件，代码保留独立副本以�
 The bundled plugin composition references immutable component sources, avoiding
 a duplicate code copy before profile preparation. Native startup windows load
 alongside runtime preparation; the workbench loads only after both complete.
+Workbench mode detection and component preparation run concurrently, as do the
+two independent desktop bridges. Normal startup loads the Core page directly;
+the error page loads only if the preparation window cannot display the error.
+Core binds an OS-assigned port with `--port 0`. The host discovers its actual
+address through the authenticated host pipe before authentication and required
+endpoint checks, eliminating the gap between selecting a port and binding it.
+The session URL stays out of logs, and readiness does not wait for optional plugins.
 Profile creation and upgrades write the selected workbench mode directly,
 avoiding a separate DSH validation process to adjust the same plugins afterwards.
 Runtime startup still validates the effective configuration. Core profile preparation uses

@@ -27,8 +27,16 @@ export class DshRuntime {
   private output = ''
   private authenticationUrl: string | null = null
   private authentication: Promise<string> | null = null
+  private runtimeUrl: string
+  private readonly receiveRuntimeEndpoint = (
+    child: ChildProcessWithoutNullStreams | null,
+    url: string
+  ): void => {
+    if (this.child && this.child === child) this.acceptAuthenticationUrl(url)
+  }
 
   constructor(private readonly options: DshRuntimeOptions) {
+    this.runtimeUrl = options.url
     this.process = options.command
       ? new RuntimeSupervisor({
           command: options.command,
@@ -45,16 +53,21 @@ export class DshRuntime {
             : {}),
           ...(options.hostPipe ? { extraPipeCount: 2 } : {}),
           startTimeoutMs: options.startTimeoutMs,
-          probe: (_child, signal) =>
-            waitForHttpEndpoints(runtimeProbeUrls(options), signal, () =>
+          probe: async (_child, signal) => {
+            while (new URL(this.runtimeUrl).port === '0') {
+              await abortableDelay(LOCAL_READINESS_RETRY_INTERVAL_MS, signal)
+            }
+            await waitForHttpEndpoints(runtimeProbeUrls(options, this.runtimeUrl), signal, () =>
               this.authenticate(signal)
-            ),
+            )
+          },
         })
       : null
     this.process?.on('spawn', () => {
       this.output = ''
       this.authenticationUrl = null
       this.authentication = null
+      this.runtimeUrl = options.url
     })
     this.process?.on('stdout', chunk => this.captureAuthenticationUrl(chunk))
     if (this.process && options.hostPipe) {
@@ -67,6 +80,8 @@ export class DshRuntime {
 
   async start(timeoutMs = 30_000): Promise<void> {
     if (this.process) {
+      this.options.hostPipe?.off('runtimeEndpoint', this.receiveRuntimeEndpoint)
+      this.options.hostPipe?.on('runtimeEndpoint', this.receiveRuntimeEndpoint)
       await this.process.start()
       return
     }
@@ -84,7 +99,7 @@ export class DshRuntime {
   }
 
   url(): string {
-    return this.options.url
+    return this.runtimeUrl
   }
 
   pid(): number | null {
@@ -92,6 +107,7 @@ export class DshRuntime {
   }
 
   stop(): Promise<void> {
+    this.options.hostPipe?.off('runtimeEndpoint', this.receiveRuntimeEndpoint)
     if (this.child) this.options.hostPipe?.detachChild(this.child)
     return this.process?.stop() ?? Promise.resolve()
   }
@@ -102,19 +118,37 @@ export class DshRuntime {
     this.output = lines.pop()?.slice(-8192) ?? ''
     for (const line of lines) {
       const announcement = line.match(/^dsh web: (http:\/\/[^\s]+)/)?.[1]
-      if (!announcement || !URL.canParse(announcement)) continue
-      const url = new URL(announcement)
-      if (url.origin !== new URL(this.options.url).origin || !url.searchParams.has('token')) {
-        continue
-      }
-      this.authenticationUrl = url.toString()
+      if (announcement) this.acceptAuthenticationUrl(announcement)
     }
+  }
+
+  private acceptAuthenticationUrl(announcement: string): void {
+    if (!URL.canParse(announcement)) return
+    const url = new URL(announcement)
+    const configured = new URL(this.options.url)
+    const dynamicPort = configured.port === '0'
+    const matchesOrigin = dynamicPort
+      ? url.protocol === configured.protocol &&
+        url.hostname === configured.hostname &&
+        !url.username &&
+        !url.password &&
+        Number(url.port) > 0 &&
+        Number(url.port) <= 65535
+      : url.origin === configured.origin
+    if (!matchesOrigin || !url.searchParams.has('token')) {
+      return
+    }
+    if (dynamicPort) this.runtimeUrl = url.origin
+    this.authenticationUrl = url.toString()
   }
 
   private async authenticate(signal: AbortSignal): Promise<string> {
     const url = this.authenticationUrl
     if (!url) return ''
-    this.authentication ??= this.exchangeBrowserSession(url, signal)
+    this.authentication ??= this.exchangeBrowserSession(url, signal).catch(error => {
+      this.authentication = null
+      throw error
+    })
     return this.authentication
   }
 
@@ -130,9 +164,14 @@ export class DshRuntime {
   }
 }
 
-function runtimeProbeUrls(options: DshRuntimeOptions): string[] {
+function runtimeProbeUrls(options: DshRuntimeOptions, runtimeUrl = options.url): string[] {
   const configured = options.probeUrls?.filter(Boolean)
-  return configured?.length ? configured : [options.probeUrl ?? options.url]
+  const urls = configured?.length ? configured : [options.probeUrl ?? options.url]
+  return urls.map(value => {
+    const url = new URL(value)
+    if (url.origin !== new URL(options.url).origin) return value
+    return new URL(`${url.pathname}${url.search}`, runtimeUrl).toString()
+  })
 }
 
 async function waitForHttpEndpoints(
@@ -152,8 +191,8 @@ async function waitForHttp(
 ): Promise<void> {
   let lastError: unknown
   while (!signal.aborted) {
-    const cookie = (await authenticate?.()) ?? ''
     try {
+      const cookie = (await authenticate?.()) ?? ''
       const response = await fetch(url, {
         signal: AbortSignal.any([signal, AbortSignal.timeout(1_000)]),
         headers: { cookie },
@@ -175,15 +214,16 @@ async function waitForHttp(
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.reject(signal.reason)
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, milliseconds)
+    const abort = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', abort)
+      reject(signal.reason)
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort)
+      resolve()
+    }, milliseconds)
     timer.unref()
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer)
-        reject(signal.reason)
-      },
-      { once: true }
-    )
+    signal.addEventListener('abort', abort, { once: true })
   })
 }

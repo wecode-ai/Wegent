@@ -215,11 +215,7 @@ async function preserveSmartAppVerification(resultDirectory) {
       const destination = join(resultDirectory, 'smart-app-verification', entry.name)
       await mkdir(destination, { recursive: true })
       await writeFile(join(destination, 'verification.json'), report)
-      const logs = await directoryEntries(join(source, 'logs'))
-      for (const log of logs) {
-        if (!log.isFile()) continue
-        await cp(join(source, 'logs', log.name), join(destination, log.name))
-      }
+      await cp(join(source, 'logs'), destination, { recursive: true })
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error
     }

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { lstat, readFile, readdir, readlink } from 'node:fs/promises'
+import { lstat, readdir, readlink } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative as relativePath, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { createFileOperationQueue } from './file-operation-queue.js'
@@ -26,9 +26,7 @@ export function validateComponentSymlink(root: string, child: string, target: st
 }
 
 export async function hashComponentFileContents(path: string): Promise<string> {
-  return createHash('sha256')
-    .update(await readFile(path))
-    .digest('hex')
+  return fileSha256(path)
 }
 
 async function hashTree(

@@ -112,6 +112,10 @@ export class ElectronHostClient {
     }
   }
 
+  reportRuntimeEndpoint(url) {
+    this.write({ type: 'runtimeEndpoint', url })
+  }
+
   async invoke(capability, params = {}) {
     if (!this.started || !this.handshake) {
       throw new ElectronHostError('client_not_ready', 'Electron host client has not started')

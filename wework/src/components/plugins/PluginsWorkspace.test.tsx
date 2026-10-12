@@ -2958,6 +2958,38 @@ describe('PluginsWorkspace', () => {
     expect(hasSettledPluginDeviceAutoSync('current-device')).toBe(false)
   })
 
+  test('refreshes a remounted plugin view when an older update releases the device lock', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    let releaseSync!: () => void
+    const deviceAutoSyncGate = new Promise<void>(resolve => {
+      releaseSync = resolve
+    })
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'auto',
+      autoUpdateBatchSizes: [1],
+      deviceAutoSyncSucceeds: true,
+      deviceAutoSyncGate,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const oldView = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+    oldView.unmount()
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-row-101')
+    const countRequests = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).includes('/api/plugins/marketplace')).length
+    const requestsBeforeCompletion = countRequests()
+    await act(async () => {
+      releaseSync()
+    })
+    await waitFor(() => expect(countRequests()).toBeGreaterThan(requestsBeforeCompletion))
+  })
+
   test('continues isolated plugin updates and shows the real failed stage', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const marketplace = mockSystemSkillsFetch({

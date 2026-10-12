@@ -3835,6 +3835,8 @@ export function PluginsWorkspace({
         finishDeviceSync()
         if (syncScopeIsCurrent()) {
           setMarketplaceRefreshTick(previous => previous + 1)
+        } else {
+          window.dispatchEvent(new Event(PLUGIN_AUTO_UPDATE_COMPLETED_EVENT))
         }
       })
   }, [

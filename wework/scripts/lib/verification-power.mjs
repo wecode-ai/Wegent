@@ -6,7 +6,7 @@ export function keepVerificationHostAwake() {
     stdio: 'ignore',
   })
   awake.once('error', error => {
-    throw error
+    console.warn('[verification] Unable to keep the host awake:', error.message)
   })
   awake.unref()
   process.once('exit', () => awake.kill())
