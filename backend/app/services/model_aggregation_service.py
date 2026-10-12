@@ -44,7 +44,7 @@ from app.services.runtime_codex_model import (
     build_codex_runtime_model_config,
     is_codex_runtime_model_enabled,
 )
-from app.services.wework_model_config import wework_model_config_options
+from app.services.wework_model_config import wework_model_catalog_config
 from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 logger = logging.getLogger(__name__)
@@ -267,7 +267,7 @@ class ModelAggregationService:
             codex_catalog_model_id = codex_catalog_model_id_from_config(env)
             if codex_catalog_model_id:
                 config["codex_catalog_model_id"] = codex_catalog_model_id
-            config.update(wework_model_config_options(model_crd.spec.modelConfig))
+            config = wework_model_catalog_config(config)
             if model_crd.spec.protocol:
                 config = {**config, "protocol": model_crd.spec.protocol}
             if model_crd.spec.apiFormat:

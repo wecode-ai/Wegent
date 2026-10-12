@@ -13,7 +13,19 @@ REASONING_VALUES = {
 CODEX_REQUEST_MODES = {"auto", "standard", "passthrough"}
 
 
-def wework_model_config_options(model_config: Any) -> dict[str, Any]:
+def wework_model_catalog_config(model_config: dict[str, Any]) -> dict[str, Any]:
+    """Omit invalid request modes from catalog metadata without changing the CRD."""
+    mode = model_config.get("codex_request_mode")
+    config = dict(model_config)
+    if not isinstance(mode, str) or mode not in CODEX_REQUEST_MODES:
+        config.pop("codex_request_mode", None)
+    config.update(wework_model_config_options(config))
+    return config
+
+
+def wework_model_config_options(
+    model_config: Any, *, upstream_api_format: str | None = None
+) -> dict[str, Any]:
     """Extract only supported reasoning and request policy fields."""
     if not isinstance(model_config, dict):
         return {}
@@ -36,6 +48,12 @@ def wework_model_config_options(model_config: Any) -> dict[str, Any]:
     if mode is not None:
         if not isinstance(mode, str) or mode not in CODEX_REQUEST_MODES:
             raise ValueError("codex_request_mode must be auto, standard or passthrough")
+        if (
+            mode == "passthrough"
+            and upstream_api_format is not None
+            and upstream_api_format != "openai-responses"
+        ):
+            raise ValueError("Codex passthrough requires an OpenAI Responses model")
         options["codex_request_mode"] = mode
     for key, alias in (
         ("native_tool_search", "nativeToolSearch"),

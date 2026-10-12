@@ -19,7 +19,7 @@ from app.services.model_capabilities import normalize_model_capabilities
 from app.services.model_embedding_dimension import (
     validate_embedding_dimension_declaration,
 )
-from app.services.wework_model_config import wework_model_config_options
+from app.services.wework_model_config import wework_model_catalog_config
 from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 
@@ -268,7 +268,7 @@ class ModelAdapter:
         codex_catalog_model_id = codex_catalog_model_id_from_config(env)
 
         if isinstance(config, dict):
-            config = {**config, **wework_model_config_options(config)}
+            config = wework_model_catalog_config(config)
 
         # Strip sensitive env from public model config
         if isinstance(config, dict) and "env" in config:

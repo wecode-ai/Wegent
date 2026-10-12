@@ -571,18 +571,11 @@ def _build_cloud_gateway_model_config(
     upstream_api_format = resolve_llm_proxy_protocol(model_name, provider_config)
     try:
         model_options = wework_model_config_options(
-            (model_spec or {}).get("modelConfig")
+            (model_spec or {}).get("modelConfig"),
+            upstream_api_format=upstream_api_format,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if (
-        model_options.get("codex_request_mode") == "passthrough"
-        and upstream_api_format != "openai-responses"
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Codex passthrough requires an OpenAI Responses model",
-        )
     catalog_model_id = _catalog_model_id_from_model_spec(model_spec)
     config = {
         "model": "openai",
