@@ -164,6 +164,36 @@ describe('Smart App package validator', () => {
       code: 'SA-PACKAGE-MANIFEST-COUNT',
     })
   })
+
+  test('validates optional capability declarations', () => {
+    expect(validateSmartAppManifest(validManifest()).capabilities).toBeUndefined()
+    expect(
+      validateSmartAppManifest({ ...validManifest(), capabilities: { decisionModel: true } })
+        .capabilities
+    ).toEqual({ decisionModel: true })
+    expect(
+      validateSmartAppManifest({ ...validManifest(), capabilities: { decisionModel: false } })
+        .capabilities
+    ).toEqual({ decisionModel: false })
+    expect(validateSmartAppManifest({ ...validManifest(), capabilities: {} }).capabilities).toEqual(
+      {}
+    )
+
+    const rejected: unknown[] = [
+      true,
+      'decisionModel',
+      [],
+      { decisionModel: 'yes' },
+      { decisionModel: 1 },
+      { decisionModel: null },
+      { decisionModel: true, unknownCapability: true },
+    ]
+    for (const capabilities of rejected) {
+      expect(() => validateSmartAppManifest({ ...validManifest(), capabilities })).toThrowError(
+        expect.objectContaining({ code: 'SA-MANIFEST-CAPABILITIES' })
+      )
+    }
+  })
 })
 
 async function packageDirectory(path?: string): Promise<string> {

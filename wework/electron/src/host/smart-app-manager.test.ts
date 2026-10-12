@@ -415,6 +415,113 @@ describe('SmartAppManager', () => {
     )
   })
 
+  test('grants the decision capability to a linked project only behind the dev switch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-capability-'))
+    roots.push(root)
+    const parent = join(root, 'projects')
+    await mkdir(parent)
+
+    const linked = createManager(root, undefined, {
+      WEWORK_DECISION_PROXY_ALLOW_LINKED_APPS: 'true',
+    })
+    const installation = await linked.createDirectory({
+      parentPath: parent,
+      name: 'decision-linked',
+      displayName: 'Decision Linked',
+      description: 'Requests the decision router',
+      template: 'web',
+    })
+    expect(installation.grantedCapabilities).toEqual({ decisionModel: false })
+
+    const manifestPath = join(installation.packagePath, 'plugin-manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as WorkbenchAppManifest
+    manifest.capabilities = { decisionModel: true }
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    await expect(linked.list()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: installation.id,
+        grantedCapabilities: { decisionModel: true },
+      })
+    )
+
+    // The same linked project on a build without the development switch stays denied.
+    const denied = createManager(root)
+    await expect(denied.list()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: installation.id,
+        grantedCapabilities: { decisionModel: false },
+      })
+    )
+  })
+
+  test('grants the decision capability to allowlisted marketplace releases only', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-market-capability-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, {
+      ...validManifest(),
+      capabilities: { decisionModel: true },
+    })
+    const allowlisted = createManager(root, undefined, {
+      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[42]',
+    })
+    const preview = await allowlisted.preview(archivePath)
+
+    const installation = await allowlisted.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+
+    expect(installation).toMatchObject({
+      id: 'market-42',
+      source: 'market',
+      grantedCapabilities: { decisionModel: true },
+    })
+
+    const otherBuild = createManager(root, undefined, {
+      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[99]',
+    })
+    await expect(otherBuild.list()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: 'market-42',
+        grantedCapabilities: { decisionModel: false },
+      })
+    )
+  })
+
+  test('never grants a capability the manifest does not request', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-no-request-'))
+    roots.push(root)
+    const withoutRequest = await createSmartAppArchive(root, validManifest())
+    const managedRequest = await createSmartAppArchive(root, {
+      ...validManifest(),
+      capabilities: { decisionModel: true },
+    })
+    const manager = createManager(root, undefined, {
+      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[42]',
+      WEWORK_DECISION_PROXY_ALLOW_LINKED_APPS: 'true',
+    })
+
+    const silentPreview = await manager.preview(withoutRequest)
+    const silent = await manager.install({
+      archivePath: withoutRequest,
+      expectedSha256: silentPreview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+    expect(silent.grantedCapabilities).toEqual({ decisionModel: false })
+
+    // A managed install is never treated as a trusted marketplace release.
+    const managedPreview = await manager.preview(managedRequest)
+    const managed = await manager.install({
+      archivePath: managedRequest,
+      expectedSha256: managedPreview.sha256,
+    })
+    expect(managed.grantedCapabilities).toEqual({ decisionModel: false })
+  })
+
   test('rejects unknown scaffold templates before creating a destination', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-template-'))
     roots.push(root)
@@ -551,7 +658,8 @@ function createManager(
       manifest: WorkbenchAppManifest
       report: SmartAppVerificationReport
     }>
-  }
+  },
+  environment: NodeJS.ProcessEnv = {}
 ): SmartAppManager {
   return new SmartAppManager({
     dataDirectory: join(root, 'data'),
@@ -559,7 +667,7 @@ function createManager(
     downloadsDirectory: () => join(root, 'downloads'),
     logDirectory: join(root, 'logs'),
     runtimeRoot: join(root, 'runtime'),
-    environment: {},
+    environment,
     runtimeHost: () => ({
       open: vi.fn(),
       close: vi.fn(),

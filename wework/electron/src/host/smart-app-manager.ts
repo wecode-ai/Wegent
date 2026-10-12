@@ -30,6 +30,10 @@ import {
 import { SmartAppVerifier, type SmartAppPackResult } from './smart-app-verifier.js'
 import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 import { ensureDirectory } from './ensure-directory.js'
+import {
+  decideDecisionModelGrant,
+  type SmartAppCapabilitySource,
+} from './smart-app-capability-policy.js'
 
 export interface SmartAppInstallation {
   id: string
@@ -45,6 +49,13 @@ export interface SmartAppInstallation {
   smartAppId?: number | null
   releaseId?: number | null
   source: 'managed' | 'linked' | 'market'
+  /**
+   * Capabilities Wework has authorized for this installation. A manifest
+   * request is only granted when the install provenance is trusted.
+   */
+  grantedCapabilities: {
+    decisionModel: boolean
+  }
 }
 
 export interface SmartAppPreview {
@@ -118,6 +129,7 @@ export class SmartAppManager {
         if (installation.source === 'linked') {
           changed = (await refreshLinkedInstallation(installation)) || changed
         }
+        changed = this.syncGrantedCapabilities(installation) || changed
         const active = running.has(tabId(installation.id))
         const state = active ? 'running' : installation.state === 'failed' ? 'failed' : 'installed'
         if (
@@ -296,6 +308,7 @@ export class SmartAppManager {
         installation.manifest = refreshed.manifest
         installation.sha256 = refreshed.sha256
         installation.error = null
+        this.syncGrantedCapabilities(installation)
         await this.writeRegistry(installations)
         return installation
       } catch (error) {
@@ -392,7 +405,9 @@ export class SmartAppManager {
         smartAppId: input.smartAppId ?? null,
         releaseId: input.releaseId ?? null,
         source: input.smartAppId == null ? 'managed' : 'market',
+        grantedCapabilities: { decisionModel: false },
       }
+      this.syncGrantedCapabilities(installation)
       await this.writeRegistry([...installations.filter(item => item.id !== id), installation])
       return installation
     })
@@ -666,9 +681,27 @@ export class SmartAppManager {
       smartAppId: null,
       releaseId: null,
       source: 'linked',
+      grantedCapabilities: { decisionModel: false },
     }
+    this.syncGrantedCapabilities(installation)
     await this.writeRegistry([...installations, installation])
     return installation
+  }
+
+  /**
+   * Recomputes the trusted capability grants for an installation and reports
+   * whether the stored record changed.
+   */
+  private syncGrantedCapabilities(installation: SmartAppInstallation): boolean {
+    const decisionModel = decideDecisionModelGrant({
+      manifest: installation.manifest,
+      source: installation.source as SmartAppCapabilitySource,
+      smartAppId: installation.smartAppId ?? null,
+      environment: this.options.environment,
+    })
+    if (installation.grantedCapabilities?.decisionModel === decisionModel) return false
+    installation.grantedCapabilities = { decisionModel }
+    return true
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {

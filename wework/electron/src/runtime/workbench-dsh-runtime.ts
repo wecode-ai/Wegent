@@ -31,6 +31,13 @@ export interface WorkbenchAppManifest {
     spec: string
     path?: string
   }>
+  /**
+   * Capability requests. A request is not a grant: Wework decides separately
+   * whether the installation is trusted enough to receive the capability.
+   */
+  capabilities?: {
+    decisionModel?: boolean
+  }
 }
 
 export interface PrepareWorkbenchDshOptions {

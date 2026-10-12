@@ -30,6 +30,10 @@ export interface HarnessAppManifest {
     spec: string
     path?: string
   }>
+  /** Capability requests; a request is not a grant. */
+  capabilities?: {
+    decisionModel?: boolean
+  }
   defaultModel?: Record<string, unknown>
 }
 
@@ -47,6 +51,10 @@ export interface HarnessAppInstallation {
   smartAppId?: number | null
   releaseId?: number | null
   source: 'managed' | 'linked' | 'market'
+  /** Capabilities Wework authorized for this installation. */
+  grantedCapabilities: {
+    decisionModel: boolean
+  }
 }
 
 export interface HarnessAppPreview {
