@@ -56,6 +56,7 @@ import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/mo
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -254,7 +255,7 @@ function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel 
 function codexConversationProvider(
   model: UnifiedModel | null | undefined
 ): 'openai' | 'router' | null {
-  if (!model) return null
+  if (!model || model.name === CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME) return null
   const configuredKind =
     typeof model.config?.weworkModelKind === 'string'
       ? model.config.weworkModelKind
@@ -828,6 +829,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           onSelectModelOption={controls.setSelectedModelOption}
           onBlockedModelSelect={controls.onBlockedModelSelect}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
+          modelSelectorOverride={modelSelectorOverride}
           isStreaming={isStreaming}
           onPause={onPause}
           projectPhrases={projectQuickPhrases}

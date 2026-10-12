@@ -1,6 +1,76 @@
 use super::*;
 
 #[test]
+fn overload_recovery_transcript_preserves_user_and_tools_without_terminal_failure() {
+    let handle = json!({"overloadRecoveryTurnIds": ["overloaded-turn"]});
+    let mut thread = json!({"turns": [
+        {"id": "overloaded-turn", "status": "failed", "error": {
+            "message": "Selected model is at capacity.",
+            "codexErrorInfo": "serverOverloaded"
+        }, "items": [
+            {"id": "user-1", "type": "userMessage", "content": [
+                {"type": "text", "text": "Original task"}
+            ]},
+            {"id": "tool-1", "type": "commandExecution", "command": "echo done",
+                "status": "completed", "aggregatedOutput": "done"}
+        ]},
+        {"id": "unrelated-failure", "status": "failed", "error": {
+            "message": "Permission denied"
+        }, "items": []}
+    ]});
+    let items = thread["turns"][0]["items"].clone();
+    normalize_overload_recovery_thread(&mut thread, &handle);
+    assert_eq!(thread["turns"][0]["status"], "completed");
+    assert!(thread["turns"][0].get("error").is_none());
+    assert_eq!(thread["turns"][0]["items"], items);
+    assert_eq!(thread["turns"][1]["status"], "failed");
+    assert_eq!(thread["turns"][1]["error"]["message"], "Permission denied");
+    let messages = transcript_messages(&thread, "device-1");
+    assert!(messages.iter().any(|message| message["role"] == "user"));
+    assert!(serde_json::to_string(&messages).unwrap().contains("tool-1"));
+    assert!(!messages.iter().any(|message| {
+        message["turnId"] == "overloaded-turn" && message["status"] == "failed"
+    }));
+
+    let mut cached = vec![
+        json!({"turnId": "overloaded-turn", "role": "user", "content": "Original task"}),
+        json!({"turnId": "overloaded-turn", "role": "assistant", "status": "failed",
+        "error": "Selected model is at capacity.", "blocks": [
+            {"type": "tool", "tool_output": "done"}
+        ]}),
+        json!({"turnId": "unrelated-failure", "role": "assistant", "status": "failed",
+            "error": "Permission denied"}),
+    ];
+    normalize_overload_recovery_messages(&mut cached, &handle);
+    assert_eq!(cached.len(), 3);
+    assert_eq!(cached[0]["content"], "Original task");
+    assert_eq!(cached[1]["status"], "done");
+    assert_eq!(cached[1]["blocks"][0]["tool_output"], "done");
+    assert!(cached[1].get("error").is_none());
+    assert_eq!(cached[2]["status"], "failed");
+}
+
+#[test]
+fn overload_recovery_turn_identity_survives_store_reload_without_duplicates() {
+    let index_path = temp_runtime_work_index_path("overload-recovery-store");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+    handler.record_overload_recovery_turn("task-1", "failed-turn");
+    handler.record_overload_recovery_turn("task-1", "failed-turn");
+    let reloaded = RuntimeWorkStore::new(index_path.clone());
+    assert_eq!(
+        reloaded.get_task("task-1").unwrap().runtime_handle["overloadRecoveryTurnIds"],
+        json!(["failed-turn"])
+    );
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn transcript_restores_native_references_from_saved_user_content() {
     for (original, provider) in [
         (

@@ -83,6 +83,9 @@ impl RestoreStartupGate {
             .state
             .lock()
             .expect("restore startup state lock should not be poisoned");
+        if matches!(*state, RestoreStartupState::Active) {
+            return true;
+        }
         if !matches!(*state, RestoreStartupState::Waiting { .. }) {
             return false;
         }

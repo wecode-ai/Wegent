@@ -47,6 +47,7 @@ const CHECKPOINT_RESOURCES = new Map([
 const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
+  'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
   'cloud-model-presets': './scenarios/cloud-model-presets.scenario.mjs',
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
   'plugin-uninstall-resilience': './scenarios/plugin-uninstall-resilience.scenario.mjs',
@@ -70,6 +71,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'codex-invalid-launch-cwd': './scenarios/codex-invalid-launch-cwd.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
+  'model-overload-recovery': './scenarios/model-overload-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
   'running-plan-history': './scenarios/running-plan-history.scenario.mjs',
@@ -122,6 +124,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-worktree-policy',
   'cloud-model-recovery',
+  'task-model-deletion',
   'cloud-model-presets',
   'plugin-account-auth',
   'plugin-uninstall-resilience',
@@ -155,6 +158,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'runtime-task-queue',
   'codex-invalid-launch-cwd',
   'executor-stream-recovery',
+  'model-overload-recovery',
   'transcript-sync',
   'running-conversation-history',
   'running-plan-history',

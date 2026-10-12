@@ -143,6 +143,8 @@ mod debug_stdout;
 mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
+#[path = "codex/overload_recovery.rs"]
+mod overload_recovery;
 #[path = "codex/plugin_skills.rs"]
 mod plugin_skills;
 
@@ -179,6 +181,7 @@ pub struct CodexAppServerTurnOptions {
     pub thread_started: Option<CodexThreadStartedCallback>,
     pub active_turn_started: Option<CodexActiveTurnCallback>,
     pub active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
+    pub overload_turn_recovering: Option<CodexActiveTurnCallback>,
 }
 
 pub trait CodexTurnInterrupter: Send + Sync {
@@ -1799,6 +1802,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         thread_started,
         active_turn_started,
         active_turn_finished,
+        overload_turn_recovering,
         defer_interactive_forms: _,
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
@@ -1985,6 +1989,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_timeout_seconds,
             startup_deadline,
             SharedTurnNotificationOptions {
+                overload_continuation_params: overload_recovery::continuation_params(
+                    turn_start_params(&thread_id, request, &launch_config, Vec::new()),
+                ),
                 active_turn_id,
                 expected_client_user_message_id,
                 notifications,
@@ -1992,6 +1999,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 request_user_input_answers,
                 active_turn_started,
                 active_turn_finished,
+                overload_turn_recovering,
                 wait_for_goal_continuation,
                 auto_approve_mcp_tool_calls,
             },
@@ -2153,6 +2161,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         mut cancellation,
         request_user_input_answers,
         defer_interactive_forms,
+        overload_turn_recovering,
         ..
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
@@ -2291,28 +2300,28 @@ pub async fn run_codex_app_server_turn_with_cancel(
             ),
         )
         .await?;
-        let outcome = if let Some(cancellation) = cancellation.as_mut() {
-            tokio::select! {
-                outcome = rpc.read_turn(
-                    turn_request_id,
-                    &mut state,
-                    notifications,
-                    request_user_input_answers,
-                    auto_approve_mcp_tool_calls,
-                    defer_interactive_forms,
-                ) => outcome?,
-                _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
-            }
-        } else {
-            rpc.read_turn(
-                turn_request_id,
-                &mut state,
+        let read_turn = rpc.read_turn(
+            turn_request_id,
+            &mut state,
+            json_rpc::TurnReadOptions {
+                overload_turn_recovering,
+                overload_continuation_params: overload_recovery::continuation_params(
+                    turn_start_params(&thread_id, request, &launch_config, Vec::new()),
+                ),
                 notifications,
                 request_user_input_answers,
                 auto_approve_mcp_tool_calls,
                 defer_interactive_forms,
-            )
-            .await?
+            },
+        );
+        let outcome = if let Some(cancellation) = cancellation.as_mut() {
+            tokio::select! {
+                biased;
+                _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
+                outcome = read_turn => outcome?,
+            }
+        } else {
+            read_turn.await?
         };
         state.finish_turn_timing(current_epoch_millis());
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
@@ -2362,6 +2371,8 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
 }
 
 struct SharedTurnNotificationOptions {
+    overload_turn_recovering: Option<CodexActiveTurnCallback>,
+    overload_continuation_params: Value,
     active_turn_id: Option<String>,
     expected_client_user_message_id: Option<String>,
     notifications: Option<CodexNotificationSender>,
@@ -2379,7 +2390,7 @@ async fn read_shared_turn_notifications(
     thread_id: &str,
     state: &mut CodexRunState,
     startup_timeout_seconds: u64,
-    startup_deadline: Instant,
+    mut startup_deadline: Instant,
     mut options: SharedTurnNotificationOptions,
 ) -> Result<ExecutionOutcome, String> {
     let mut last_outcome: Option<ExecutionOutcome> = None;
@@ -2392,6 +2403,7 @@ async fn read_shared_turn_notifications(
         .map(InteractionAnswerRouter::new);
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
     let mut cancellation_requested = false;
+    let mut overload_recovery = overload_recovery::OverloadRecovery::default();
     loop {
         let receive_notification = async {
             if let Some(cancel_rx) = options.cancellation.as_mut() {
@@ -2578,6 +2590,78 @@ async fn read_shared_turn_notifications(
         if waiting_for_initial_progress && codex_notification_has_initial_progress(&message, state)
         {
             waiting_for_initial_progress = false;
+        }
+        if !cancellation_requested {
+            match overload_recovery.observe(&message, state) {
+                overload_recovery::RecoveryAction::Forward => {}
+                overload_recovery::RecoveryAction::AwaitCompletion => {
+                    waiting_for_initial_progress = true;
+                    startup_deadline =
+                        Instant::now() + Duration::from_secs(startup_timeout_seconds);
+                    continue;
+                }
+                overload_recovery::RecoveryAction::Retry {
+                    delay,
+                    notification,
+                } => {
+                    if let Some(callback) = options.overload_turn_recovering.as_ref() {
+                        if let Some(turn_id) = notification_turn_id.as_deref() {
+                            callback(thread_id.to_owned(), turn_id.to_owned());
+                        }
+                    }
+                    let _ = state.handle_message(&message);
+                    if let Some(callback) = options.active_turn_finished.as_ref() {
+                        callback();
+                    }
+                    options.active_turn_id = None;
+                    if let Some(sender) = &options.notifications {
+                        let _ = sender.send(notification);
+                    }
+                    overload_recovery::wait_for_retry(delay, &mut options.cancellation).await?;
+                    ensure_codex_turn_not_cancelled(&mut options.cancellation)?;
+                    startup_deadline =
+                        Instant::now() + Duration::from_secs(startup_timeout_seconds);
+                    let start = timeout_at(
+                        startup_deadline,
+                        client.request("turn/start", options.overload_continuation_params.clone()),
+                    );
+                    let response = if let Some(cancel_rx) = options.cancellation.as_mut() {
+                        tokio::select! {
+                            biased;
+                            _ = cancel_rx => {
+                                let _ = interrupt_shared_turn(client, thread_id, "").await;
+                                return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+                            }
+                            response = start => response,
+                        }
+                    } else {
+                        start.await
+                    };
+                    let response = match response {
+                        Ok(response) => response?,
+                        Err(_) => {
+                            return Err(recover_stalled_shared_turn(
+                                client,
+                                thread_id,
+                                startup_timeout_seconds,
+                            )
+                            .await)
+                        }
+                    };
+                    options.active_turn_id = turn_start_response_id(&response);
+                    options.expected_client_user_message_id = None;
+                    if let (Some(callback), Some(turn_id)) = (
+                        options.active_turn_started.as_ref(),
+                        options.active_turn_id.as_ref(),
+                    ) {
+                        callback(thread_id.to_owned(), turn_id.clone());
+                    }
+                    waiting_for_initial_progress = true;
+                    goal_continuation_deadline = None;
+                    last_outcome = None;
+                    continue;
+                }
+            }
         }
         let auto_approve_mcp_tool_call =
             options.auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);

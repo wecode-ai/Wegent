@@ -750,6 +750,9 @@ impl RuntimeWorkRpcHandler {
                 thread.insert("cwd".to_owned(), Value::String(workspace_path.to_owned()));
             }
         }
+        if let Some(link) = local_link.as_ref().filter(|_| !direct_thread_override) {
+            normalize_overload_recovery_thread(&mut thread, &link.runtime_handle);
+        }
         let presentation_page_turn_ids = thread
             .get("turns")
             .and_then(Value::as_array)

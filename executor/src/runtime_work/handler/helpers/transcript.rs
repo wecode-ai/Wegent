@@ -7,6 +7,7 @@ fn cached_transcript_response(
     before_cursor: Option<&str>,
     after_cursor: Option<&str>,
 ) -> Value {
+    normalize_overload_recovery_messages(&mut messages, &link.runtime_handle);
     remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
     let turn_navigation = transcript_turn_navigation(&messages);
     let history_unavailable = !running
@@ -54,6 +55,53 @@ fn cached_transcript_response(
         }
     }
     response
+}
+
+fn overload_recovery_turn_ids(runtime_handle: &Value) -> std::collections::HashSet<&str> {
+    runtime_handle
+        .get("overloadRecoveryTurnIds")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect()
+}
+
+fn normalize_overload_recovery_thread(thread: &mut Value, runtime_handle: &Value) {
+    let ids = overload_recovery_turn_ids(runtime_handle);
+    if let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) {
+        for turn in turns {
+            if turn
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| ids.contains(id))
+            {
+                turn["status"] = json!("completed");
+                turn.as_object_mut()
+                    .expect("turn is an object")
+                    .remove("error");
+            }
+        }
+    }
+}
+
+fn normalize_overload_recovery_messages(messages: &mut [Value], runtime_handle: &Value) {
+    let ids = overload_recovery_turn_ids(runtime_handle);
+    for message in messages {
+        if message
+            .get("turnId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| ids.contains(id))
+        {
+            let object = message
+                .as_object_mut()
+                .expect("transcript message is an object");
+            object.insert("status".to_owned(), json!("done"));
+            object.insert("runtimeStatus".to_owned(), json!("completed"));
+            object.remove("error");
+            object.remove("errorType");
+        }
+    }
 }
 
 pub(super) fn remove_superseded_transcript_turns(

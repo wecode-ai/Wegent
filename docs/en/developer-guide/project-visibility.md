@@ -4,7 +4,7 @@ sidebar_position: 35
 
 # Project roles and issue visibility
 
-Cloud projects use one set of roles: Owner, Maintainer, Developer, and Viewer. Owners administer the project and members. Maintainers manage settings, members, assignments, and issue security. Developers create and edit visible issues. Viewers have read-only access. Creators retain Owner access. Workspace members inherit Viewer access through the existing project association; direct project grants can raise their role.
+Cloud projects use one set of roles: Owner, Maintainer, Developer, and Viewer. Owners administer the project and members. Maintainers manage settings, members, and issue security. Developers create and edit visible issues and can assign the owner; the issue creator can also assign their own issue. Viewers have read-only access. Project creators retain Owner access. Workspace members inherit Viewer access through the existing project association; direct project grants can raise their role.
 
 Private and public access are represented by grants in `resource_members`. A public project grants Viewer or Developer to all signed-in users; a private project has no such grant. Direct, inherited, and all-user grants combine using the strongest role. Pending, rejected, and invalid grants have no effect. Archived projects remain inaccessible.
 

@@ -323,6 +323,12 @@ export function createWorkbenchHomeMigrationScenario({
       completed.push('native-mcp-service-environment-start-resume')
       fixture.nativeAgentMcp = await verifyNativeAgentMcp({ fixture, resultDir })
       completed.push('native-agent-mcp-persistence-and-followup')
+      fixture.emptyCommandHttpMcp = await verifyNativeAgentMcp({
+        fixture,
+        resultDir,
+        emptyCommandHttp: true,
+      })
+      completed.push('native-agent-empty-command-http-mcp-start-and-resume')
       fixture.nativeAgentMcpOverride = await verifyNativeAgentMcp({
         fixture,
         resultDir,
