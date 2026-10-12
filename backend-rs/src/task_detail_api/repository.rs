@@ -7,7 +7,7 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlRow};
 use chrono::NaiveDateTime;
 use serde_json::Value;
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// A `tasks_{:04}` row selected with the full unqualified projection.
 #[derive(Debug)]

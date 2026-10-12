@@ -9,7 +9,7 @@
 //! helpers `_matches_source`, `_search_text`, `_source_provider`,
 //! `_source_label` from the source service.
 #[cfg(test)]
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 use std::collections::{HashMap, HashSet};
 
 use brz_mysql::Mysql;
@@ -363,6 +363,27 @@ fn marketplace_item(input: MarketplaceItemInput<'_>) -> MarketplaceItem {
     }
 }
 
+/// Source `plugin_device_rows`: resolve the requested device to its canonical
+/// id, load every installation row for the user, coalesce legacy aliases, then
+/// keep only rows on the canonical device, keyed by installed kind id.
+async fn plugin_device_rows<M>(
+    mysql: &M,
+    user_id: i64,
+    device_id: &str,
+) -> Result<HashMap<i64, DeviceInstallationRow>, brz_mysql::MysqlError>
+where
+    M: Mysql,
+{
+    let canonical_id = plugin_device_id(mysql, user_id, device_id).await?;
+    let rows = UserRepository::list_device_installations_by_user(mysql, user_id).await?;
+    Ok(coalesce_plugin_device_rows(mysql, rows)
+        .await?
+        .into_iter()
+        .filter(|((_, canonical), _)| *canonical == canonical_id)
+        .map(|((installed_id, _), row)| (installed_id, row))
+        .collect())
+}
+
 /// Build the marketplace listing response for one request.
 ///
 /// Errors map to a 500-class failure; the source's request path has no other
@@ -525,20 +546,8 @@ where
     let device_rows_by_kind_id: HashMap<i64, DeviceInstallationRow> =
         match (device_filter, installed_kind_ids.is_empty()) {
             (Some(device_id), false) => {
-                // Source `plugin_device_rows`: resolve the requested device to
-                // its canonical id, load every installation row for the user,
-                // coalesce legacy aliases, then keep rows on the canonical
-                // device.
                 let user_id = user_id.expect("installed kinds require an authenticated user");
-                let canonical_id = plugin_device_id(mysql, user_id, device_id).await?;
-                let rows =
-                    UserRepository::list_device_installations_by_user(mysql, user_id).await?;
-                coalesce_plugin_device_rows(mysql, rows)
-                    .await?
-                    .into_iter()
-                    .filter(|((_, canonical), _)| *canonical == canonical_id)
-                    .map(|((installed_id, _), row)| (installed_id, row))
-                    .collect()
+                plugin_device_rows(mysql, user_id, device_id).await?
             }
             _ => HashMap::new(),
         };
@@ -569,8 +578,23 @@ where
             continue;
         };
         let installed = installed_by_plugin_id.get(&plugin.id);
-        let device_row =
+        let preloaded_row =
             installed.and_then(|installed| device_rows_by_kind_id.get(&installed.kind_id));
+        // Source `_to_marketplace_item`: with an active device filter, an
+        // installed plugin whose preloaded device row is absent is re-resolved
+        // through `_device_installation`, which issues one `plugin_device_rows`
+        // per such plugin. The re-resolved row comes from the same lookup, so
+        // it stays absent here, but the source still emits the queries.
+        let fallback_rows: HashMap<i64, DeviceInstallationRow> =
+            match (preloaded_row, installed, device_filter) {
+                (None, Some(_installed), Some(device_id)) => {
+                    let user_id = user_id.expect("installed kinds require an authenticated user");
+                    plugin_device_rows(mysql, user_id, device_id).await?
+                }
+                _ => HashMap::new(),
+            };
+        let device_row = preloaded_row
+            .or_else(|| installed.and_then(|installed| fallback_rows.get(&installed.kind_id)));
         items.push(marketplace_item(MarketplaceItemInput {
             plugin,
             release,
@@ -773,5 +797,33 @@ mod tests {
         assert!(item.actual_release_id.is_none());
         assert!(item.error_code.is_none());
         assert!(item.last_sync_at.is_none());
+    }
+
+    /// Source `plugin_device_rows` composes exactly two reads: the canonical
+    /// device resolution (`kinds` Device lookup) followed by the user's
+    /// `plugin_device_installations` rows. Source `_to_marketplace_item`
+    /// re-invokes this helper for each installed plugin without a preloaded
+    /// device row, so the helper must stay a single reusable call.
+    #[tokio::test]
+    async fn plugin_device_rows_reads_device_then_installations() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let rows = plugin_device_rows(&mysql, 1555, "electron-4958888b")
+            .await
+            .unwrap();
+        assert!(rows.is_empty());
+
+        let queries: Vec<String> = mysql.queries().into_iter().map(|query| query.sql).collect();
+        assert_eq!(queries.len(), 2, "{queries:?}");
+        assert!(
+            queries[0].starts_with("SELECT kinds.id AS kinds_id")
+                && queries[0].contains("kinds.kind = 'Device'"),
+            "{queries:?}"
+        );
+        assert!(
+            queries[1].starts_with(
+                "SELECT plugin_device_installations.id AS plugin_device_installations_id"
+            ),
+            "{queries:?}"
+        );
     }
 }

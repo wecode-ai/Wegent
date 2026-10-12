@@ -316,7 +316,7 @@ struct TaskProjection {
 }
 
 impl TaskProjection {
-    fn project(value: &crate::json_compat::OpaqueJson) -> Self {
+    fn project(value: &brz_json::OpaqueJson) -> Self {
         #[derive(Default, serde::Deserialize)]
         #[serde(default)]
         struct Document {
@@ -351,7 +351,7 @@ struct TeamProjection {
 }
 
 impl TeamProjection {
-    fn project(value: &crate::json_compat::OpaqueJson) -> Self {
+    fn project(value: &brz_json::OpaqueJson) -> Self {
         #[derive(Default, serde::Deserialize)]
         #[serde(default)]
         struct Document {
@@ -403,8 +403,8 @@ impl TeamProjection {
 mod tests {
     use super::*;
 
-    fn opaque(json: serde_json::Value) -> crate::json_compat::OpaqueJson {
-        crate::json_compat::OpaqueJson::from(json)
+    fn opaque(json: serde_json::Value) -> brz_json::OpaqueJson {
+        brz_json::OpaqueJson::from(json)
     }
 
     #[test]

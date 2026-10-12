@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod entity_resolution;
 pub mod internal_binary;
+pub mod skill_bindings;
 pub mod skill_download;
 
 mod skills_api;

@@ -14,8 +14,12 @@
 //! `spec.installState`.
 
 pub mod auth;
+mod auto_update;
+mod catalog_reconcile;
 mod handler;
 mod item;
+mod report;
+mod sync_device;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 pub use item::kind_to_item;

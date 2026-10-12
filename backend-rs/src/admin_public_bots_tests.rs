@@ -114,7 +114,7 @@ fn bot_row(spec: BotSpecIn) -> KindRow {
 
 fn refs_of(bot: &KindRow) -> BotRefs {
     let document = bot.json.0.project::<BotDocument>().unwrap_or_default();
-    let secondary = document.spec.secondary_model_ref.value.as_ref();
+    let secondary = document.spec.secondary_model_ref.value();
     BotRefs {
         ghost_name: reference_name(&document.spec.ghost_ref),
         shell_name: reference_name(&document.spec.shell_ref),

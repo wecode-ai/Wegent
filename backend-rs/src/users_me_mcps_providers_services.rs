@@ -205,16 +205,7 @@ fn service_config_with(
 
 /// Python truthiness (`bool(value)`): `False`/`0`/empty string/empty
 /// collection/`None` are falsy and everything else is truthy.
-fn python_truthy(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Null => false,
-        serde_json::Value::Bool(flag) => *flag,
-        serde_json::Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
-        serde_json::Value::String(text) => !text.is_empty(),
-        serde_json::Value::Array(items) => !items.is_empty(),
-        serde_json::Value::Object(map) => !map.is_empty(),
-    }
-}
+use brz_json::adapters::python_truthy;
 
 /// `shared.utils.crypto`'s `GIT_TOKEN_AES_KEY` default.
 const DEFAULT_AES_KEY: &str = "12345678901234567890123456789012";

@@ -58,7 +58,6 @@ pub struct SubtaskContextRow {
     pub id: i32,
     #[allow(dead_code)]
     pub subtask_id: i64,
-    #[allow(dead_code)]
     pub user_id: i32,
     pub context_type: String,
     pub name: String,
@@ -300,6 +299,37 @@ impl<'a> ChatHistoryRepository<'a> {
         let rows: Vec<MysqlRow> = self.mysql.fetch_all(sql.as_str(), ()).await?;
         rows.iter().map(decode_context_row).collect()
     }
+
+    /// `subtask_store._attach_contexts` (`subqueryload(Subtask.contexts)`): the
+    /// batch context load the source's `get_by_id` runs after a subtask read.
+    /// Every context row of the given ids, ordered `id ASC`; an empty id list
+    /// issues no statement because the source returns before the query.
+    pub async fn list_contexts_by_subtask_ids(
+        &self,
+        subtask_ids: &[i64],
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        if subtask_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.mysql
+            .fetch_all(
+                contexts_by_subtask_ids_statement(subtask_ids.len()),
+                subtask_ids.to_vec(),
+            )
+            .await
+    }
+}
+
+/// `_attach_contexts`'s `subtask_contexts` read for `count` subtask ids: the
+/// labeled projection restricted to `subtask_id IN (...)`, ordered `id ASC`.
+pub fn contexts_by_subtask_ids_statement(count: usize) -> String {
+    let placeholders = vec!["?"; count].join(", ");
+    format!(
+        "SELECT {columns} \nFROM subtask_contexts \n\
+         WHERE subtask_contexts.subtask_id IN ({placeholders}) \
+         ORDER BY subtask_contexts.id ASC",
+        columns = crate::task_store::subtask_context_columns()
+    )
 }
 
 /// Fork specification parsed from a task `json` column (`TaskForkSpec`).
@@ -354,5 +384,23 @@ mod tests {
              subtask_contexts.subtask_id AS subtask_contexts_subtask_id"
         ));
         assert!(columns.ends_with("subtask_contexts.updated_at AS subtask_contexts_updated_at"));
+    }
+
+    /// `_attach_contexts`'s batch read for one subtask, matching the recorded
+    /// `subqueryload` rendering.
+    #[test]
+    fn contexts_by_subtask_ids_statement_matches_the_recorded_rendering() {
+        let sql = super::contexts_by_subtask_ids_statement(1);
+        assert!(sql.ends_with(
+            " \nFROM subtask_contexts \n\
+             WHERE subtask_contexts.subtask_id IN (?) \
+             ORDER BY subtask_contexts.id ASC"
+        ));
+        assert_eq!(
+            super::contexts_by_subtask_ids_statement(2)
+                .matches('?')
+                .count(),
+            2
+        );
     }
 }

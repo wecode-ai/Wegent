@@ -11,6 +11,7 @@
 //! ordered by `(recommendation_score, updated_at, id)` descending, and the
 //! page is sliced from the fully materialized list.
 
+use brz_json::FieldState as _;
 use brz_mysql::Mysql;
 use chrono::NaiveDateTime;
 
@@ -128,27 +129,23 @@ impl Source<'_> {
 
         let display = if is_system {
             if self.kind == "Skill" {
-                payload
-                    .spec()
-                    .and_then(|spec| spec.display_name.value.as_ref())
+                payload.spec().and_then(|spec| spec.display_name.value())
             } else {
                 payload
                     .metadata()
-                    .and_then(|metadata| metadata.display_name.value.as_ref())
+                    .and_then(|metadata| metadata.display_name.value())
             }
         } else {
             payload
                 .capability()
-                .and_then(|capability| capability.display_name.value.as_ref())
+                .and_then(|capability| capability.display_name.value())
         };
         let description = if is_system || self.kind == "Skill" {
-            payload
-                .spec()
-                .and_then(|spec| spec.description.value.as_ref())
+            payload.spec().and_then(|spec| spec.description.value())
         } else {
             payload
                 .capability()
-                .and_then(|capability| capability.description.value.as_ref())
+                .and_then(|capability| capability.description.value())
         };
 
         let recommendation_score = if is_system {
@@ -187,7 +184,7 @@ fn display_name(display: Option<&JsonScalar>, name: &str) -> String {
 fn marketplace_recommendation_score(payload: &KindPayload) -> i64 {
     payload
         .marketplace()
-        .and_then(|marketplace| marketplace.recommendation_score.value.as_ref())
+        .and_then(|marketplace| marketplace.recommendation_score.value())
         .and_then(JsonScalar::integer)
         .map_or(0, |score| score.clamp(0, 100))
 }
@@ -208,10 +205,10 @@ fn example_conversations(
         return Ok(Vec::new());
     };
     let stored = &marketplace.example_conversations;
-    if !stored.present {
+    if !stored.is_present() {
         return Ok(Vec::new());
     }
-    let Some(entries) = stored.value.as_ref() else {
+    let Some(entries) = stored.value() else {
         return Err(unhandled());
     };
     let mut conversations = Vec::with_capacity(entries.len());
@@ -225,8 +222,8 @@ fn example_conversations(
 /// (`title`: 1..=100 characters after strip; `url`: HTTP(S) with a host, at
 /// most 2048 characters) rejects it.
 fn conversation(entry: &ConversationInput) -> Option<ExampleConversation> {
-    let title = entry.title.value.as_ref()?.text_value()?;
-    let url = entry.url.value.as_ref()?.text_value()?;
+    let title = entry.title.value()?.text_value()?;
+    let url = entry.url.value()?.text_value()?;
 
     let title_length = title.chars().count();
     if !(1..=100).contains(&title_length) {
@@ -280,24 +277,16 @@ fn unhandled() -> FastApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json_compat::JsonField;
     use chrono::NaiveDate;
 
     use super::super::models::{Capability, KindMetadata, KindSpec, MarketplaceConfig};
 
-    fn text(value: &str) -> JsonField<JsonScalar> {
-        present(JsonScalar::Text(value.to_owned()))
+    fn text(value: &str) -> JsonScalar {
+        JsonScalar::Text(value.to_owned())
     }
 
-    fn int(value: i64) -> JsonField<JsonScalar> {
-        present(JsonScalar::Int(value))
-    }
-
-    fn present<T>(value: T) -> JsonField<T> {
-        JsonField {
-            present: true,
-            value: Some(value),
-        }
+    fn int(value: i64) -> JsonScalar {
+        JsonScalar::Int(value)
     }
 
     fn naive() -> NaiveDateTime {
@@ -309,32 +298,36 @@ mod tests {
 
     fn payload(spec: KindSpec) -> KindPayload {
         KindPayload {
-            metadata: present(KindMetadata::default()),
-            spec: present(spec),
+            metadata: (KindMetadata::default()).into(),
+            spec: (spec).into(),
         }
     }
 
     #[test]
     fn system_agent_reads_metadata_display_name_and_marketplace_examples() {
         let spec = KindSpec {
-            description: text("接入Seedance2.5模型"),
-            capability: present(Capability {
-                marketplace: present(MarketplaceConfig {
-                    recommendation_score: int(90),
-                    example_conversations: present(vec![ConversationInput {
-                        title: text("添加参考图生成视频"),
-                        url: text("https://wegent.example/shared/task?token=x"),
-                    }]),
-                }),
+            description: text("接入Seedance2.5模型").into(),
+            capability: (Capability {
+                marketplace: (MarketplaceConfig {
+                    recommendation_score: int(90).into(),
+                    example_conversations: (vec![ConversationInput {
+                        title: text("添加参考图生成视频").into(),
+                        url: text("https://wegent.example/shared/task?token=x").into(),
+                    }])
+                    .into(),
+                })
+                .into(),
                 ..Capability::default()
-            }),
+            })
+            .into(),
             ..KindSpec::default()
         };
         let payload = KindPayload {
-            metadata: present(KindMetadata {
-                display_name: text("生成视频"),
-            }),
-            spec: present(spec),
+            metadata: (KindMetadata {
+                display_name: text("生成视频").into(),
+            })
+            .into(),
+            spec: (spec).into(),
         };
         let source = Source {
             id: 269955,
@@ -362,11 +355,12 @@ mod tests {
     #[test]
     fn publisher_rows_use_capability_and_the_stored_score() {
         let payload = payload(KindSpec {
-            capability: present(Capability {
-                display_name: text("Published"),
-                description: text("desc"),
+            capability: (Capability {
+                display_name: text("Published").into(),
+                description: text("desc").into(),
                 ..Capability::default()
-            }),
+            })
+            .into(),
             ..KindSpec::default()
         });
         let source = Source {
@@ -393,17 +387,20 @@ mod tests {
     #[test]
     fn skills_drop_example_conversations_and_clamp_the_score() {
         let payload = payload(KindSpec {
-            description: text("s"),
-            capability: present(Capability {
-                marketplace: present(MarketplaceConfig {
-                    recommendation_score: int(500),
-                    example_conversations: present(vec![ConversationInput {
-                        title: text("x"),
-                        url: text("https://a.example"),
-                    }]),
-                }),
+            description: text("s").into(),
+            capability: (Capability {
+                marketplace: (MarketplaceConfig {
+                    recommendation_score: int(500).into(),
+                    example_conversations: (vec![ConversationInput {
+                        title: text("x").into(),
+                        url: text("https://a.example").into(),
+                    }])
+                    .into(),
+                })
+                .into(),
                 ..Capability::default()
-            }),
+            })
+            .into(),
             ..KindSpec::default()
         });
         let source = Source {
@@ -444,16 +441,15 @@ mod tests {
     #[test]
     fn invalid_example_conversations_surface_as_an_unhandled_error() {
         let payload = payload(KindSpec {
-            capability: present(Capability {
-                marketplace: present(MarketplaceConfig {
-                    example_conversations: JsonField {
-                        present: true,
-                        value: None,
-                    },
+            capability: (Capability {
+                marketplace: (MarketplaceConfig {
+                    example_conversations: brz_json::from_str("null").unwrap(),
                     ..MarketplaceConfig::default()
-                }),
+                })
+                .into(),
                 ..Capability::default()
-            }),
+            })
+            .into(),
             ..KindSpec::default()
         });
         let source = Source {

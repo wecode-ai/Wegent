@@ -4,7 +4,6 @@
 
 """Lightweight task runtime checkpoints."""
 
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -12,10 +11,9 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.models.user import User
-from app.schemas.task import TaskRuntimeActiveStream, TaskRuntimeCheck
-from app.services.chat.storage import session_manager
+from app.schemas.task import TaskRuntimeCheck
 from app.stores.tasks import task_access_store
-from shared.telemetry.decorators import trace_async, trace_sync
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 
@@ -39,27 +37,28 @@ def load_runtime_checkpoint(
     )
 
 
-@router.get("/{task_id}/runtime-check", response_model=TaskRuntimeCheck)
-@trace_async(span_name="tasks.runtime_check", tracer_name="backend.tasks")
-async def get_task_runtime_check(
-    checkpoint: TaskRuntimeCheck = Depends(load_runtime_checkpoint),
-) -> TaskRuntimeCheck:
-    """Return state and stream cursor; recover messages through WebSocket only."""
-    streaming_status = await session_manager.get_task_streaming_status(
-        checkpoint.task_id
-    )
-    if streaming_status:
-        raw_subtask_id = streaming_status.get("subtask_id")
-        if raw_subtask_id is not None:
-            subtask_id = int(raw_subtask_id)
-            cached_content = await session_manager.get_streaming_content(subtask_id)
-            checkpoint.active_stream = TaskRuntimeActiveStream(
-                subtask_id=subtask_id,
-                cursor=len(cached_content or ""),
-                last_activity_at=(
-                    datetime.fromisoformat(streaming_status["last_activity_at"])
-                    if streaming_status.get("last_activity_at")
-                    else None
-                ),
-            )
-    return checkpoint
+# Migrated to Rust; cutover is configured in backend-rs/config/routes.toml.
+# @router.get("/{task_id}/runtime-check", response_model=TaskRuntimeCheck)
+# @trace_async(span_name="tasks.runtime_check", tracer_name="backend.tasks")
+# async def get_task_runtime_check(
+#     checkpoint: TaskRuntimeCheck = Depends(load_runtime_checkpoint),
+# ) -> TaskRuntimeCheck:
+#     """Return state and stream cursor; recover messages through WebSocket only."""
+#     streaming_status = await session_manager.get_task_streaming_status(
+#         checkpoint.task_id
+#     )
+#     if streaming_status:
+#         raw_subtask_id = streaming_status.get("subtask_id")
+#         if raw_subtask_id is not None:
+#             subtask_id = int(raw_subtask_id)
+#             cached_content = await session_manager.get_streaming_content(subtask_id)
+#             checkpoint.active_stream = TaskRuntimeActiveStream(
+#                 subtask_id=subtask_id,
+#                 cursor=len(cached_content or ""),
+#                 last_activity_at=(
+#                     datetime.fromisoformat(streaming_status["last_activity_at"])
+#                     if streaming_status.get("last_activity_at")
+#                     else None
+#                 ),
+#             )
+#     return checkpoint

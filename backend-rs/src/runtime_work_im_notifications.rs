@@ -5,7 +5,16 @@
 //! `GET /api/runtime-work/im-notifications` — the Wework runtime IM
 //! notification settings.
 //!
-//! Mirrors `app.api.endpoints.runtime_work.get_im_notification_settings_endpoint`
+//! `PUT /api/runtime-work/im-notifications/presence` — refresh one Wework
+//! client's foreground or away presence. Mirrors
+//! `app.api.endpoints.runtime_work.update_im_notification_presence_endpoint` and
+//! `IMSessionService.update_im_notification_presence`: it refreshes the client's
+//! member on `channel:user_im_notification_presence:<user_id>` with a
+//! `ZREM` + `ZADD` + `ZREMRANGEBYSCORE` + `ZREVRANGE` sequence and answers the
+//! aggregated away state with the fixed 90-second lease.
+//!
+//! The GET endpoint mirrors
+//! `app.api.endpoints.runtime_work.get_im_notification_settings_endpoint`
 //! (router prefix `/runtime-work` mounted under the app prefix `/api`) and
 //! `runtime_work_service.get_im_notification_settings`. The endpoint reads only
 //! Redis-backed private IM state:
@@ -24,19 +33,40 @@
 //! of failing the request. A private session whose payload is not a JSON object,
 //! omits a required field, or belongs to another user is dropped, matching
 //! `IMPrivateSession.from_dict` / `_load_user_im_session` returning `None`.
+//!
+//! Reopen note (2026-10-12, round 3): after the canonical base applied the
+//! `im-notification-presence-time` replay dependency rule
+//! (`backend-rs-intra/.traffic-e2e/verification.yaml`), which declares the
+//! request-generated Unix-second values at the `ZADD` score (arg 1) and the
+//! `ZREMRANGEBYSCORE` max (arg 2), this endpoint is re-opened for
+//! post-rule re-verification with a fresh focused replay. The ported handler
+//! is unchanged and faithful; this note only refreshes the target fingerprint
+//! for the new attempt and carries no behaviour change.
 use brz_redis::{Redis, RedisBytes};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::auth::SessionUser;
 use crate::http_compat::FastApiError;
-use crate::json_compat::OpaqueJson;
 use crate::state::AppState;
+use brz_json::OpaqueJson;
 
 /// `IMSessionService` cache-key prefixes (`app/services/im/session_service.py`).
 const GLOBAL_NOTIFICATION_PREFIX: &str = "channel:user_global_notification:";
 const PRIVATE_SESSION_PREFIX: &str = "channel:private_session:";
 const RUNTIME_TASK_SUBSCRIPTIONS_PREFIX: &str = "channel:user_runtime_task_subscriptions:";
+const USER_IM_NOTIFICATION_PRESENCE_PREFIX: &str = "channel:user_im_notification_presence:";
+
+/// `IM_NOTIFICATION_PRESENCE_TTL_SECONDS`: the source presence lease in seconds.
+const IM_NOTIFICATION_PRESENCE_TTL_SECONDS: i64 = 90;
+/// `IM_NOTIFICATION_PRESENCE_ACTIVE`: the member suffix for a foregrounded client.
+const IM_NOTIFICATION_PRESENCE_ACTIVE: &str = "active";
+/// `IM_NOTIFICATION_PRESENCE_AWAY`: the member suffix for an away client.
+const IM_NOTIFICATION_PRESENCE_AWAY: &str = "away";
+
+/// The source `validation_exception_handler` detail line
+/// (`app/core/exceptions.py`).
+const VALIDATION_FAILED: &str = "Request parameter validation failed";
 
 /// `get_channel_label`: the presentation label for a known channel type,
 /// otherwise the channel type itself.
@@ -61,16 +91,7 @@ fn decode_json(value: &[u8]) -> Option<OpaqueJson> {
 }
 
 /// Python truthiness of a JSON value, used by `bool(data.get("enabled"))`.
-fn python_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_some_and(|float| float != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(map) => !map.is_empty(),
-    }
-}
+use brz_json::adapters::python_truthy;
 
 /// `IMGlobalNotificationSettings` parsed from the cached document.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -337,10 +358,234 @@ async fn get_im_notification_settings(
     get_settings(state, &user).await
 }
 
+/// `RuntimeIMNotificationPresenceUpdateRequest`, validated like the source
+/// pydantic model (`clientId` alias with `populate_by_name`, so `client_id` is
+/// also accepted). Unknown keys are ignored.
+struct PresenceUpdate {
+    client_id: String,
+    away: bool,
+}
+
+impl PresenceUpdate {
+    /// Validate a decoded JSON body against
+    /// `RuntimeIMNotificationPresenceUpdateRequest`.
+    fn from_value(value: Value) -> Result<Self, FastApiError> {
+        let Value::Object(object) = value else {
+            return Err(validation_error(
+                vec!["body"],
+                "model_attributes_type",
+                "Input should be a valid dictionary or object to extract fields from",
+                value,
+            ));
+        };
+
+        let client_id = match object.get("clientId").or_else(|| object.get("client_id")) {
+            Some(Value::String(text)) => {
+                let length = text.chars().count();
+                if length < 1 {
+                    return Err(validation_error(
+                        vec!["body", "clientId"],
+                        "string_too_short",
+                        "String should have at least 1 character",
+                        Value::String(text.clone()),
+                    ));
+                }
+                if length > 128 {
+                    return Err(validation_error(
+                        vec!["body", "clientId"],
+                        "string_too_long",
+                        "String should have at most 128 characters",
+                        Value::String(text.clone()),
+                    ));
+                }
+                if !text
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+                {
+                    return Err(validation_error(
+                        vec!["body", "clientId"],
+                        "string_pattern_mismatch",
+                        "String should match pattern '^[A-Za-z0-9._:-]+$'",
+                        Value::String(text.clone()),
+                    ));
+                }
+                text.clone()
+            }
+            Some(other) => {
+                return Err(validation_error(
+                    vec!["body", "clientId"],
+                    "string_type",
+                    "Input should be a valid string",
+                    other.clone(),
+                ));
+            }
+            None => {
+                return Err(validation_error(
+                    vec!["body", "clientId"],
+                    "missing",
+                    "Field required",
+                    Value::Null,
+                ));
+            }
+        };
+
+        let away = match object.get("away") {
+            Some(Value::Bool(flag)) => *flag,
+            Some(other) => {
+                return Err(validation_error(
+                    vec!["body", "away"],
+                    "bool_type",
+                    "Input should be a valid boolean",
+                    other.clone(),
+                ));
+            }
+            None => {
+                return Err(validation_error(
+                    vec!["body", "away"],
+                    "missing",
+                    "Field required",
+                    Value::Null,
+                ));
+            }
+        };
+
+        Ok(Self { client_id, away })
+    }
+}
+
+/// `RuntimeIMNotificationPresenceResponse` in pydantic field order
+/// (`response_model_by_alias=True`).
+#[derive(Debug, Serialize)]
+struct PresenceResponse {
+    away: bool,
+    #[serde(rename = "ttlSeconds")]
+    ttl_seconds: i64,
+}
+
+/// `_im_notification_presence_key`.
+fn presence_key(user_id: i64) -> String {
+    format!("{USER_IM_NOTIFICATION_PRESENCE_PREFIX}{user_id}")
+}
+
+/// `_im_notification_presence_member`: `<client_id>\0<state>`.
+fn presence_member(client_id: &str, state: &str) -> String {
+    format!("{client_id}\u{0}{state}")
+}
+
+/// `_presence_members_are_away`: away when no fresh member is foregrounded,
+/// detected by the source's `\0active` member suffix.
+fn presence_members_are_away(members: &[String]) -> bool {
+    let active_suffix = presence_member("", IM_NOTIFICATION_PRESENCE_ACTIVE);
+    !members
+        .iter()
+        .any(|member| member.ends_with(active_suffix.as_str()))
+}
+
+/// Source `time.time()`: the current Unix time in seconds.
+fn unix_seconds() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64())
+}
+
+/// A dependency failure renders the source `python_exception_handler` 500 body.
+fn presence_dependency_error(error: brz_redis::RedisError) -> FastApiError {
+    tracing::error!(%error, "IM notification presence Redis failure");
+    FastApiError::unhandled()
+}
+
+/// `IMSessionService.update_im_notification_presence`: refresh one client's
+/// presence member and return the aggregated away state. Mirrors the source
+/// `ZREM` + `ZADD` + `ZREMRANGEBYSCORE` + `ZREVRANGE` sequence on the
+/// per-user presence sorted set.
+async fn update_presence(
+    state: &AppState,
+    user: &SessionUser,
+    request: &PresenceUpdate,
+) -> Result<PresenceResponse, FastApiError> {
+    let user_id = i64::from(user.id);
+    let key = presence_key(user_id);
+    let active_member = presence_member(&request.client_id, IM_NOTIFICATION_PRESENCE_ACTIVE);
+    let away_member = presence_member(&request.client_id, IM_NOTIFICATION_PRESENCE_AWAY);
+    let next_member = if request.away {
+        &away_member
+    } else {
+        &active_member
+    };
+    let now = unix_seconds();
+    let redis = state
+        .redis
+        .as_ref()
+        .ok_or_else(|| presence_dependency_error(missing_redis_error()))?;
+
+    redis
+        .zrem(key.as_str(), [active_member.as_str(), away_member.as_str()])
+        .await
+        .map_err(presence_dependency_error)?;
+    redis
+        .zadd(
+            key.as_str(),
+            now + IM_NOTIFICATION_PRESENCE_TTL_SECONDS as f64,
+            next_member.as_str(),
+        )
+        .await
+        .map_err(presence_dependency_error)?;
+    redis
+        .zremrangebyscore(key.as_str(), "-inf", now)
+        .await
+        .map_err(presence_dependency_error)?;
+    let members: Vec<String> = redis
+        .zrevrange(key.as_str(), 0, -1)
+        .await
+        .map_err(presence_dependency_error)?;
+    let away = presence_members_are_away(&members);
+
+    Ok(PresenceResponse {
+        away,
+        ttl_seconds: IM_NOTIFICATION_PRESENCE_TTL_SECONDS,
+    })
+}
+
+/// A `RedisError` describing an unconfigured application cache client, so the
+/// missing dependency renders the same 500 body as a failed command.
+fn missing_redis_error() -> brz_redis::RedisError {
+    brz_redis::RedisError::new(
+        brz_redis::ErrorKind::ClientError,
+        "IM notification presence Redis client is not configured",
+    )
+}
+
+/// PUT /api/runtime-work/im-notifications/presence: refresh one Wework client's
+/// foreground or away presence.
+#[brz_http_server::put("/api/runtime-work/im-notifications/presence")]
+async fn update_im_notification_presence(
+    #[inject(state)] state: &AppState,
+    #[auth] user: SessionUser,
+    body: Value,
+) -> Result<PresenceResponse, FastApiError> {
+    let request = PresenceUpdate::from_value(body)?;
+    update_presence(state, &user, &request).await
+}
+
+/// `{"error_code":422,"detail":"Request parameter validation failed","errors":[...]}`
+/// — the source `validation_exception_handler` body.
+fn validation_error(location: Vec<&str>, kind: &str, message: &str, input: Value) -> FastApiError {
+    FastApiError::json_body(
+        brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+        serde_json::json!({
+            "error_code": 422,
+            "detail": VALIDATION_FAILED,
+            "errors": [
+                {"type": kind, "loc": location, "msg": message, "input": input},
+            ],
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json_compat::OpaqueJson;
+    use brz_json::OpaqueJson;
     use serde_json::json;
 
     fn opaque(value: Value) -> OpaqueJson {
@@ -515,6 +760,79 @@ mod tests {
         assert_eq!(
             runtime_task_subscriptions_key(157),
             "channel:user_runtime_task_subscriptions:157"
+        );
+    }
+
+    #[test]
+    fn presence_key_and_member_match_the_source() {
+        assert_eq!(
+            presence_key(157),
+            "channel:user_im_notification_presence:157"
+        );
+        assert_eq!(presence_member("client-a", "active"), "client-a\u{0}active");
+        assert_eq!(presence_member("client-a", "away"), "client-a\u{0}away");
+    }
+
+    #[test]
+    fn presence_away_requires_the_exact_active_suffix() {
+        // A foregrounded client keeps the aggregated state not-away.
+        assert!(!presence_members_are_away(&[presence_member(
+            "client-a", "active"
+        )]));
+        // Away members, an empty set, and a client id merely ending in the text
+        // "active" all aggregate to away (the separator is significant).
+        assert!(presence_members_are_away(&[presence_member(
+            "client-a", "away"
+        )]));
+        assert!(presence_members_are_away(&[]));
+        assert!(presence_members_are_away(&[
+            "not\u{0}active-client".to_owned()
+        ]));
+        assert!(presence_members_are_away(&["client-active".to_owned()]));
+    }
+
+    #[test]
+    fn presence_update_requires_a_valid_client_id_and_away() {
+        assert!(PresenceUpdate::from_value(json!({"away": false})).is_err());
+        assert!(PresenceUpdate::from_value(json!({"clientId": "a"})).is_err());
+        assert!(PresenceUpdate::from_value(json!({"clientId": "", "away": false})).is_err());
+        assert!(
+            PresenceUpdate::from_value(json!({"clientId": "has space", "away": false})).is_err()
+        );
+        assert!(PresenceUpdate::from_value(json!({"clientId": 7, "away": false})).is_err());
+        assert!(PresenceUpdate::from_value(json!({"clientId": "a", "away": "no"})).is_err());
+        assert!(PresenceUpdate::from_value(json!([])).is_err());
+    }
+
+    #[test]
+    fn presence_update_accepts_the_alias_and_the_field_name() {
+        let aliased = PresenceUpdate::from_value(json!({
+            "clientId": "wework-68cd2c56-ddc1-4981-b06a-3ab8ab0064fa",
+            "away": false,
+            "ignored": true,
+        }))
+        .unwrap();
+        assert_eq!(
+            aliased.client_id,
+            "wework-68cd2c56-ddc1-4981-b06a-3ab8ab0064fa"
+        );
+        assert!(!aliased.away);
+
+        let named =
+            PresenceUpdate::from_value(json!({"client_id": "a:b.c_d-e", "away": true})).unwrap();
+        assert_eq!(named.client_id, "a:b.c_d-e");
+        assert!(named.away);
+    }
+
+    #[test]
+    fn presence_response_serializes_with_the_source_alias() {
+        let response = PresenceResponse {
+            away: false,
+            ttl_seconds: IM_NOTIFICATION_PRESENCE_TTL_SECONDS,
+        };
+        assert_eq!(
+            serde_json::to_string(&response).unwrap(),
+            "{\"away\":false,\"ttlSeconds\":90}"
         );
     }
 

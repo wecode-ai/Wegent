@@ -11,7 +11,7 @@ fn metadata(value: serde_json::Value) -> ItemMetadata {
 
 #[test]
 fn owner_permissions_match_the_source_hierarchy() {
-    let permissions = issue_permissions("Owner", Some(14), 14, false);
+    let permissions = issue_permissions("Owner");
     assert!(permissions.edit_content);
     assert!(permissions.comment);
     assert!(permissions.assign);
@@ -19,21 +19,27 @@ fn owner_permissions_match_the_source_hierarchy() {
 }
 
 #[test]
-fn restricted_analyst_only_owns_its_own_issue() {
-    let own = issue_permissions("RestrictedAnalyst", Some(14), 14, true);
-    assert!(own.edit_content && own.comment && own.execute);
-    assert!(!own.assign);
-
-    let other = issue_permissions("RestrictedAnalyst", Some(99), 14, true);
-    assert!(!other.edit_content && !other.comment && !other.execute);
-    assert!(!other.assign);
+fn restricted_analyst_permissions_follow_the_role_only_source() {
+    // `issue_permissions` ignores the caller identity at this source revision:
+    // every action is role-based, so a RestrictedAnalyst holds none.
+    let permissions = issue_permissions("RestrictedAnalyst");
+    assert!(!permissions.edit_content && !permissions.comment && !permissions.execute);
+    assert!(!permissions.assign);
 }
 
 #[test]
-fn reporter_cannot_edit_but_can_comment() {
-    let permissions = issue_permissions("Reporter", None, 14, false);
+fn reporter_cannot_edit_or_comment() {
+    let permissions = issue_permissions("Reporter");
     assert!(!permissions.edit_content);
-    assert!(permissions.comment && permissions.execute);
+    assert!(!permissions.comment);
+    assert!(!permissions.execute);
+    assert!(!permissions.assign);
+}
+
+#[test]
+fn developer_holds_every_action_but_assign() {
+    let permissions = issue_permissions("Developer");
+    assert!(permissions.edit_content && permissions.comment && permissions.execute);
     assert!(!permissions.assign);
 }
 
@@ -187,7 +193,6 @@ fn response_serializes_all_fields_with_nulls() {
         assignment_history: Vec::new(),
         status_history: Vec::new(),
         approval: None,
-        human_work: None,
         queued_at: None,
         execution_note: None,
         execution_error: None,
@@ -201,6 +206,7 @@ fn response_serializes_all_fields_with_nulls() {
         created_by_user_id: 14,
         created_by_user_name: None,
         can_view_detail: true,
+        security_level: "open",
         can_edit: true,
         permissions: Permissions {
             edit_content: true,
@@ -210,6 +216,7 @@ fn response_serializes_all_fields_with_nulls() {
         },
         detail_loaded: true,
         content_revision: 1,
+        activity_read_sequence: 0,
         is_unread: true,
         current_delivery_id: None,
         version: 2,
@@ -220,9 +227,74 @@ fn response_serializes_all_fields_with_nulls() {
     let value = serde_json::to_value(&response).expect("serializes");
     assert_eq!(value["assignee_user_id"], 14);
     assert_eq!(value["assignee_name"], "xiaozhou5");
-    assert_eq!(value["human_work"], serde_json::Value::Null);
     assert_eq!(value["detail_loaded"], true);
     assert_eq!(value["permissions"]["assign"], true);
-    // 51 declared fields (54 keys when nested `permissions` is expanded).
-    assert_eq!(value.as_object().expect("object").len(), 51);
+    // 52 declared fields, matching the recorded source schema.
+    assert_eq!(value.as_object().expect("object").len(), 52);
+}
+
+#[test]
+fn workflow_view_aliases_workspace_binding_and_defaults_execution_error() {
+    // The stored metadata keeps snake_case `workspace_binding` keys and omits
+    // the defaulted node `execution_error`; the schema re-serialization emits
+    // the `ProjectChatWorkspaceBinding` camel-case aliases and the null.
+    let workflow = json!({
+        "version": 7,
+        "nodes": [{
+            "id": "step-1",
+            "collectors": {},
+            "execution_config": {
+                "model": "deepseek",
+                "workspace_binding": {
+                    "type": "standalone",
+                    "device_id": null,
+                    "project_id": null,
+                    "device_workspace_id": null,
+                    "runtime_project_key": null
+                }
+            }
+        }]
+    });
+    let view = workflow_view(&workflow);
+    let node = &view["nodes"][0];
+    let binding = &node["execution_config"]["workspace_binding"];
+    assert_eq!(binding["type"], json!("standalone"));
+    for key in [
+        "projectId",
+        "deviceWorkspaceId",
+        "deviceId",
+        "runtimeProjectKey",
+    ] {
+        assert!(binding.get(key).is_some(), "{key} must be present");
+        assert!(binding[key].is_null(), "{key} must be null");
+    }
+    assert!(binding.get("device_id").is_none());
+    assert!(node.get("execution_error").is_some());
+    assert!(node["execution_error"].is_null());
+}
+
+#[test]
+fn workflow_view_preserves_alias_keys_and_stored_execution_error() {
+    let workflow = json!({
+        "execution_config": {
+            "workspace_binding": {"type": "backend_project", "projectId": 5}
+        },
+        "nodes": [{
+            "id": "step-1",
+            "execution_error": "boom",
+            "execution_config": {
+                "workspace_binding": {"type": "device_project", "deviceId": "d"}
+            }
+        }]
+    });
+    let view = workflow_view(&workflow);
+    assert_eq!(
+        view["execution_config"]["workspace_binding"]["projectId"],
+        json!(5)
+    );
+    assert_eq!(
+        view["nodes"][0]["execution_config"]["workspace_binding"]["deviceId"],
+        json!("d")
+    );
+    assert_eq!(view["nodes"][0]["execution_error"], json!("boom"));
 }
