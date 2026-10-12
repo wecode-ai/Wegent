@@ -13,7 +13,7 @@
 use brz_mysql::{Mysql, MysqlRow};
 
 use super::app_state::AppState;
-use crate::json_compat::{JsonProjection, OpaqueJson};
+use brz_json::{JsonProjection, OpaqueJson};
 
 /// `get_task_detail` passes `limit=100` to
 /// `task_fork_history_resolver.resolve_for_task`.

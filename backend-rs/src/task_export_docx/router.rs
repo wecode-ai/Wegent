@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Route and handler for `GET /api/tasks/{task_id}/export/docx`
-//! (`app.api.endpoints.adapter.tasks.export_task_docx`).
+//! (`app.api.endpoints.adapter.tasks.export_task_docx`) and
+//! `POST /api/tasks/{task_id}/export/docx/download-url`
+//! (`app.api.endpoints.adapter.tasks.create_task_docx_export_download_url`).
 
-use brz_http_server::{Binary, HttpResponse, StatusCode};
-use serde::Deserialize;
+use brz_http_server::{Binary, HttpResponse, Response, StatusCode};
+use serde::{Deserialize, Serialize};
 
 use super::generator::{self, ExportInput};
 use super::repository::{self, ContextRow};
@@ -19,6 +21,20 @@ use crate::state::AppState;
 pub(crate) struct ExportQuery {
     pub message_ids: Option<String>,
     pub download_token: Option<String>,
+}
+
+/// Query parameters for the download-url endpoint (`message_ids`).
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct DownloadUrlQuery {
+    pub message_ids: Option<String>,
+}
+
+/// The download-url response body (`{"download_url": ..., "expires_in": 300}`),
+/// serialized in the source dict's key order.
+#[derive(Debug, Serialize)]
+struct DownloadUrlResponse {
+    download_url: String,
+    expires_in: u32,
 }
 
 /// GET /api/tasks/{task_id}/export/docx: the export free function, injecting
@@ -49,6 +65,95 @@ pub(crate) async fn export_task_docx(
             ExportError::Fast(error) => error,
             ExportError::Internal => internal_error(),
         })?
+}
+
+/// POST /api/tasks/{task_id}/export/docx/download-url: mint a short-lived
+/// token for a browser-native DOCX download and return the download URL
+/// (`app.api.endpoints.adapter.tasks.create_task_docx_export_download_url`).
+#[brz_http_server::post("/api/tasks/:task_id/export/docx/download-url")]
+pub(crate) async fn create_task_docx_export_download_url(
+    #[inject(state)] state: &AppState,
+    task_id: i64,
+    #[auth] current_user: crate::auth::SessionUser,
+    query: brz_http_server::Query<DownloadUrlQuery>,
+) -> Result<Response, FastApiError> {
+    let message_ids = query.0.message_ids.as_deref();
+    let user_id = i64::from(current_user.id);
+
+    // `task_member_service.is_member`: the accessible task's owner or approved
+    // member. A miss maps to the source's `404 {"detail": "Task not found"}`.
+    let owner_id = state
+        .task_store
+        .get_task_owner_id(task_id)
+        .await
+        .map_err(|_| download_url_internal_error())?
+        .and_then(|row| row.get_required::<i64>("user_id").ok());
+    let is_member = match owner_id {
+        Some(owner) if owner == user_id => true,
+        Some(_) => repository::is_approved_member(&state.mysql, task_id, user_id)
+            .await
+            .map_err(|_| download_url_internal_error())?,
+        None => false,
+    };
+    if !is_member {
+        return Err(not_found());
+    }
+
+    // `task_store.get_task_by_states` with `TaskResource.is_active_query()`.
+    if state
+        .task_store
+        .get_active_task(task_id)
+        .await
+        .map_err(|_| download_url_internal_error())?
+        .is_none()
+    {
+        return Err(not_found());
+    }
+
+    // `create_docx_export_download_token` (5-minute expiry).
+    let download_token = token::create_download_token(
+        &state.auth,
+        task_id,
+        user_id,
+        &current_user.user_name,
+        message_ids,
+        5,
+    )
+    .ok_or_else(download_url_internal_error)?;
+
+    let mut download_url = format!(
+        "/api/tasks/{task_id}/export/docx?download_token={}",
+        quote_all(&download_token)
+    );
+    // `if message_ids:` appends the filter only for a non-empty value.
+    if let Some(message_ids) = message_ids.filter(|value| !value.is_empty()) {
+        download_url.push_str("&message_ids=");
+        download_url.push_str(&quote_all(message_ids));
+    }
+
+    let body = serde_json::to_string(&DownloadUrlResponse {
+        download_url,
+        expires_in: 300,
+    })
+    .map_err(|_| download_url_internal_error())?;
+    Ok(Response::owned_bytes(StatusCode::OK, body).content_type("application/json"))
+}
+
+/// `urllib.parse.quote(value, safe="")`: every byte outside the unreserved set
+/// (`A-Za-z0-9` and `-._~`) becomes uppercase `%XX`.
+fn quote_all(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(value.len());
+    for &byte in value.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0xF) as usize] as char);
+        }
+    }
+    out
 }
 
 /// `_build_content_disposition`: quoted ASCII filename or RFC 5987 encoding.
@@ -90,6 +195,13 @@ fn internal_error() -> FastApiError {
         StatusCode::INTERNAL_SERVER_ERROR,
         "Failed to generate DOCX document",
     )
+}
+
+/// An unhandled failure in the download-url handler. The source endpoint has no
+/// `try/except`, so an exception reaches `python_exception_handler`
+/// (`{"error_code": 500, "detail": "Internal server error"}`).
+fn download_url_internal_error() -> FastApiError {
+    FastApiError::unhandled()
 }
 
 /// The endpoint flow after parameter extraction.
@@ -261,5 +373,37 @@ fn attachment_card(context: &ContextRow) -> generator::AttachmentCardView {
         file_type: super::markdown::file_type_label(file_extension).to_string(),
         name: super::markdown::sanitize_xml_text(context.name.as_deref().unwrap_or("")),
         size: super::markdown::format_file_size(file_size),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `urllib.parse.quote(value, safe="")` keeps only the unreserved set and
+    /// encodes the rest as uppercase `%XX`.
+    #[test]
+    fn quote_all_matches_python_quote_without_safe_characters() {
+        assert_eq!(quote_all("1,2"), "1%2C2");
+        assert_eq!(
+            quote_all("eyJhbGciOiJIUzI1NiJ9.abc-DEF_0.xyz"),
+            "eyJhbGciOiJIUzI1NiJ9.abc-DEF_0.xyz"
+        );
+        assert_eq!(quote_all("a/b c~"), "a%2Fb%20c~");
+    }
+
+    #[test]
+    fn download_url_body_matches_the_source_shape() {
+        let body = serde_json::to_string(&DownloadUrlResponse {
+            download_url:
+                "/api/tasks/21577915845327/export/docx?download_token=tok&message_ids=1%2C2"
+                    .to_string(),
+            expires_in: 300,
+        })
+        .unwrap();
+        assert_eq!(
+            body,
+            "{\"download_url\":\"/api/tasks/21577915845327/export/docx?download_token=tok&message_ids=1%2C2\",\"expires_in\":300}"
+        );
     }
 }

@@ -10,11 +10,9 @@
 //! SQL sent to MySQL matches the source statement); only the fields the
 //! download path reads are exposed through accessors.
 
-use crate::json_compat::{JsonProjection, OpaqueJson};
+use brz_json::{JsonProjection, OpaqueJson};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
-
-use super::auth::UserRow;
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
@@ -46,6 +44,7 @@ pub struct AttachmentMetadata {
 pub struct VideoMetadata {
     pub video_url: Option<String>,
     pub media_id: Option<OpaqueJson>,
+    pub cover_url: Option<OpaqueJson>,
 }
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
@@ -146,6 +145,12 @@ impl SubtaskContextRow {
             .as_deref()
             .filter(|url| !url.is_empty())
     }
+
+    /// `_attachment_cover_url(context)`: the persisted cover URL from the
+    /// decoded `type_data`, `None` for every other attachment.
+    pub fn attachment_cover_url(&self) -> Option<String> {
+        self.metadata()?.attachment_cover_url()
+    }
 }
 
 impl AttachmentMetadata {
@@ -180,6 +185,21 @@ impl AttachmentMetadata {
         }
         self.fid.as_ref().and_then(truthy_str)
     }
+
+    /// `_attachment_cover_url`: the persisted cover URL, preferring the
+    /// `video_metadata.cover_url` nested value over the top-level
+    /// `type_data.cover_url`.
+    pub fn attachment_cover_url(&self) -> Option<String> {
+        if let Some(cover) = self
+            .video_metadata
+            .as_ref()
+            .and_then(|video| video.cover_url.as_ref())
+            .and_then(truthy_str)
+        {
+            return Some(cover);
+        }
+        self.cover_url.as_ref().and_then(truthy_str)
+    }
 }
 
 /// `bool(value)` and `str(value)`: the Python truthiness and string form the
@@ -208,8 +228,40 @@ fn python_str(value: &serde_json::Value) -> String {
     }
 }
 
+/// The Python `str()` form of one stored media-reference scalar, shared by
+/// the legacy playback resolver and the history reference resolver.
+pub fn python_media_scalar(value: &serde_json::Value) -> String {
+    python_str(value)
+}
+
+impl AttachmentMetadata {
+    /// Decode the metadata projection from a raw `type_data` JSON value
+    /// (`JsonProjection`'s tolerant decode: wrong-shape JSON is `None`).
+    pub fn from_json_value(value: &serde_json::Value) -> Option<Self> {
+        serde_json::from_value(value.clone()).ok()
+    }
+}
+
 /// `context_service.get_context_optional`: the full source column list for
 /// `SELECT ... FROM subtask_contexts WHERE id = ? LIMIT 1`.
+pub const CONTEXT_BY_ID_QUERY: &str = "SELECT subtask_contexts.id AS subtask_contexts_id, \
+     subtask_contexts.subtask_id AS subtask_contexts_subtask_id, \
+     subtask_contexts.user_id AS subtask_contexts_user_id, \
+     subtask_contexts.context_type AS subtask_contexts_context_type, \
+     subtask_contexts.name AS subtask_contexts_name, \
+     subtask_contexts.status AS subtask_contexts_status, \
+     subtask_contexts.error_message AS subtask_contexts_error_message, \
+     subtask_contexts.binary_data AS subtask_contexts_binary_data, \
+     subtask_contexts.image_base64 AS subtask_contexts_image_base64, \
+     subtask_contexts.extracted_text AS subtask_contexts_extracted_text, \
+     subtask_contexts.text_length AS subtask_contexts_text_length, \
+     subtask_contexts.type_data AS subtask_contexts_type_data, \
+     subtask_contexts.created_at AS subtask_contexts_created_at, \
+     subtask_contexts.updated_at AS subtask_contexts_updated_at \
+     FROM subtask_contexts \
+     WHERE subtask_contexts.id = ? \
+     LIMIT 1";
+
 pub async fn get_context_optional<M>(
     mysql: &M,
     context_id: i64,
@@ -218,26 +270,7 @@ where
     M: Mysql,
 {
     mysql
-        .fetch_optional(
-            "SELECT subtask_contexts.id AS subtask_contexts_id, \
-             subtask_contexts.subtask_id AS subtask_contexts_subtask_id, \
-             subtask_contexts.user_id AS subtask_contexts_user_id, \
-             subtask_contexts.context_type AS subtask_contexts_context_type, \
-             subtask_contexts.name AS subtask_contexts_name, \
-             subtask_contexts.status AS subtask_contexts_status, \
-             subtask_contexts.error_message AS subtask_contexts_error_message, \
-             subtask_contexts.binary_data AS subtask_contexts_binary_data, \
-             subtask_contexts.image_base64 AS subtask_contexts_image_base64, \
-             subtask_contexts.extracted_text AS subtask_contexts_extracted_text, \
-             subtask_contexts.text_length AS subtask_contexts_text_length, \
-             subtask_contexts.type_data AS subtask_contexts_type_data, \
-             subtask_contexts.created_at AS subtask_contexts_created_at, \
-             subtask_contexts.updated_at AS subtask_contexts_updated_at \
-             FROM subtask_contexts \
-             WHERE subtask_contexts.id = ? \
-             LIMIT 1",
-            (context_id,),
-        )
+        .fetch_optional(CONTEXT_BY_ID_QUERY, (context_id,))
         .await
 }
 
@@ -576,10 +609,10 @@ pub async fn ensure_attachment_access(
     task_store: &dyn crate::task_store::TaskStore,
     mysql: &brz_mysql::MysqlService,
     context: &SubtaskContextRow,
-    current_user: &UserRow,
+    user_id: i32,
 ) -> MysqlResult<bool> {
     // 1. Uploader.
-    if context.user_id == current_user.users_id {
+    if context.user_id == user_id {
         return Ok(true);
     }
 
@@ -592,7 +625,7 @@ pub async fn ensure_attachment_access(
     } else {
         // 3. Unlinked: knowledge-base ACL first (hard verdicts), then the
         // executor-uploaded legacy fallback through the owner's subtask.
-        match check_knowledge_base_access(mysql, context.id, current_user.users_id).await? {
+        match check_knowledge_base_access(mysql, context.id, user_id).await? {
             Some(access) => return Ok(access),
             None => {
                 if let Some(subtask) =
@@ -605,7 +638,7 @@ pub async fn ensure_attachment_access(
     }
 
     if let Some(task_id) = task_id {
-        return check_task_access(task_store, mysql, task_id, current_user.users_id).await;
+        return check_task_access(task_store, mysql, task_id, user_id).await;
     }
     Ok(false)
 }
@@ -632,6 +665,33 @@ mod tests {
 
     fn metadata(value: serde_json::Value) -> AttachmentMetadata {
         serde_json::from_value(value).expect("type_data decodes")
+    }
+
+    #[test]
+    fn attachment_cover_url_prefers_video_metadata_then_the_top_level() {
+        assert_eq!(
+            metadata(serde_json::json!({
+                "video_metadata": {"cover_url": "https://media.example.test/c.jpg"},
+                "cover_url": "https://media.example.test/top.jpg",
+            }))
+            .attachment_cover_url()
+            .as_deref(),
+            Some("https://media.example.test/c.jpg")
+        );
+        assert_eq!(
+            metadata(serde_json::json!({"cover_url": "https://a.example/c.jpg"}))
+                .attachment_cover_url()
+                .as_deref(),
+            Some("https://a.example/c.jpg")
+        );
+        // Falsy values fall through exactly like `_attachment_cover_url`.
+        for value in [
+            serde_json::json!({"video_metadata": {"cover_url": ""}}),
+            serde_json::json!({"video_metadata": {}}),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(metadata(value).attachment_cover_url(), None);
+        }
     }
 
     #[test]

@@ -274,7 +274,7 @@ pub struct UserRow {
     pub email: Option<String>,
     #[allow(dead_code, reason = "selected to match source column list")]
     #[mysql(rename = "users_git_info")]
-    pub git_info: Json<crate::json_compat::OpaqueJson>,
+    pub git_info: Json<brz_json::OpaqueJson>,
     #[mysql(rename = "users_is_active")]
     pub is_active: i8,
     #[allow(dead_code, reason = "selected to match source column list")]

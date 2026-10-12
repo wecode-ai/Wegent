@@ -13,7 +13,7 @@
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlRow};
 use chrono::NaiveDateTime;
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// `db.query(User).filter(User.id == ..., User.is_active.is_(True))` —
 /// the download-token user load.

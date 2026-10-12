@@ -96,14 +96,33 @@ impl ExternalMediaReference {
     /// builds its request from this projection.
     #[must_use]
     pub(crate) fn from_context(context: &super::context_store::SubtaskContextRow) -> Self {
-        let metadata = context.metadata();
+        Self::from_metadata(context.metadata(), &context.mime_type())
+    }
+
+    /// The same projection from a decoded `AttachmentMetadata`: callers that
+    /// keep `type_data` as raw JSON (the chat-history context rows) decode
+    /// the metadata once and share this constructor.
+    #[must_use]
+    pub fn from_metadata(
+        metadata: Option<&super::context_store::AttachmentMetadata>,
+        mime_type: &str,
+    ) -> Self {
         Self {
             media_reference: metadata
                 .and_then(super::context_store::AttachmentMetadata::stored_media_reference),
             legacy_fid: metadata
                 .and_then(super::context_store::AttachmentMetadata::legacy_weibo_fid),
-            mime_type: context.mime_type(),
+            mime_type: mime_type.to_owned(),
         }
+    }
+
+    /// The same projection decoded straight from the raw `type_data` JSON of
+    /// a context row that keeps it as a `serde_json::Value`.
+    #[must_use]
+    pub fn from_type_data(type_data: Option<&serde_json::Value>, mime_type: &str) -> Self {
+        let metadata =
+            type_data.and_then(super::context_store::AttachmentMetadata::from_json_value);
+        Self::from_metadata(metadata.as_ref(), mime_type)
     }
 }
 
@@ -147,6 +166,66 @@ impl ExternalMediaRelay for NoExternalMediaRelay {
         &self,
         _request: ExternalMediaRequest<'_>,
     ) -> Result<Option<AttachmentDownload>, FastApiError> {
+        Ok(None)
+    }
+}
+
+/// `resolve_external_attachment_playback` restricted to URL resolution: the
+/// playback metadata an attachment history response needs
+/// (`context_service.build_video_content_from_attachment` without the relay).
+///
+/// The URL and the resolved media type are application-owned: the open-source
+/// deployment registers no playback resolver, so the default resolves nothing
+/// and callers fall back to their no-playback shape.
+#[async_trait]
+pub trait ExternalPlaybackResolver: Send + Sync {
+    /// Resolve the playback URL and media type of one attachment's stored
+    /// media reference. `Ok(None)` mirrors a resolver chain that does not
+    /// match the attachment; `Err` carries the source's unhandled exception
+    /// (a `ValueError` from the resolver reaches the application's 500
+    /// handler on the history path).
+    async fn resolve_playback_url(
+        &self,
+        reference: &ExternalMediaReference,
+        user_id: i64,
+    ) -> Result<Option<ExternalPlayback>, FastApiError>;
+}
+
+/// `ExternalAttachmentPlayback.delivery_mode`: how the caller serves the
+/// resolved media.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaybackDeliveryMode {
+    /// `"proxy"`: the caller exposes its own download URL instead of the
+    /// resolver's media URL (the source default).
+    Proxy,
+    /// `"direct"`: the returned URL is served to the browser as-is.
+    Direct,
+}
+
+/// One resolved playback (`ExternalAttachmentPlayback`): the URL and media
+/// type a history response needs plus the cover and delivery mode the
+/// attachment playback endpoint reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalPlayback {
+    pub url: String,
+    pub media_type: String,
+    /// `ExternalAttachmentPlayback.cover_url`.
+    pub cover_url: Option<String>,
+    /// `ExternalAttachmentPlayback.delivery_mode`.
+    pub delivery_mode: PlaybackDeliveryMode,
+}
+
+/// The open-source deployment's resolver: `_playback_resolvers` is empty, so
+/// `resolve_external_attachment_playback` resolves nothing.
+pub struct NoExternalPlaybackResolver;
+
+#[async_trait]
+impl ExternalPlaybackResolver for NoExternalPlaybackResolver {
+    async fn resolve_playback_url(
+        &self,
+        _reference: &ExternalMediaReference,
+        _user_id: i64,
+    ) -> Result<Option<ExternalPlayback>, FastApiError> {
         Ok(None)
     }
 }

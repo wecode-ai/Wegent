@@ -279,6 +279,7 @@ import {
 
 import {
   verifyAsyncRequestUserInput,
+  verifyAsyncQuestionWaitingIndicator,
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
   verifyForkProviderModelPreservation,
@@ -2254,6 +2255,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
       phase = 'request-user-input-async'
       await verifyAsyncRequestUserInput({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
+      phase = 'async-question-waiting-indicator'
+      await verifyAsyncQuestionWaitingIndicator({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
         executorHome,

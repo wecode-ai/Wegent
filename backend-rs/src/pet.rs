@@ -14,8 +14,8 @@
 //! Field order matches the pydantic model declaration order, and dates and
 //! datetimes render pydantic-style (`2026-03-17`, `2026-03-17T19:16:00`).
 use crate::json_compat::OptionalOpaqueJsonExt;
-use crate::json_compat::{JsonProjection, OpaqueJson};
-use serde_json::value::RawValue;
+use brz_json::RawJson;
+use brz_json::{JsonProjection, OpaqueJson};
 #[cfg(test)]
 use serde_json::{Value, json};
 
@@ -133,18 +133,18 @@ fn pydantic_datetime(value: chrono::NaiveDateTime) -> String {
 /// pet_name, is_visible (PetBase), then the PetResponse fields.
 #[derive(serde::Serialize)]
 struct PetResponse {
-    pet_name: Box<RawValue>,
-    is_visible: Box<RawValue>,
+    pet_name: RawJson,
+    is_visible: RawJson,
     id: i64,
     user_id: i64,
     stage: i64,
     experience: i64,
-    total_chats: Box<RawValue>,
+    total_chats: RawJson,
     current_streak: i64,
-    longest_streak: Box<RawValue>,
+    longest_streak: RawJson,
     last_active_date: Option<String>,
-    appearance_traits: Box<RawValue>,
-    svg_seed: Box<RawValue>,
+    appearance_traits: RawJson,
+    svg_seed: RawJson,
     experience_to_next_stage: Option<i64>,
     streak_multiplier: f64,
     created_at: String,

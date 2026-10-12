@@ -12,9 +12,10 @@
 //! (`CachedKindReader`, `CachedSharedTeamReader`, `CachedGroupReader`,
 //! `CachedGroupMemberReader`), so each step probes its cache document first
 //! and only a miss reaches the SQL reader.
-use crate::json_compat::{OpaqueJson, python_json_value};
+use crate::json_compat::python_json_value;
 use crate::remote_workspace_tree::error::{ApiError, database_query_failed};
 use crate::remote_workspace_tree::kinds::{KindRecord, KindStore};
+use brz_json::OpaqueJson;
 use serde_json::Value;
 
 use super::repository as repo;

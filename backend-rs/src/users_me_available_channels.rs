@@ -22,9 +22,9 @@ use serde_json::Value;
 
 use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
-use crate::json_compat::JsonProjection;
 use crate::state::AppState;
 use crate::user_reader::USER_BY_ID_QUERY;
+use brz_json::JsonProjection;
 
 /// A `Messager` `kinds` row selected with the full labeled source column list
 /// (`db.query(Kind)`); only `id`, `name`, and `json` are consumed.

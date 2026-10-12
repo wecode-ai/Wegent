@@ -565,6 +565,14 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs"
 
+assert_desktop_case "Issue task discovery scenario is invoked by its core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-issue-task-discovery"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-issue-task-discovery.scenario.mjs"
+
 assert_desktop_case "issue comment mention scenario selects its own checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
@@ -720,7 +728,7 @@ wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shar
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
 wework_desktop_macos_inspector_e2e=true'
-full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-issue-archive,collaboration-local-group-cancellation\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"local-harness,running-conversation-history,running-plan-history,native-window-chrome\"/\"segments\":\"local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification\"}"

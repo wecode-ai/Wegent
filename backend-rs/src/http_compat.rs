@@ -22,13 +22,10 @@ pub struct FastApiError {
 #[derive(Debug, serde::Serialize)]
 #[serde(untagged)]
 enum ErrorBody {
-    Detail {
-        detail: String,
-    },
-    Validation {
-        detail: Box<serde_json::value::RawValue>,
-    },
-    Custom(Box<serde_json::value::RawValue>),
+    Detail { detail: String },
+    Validation { detail: brz_json::RawJson },
+    Custom(brz_json::RawJson),
+    Unhandled(UnhandledErrorBody),
 }
 
 /// The body of the application's `Exception` handler
@@ -43,7 +40,7 @@ impl FastApiError {
     pub(crate) fn detail_message(&self) -> Option<&str> {
         match &self.body {
             ErrorBody::Detail { detail } => Some(detail),
-            ErrorBody::Validation { .. } | ErrorBody::Custom(_) => None,
+            ErrorBody::Validation { .. } | ErrorBody::Custom(_) | ErrorBody::Unhandled(_) => None,
         }
     }
 
@@ -101,8 +98,7 @@ impl FastApiError {
         Self {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             body: ErrorBody::Validation {
-                detail: serde_json::value::to_raw_value(&detail)
-                    .expect("validation detail serializes"),
+                detail: brz_json::to_raw_value(&detail).expect("validation detail serializes"),
             },
             headers: Vec::new(),
         }
@@ -118,16 +114,18 @@ impl FastApiError {
     /// application's `python_exception_handler` body (`app/core/exceptions.py`),
     /// installed as the app's `Exception` handler. Every failure a route does
     /// not convert into an `HTTPException` renders this shape instead of
-    /// [`Self::internal`].
+    /// [`Self::internal`]. Starlette renders this outside its CORS middleware,
+    /// so this response explicitly bypasses the public gateway's CORS policy.
     #[must_use]
     pub fn unhandled() -> Self {
-        Self::json_body(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            UnhandledErrorBody {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: ErrorBody::Unhandled(UnhandledErrorBody {
                 error_code: 500,
                 detail: "Internal server error",
-            },
-        )
+            }),
+            headers: Vec::new(),
+        }
     }
 
     /// A body that is already a JSON value (custom payload shapes).
@@ -135,9 +133,7 @@ impl FastApiError {
     pub fn json_body(status: StatusCode, body: impl serde::Serialize) -> Self {
         Self {
             status,
-            body: ErrorBody::Custom(
-                serde_json::value::to_raw_value(&body).expect("error body serializes"),
-            ),
+            body: ErrorBody::Custom(brz_json::to_raw_value(&body).expect("error body serializes")),
             headers: Vec::new(),
         }
     }
@@ -168,11 +164,14 @@ impl FastApiError {
                 serde_json::to_string(detail).expect("string serializes")
             }
             ErrorBody::Validation { detail } => detail.get().to_owned(),
+            ErrorBody::Unhandled(body) => {
+                serde_json::to_string(body.detail).expect("string serializes")
+            }
             ErrorBody::Custom(body) => {
                 #[derive(serde::Deserialize)]
                 struct Detail<'a> {
                     #[serde(borrow)]
-                    detail: Option<&'a serde_json::value::RawValue>,
+                    detail: Option<brz_json::RawJsonRef<'a>>,
                 }
                 serde_json::from_str::<Detail<'_>>(body.get())
                     .ok()
@@ -201,7 +200,11 @@ impl IntoHttpError for FastApiError {
                 response = response.headers(header);
             }
         }
-        response
+        if matches!(self.body, ErrorBody::Unhandled(_)) {
+            response.without_cors()
+        } else {
+            response
+        }
     }
 }
 

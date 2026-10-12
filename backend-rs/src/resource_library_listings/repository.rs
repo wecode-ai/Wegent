@@ -13,7 +13,7 @@
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 
-use crate::json_compat::JsonProjection;
+use brz_json::JsonProjection;
 
 use super::models::KindPayload;
 

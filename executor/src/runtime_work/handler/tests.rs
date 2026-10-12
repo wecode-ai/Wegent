@@ -6220,6 +6220,99 @@ async fn execution_mapper_drops_notifications_after_stop_is_requested() {
 }
 
 #[tokio::test]
+async fn async_question_state_survives_completion_and_clears_on_next_send() {
+    let index_path = temp_runtime_work_index_path("async-question-interaction");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "async-question-task";
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Async question".to_owned(),
+    );
+    link.thread_id = Some("thread-async".to_owned());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, local_task_id);
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-async".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    handler
+        .map_execution_codex_notification(
+            local_task_id,
+            execution_id,
+            &request,
+            None,
+            &mut CodexNotificationEventMapper::default(),
+            json!({
+                "method": "item/completed",
+                "params": {"item": {
+                    "id": "question-async", "type": "agentMessage",
+                    "questions": [{"title": "Continue?", "options": ["Yes", "No"]}]
+                }}
+            }),
+        )
+        .await;
+    assert_eq!(
+        handler
+            .local_task_link(local_task_id)
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_AWAITING_USER_REPLY)
+    );
+    assert!(handler.finish_local_task(local_task_id, execution_id, None, "done"));
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    assert_eq!(
+        handler
+            .local_task_link(local_task_id)
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_AWAITING_USER_REPLY)
+    );
+    assert!(!handler.is_active_local_task(local_task_id));
+    handler.mark_task_running_for_send(
+        local_task_id,
+        "thread-async",
+        "/tmp/project",
+        &request,
+        &json!({"message": "Yes"}),
+    );
+    assert!(handler
+        .local_task_link(local_task_id)
+        .unwrap()
+        .interaction_status
+        .is_none());
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn unsuccessful_execution_clears_pending_async_question() {
+    for status in ["failed", "cancelled"] {
+        let index_path = temp_runtime_work_index_path(status);
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "async-failed-task".to_owned(),
+            "/tmp/project".to_owned(),
+            "Async question".to_owned(),
+        );
+        link.interaction_status = Some(INTERACTION_AWAITING_USER_REPLY.to_owned());
+        handler.upsert_local_task(link);
+        let execution_id = start_test_execution(&handler, "async-failed-task");
+        assert!(handler.finish_local_task("async-failed-task", execution_id, None, status));
+        assert!(handler
+            .local_task_link("async-failed-task")
+            .unwrap()
+            .interaction_status
+            .is_none());
+        let _ = fs::remove_file(index_path);
+    }
+}
+
+#[tokio::test]
 async fn execution_mapper_keeps_same_turn_subagent_text_out_of_root_conversation() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("execution-mapper-subagent-text");

@@ -103,7 +103,7 @@ fn tool_from_upstream(app: &ConnectorApp, tool: &UpstreamTool) -> ConnectorTool 
 mod tests {
     use super::*;
     use crate::apps_installed::db::KindRow;
-    use crate::json_compat::OpaqueJson;
+    use brz_json::OpaqueJson;
     use serde_json::Value;
 
     /// Recorded deployment MCP endpoint, assembled to avoid a bare

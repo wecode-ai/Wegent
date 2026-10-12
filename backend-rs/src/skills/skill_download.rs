@@ -15,7 +15,7 @@
 //! 5. system Skill (`user_id=0`), restricted to admins and executor
 //!    credentials
 use super::input::{SkillInput, TeamReference};
-use crate::json_compat::JsonProjection;
+use brz_json::JsonProjection;
 use brz_mysql::{FromMysqlRow, Json, MysqlResult};
 #[cfg(test)]
 use serde_json::Value;

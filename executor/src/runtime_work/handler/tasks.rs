@@ -1554,6 +1554,7 @@ impl RuntimeWorkRpcHandler {
         };
         match steer_result {
             Ok(turn_id) => {
+                self.set_interaction_status(&local_task_id, None);
                 self.record_active_codex_turn(
                     &local_task_id,
                     active_turn.execution_id,
@@ -2032,6 +2033,7 @@ impl RuntimeWorkRpcHandler {
             }
             link.updated_at = now_ms();
             set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
+            link.interaction_status = None;
         });
         if updated.is_some() {
             return;
