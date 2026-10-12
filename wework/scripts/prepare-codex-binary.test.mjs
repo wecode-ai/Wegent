@@ -36,7 +36,7 @@ describe('downloadWithRetry', () => {
       await downloadWithRetry(`http://127.0.0.1:${server.address().port}/redirect`, destination, {
         attempts: 1,
       })
-      expect(await readFile(destination)).toEqual(archive)
+      expect((await readFile(destination)).equals(archive)).toBe(true)
     } finally {
       await new Promise(resolve => server.close(resolve))
     }
