@@ -231,6 +231,8 @@ export interface WorkbenchServices {
       modelType?: ModelType | null
       modelOptions?: ModelOptions
       outputSchema?: Record<string, unknown>
+      signal?: AbortSignal
+      timeoutMs?: number
       onProgress?: (phase: 'preparing' | 'generating') => void
       onDelta?: (delta: string) => void
     }) => Promise<string>

@@ -116,6 +116,7 @@ from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.services.im.notification_dispatcher import im_notification_dispatcher
+from app.services.im.runtime_notification_delivery import runtime_notification_id
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_executions.device_pull import (
     acknowledge_execution,
@@ -781,7 +782,7 @@ def _summarize_runtime_notification_results(
         return []
     summarized: list[dict[str, Any]] = []
     for result in results:
-        if not isinstance(result, dict):
+        if not isinstance(result, dict) or result.get("skipped") == "duplicate":
             continue
         summarized.append(
             {
@@ -2745,20 +2746,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not args:
             return {"error": "Missing event data"}
 
-        # Project robot queue write-back: match the execution by runtime task
-        # id. Streaming events extend the lease; terminal events complete or
-        # fail the run.
-        event_data = args[0]
-        if isinstance(event_data, dict) and event_data.get("task_id"):
-            workflow_continuation = await run_sync_in_executor(
-                _execution_runtime_event_sync,
-                int(user_id),
-                device_id,
-                event_data.get("task_id"),
-                event_type,
-                event_data,
-            )
-
         data = args[0]
         if not isinstance(data, dict):
             return {"error": "Invalid event data format"}
@@ -2771,6 +2758,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         local_task_id = data.get("local_task_id")
 
         if isinstance(local_task_id, str) and local_task_id.strip():
+            await self._write_back_execution_event(user_id, device_id, event_type, data)
             return await self._handle_local_task_responses_api_event(
                 user_id=user_id,
                 device_id=device_id,
@@ -2798,6 +2786,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
         try:
             # Acquire lock to ensure sequential processing of events for this subtask
             async with lock:
+                # Include queue write-back in ordering: its database awaits must
+                # not let completion overtake a previously received text delta.
+                await self._write_back_execution_event(
+                    user_id, device_id, event_type, data
+                )
                 # Parse using shared ResponsesAPIEventParser
                 await emit_response_api_event(
                     event_name=event_type,
@@ -2875,6 +2868,21 @@ class DeviceNamespace(socketio.AsyncNamespace):
             # Clean up lock on error to prevent memory leak
             self._cleanup_subtask_lock(subtask_id)
             return {"error": str(e)}
+
+    @trace_async("device.execution_event_writeback", tracer_name="backend.device")
+    async def _write_back_execution_event(
+        self, user_id: int, device_id: str, event_type: str, data: dict
+    ) -> None:
+        """Extend the project execution lease or write its terminal status."""
+        if data.get("task_id"):
+            await run_sync_in_executor(
+                _execution_runtime_event_sync,
+                int(user_id),
+                device_id,
+                data["task_id"],
+                event_type,
+                data,
+            )
 
     async def _handle_local_task_responses_api_event(
         self,
@@ -3012,10 +3020,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 status=status,
                 content=content,
                 source="codex_watcher",
+                notification_id=runtime_notification_id(data, status),
             )
         )
         notified = int(notification.get("sent") or 0)
-        if notified <= 0:
+        results = _summarize_runtime_notification_results(notification)
+        if notified <= 0 and results:
             logger.warning(
                 "[RuntimeTaskNotification] Runtime task update notification "
                 "was not delivered: user_id=%s device_id=%s local_task_id=%s "
@@ -3024,7 +3034,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 device_id,
                 local_task_id,
                 status,
-                _summarize_runtime_notification_results(notification),
+                results,
             )
         logger.info(
             "[RuntimeTaskNotification] Dispatched runtime task update: "
@@ -3196,6 +3206,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     status=("waiting_user_input" if waiting_for_user_input else status),
                     content=content,
                     source=str(source_name) if source_name else None,
+                    notification_id=runtime_notification_id(
+                        payload,
+                        "waiting_user_input" if waiting_for_user_input else status,
+                    ),
                 )
             )
         except Exception:

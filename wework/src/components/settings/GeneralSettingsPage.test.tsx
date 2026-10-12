@@ -286,6 +286,7 @@ describe('GeneralSettingsPage', () => {
       <WorkbenchContext.Provider
         value={
           {
+            projectChat: { models: [], requestCatalogs: vi.fn() },
             services: {
               runtimeWorkApi: {
                 getRuntimeSettings: getRuntimeSettingsMock,
@@ -341,6 +342,7 @@ describe('GeneralSettingsPage', () => {
       <WorkbenchContext.Provider
         value={
           {
+            projectChat: { models: [], requestCatalogs: vi.fn() },
             services: {},
             state: {
               user: {
@@ -376,6 +378,7 @@ describe('GeneralSettingsPage', () => {
       <WorkbenchContext.Provider
         value={
           {
+            projectChat: { models: [], requestCatalogs: vi.fn() },
             services: {},
             state: {
               user: {
@@ -411,6 +414,7 @@ describe('GeneralSettingsPage', () => {
       <WorkbenchContext.Provider
         value={
           {
+            projectChat: { models: [], requestCatalogs: vi.fn() },
             services: {},
             state: {
               user: {

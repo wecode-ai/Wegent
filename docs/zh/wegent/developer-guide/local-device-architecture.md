@@ -443,6 +443,8 @@ Claude Code 子进程启动前，executor 会完成以下准备：
 
 本地 executor 对 Claude stdout 的 NDJSON 输出会即时转换为 Responses API 事件：可见文本产生 `response.output_text.delta`，reasoning 摘要产生 `response.reasoning_summary_text.delta`，进程结束后仍发送最终 `response.completed` 或错误事件。Backend 和前端不能假设 `response.created` 之后紧跟终态事件。
 
+Backend 处理设备回调时，同一 subtask 的队列写回、文本存储、前端广播和完成结果收集都在同一把消息锁内执行。数据库写回的等待不能让完成事件越过最后一段文本，否则完成结果中的文本块会截断。
+
 ---
 
 ## 🔄 任务执行流程

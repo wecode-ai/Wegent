@@ -104,6 +104,10 @@ def execute(credential, arguments):
             .await
             .unwrap();
         assert_eq!(String::from_utf8(result).unwrap().trim(), "business-ok");
+        assert!(
+            !root.join("scripts/__pycache__").exists(),
+            "Native authentication must not write bytecode into an immutable plugin package"
+        );
     }
 }
 
@@ -329,6 +333,10 @@ impl wegent_executor::local::backend::LocalBackendTransport for OAuthTransport {
         panic!("No OAuth broadcast")
     }
     fn on(&self, _: &str, _: wegent_executor::local::backend::EventHandler) {
+        panic!("No OAuth subscription")
+    }
+
+    fn on_close(&self, _: wegent_executor::local::backend::ConnectionClosedHandler) {
         panic!("No OAuth subscription")
     }
 }
@@ -679,6 +687,10 @@ impl wegent_executor::local::backend::LocalBackendTransport for MigrationTranspo
     fn on(&self, _: &str, _: wegent_executor::local::backend::EventHandler) {
         panic!("No subscription")
     }
+
+    fn on_close(&self, _: wegent_executor::local::backend::ConnectionClosedHandler) {
+        panic!("No subscription")
+    }
 }
 
 fn managed_fixture(root: &Path, checksum: &str) -> PathBuf {
@@ -784,6 +796,10 @@ impl wegent_executor::local::backend::LocalBackendTransport for TransferTranspor
         panic!("No secret broadcast")
     }
     fn on(&self, _: &str, _: wegent_executor::local::backend::EventHandler) {
+        panic!("No secret subscription")
+    }
+
+    fn on_close(&self, _: wegent_executor::local::backend::ConnectionClosedHandler) {
         panic!("No secret subscription")
     }
 }

@@ -347,7 +347,7 @@ function localModelSwitchCommand() {
 }
 
 function matrixCaseId(model) {
-  return `${model.execution}-${model.source}-${model.protocol}`
+  return `${model.execution}-${model.source}-${model.protocol}${model.requestMode ? `-${model.requestMode}` : ''}`
 }
 
 function matrixTextPrompt(model) {
