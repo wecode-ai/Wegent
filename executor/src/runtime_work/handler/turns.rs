@@ -917,6 +917,15 @@ impl RuntimeWorkRpcHandler {
         }
         if codex_notification_requires_user_input(&message) {
             self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+        } else if matches!(
+            message.get("method").and_then(Value::as_str),
+            Some("item/completed")
+        ) && crate::runtime_work::codex_user_input::async_question_payload_from_item(
+            &message["params"],
+        )
+        .is_some()
+        {
+            self.set_interaction_status(local_task_id, Some(INTERACTION_AWAITING_USER_REPLY));
         }
 
         if let (Some(active_turn), Some(cwd)) = (active_turn.as_ref(), request.cwd()) {

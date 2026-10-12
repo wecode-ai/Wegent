@@ -54,6 +54,7 @@ const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
 const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const INTERACTION_WAITING_FOR_USER_INPUT: &str = "waitingForUserInput";
+const INTERACTION_AWAITING_USER_REPLY: &str = "awaitingUserReply";
 const COLLABORATION_MANAGER_CONTEXT_KEY: &str = "collaborationManagerContext";
 
 enum RestoreStartupState {
