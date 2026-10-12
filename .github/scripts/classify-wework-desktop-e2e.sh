@@ -74,6 +74,7 @@ core_segments=(
   temporary-chat
   workspace-attachments
   rendering-extensions
+  background-terminals
   change-request-status
   claude-runtime
   local-file-preview
@@ -171,7 +172,7 @@ core_shards=(
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
-  rendering-extensions,transcript-sync
+  rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
@@ -477,6 +478,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx ]]; then
         select_target "core:temporary-chat"
+        select_target "core:background-terminals"
       fi
       return
       ;;
@@ -778,6 +780,10 @@ classify_wework_path() {
         "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:project-ai-settings"
       fi
+      if [[ "$path" == wework/src/api/local/localServices* || \
+        "$path" == wework/src/api/hybrid/hybridServices* ]]; then
+        select_target "core:background-terminals"
+      fi
       if [[ "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:send-key-preference"
       fi
@@ -831,6 +837,7 @@ classify_wework_path() {
       wework/src/components/layout/DesktopWorkbenchLayout.test.tsx)
       select_target "core:environment-panel-scroll"
       if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
+        select_target "core:background-terminals"
         select_target "core:temporary-chat"
         select_target "core:cloud-context-resilience"
         select_target "core:task-board-association"
@@ -840,8 +847,7 @@ classify_wework_path() {
 
     # Right-workspace temporary chats have an independently bootstrapped
     # ephemeral-thread scenario.
-    wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx | \
-      wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
+    wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
       wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
       select_target "core:temporary-chat"
       return
@@ -914,6 +920,15 @@ classify_wework_path() {
 
     wework/e2e/desktop/modules/shared-skill-runtime.mjs)
       select_target "core:claude-runtime"
+      return
+      ;;
+
+    wework/src/components/layout/BackgroundTerminalsSummary* | \
+      wework/src/components/layout/backgroundTerminals* | \
+      wework/src/components/layout/workspace-panels/BackgroundTerminalPanel* | \
+      wework/src/api/runtimeBackgroundTerminals.ts | \
+      wework/e2e/desktop/scenarios/background-terminals.scenario.mjs)
+      select_target "core:background-terminals"
       return
       ;;
 

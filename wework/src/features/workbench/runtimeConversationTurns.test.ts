@@ -1261,7 +1261,7 @@ describe('runtimeConversationTurns', () => {
           id: 'tool-1',
           block: expect.objectContaining({
             status: 'streaming',
-            toolOutputDelta: 'partial',
+            toolOutput: 'partial',
           }),
         }),
       ],

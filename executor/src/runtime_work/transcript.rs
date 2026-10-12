@@ -712,6 +712,7 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
         "status": status,
     });
     if let Some(object) = updates.as_object_mut() {
+        insert_command_execution_payload(object, &item);
         if let Some(completed_at) = item_completed_at(&item) {
             object.insert("completedAt".to_owned(), json!(completed_at));
         }
@@ -1238,8 +1239,8 @@ use message_projection::{
 mod tool_projection;
 
 use tool_projection::{
-    command_input_from_output, insert_tool_output_fields, limit_content_field, merge_tool_output,
-    tool_block, tool_call_id, tool_input, tool_status,
+    command_input_from_output, insert_command_execution_payload, insert_tool_output_fields,
+    limit_content_field, merge_tool_output, tool_block, tool_call_id, tool_input, tool_status,
 };
 
 #[path = "transcript/image_generation.rs"]

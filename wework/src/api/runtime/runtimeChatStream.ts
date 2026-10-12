@@ -561,7 +561,7 @@ function logRuntimeChatStreamEvent(
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)
   const contentDelta = stringField(updates, 'contentDelta') ?? stringField(updates, 'content_delta')
-  console.info('[Wework] Runtime chat stream event', {
+  console.debug('[Wework] Runtime chat stream event', {
     subscriptionId,
     activeSubscriptions: activeRuntimeChatStreamSubscriptions,
     sequence: event.sequence,
@@ -596,7 +596,7 @@ function logRuntimeChatStreamNativeEvent(
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)
   const contentDelta = stringField(updates, 'contentDelta') ?? stringField(updates, 'content_delta')
-  console.info('[Wework] Runtime chat stream native event', {
+  console.debug('[Wework] Runtime chat stream native event', {
     sequence: event.sequence,
     event: event.event,
     taskId: stringField(payload, 'taskId'),
