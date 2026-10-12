@@ -62,6 +62,7 @@ export const DESKTOP_CHECKPOINTS = [
   'runtime-task-queue',
   'codex-invalid-launch-cwd',
   'executor-stream-recovery',
+  'model-overload-recovery',
   'transcript-sync',
   'running-conversation-history',
   'running-plan-history',
