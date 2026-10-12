@@ -26,7 +26,7 @@ use super::{
     codex_notifications::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
-    codex_user_input::async_question_render_payload,
+    codex_user_input::async_question_payload_from_item,
     notification_mapping::{
         codex_stream_debug_enabled, log_dropped_notification, map_text_chunk,
         map_tool_output_delta, notification_item_id, TextChunkMapping,
@@ -2008,17 +2008,10 @@ fn emit_request_user_input_block(
 /// message instead of a runtime response. Render the structured choices as the
 /// interactive card rather than the plain-text fallback the same item also carries.
 fn emit_async_request_user_input(context: &EventEmitContext<'_>, params: &Value) -> bool {
-    let item = params.get("item").unwrap_or(params);
-    if item_type(item).as_str() != "agentmessage" {
-        return false;
-    }
-    let Some(questions) = item.get("questions").and_then(Value::as_array) else {
+    let Some(render_payload) = async_question_payload_from_item(params) else {
         return false;
     };
-    let item_id = item_id(item, "request-user-input");
-    let Some(render_payload) = async_question_render_payload(item_id.as_str(), questions) else {
-        return false;
-    };
+    let item_id = render_payload["itemId"].as_str().unwrap();
     emit_request_user_input_block(
         context.event_tx,
         context.device_id,

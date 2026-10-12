@@ -76,6 +76,23 @@ flowchart TB
     n485ac7c8b2 -->|"dispatches-through"| ne5f2afb869
 ```
 
+## User questions and execution state
+
+Executor persists task `interactionStatus` independently of turn and execution
+completion. Blocking questions use `waitingForUserInput`. Codex's
+`request_user_input_async` uses `awaitingUserReply`: the model can keep working,
+and the answer travels as the next user message. Both states show the sidebar
+bell, but an async pending reply alone does not prevent sending a message.
+
+Async reminders survive successful execution completion, task switching, and
+task-list reloads. Executor clears them when it accepts the next message or
+in-turn guidance, or when execution fails or is cancelled. Completing a turn or
+the question's tool call does not constitute an answer.
+
+The desktop `priority-filter` checkpoint covers the async bell regression: wait
+for execution to finish, verify the bell in the current and background task,
+then submit an answer and verify that the reminder disappears.
+
 ## Writes and concurrency
 
 Wework sends semantic mutations such as “move project A before B” or “pin thread T”; the frontend never overwrites the complete JSON document. Executor reads the latest state and computes the affected arrays for each mutation.
