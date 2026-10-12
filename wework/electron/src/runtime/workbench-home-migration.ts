@@ -208,7 +208,11 @@ async function repairRelativeLinks(home: string, journal: MigrationJournal): Pro
       }
     } else {
       const target = await fs.stat(path)
-      await fs.symlink(link.destination, temporary, target.isDirectory() ? 'dir' : 'file')
+      await fs.symlink(
+        link.destination,
+        temporary,
+        target.isDirectory() ? (process.platform === 'win32' ? 'junction' : 'dir') : 'file'
+      )
     }
     await fs.rename(temporary, path)
   }
@@ -230,7 +234,7 @@ async function prepareBridge(
       throw new Error('Workbench Home migration temporary link conflict')
     }
   } else {
-    await fs.symlink(targetHome, temporary, 'dir')
+    await fs.symlink(targetHome, temporary, process.platform === 'win32' ? 'junction' : 'dir')
   }
   if (
     !(await metadata(temporary))?.isSymbolicLink() ||
@@ -305,7 +309,7 @@ async function resumeMigration(
       throw new Error('Workbench Home migration found an unjournaled external relative link')
     }
     await fs.mkdir(dirname(targetHome), { recursive: true, mode: 0o700 })
-    // Prove directory symlink privileges before making the old Home unavailable.
+    // Prove the directory bridge can be created before making the old Home unavailable.
     await prepareBridge(options, journal)
     await assertAbsent(targetHome)
     assertHeld()

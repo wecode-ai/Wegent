@@ -17,6 +17,7 @@ import { Readable, Transform } from 'node:stream'
 import type { ComponentDownloadProgress } from '../host/app-update-progress.js'
 import { cloudFetch } from '../host/cloud-http.js'
 import { pipeline } from 'node:stream/promises'
+import { publishImmutableDirectory } from './immutable-directory.js'
 import * as tar from 'tar'
 
 export const MANAGED_COMPONENT_IDS = [
@@ -571,32 +572,29 @@ export class ComponentUpdateManager {
       .update(staticSha256)
       .digest('hex')
     const target = join(this.root, 'composed', 'wework-core-plugins', fingerprint)
-    if ((await stat(target).catch(() => null))?.isDirectory()) return target
+    return publishImmutableDirectory(target, content =>
+      this.populateCorePlugins(corePlugins, appStatic, content)
+    )
+  }
 
-    const temporary = `${target}.${process.pid}.tmp`
-    await rm(temporary, { recursive: true, force: true })
-    await mkdir(dirname(target), { recursive: true, mode: 0o700 })
-    try {
-      await mkdir(temporary, { recursive: true, mode: 0o700 })
-      await this.copyDirectoryEntries(corePlugins, temporary, new Set(['wework-app']))
-      const appRoot = join(temporary, 'wework-app')
-      await mkdir(appRoot, { recursive: true, mode: 0o700 })
-      await this.copyDirectoryEntries(join(corePlugins, 'wework-app'), appRoot, new Set(['web']))
-      const webRoot = join(appRoot, 'web')
-      await mkdir(webRoot, { recursive: true, mode: 0o700 })
-      await this.linkDirectoryEntries(
-        join(corePlugins, 'wework-app', 'web'),
-        webRoot,
-        new Set(WEWORK_APP_STATIC_DIRECTORIES)
-      )
-      for (const directory of WEWORK_APP_STATIC_DIRECTORIES) {
-        await this.linkEntry(join(appStatic, directory), join(webRoot, directory))
-      }
-      await rm(target, { recursive: true, force: true })
-      await rename(temporary, target)
-      return target
-    } finally {
-      await rm(temporary, { recursive: true, force: true })
+  private async populateCorePlugins(
+    corePlugins: string,
+    appStatic: string,
+    content: string
+  ): Promise<void> {
+    await this.copyDirectoryEntries(corePlugins, content, new Set(['wework-app']))
+    const appRoot = join(content, 'wework-app')
+    await mkdir(appRoot, { recursive: true, mode: 0o700 })
+    await this.copyDirectoryEntries(join(corePlugins, 'wework-app'), appRoot, new Set(['web']))
+    const webRoot = join(appRoot, 'web')
+    await mkdir(webRoot, { recursive: true, mode: 0o700 })
+    await this.linkDirectoryEntries(
+      join(corePlugins, 'wework-app', 'web'),
+      webRoot,
+      new Set(WEWORK_APP_STATIC_DIRECTORIES)
+    )
+    for (const directory of WEWORK_APP_STATIC_DIRECTORIES) {
+      await this.linkEntry(join(appStatic, directory), join(webRoot, directory))
     }
   }
 
@@ -630,7 +628,7 @@ export class ComponentUpdateManager {
   private async linkEntry(source: string, destination: string): Promise<void> {
     const metadata = await lstat(source)
     if (metadata.isDirectory()) {
-      await symlink(source, destination, this.platform === 'win32' ? 'junction' : 'dir')
+      await symlink(source, destination, process.platform === 'win32' ? 'junction' : 'dir')
       return
     }
     if (metadata.isFile()) {

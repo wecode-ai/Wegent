@@ -86,6 +86,39 @@ async function interruptBeforeMove(): Promise<void> {
 }
 
 describe('migrateWorkbenchHome', () => {
+  test.each(['complete', 'bridge-interrupted', 'move-interrupted'])(
+    'migrates an empty Home with a native directory bridge: %s',
+    async stage => {
+      await fs.mkdir(options.sourceHome, { recursive: true })
+      const before = await fs.lstat(options.sourceHome)
+      if (stage === 'bridge-interrupted') {
+        vi.mocked(fs.symlink).mockImplementationOnce(async (target, path, type) => {
+          await actual.symlink(target, path, type)
+          throw interrupted
+        })
+      } else if (stage === 'move-interrupted') {
+        vi.mocked(fs.rename).mockImplementationOnce(async (source, target) => {
+          await actual.rename(source, target)
+          throw interrupted
+        })
+      }
+      if (stage !== 'complete') {
+        await expect(migrateWorkbenchHome(options)).rejects.toBe(interrupted)
+      }
+      await expect(migrateWorkbenchHome(options)).resolves.toBe('migrated')
+      expect((await fs.lstat(options.sourceHome)).isSymbolicLink()).toBe(true)
+      expect(await fs.realpath(options.sourceHome)).toBe(options.targetHome)
+      expect((await fs.lstat(options.targetHome)).ino).toBe(before.ino)
+      expect(await fs.readdir(options.targetHome)).toEqual([])
+      expect(fs.symlink).toHaveBeenCalledWith(
+        options.targetHome,
+        expect.stringContaining(`${options.sourceHome}.migration-`),
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
+      await expect(migrateWorkbenchHome(options)).resolves.toBe('already-migrated')
+    }
+  )
+
   test('converts a previously published reverse bridge into a physical migration', async () => {
     await createSource()
     const before = await fs.lstat(options.sourceHome)

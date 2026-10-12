@@ -22,6 +22,7 @@ const INHERITED_RUNTIME_ENV_KEYS = [
   'WEGENT_CAPABILITIES_HOME',
   'WEGENT_CLAUDE_HOME',
   'WEWORK_COMPONENT_RESOURCES_ROOT',
+  'WEWORK_DESKTOP_CONTROL_REGISTRY_DIR',
   'WEWORK_APP_HOT_RELOAD',
   'WEWORK_DEV_BRANCH',
   'WEWORK_DEV_DOCK_TITLE',
@@ -85,5 +86,6 @@ export function buildAiVerifyEnvironment(
     WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),
     WEGENT_EXECUTOR_LOG_DIR: sessionDirectory,
     WEWORK_APP_CONFIG_DIR: join(sessionDirectory, 'app-config'),
+    WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(sessionDirectory, 'desktop-instances'),
   }
 }

@@ -473,10 +473,12 @@ describe('buildSourceRuntimeEnvironment', () => {
 
     expect(environment).not.toHaveProperty('WEWORK_NODE_PATH')
     expect(environment.WEWORK_EXECUTOR_PATH).toContain(
-      '/executor/target/ai-verify/debug/wegent-executor'
+      join('executor', 'target', 'ai-verify', 'debug', 'wegent-executor')
     )
-    expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toContain('/electron/resources')
-    expect(environment.WEWORK_CORE_PLUGIN_ROOT).toContain('/electron/resources/wework-core-plugins')
+    expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toContain(join('electron', 'resources'))
+    expect(environment.WEWORK_CORE_PLUGIN_ROOT).toContain(
+      join('electron', 'resources', 'wework-core-plugins')
+    )
     expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toContain('harness-runtime-dev')
   })
 })
