@@ -51,6 +51,12 @@ Electron does not create a WebContents context menu automatically. The Wework El
 
 When changing this path, run `wework/electron/src/host/image-context-menu.test.ts`, then verify menu presentation, enabled states, and paste behavior in a real input inside an isolated Electron session. WebView DOM snapshots do not include a native macOS `NSMenu`; a synthetic `contextmenu` event or browser-only screenshot is not a substitute for real desktop verification.
 
+## Fixed tab window restoration
+
+When a fixed tab is assigned to a separate window, Electron restores its window identity and content route from local preferences. The restored URL must use the shared `resolveDshAppRoute` helper to add the `/wework/app/` prefix while preserving task or project query parameters, `workspaceTab`, `workspaceTabTitle`, and the fragment. Loading an unprefixed content route bypasses the Wework application deep-link entry point and prevents the restored window from displaying correctly.
+
+The desktop CI `workspace-tabs` checkpoint covers detaching a fixed tab and restarting the application. It asserts the restored window route, tab identity, fixed state, visible composer, and unsent draft. Run focused verification with `pnpm --filter wework e2e:desktop --segment workspace-tabs`.
+
 ## AI workflow
 
 An AI should start with `snapshot` to confirm the route and available `data-testid` values, make the smallest required interaction, and use `wait-for` plus `snapshot` or `text` to verify the result. Always call `stop` when finished. On failure, keep the session directory and inspect `app.log`.
