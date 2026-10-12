@@ -16,22 +16,24 @@ import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import { isRuntimePaneTranscriptConfirmedIdle, projectRuntimePaneTranscript } from './projection'
 import type { RuntimeTaskAddress } from '@/types/api'
+import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
+import {
+  hasRequestUserInputResponse,
+  isAsyncRequestUserInputPayload,
+} from '@/components/chat/requestUserInputMessages'
 
-function isPendingRequestUserInputBlock(payload: {
+function pendingRequestUserInputBlockPayload(payload: {
   block: { type: string; status?: string; renderPayload?: unknown; render_payload?: unknown }
-}): boolean {
-  if (payload.block.type !== 'tool' || payload.block.status === 'error') return false
+}): RequestUserInputPayload | null {
+  if (payload.block.type !== 'tool' || payload.block.status === 'error') return null
   const renderPayload = payload.block.renderPayload ?? payload.block.render_payload
   if (!renderPayload || typeof renderPayload !== 'object' || Array.isArray(renderPayload)) {
-    return false
+    return null
   }
-  const request = renderPayload as Record<string, unknown>
-  return (
-    request.kind === 'request_user_input' &&
-    !request.response &&
-    !request.requestUserInputResponse &&
-    !request.request_user_input_response
-  )
+  const request = renderPayload as RequestUserInputPayload
+  return request.kind === 'request_user_input' && !hasRequestUserInputResponse(request)
+    ? request
+    : null
 }
 
 type ReconciliationReason = 'event_lagged' | 'runtime_replaced' | 'system_resume'
@@ -239,10 +241,14 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         store.turnStarted(address, payload.subtaskId?.trim() || null)
       },
       onBlockCreated: payload => {
-        if (!isPendingRequestUserInputBlock(payload)) return
+        const request = pendingRequestUserInputBlockPayload(payload)
+        if (!request) return
         const address = matchingLifecycleAddress(store, payload)
         if (!address) return
-        store.userInputRequested(address)
+        store.userInputRequested(
+          address,
+          isAsyncRequestUserInputPayload(request) ? 'async' : undefined
+        )
       },
       onChatDone: payload => {
         const match = settleMatchingTask(payload, 'succeeded')

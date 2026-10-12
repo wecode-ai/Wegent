@@ -28,10 +28,10 @@
 //! (`RestrictedAnalyst`), so the source raises the 403 after the project and
 //! membership lookups; the rule scan is implemented for the permitted path.
 use brz_http_server::StatusCode;
+use brz_json::RawJson;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 use serde::Serialize;
-use serde_json::value::RawValue;
 
 use crate::auth::SessionUser;
 use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow};
@@ -80,7 +80,7 @@ struct AutomationRuleRow {
 struct RuleMetadata {
     action: Option<String>,
     event_type: Option<String>,
-    event_config: Option<Box<RawValue>>,
+    event_config: Option<RawJson>,
     cron_expression: Option<String>,
     timezone: Option<String>,
     last_run_at: Option<String>,
@@ -406,7 +406,7 @@ struct ProjectAutomationView {
     #[serde(rename = "eventType")]
     event_type: Option<String>,
     #[serde(rename = "eventConfig")]
-    event_config: Box<RawValue>,
+    event_config: RawJson,
     #[serde(rename = "assignmentMode")]
     assignment_mode: String,
     #[serde(rename = "managerType")]
@@ -448,8 +448,8 @@ struct ProjectAutomationView {
 }
 
 /// A raw empty JSON object for the `event_config` default.
-fn raw_empty_object() -> Box<RawValue> {
-    serde_json::value::to_raw_value(&std::collections::BTreeMap::<String, String>::new())
+fn raw_empty_object() -> RawJson {
+    brz_json::to_raw_value(&std::collections::BTreeMap::<String, String>::new())
         .expect("empty object serializes")
 }
 

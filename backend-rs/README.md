@@ -78,3 +78,10 @@ Macro-exported Rust APIs run on a loopback-only Breeze listener in the gateway
 process. The public listener forwards configured Rust routes to it and sends
 all other requests to Python. An unset route file remains a full Python
 fallback for deployments that have not enabled the cutover.
+
+The loopback listener exports explicit per-response CORS decisions, and only
+its matched `OriginService` trusts them. `FastApiError::unhandled()` bypasses
+CORS to match FastAPI's outer exception handler; ordinary business errors,
+including other 500 responses, retain the public CORS policy. The gateway
+consumes the internal metadata before public delivery. Python fallback origins
+cannot choose this policy through response metadata.

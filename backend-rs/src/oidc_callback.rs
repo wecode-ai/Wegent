@@ -129,7 +129,7 @@ pub async fn callback_response_with_state(
         return Err(crate::http_compat::FastApiError::validation(
             serde_json::json!([
                 { "type": "missing", "loc": ["query", "state"], "msg": "Field required",
-                  "input": crate::json_compat::JsonNull }
+                  "input": brz_json::JsonNull }
             ]),
         ));
     };

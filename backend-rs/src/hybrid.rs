@@ -11,7 +11,7 @@ use std::time::Duration;
 use http::{Method, Uri};
 use tracing::info;
 
-use crate::filters::{RequestIdFilter, server_config};
+use crate::filters::{RequestIdFilter, gateway_cors, server_config};
 use crate::{Application, BoxError, Gateway, OriginService, RouteTable, RustApi, bind, serve};
 
 mod routes;
@@ -130,6 +130,9 @@ async fn serve_gateway<S: RustApi, F: Future<Output = ()>>(
     gateway: Gateway<S>,
     shutdown: F,
 ) -> Result<(), BoxError> {
+    // Apply CORS to the public boundary for both ordinary and caller-supplied
+    // gateways, before any cutover or recording admission can run.
+    let gateway = gateway.with_cors(gateway_cors())?;
     let listener = bind(config.listen_address).await?;
 
     info!(
@@ -200,7 +203,7 @@ where
     .await?;
     let api_address = api_server.local_addr()?;
     let api_origin: Uri = format!("http://{api_address}").parse()?;
-    let api = OriginService::new(&api_origin)?;
+    let api = OriginService::new(&api_origin)?.with_response_cors();
     let (api_shutdown, wait_for_api_shutdown) = tokio::sync::oneshot::channel();
 
     info!(listen = %api_address, "Wegent exported Rust APIs started");

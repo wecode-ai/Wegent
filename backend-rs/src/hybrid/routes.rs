@@ -140,6 +140,8 @@ mod tests {
         let source = std::fs::read_to_string(&path).unwrap();
         let file: FileConfig = toml::from_str(&source).unwrap();
         assert!(file.include.is_empty());
+        assert_eq!(file.routes.len(), 15, "five existing and ten new GET APIs");
+        assert!(file.routes.iter().all(|rule| rule.methods == ["GET"]));
 
         let selected: BTreeSet<_> = file
             .routes
@@ -194,6 +196,30 @@ mod tests {
                 table.matches(&method, &concrete),
                 "cutover rule failed to match {method} {path}"
             );
+            for other_method in [
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+                Method::HEAD,
+                Method::OPTIONS,
+            ] {
+                assert!(
+                    !table.matches(&other_method, &concrete),
+                    "unmigrated method selected: {other_method} {path}"
+                );
+            }
+        }
+        for path in [
+            "/api/teams/default",
+            "/api/v1/wework-notifications/preferences",
+            "/api/tasks/lite/group",
+            "/api/tasks/123/remote-workspace/file",
+            "/api/plugins/installed/123/download",
+            "/api/v1/kinds/skills/public/123/download",
+            "/api/v1/kinds/skills/unified",
+        ] {
+            assert!(!table.matches(&Method::GET, path), "unmigrated GET {path}");
         }
         assert!(!table.matches(&Method::GET, "/api/tasks/123/unmigrated"));
     }

@@ -204,7 +204,7 @@ pub fn format_python_datetime(value: &NaiveDateTime) -> String {
 
 /// `get_task_execution_workspace_source` / `get_task_execution_workspace_path`
 /// (`spec.execution.workspace.{source,path}`, trimmed non-empty strings).
-pub(crate) fn opaque_string(field: &Option<crate::json_compat::OpaqueJson>) -> Option<String> {
+pub(crate) fn opaque_string(field: &Option<brz_json::OpaqueJson>) -> Option<String> {
     field.as_ref()?.project::<String>()
 }
 

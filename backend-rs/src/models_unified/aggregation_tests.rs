@@ -138,8 +138,8 @@ fn placeholders_match_the_requested_list_length() {
 /// names, and every other model stays visible.
 #[test]
 fn public_model_whitelist_admits_only_listed_users() {
-    use crate::json_compat::OpaqueJson;
     use crate::teams::public_model_access::allowed_for_user_name;
+    use brz_json::OpaqueJson;
     use serde_json::json;
 
     let whitelisted = OpaqueJson::from(json!({

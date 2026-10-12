@@ -5,7 +5,7 @@
 //! Typed references after legacy JSON normalization. The boundary stays
 //! permissive so one malformed array entry does not discard its siblings.
 use crate::crd::{NumericId, ResourceReference};
-use crate::json_compat::JsonProjection;
+use brz_json::JsonProjection;
 use serde::Serialize;
 
 impl ResourceReference {

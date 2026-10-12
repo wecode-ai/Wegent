@@ -12,8 +12,8 @@
 use brz_mysql::{FromMysqlRow, MysqlResult};
 
 use crate::crd::CrdDocument;
-use crate::json_compat::OpaqueJson;
 use crate::task_store::TaskStore;
+use brz_json::OpaqueJson;
 
 /// One `running_tasks` entry of `DeviceInfo`
 /// (`CloudDeviceProvider.get_slot_usage` task projection).
@@ -104,7 +104,7 @@ fn project_running_task(row: &RunningTaskRow) -> Option<RunningTask> {
 /// Render a stored CRD timestamp the way `datetime.isoformat()` renders the
 /// datetime pydantic parsed it into: `T`-separated, the microsecond part
 /// omitted when it is zero, and the UTC offset normalized to `±HH:MM`.
-fn python_datetime_isoformat(value: &str) -> String {
+pub(crate) fn python_datetime_isoformat(value: &str) -> String {
     let value = value.trim();
     if let Ok(datetime) = chrono::DateTime::parse_from_rfc3339(value) {
         let offset = datetime.offset().local_minus_utc();

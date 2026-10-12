@@ -29,17 +29,17 @@
 //! Every `executor:latest_version` read goes through
 //! [`crate::executor_version`], which also owns the process-local refresh the
 //! source starts when that key is missing.
+use brz_json::RawJson;
 #[cfg(test)]
-use crate::json_compat::raw_json;
-use crate::json_compat::{JsonProjection, OpaqueJson};
+use brz_json::raw_json;
+use brz_json::{JsonProjection, OpaqueJson};
 use brz_redis::Redis;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
-use serde_json::value::RawValue;
 
-use crate::auth::{SessionUser, UserRow};
+use crate::auth::SessionUser;
 use crate::device_running_tasks::{RunningTask, list_running_tasks};
 use crate::executor_version::latest_executor_version;
 use crate::http_compat::FastApiError;
@@ -144,31 +144,31 @@ pub(crate) fn record_route_id(row: &DeviceKindRow, device_type: DeviceType) -> S
 /// Field order follows the source model; missing keys use the same defaults
 /// pydantic applies.
 #[derive(serde::Serialize)]
-struct DeviceItem {
+pub(crate) struct DeviceItem {
     id: i64,
     execution_target_id: Option<String>,
     device_id: String,
     name: String,
     status: String,
     is_default: bool,
-    last_heartbeat: Option<Box<RawValue>>,
+    last_heartbeat: Option<RawJson>,
     device_type: DeviceType,
     connection_mode: String,
-    capabilities: Option<Box<RawValue>>,
+    capabilities: Option<RawJson>,
     slot_used: i64,
     slot_max: i64,
     running_tasks: Vec<RunningTask>,
     executor_version: Option<String>,
     latest_version: Option<String>,
     update_available: bool,
-    client_ip: Option<Box<RawValue>>,
-    runtime_transfer_host: Option<Box<RawValue>>,
-    runtime_instance_id: Option<Box<RawValue>>,
-    app_device_id: Option<Box<RawValue>>,
+    client_ip: Option<RawJson>,
+    runtime_transfer_host: Option<RawJson>,
+    runtime_instance_id: Option<RawJson>,
+    app_device_id: Option<RawJson>,
     socket_device_id: Option<String>,
     runtime_features: Option<RuntimeFeatures>,
-    cloud_config: Option<Box<RawValue>>,
-    remote_config: Option<Box<RawValue>>,
+    cloud_config: Option<RawJson>,
+    remote_config: Option<RawJson>,
     bind_shell: String,
 }
 
@@ -192,9 +192,9 @@ struct DeviceListResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeFeatures {
     pub schema_version: i64,
-    pub runtime_task_create: Option<Box<RawValue>>,
-    pub interactive_sessions: Option<Box<RawValue>>,
-    pub worktrees: Option<Box<RawValue>>,
+    pub runtime_task_create: Option<RawJson>,
+    pub interactive_sessions: Option<RawJson>,
+    pub worktrees: Option<RawJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_editing: Option<RuntimeProjectEditingFeatures>,
     #[serde(flatten)]
@@ -283,6 +283,13 @@ pub struct OnlineStateInput {
     /// and heartbeat.
     pub runtime_features: Option<OpaqueJson>,
     runtime_capacity: Option<RuntimeCapacityInput>,
+}
+
+impl OnlineStateInput {
+    /// The raw `status` reported by the online-state document.
+    pub(crate) fn status_value(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
 }
 #[derive(Default, serde::Deserialize)]
 #[serde(default)]
@@ -388,7 +395,7 @@ pub async fn cache_manager_get<T: DeserializeOwned>(state: &AppState, key: &str)
 /// Source `cache_manager.mget`: read a batch of keys over the shared pooled
 /// connection; errors degrade to an all-missing map, which yields offline
 /// devices exactly like the source's error swallow.
-async fn cache_manager_mget<T: DeserializeOwned>(
+pub(crate) async fn cache_manager_mget<T: DeserializeOwned>(
     state: &AppState,
     keys: Vec<String>,
 ) -> Vec<Option<T>> {
@@ -744,6 +751,23 @@ fn project_editing_features(
     }
 }
 
+impl DeviceItem {
+    /// The logical `device_id` the source listing dict carries.
+    pub(crate) fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    /// The `name` the source listing dict carries.
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The `device_type` discriminator the source listing dict carries.
+    pub(crate) fn device_type(&self) -> DeviceType {
+        self.device_type
+    }
+}
+
 /// GET /api/devices: the devices free function, injecting the process-lifetime
 /// application state.
 #[brz_http_server::get("/api/devices")]
@@ -751,11 +775,21 @@ async fn get_all_devices(
     #[inject(state)] state: &AppState,
     #[auth] user: SessionUser,
 ) -> Result<DeviceListResponse, FastApiError> {
-    devices(state, user.0).await
+    let items = list_all_devices(state, user.id).await?;
+    Ok(DeviceListResponse {
+        total: items.len(),
+        items,
+    })
 }
 
-/// Handler for `GET /api/devices`.
-async fn devices(state: &AppState, user: UserRow) -> Result<DeviceListResponse, FastApiError> {
+/// `device_service.get_all_devices`: every registered provider lists its
+/// devices for the user and the results are concatenated in provider
+/// registration order (cloud, local, app, remote). Shared by `GET /api/devices`
+/// and `GET /api/v1/runtime-profiles`, whose source both call this listing.
+pub(crate) async fn list_all_devices(
+    state: &AppState,
+    user_id: i32,
+) -> Result<Vec<DeviceItem>, FastApiError> {
     // Source queries `kinds` once per provider in registration order:
     // cloud, local, app, remote.
     let mut items: Vec<DeviceItem> = Vec::new();
@@ -766,7 +800,7 @@ async fn devices(state: &AppState, user: UserRow) -> Result<DeviceListResponse, 
         DeviceType::Remote,
     ] {
         let kinds: Result<Vec<DeviceKindRow>, _> =
-            state.mysql.fetch_all(KINDS_QUERY, (user.id,)).await;
+            state.mysql.fetch_all(KINDS_QUERY, (user_id,)).await;
         let kinds = match kinds {
             Ok(rows) => rows,
             Err(error) => {
@@ -776,16 +810,12 @@ async fn devices(state: &AppState, user: UserRow) -> Result<DeviceListResponse, 
         };
         match device_type {
             DeviceType::Cloud => {
-                items.extend(list_cloud_devices(state, user.id.into(), &kinds).await?)
+                items.extend(list_cloud_devices(state, user_id.into(), &kinds).await?)
             }
-            other => items.extend(list_mget_devices(state, user.id.into(), &kinds, other).await),
+            other => items.extend(list_mget_devices(state, user_id.into(), &kinds, other).await),
         }
     }
-
-    Ok(DeviceListResponse {
-        total: items.len(),
-        items,
-    })
+    Ok(items)
 }
 
 /// Source `python_exception_handler` 500 response shape.

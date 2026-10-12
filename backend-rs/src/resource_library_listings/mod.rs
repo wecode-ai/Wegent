@@ -12,7 +12,7 @@
 //! and published discovery queries, then project each page item.
 
 mod handler;
-mod models;
-mod repository;
+pub(crate) mod models;
+pub(crate) mod repository;
 mod service;
-mod skill_bindings;
+pub(crate) mod skill_bindings;

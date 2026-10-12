@@ -366,16 +366,7 @@ fn decode_online_document(value: Option<&RedisBytes>) -> Result<Option<Value>, (
 }
 
 /// Python truthiness of a decoded JSON value (`bool(value)`).
-fn python_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
-        Value::String(value) => !value.is_empty(),
-        Value::Array(value) => !value.is_empty(),
-        Value::Object(value) => !value.is_empty(),
-    }
-}
+use brz_json::adapters::python_truthy;
 
 /// The endpoint's 503 (`HTTPException(503, "Device status is temporarily
 /// unavailable")`).

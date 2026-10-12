@@ -1,6 +1,7 @@
 """Inbox persistence, transaction, authorization and IM contracts."""
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -78,9 +79,6 @@ def test_send_without_project_persists_in_own_inbox(
         saved["id"],
         {"in_app": True, "system": False, "im": True},
     )
-    inbox = test_client.get(path, headers=headers).json()
-    assert [row["id"] for row in inbox["items"]] == [saved["id"]]
-    assert inbox["unread_count"] == 1
     read = test_client.post(f"{path}/{saved['id']}/read", headers=headers)
     assert read.status_code == 200
     read_at = read.json()["read_at"]
@@ -92,10 +90,9 @@ def test_send_without_project_persists_in_own_inbox(
         == read_at
     )
     assert test_client.post(f"{path}/read-all", headers=headers).status_code == 204
-    assert (
-        test_client.get(path, headers=headers).json()["items"][0]["read_at"] == read_at
-    )
-    assert test_client.get(path, headers=headers).json()["unread_count"] == 0
+    test_db.refresh(row)
+    assert row.is_read is True
+    assert row.read_at.replace(tzinfo=timezone.utc) == datetime.fromisoformat(read_at)
 
 
 @pytest.mark.parametrize(
@@ -190,7 +187,7 @@ def test_ai_assignment_notifies_current_user(test_db, test_user):
     assert test_db.query(WeworkNotification).one().user_id == test_user.id
 
 
-def test_inbox_api_is_private_and_read_state_persists(
+def test_read_api_is_private_and_read_state_persists(
     test_client, test_db, test_user, test_token
 ):
     project = _make_project(test_db, test_user)
@@ -214,10 +211,7 @@ def test_inbox_api_is_private_and_read_state_persists(
     )
     headers = {"Authorization": f"Bearer {test_token}"}
     path = "/api/v1/wework-notifications"
-    assert test_client.get(path).status_code == 401
-    response = test_client.get(path, headers=headers).json()
-    assert [row["id"] for row in response["items"]] == [own.id]
-    assert response["unread_count"] == 1
+    assert test_client.post(f"{path}/{own.id}/read").status_code == 401
     assert (
         test_client.post(f"{path}/{other.id}/read", headers=headers).status_code == 404
     )
@@ -226,81 +220,10 @@ def test_inbox_api_is_private_and_read_state_persists(
             test_client.post(f"{path}/{own.id}/read", headers=headers).status_code
             == 200
         )
-    assert test_client.get(path, headers=headers).json()["unread_count"] == 0
+    test_db.refresh(own)
+    assert own.is_read is True
     assert test_client.post(f"{path}/read-all", headers=headers).status_code == 204
     assert test_db.get(WeworkNotification, other.id).read_at is None
-
-
-def test_inbox_categories_have_independent_pagination_and_unread_counts(
-    test_client, test_db, test_user, test_token
-):
-    rows = [
-        create_notification(
-            test_db,
-            user_id=test_user.id,
-            actor_user_id=test_user.id,
-            title=kind,
-            body=kind,
-            kind=kind,
-        )
-        for kind in ("message", "assignment", "issue_dispatch_assignment", "new_kind")
-    ]
-    test_db.commit()
-    headers = {"Authorization": f"Bearer {test_token}"}
-    path = "/api/v1/wework-notifications"
-
-    collaboration = test_client.get(
-        f"{path}?category=collaboration&limit=1", headers=headers
-    ).json()
-    assert collaboration["unread_count"] == 2
-    assert collaboration["next_offset"] == 1
-    next_page = test_client.get(
-        f"{path}?category=collaboration&limit=1&offset=1", headers=headers
-    ).json()
-    assert {collaboration["items"][0]["id"], next_page["items"][0]["id"]} == {
-        rows[1].id,
-        rows[2].id,
-    }
-    general = test_client.get(f"{path}?category=general", headers=headers).json()
-    assert {item["id"] for item in general["items"]} == {rows[0].id, rows[3].id}
-    assert general["unread_count"] == 2
-    assert (
-        test_client.get(f"{path}?category=unknown", headers=headers).status_code == 422
-    )
-
-
-def test_board_mentions_and_runs_join_the_collaboration_category(
-    test_client, test_db, test_user, test_token
-):
-    """The bell files board work a member is pulled into under collaboration."""
-
-    collaboration_kinds = (
-        "mention",
-        "execution",
-    )
-    rows = {
-        kind: create_notification(
-            test_db,
-            user_id=test_user.id,
-            actor_user_id=test_user.id,
-            title=kind,
-            body=kind,
-            kind=kind,
-        )
-        for kind in (*collaboration_kinds, "message")
-    }
-    test_db.commit()
-    headers = {"Authorization": f"Bearer {test_token}"}
-    path = "/api/v1/wework-notifications"
-
-    collaboration = test_client.get(
-        f"{path}?category=collaboration", headers=headers
-    ).json()
-    assert {item["id"] for item in collaboration["items"]} == {
-        rows[kind].id for kind in collaboration_kinds
-    }
-    general = test_client.get(f"{path}?category=general", headers=headers).json()
-    assert {item["id"] for item in general["items"]} == {rows["message"].id}
 
 
 def test_send_rejects_cross_project_item_and_nonmember(test_db, test_user):
@@ -581,11 +504,8 @@ def test_read_all_updates_only_unread_notifications_of_current_user(
     assert rows[1].read_at is not None
     assert rows[2].is_read is False
     assert rows[2].read_at is None
-    inbox = test_client.get(path, headers=headers).json()
-    assert inbox["unread_count"] == 0
-    assert (
-        next(row for row in inbox["items"] if row["id"] == rows[0].id)["read_at"]
-        == first_read["read_at"]
+    assert rows[0].read_at.replace(tzinfo=timezone.utc) == datetime.fromisoformat(
+        first_read["read_at"]
     )
 
 

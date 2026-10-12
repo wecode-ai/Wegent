@@ -143,6 +143,18 @@ impl EntityResolver<RedisService> for RecordingResolver {
             .cloned()
             .collect())
     }
+
+    async fn get_resource_ids_by_entity(
+        &self,
+        _: &EntityResolvers<RedisService>,
+        _: &brz_mysql::MysqlService,
+        _: Option<&RedisService>,
+        _: i64,
+        _: &str,
+        _: &str,
+    ) -> MysqlResult<Vec<i64>> {
+        Ok(Vec::new())
+    }
 }
 
 /// A registry with the `org_department` resolver under test. The MySQL handle is

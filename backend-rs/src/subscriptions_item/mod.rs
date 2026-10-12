@@ -2,16 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `PUT` and `DELETE /api/subscriptions/{subscription_id}`.
+//! `PUT`, `DELETE`, and `POST .../toggle` for
+//! `/api/subscriptions/{subscription_id}`.
 //!
-//! Mirrors `app.api.endpoints.adapter.subscriptions.update_subscription` /
-//! `delete_subscription` (router prefix `/subscriptions`, mounted under `/api`)
-//! and `SubscriptionService.update_subscription` / `delete_subscription`
-//! (`app.services.subscription.service`).
+//! Mirrors `app.api.endpoints.adapter.subscriptions` (`update_subscription`,
+//! `delete_subscription`, `toggle_subscription`; router prefix
+//! `/subscriptions`, mounted under `/api`) and the matching
+//! `SubscriptionService` methods (`app.services.subscription.service`).
 //!
-//! Both handlers authenticate with the session user, load one active owned
-//! `Subscription` `kinds` row, reject Code Wiki scheduler rows with 409, and run
-//! the source's single session transaction:
+//! Every handler authenticates with the session user, loads one active owned
+//! `Subscription` `kinds` row, rejects Code Wiki scheduler rows with 409, and
+//! runs the source's single session transaction:
 //!
 //! - `PUT` reapplies the submitted `SubscriptionUpdate` onto the stored CRD,
 //!   re-validating team/workspace/device references and the trigger config, then
@@ -19,6 +20,9 @@
 //!   (`db.refresh`) to render `SubscriptionInDB`.
 //! - `DELETE` soft-deletes the row (`is_active = 0`, `_internal.enabled =
 //!   false`).
+//! - `POST .../toggle` flips `enabled` on both `spec` and `_internal`,
+//!   recomputes `_internal.next_execution_time` when enabling, and renders the
+//!   updated `SubscriptionInDB`.
 //!
 //! On flush the source's internal Kind cache invalidates the row's data and
 //! personal-index keys; the transaction then commits.
@@ -37,6 +41,7 @@ mod crd;
 mod cron;
 mod crypto;
 mod delete;
+mod toggle;
 mod update;
 
 pub(crate) use body::Update;
@@ -104,6 +109,19 @@ async fn delete_subscription(
     #[auth] user: SessionUser,
 ) -> Result<brz_http_server::Response, FastApiError> {
     delete::delete_subscription(state, user.0.id as i64, subscription_id).await
+}
+
+/// `POST /api/subscriptions/{subscription_id}/toggle` — enable or disable the
+/// subscription and render the updated `SubscriptionInDB`.
+#[brz_http_server::post("/api/subscriptions/:subscription_id/toggle")]
+async fn toggle_subscription(
+    #[inject(state)] state: &AppState,
+    subscription_id: i64,
+    #[auth] user: SessionUser,
+    query: brz_http_server::Query<toggle::ToggleQuery>,
+) -> Result<SubscriptionItem, FastApiError> {
+    let enabled = query.enabled()?;
+    toggle::toggle_subscription(state, user.0.id as i64, subscription_id, enabled).await
 }
 
 /// The source's 404 (`HTTPException(404, "Subscription not found")`).

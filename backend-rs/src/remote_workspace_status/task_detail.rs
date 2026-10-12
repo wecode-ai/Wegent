@@ -19,8 +19,8 @@ use serde_json::Value;
 use super::app_state::AppState;
 use super::subtask_history::{SubtaskRow, list_subtask_history};
 use crate::crd::CrdDocument;
-use crate::json_compat::{JsonNull, JsonProjection, OpaqueJson};
 use crate::remote_workspace_tree::kinds::KindStore;
+use brz_json::{JsonNull, JsonProjection, OpaqueJson};
 
 /// `add_group_chat_info_to_task` (`task_detail_helpers.py`): the task's
 /// approved members, excluding copied share records

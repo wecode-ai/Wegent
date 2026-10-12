@@ -12,11 +12,13 @@
 //! `_parent_contexts`, while the cloud-context endpoint renders the project
 //! without one.
 
-use crate::json_compat::{OpaqueJson, raw_json};
+use brz_json::RawJson;
+use brz_json::{OpaqueJson, raw_json};
 use chrono::NaiveDateTime;
+use serde_json::Value;
 use serde_json::json;
-use serde_json::{Value, value::RawValue};
 
+use super::workflow_definition::{WorkflowDefinition, workflow_definition_value};
 use super::{CloudMetadataInput, ProjectListRow};
 
 /// pydantic naive-datetime serialization: `YYYY-MM-DDTHH:MM:SS` plus
@@ -144,18 +146,6 @@ struct AutomationInput {
     auto_retry_on_failure: Option<bool>,
     max_retry_count: Option<i64>,
 }
-#[derive(Default, serde::Deserialize)]
-#[serde(default)]
-struct WorkflowInput {
-    version: Option<i64>,
-    stage_mode: Option<String>,
-    advancement_policy: Option<String>,
-    coordinator_prompt: Option<String>,
-    approval_policy: Option<String>,
-    ai_automation_rule_id: Option<OpaqueJson>,
-    execution_config: Option<OpaqueJson>,
-    nodes: Option<Vec<OpaqueJson>>,
-}
 
 /// Card display with schema defaults.
 fn card_display_value(config: Option<&OpaqueJson>) -> CardDisplay {
@@ -223,35 +213,11 @@ fn pull_request_automation_value(config: Option<&OpaqueJson>) -> PullRequestAuto
     }
 }
 
-/// Workflow definition with schema defaults.
-fn workflow_definition_value(config: Option<&OpaqueJson>) -> WorkflowDefinition {
-    let input = config
-        .and_then(OpaqueJson::project::<WorkflowInput>)
-        .unwrap_or_default();
-    let opaque = |value: OpaqueJson| {
-        serde_json::value::to_raw_value(&value).expect("workflow value serializes")
-    };
-    WorkflowDefinition {
-        version: input.version.unwrap_or(1),
-        stage_mode: input.stage_mode.unwrap_or_else(|| "none".into()),
-        advancement_policy: input.advancement_policy.unwrap_or_else(|| "manual".into()),
-        coordinator_prompt: input.coordinator_prompt.unwrap_or_default(),
-        approval_policy: input.approval_policy.unwrap_or_else(|| "required".into()),
-        ai_automation_rule_id: input.ai_automation_rule_id.map(opaque),
-        execution_config: input.execution_config.map(opaque),
-        nodes: input
-            .nodes
-            .unwrap_or_default()
-            .into_iter()
-            .map(opaque)
-            .collect(),
-    }
-}
-
 /// `ExecutionEnvironmentConfig` (`app.schemas.workspace`): the shared
 /// execution-environment definition plus the per-device preparation state.
 #[derive(Debug, serde::Serialize)]
 struct ExecutionEnvironment {
+    workspace_policy: String,
     repositories: Vec<ExecutionRepository>,
     setup_steps: Vec<ExecutionSetupStep>,
     fingerprint: String,
@@ -302,9 +268,21 @@ fn striped_text(object: &serde_json::Map<String, Value>, key: &str, default: &st
         .to_string()
 }
 
+/// `ExecutionEnvironmentDefinition.workspace_policy`: the stored literal within
+/// the known set, otherwise the schema default (`git_worktree`).
+fn workspace_policy_value(source: Option<&serde_json::Map<String, Value>>) -> String {
+    source
+        .and_then(|object| object.get("workspace_policy"))
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "git_worktree" | "project"))
+        .unwrap_or("git_worktree")
+        .to_string()
+}
+
 /// `ExecutionEnvironmentConfig` over `metadata.execution_environment`, with the
-/// schema defaults applied (`repositories`/`setup_steps` empty, `fingerprint`
-/// empty, `devices` empty) and unknown sub-fields dropped.
+/// schema defaults applied (`workspace_policy` `git_worktree`,
+/// `repositories`/`setup_steps` empty, `fingerprint` empty, `devices` empty)
+/// and unknown sub-fields dropped.
 fn execution_environment_value(config: Option<&OpaqueJson>) -> ExecutionEnvironment {
     let config = config.map(OpaqueJson::to_value);
     let source = config.as_ref().and_then(Value::as_object);
@@ -364,6 +342,7 @@ fn execution_environment_value(config: Option<&OpaqueJson>) -> ExecutionEnvironm
         })
         .unwrap_or_default();
     ExecutionEnvironment {
+        workspace_policy: workspace_policy_value(source),
         repositories,
         setup_steps,
         fingerprint: source
@@ -393,25 +372,47 @@ pub(crate) struct WorkspaceContext {
     pub name: String,
 }
 
-/// `CloudProjectResponse.populate_tags` visibility: the metadata value when it
-/// is one of the schema literals, else `private`.
-fn visibility_value(metadata: Option<&CloudMetadataInput>) -> &'static str {
-    match metadata.and_then(|metadata| metadata.visibility.as_deref()) {
-        Some("public") => "public",
-        Some("public_restricted") => "public_restricted",
-        _ => "private",
+/// `ProjectVisibility` (`app.schemas.cloud_project`): a project carrying any
+/// approved `authenticated_users` grant is `public`, otherwise `private`. The
+/// `_response` helper overrides the stored metadata value, so this no longer
+/// reads `metadata.visibility`.
+fn visibility_value(all_user_role: Option<&str>) -> &'static str {
+    if all_user_role.is_some() {
+        "public"
+    } else {
+        "private"
     }
 }
 
+/// `CloudProjectResponse.populate_tags` `default_issue_security`: the metadata
+/// literal within the schema set, else the default (`open`).
+fn default_issue_security_value(metadata: Option<&CloudMetadataInput>) -> String {
+    metadata
+        .and_then(|metadata| metadata.default_issue_security.as_deref())
+        .filter(|value| matches!(*value, "open" | "related"))
+        .unwrap_or("open")
+        .to_string()
+}
+
+/// `PublicAccessGrant` (`app.schemas.cloud_project`): the stored role of the
+/// all-signed-in-users grant, or `None` when the project is private.
+#[derive(Debug, serde::Serialize)]
+struct PublicAccessGrant {
+    role: String,
+}
+
 /// Serialize one project row the way `_project_response` +
-/// `CloudProjectResponse` do. `workspace` is the resolved parent-space
-/// navigation context; the source passes `None` when the project has no
-/// readable parent workspace.
+/// `CloudProjectResponse` do. `access_role` is the caller's effective role;
+/// `all_user_role` is the stored role of the project's approved
+/// `authenticated_users` grant (`None` for a private project). `workspace` is
+/// the resolved parent-space navigation context; the source passes `None` when
+/// the project has no readable parent workspace.
 pub(crate) fn project_response(
     project: &ProjectListRow,
     current_user_id: i32,
     current_user_name: &str,
     access_role: &str,
+    all_user_role: Option<&str>,
     workspace: Option<&WorkspaceContext>,
 ) -> CloudProjectBody {
     let metadata = project
@@ -453,11 +454,15 @@ pub(crate) fn project_response(
         workflow_automation_id: metadata
             .and_then(|metadata| metadata.workflow_automation_id.as_ref())
             .filter(|value| !value.is_null())
-            .map(|value| serde_json::value::to_raw_value(value).unwrap()),
+            .map(|value| brz_json::to_raw_value(value).unwrap()),
         execution_environment: execution_environment_value(
             metadata.and_then(|metadata| metadata.execution_environment.as_ref()),
         ),
-        visibility: visibility_value(metadata),
+        visibility: visibility_value(all_user_role),
+        public_access: all_user_role.map(|role| PublicAccessGrant {
+            role: role.to_owned(),
+        }),
+        default_issue_security: default_issue_security_value(metadata),
         created_by_user_id: project.created_by_user_id,
         current_user_id,
         current_user_name: current_user_name.to_owned(),
@@ -488,9 +493,11 @@ pub(crate) struct CloudProjectBody {
     ai_automation: AiAutomation,
     pull_request_automation: PullRequestAutomation,
     workflow_definition: WorkflowDefinition,
-    workflow_automation_id: Option<Box<RawValue>>,
+    workflow_automation_id: Option<RawJson>,
     execution_environment: ExecutionEnvironment,
     visibility: &'static str,
+    public_access: Option<PublicAccessGrant>,
+    default_issue_security: String,
     created_by_user_id: i32,
     current_user_id: i32,
     current_user_name: String,
@@ -505,7 +512,7 @@ pub(crate) struct CloudProjectBody {
 #[derive(Debug, serde::Serialize)]
 struct ProviderConfig {
     #[serde(flatten)]
-    extra: std::collections::BTreeMap<String, Box<RawValue>>,
+    extra: std::collections::BTreeMap<String, RawJson>,
     credential_configured: bool,
 }
 #[derive(Debug, serde::Serialize)]
@@ -518,7 +525,7 @@ struct CardDisplay {
 #[derive(Debug, serde::Serialize)]
 struct BoardConfig {
     group_by: String,
-    statuses: Box<RawValue>,
+    statuses: RawJson,
     processing_start_status_id: Option<String>,
 }
 #[derive(Debug, serde::Serialize)]
@@ -529,19 +536,8 @@ struct AiAutomation {
 #[derive(Debug, serde::Serialize)]
 struct PullRequestAutomation {
     enabled: bool,
-    statuses: Box<RawValue>,
+    statuses: RawJson,
     prompt: String,
-}
-#[derive(Debug, serde::Serialize)]
-struct WorkflowDefinition {
-    version: i64,
-    stage_mode: String,
-    advancement_policy: String,
-    coordinator_prompt: String,
-    approval_policy: String,
-    ai_automation_rule_id: Option<Box<RawValue>>,
-    execution_config: Option<Box<RawValue>>,
-    nodes: Vec<Box<RawValue>>,
 }
 #[derive(serde::Serialize)]
 pub(crate) struct ProjectListResponse {
@@ -563,6 +559,10 @@ impl CloudProjectBody {
             current_user_id,
             current_user_name,
             access_role,
+            // The runtime-task cloud-context source builds `project` straight
+            // from `project.__dict__`, which carries no all-signed-in-users
+            // grant, so the project always renders `private`.
+            None,
             None,
         )
     }
@@ -595,6 +595,7 @@ mod tests {
             current_user_id,
             current_user_name,
             access_role,
+            None,
             None,
         ))
         .unwrap()
@@ -636,7 +637,11 @@ mod tests {
         });
         let value = project_response(&row(metadata), 302, "dehua", "RestrictedAnalyst");
         assert_eq!(value["id"], "1712605396200092385");
-        assert_eq!(value["visibility"], "public");
+        // The stored metadata `visibility` is overridden: only an approved
+        // all-signed-in-users grant makes the project `public`.
+        assert_eq!(value["visibility"], "private");
+        assert_eq!(value["public_access"], serde_json::Value::Null);
+        assert_eq!(value["default_issue_security"], "open");
         assert_eq!(value["task_provider"], "gitlab");
         // credential masked, other keys kept, flag appended last
         assert_eq!(
@@ -726,6 +731,7 @@ mod tests {
         assert_eq!(
             value,
             json!({
+                "workspace_policy": "git_worktree",
                 "repositories": [],
                 "setup_steps": [],
                 "fingerprint": "",
@@ -756,6 +762,7 @@ mod tests {
         assert_eq!(
             value,
             json!({
+                "workspace_policy": "git_worktree",
                 "repositories": [{
                     "name": "Wegent",
                     "url": "https://example.invalid/r",
@@ -795,6 +802,7 @@ mod tests {
             302,
             "user",
             "RestrictedAnalyst",
+            None,
             Some(&workspace),
         ))
         .unwrap();
@@ -815,18 +823,43 @@ mod tests {
     }
 
     #[test]
-    fn visibility_keeps_the_schema_literals_and_falls_back_to_private() {
-        for (stored, expected) in [
-            ("public", "public"),
-            ("public_restricted", "public_restricted"),
-            ("private", "private"),
-            ("weird", "private"),
-        ] {
+    fn visibility_tracks_the_all_signed_in_users_grant() {
+        // No approved `authenticated_users` grant -> `private`, regardless of
+        // the stored metadata value.
+        for stored in ["public", "public_restricted", "private", "weird"] {
             let value = project_response(&row(json!({"visibility": stored})), 1, "u", "Owner");
-            assert_eq!(value["visibility"], json!(expected), "stored {stored}");
+            assert_eq!(value["visibility"], json!("private"), "stored {stored}");
+            assert_eq!(value["public_access"], Value::Null);
         }
+        // A stored grant role makes the project `public` and exposes
+        // `public_access.role`.
+        let value = crate::json_contract_tests::serialized(super::project_response(
+            &row(json!({})),
+            1,
+            "u",
+            "Viewer",
+            Some("Viewer"),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(value["visibility"], json!("public"));
+        assert_eq!(value["public_access"], json!({"role": "Viewer"}));
+    }
+
+    #[test]
+    fn default_issue_security_reads_the_metadata_literal() {
+        for (stored, expected) in [("open", "open"), ("related", "related"), ("weird", "open")] {
+            let value = project_response(
+                &row(json!({"default_issue_security": stored})),
+                1,
+                "u",
+                "Owner",
+            );
+            assert_eq!(value["default_issue_security"], json!(expected));
+        }
+        // Missing metadata falls back to the schema default.
         let value = project_response(&row(json!({})), 1, "u", "Owner");
-        assert_eq!(value["visibility"], json!("private"));
+        assert_eq!(value["default_issue_security"], json!("open"));
     }
 }
 

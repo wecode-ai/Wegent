@@ -727,7 +727,8 @@ function normalizeRuntimeTaskSummary(
   const interactionStatus =
     rawInteractionStatus === null
       ? null
-      : rawInteractionStatus === 'waitingForUserInput'
+      : rawInteractionStatus === 'waitingForUserInput' ||
+          rawInteractionStatus === 'awaitingUserReply'
         ? rawInteractionStatus
         : undefined
   const hasInteractionStatus = rawInteractionStatus === null || interactionStatus !== undefined

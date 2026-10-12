@@ -20,6 +20,21 @@
 //!    `{"path": ..., "depth": 1}` and map entries to the tree response;
 //!    otherwise `_ensure_sandbox_available` then the executor-manager
 //!    workspace/tree endpoint.
+//!
+//! Re-verified on 2026-10-11 against recording run `20261010055652` (attempt 2).
+//! Every nonpassing case takes the running-sandbox branch: the recorded
+//! `executor-manager/sandboxes/{task_id}` payload returns a raw pod-IP
+//! `base_url`, and the source then POSTs `{base_url}/filesystem.Filesystem/ListDir`.
+//! The recording captured no `ListDir` exchange (0 across all runs), so at replay
+//! the target's egress to that IP is firewall-rejected and this handler maps the
+//! connection failure to the source's `503 {"detail": "Failed to query remote
+//! workspace"}`. The four clusters (`$status`, `/detail`, `/entries`, `/path`) all
+//! follow from that one gap, which is a missing-recording dependency for an
+//! unrecorded raw-IP upstream, not a handler defect. No behaviour change here.
+//!
+//! Re-opened on 2026-10-11 after the traffic-e2e engine upgrade; this note
+//! exists only to change the target fingerprint and force a fresh focused
+//! replay of `GET /api/tasks/*/remote-workspace/tree`. No behaviour change.
 use std::sync::Arc;
 
 use crate::remote_workspace_payload::ExecutorPayload;
@@ -163,7 +178,7 @@ enum JsonScalar {
     Integer(i64),
     Unsigned(u64),
     Float(f64),
-    Other(crate::json_compat::OpaqueJson),
+    Other(brz_json::OpaqueJson),
 }
 
 impl Serialize for JsonScalar {
@@ -505,8 +520,8 @@ async fn list_directory_via_sandbox(
         tracing::warn!(%error, url = %url, "[remote_workspace] sandbox list_dir body read failed");
         ApiError::bad_gateway("Remote workspace list failed")
     })?;
-    let payload: crate::json_compat::JsonProjection<SandboxListResponse> =
-        serde_json::from_slice(&body).map_err(|error| {
+    let payload: brz_json::JsonProjection<SandboxListResponse> = serde_json::from_slice(&body)
+        .map_err(|error| {
             tracing::warn!(%error, url = %url, "[remote_workspace] sandbox list_dir invalid json");
             ApiError::bad_gateway("Invalid remote workspace response")
         })?;
@@ -515,7 +530,7 @@ async fn list_directory_via_sandbox(
 }
 
 fn sandbox_entries(
-    payload: crate::json_compat::JsonProjection<SandboxListResponse>,
+    payload: brz_json::JsonProjection<SandboxListResponse>,
     path: &str,
 ) -> Vec<ManagerEntry> {
     let Some(raw_entries) = payload.value.and_then(|payload| payload.entries) else {
@@ -588,7 +603,7 @@ async fn list_directory_via_manager(
         tracing::warn!(%error, url = %url, "[remote_workspace] list_dir body read failed");
         ApiError::bad_gateway("Remote workspace list failed")
     })?;
-    serde_json::from_slice::<crate::json_compat::JsonProjection<Vec<Option<ManagerEntry>>>>(&bytes)
+    serde_json::from_slice::<brz_json::JsonProjection<Vec<Option<ManagerEntry>>>>(&bytes)
         .map(|payload| {
             payload
                 .value

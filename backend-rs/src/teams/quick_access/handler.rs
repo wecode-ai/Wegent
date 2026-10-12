@@ -18,10 +18,10 @@ use crate::json_compat::OptionalOpaqueJsonExt;
 use std::collections::HashSet;
 
 use crate::crd::CrdDocument;
-use crate::json_compat::{JsonProjection, OpaqueJson, raw_null};
+use brz_json::RawJson;
+use brz_json::{JsonProjection, OpaqueJson, raw_null};
 #[cfg(test)]
 use serde_json::Value;
-use serde_json::value::RawValue;
 
 use super::super::auth::TeamsUser;
 use super::super::http_error::HttpError;
@@ -62,10 +62,10 @@ fn team_ids(field: Option<Vec<Option<i64>>>) -> Vec<i64> {
 struct QuickAccessTeam {
     id: i64,
     name: String,
-    display_name: Box<RawValue>,
+    display_name: RawJson,
     is_system: bool,
-    recommended_mode: Box<RawValue>,
-    agent_type: Box<RawValue>,
+    recommended_mode: RawJson,
+    agent_type: RawJson,
 }
 
 #[derive(serde::Serialize)]
@@ -97,7 +97,7 @@ fn quick_access_team(
             .spec
             .as_ref()
             .map(|spec| spec.recommended_mode.raw_or("both"))
-            .unwrap_or_else(|| serde_json::value::to_raw_value("both").unwrap()),
+            .unwrap_or_else(|| brz_json::to_raw_value("both").unwrap()),
         agent_type: team.agent_type.raw_or(()),
     }
 }
