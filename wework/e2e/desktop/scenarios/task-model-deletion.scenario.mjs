@@ -61,6 +61,41 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     await control.command('press', 'body', { key: 'Escape' })
   }
 
+  async function conversationIdentity(control) {
+    const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const address = state.workbench?.currentRuntimeTask
+    const origin = await control.command('getLocationOrigin', 'body')
+    const response = await fetchJson(`${origin}/wework/executor/v1/rpc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: 'model-deletion-task',
+        method: 'runtime.tasks.get',
+        params: { address },
+      }),
+      signal: AbortSignal.timeout(modelResponseTimeoutMs),
+    })
+    assert.equal(response.ok, true, 'The persisted task could not be read')
+    const task = response.result?.task
+    assert.ok(task?.taskId && task?.threadId, 'The task conversation identity is unavailable')
+    assert.equal(task.taskId, address?.taskId, 'The active task does not match the persisted task')
+    return { taskId: task.taskId, threadId: task.threadId }
+  }
+
+  async function assertOriginalConversation(control, identity, row) {
+    assert.deepEqual(
+      await conversationIdentity(control),
+      identity,
+      'Model replacement changed the original task or conversation'
+    )
+    const state = JSON.parse(await control.command('snapshot', 'body'))
+    assert.deepEqual(
+      state.testIds.filter(id => id.startsWith('runtime-local-task-row-')),
+      [row],
+      'Model replacement created another task instead of continuing the original task'
+    )
+  }
+
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(environment) {
@@ -118,16 +153,19 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         )
         const row = snapshot.testIds.find(id => id.startsWith('runtime-local-task-row-'))
         const taskSelector = `[data-testid="${row}"]`
+        const identity = await conversationIdentity(control)
 
         // Delete the local configuration through the actual settings UI and reopen the task.
         await control.command('navigate', 'body', { value: '/settings/personal/models' })
         await control.command('waitFor', '[data-testid="local-model-delete-desktop-e2e-responses"]')
         await control.command('click', '[data-testid="local-model-delete-desktop-e2e-responses"]')
         await control.command('navigate', 'body', { value: '/' })
+        await control.command('waitFor', taskSelector)
         await control.command('click', taskSelector)
         await assertRecoveryEntry(control)
         await selectE2EModel(control, modelName, modelName)
         await send(control, 'replacement cloud model')
+        await assertOriginalConversation(control, identity, row)
 
         // A cold renderer must also recover when the persisted cloud model has been deleted.
         await request(`/api/models/${deletedModelId}`, { method: 'DELETE' })
@@ -136,9 +174,19 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         await control.command('waitFor', taskSelector)
         await control.command('click', taskSelector)
         await assertRecoveryEntry(control)
-        await selectE2EModel(control, CLOUD_PUBLIC_MODEL_NAME, CLOUD_PUBLIC_MODEL_NAME)
+        const catalog = await request(
+          '/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
+        )
+        const replacement = catalog.data.find(model => model.name === CLOUD_PUBLIC_MODEL_NAME)
+        assert.ok(replacement, 'The replacement cloud model is unavailable')
+        await selectE2EModel(
+          control,
+          replacement.name,
+          replacement.displayName || replacement.modelId || replacement.name
+        )
         await send(control, 'follow-up after cloud deletion')
         assert.equal(replyCount, 3, 'Recovery did not continue the existing task')
+        await assertOriginalConversation(control, identity, row)
       } finally {
         if (deletedModelId) await request(`/api/models/${deletedModelId}`, { method: 'DELETE' })
       }

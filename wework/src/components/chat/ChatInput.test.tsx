@@ -927,6 +927,53 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
   })
 
+  test('recovers a deleted model in the same conversation despite its unavailable placeholder', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'codex-official-unavailable',
+      type: 'runtime',
+      provider: 'local',
+      isActive: false,
+      config: { weworkModelKind: 'codex-official' },
+    }
+    const targetModel: UnifiedModel = {
+      name: 'replacement-model',
+      type: 'public',
+      provider: 'openai',
+      displayName: 'Replacement Model',
+      isActive: true,
+    }
+    const setSelectedModel = vi.fn()
+    const continueInNewConversation = vi.fn()
+
+    render(
+      <ChatInput
+        value="Continue the original task"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [targetModel],
+          activeModel,
+          selectedModel: null,
+          isModelSelectionReady: false,
+          setSelectedModel,
+          continueInNewConversation,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-option-replacement-model'))
+    expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+      'Switching to Replacement Model may change how the existing context is understood.'
+    )
+    await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
+    expect(continueInNewConversation).not.toHaveBeenCalled()
+  })
+
   test('continues in a new referenced conversation when switching Codex providers', async () => {
     const activeModel: UnifiedModel = {
       name: 'gpt-5.6-sol',

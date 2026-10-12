@@ -225,6 +225,22 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     },
     onRefineTrialPrompt: refinePluginTrialPrompt,
   }
+  const mobileModelSelector = (
+    <ModelSelector
+      models={effectiveProjectChat.models}
+      selectedModel={effectiveProjectChat.selectedModel}
+      selectedModelOptions={effectiveProjectChat.selectedModelOptions}
+      openSignal={modelSelectorOpenSignal}
+      disabled={false}
+      onSelectModel={projectChatWithModelSelectorSignal.setSelectedModel}
+      onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
+      onOpenChange={projectChatWithModelSelectorSignal.onModelSelectorOpenChange}
+      onBlockedModelSelect={effectiveProjectChat.onBlockedModelSelect}
+      menuPlacement="below"
+      buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
+      menuClassName="left-0 right-auto w-[min(34rem,calc(100vw-2rem))]"
+    />
+  )
   const emptyTitle = activeConversationProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${activeConversationProject.name} 中构建什么？`,
@@ -348,24 +364,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 <Menu className="h-5 w-5" />
               </button>
               <div className="pointer-events-auto flex min-w-0 flex-1 justify-start">
-                {(effectiveProjectChat.isModelSelectionReady ?? true) ? (
-                  <ModelSelector
-                    models={effectiveProjectChat.models}
-                    selectedModel={effectiveProjectChat.selectedModel}
-                    selectedModelOptions={effectiveProjectChat.selectedModelOptions}
-                    openSignal={modelSelectorOpenSignal}
-                    disabled={false}
-                    onSelectModel={projectChatWithModelSelectorSignal.setSelectedModel}
-                    onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
-                    onOpenChange={projectChatWithModelSelectorSignal.onModelSelectorOpenChange}
-                    onBlockedModelSelect={effectiveProjectChat.onBlockedModelSelect}
-                    menuPlacement="below"
-                    buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
-                    menuClassName="left-0 right-auto w-[min(34rem,calc(100vw-2rem))]"
-                  />
-                ) : (
-                  <div className="h-10 w-32" data-testid="model-selector-loading" />
-                )}
+                {mobileModelSelector}
               </div>
               {currentRuntimeTask ? (
                 <div className="pointer-events-auto flex items-center gap-1">
@@ -520,6 +519,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       disabledReason={inlineComposerDisabledReason}
                       placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
                       projectChat={projectChatWithModelSelectorSignal}
+                      modelSelectorOverride={null}
                       projectWork={effectiveProjectWork}
                       workspaceTarget={workspaceTarget}
                       workspaceFileApi={workspaceFileApi}
@@ -574,26 +574,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               >
                 <Menu className="h-5 w-5" />
               </button>
-              <div className="flex min-w-0 flex-1 justify-start">
-                {(effectiveProjectChat.isModelSelectionReady ?? true) ? (
-                  <ModelSelector
-                    models={effectiveProjectChat.models}
-                    selectedModel={effectiveProjectChat.selectedModel}
-                    selectedModelOptions={effectiveProjectChat.selectedModelOptions}
-                    openSignal={modelSelectorOpenSignal}
-                    disabled={false}
-                    onSelectModel={projectChatWithModelSelectorSignal.setSelectedModel}
-                    onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
-                    onOpenChange={projectChatWithModelSelectorSignal.onModelSelectorOpenChange}
-                    onBlockedModelSelect={effectiveProjectChat.onBlockedModelSelect}
-                    menuPlacement="below"
-                    buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
-                    menuClassName="left-0 right-auto w-[min(34rem,calc(100vw-2rem))]"
-                  />
-                ) : (
-                  <div className="h-10 w-32" data-testid="model-selector-loading" />
-                )}
-              </div>
+              <div className="flex min-w-0 flex-1 justify-start">{mobileModelSelector}</div>
               <div className="h-11 min-w-[44px]" />
             </header>
 
@@ -636,6 +617,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
+                modelSelectorOverride={null}
                 projectWork={effectiveProjectWork}
                 workspaceTarget={workspaceTarget}
                 workspaceFileApi={workspaceFileApi}

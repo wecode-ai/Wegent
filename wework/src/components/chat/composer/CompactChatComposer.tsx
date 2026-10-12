@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ReactNode,
 } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
@@ -109,6 +110,7 @@ interface CompactChatComposerProps {
   onSelectModel?: (model: UnifiedModel | null) => boolean | void
   onSelectModelOption?: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
+  modelSelectorOverride?: ReactNode
   isModelSelectionReady?: boolean
   isStreaming?: boolean
   onPause?: () => void
@@ -162,6 +164,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       onSelectModel,
       onSelectModelOption,
       onBlockedModelSelect,
+      modelSelectorOverride,
       isModelSelectionReady = true,
       isStreaming = false,
       onPause,
@@ -388,9 +391,12 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
             title={t('workbench.collaboration_mode', '运行模式')}
           />
         ) : null}
-        {!fullscreenInputOpen && (
-          <div className="mb-2 flex min-w-0 justify-end">{modelSelector}</div>
-        )}
+        {!fullscreenInputOpen &&
+          (modelSelectorOverride === undefined ? (
+            <div className="mb-2 flex min-w-0 justify-end">{modelSelector}</div>
+          ) : (
+            modelSelectorOverride
+          ))}
         <form
           className="flex w-full items-end gap-2"
           onSubmit={event => {
