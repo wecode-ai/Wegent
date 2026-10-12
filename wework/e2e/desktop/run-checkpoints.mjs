@@ -353,10 +353,12 @@ function checkpointScenarioEnv(env, checkpoint) {
   if (
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'browser-multi-tabs' ||
+    checkpoint === 'project-assignment-notification' ||
     checkpoint === 'core-task-flow'
   ) {
     // Core task flow verifies the native drag-to-popout window. macOS background
     // mode prohibits activation and hides the app when that window is presented.
+    // Assignment checks native field blur; inactive macOS windows suppress it.
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]

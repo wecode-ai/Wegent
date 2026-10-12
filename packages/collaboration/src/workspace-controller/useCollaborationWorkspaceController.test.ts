@@ -236,6 +236,35 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
   });
 
+  it("reads changes published while a board snapshot was in flight", async () => {
+    state = { ...state, projects: [project], project, selectedIssue: issue };
+    const { api, commands } = createController();
+    const snapshot = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const reassigned = { ...issue, assignee_user_id: 1, version: 2 };
+    const pending = deferred<typeof snapshot>();
+    vi.mocked(api.issues.getBoardSnapshot)
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue({ ...snapshot, items: [reassigned] });
+
+    const initialLoad = commands.loadProject(project.id);
+    const refresh = commands.loadProjectSnapshot(project.id, { fresh: true });
+    const anotherChange = commands.loadProjectSnapshot(project.id, {
+      fresh: true,
+    });
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce();
+    pending.resolve(snapshot);
+    await Promise.all([initialLoad, refresh, anotherChange]);
+
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
+    expect(state.selectedIssue).toEqual(reassigned);
+    expect(state.issues).toEqual([reassigned]);
+  });
+
   it("keeps a successful project catalog when My Work fails", async () => {
     const api = createApi();
     api.myWork!.list = vi

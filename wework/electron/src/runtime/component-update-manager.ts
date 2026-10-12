@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
+import { createWriteStream, type Dirent } from 'node:fs'
 import {
   cp,
   lstat,
@@ -611,7 +611,8 @@ export class ComponentUpdateManager {
         new Set(WEWORK_APP_STATIC_DIRECTORIES)
       )
       for (const directory of WEWORK_APP_STATIC_DIRECTORIES) {
-        await this.linkEntry(join(appStatic, directory), join(webRoot, directory))
+        const source = join(appStatic, directory)
+        await this.linkEntry(source, join(webRoot, directory), await lstat(source))
       }
       await rm(target, { recursive: true, force: true })
       await rename(temporary, target)
@@ -627,14 +628,25 @@ export class ComponentUpdateManager {
     excluded: ReadonlySet<string>
   ): Promise<void> {
     const entries = await readdir(source, { withFileTypes: true })
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (excluded.has(entry.name)) continue
-      await this.linkEntry(join(source, entry.name), join(destination, entry.name))
-    }
+    const prepare = createFileOperationQueue()
+    const results = await Promise.allSettled(
+      entries
+        .filter(entry => !excluded.has(entry.name))
+        .map(entry =>
+          prepare(() =>
+            this.linkEntry(join(source, entry.name), join(destination, entry.name), entry)
+          )
+        )
+    )
+    const failure = results.find(result => result.status === 'rejected')
+    if (failure?.status === 'rejected') throw failure.reason
   }
 
-  private async linkEntry(source: string, destination: string): Promise<void> {
-    const metadata = await lstat(source)
+  private async linkEntry(
+    source: string,
+    destination: string,
+    metadata: Pick<Dirent, 'isDirectory' | 'isFile'>
+  ): Promise<void> {
     if (metadata.isDirectory()) {
       await symlink(source, destination, this.platform === 'win32' ? 'junction' : 'dir')
       return
