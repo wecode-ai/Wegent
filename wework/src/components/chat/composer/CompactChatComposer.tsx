@@ -16,6 +16,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { useComposerModelSelector } from './useComposerModelSelector'
 import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
 import {
@@ -179,6 +180,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     const imageInputRef = useRef<HTMLInputElement>(null)
     const cameraInputRef = useRef<HTMLInputElement>(null)
     const composerRef = useRef<ComposerTextareaHandle>(null)
+    const modelSelectorControl = useComposerModelSelector()
+    const fullscreenModelSelectorControl = useComposerModelSelector()
     const fullscreenComposerRef = useRef<ComposerTextareaHandle>(null)
     const textareaRef = useAutoResizeTextarea(value, 128)
     const fullscreenInputRef = useRef<HTMLElement>(null)
@@ -325,8 +328,10 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       setCanExpandInput(explicitLineCount > 4 || textarea.scrollHeight > 124)
     }, [explicitLineCount, textareaRef, value])
 
-    const modelSelector = (
+    const renderModelSelector = (control: ReturnType<typeof useComposerModelSelector>) => (
       <ModelSelector
+        openSignal={control.openSignal}
+        onOpenChange={control.onOpenChange}
         models={models}
         selectedModel={selectedModel ?? null}
         selectedModelOptions={selectedModelOptions}
@@ -393,7 +398,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
         ) : null}
         {!fullscreenInputOpen &&
           (modelSelectorOverride === undefined ? (
-            <div className="mb-2 flex min-w-0 justify-end">{modelSelector}</div>
+            <div className="mb-2 flex min-w-0 justify-end">
+              {renderModelSelector(modelSelectorControl)}
+            </div>
           ) : (
             modelSelectorOverride
           ))}
@@ -447,6 +454,10 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           >
             <ComposerTextarea
               ref={composerRef}
+              onOpenModelSelector={
+                modelSelectorOverride === undefined ? modelSelectorControl.requestOpen : undefined
+              }
+              modelSelectorOpen={modelSelectorControl.open}
               testId={inputTestId}
               textareaRef={textareaRef}
               value={value}
@@ -669,7 +680,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
             data-testid="fullscreen-input-sheet"
             className="fixed inset-0 z-modal flex h-dvh flex-col bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
           >
-            <div className="mb-2 flex min-w-0 justify-end">{modelSelector}</div>
+            <div className="mb-2 flex min-w-0 justify-end">
+              {renderModelSelector(fullscreenModelSelectorControl)}
+            </div>
             <div className="relative min-h-0 flex-1">
               <button
                 type="button"
@@ -682,6 +695,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               </button>
               <ComposerTextarea
                 ref={fullscreenComposerRef}
+                onOpenModelSelector={fullscreenModelSelectorControl.requestOpen}
+                modelSelectorOpen={fullscreenModelSelectorControl.open}
                 testId="fullscreen-message-input"
                 textareaRef={fullscreenInputRef}
                 value={value}
