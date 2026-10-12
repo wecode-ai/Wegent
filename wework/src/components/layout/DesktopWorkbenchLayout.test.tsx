@@ -13091,7 +13091,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-browser-url-input')).not.toBeInTheDocument()
     expect(screen.getByTestId('smart-app-development-preview-add-plugins')).toBeEnabled()
     expect(screen.getByTestId('smart-app-development-preview-refresh')).toBeEnabled()
-    expect(harnessAppMocks.start).toHaveBeenCalledWith(installed.id, null, null, null, null)
+    expect(harnessAppMocks.start).toHaveBeenCalledWith({
+      installationId: installed.id,
+      modelBaseUrl: null,
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: null,
+      decisionProtocolVersion: null,
+    })
     expect(
       screen.getByTestId('smart-app-development-preview-verification-unverified')
     ).toHaveTextContent('尚未验证')

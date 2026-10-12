@@ -159,7 +159,15 @@ export function useHarnessAppManagement({
         onBusyChange(null)
       }
     },
-    [closeAppTabs, onBusyChange, onError, onRefresh, services.localHarnessModelApi, t]
+    [
+      closeAppTabs,
+      onBusyChange,
+      onError,
+      onRefresh,
+      services.localHarnessModelApi,
+      services.localDecisionRouterApi,
+      t,
+    ]
   )
 
   const changeModel = useCallback(
