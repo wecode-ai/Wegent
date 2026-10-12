@@ -34,6 +34,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['automation-lifecycle', ['desktop-runtime-intensive']],
   ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-issue-task-discovery', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-issue-robot-assignment', ['collaboration-runtime']],
   ['collaboration-local-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
@@ -104,6 +105,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-task-discovery.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
+  'collaboration-issue-robot-assignment':
+    './scenarios/collaboration-issue-robot-assignment.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'collaboration-remote-agent-dispatch':
@@ -159,6 +162,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-issue-task-discovery',
   'collaboration-first-use',
   'collaboration-group-onboarding',
+  'collaboration-issue-robot-assignment',
   'collaboration-local-agent-dispatch',
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',

@@ -11,6 +11,7 @@ core_segments=(
   collaboration-first-use
   collaboration-worktree-policy
   collaboration-group-onboarding
+  collaboration-issue-robot-assignment
   collaboration-local-agent-dispatch
   collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
@@ -169,7 +170,7 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
+  project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-issue-robot-assignment,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
@@ -654,6 +655,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs)
       select_target "core:collaboration-group-onboarding"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-robot-assignment.scenario.mjs)
+      select_target "core:collaboration-issue-robot-assignment"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-local-agent-dispatch.scenario.mjs)
@@ -1229,6 +1234,7 @@ classify_path() {
       select_target "core:collaboration-issue-archive"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
+      select_target "core:collaboration-issue-robot-assignment"
       select_collaboration_dispatch_checkpoints
       select_target "cloud:cloud-device-lifecycle"
       ;;
@@ -1240,6 +1246,7 @@ classify_path() {
       select_target "core:collaboration-issue-archive"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
+      select_target "core:collaboration-issue-robot-assignment"
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-comment-notification"
