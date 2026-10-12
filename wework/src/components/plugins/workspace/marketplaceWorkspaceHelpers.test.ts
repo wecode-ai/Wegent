@@ -51,6 +51,19 @@ test('detail source preserves the shared inventory local path for an official ma
   ).toEqual({ id: 'openai-official', name: 'OpenAI', path: '/tmp/github-marketplace' })
 })
 
+test('detail source uses the selected plugin local path before the marketplace list arrives', () => {
+  const item = githubMarketplaceItem()
+  item.manifest = {
+    marketplaceId: 'openai-official',
+    marketplacePath: '/tmp/github-marketplace/.agents/plugins/marketplace.json',
+  }
+  expect(marketplacePluginDetailSource(item, [])).toEqual({
+    id: 'openai-official',
+    name: 'openai-official',
+    path: '/tmp/github-marketplace/.agents/plugins/marketplace.json',
+  })
+})
+
 test('only a declared remote catalog can resolve without a local path', () => {
   const item = githubMarketplaceItem()
   expect(marketplacePluginDetailSource(item, []).path).toBe('openai-curated-remote')

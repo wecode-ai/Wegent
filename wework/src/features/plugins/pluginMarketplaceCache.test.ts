@@ -294,6 +294,94 @@ describe('pluginMarketplaceCache', () => {
     expect(getPluginMarketplaceCache(key)?.logosStripped).toBe(true)
   })
 
+  test('preserves the local marketplace install source after restoring the inventory', () => {
+    const key = 'local-official-marketplace'
+    const manifest = {
+      marketplaceId: 'openai-official',
+      marketplacePath: '/tmp/github-marketplace/.agents/plugins/marketplace.json',
+    }
+    setPluginMarketplaceCache(
+      {
+        cacheKey: key,
+        marketplaceItems: [item({ id: 'github@openai-official', name: 'github', manifest })],
+        installedPlugins: [],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        deviceId: 'device',
+        fetchedAt: Date.now(),
+      },
+      { persistImmediately: true }
+    )
+
+    resetPluginMarketplaceCacheMemory()
+
+    expect(getPluginMarketplaceCache(key)?.marketplaceItems[0].manifest).toEqual(manifest)
+  })
+
+  test('refreshing a missing marketplace path invalidates the cached catalog equality', () => {
+    const plugin = item({
+      id: 'github@openai-official',
+      name: 'github',
+      manifest: { marketplaceId: 'openai-official' },
+    })
+    expect(
+      sameMarketplaceItems(
+        [plugin],
+        [
+          {
+            ...plugin,
+            manifest: {
+              ...plugin.manifest,
+              marketplacePath: '/tmp/github-marketplace/.agents/plugins/marketplace.json',
+            },
+          },
+        ]
+      )
+    ).toBe(false)
+  })
+
+  test('restores an older compacted Codex item from its declared local marketplace source', () => {
+    const key = 'existing-local-marketplace-cache'
+    const path = '/tmp/github-marketplace/.agents/plugins/marketplace.json'
+    window.localStorage.setItem(
+      'wework.plugins.inventory.v2',
+      JSON.stringify({
+        entries: {
+          [key]: {
+            cacheKey: key,
+            marketplaceItems: [
+              item({
+                id: 'github@openai-official',
+                name: 'github',
+                sourceProvider: 'codex',
+                manifest: { marketplaceId: 'openai-official' },
+              }),
+            ],
+            installedPlugins: [],
+            marketplaces: [
+              {
+                key: 'local:openai-official',
+                id: 'openai-official',
+                name: 'OpenAI',
+                kind: 'local',
+                path,
+              },
+            ],
+            selectedMarketplaceKey: '',
+            deviceId: 'device',
+            fetchedAt: Date.now(),
+          },
+        },
+      })
+    )
+    resetPluginMarketplaceCacheMemory()
+
+    expect(getPluginMarketplaceCache(key)?.marketplaceItems[0].manifest).toEqual({
+      marketplaceId: 'openai-official',
+      marketplacePath: path,
+    })
+  })
+
   test('persists presentation fields without copying heavy plugin detail', () => {
     const key = 'bounded-interface'
     const interfaceData = {

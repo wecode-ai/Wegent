@@ -37,6 +37,14 @@ Production builds combine statically imported Lucide icons into one shared modul
 to reduce separate local HTTP requests. Other icons used by dynamic contributions
 remain demand-loaded, and optional viewers retain their dynamic import boundaries.
 
+任务描述编辑器在首次打开编辑区域时加载，避免首屏预加载 BlockNote 及其依赖。
+加载期间保留当前描述和回调，创建与编辑任务继续使用同一套编辑器。
+
+The task description editor loads when its editing area first opens, keeping
+BlockNote and its dependencies out of the initial page load. Pending loading
+retains the current description and callbacks; task creation and editing use
+the same editor.
+
 Core profile 使用有界并发准备内置插件，代码保留独立副本以继续从 profile 解析依赖，
 静态网页资源使用目录链接。所有插件准备完成后才写入版本标记；任何复制失败都会阻止启动。
 
