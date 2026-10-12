@@ -24,6 +24,8 @@ import { PluginConnectorSection } from './PluginConnectorSection'
 import { PluginSourceAvatar } from './PluginSourceAvatar'
 import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
 import { PluginPublicationProgressCard } from './PluginPublicationProgressCard'
+import { BundledPluginUpdateNotice } from './BundledPluginUpdateNotice'
+import { installedPluginMarketplaceId } from './pluginDistribution'
 
 interface PluginDetailViewProps {
   plugin: InstalledPluginItem
@@ -918,6 +920,9 @@ export function PluginDetailView({
           {description}
         </p>
 
+        {installedPluginMarketplaceId(raw) === 'wework-personal' && (
+          <BundledPluginUpdateNotice name={raw.spec.source.pluginKey} />
+        )}
         {actionError && (
           <div
             role="alert"

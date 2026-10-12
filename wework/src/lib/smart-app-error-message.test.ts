@@ -10,6 +10,17 @@ import {
 const t = (_key: string, fallback?: string) => fallback ?? _key
 
 describe('getSmartAppErrorMessage', () => {
+  test('explains how to recover from missing or stale verification reports', () => {
+    expect(getSmartAppErrorMessage(new Error('SA-PACKAGE-UNVERIFIED'), '发布失败', t)).toBe(
+      '请先完成工作台正式验证，再导出或发布。'
+    )
+    expect(getSmartAppErrorMessage(new Error('SA-PACKAGE-STALE'), '导出失败', t)).toBe(
+      '工作台文件已修改，请重新验证后再导出或发布。'
+    )
+    expect(
+      getSmartAppErrorMessage(new Error('SA-MANIFEST-CONTRACT-MISSING'), '发布失败', t)
+    ).toContain('查看验证结果')
+  })
   test('localizes known backend image errors', () => {
     expect(
       getSmartAppErrorMessage(new ApiError('Smart app image is too large', 422), '发布失败', t)

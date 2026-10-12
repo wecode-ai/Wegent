@@ -5513,8 +5513,6 @@ describe('PluginsWorkspace', () => {
     // Bare ids like documents-local-id look like Codex remote plugin ids and must
     // not be probed for local/personal uninstalls.
     expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.plugin.uninstall_local', {
-      marketplacePath:
-        '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal/.agents/plugins/marketplace.json',
       pluginName: 'documents',
     })
     expectCodexAppServerRequestNotCalled('plugin/uninstall')

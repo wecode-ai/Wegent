@@ -450,6 +450,11 @@ classify_wework_path() {
     # Plugin development verifies the installed Codex guide, generated local
     # project, conditional conversation sidebar, isolated Wework, and HMR.
     wework/dsh/plugin-developer/* | \
+      wework/e2e/desktop/modules/bundled-plugin-upgrades.mjs | \
+      executor/src/local/plugin_cache.rs | \
+      executor/src/runtime_work/handler/plugin_install.rs | \
+      wework/src/desktop/localExecutor* | \
+      wework/src/components/plugins/BundledPluginUpdateNotice* | \
       wework/e2e/desktop/scenarios/plugin-development.scenario.mjs | \
       wework/electron/src/runtime/plugin-development-manager* | \
       wework/resources/bundled-plugins/wework-personal/plugins/wework-plugin-developer/* | \

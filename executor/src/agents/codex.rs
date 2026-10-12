@@ -294,7 +294,7 @@ pub struct CodexAppServerClient {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum CodexAuthMutationError {
+pub enum CodexIdleMutationError {
     Busy {
         active_turn_count: usize,
         pending_request_count: usize,
@@ -534,31 +534,43 @@ impl CodexAppServerClient {
         Ok(())
     }
 
-    pub async fn mutate_auth_if_idle<F>(&self, mutation: F) -> Result<(), CodexAuthMutationError>
+    pub async fn mutate_auth_if_idle<F>(&self, mutation: F) -> Result<(), CodexIdleMutationError>
     where
         F: FnOnce() -> Result<(), String>,
     {
-        let process = {
-            let mut state = self.state.lock().await;
-            let active_turn_count = state.active_threads.values().sum::<usize>();
-            let pending_request_count = match state.process.as_ref() {
-                Some(process) => process.pending.lock().await.len(),
-                None => 0,
-            };
-            if active_turn_count > 0 || pending_request_count > 0 {
-                return Err(CodexAuthMutationError::Busy {
-                    active_turn_count,
-                    pending_request_count,
-                });
-            }
-            mutation().map_err(CodexAuthMutationError::Update)?;
+        self.mutate_configuration_if_idle(|| async { mutation().map(|_| ((), true)) })
+            .await
+    }
+
+    /// Serialize file mutations with turn admission, then invalidate the idle process if needed.
+    pub async fn mutate_configuration_if_idle<F, Fut, T>(
+        &self,
+        mutation: F,
+    ) -> Result<T, CodexIdleMutationError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<(T, bool), String>>,
+    {
+        let mut state = self.state.lock().await;
+        let active_turn_count = state.active_threads.values().sum::<usize>();
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
+        };
+        if active_turn_count > 0 || pending_request_count > 0 {
+            return Err(CodexIdleMutationError::Busy {
+                active_turn_count,
+                pending_request_count,
+            });
+        }
+        let (result, changed) = mutation().await.map_err(CodexIdleMutationError::Update)?;
+        if changed {
             state.thread_generations.clear();
             state.idle_thread_generations.clear();
             state.process_environment.clear();
-            state.process.take()
-        };
-        drop(process);
-        Ok(())
+            drop(state.process.take());
+        }
+        Ok(result)
     }
 
     async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
