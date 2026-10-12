@@ -63,7 +63,7 @@ pub fn workbench_root() -> Result<PathBuf, String> {
         env::var_os("WEGENT_WORKBENCH_HOME")
             .filter(|value| !value.to_string_lossy().trim().is_empty())
             .map(PathBuf::from),
-        dirs::home_dir(),
+        crate::local::command::configured_home_dir(),
     )
 }
 
@@ -325,7 +325,7 @@ fn extract_archive(bytes: &[u8], target: &Path, kind: PackageKind) -> Result<(),
     if roots.len() != 1 {
         return Err("Package has ambiguous manifest roots".into());
     }
-    for (path, content, mode) in entries {
+    for (path, content, _mode) in entries {
         let Ok(relative) = path.strip_prefix(&roots[0]) else {
             continue;
         };
@@ -340,7 +340,7 @@ fn extract_archive(bytes: &[u8], target: &Path, kind: PackageKind) -> Result<(),
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(fs::Permissions::from_mode(0o644 | (mode & 0o111)))
+            file.set_permissions(fs::Permissions::from_mode(0o644 | (_mode & 0o111)))
                 .map_err(io_error)?;
         }
     }
@@ -396,16 +396,20 @@ fn files_hash(root: &Path) -> Result<String, String> {
 }
 
 /// Replace a managed symlink. Callers must establish ownership and exclude readers.
-/// Unix replacement is atomic. Windows requires symlink privileges and briefly
+/// Unix replacement is atomic. Windows uses native junctions and briefly
 /// moves the previous entry aside because rename cannot replace a directory link.
 pub fn link_package(source: &Path, target: &Path) -> Result<(), String> {
     let parent = target.parent().ok_or("Package link has no parent")?;
     fs::create_dir_all(parent).map_err(io_error)?;
     let parent = fs::canonicalize(parent).map_err(io_error)?;
     let source = fs::canonicalize(source).map_err(io_error)?;
+    #[cfg(unix)]
     let left = parent.components().collect::<Vec<_>>();
+    #[cfg(unix)]
     let right = source.components().collect::<Vec<_>>();
+    #[cfg(unix)]
     let common = left.iter().zip(&right).take_while(|(a, b)| a == b).count();
+    #[cfg(unix)]
     let relative = if common == 0 {
         source.clone()
     } else {
@@ -424,7 +428,7 @@ pub fn link_package(source: &Path, target: &Path) -> Result<(), String> {
     #[cfg(unix)]
     std::os::unix::fs::symlink(&relative, &link).map_err(io_error)?;
     #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(&relative, &link).map_err(io_error)?;
+    crate::directory_link::create(&source, &link).map_err(io_error)?;
     #[cfg(not(any(unix, windows)))]
     return Err("Package links are unsupported on this platform".into());
     #[cfg(windows)]
@@ -432,8 +436,7 @@ pub fn link_package(source: &Path, target: &Path) -> Result<(), String> {
         if !target.is_symlink() {
             return Err("Package link destination is not a managed symbolic link".into());
         }
-        // Stage the new link before touching the old entry, including privilege
-        // checks. Restore by rename rather than recreating a privileged symlink.
+        // Stage the new link before touching the old entry. Restore by rename.
         let backup = temporary.path().join("previous");
         fs::rename(target, &backup).map_err(io_error)?;
         if let Err(error) = fs::rename(&link, target) {

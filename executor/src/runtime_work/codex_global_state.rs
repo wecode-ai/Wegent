@@ -1891,6 +1891,7 @@ mod tests {
         OPLOG_KIND_UPSERT_REMOTE_PROJECTS, SELECTED_REMOTE_HOST_ID_KEY,
     };
     use crate::runtime_work::remote_projects::CodexGlobalRemoteProject;
+    use crate::runtime_work::util::normalize_workspace_path;
     use serde_json::{json, Map, Value};
 
     fn payload(value: Value) -> Map<String, Value> {
@@ -1948,7 +1949,7 @@ mod tests {
             .expect("device-local project id should resolve");
         assert_eq!(
             project.workspace_path,
-            "/Volumes/OuterHD/OuterIdeaProjects/Wegent"
+            normalize_workspace_path("/Volumes/OuterHD/OuterIdeaProjects/Wegent")
         );
     }
 
@@ -2009,12 +2010,22 @@ mod tests {
             index
                 .projects()
                 .iter()
-                .map(|project| project.key.as_str())
+                .map(|project| project.key.clone())
                 .collect::<Vec<_>>(),
-            vec!["remote-1", "multi", "/repo"]
+            vec![
+                "remote-1".to_owned(),
+                "multi".to_owned(),
+                normalize_workspace_path("/repo")
+            ]
         );
         let multi = index.project_for_key("multi").expect("multi project");
-        assert_eq!(multi.roots, vec!["/repo/nested", "/other"]);
+        assert_eq!(
+            multi.roots,
+            vec![
+                normalize_workspace_path("/repo/nested"),
+                normalize_workspace_path("/other")
+            ]
+        );
         assert!(multi.pinned);
         assert_eq!(multi.pinned_order, Some(0));
         assert_eq!(multi.appearance, Some(json!({"color": "purple"})));
@@ -2022,7 +2033,7 @@ mod tests {
             index
                 .project_for_thread(Some("assigned"), "/repo/nested/file")
                 .map(|project| project.key.as_str()),
-            Some("/repo")
+            Some(normalize_workspace_path("/repo").as_str())
         );
         assert!(index
             .project_for_thread(Some("projectless"), "/repo/nested/file")
@@ -2031,7 +2042,7 @@ mod tests {
             index
                 .project_for_thread(Some("hinted"), "/repo/nested/file")
                 .map(|project| project.key.as_str()),
-            Some("/repo")
+            Some(normalize_workspace_path("/repo").as_str())
         );
         assert_eq!(
             index
@@ -2070,7 +2081,10 @@ mod tests {
             ],
         );
 
-        assert_eq!(payload["project-order"], json!(["remote-1", "/local"]));
+        assert_eq!(
+            payload["project-order"],
+            json!(["remote-1", normalize_workspace_path("/local")])
+        );
         assert_eq!(payload["remote-projects"][0]["id"], "remote-1");
         assert_eq!(payload["remote-projects"][0]["hostId"], "host-1");
         assert_eq!(payload["remote-projects"][0]["remotePath"], "/srv/app");

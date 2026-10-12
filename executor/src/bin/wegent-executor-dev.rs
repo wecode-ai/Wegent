@@ -116,6 +116,7 @@ fn parent_process_exited(_expected_parent_process_id: u32) -> bool {
     false
 }
 
+#[cfg(any(unix, test))]
 fn parent_process_changed(expected_parent_process_id: u32, current_parent_process_id: u32) -> bool {
     expected_parent_process_id > 1 && current_parent_process_id != expected_parent_process_id
 }

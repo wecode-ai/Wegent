@@ -38,6 +38,7 @@ const MAX_GIT_HTTP_LOW_SPEED_LIMIT: u64 = 10 * 1_024 * 1_024;
 const DEFAULT_GIT_HTTP_LOW_SPEED_TIME_SECONDS: u64 = 60;
 const MAX_GIT_HTTP_LOW_SPEED_TIME_SECONDS: u64 = 3_600;
 const GIT_REPOSITORY_VALIDATION_TIMEOUT_SECONDS: u64 = 10;
+#[cfg(unix)]
 const GIT_CLONE_TERMINATION_GRACE_SECONDS: u64 = 1;
 
 mod managed;
@@ -588,10 +589,10 @@ async fn collect_output(reader: Option<JoinHandle<Vec<u8>>>) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-async fn terminate_git_clone(child: &mut Child, process_group_id: Option<u32>) {
+async fn terminate_git_clone(child: &mut Child, _process_group_id: Option<u32>) {
     #[cfg(unix)]
     {
-        if let Some(process_group_id) = process_group_id {
+        if let Some(process_group_id) = _process_group_id {
             unsafe {
                 let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGTERM);
             }
@@ -866,7 +867,7 @@ fn truncate_summary(value: &str, max_chars: usize) -> String {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    dirs::home_dir()
+    crate::local::command::configured_home_dir()
 }
 
 #[cfg(test)]
@@ -1004,7 +1005,7 @@ mod tests {
             let identity =
                 crate::repository_identity::RepositoryIdentity::from_url(source.to_str().unwrap())
                     .unwrap();
-            let expected = home.join(".wegent/workspace").join(identity.key(8));
+            let expected = home.join(".wegent").join("workspace").join(identity.key(8));
             let prepared = prepare_git_workspace(request.clone()).await.unwrap();
             assert_eq!(
                 prepared.project_workspace_path.as_deref(),
@@ -1059,8 +1060,14 @@ mod tests {
 
     #[test]
     fn reads_multiple_execution_repositories_and_primary_workspace() {
+        let environment_root = std::path::absolute("/workspace/environments/project-1").unwrap();
         let mut request = ExecutionRequest {
-            project_workspace_path: Some("/workspace/environments/project-1/wegent".to_owned()),
+            project_workspace_path: Some(
+                environment_root
+                    .join("wegent")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             ..ExecutionRequest::default()
         };
         request.extra.insert(
@@ -1094,7 +1101,7 @@ mod tests {
         assert_eq!(repositories[1].path, PathBuf::from("deps/sdk"));
         assert_eq!(
             resolve_environment_root(&request, &repositories),
-            PathBuf::from("/workspace/environments/project-1")
+            environment_root
         );
     }
 

@@ -39,9 +39,10 @@ pub(crate) fn workspace_root() -> PathBuf {
 }
 
 fn default_workspace_root() -> PathBuf {
-    dirs::home_dir()
+    crate::local::command::configured_home_dir()
         .unwrap_or_else(env::temp_dir)
-        .join(".wegent/workspace")
+        .join(".wegent")
+        .join("workspace")
 }
 
 fn configured_workspace_root() -> Option<PathBuf> {
@@ -61,10 +62,14 @@ pub(crate) fn projects_root() -> PathBuf {
 pub(crate) fn historical_workspace_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(home) = env_path("WECODE_HOME") {
-        roots.push(home.join("wegent-executor/workspace/projects"));
+        roots.push(
+            home.join("wegent-executor")
+                .join("workspace")
+                .join("projects"),
+        );
     }
     if let Some(home) = env_path("WEGENT_EXECUTOR_HOME") {
-        roots.push(home.join("workspace/projects"));
+        roots.push(home.join("workspace").join("projects"));
     }
     roots.retain(|root| *root != workspace_root());
     roots
@@ -202,11 +207,15 @@ mod tests {
 
         assert_eq!(
             workspace_root(),
-            _env._home.path().join(".wegent/workspace")
+            _env._home.path().join(".wegent").join("workspace")
         );
         assert_eq!(
             task_workspace_dir("42"),
-            _env._home.path().join(".wegent/workspace/42")
+            _env._home
+                .path()
+                .join(".wegent")
+                .join("workspace")
+                .join("42")
         );
     }
 
@@ -246,14 +255,14 @@ mod tests {
             "WEGENT_EXECUTOR_HOME",
             _env._home.path().join("legacy-executor"),
         );
-        let expected = _env._home.path().join(".wegent/workspace");
+        let expected = _env._home.path().join(".wegent").join("workspace");
         assert_eq!(workspace_root(), expected);
         assert_eq!(projects_root(), expected);
         assert_eq!(worktrees_root(), expected.join("worktrees"));
         assert_eq!(task_workspace_dir("42"), expected.join("42"));
         assert_eq!(
             resolve_logical_path("/workspace/42/demo"),
-            expected.join("42/demo")
+            expected.join("42").join("demo")
         );
     }
 
@@ -274,26 +283,36 @@ mod tests {
         env::set_var("WEGENT_EXECUTOR_HOME", temp.path().join("isolated"));
         assert_eq!(
             worktrees_root(),
-            _env._home.path().join(".wegent/workspace/worktrees")
+            _env._home
+                .path()
+                .join(".wegent")
+                .join("workspace")
+                .join("worktrees")
         );
         env::set_var(
             "LOCAL_WORKSPACE_ROOT",
-            temp.path().join("isolated/workspace"),
+            temp.path().join("isolated").join("workspace"),
         );
         assert_eq!(
             worktrees_root(),
-            temp.path().join("isolated/workspace/worktrees")
+            temp.path()
+                .join("isolated")
+                .join("workspace")
+                .join("worktrees")
         );
         env::remove_var("LOCAL_WORKSPACE_ROOT");
         env::set_var(
             "WEGENT_EXECUTOR_PROJECTS_DIR",
-            temp.path().join("legacy/projects"),
+            temp.path().join("legacy").join("projects"),
         );
-        assert_eq!(worktrees_root(), temp.path().join("legacy/worktrees"));
+        assert_eq!(
+            worktrees_root(),
+            temp.path().join("legacy").join("worktrees")
+        );
         env::set_var("WEGENT_EXECUTOR_PROJECTS_DIR", temp.path().join("flat"));
-        assert_eq!(worktrees_root(), temp.path().join("flat/worktrees"));
+        assert_eq!(worktrees_root(), temp.path().join("flat").join("worktrees"));
         env::set_var("WORKSPACE_ROOT", temp.path().join("new"));
-        assert_eq!(worktrees_root(), temp.path().join("new/worktrees"));
+        assert_eq!(worktrees_root(), temp.path().join("new").join("worktrees"));
     }
 
     #[test]
@@ -305,7 +324,7 @@ mod tests {
         env::set_var("HOME", temp.path());
         env::set_var("USERPROFILE", temp.path());
         env::set_var("EXECUTOR_MODE", "local");
-        let expected = temp.path().join(".wegent/workspace");
+        let expected = temp.path().join(".wegent").join("workspace");
         assert_eq!(workspace_root(), expected);
         assert_eq!(projects_root(), expected);
         assert_eq!(worktrees_root(), expected.join("worktrees"));
@@ -340,7 +359,7 @@ mod tests {
         let _env = clear_workspace_env();
         let directory =
             env::temp_dir().join(format!("wegent-workspace-paths-{}", std::process::id()));
-        fs::create_dir_all(directory.join("42/lottery")).unwrap();
+        fs::create_dir_all(directory.join("42").join("lottery")).unwrap();
         // Canonicalize so the round trip also holds where the temp directory is
         // reached through a symlink.
         let root = fs::canonicalize(&directory).unwrap();
@@ -348,7 +367,7 @@ mod tests {
 
         assert_eq!(display_workspace_path(&root), Some("/workspace".to_owned()));
         assert_eq!(
-            display_workspace_path(&root.join("42/lottery")),
+            display_workspace_path(&root.join("42").join("lottery")),
             Some("/workspace/42/lottery".to_owned())
         );
         let _ = fs::remove_dir_all(&directory);

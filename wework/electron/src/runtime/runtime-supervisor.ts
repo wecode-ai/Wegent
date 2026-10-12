@@ -64,7 +64,7 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
   }
 
   current(): ChildProcessWithoutNullStreams | null {
-    return this.child?.exitCode === null ? this.child : null
+    return this.child?.exitCode === null && this.child.signalCode === null ? this.child : null
   }
 
   pid(): number | null {
@@ -279,7 +279,7 @@ export async function terminateProcessTree(
   child: ChildProcessWithoutNullStreams,
   timeoutMs: number
 ): Promise<void> {
-  if (child.exitCode !== null) return
+  if (child.exitCode !== null || child.signalCode !== null) return
   const processGroupId = process.platform === 'win32' ? null : child.pid
   const exited = once(child, 'exit').then(() => true)
   signalProcessTree(child, 'SIGTERM')
@@ -328,8 +328,8 @@ function processGroupExists(processGroupId: number): boolean {
 function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
   try {
     if (process.platform === 'win32') {
-      const args = ['/pid', String(child.pid), '/t']
-      if (signal === 'SIGKILL') args.push('/f')
+      // Console runtimes cannot receive taskkill's non-forced window-close request.
+      const args = ['/pid', String(child.pid), '/t', '/f']
       const killer = spawn('taskkill', args, { windowsHide: true, stdio: 'ignore' })
       killer.unref()
       return

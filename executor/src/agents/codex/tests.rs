@@ -27,7 +27,10 @@ fn named_home_rpc_clients_preserve_process_isolation() {
     assert!(!Arc::ptr_eq(&first.state, &second.state));
     assert_eq!(
         first.process_environment(&BTreeMap::new(), &BTreeMap::new())["CODEX_HOME"],
-        root.join("agents/synthetic/default/agent-a")
+        root.join("agents")
+            .join("synthetic")
+            .join("default")
+            .join("agent-a")
             .display()
             .to_string()
     );
@@ -1033,7 +1036,12 @@ fn wework_codex_home_ignores_empty_executor_home() {
     env::set_var("WEGENT_EXECUTOR_HOME", "");
     env::remove_var(WEGENT_CODEX_HOME_ENV);
 
-    let expected = temp.path().join(".wegent/workbench/executor/codex");
+    let expected = temp
+        .path()
+        .join(".wegent")
+        .join("workbench")
+        .join("executor")
+        .join("codex");
     assert_eq!(wework_codex_home(), expected);
 }
 
@@ -4243,9 +4251,13 @@ fn turn_input_preserves_collaboration_references_as_text() {
 
 #[test]
 fn turn_input_expands_home_relative_skill_mentions_and_deduplicates_absolute_paths() {
-    let path = dirs::home_dir()
+    let _lock = crate::test_env::lock();
+    let path = crate::local::command::configured_home_dir()
         .expect("test user has a home directory")
-        .join(".agents/skills/test-skill/SKILL.md");
+        .join(".agents")
+        .join("skills")
+        .join("test-skill")
+        .join("SKILL.md");
     let input = turn_input(&Value::String(format!(
         "[$test-skill](~/.agents/skills/test-skill/SKILL.md) then [$test-skill]({})",
         path.display()
@@ -4387,15 +4399,20 @@ fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
 fn turn_input_binds_managed_plugin_mentions_to_the_plugin_entry_skill() {
     let root = unique_test_path("managed-plugin-skill-input");
     let codex_home = root.join("codex");
-    let manifest_path = root.join("capabilities/manifest.json");
-    let plugin_root = codex_home.join("plugins/cache/wegent/dingtalk/0.2.0");
-    let skill_path = plugin_root.join("skills/dws/SKILL.md");
+    let manifest_path = root.join("capabilities").join("manifest.json");
+    let plugin_root = codex_home
+        .join("plugins")
+        .join("cache")
+        .join("wegent")
+        .join("dingtalk")
+        .join("0.2.0");
+    let skill_path = plugin_root.join("skills").join("dws").join("SKILL.md");
     fs::create_dir_all(skill_path.parent().expect("skill parent should exist"))
         .expect("skill directory should be created");
     fs::create_dir_all(plugin_root.join(".codex-plugin"))
         .expect("plugin manifest directory should be created");
     fs::write(
-        plugin_root.join(".codex-plugin/plugin.json"),
+        plugin_root.join(".codex-plugin").join("plugin.json"),
         r#"{"name":"dingtalk","version":"0.2.0","skills":"./skills/"}"#,
     )
     .expect("plugin manifest should be written");

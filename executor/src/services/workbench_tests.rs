@@ -220,8 +220,7 @@ fn windows_replaces_an_existing_directory_link_under_an_idle_caller() {
     fs::create_dir_all(&second).unwrap();
     fs::write(first.join("SKILL.md"), "old").unwrap();
     fs::write(second.join("SKILL.md"), "new").unwrap();
-    std::os::windows::fs::symlink_dir(&first, &target)
-        .expect("Windows test requires Developer Mode or symlink privileges");
+    crate::directory_link::create(&first, &target).unwrap();
     link_package(&second, &target).unwrap();
     assert_eq!(fs::read_to_string(target.join("SKILL.md")).unwrap(), "new");
     assert_eq!(fs::read_to_string(first.join("SKILL.md")).unwrap(), "old");

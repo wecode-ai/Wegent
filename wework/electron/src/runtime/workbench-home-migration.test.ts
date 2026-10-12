@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { temporaryDirectory } from './test-helpers.js'
 import {
@@ -199,7 +199,7 @@ describe('migrateWorkbenchHome', () => {
     expect(await fs.readlink(options.targetHome)).toBe(options.sourceHome)
     expect(await nativeKeys(options.targetHome)).toEqual(keys)
     expect(await fs.readlink(join(options.sourceHome, 'skills', 'untouched'))).toBe(
-      '../../unresolved-external'
+      normalize('../../unresolved-external')
     )
     await fs.writeFile(join(options.targetHome, 'post-upgrade'), 'new data')
     expect(await fs.readFile(join(options.sourceHome, 'post-upgrade'), 'utf8')).toBe('new data')
@@ -292,7 +292,7 @@ describe('migrateWorkbenchHome', () => {
       before.map(({ dev, ino, mode }) => ({ dev, ino, mode }))
     )
     expect(await fs.readlink(join(options.targetHome, 'skills', 'internal'))).toBe(
-      '../state.sqlite'
+      normalize('../state.sqlite')
     )
     await assertBridge()
   })
@@ -510,7 +510,7 @@ describe('migrateWorkbenchHome', () => {
       await expect(migrateWorkbenchHome(options)).rejects.toThrow(
         /cannot verify a relative symlink/
       )
-      expect(await fs.readlink(join(options.sourceHome, 'external'))).toBe(target)
+      expect(await fs.readlink(join(options.sourceHome, 'external'))).toBe(normalize(target))
       expect((await fs.lstat(options.sourceHome)).isDirectory()).toBe(true)
       expect(fs.rename).not.toHaveBeenCalled()
     }
@@ -527,7 +527,11 @@ describe('migrateWorkbenchHome', () => {
     await createSource()
     await fs.mkdir(join(options.sourceHome, '..', 'capabilities', 'store'), { recursive: true })
     await fs.symlink('.', join(options.sourceHome, 'alias'), 'dir')
-    await fs.symlink('alias/../capabilities/store', join(options.sourceHome, 'external'), 'dir')
+    await fs.symlink(
+      process.platform === 'win32' ? '../capabilities/store' : 'alias/../capabilities/store',
+      join(options.sourceHome, 'external'),
+      'dir'
+    )
     const destination = await fs.realpath(join(options.sourceHome, 'external'))
     await expect(migrateWorkbenchHome(options)).resolves.toBe('migrated')
     expect(await fs.readlink(join(options.targetHome, 'external'))).toBe(destination)
@@ -557,6 +561,25 @@ describe('migrateWorkbenchHome', () => {
     expect(await fs.readFile(join(external, 'SKILL.md'), 'utf8')).toBe('unchanged')
   })
 
+  test('recovers a publication interrupted before replacing an external directory link', async () => {
+    await createSource()
+    const external = join(options.sourceHome, '..', 'capabilities', 'store')
+    await fs.mkdir(external, { recursive: true })
+    await fs.writeFile(join(external, 'SKILL.md'), 'unchanged')
+    await fs.symlink(
+      '../../capabilities/store',
+      join(options.sourceHome, 'skills', 'external'),
+      'dir'
+    )
+    vi.mocked(fs.rename).mockRejectedValueOnce(interrupted)
+    await expect(migrateWorkbenchHome(options)).rejects.toBe(interrupted)
+    await expect(migrateWorkbenchHome(options)).resolves.toBe('migrated')
+    expect(
+      await fs.readFile(join(options.targetHome, 'skills', 'external', 'SKILL.md'), 'utf8')
+    ).toBe('unchanged')
+    expect(await fs.readFile(join(external, 'SKILL.md'), 'utf8')).toBe('unchanged')
+  })
+
   test('fails closed when a relative link cannot be resolved', async () => {
     await createSource()
     await fs.symlink('missing', join(options.sourceHome, 'unresolved'))
@@ -573,7 +596,7 @@ describe('migrateWorkbenchHome', () => {
     await fs.symlink(join(directory.path, 'missing'), join(options.sourceHome, 'dangling'))
     await expect(migrateWorkbenchHome(options)).resolves.toBe('migrated')
     expect(await fs.readlink(join(options.targetHome, 'external'))).toBe(external)
-    expect(await fs.readlink(join(external, 'relative-external'))).toBe('../outside')
+    expect(await fs.readlink(join(external, 'relative-external'))).toBe(normalize('../outside'))
   })
 
   test('rejects overlapping paths before creating any migration state', async () => {

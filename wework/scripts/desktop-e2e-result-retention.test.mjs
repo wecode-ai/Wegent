@@ -1,7 +1,8 @@
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, test } from 'vitest'
@@ -37,6 +38,20 @@ async function expectExists(path) {
 
 async function expectMissing(path) {
   await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
+}
+
+function gitBash() {
+  if (process.platform !== 'win32') return 'bash'
+  const executables = execFileSync('where.exe', ['git'], { encoding: 'utf8' }).trim().split(/\r?\n/)
+  for (const executable of executables) {
+    let directory = dirname(executable)
+    while (dirname(directory) !== directory) {
+      const bash = join(directory, 'bin', 'bash.exe')
+      if (existsSync(bash)) return bash
+      directory = dirname(directory)
+    }
+  }
+  throw new Error('Git for Windows Bash is unavailable')
 }
 
 describe('desktop E2E result retention', () => {
@@ -138,10 +153,13 @@ describe('desktop E2E result retention', () => {
     await writeFile(join(resultDirectory, 'dws-native.zip'), 'archive\n')
     await writeFile(join(resultDirectory, 'app.log'), 'diagnostic\n')
 
-    await execFileAsync(
-      resolve(import.meta.dirname, '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'),
-      [resultRoot]
-    )
+    await execFileAsync(gitBash(), [
+      resolve(
+        import.meta.dirname,
+        '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'
+      ).replaceAll('\\', '/'),
+      resultRoot.replaceAll('\\', '/'),
+    ])
 
     await expectMissing(
       join(
