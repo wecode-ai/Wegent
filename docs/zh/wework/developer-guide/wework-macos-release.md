@@ -180,6 +180,10 @@ Electron 和 Chromium。
 查询附件列表；只有远端附件已完整上传且与本地压缩包完全一致才继续发布。
 缺失、不完整或摘要不符的附件仍会阻止发布，原始 CLI 错误会保留在日志中。
 
+发布 Job 检出发布源码后，使用共享的 `setup-node-workspace` action 准备 Node.js、
+pnpm 和工作区依赖，再运行发布脚本。Harness Runtime 归档收集使用 Wework 声明的
+`tar` 包；构建 Job 中已安装的依赖不会自动传递到发布 Job。
+
 Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 Electron 清单只有
 在当前已发布版本声明 `componentizedHostUpdate: 1` 后，才会指向不含上述七个托管
 组件的精简宿主包；客户端会先暂存目标应用版本的完整组件集合，再安装宿主更新。

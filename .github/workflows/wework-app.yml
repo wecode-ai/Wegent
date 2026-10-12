@@ -445,6 +445,9 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.release_sha }}
 
+      - name: Set up release script dependencies
+        uses: ./.github/actions/setup-node-workspace
+
       - name: Download release builds
         uses: actions/download-artifact@v4
         with:
