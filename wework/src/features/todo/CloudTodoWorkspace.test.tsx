@@ -659,6 +659,8 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
   }
   const projectChatAgentApi = workbenchServices.projectChatAgentApi ?? {
     list: vi.fn(async () => []),
+    listRunnerEnvironments: vi.fn(async () => []),
+    listModels: vi.fn(async () => []),
     create: vi.fn(),
     update: vi.fn(),
   }
@@ -885,6 +887,7 @@ describe('CloudTodoWorkspace', () => {
       values.actionTestId === 'cloud-todo-create-assignee-add-agent'
         ? {
             agentResourceApi: {
+              listRunnerEnvironments: vi.fn(async () => []),
               listModels: vi.fn(async () => []),
               listSkills: vi.fn(async () => []),
               createAgent: vi.fn(),
@@ -2332,6 +2335,8 @@ describe('CloudTodoWorkspace', () => {
     const localServices = services()
     localServices.localProjectChatAgentApi = {
       list: vi.fn(async () => []),
+      listRunnerEnvironments: vi.fn(async () => []),
+      listModels: vi.fn(async () => []),
       create: vi.fn(),
       update: vi.fn(),
     } as never
@@ -2346,6 +2351,7 @@ describe('CloudTodoWorkspace', () => {
     const workbenchServices = {
       ...localServices,
       agentResourceApi: {
+        listRunnerEnvironments: vi.fn(async () => []),
         listModels: vi.fn(async () => []),
         listSkills: vi.fn(async () => []),
         createAgent: vi.fn(),

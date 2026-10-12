@@ -260,9 +260,9 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@/api/local/localServices', () => ({
-  createLocalAppServices: (options: unknown) => {
+  createLocalAppServices: (options: { materializeRuntimeTask?: unknown } | undefined) => {
     mocks.captureLocalAppOptions(options)
-    return options === undefined ? mocks.localOnlyServices : mocks.localServices
+    return options?.materializeRuntimeTask ? mocks.localServices : mocks.localOnlyServices
   },
   createAutomationApiFromIpc: (
     request: (

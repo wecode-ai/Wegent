@@ -4332,6 +4332,7 @@ mod tests {
                         "dispatch_id": "dispatch-1",
                         "manager_agent_id": "manager-agent",
                         "idempotency_key": "decision-1",
+                        "manager_runtime_task_id": "manager-task",
                         "target_status": "in_review",
                         "reason": "Evidence is ready",
                         "comment": "Please confirm the completed work",

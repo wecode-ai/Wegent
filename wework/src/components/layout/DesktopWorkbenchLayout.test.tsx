@@ -150,6 +150,10 @@ const sharedWorkspaceApiMock = {
     },
   },
   resources: {
+    devices: {
+      local: async () => [],
+      cloud: async () => [],
+    },
     async list() {
       return { agents: [], execution_environments: [] }
     },

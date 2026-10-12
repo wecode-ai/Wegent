@@ -4034,7 +4034,7 @@ fn get_item_from(
              FROM loop_items
              WHERE id = ?1 AND resource_type = ?2 AND deleted_at IS NULL",
             params![id, resource_type],
-            |row| map_loop_item(&connection, row),
+            |row| map_loop_item(connection, row),
         )
         .optional()
 }
@@ -5064,7 +5064,7 @@ fn collaboration_agent(
     let agent = statement
         .query_row(
             params![project_id, DEFAULT_WORK_ITEM_PROJECT_ID, agent_id],
-            |row| map_loop_item(&connection, row),
+            |row| map_loop_item(connection, row),
         )
         .optional()?
         .ok_or_else(|| {

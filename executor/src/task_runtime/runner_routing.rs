@@ -161,41 +161,6 @@ pub(crate) fn validate_model_runtime(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn validates_policy_pairs_and_nonempty_fixed_environment() {
-        assert!(validate_policies(
-            Some(&json!({"mode":"fixed","environment_id":""})),
-            Some(&json!({"mode":"user_select"}))
-        )
-        .is_err());
-        assert!(validate_policies(Some(&json!({"mode":"project_pool"})), None).is_err());
-        assert!(validate_policies(
-            Some(&json!({"mode":"project_pool"})),
-            Some(&json!({"mode":"user_select"}))
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn model_identity_and_affinity_are_both_required() {
-        let model = json!({"runtime":"codex","provider":"openai","model_id":"test"});
-        let payload = json!({"runnerRouting":{"environment_id":"runner-a","model":model}});
-        assert!(validate_claim(&payload, Some(&json!({"models":[model]})), "runner-a").is_ok());
-        assert!(validate_claim(&payload, Some(&json!({"models":[model]})), "runner-b").is_err());
-        assert!(validate_claim(
-            &payload,
-            Some(&json!({"models":[{"runtime":"codex","provider":"other","model_id":"test"}]})),
-            "runner-a"
-        )
-        .is_err());
-    }
-}
-
 pub(crate) fn validate_automation(
     agent: &Value,
     selection: &Value,
@@ -393,4 +358,39 @@ pub(crate) fn resolve_pending(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn validates_policy_pairs_and_nonempty_fixed_environment() {
+        assert!(validate_policies(
+            Some(&json!({"mode":"fixed","environment_id":""})),
+            Some(&json!({"mode":"user_select"}))
+        )
+        .is_err());
+        assert!(validate_policies(Some(&json!({"mode":"project_pool"})), None).is_err());
+        assert!(validate_policies(
+            Some(&json!({"mode":"project_pool"})),
+            Some(&json!({"mode":"user_select"}))
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn model_identity_and_affinity_are_both_required() {
+        let model = json!({"runtime":"codex","provider":"openai","model_id":"test"});
+        let payload = json!({"runnerRouting":{"environment_id":"runner-a","model":model}});
+        assert!(validate_claim(&payload, Some(&json!({"models":[model]})), "runner-a").is_ok());
+        assert!(validate_claim(&payload, Some(&json!({"models":[model]})), "runner-b").is_err());
+        assert!(validate_claim(
+            &payload,
+            Some(&json!({"models":[{"runtime":"codex","provider":"other","model_id":"test"}]})),
+            "runner-a"
+        )
+        .is_err());
+    }
 }
