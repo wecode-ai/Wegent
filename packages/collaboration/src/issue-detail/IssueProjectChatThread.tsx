@@ -97,7 +97,8 @@ export function IssueProjectChatThread({
   const isExecutionTaskThread =
     thread.root.sender.type === "agent" &&
     thread.root.metadata.dispatch_role !== "manager";
-  const runs = [thread.root, ...thread.replies].filter(
+  const displayReplies = thread.displayReplies ?? thread.replies;
+  const runs = [thread.root, ...displayReplies].filter(
     (message) => message.sender.type === "agent",
   );
   function renderMessage(message: ProjectChatMessage, eventOnly = false) {
@@ -162,8 +163,8 @@ export function IssueProjectChatThread({
       }}
       message={renderMessage(thread.root)}
       replies={
-        thread.replies.length
-          ? thread.replies.map((message) => renderMessage(message))
+        displayReplies.length
+          ? displayReplies.map((message) => renderMessage(message))
           : null
       }
       repliesTestId={`collaboration-chat-replies-${rootId}`}

@@ -9,6 +9,20 @@ export function issueActivityTimestamp(message: ProjectChatMessage): string {
     : message.updatedAt;
 }
 
+export function issueThreadActivityTimestamp(thread: {
+  root: ProjectChatMessage;
+  replies: ProjectChatMessage[];
+}): string {
+  if (thread.root.sender.type !== "agent") return thread.root.createdAt;
+  return thread.replies
+    .filter((message) => message.sender.type === "agent")
+    .map(issueActivityTimestamp)
+    .reduce(
+      (latest, at) => (compareIssueTimestamps(at, latest) > 0 ? at : latest),
+      issueActivityTimestamp(thread.root),
+    );
+}
+
 const EXPLICIT_TIME_ZONE_PATTERN = /(?:Z|[+-]\d{2}:?\d{2})$/i;
 
 function parseBackendTimestamp(value: string): Date | null {
@@ -47,7 +61,17 @@ export function compareIssueTimestamps(left: string, right: string): number {
 
   if (leftTime === undefined) return rightTime === undefined ? 0 : -1;
   if (rightTime === undefined) return 1;
-  return leftTime - rightTime;
+  const delta = leftTime - rightTime;
+  if (delta) return delta;
+  // Date truncates submillisecond digits; backend status events retain them.
+  const fraction = (value: string) =>
+    value.trim().match(/\.(\d+)(?:Z|[+-]\d{2}:?\d{2})?$/i)?.[1] ?? "";
+  const leftFraction = fraction(left);
+  const rightFraction = fraction(right);
+  const precision = Math.max(leftFraction.length, rightFraction.length);
+  return leftFraction
+    .padEnd(precision, "0")
+    .localeCompare(rightFraction.padEnd(precision, "0"));
 }
 
 export function issueExecutionElapsedMinutes(

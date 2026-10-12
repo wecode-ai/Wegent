@@ -1346,9 +1346,14 @@ describe('TaskActivityView', () => {
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
-  it.each(['streaming', 'completed'] as const)(
-    'places a %s execution activity after its status transition',
-    async status => {
+  it.each([
+    { status: 'streaming' as const, commentTriggered: false },
+    { status: 'completed' as const, commentTriggered: false },
+    { status: 'streaming' as const, commentTriggered: true },
+    { status: 'completed' as const, commentTriggered: true },
+  ])(
+    'places $status execution after its status transition (comment=$commentTriggered)',
+    async ({ status, commentTriggered }) => {
       const activityAt =
         status === 'streaming' ? '2026-10-10T08:09:43.234567Z' : '2026-10-10T08:10:03.234567Z'
       const execution = {
@@ -1358,10 +1363,16 @@ describe('TaskActivityView', () => {
         createdAt: '2026-10-10T08:09:43Z',
         updatedAt: '2026-10-10T08:10:03Z',
         metadata: { activity_at: activityAt },
+        rootMessageId: commentTriggered ? userMessage.messageId : null,
+        replyToMessageId: commentTriggered ? userMessage.messageId : null,
       }
       const client = {
         subscribe: vi.fn(async () => ({
-          snapshot: { messages: [execution], latestSequence: 2, currentUserId: '1' },
+          snapshot: {
+            messages: commentTriggered ? [userMessage, execution] : [execution],
+            latestSequence: 2,
+            currentUserId: '1',
+          },
           unsubscribe: vi.fn(),
         })),
         send: vi.fn(),
@@ -1401,6 +1412,7 @@ describe('TaskActivityView', () => {
       await within(list).findByText('执行详情')
       const entries = Array.from(list.children[0].children)
       expect(entries.map(entry => entry.getAttribute('data-testid') ?? entry.className)).toEqual([
+        ...(commentTriggered ? ['task-detail-thread is-timeline'] : []),
         'cloud-task-status-event-0',
         ...(status === 'completed' ? ['cloud-task-status-event-1'] : []),
         'task-detail-thread is-timeline',
@@ -1409,7 +1421,7 @@ describe('TaskActivityView', () => {
     }
   )
 
-  it('interleaves UTC-naive comments and offset-aware status changes and keeps execution status inside the comment', async () => {
+  it('keeps the discussion before status changes and places its execution after completion', async () => {
     const user = userEvent.setup()
     const openTaskConversation = vi.fn()
     const root = {
@@ -1427,6 +1439,7 @@ describe('TaskActivityView', () => {
         dispatch_role: 'member',
         workflow_task_title: '验证 CPU 检查项',
         run_status: 'succeeded',
+        activity_at: '2026-08-03T11:00:00.001Z',
       },
       runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-task-1' },
       createdAt: '2026-08-03T10:01:00Z',
@@ -1437,6 +1450,7 @@ describe('TaskActivityView', () => {
       messageId: 'message-3',
       content: '请补充验证',
       rootMessageId: root.messageId,
+      replyToMessageId: execution.messageId,
       createdAt: '2026-08-03T10:02:00Z',
     }
     const response = {
@@ -1445,6 +1459,7 @@ describe('TaskActivityView', () => {
       messageId: 'message-4',
       content: '验证已补充',
       rootMessageId: root.messageId,
+      replyToMessageId: followUp.messageId,
       status: 'completed' as const,
       metadata: { run_status: 'succeeded' },
       createdAt: '2026-08-03T10:03:00Z',
@@ -1507,9 +1522,12 @@ describe('TaskActivityView', () => {
       'cloud-task-status-event-0',
       'task-detail-thread is-timeline',
       'cloud-task-status-event-1',
+      'task-detail-thread is-timeline',
     ])
-    const card = screen.getByTestId('cloud-task-activity-card-message-1')
-    expect(card).toHaveTextContent('请完成接入')
+    const discussion = screen.getByTestId('cloud-task-activity-card-message-1')
+    expect(discussion).toHaveTextContent('请完成接入')
+    expect(discussion).not.toHaveTextContent('CPU 验证智能体')
+    const card = screen.getByTestId('cloud-task-activity-card-message-2')
     expect(card).toHaveTextContent('CPU 验证智能体')
     const agentMessageCard = within(card).getByTestId('cloud-task-activity-message-message-2')
     const agentMessageHeader = agentMessageCard.querySelector('header')
@@ -1538,11 +1556,13 @@ describe('TaskActivityView', () => {
     await user.click(executionButton)
     expect(openTaskConversation).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('runtime-execution-detail-overlay')).toBeNull()
-    const replyToggle = within(card).getByTestId('cloud-task-activity-reply-toggle-message-1')
+    const replyToggle = within(discussion).getByTestId('cloud-task-activity-reply-toggle-message-1')
     const actions = replyToggle.closest('.task-detail-thread-actions') as HTMLElement
     expect(actions.querySelector('time')).toHaveAttribute('datetime', root.createdAt)
     expect(
-      within(card).getByTestId('cloud-task-activity-message-message-1').querySelector('header time')
+      within(discussion)
+        .getByTestId('cloud-task-activity-message-message-1')
+        .querySelector('header time')
     ).toBeNull()
     expect(replyToggle).toHaveAttribute('aria-expanded', 'false')
     expect(within(card).queryByTestId('cloud-task-activity-card-composer-message-1')).toBeNull()

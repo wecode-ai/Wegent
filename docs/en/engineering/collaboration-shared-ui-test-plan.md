@@ -35,8 +35,9 @@ only model responses; storage, scheduling, and executors remain real.
    status event must precede the execution card.
 2. Release the response and wait for review. The completion status event must
    precede the execution details, which must contain the actual result.
-3. Follow-up replies keep their original thread and execution session when a
-   result timestamp changes.
+3. For comment-triggered execution, retain the discussion at creation time and
+   place the execution card separately after its status event. Follow-up replies
+   retain their original discussion and session without duplicate execution.
 4. Persistence tests compare status events with activity timestamps, including
    different subsecond precision within one second. Cover success, failure,
    cancellation, and reconnect reconciliation; user discussions keep creation time.

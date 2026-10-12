@@ -469,9 +469,13 @@ export async function createDesktopScenario({
         visible: true,
       })
       await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'), {
-        text: RENAMED_ISSUE,
         timeoutMs: uiTimeoutMs,
       })
+      assert.equal(
+        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+        RENAMED_ISSUE,
+        'Returning to the Issue did not retain its saved title'
+      )
 
       await sendIssueReply(control, activityId, FOLLOW_UP_ONE, uiTimeoutMs)
       await waitForModelRequestCount(modelRequests, 2, modelResponseTimeoutMs)
