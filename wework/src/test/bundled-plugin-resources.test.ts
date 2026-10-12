@@ -320,6 +320,10 @@ describe('bundled plugin resources', () => {
       expect(workflow).toContain('desktop-component-release.mjs release-assets shared')
       expect(workflow).toContain('Reusing immutable component asset')
       expect(workflow).toContain('collect-harness-runtime-release-assets.mjs')
+      const publishJob = workflow.slice(workflow.indexOf('  publish:'))
+      expect(publishJob).toMatch(
+        /Checkout release source[\s\S]*?uses: \.\/\.github\/actions\/setup-node-workspace[\s\S]*?collect-harness-runtime-release-assets\.mjs/
+      )
       expect(workflow).toContain('Reusing immutable Harness Runtime asset')
       expect(workflow).toContain('components-${channel}-linux-x64.json')
       expect(

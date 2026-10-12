@@ -164,6 +164,12 @@ asset is fully uploaded and exactly matches the local archive. Missing,
 incomplete, or mismatched assets still block publication, and the original
 CLI error remains in the logs.
 
+After checking out the release source, the publish job uses the shared
+`setup-node-workspace` action to prepare Node.js, pnpm, and workspace
+dependencies before running release scripts. Harness Runtime archive
+collection uses the `tar` package declared by Wework; dependencies installed
+in build jobs are not automatically available in the publish job.
+
 The version boundary follows whether an artifact must remain atomically
 compatible with the Electron host:
 
