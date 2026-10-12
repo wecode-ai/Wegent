@@ -706,6 +706,7 @@ full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"seg
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"local-harness,running-conversation-history,running-plan-history,native-window-chrome\"/\"segments\":\"local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification\"}"
+full_desktop_expected="${full_desktop_expected/temporary-chat,local-file-preview,conversation-state,reply-predictions/temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings}"
 
 assert_desktop_case "drawing implementation and scenario select their desktop regression" \
   'wework_desktop_e2e=true
@@ -743,6 +744,16 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-17","name":"Core / shard 
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/codex-account-login.scenario.mjs"
+
+assert_desktop_case "model settings changes select model management and account coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"model-settings"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing,codex-account-login"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/model-settings.scenario.mjs" \
+  "wework/src/components/settings/ProviderEditor.tsx" \
+  "wework/src/features/model-settings/providerModelConfiguration.ts"
 
 assert_desktop_case "workbench layout changes retain full desktop coverage" \
   "$full_desktop_expected" \
