@@ -156,6 +156,14 @@ Core DSH, Codex, or DWS binaries. Every publication Release contains complete
 installers and its component manifests, and uploads only archive hashes that
 are not already available at the appropriate location.
 
+Before uploading a version Release component, the workflow checks any existing
+asset's upload state, size, and SHA-256. An exact match is reused without
+overwriting the immutable component. If GitHub CLI reports an upload error,
+the script queries the asset list again and continues only when the remote
+asset is fully uploaded and exactly matches the local archive. Missing,
+incomplete, or mismatched assets still block publication, and the original
+CLI error remains in the logs.
+
 The version boundary follows whether an artifact must remain atomically
 compatible with the Electron host:
 

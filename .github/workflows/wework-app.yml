@@ -485,10 +485,8 @@ jobs:
             ! -name 'WeworkComponent_*.tar.gz' \
             -print0 |
             xargs -0 gh release upload "$RELEASE_TAG" --clobber
-          while IFS= read -r component_name; do
-            [[ -n "$component_name" ]] || continue
-            gh release upload "$RELEASE_TAG" "release-assets/$component_name" --clobber
-          done < <(node wework/scripts/desktop-component-release.mjs release-assets version)
+          node wework/scripts/upload-desktop-component-assets.mjs \
+            release-assets version "$RELEASE_TAG"
           if [[ "$RELEASE_KIND" == "full" ]]; then
             gh release upload "$RELEASE_TAG" release-manifests/* --clobber
           else
