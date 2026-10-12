@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -88,6 +88,7 @@ impl RunnerResult {
 pub struct AppState<R> {
     runner: R,
     runtime_heartbeat: Option<RuntimeHeartbeatController>,
+    decision_proxy: Arc<local_decision_proxy::DecisionProxyConfig>,
 }
 
 impl<R> AppState<R> {
@@ -95,6 +96,7 @@ impl<R> AppState<R> {
         Self {
             runner,
             runtime_heartbeat: None,
+            decision_proxy: local_decision_proxy::config_from_env_or_disabled(),
         }
     }
 
@@ -176,6 +178,7 @@ where
         .route("/api/archive", post(archive_workspace))
         .route("/api/runtime/prepare", post(prepare_runtime_workspace))
         .route("/api/restore", post(restore_workspace))
+        .merge(local_decision_proxy::routes::<AppState<R>>())
         .with_state(state)
 }
 

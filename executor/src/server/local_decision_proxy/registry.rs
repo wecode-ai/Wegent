@@ -244,7 +244,7 @@ fn registration_log_fields(
     ]
 }
 
-fn scope_hash(scope: &str) -> String {
+pub(crate) fn scope_hash(scope: &str) -> String {
     hash_hex(scope)
 }
 
