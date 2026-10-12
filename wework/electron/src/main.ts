@@ -88,6 +88,7 @@ import {
   type StartupSplashTheme,
 } from './host/startup-splash.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
+import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
@@ -309,7 +310,9 @@ let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
 let startupRecovery: StartupRecoveryService | null = null
+let startupRuntimeEnvironment: NodeJS.ProcessEnv | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
+let startupComponentUpdate: Promise<void> | null = null
 let pluginDevelopment: PluginDevelopmentManager | null = null
 const pluginDevelopmentChildRuntime =
   pluginDevelopmentInstance &&
@@ -1533,6 +1536,7 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('workbench-mode-initialize', 'completed')
   logStartupStep('desktop-environment', 'started')
   const environment = await desktopEnvironment()
+  startupRuntimeEnvironment = environment
   logStartupStep('desktop-environment', 'completed')
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
@@ -1913,14 +1917,18 @@ function startDesktopRuntime(): Promise<void> {
     logStartupStep('desktop-runtime-start', 'completed')
     startupTelemetrySuccess.markRuntimeReady()
     if (!pluginDevelopmentInstance && shouldStageDesktopComponentUpdates(process.env)) {
-      void componentUpdates
-        ?.stageAvailableUpdate()
-        .then(staged => {
-          if (staged) console.log('[components] update staged for the next application restart')
-        })
-        .catch(error => {
-          console.error('[components] update check failed', error)
-        })
+      startupComponentUpdate =
+        componentUpdates
+          ?.stageAvailableUpdate()
+          .then(staged => {
+            if (staged) console.log('[components] update staged for the next application restart')
+          })
+          .catch(error => {
+            console.error('[components] update check failed', error)
+          })
+          .finally(() => {
+            startupComponentUpdate = null
+          }) ?? null
     }
   })()
     .catch(async error => {
@@ -1996,10 +2004,39 @@ if (hasSingleInstanceLock) {
       rendererStorage,
       preferences,
       cloudCredentials,
+      prepareCleanup: async () => {
+        await runtimeStartPromise
+        await startupComponentUpdate
+        await prepareApplicationShutdown()
+        disposeCoreDshViews()
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          await mainWindow.webContents.loadURL('about:blank')
+        }
+      },
+      clearRuntimeFiles: () => clearStartupRuntimeFiles(app.getPath('userData')),
+      clearUserFiles: () => {
+        const environment = startupRuntimeEnvironment ?? process.env
+        const home = environment.WEGENT_EXECUTOR_HOME?.trim() || executorHome
+        return clearStartupUserFiles({
+          dataDirectory: app.getPath('userData'),
+          codexHome: environment.WEGENT_CODEX_HOME?.trim() || join(home, 'codex'),
+          claudeHome: environment.WEGENT_CLAUDE_HOME?.trim() || join(home, 'claude'),
+          capabilitiesHome:
+            environment.WEGENT_CAPABILITIES_HOME?.trim() || join(home, 'capabilities'),
+          protectedAgentHomes: [
+            join(app.getPath('home'), '.codex'),
+            join(app.getPath('home'), '.claude'),
+          ],
+        })
+      },
       clearCache: () => session.defaultSession.clearCache(),
       clearAppStorage: () =>
         session.defaultSession.clearStorageData({
           storages: ['serviceworkers', 'cachestorage'],
+        }),
+      clearUserStorage: () =>
+        session.defaultSession.clearStorageData({
+          storages: ['cookies', 'localstorage', 'indexdb'],
         }),
       disablePlugin: async name => {
         if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
