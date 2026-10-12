@@ -28,6 +28,7 @@ let state: ProviderConfigurationState = { snapshot: null, error: null }
 const listeners = new Set<() => void>()
 let initialized: Promise<void> | null = null
 let reloadSequence = 0
+let latestReload: Promise<void> | null = null
 let migrationWrite: Promise<unknown> | null = null
 
 /** Return the stable snapshot consumed by useSyncExternalStore. */
@@ -148,9 +149,20 @@ async function migrateLegacySnapshot(
   }
 }
 
-/** Load matching public and runtime revisions, ignoring superseded asynchronous requests. */
+/** Resolve only after the latest refresh has published its matching public and runtime revisions. */
 export async function reloadProviderConfiguration(): Promise<void> {
   const sequence = ++reloadSequence
+  let reload = loadProviderConfiguration(sequence)
+  latestReload = reload
+  await reload
+  while (latestReload && latestReload !== reload) {
+    reload = latestReload
+    await reload
+  }
+}
+
+/** Ignore superseded requests without publishing an older configuration over newer data. */
+async function loadProviderConfiguration(sequence: number): Promise<void> {
   try {
     let snapshot = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
     if (sequence !== reloadSequence) return
