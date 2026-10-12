@@ -28,6 +28,7 @@ import {
   GOAL_IDLE_FOLLOW_UP_PROMPT,
   GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_IDLE_INITIAL_TEXT,
+  GOAL_IDLE_CONTINUATION_TEXT,
   GOAL_IDLE_PROMPT,
   GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
   GOAL_SNAPSHOT_RECONCILIATION_TEXT,
@@ -303,6 +304,25 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     [GOAL_IDLE_PROMPT]: 1,
     [GOAL_IDLE_INITIAL_TEXT]: 1,
   })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: GOAL_IDLE_CONTINUATION_TEXT,
+    }
+  )
+  const goalStatusText = await control.command('getText', '[data-testid="goal-status-bar"]')
+  assert.doesNotMatch(
+    goalStatusText,
+    /正在开始下一轮|Starting next turn/,
+    'A continuation producing output must leave the startup state'
+  )
+  const outputDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  assert.equal(
+    outputDebugSnapshot.pane?.messageStyleComparison?.currentStreaming?.subtaskId,
+    outputDebugSnapshot.workbench?.activeLifecycle?.turn?.id,
+    'Continuation output must belong to its active turn'
+  )
   await captureVerificationScreenshot(control, 'goal-idle-02-automatic-continuation.png')
 
   const readyCountBeforeContinuationReload = control.readyCount

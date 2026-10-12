@@ -4,6 +4,7 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import {
   isRuntimeGoalContinuationTurn,
   projectRuntimeGoalContinuing,
+  projectRuntimeGoalContinuationActive,
   shouldReconcileActiveRuntimeGoalTranscript,
   updateRuntimeGoalContinuation,
 } from './runtime-goal'
@@ -83,6 +84,48 @@ describe('runtime goal continuation', () => {
         activeAssistantMessage: continuedAssistantMessage,
       })
     ).toBe(true)
+  })
+
+  test.each([
+    { content: 'Checking CI results' },
+    {
+      blocks: [
+        { id: 'tool-1', type: 'tool', status: 'running', toolName: 'exec_command', toolInput: {} },
+      ],
+    },
+  ] as Partial<WorkbenchMessage>[])(
+    'stops showing startup after continuation output while keeping history reconciliation active',
+    output => {
+      const assistant = { ...continuedAssistantMessage, ...output }
+      const input = {
+        goal: activeGoal,
+        continuation: started,
+        taskRunning: true,
+        messages: [initialUserMessage, assistant],
+        activeAssistantMessage: assistant,
+      }
+      expect(projectRuntimeGoalContinuing(input)).toBe(false)
+      expect(projectRuntimeGoalContinuationActive(input)).toBe(true)
+      expect(
+        shouldReconcileActiveRuntimeGoalTranscript({
+          goalContinuing: projectRuntimeGoalContinuationActive(input),
+          messages: input.messages,
+          activeAssistantMessage: assistant,
+        })
+      ).toBe(true)
+    }
+  )
+
+  test('does not show startup for a stopped task with a stale lifecycle event', () => {
+    expect(
+      projectRuntimeGoalContinuing({
+        goal: activeGoal,
+        continuation: started,
+        taskRunning: false,
+        messages: [initialUserMessage],
+        activeAssistantMessage: continuedAssistantMessage,
+      })
+    ).toBe(false)
   })
 
   test('does not project the initial Goal turn as continuation', () => {

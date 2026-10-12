@@ -1161,8 +1161,10 @@ impl RuntimeWorkRpcHandler {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned);
-            let pending_turn_presentation =
-                Arc::new(Mutex::new(active_turn_client_user_message_id));
+            let pending_turn_presentation = Arc::new(Mutex::new(Some((
+                active_turn_subtask_id.clone(),
+                active_turn_client_user_message_id,
+            ))));
             let active_turn_request = request.clone();
             let callback_hook_turn = Arc::clone(&hook_turn);
             let callback_turn_presentation = Arc::clone(&pending_turn_presentation);
@@ -1204,18 +1206,26 @@ impl RuntimeWorkRpcHandler {
                         &thread_id,
                         &turn_id,
                     );
-                    let client_user_message_id = callback_turn_presentation
+                    let presentation = callback_turn_presentation
                         .lock()
                         .expect("turn presentation lock should not be poisoned")
                         .clone();
                     active_turn_handler.record_runtime_turn_id(
                         &active_turn_local_task_id,
-                        &active_turn_subtask_id,
+                        presentation
+                            .as_ref()
+                            .map(|(subtask_id, _)| subtask_id.as_str())
+                            .unwrap_or(&turn_id),
                         &turn_id,
-                        client_user_message_id.as_deref(),
+                        presentation.as_ref().and_then(|(_, id)| id.as_deref()),
                     );
                     let mut event_request = active_turn_request.clone();
                     event_request.subtask_id = turn_id.clone();
+                    if presentation.is_none() {
+                        event_request.extra.remove("client_user_message_id");
+                        event_request.extra.remove("clientUserMessageId");
+                        event_request.extra.remove("runtime_generated_user_message");
+                    }
                     active_turn_handler.register_thread_event_route(
                         &thread_id,
                         active_turn_local_task_id.clone(),

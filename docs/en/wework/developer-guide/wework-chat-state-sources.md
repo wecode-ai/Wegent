@@ -137,6 +137,22 @@ WebView or executor rebuild. A thread ID change must clear both the completed
 message cache and transcript snapshot so messages cannot cross thread
 boundaries.
 
+History snapshots must retain the Provider's before and after cursors. Default
+reads during execution may reuse a snapshot, but explicit pagination must use
+native history. A tail snapshot is not complete history. Merge live assistant
+blocks and runtime items by item ID so new items cannot replace loaded history.
+Adding live items must not upgrade a summary turn's `itemsView` to full.
+
+Automatic Goal continuation owns a new turn. It must neither carry the previous
+turn's client user message association nor rewrite its subtask-to-turn mapping.
+The starting-next-turn label ends when that turn produces visible text or tools;
+history reconciliation remains active until continuation settles.
+
+The capability publication lock covers session preparation and runtime
+initialization only. Codex and Claude Code release the read lease before model
+execution. Capability synchronization publishes under the write lease, so a
+long model run cannot block other tasks from starting.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`

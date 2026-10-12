@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-// A writer cannot replace native capability entries while a turn reads them.
-// Keep exactly one read lease per turn; nested reads can deadlock behind a writer.
+// Protect capability preparation and native session initialization, not model work.
+// Keep one read lease per startup; nested reads can deadlock behind a writer.
 static ACTIVATION: RwLock<()> = RwLock::const_new(());
 static REVISION: AtomicU64 = AtomicU64::new(0);
 
@@ -33,7 +33,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn activation_waits_for_every_running_turn() {
+    async fn activation_waits_for_every_session_preparation() {
         let first = begin_execution().await;
         let second = begin_execution().await;
         assert!(ACTIVATION.try_write().is_err());

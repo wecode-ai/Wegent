@@ -474,11 +474,16 @@ impl RuntimeWorkRpcHandler {
                 transcript_navigation_from_codex_turns(navigation),
             ));
         }
-        if local_execution_running && !refresh && !direct_thread_override {
-            if let Some(link) = local_link
-                .as_ref()
-                .filter(|link| runtime_has_provider_transcript_reader(&link.runtime))
-            {
+        if local_execution_running
+            && !refresh
+            && !direct_thread_override
+            && before_cursor.is_none()
+            && after_cursor.is_none()
+        {
+            if let Some(link) = local_link.as_ref().filter(|link| {
+                runtime_has_provider_transcript_reader(&link.runtime)
+                    && (link.runtime != "codex" || transcript_snapshot_pagination(link).is_some())
+            }) {
                 let mut messages = transcript_snapshot_messages(link);
                 append_unique_transcript_messages(
                     &mut messages,
@@ -799,7 +804,9 @@ impl RuntimeWorkRpcHandler {
         if before_cursor.is_none() && after_cursor.is_none() && !include_full_content {
             let snapshot_changed = local_link.as_ref().is_some_and(|link| {
                 link.thread_id.as_deref() == Some(thread_id.as_str())
-                    && transcript_snapshot_messages(link) != messages
+                    && (transcript_snapshot_messages(link) != messages
+                        || transcript_snapshot_pagination(link)
+                            != Some((page_before_cursor.clone(), page_after_cursor.clone())))
             });
             if snapshot_changed {
                 let snapshot_messages = messages.clone();
@@ -809,6 +816,8 @@ impl RuntimeWorkRpcHandler {
                             &mut link.runtime_handle,
                             &thread_id,
                             snapshot_messages,
+                            page_before_cursor.clone(),
+                            page_after_cursor.clone(),
                         );
                     }
                 });
