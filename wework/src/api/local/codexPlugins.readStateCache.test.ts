@@ -163,6 +163,62 @@ describe('local codex plugin readState cache', () => {
     vi.restoreAllMocks()
   })
 
+  test('installs a cold-cached local official plugin without remote catalog authentication', async () => {
+    const marketplacePath = '/tmp/github-marketplace/.agents/plugins/marketplace.json'
+    let installed = false
+    mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+      if (method === 'executor.plugins.links.list') return []
+      if (method === 'executor.plugins.manifest.read') return {}
+      if (method === 'executor.plugins.store.list') return { storePath: '/tmp/store', plugins: [] }
+      if (method !== 'codex.app_server_request') throw new Error(`Unexpected method ${method}`)
+      if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+        return {
+          marketplaces: [
+            {
+              name: 'openai-official',
+              path: marketplacePath,
+              plugins: [
+                {
+                  id: 'github@openai-official',
+                  name: 'github',
+                  installed,
+                  enabled: installed,
+                  source: { source: 'local', path: './plugins/github' },
+                },
+              ],
+            },
+          ],
+        }
+      }
+      if (params.method === 'plugin/install') {
+        expect(params.params).toEqual({
+          marketplacePath,
+          remoteMarketplaceName: null,
+          pluginName: 'github',
+        })
+        installed = true
+        return {}
+      }
+      if (params.method === 'plugin/read') {
+        expect(params.params.marketplacePath).toBe(marketplacePath)
+        return {
+          plugin: { summary: { name: 'github', version: '1.0.0', description: 'GitHub CLI' } },
+        }
+      }
+      throw new Error(`Unexpected app-server method ${params.method}`)
+    })
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    const durable = window.localStorage.getItem('wework.plugins.codexCatalog.v1')!
+    clearLocalCodexPluginsReadStateCache()
+    window.localStorage.setItem('wework.plugins.codexCatalog.v1', durable)
+
+    const cached = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })!
+    expect(cached.marketplaceItems[0].manifest.marketplacePath).toBe(marketplacePath)
+    const result = await api.installAvailablePlugin(cached.marketplaceItems[0])
+    expect(result.metadata.name).toBe('github')
+  })
+
   test('reads remote discovery without membership, disk reconciliation or bundled registration', async () => {
     mocks.requestLocalExecutor.mockResolvedValue({
       marketplaces: [personalMarketplace, { name: 'openai-curated-remote', plugins: [] }],

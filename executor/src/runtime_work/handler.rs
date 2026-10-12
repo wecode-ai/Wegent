@@ -1117,6 +1117,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.collaboration.dispatch" => self.create_collaboration_dispatch(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
+            "runtime.text.predict_reply" => self.predict_reply(payload).await,
             "runtime.text.cancel" => self.cancel_text_generation(payload),
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,

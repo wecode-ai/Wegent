@@ -6,7 +6,6 @@ import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttach
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import type { ProjectChatMention } from '@/api/backend/projectChatSocket'
 import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
-import type { ReplyPredictionSource } from '@/features/reply-predictions/replyPredictionService'
 
 export interface CardCommentSendResult {
   ok: boolean
@@ -14,7 +13,6 @@ export interface CardCommentSendResult {
 }
 
 interface CardCommentComposerProps {
-  predictionSource?: ReplyPredictionSource | null
   predictionAddress?: RuntimeTaskAddress | null
   rootId: string
   projectId: string
@@ -31,7 +29,6 @@ interface CardCommentComposerProps {
 }
 
 export function CardCommentComposer({
-  predictionSource,
   predictionAddress,
   rootId,
   projectId,
@@ -52,7 +49,6 @@ export function CardCommentComposer({
   return (
     <ReplyPredictionProvider
       address={predictionAddress}
-      source={predictionAddress ? undefined : predictionSource}
       blocked={
         disabled ||
         attachmentSelection.attachments.length > 0 ||

@@ -15,6 +15,8 @@ mod fork;
 mod harness_protocol;
 mod history;
 mod image_budget;
+mod passthrough_stream;
+mod request_policy;
 mod vision;
 
 use std::{
@@ -40,6 +42,7 @@ use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
 use fork::{codex_forked_from_thread_id, prepare_fork_request};
+pub(crate) use request_policy::CodexRequestMode;
 
 pub(crate) const API_KEY: &str = "wework-local-router";
 pub(crate) const ROUTE: &str = "/v1/codex-router/responses";
@@ -106,6 +109,8 @@ pub(crate) struct LocalModelProxyUpstream {
     pub convert_custom_tools: bool,
     pub native_tool_search: bool,
     pub native_namespace_tools: bool,
+    #[serde(default)]
+    pub codex_request_mode: CodexRequestMode,
     pub api_key: String,
     pub default_headers: Vec<(String, String)>,
     pub proxy_url: Option<String>,
@@ -180,14 +185,32 @@ struct ResponsesToolCapabilities {
     convert_custom_tools: bool,
     native_tool_search: bool,
     native_namespace_tools: bool,
+    function_tools_only: bool,
 }
 
 impl LocalModelProxyUpstream {
     fn responses_tool_capabilities(&self) -> ResponsesToolCapabilities {
+        if self.codex_request_mode == CodexRequestMode::Standard {
+            return ResponsesToolCapabilities {
+                convert_custom_tools: true,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                function_tools_only: true,
+            };
+        }
+        if self.codex_request_mode == CodexRequestMode::Passthrough {
+            return ResponsesToolCapabilities {
+                convert_custom_tools: false,
+                native_tool_search: true,
+                native_namespace_tools: true,
+                function_tools_only: false,
+            };
+        }
         ResponsesToolCapabilities {
             convert_custom_tools: self.convert_custom_tools,
             native_tool_search: self.native_tool_search,
             native_namespace_tools: self.native_namespace_tools,
+            function_tools_only: false,
         }
     }
 }
@@ -201,27 +224,41 @@ fn canonical_upstream_api_format(api_format: &str) -> String {
     }
 }
 
-pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalModelProxyUpstream> {
-    let base_url = non_empty_string(model_config, "base_url")
-        .or_else(|| non_empty_string(model_config, "baseUrl"))?;
-    let api_key = non_empty_string(model_config, "api_key")
-        .or_else(|| non_empty_string(model_config, "apiKey"))
-        .or_else(|| non_empty_string(model_config, "auth_token"))
-        .unwrap_or_default();
+/// Validate request policy before selecting a proxy or the direct-provider path.
+pub(crate) fn upstream_from_model_config(
+    model_config: &Value,
+) -> Result<Option<LocalModelProxyUpstream>, String> {
     let api_format = canonical_upstream_api_format(
         &non_empty_string(model_config, "upstream_api_format")
             .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
             .or_else(|| non_empty_string(model_config, "api_format"))
             .unwrap_or_else(|| "openai-responses".to_owned()),
     );
+    let codex_request_mode = model_config
+        .get("codex_request_mode")
+        .map(|value| serde_json::from_value::<CodexRequestMode>(value.clone()))
+        .transpose()
+        .map_err(|_| "codex_request_mode must be auto, standard or passthrough".to_owned())?
+        .unwrap_or_default();
+    codex_request_mode.validate(&api_format)?;
+    let Some(base_url) = non_empty_string(model_config, "base_url")
+        .or_else(|| non_empty_string(model_config, "baseUrl"))
+    else {
+        return Ok(None);
+    };
+    let api_key = non_empty_string(model_config, "api_key")
+        .or_else(|| non_empty_string(model_config, "apiKey"))
+        .or_else(|| non_empty_string(model_config, "auth_token"))
+        .unwrap_or_default();
     let native_by_default = api_format == "openai-responses";
-    Some(LocalModelProxyUpstream {
+    Ok(Some(LocalModelProxyUpstream {
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_string(model_config, "responses_url")
             .or_else(|| non_empty_string(model_config, "responsesUrl"))
             .or_else(|| non_empty_string(model_config, "request_url"))
             .or_else(|| non_empty_string(model_config, "requestUrl")),
         api_format,
+        codex_request_mode,
         convert_custom_tools: non_empty_string(model_config, "tool_profile")
             .or_else(|| non_empty_string(model_config, "toolProfile"))
             .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
@@ -247,7 +284,7 @@ pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalMo
             .or_else(|| model_config.get("maxOutputTokens"))
             .and_then(Value::as_u64)
             .filter(|value| *value > 0),
-    })
+    }))
 }
 
 fn non_empty_string(value: &Value, key: &str) -> Option<String> {
@@ -842,38 +879,33 @@ async fn handle_for_token(
         .request_url
         .clone()
         .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
-    let request_body = match upstream.model_id.as_deref() {
-        Some(model_id) => rewrite_request_model(&body, model_id)?,
-        None => body.to_vec(),
-    };
     let normalized_inter_agent_content = 0;
     let request_body = if text_only {
-        text_only_request(&request_body)?
+        text_only_request(&body)?
     } else {
-        request_body
+        body.to_vec()
     };
-    let request_body =
-        prepare_model_switch_request(&upstream, request_body, model_routing.model_switched)?;
-    let conversation_id = request_thread_identity(&request_body).map(|identity| identity.thread_id);
-    let request_body = vision::replace_images_with_descriptions(
+    let request_policy::PreparedRequest {
+        body: request_body,
+        conversion,
+        expanded_browser_tools,
+        stripped_encrypted_content,
+    } = request_policy::prepare(
+        &upstream,
+        &request_body,
         vision_sidecar.as_ref(),
-        conversation_id.as_deref(),
-        &request_body,
-    )
-    .await?;
-    let (request_body, conversion, expanded_browser_tools) = prepare_request_with_history(
-        &upstream.api_format,
-        upstream.responses_tool_capabilities(),
-        upstream.max_output_tokens,
-        upstream.routing_model_id.as_deref(),
-        &request_body,
         history.as_ref(),
+        model_routing.model_switched,
+        forked_from_thread_id.is_some(),
     )
     .await?;
-    let (request_body, stripped_encrypted_content) =
-        prepare_fork_request(request_body, forked_from_thread_id.is_some())?;
+    let tool_capabilities = upstream.responses_tool_capabilities();
     let mut request_log_fields = vec![
         ("api_format", upstream.api_format.clone()),
+        (
+            "codex_request_mode",
+            upstream.codex_request_mode.label().to_owned(),
+        ),
         ("upstream", safe_url(&request_url)),
         ("auth_present", (!upstream.api_key.is_empty()).to_string()),
         (
@@ -883,15 +915,15 @@ async fn handle_for_token(
         ("body_bytes", request_body.len().to_string()),
         (
             "convert_custom_tools",
-            upstream.convert_custom_tools.to_string(),
+            tool_capabilities.convert_custom_tools.to_string(),
         ),
         (
             "native_tool_search",
-            upstream.native_tool_search.to_string(),
+            tool_capabilities.native_tool_search.to_string(),
         ),
         (
             "native_namespace_tools",
-            upstream.native_namespace_tools.to_string(),
+            tool_capabilities.native_namespace_tools.to_string(),
         ),
         (
             "expanded_browser_tools",
@@ -1073,6 +1105,12 @@ async fn handle_for_token(
             let responses_stream = chat::responses_sse_to_responses(response_stream, context);
             Response::new(Body::from_stream(history::record_responses_stream(
                 responses_stream,
+                history,
+            )))
+        }
+        None if upstream.codex_request_mode == CodexRequestMode::Passthrough => {
+            Response::new(Body::from_stream(history::record_responses_stream(
+                passthrough_stream::guard(response_stream),
                 history,
             )))
         }
@@ -1602,6 +1640,7 @@ fn prepare_request(
             convert_custom_tools,
             native_tool_search: true,
             native_namespace_tools: true,
+            function_tools_only: false,
         },
         max_output_tokens,
         None,
@@ -1637,6 +1676,9 @@ fn prepare_request_with_model_hint(
             detail: format!("Failed to convert local model request: {error}"),
         })?;
         responses_body = converted;
+        if tool_capabilities.function_tools_only {
+            request_policy::retain_function_tools(&mut responses_body)?;
+        }
         let conversion = (!context.is_empty()).then_some(Conversion::Responses(context));
         let expanded_browser_tools = HashSet::new();
         let body = serde_json::to_vec(&responses_body).map_err(|error| HttpError {
@@ -2418,6 +2460,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: None,
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
         let mut incoming_headers = HeaderMap::new();
@@ -2536,6 +2579,7 @@ mod tests {
                 "base_url": "https://example.com",
                 "upstream_api_format": configured
             }))
+            .expect("model config should be valid")
             .expect("model config should produce an upstream");
 
             assert_eq!(upstream.api_format, expected);
@@ -2664,6 +2708,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-luna".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
         let body = serde_json::to_vec(&json!({
@@ -2722,6 +2767,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("kimi-k3".to_owned()),
                 routing_model_id: Some("wework-kimi-k3".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -2763,6 +2809,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("kimi-k3".to_owned()),
                 routing_model_id: Some("wework-kimi-k3".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
             body,
@@ -2822,6 +2869,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("kimi-k3".to_owned()),
                 routing_model_id: Some("wework-kimi-k3".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -2866,6 +2914,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("kimi-k3".to_owned()),
             routing_model_id: Some("wework-kimi-k3".to_owned()),
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
         let body = serde_json::to_vec(&json!({
@@ -2901,6 +2950,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
         let body = serde_json::to_vec(&json!({
@@ -2934,6 +2984,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
         let body = serde_json::to_vec(&json!({
@@ -3052,6 +3103,7 @@ mod tests {
                 convert_custom_tools: false,
                 native_tool_search: false,
                 native_namespace_tools: false,
+                function_tools_only: false,
             },
             None,
             Some("wework-kimi-k3"),
@@ -3420,6 +3472,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-luna".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-luna".to_owned()),
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
         let token = register("stable-task-route", initial);
@@ -3443,6 +3496,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
         let repeated_token = register("stable-task-route", updated.clone());
@@ -3497,6 +3551,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
         let task_a = register("stable-random-token-task-a", upstream.clone());
@@ -3539,6 +3594,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-luna".to_owned()),
                 routing_model_id: Some("wework-gpt-5.6-luna".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -3574,6 +3630,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-sol".to_owned()),
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -3618,6 +3675,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("upstream-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
 
@@ -3641,6 +3699,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("upstream-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
 
@@ -3666,6 +3725,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -3712,6 +3772,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("upstream-model".to_owned()),
                 routing_model_id: Some("routing-model".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -3752,6 +3813,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: Some("gpt-5.6-luna".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -3789,6 +3851,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: Some("gpt-5.6-luna".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -3837,6 +3900,7 @@ mod tests {
             proxy_url: None,
             model_id: None,
             routing_model_id: Some("gpt-5.6-luna".to_owned()),
+            codex_request_mode: Default::default(),
             max_output_tokens: None,
         };
         let first = register("generic-ambiguous-thread-task-a", upstream.clone());
@@ -3878,6 +3942,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -3944,6 +4009,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -4051,6 +4117,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("deepseek-v4-flash".to_owned()),
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -4145,6 +4212,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -4207,6 +4275,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -4268,6 +4337,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-luna".to_owned()),
                 routing_model_id: Some("gpt-5.6-luna".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -4293,6 +4363,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-sol".to_owned()),
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -4370,6 +4441,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -4459,6 +4531,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -4558,6 +4631,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -4773,6 +4847,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -4916,6 +4991,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -5113,6 +5189,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -5255,6 +5332,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -5501,6 +5579,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );
@@ -5562,6 +5641,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some(model_id.clone()),
                 routing_model_id: None,
+                codex_request_mode: Default::default(),
                 max_output_tokens: None,
             },
         );

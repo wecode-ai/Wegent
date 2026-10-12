@@ -116,6 +116,7 @@ from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.services.im.notification_dispatcher import im_notification_dispatcher
+from app.services.im.runtime_notification_delivery import runtime_notification_id
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_executions.device_pull import (
     acknowledge_execution,
@@ -781,7 +782,7 @@ def _summarize_runtime_notification_results(
         return []
     summarized: list[dict[str, Any]] = []
     for result in results:
-        if not isinstance(result, dict):
+        if not isinstance(result, dict) or result.get("skipped") == "duplicate":
             continue
         summarized.append(
             {
@@ -3019,10 +3020,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 status=status,
                 content=content,
                 source="codex_watcher",
+                notification_id=runtime_notification_id(data, status),
             )
         )
         notified = int(notification.get("sent") or 0)
-        if notified <= 0:
+        results = _summarize_runtime_notification_results(notification)
+        if notified <= 0 and results:
             logger.warning(
                 "[RuntimeTaskNotification] Runtime task update notification "
                 "was not delivered: user_id=%s device_id=%s local_task_id=%s "
@@ -3031,7 +3034,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 device_id,
                 local_task_id,
                 status,
-                _summarize_runtime_notification_results(notification),
+                results,
             )
         logger.info(
             "[RuntimeTaskNotification] Dispatched runtime task update: "
@@ -3203,6 +3206,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     status=("waiting_user_input" if waiting_for_user_input else status),
                     content=content,
                     source=str(source_name) if source_name else None,
+                    notification_id=runtime_notification_id(
+                        payload,
+                        "waiting_user_input" if waiting_for_user_input else status,
+                    ),
                 )
             )
         except Exception:
