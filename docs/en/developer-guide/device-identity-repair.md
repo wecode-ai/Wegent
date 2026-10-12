@@ -64,6 +64,11 @@ Use isolated databases, Redis, users and Electron profiles, never production dat
 | Conversation and desktop | Device-page chat response and follow-up; real desktop registration exposes a UUID and record route |
 
 The platform chromium shards run `frontend/e2e/tests/devices/app-device-identity.spec.ts`.
+The first shard also runs `backend/tests/integration/device_registration_mysql.py`
+against real MySQL. It synchronizes two owners' first identity reads before their
+inserts and verifies that eight first registrations for one owner still create
+one row. Registration relies on the existing owner row lock without a redundant
+Kind range lock, avoiding cross-owner insert deadlocks under `REPEATABLE READ`.
 The executor-chromium job runs the app conversation in `tasks/agent-conversation-regression.spec.ts`.
 Desktop CI covers the existing shared-runner `remote-device-onboarding` checkpoint.
 Unit tests cover ownership, unfinished-task protection, historical references and concurrent persistence.

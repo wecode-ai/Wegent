@@ -162,16 +162,17 @@ def find_registration_device(
     app_device_id: str | None = None,
     device_type: str | None = None,
 ) -> Kind | None:
-    """Serialize first registration on the owner, then lock the scoped identity."""
+    """Read the scoped identity after serializing registration on its owner."""
 
     if device_id.startswith(RECORD_ROUTE_PREFIX):
         raise DeviceIdentityConflictError("Device ID uses a reserved routing prefix")
     lock_device_owner(db, user_id)
+    # The owner lock already serializes creation and removal. Locking an absent
+    # Kind range would also block inserts by unrelated owners through gap locks.
     devices = (
         db.query(Kind)
         .filter_by(user_id=user_id, kind="Device", namespace="default", name=device_id)
         .populate_existing()
-        .with_for_update()
         .order_by(Kind.id)
         .all()
     )
