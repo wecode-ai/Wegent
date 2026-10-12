@@ -33,6 +33,8 @@ Model identity and provider options remain opaque dictionaries and are not subje
 
 Successful planning and assignment by the manager does not mean the Issue is complete. Parent steps and child details display the child's execution state. Missing model or workspace configuration keeps an execution in `waiting_runtime`; **Configure and continue** completes that existing execution's profile. If no authorized Executor can claim it, the Run remains queued. Backend does not push work according to capacity and does not pre-bind a device to an Agent. Completing runtime configuration does not change project or Agent defaults and preserves manual approval requirements. Workflow progress counts steps only after acceptance.
 
+Assigning a robot as the owner immediately moves the Issue into the in-progress column and creates its Run. When that Run is `waiting_runtime` for a missing model or workspace, the board card and the detail page must show the requires-configuration reason instead of only the column, and must not leave that wait silent behind "in progress".
+
 Wegent Web replaces the former **Inbox** entry with **Collaboration** and directly reuses the Backend APIs for cloud projects, board Issues, comments, attachments, shared files, members, and execution records. Web and Wework do not maintain a second domain model or API surface.
 
 Cross-client types, API clients, copy, test contracts, and host-independent React components live in `packages/collaboration`. `CollaborationApp` is the sole primary interface for cloud projects in both Web and Wework. It owns the project home, board, Issue details, comments, attachments, files, members, runs, and project settings; the clients must not maintain parallel cloud-collaboration pages.
@@ -123,14 +125,14 @@ Local and cloud Executors use the same claim protocol and board data model. When
 
 For a direct human assignment, Backend sends in-app and connected IM notifications that open the original Issue without creating a personal task. The assignee starts work, enters the result, and submits it for review on that Issue. Optional AI assistance creates a linked Runtime Task; its Delivery returns only as a draft and never submits or accepts the Issue on the person's behalf. Human tasks inside a collaboration-group round still create a personal task from the notification; its Delivery releases the round's barrier and wakes the manager.
 
-For a direct Agent assignment, an Executor claims the root Issue and starts a Runtime session for the assigned Agent. Results are persisted as activity and delivery evidence; success moves the root Issue to `in_review` for user confirmation. Backend never creates or owns the internal Runtime session.
+For a direct Agent assignment, an Executor claims the root Issue and starts a Runtime session for the assigned Agent. Results are persisted as activity and delivery evidence; success moves the root Issue to `in_review` for user confirmation. Backend never creates or owns the internal Runtime session. Setting a robot owner is itself what moves the root Issue into the in-progress column and creates the Run; the owner does not have to drag the Issue into a processing column first.
 
 For a collaboration-group assignment, the Executor still claims only one root Issue. All later coordination stays inside that Executor:
 
 1. The Executor starts a fresh manager session. Project collaboration rules and the optional workflow are visible in that turn, and the manager reads the Issue and eligible members through board MCP tools.
 2. The manager can update the root Issue state with an optional comment through MCP, or submit one round of assignments. Every assignment contains a task title, an assignee, and a workflow stage when the project defines a workflow.
 3. The Executor starts isolated Runtime sessions for all Agent assignments in the round and runs them concurrently. Human assignments send notifications and wait for Delivery.
-4. The Executor owns the round barrier locally. Only after every Agent result and human Delivery arrives does it start a fresh manager session with the complete round results.
+4. The Executor owns the round barrier locally. Only after every Agent result and human Delivery arrives does it start a fresh manager session with the complete round results. Once a round is accepted, the Executor must converge it: retry a member launch that fails, report a member that still cannot start as failed to Backend and hand it to the manager as a failed outcome, and always wake a fresh manager. It must never drop the round silently or leave the Issue parked in the processing column with no owner.
 5. The manager either submits another round or explicitly updates the root Issue to `in_review`, `completed`, or another target state through MCP, optionally with a comment. Member completion never advances the root Issue by itself.
 
 Every manager turn is a fresh Runtime session, and member sessions are isolated. A later round receives only structured assignments, results, and deliveries. It never reuses a member conversation, and Backend never guesses the manager's next action.
