@@ -49,9 +49,9 @@ export function ReplyPredictionProvider({
     store?.getSnapshot ?? emptySnapshot
   )
   const lifecycle = snapshot && address ? store?.selectTask(snapshot, address) : null
-  const selectedModel = workbench?.projectChat.selectedModel
-  const selectedOptions = workbench?.projectChat.selectedModelOptions
   const enabled = preferences?.loaded && preferences.preferences.replyPredictionsEnabled
+  const selectedModel = enabled ? workbench?.projectChat.selectedModel : null
+  const selectedOptions = enabled ? workbench?.projectChat.selectedModelOptions : undefined
   const independentModel = preferences?.preferences.replyPredictionModel
   const configured = useMemo(() => {
     if (!enabled) return null
