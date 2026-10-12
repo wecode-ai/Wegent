@@ -5,6 +5,17 @@ title: Plugin account authentication
 
 # Plugin account authentication
 
+## Cancel pending authorization when starting a task
+
+Blank conversations reuse their workbench pane. Starting a task must immediately invalidate
+pending authorization and in-flight connection checks, even if the pane stays visible and
+mounted. The new-chat notification is synchronous and precedes composer focus; clearing the
+authorization card cancels its session. A late QR success callback must neither submit the
+old plugin draft nor navigate back to its task. Existing blank-draft restoration remains.
+Unit tests cover same-pane navigation, pending health checks, and late success callbacks.
+The existing `plugin-account-auth` CI scenario verifies isolation with real QR sessions
+and ordinary chat.
+
 ## Delivery status
 
 The implementation includes the Backend, native Executor, background account connections,
