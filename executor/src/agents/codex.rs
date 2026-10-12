@@ -139,6 +139,7 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
+mod reply_prediction;
 mod text_generation;
 use text_generation::configure_text_generation;
 #[path = "codex/diagnostics.rs"]
