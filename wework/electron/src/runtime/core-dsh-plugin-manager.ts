@@ -404,6 +404,8 @@ export class CoreDshPluginManager {
       "      - '**/node_modules'",
       "      - '**/.git'",
       '    debounce: 100',
+      '- id: client-hmr',
+      '  disabled: false',
       '',
     ].join('\n')
     await writeFile(join(this.profileRoot, 'cordis.patch.yml'), patch, { mode: 0o600 })

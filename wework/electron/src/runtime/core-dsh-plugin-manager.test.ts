@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
+import { parse } from 'yaml'
 import {
   CoreDshPluginManager,
   parseBlockedBuildMatcher,
@@ -142,6 +143,12 @@ describe('CoreDshPluginManager', () => {
     expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
       JSON.stringify(source)
     )
+    const patch = parse(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8'))
+    expect(
+      patch
+        .filter((entry: { disabled: boolean }) => !entry.disabled)
+        .map((entry: { id: string }) => entry.id)
+    ).toEqual(['hmr', 'client-hmr'])
     expect(await fixture.userBundles()).toEqual(['dsh-alpha', 'dsh-beta', 'dsh-development'])
     await fixture.remove()
   })

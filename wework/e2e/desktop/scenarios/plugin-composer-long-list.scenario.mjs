@@ -63,7 +63,15 @@ export async function createDesktopScenario({
         'Not all 24 real plugins reached the shared inventory and composer',
         workbenchReadyTimeoutMs
       )
-      const snapshot = JSON.parse(await control.command('snapshot', picker))
+      // Inventory publication can precede React's commit of the open menu.
+      const snapshot = await until(
+        async () => JSON.parse(await control.command('snapshot', picker)),
+        state =>
+          fixtures.every(fixture =>
+            state.testIds.includes(`composer-plugin-picker-item-plugin:${fixture.slug}`)
+          ),
+        'The picker did not render all 24 installed plugins'
+      )
       const itemIds = snapshot.testIds.filter(id => id.startsWith('composer-plugin-picker-item-'))
       for (const fixture of fixtures) {
         assert.ok(

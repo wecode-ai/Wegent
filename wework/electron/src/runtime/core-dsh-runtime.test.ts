@@ -12,6 +12,7 @@ import {
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { describe, expect, test } from 'vitest'
+import { parse } from 'yaml'
 import {
   CORE_DSH_VERSION,
   copyManagedPlugin,
@@ -56,6 +57,12 @@ describe('core DSH runtime', () => {
         }
         const assertMode = async () => {
           const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+          const patch = parse(await readFile(join(profileRoot, 'cordis.patch.yml'), 'utf8'))
+          expect(
+            patch
+              .filter((entry: { disabled: boolean }) => entry.disabled)
+              .map((entry: { id: string }) => entry.id)
+          ).toEqual(['hmr', 'client-hmr'])
           for (const [name, enabled] of Object.entries(expected)) {
             expect(manifest.dsh.profile.bundles.includes(name)).toBe(enabled)
           }

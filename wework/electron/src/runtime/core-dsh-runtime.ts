@@ -21,6 +21,8 @@ import { workbenchModePluginStates, type WorkbenchMode } from './workbench-mode.
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
 const PROFILE_STAMP = '.wework-runtime.json'
+// The profile patch runs after bundles, including the web bundle's client HMR entry.
+const PRODUCTION_PROFILE_PATCH = '- id: hmr\n  disabled: true\n- id: client-hmr\n  disabled: true\n'
 const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-app-wework', 'wework-app'],
   ['@wegent/dsh-electron-host', 'wework-electron-host'],
@@ -393,7 +395,7 @@ async function prepareProfile(options: {
     { mode: 0o600 }
   )
   await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
-  await writeFile(join(profileRoot, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
+  await writeFile(join(profileRoot, 'cordis.patch.yml'), PRODUCTION_PROFILE_PATCH, { mode: 0o600 })
   await synchronizeModePluginState(profileRoot, modeStates, managedDependencyNames)
   await ensureCoreWorkspace(workspacePath)
   const preparePlugin = createFileOperationQueue(4)

@@ -87,6 +87,15 @@ remains an independent copy so dependencies resolve from the profile; static web
 resources use directory links. The version stamp is written only after every plugin
 has finished, and any copy failure prevents startup.
 
+生产环境同时关闭 DSH 的配置热更新和客户端模块热更新，安装、更新、启停与卸载插件
+均在显式重启后生效，避免安装改写文件时卸载正在使用的工作台。插件开发会话显式开启
+两种热更新，继续支持源码与客户端页面的即时更新。
+
+Production disables both DSH configuration reloads and client module reloads.
+Plugin installation, updates, toggles and removal take effect after an explicit
+restart, preserving the active workbench while package files change. Plugin
+development sessions explicitly enable both reload paths for source and client UI changes.
+
 本地任务数据库在单个事务中完成初始化与迁移，减少首次启动的磁盘同步次数。
 执行活动修复使用同一事务；失败会回滚全部迁移，已是当前结构的数据库继续直接读取。
 

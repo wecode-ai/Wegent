@@ -33,7 +33,14 @@ export async function verifyPluginEnabledState(control, fixture, enabled, timeou
   )
   assert.equal(Boolean(app?.isEnabled), enabled, 'Composer disagrees with shared enabled state')
   await control.command('fill', testId('composer-plugin-picker-search'), { value: fixture.slug })
-  const picker = JSON.parse(await control.command('snapshot', testId('composer-plugin-picker')))
+  // The shared inventory can settle before the open picker's local request commits.
+  const picker = await until(
+    async () => JSON.parse(await control.command('snapshot', testId('composer-plugin-picker'))),
+    value =>
+      !/Loading plugins|正在加载插件/.test(value.text) &&
+      value.testIds.includes('composer-plugin-picker-item-plugin:' + fixture.slug) === enabled,
+    'The picker did not render the shared enabled state'
+  )
   assert.equal(
     picker.testIds.includes('composer-plugin-picker-item-plugin:' + fixture.slug),
     enabled,

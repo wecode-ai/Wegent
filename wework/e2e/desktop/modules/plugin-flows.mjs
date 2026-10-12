@@ -185,6 +185,16 @@ async function verifyCoreDshPluginManagement({
   const manifest = async () => JSON.parse(await readFile(manifestPath, 'utf8'))
 
   await openManager()
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const events = await fetch(new URL('/plugins/events', initialSnapshot.location), {
+    signal: AbortSignal.timeout(10_000),
+  })
+  await events.body?.cancel()
+  assert.notEqual(
+    events.headers.get('content-type')?.split(';')[0],
+    'text/event-stream',
+    'Production Core DSH must not expose a client hot reload channel'
+  )
   await control.command('fill', '[data-testid="core-dsh-plugin-spec-input"]', {
     value: pluginRoot,
   })
