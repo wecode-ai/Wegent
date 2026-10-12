@@ -15,6 +15,7 @@ vi.mock('node:fs/promises', async importOriginal => {
     rename: vi.fn(actual.rename),
     symlink: vi.fn(actual.symlink),
     readFile: vi.fn(actual.readFile),
+    opendir: vi.fn(actual.opendir),
   }
 })
 
@@ -28,6 +29,7 @@ beforeEach(async () => {
   vi.mocked(fs.rename).mockReset().mockImplementation(actual.rename)
   vi.mocked(fs.symlink).mockReset().mockImplementation(actual.symlink)
   vi.mocked(fs.readFile).mockReset().mockImplementation(actual.readFile)
+  vi.mocked(fs.opendir).mockReset().mockImplementation(actual.opendir)
   directory = await temporaryDirectory('workbench-home-migration-')
   const root = await fs.realpath(directory.path)
   options = {
@@ -86,6 +88,36 @@ async function interruptBeforeMove(): Promise<void> {
 }
 
 describe('migrateWorkbenchHome', () => {
+  test('does not stat a transient regular file removed during relative-link scanning', async () => {
+    await createSource()
+    const gitDirectory = join(options.sourceHome, '.tmp', 'plugins-clone', '.git')
+    const lockPath = join(gitDirectory, 'shallow.lock')
+    await fs.mkdir(gitDirectory, { recursive: true })
+    await fs.writeFile(lockPath, 'transient git lock')
+    let removed = false
+    vi.mocked(fs.opendir).mockImplementation(async (...args) => {
+      const entries = await actual.opendir(...args)
+      const iterator = async function* () {
+        for await (const entry of entries) {
+          if (args[0] === gitDirectory && entry.name === 'shallow.lock') {
+            await fs.unlink(lockPath)
+            removed = true
+          }
+          yield entry
+        }
+      }
+      return { [Symbol.asyncIterator]: iterator } as Awaited<ReturnType<typeof fs.opendir>>
+    })
+
+    await expect(migrateWorkbenchHome(options)).resolves.toBe('migrated')
+
+    expect(removed).toBe(true)
+    await assertBridge()
+    await expect(
+      fs.lstat(join(options.targetHome, '.tmp', 'plugins-clone', '.git', 'shallow.lock'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   test('converts a previously published reverse bridge into a physical migration', async () => {
     await createSource()
     const before = await fs.lstat(options.sourceHome)

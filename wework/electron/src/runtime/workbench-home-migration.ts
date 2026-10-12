@@ -162,8 +162,7 @@ async function collectRelativeLinks(
   const entries = await fs.opendir(directory)
   for await (const entry of entries) {
     const path = join(directory, entry.name)
-    const info = await fs.lstat(path)
-    if (info.isSymbolicLink()) {
+    if (entry.isSymbolicLink()) {
       const target = await fs.readlink(path)
       if (isAbsolute(target)) continue
       // Lexical containment alone misses paths such as "alias/../outside".
@@ -179,7 +178,7 @@ async function collectRelativeLinks(
       if (!contains(home, destination)) {
         links.push({ path: relative(home, path), original: target, destination })
       }
-    } else if (info.isDirectory()) {
+    } else if (entry.isDirectory()) {
       await collectRelativeLinks(home, path, links)
     }
   }
