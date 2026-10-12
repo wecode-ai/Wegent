@@ -1393,6 +1393,84 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudServices.deviceApi.executeCommand).not.toHaveBeenCalled()
   })
 
+  it('invalidates alias-owned plugin support through background discovery without an editor', async () => {
+    const device = {
+      id: 1,
+      device_id: 'logical',
+      socket_device_id: 'relay',
+      name: 'Remote',
+      status: 'online',
+      device_type: 'remote',
+      bind_shell: 'claudecode',
+      executor_version: '2.0.21',
+      runtime_instance_id: 'runtime',
+      is_default: false,
+    }
+    mocks.cloudListDevices.mockResolvedValue([device])
+    const services = createServices()
+    await services.cloudBackgroundApi!.listDevices!()
+    const api = services.projectDevicePluginApi!('relay')
+    mocks.cloudRuntimeIpcRequest.mockRejectedValue(
+      new Error(
+        'runtime_rpc_failed: Unsupported runtime RPC method: runtime.codex.app_server.request'
+      )
+    )
+    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
+    mocks.cloudListDevices.mockResolvedValue([])
+    await services.cloudBackgroundApi!.listDevices!()
+    mocks.cloudListDevices.mockResolvedValue([device])
+    await services.cloudBackgroundApi!.listDevices!()
+    mocks.cloudRuntimeIpcRequest.mockResolvedValue({ marketplaces: [] })
+    await expect(api.readState()).resolves.toMatchObject({ deviceId: 'relay' })
+  })
+
+  it('invalidates plugin knowledge and pending writes when runtime connections are recovered', async () => {
+    const device = {
+      id: 1,
+      device_id: 'remote',
+      name: 'Remote',
+      status: 'online',
+      device_type: 'remote',
+      bind_shell: 'claudecode',
+      executor_version: '2.0.21',
+      runtime_instance_id: 'runtime',
+      is_default: false,
+    }
+    mocks.cloudListDevices.mockResolvedValue([device])
+    const services = createServices()
+    await services.cloudBackgroundApi!.listDevices!()
+    const api = services.projectDevicePluginApi!('remote')
+    mocks.cloudRuntimeIpcRequest.mockRejectedValue(
+      new Error('Unsupported runtime RPC method: runtime.codex.app_server.request')
+    )
+    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
+    await services.recoverRuntimeConnections!()
+    mocks.cloudRuntimeIpcRequest.mockResolvedValue({ marketplaces: [] })
+    await expect(api.readState()).resolves.toMatchObject({ deviceId: 'remote' })
+    let finishRead!: (value: unknown) => void
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async (_method, params) =>
+      params.method === 'plugin/installed'
+        ? new Promise(resolve => {
+            finishRead = resolve
+          })
+        : { marketplaces: [] }
+    )
+    const installing = api.installAvailablePlugin({
+      id: 'quality@team',
+      name: 'quality',
+      manifest: { marketplaceId: 'team', marketplacePath: '/plugins' },
+    } as never)
+    await vi.waitFor(() => expect(finishRead).toBeDefined())
+    await services.recoverRuntimeConnections!()
+    finishRead({ marketplaces: [] })
+    await expect(installing).rejects.toThrow()
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalledWith(
+      'runtime.codex.app_server.request',
+      expect.objectContaining({ method: 'plugin/install' }),
+      'remote'
+    )
+  })
+
   it('targets project plugin RPC and inventory to each cloud or remote execution device', async () => {
     mocks.cloudListDevices.mockResolvedValue(
       ['cloud', 'remote'].map((deviceType, index) => ({

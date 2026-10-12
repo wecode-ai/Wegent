@@ -4,6 +4,7 @@ import {
   getRuntimeRemoteProjectRegistrations,
 } from '@/lib/runtime-project-state'
 import '@/i18n'
+import { createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
 import { describe, expect, test, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import type { ExecutorClient } from '@/api/executorAccess'
@@ -81,11 +82,10 @@ describe('device project settings save', () => {
     queue?: (mutation: () => Promise<unknown>) => Promise<unknown>
   ) {
     const events: string[] = []
-    const upsert = vi.fn(async () => ({
-      ...update,
-      accepted: saveAccepted,
-      error: saveAccepted ? null : 'Owner rejected',
-    }))
+    const upsert = vi.fn(async (data: unknown) => {
+      void data
+      return { ...update, accepted: saveAccepted, error: saveAccepted ? null : 'Owner rejected' }
+    })
     const sync = vi.fn(async () => {
       events.push('sync')
       return { accepted: syncAccepted, error: 'Mirror rejected' }
@@ -103,7 +103,12 @@ describe('device project settings save', () => {
       state: {
         devices: [
           { device_id: 'local', device_type: 'local', status: 'online' },
-          { device_id: 'remote', device_type: 'remote', status: 'online' },
+          {
+            device_id: 'remote',
+            device_type: 'remote',
+            status: 'online',
+            executor_version: '1.8.6',
+          },
         ],
         runtimeWork: {
           projects: [
@@ -134,7 +139,30 @@ describe('device project settings save', () => {
       },
       dispatch: vi.fn(),
       executorClient: {
-        runtime: { upsertLocalRuntimeProject: upsert, syncRuntimeRemoteProjects: sync },
+        runtime: {
+          upsertLocalRuntimeProject: upsert,
+          syncRuntimeRemoteProjects: sync,
+          listRuntimeWork: vi.fn(async () => {
+            const persisted = (upsert.mock.calls.at(-1)?.[0] ?? update) as typeof update
+            return {
+              projects: [
+                {
+                  project: {
+                    ...persisted,
+                    key: update.projectKey,
+                    source: 'local_project',
+                    stateDeviceId: 'remote',
+                    roots: persisted.roots.map(path => ({ kind: 'local', path })),
+                  },
+                  deviceWorkspaces: [],
+                },
+              ],
+              chats: [],
+              totalTasks: 0,
+            }
+          }),
+          renameRuntimeWorkspace: vi.fn(async () => ({ accepted: true, deviceId: 'remote' })),
+        },
       },
       services: { projectApi: {} },
       refreshWorkLists,
@@ -154,14 +182,23 @@ describe('device project settings save', () => {
         getLocalRuntimeStateDeviceId(options.state.devices as never),
         { devices: options.state.devices as never }
       )
-    const { result } = renderHook(() =>
+    const { result, rerender } = renderHook(() =>
       useWorkbenchProjectActions({
         ...options,
         getRuntimeWorkSnapshot,
         getRemoteProjectRegistrations,
       } as never)
     )
-    return { result, upsert, sync, updateRuntimeProject, refreshWorkLists, events }
+    return {
+      result,
+      rerender,
+      upsert,
+      sync,
+      updateRuntimeProject,
+      refreshWorkLists,
+      events,
+      options,
+    }
   }
 
   test('saves full metadata on owner before projecting and synchronizing the stable mirror', async () => {
@@ -202,6 +239,367 @@ describe('device project settings save', () => {
     )
     expect(updateRuntimeProject).not.toHaveBeenCalled()
     expect(sync).not.toHaveBeenCalled()
+  })
+
+  test('rejects an accepted save with a dropped supported AI field before projecting', async () => {
+    const { result, upsert, updateRuntimeProject, sync } = setup()
+    upsert.mockImplementation(
+      async () => ({ ...update, aiSettings: undefined, accepted: true, error: null }) as never
+    )
+    await expect(result.current.updateLocalRuntimeProject(update as never)).rejects.toThrow()
+    expect(updateRuntimeProject).not.toHaveBeenCalled()
+    expect(sync).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ['aiSettings', { instructions: '' }],
+    ['aiSettings', null],
+    ['defaultProjectSpace', null],
+  ])(
+    'rejects an omitted requested echo field %s even for a clear or empty value',
+    async (field, value) => {
+      const { result, upsert, updateRuntimeProject } = setup()
+      upsert.mockImplementation(async data => {
+        const response = { ...(data as typeof update), accepted: true, error: null } as Record<
+          string,
+          unknown
+        >
+        delete response[field as string]
+        return response as never
+      })
+      await expect(
+        result.current.updateLocalRuntimeProject({ ...update, [field as string]: value } as never)
+      ).rejects.toThrow()
+      expect(updateRuntimeProject).not.toHaveBeenCalled()
+    }
+  )
+
+  test('does not infer supported single-root readback through the real IPC response adapter', async () => {
+    const { result, options, upsert, updateRuntimeProject } = setup()
+    const desired = { ...update, roots: ['/new'] }
+    upsert.mockImplementation(async data => ({
+      ...(data as typeof update),
+      accepted: true,
+      error: null,
+    }))
+    const ownerApi = createRuntimeWorkApiFromIpc(
+      async () => ({
+        workspaces: [
+          {
+            workspacePath: '/new',
+            projectKey: 'owner-key',
+            label: update.name,
+            projectSource: 'local_project',
+            projectAiSettings: update.aiSettings,
+            defaultProjectSpace: update.defaultProjectSpace,
+            tasks: [],
+          },
+        ],
+      }),
+      async () => 'remote'
+    )
+    options.executorClient.runtime.listRuntimeWork.mockImplementation(requestOptions =>
+      ownerApi.listRuntimeWork(requestOptions)
+    )
+    await expect(result.current.updateLocalRuntimeProject(desired as never)).rejects.toThrow()
+    expect(updateRuntimeProject).not.toHaveBeenCalled()
+  })
+
+  test.each(['name', 'roots', 'defaultProjectSpace'])(
+    'rejects an accepted echo with a mismatched %s',
+    async field => {
+      const { result, upsert, updateRuntimeProject } = setup()
+      upsert.mockImplementation(
+        async () =>
+          ({
+            ...update,
+            [field]: field === 'roots' ? [...update.roots].reverse() : null,
+            accepted: true,
+          }) as never
+      )
+      await expect(result.current.updateLocalRuntimeProject(update as never)).rejects.toThrow()
+      expect(updateRuntimeProject).not.toHaveBeenCalled()
+    }
+  )
+
+  test('omits unsupported 1.8.5 metadata and keeps the saved mirror values', async () => {
+    const { result, options, upsert, updateRuntimeProject } = setup()
+    options.state.devices[1].executor_version = '1.8.5'
+    const aiSettings = { instructions: 'Preserved legacy metadata' }
+    Object.assign(options.state.runtimeWork.projects[0].project, { aiSettings })
+    await result.current.updateLocalRuntimeProject({
+      ...update,
+      aiSettings: undefined,
+      defaultProjectSpace: undefined,
+    } as never)
+    expect(upsert).toHaveBeenCalledWith({
+      deviceId: update.deviceId,
+      projectKey: update.projectKey,
+      name: update.name,
+      roots: update.roots,
+      runtime: 'codex',
+    })
+    expect(updateRuntimeProject).toHaveBeenCalledWith(expect.objectContaining({ aiSettings }))
+  })
+
+  test('uses only the existing rename path on an unknown device version', async () => {
+    const { result, options, upsert, updateRuntimeProject } = setup()
+    options.state.devices[1].executor_version = 'unknown'
+    const aiSettings = {
+      instructions: 'Preserved',
+      plugins: [{ id: 'quality@team', pluginName: 'quality', marketplaceId: 'team' }],
+    }
+    Object.assign(options.state.runtimeWork.projects[0].project, { aiSettings })
+    options.executorClient.runtime.listRuntimeWork.mockResolvedValue({
+      projects: [
+        {
+          project: {
+            ...update,
+            key: update.projectKey,
+            source: 'local_project',
+            stateDeviceId: 'remote',
+            roots: [{ kind: 'local', path: '/old' }],
+            aiSettings,
+          },
+          deviceWorkspaces: [],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    })
+    await result.current.updateLocalRuntimeProject({
+      deviceId: update.deviceId,
+      projectKey: update.projectKey,
+      name: update.name,
+      roots: ['/old'],
+    })
+    expect(upsert).not.toHaveBeenCalled()
+    expect(options.executorClient.runtime.renameRuntimeWorkspace).toHaveBeenCalledWith({
+      deviceId: 'remote',
+      projectKey: 'owner-key',
+      workspacePath: '/old',
+      runtime: 'codex',
+      name: update.name,
+    })
+    expect(updateRuntimeProject).toHaveBeenCalledWith(
+      expect.objectContaining({ roots: ['/old'], aiSettings })
+    )
+  })
+
+  test('confirms a legacy rename from owner workspace paths when its roots field is absent', async () => {
+    const { result, options, upsert, updateRuntimeProject } = setup()
+    options.state.devices[1].executor_version = 'unknown'
+    options.executorClient.runtime.listRuntimeWork.mockResolvedValue({
+      projects: [
+        {
+          project: {
+            key: update.projectKey,
+            name: update.name,
+            source: 'local_project',
+            stateDeviceId: 'remote',
+          },
+          deviceWorkspaces: [
+            { deviceId: 'remote', workspacePath: '/old', tasks: [], available: true },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    } as never)
+    await result.current.updateLocalRuntimeProject({
+      deviceId: update.deviceId,
+      projectKey: update.projectKey,
+      name: update.name,
+      roots: ['/old'],
+    })
+    expect(upsert).not.toHaveBeenCalled()
+    expect(updateRuntimeProject).toHaveBeenCalledWith(expect.objectContaining({ roots: ['/old'] }))
+  })
+
+  test('confirms the real legacy rename RPC acknowledgement without an unprovided deviceId', async () => {
+    const { result, options, upsert, updateRuntimeProject } = setup()
+    options.state.devices[1].executor_version = 'unknown'
+    const ownerApi = createRuntimeWorkApiFromIpc(
+      async method =>
+        method === 'runtime.workspaces.rename'
+          ? { success: true, accepted: true, workspacePath: '/old', runtime: 'codex' }
+          : {
+              workspaces: [
+                {
+                  workspacePath: '/old',
+                  projectKey: update.projectKey,
+                  label: update.name,
+                  tasks: [],
+                },
+              ],
+            },
+      async () => 'remote'
+    )
+    options.executorClient.runtime.renameRuntimeWorkspace.mockImplementation(
+      data => ownerApi.renameRuntimeWorkspace(data) as never
+    )
+    options.executorClient.runtime.listRuntimeWork.mockImplementation(requestOptions =>
+      ownerApi.listRuntimeWork(requestOptions)
+    )
+    await result.current.updateLocalRuntimeProject({
+      deviceId: update.deviceId,
+      projectKey: update.projectKey,
+      name: update.name,
+      roots: ['/old'],
+    })
+    expect(upsert).not.toHaveBeenCalled()
+    expect(updateRuntimeProject).toHaveBeenCalledWith(
+      expect.objectContaining({ name: update.name, roots: ['/old'] })
+    )
+  })
+
+  test('rejects a modern owner snapshot that drops supported roots even when a workspace remains', async () => {
+    const { result, options, updateRuntimeProject } = setup()
+    options.executorClient.runtime.listRuntimeWork.mockResolvedValue({
+      projects: [
+        {
+          project: {
+            ...update,
+            key: update.projectKey,
+            source: 'local_project',
+            stateDeviceId: 'remote',
+            roots: undefined,
+          },
+          deviceWorkspaces: [
+            { deviceId: 'remote', workspacePath: '/new', tasks: [], available: true },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    } as never)
+    await expect(result.current.updateLocalRuntimeProject(update as never)).rejects.toThrow()
+    expect(updateRuntimeProject).not.toHaveBeenCalled()
+  })
+
+  test('blocks programmatic plugin changes when explicitly unsupported', async () => {
+    const { result, options, upsert } = setup()
+    Object.assign(options.state.devices[1], {
+      runtime_features: {
+        schemaVersion: 4,
+        projectEditing: {
+          multiRoots: true,
+          aiSettings: true,
+          defaultProjectSpace: true,
+          plugins: false,
+        },
+      },
+    })
+    await expect(
+      result.current.updateLocalRuntimeProject({
+        ...update,
+        aiSettings: {
+          plugins: [{ id: 'quality@team', pluginName: 'quality', marketplaceId: 'team' }],
+        },
+      } as never)
+    ).rejects.toThrow()
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  test('rejects an owner readback mismatch even when the upsert echo matches', async () => {
+    const { result, options, updateRuntimeProject, sync } = setup()
+    options.executorClient.runtime.listRuntimeWork.mockResolvedValue({
+      projects: [
+        {
+          project: {
+            ...update,
+            key: update.projectKey,
+            source: 'local_project',
+            stateDeviceId: 'remote',
+            name: 'Old',
+            roots: update.roots.map(path => ({ kind: 'local', path })),
+          },
+          deviceWorkspaces: [],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    })
+    await expect(result.current.updateLocalRuntimeProject(update as never)).rejects.toThrow()
+    expect(updateRuntimeProject).not.toHaveBeenCalled()
+    expect(sync).not.toHaveBeenCalled()
+  })
+
+  test('rejects unsupported AI edits before sending to verified 1.8.5', async () => {
+    const { result, upsert, options } = setup()
+    options.state.devices[1].executor_version = '1.8.5'
+    await expect(result.current.updateLocalRuntimeProject(update as never)).rejects.toThrow()
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  test('rejects offline saves programmatically before dispatch', async () => {
+    const { result, upsert, options } = setup()
+    options.state.devices[1].status = 'offline'
+    await expect(result.current.updateLocalRuntimeProject(update as never)).rejects.toThrow()
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  test('saves supported AI independently when explicit folder editing is disabled', async () => {
+    const { result, options, upsert } = setup()
+    Object.assign(options.state.devices[1], {
+      runtime_features: {
+        schemaVersion: 4,
+        projectEditing: { multiRoots: false, aiSettings: true, plugins: false },
+      },
+    })
+    upsert.mockImplementation(async data => ({
+      ...(data as typeof update),
+      accepted: true,
+      error: null,
+    }))
+    await result.current.updateLocalRuntimeProject({
+      ...update,
+      roots: ['/old'],
+      defaultProjectSpace: undefined,
+    } as never)
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ roots: ['/old'], aiSettings: update.aiSettings })
+    )
+  })
+
+  test('keeps the draft unconfirmed when the owning runtime changes during save', async () => {
+    const { result, rerender, upsert, options, updateRuntimeProject } = setup()
+    let accept!: (response: unknown) => void
+    upsert.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          accept = resolve as never
+        }) as never
+    )
+    const saving = result.current.updateLocalRuntimeProject(update as never)
+    await waitFor(() => expect(upsert).toHaveBeenCalled())
+    options.state.devices = options.state.devices.map(device =>
+      device.device_id === 'remote' ? { ...device, runtime_instance_id: 'replacement' } : device
+    )
+    rerender()
+    accept({ ...update, accepted: true })
+    await expect(saving).rejects.toThrow()
+    expect(updateRuntimeProject).not.toHaveBeenCalled()
+  })
+
+  test('confirms a save when concurrent task activity only changes online to busy', async () => {
+    const { result, rerender, upsert, options, updateRuntimeProject } = setup()
+    let accept!: (response: unknown) => void
+    upsert.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          accept = resolve as never
+        }) as never
+    )
+    const saving = result.current.updateLocalRuntimeProject(update as never)
+    await waitFor(() => expect(upsert).toHaveBeenCalled())
+    options.state.devices = options.state.devices.map(device =>
+      device.device_id === 'remote' ? { ...device, status: 'busy' } : device
+    )
+    rerender()
+    accept({ ...update, accepted: true })
+    await expect(saving).resolves.toBeUndefined()
+    expect(updateRuntimeProject).toHaveBeenCalledWith(update)
   })
 
   test('serializes mirror writes using the latest confirmed settings instead of a queued stale edit', async () => {

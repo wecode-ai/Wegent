@@ -1,9 +1,10 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { LocalProjectEditDialog } from './LocalProjectEditDialog'
+import { ProjectPluginsUnsupportedError } from '@/api/projectDevicePlugins'
 
 const pickerMocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -40,6 +41,246 @@ const folderPickerProps = {
 }
 
 describe('LocalProjectEditDialog', () => {
+  test('keeps a saved default space readable when unsupported and absent from the catalog', async () => {
+    const api = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [] }),
+    } as unknown as ProjectSpaceApi
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        open
+        device={{
+          device_id: 'local-device',
+          device_type: 'remote',
+          status: 'online',
+          name: 'Unknown',
+        }}
+        projectWork={{
+          ...projectWork,
+          project: {
+            ...projectWork.project,
+            defaultProjectSpace: { projectStore: 'backend', projectId: 'saved-space' },
+          },
+        }}
+        projectSpaceApis={[api]}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+    await screen.findByText('不自动加入')
+    expect(screen.getByTestId('local-project-auto-join-space-select')).toHaveValue(
+      'backend:saved-space'
+    )
+    expect(screen.getByTestId('local-project-auto-join-space-select')).toBeDisabled()
+  })
+  test('keeps a saved model readable when unsupported and absent from the catalog', () => {
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        open
+        device={{
+          device_id: 'local-device',
+          device_type: 'remote',
+          status: 'online',
+          name: 'Unknown',
+        }}
+        projectWork={{
+          ...projectWork,
+          project: {
+            ...projectWork.project,
+            aiSettings: { modelSelection: { modelName: 'saved-model', modelType: 'public' } },
+          },
+        }}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByTestId('local-project-settings-ai-tab'))
+    expect(screen.getByTestId('local-project-model-select')).toHaveValue('public:saved-model')
+    expect(screen.getByTestId('local-project-model-select')).toBeDisabled()
+  })
+
+  test('plugin RPC support does not authorize writes to an unsupported AI object', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const pluginApi = {
+      readState: vi.fn().mockResolvedValue({
+        marketplaceItems: [
+          {
+            id: 'quality@team',
+            name: 'quality',
+            installed: true,
+            manifest: { marketplaceId: 'team' },
+          },
+        ],
+      }),
+      installAvailablePlugin: vi.fn(),
+    }
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        open
+        device={{
+          device_id: 'local-device',
+          device_type: 'remote',
+          status: 'online',
+          name: 'Partial',
+          runtime_features: {
+            schemaVersion: 4,
+            projectEditing: { multiRoots: true, aiSettings: false, plugins: true },
+          },
+        }}
+        projectWork={projectWork}
+        pluginApi={pluginApi}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
+    expect(await screen.findByTestId('local-project-plugin-toggle-quality')).toBeDisabled()
+    expect(screen.getByTestId('project-plugins-upgrade-hint')).toBeVisible()
+    fireEvent.click(screen.getByTestId('save-local-project-button'))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(onSave.mock.calls[0][0]).not.toHaveProperty('aiSettings')
+    expect(pluginApi.installAvailablePlugin).not.toHaveBeenCalled()
+  })
+  test('unsupported legacy plugins remain readable without blocking a supported save', async () => {
+    const plugins = [
+      { id: 'quality@team', pluginName: 'quality', marketplaceId: 'team', displayName: 'Quality' },
+    ]
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const pluginApi = {
+      readState: vi.fn().mockRejectedValue(new ProjectPluginsUnsupportedError()),
+      installAvailablePlugin: vi.fn(),
+    }
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        open
+        device={{
+          device_id: 'local-device',
+          device_type: 'remote',
+          status: 'online',
+          executor_version: '2.0.21',
+          name: 'Legacy',
+        }}
+        projectWork={{
+          ...projectWork,
+          project: { ...projectWork.project, aiSettings: { instructions: 'Preserved', plugins } },
+        }}
+        pluginApi={pluginApi}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
+    expect(await screen.findByTestId('project-plugins-upgrade-hint')).toBeVisible()
+    expect(screen.getByTestId('remove-project-selected-plugin-quality@team')).toBeDisabled()
+    expect(screen.getByTestId('save-local-project-button')).toBeEnabled()
+    expect(screen.queryByTestId('local-project-plugins-loading')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('save-local-project-button'))
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ aiSettings: expect.objectContaining({ plugins }) })
+      )
+    )
+    expect(pluginApi.installAvailablePlugin).not.toHaveBeenCalled()
+  })
+
+  test('a genuine plugin load error remains visible while unrelated settings can save', async () => {
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        open
+        projectWork={projectWork}
+        pluginApi={{
+          readState: vi.fn().mockRejectedValue(new Error('Unauthorized plugin inventory')),
+          installAvailablePlugin: vi.fn(),
+        }}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unauthorized plugin inventory')
+    expect(screen.getByTestId('save-local-project-button')).toBeEnabled()
+    expect(screen.queryByTestId('project-plugins-upgrade-hint')).not.toBeInTheDocument()
+  })
+  test('keeps verified 1.8.5 folders editable while preserving unsupported AI settings', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        open
+        device={{
+          device_id: 'local-device',
+          device_type: 'remote',
+          status: 'online',
+          executor_version: '1.8.5',
+          name: 'Legacy',
+        }}
+        projectWork={{
+          ...projectWork,
+          project: { ...projectWork.project, aiSettings: { instructions: 'Preserved' } },
+        }}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('add-local-project-folders')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('local-project-settings-ai-tab'))
+    expect(screen.getByTestId('local-project-instructions-input')).toBeDisabled()
+    expect(screen.getByTestId('project-ai-settings-upgrade-hint')).toBeVisible()
+    fireEvent.click(screen.getByTestId('save-local-project-button'))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(onSave).toHaveBeenCalledWith(
+      expect.not.objectContaining({ aiSettings: expect.anything() })
+    )
+  })
+
+  test('unknown remote versions allow name-only editing and retain saved plugin selections', async () => {
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        open
+        device={{
+          device_id: 'local-device',
+          device_type: 'remote',
+          status: 'online',
+          name: 'Unknown',
+        }}
+        projectWork={{
+          ...projectWork,
+          project: {
+            ...projectWork.project,
+            aiSettings: {
+              plugins: [
+                {
+                  id: 'quality@team',
+                  pluginName: 'quality',
+                  marketplaceId: 'team',
+                  displayName: 'Quality',
+                },
+              ],
+            },
+          },
+        }}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('local-project-name-input')).toBeEnabled()
+    expect(screen.getByTestId('add-local-project-folders')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
+    expect(screen.getByTestId('project-selected-plugin-quality@team')).toHaveTextContent('Quality')
+    expect(screen.getByTestId('remove-project-selected-plugin-quality@team')).toBeDisabled()
+  })
   test('saves a cached remote descriptor through the owning device and project key', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     render(
@@ -50,6 +291,7 @@ describe('LocalProjectEditDialog', () => {
           device_type: 'remote',
           status: 'online',
           name: 'Remote',
+          executor_version: '1.8.6',
         }}
         open
         projectWork={{
@@ -85,6 +327,7 @@ describe('LocalProjectEditDialog', () => {
           device_type: 'remote',
           status: 'online',
           name: 'Remote',
+          executor_version: '1.8.6',
         }}
         onGetDeviceHomeDirectory={getHome}
         onListDeviceDirectories={listDirectories}
@@ -112,6 +355,7 @@ describe('LocalProjectEditDialog', () => {
           device_type: 'remote',
           status: 'offline',
           name: 'Remote',
+          executor_version: '1.8.6',
         }}
         open
         projectWork={{
@@ -176,6 +420,7 @@ describe('LocalProjectEditDialog', () => {
         device={{
           device_id: 'remote-device',
           name: 'Remote',
+          executor_version: '1.8.6',
           status: 'online',
           device_type: 'remote',
         }}

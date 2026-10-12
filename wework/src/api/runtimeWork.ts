@@ -83,6 +83,9 @@ export const REMOTE_TEAM_BACKEND_UNSUPPORTED = 'REMOTE_TEAM_BACKEND_UNSUPPORTED'
 
 export interface RuntimeWorkListRequestOptions extends Pick<HttpRequestOptions, 'signal'> {
   preferCached?: boolean
+  deviceId?: string
+  /** Preserve absent raw roots when verifying a runtime that advertises root editing. */
+  requireExplicitProjectRoots?: boolean
 }
 
 export function createRuntimeWorkApi(client: HttpClient) {

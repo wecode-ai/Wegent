@@ -23,11 +23,28 @@ import {
 import { remotePluginInstallation } from './local/codexPluginInstallation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import i18n from '@/i18n'
+import {
+  projectEditingCapabilities,
+  projectEditingDeviceRevision,
+  type ProjectPluginSupport,
+} from '@/lib/project-editing-capabilities'
+import type { DeviceInfo } from '@/types/api'
 
 export type ProjectDevicePluginApi = Pick<
   LocalCodexPluginApi,
   'readState' | 'installAvailablePlugin'
->
+> & {
+  observeDevice?: (device: DeviceInfo | null) => void
+  invalidate?: () => void
+  checkSupport?: () => Promise<void>
+}
+
+export class ProjectPluginsUnsupportedError extends Error {
+  constructor() {
+    super(i18n.t('common:workbench.project_plugins_upgrade_required'))
+    this.name = 'ProjectPluginsUnsupportedError'
+  }
+}
 export type ProjectPluginRequest = <T>(
   method: string,
   params: Record<string, unknown>
@@ -70,22 +87,83 @@ export function createRemoteProjectDevicePluginApi(
   request: ProjectPluginRequest
 ): ProjectDevicePluginApi {
   let generation = 0
+  let inventoryRevision = 0
   let cached: Awaited<ReturnType<ProjectDevicePluginApi['readState']>> | null = null
+  let deviceRevision: string | null = null
+  let support: 'supported' | 'unsupported' | 'unknown' = 'unknown'
+  let advertisedSupport: ProjectPluginSupport = 'unknown'
+  let available = true
+  let supportRequest: Promise<void> | null = null
+  const invalidate = () => {
+    generation += 1
+    cached = null
+    supportRequest = null
+    support = advertisedSupport
+  }
+  const ensureSameRuntime = (revision: number) => {
+    if (revision !== generation) throw new Error(i18n.t('common:workbench.project_runtime_changed'))
+    if (!available) throw new Error(i18n.t('common:workbench.project_device_offline_settings'))
+  }
   const installedInventory = async () => {
-    const result = await request<{ marketplaces: CodexPluginMarketplaceEntry[] }>(
-      'plugin/installed',
-      {}
-    )
-    return mergeInstalledPluginSummaries(result.marketplaces, [], key => i18n.t(key))
+    ensureSameRuntime(generation)
+    if (support === 'unsupported') throw new ProjectPluginsUnsupportedError()
+    const revision = generation
+    try {
+      const result = await request<{ marketplaces: CodexPluginMarketplaceEntry[] }>(
+        'plugin/installed',
+        {}
+      )
+      ensureSameRuntime(revision)
+      support = 'supported'
+      return mergeInstalledPluginSummaries(result.marketplaces, [], key => i18n.t(key))
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /^(?:(?:unsupported_method|runtime_rpc_failed): )?Unsupported runtime RPC method: runtime\.codex\.app_server\.request$/.test(
+          error.message.trim()
+        )
+      ) {
+        if (revision === generation) support = 'unsupported'
+        throw new ProjectPluginsUnsupportedError()
+      }
+      throw error
+    }
   }
   return {
+    observeDevice(device) {
+      const revision = projectEditingDeviceRevision(device)
+      if (revision === deviceRevision) return
+      deviceRevision = revision
+      available = Boolean(device && (device.status === 'online' || device.status === 'busy'))
+      advertisedSupport = projectEditingCapabilities(device).plugins
+      invalidate()
+    },
+    invalidate,
+    async checkSupport() {
+      ensureSameRuntime(generation)
+      if (support === 'unsupported') throw new ProjectPluginsUnsupportedError()
+      if (support === 'supported') return
+      if (!supportRequest) {
+        const pending = installedInventory().then(() => undefined)
+        supportRequest = pending
+        void pending
+          .finally(() => {
+            if (supportRequest === pending) supportRequest = null
+          })
+          .catch(() => undefined)
+      }
+      await supportRequest
+    },
     async readState(params = {}) {
       if (cached && !params.refresh) return cached
       const revision = generation
+      const readInventoryRevision = inventoryRevision
       const installedPlugins = await installedInventory()
+      ensureSameRuntime(revision)
       const result = await request<{ marketplaces: CodexPluginMarketplaceEntry[] }>('plugin/list', {
         cwds: null,
       })
+      ensureSameRuntime(revision)
       const marketplaceItems = applyInstalledPluginsToMarketplaceItems(
         result.marketplaces.flatMap(marketplace =>
           marketplace.plugins.map(plugin => toMarketplaceItem(marketplace, plugin))
@@ -105,11 +183,13 @@ export function createRemoteProjectDevicePluginApi(
         marketplacePath: '',
         installRegistryPath: '',
       }
-      if (revision === generation) cached = state
+      if (readInventoryRevision === inventoryRevision) cached = state
       return state
     },
     async installAvailablePlugin(item) {
+      const revision = generation
       const existing = (await installedInventory()).find(plugin => pluginMatches(plugin, item))
+      ensureSameRuntime(revision)
       if (existing) return existing
       const marketplaceId = String(item.manifest.marketplaceId || '').trim()
       if (!marketplaceId || !item.name.trim())
@@ -133,6 +213,7 @@ export function createRemoteProjectDevicePluginApi(
           )
       let result: unknown
       for (let index = 0; index < installNames.length; index += 1) {
+        ensureSameRuntime(revision)
         try {
           result = await request('plugin/install', {
             marketplacePath: local ? marketplacePath : null,
@@ -150,8 +231,7 @@ export function createRemoteProjectDevicePluginApi(
             throw error
         }
       }
-      generation += 1
-      cached = null
+      ensureSameRuntime(revision)
       const installed = local
         ? toInstalledPlugin(
             { name: marketplaceId, path: marketplacePath, plugins: [] },
@@ -171,6 +251,9 @@ export function createRemoteProjectDevicePluginApi(
         value: false,
         mergeStrategy: 'upsert',
       })
+      ensureSameRuntime(revision)
+      inventoryRevision += 1
+      cached = null
       return { ...installed, spec: { ...installed.spec, enabled: false } }
     },
   }

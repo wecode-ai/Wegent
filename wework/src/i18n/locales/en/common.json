@@ -3988,7 +3988,16 @@
     "slash_command_group_extensions": "Extensions",
     "edit": "Edit",
     "delete": "Delete",
-    "composer_plugins_load_error": "Failed to load plugins"
+    "composer_plugins_load_error": "Failed to load plugins",
+    "project_settings_upgrade_required": "This device does not support the changed project settings. Upgrade its runtime and try again.",
+    "project_folders_upgrade_required": "Upgrade this device to edit project folders. Existing folders are preserved.",
+    "project_ai_settings_upgrade_required": "Upgrade this device to edit AI settings and quick phrases. Saved settings are preserved.",
+    "project_default_space_upgrade_required": "Upgrade this device to change the default project space. The saved selection is preserved.",
+    "project_plugins_upgrade_required": "Upgrade this device to manage project plugins. Saved plugin selections are preserved.",
+    "project_plugins_support_pending": "Checking plugin support on this device… Other project settings can still be saved.",
+    "project_save_verification_failed": "The device did not confirm the saved project settings. Your changes remain open; check the device and try again.",
+    "project_runtime_changed": "The device runtime changed while saving. Your changes remain open; reopen project settings and try again.",
+    "project_saved_space": "Saved project space ({{id}})"
   },
   "delivery": {
     "action": "Deliver",

@@ -3985,7 +3985,16 @@
     "slash_command_group_extensions": "扩展",
     "edit": "编辑",
     "delete": "删除",
-    "composer_plugins_load_error": "加载插件失败"
+    "composer_plugins_load_error": "加载插件失败",
+    "project_settings_upgrade_required": "当前设备不支持修改这些项目设置。请升级设备运行时后重试。",
+    "project_folders_upgrade_required": "升级此设备后可编辑项目目录，已有目录会保留。",
+    "project_ai_settings_upgrade_required": "升级此设备后可编辑 AI 设置和快捷短语，已保存设置会保留。",
+    "project_default_space_upgrade_required": "升级此设备后可修改默认项目空间，已保存选择会保留。",
+    "project_plugins_upgrade_required": "升级此设备后可管理项目插件，已保存的插件选择会保留。",
+    "project_plugins_support_pending": "正在确认此设备的插件能力，其他项目设置仍可保存。",
+    "project_save_verification_failed": "设备未确认项目设置已保存。你的修改仍保留，请检查设备后重试。",
+    "project_runtime_changed": "保存期间设备运行时已变化。你的修改仍保留，请重新打开项目设置后重试。",
+    "project_saved_space": "已保存的项目空间（{{id}}）"
   },
   "delivery": {
     "action": "交付",

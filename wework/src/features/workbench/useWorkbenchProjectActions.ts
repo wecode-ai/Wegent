@@ -1,11 +1,18 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
 import { getLocalRuntimeStateDeviceId } from '@/lib/runtime-project-state'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
+import { projectEditingDeviceRevision } from '@/lib/project-editing-capabilities'
+import {
+  findOwnedRuntimeProject,
+  saveProjectOnOwningRuntime,
+  type ProjectEditingSave,
+} from '@/lib/project-editing-save'
 import {
   getRuntimeProjectSyncTarget,
   type RuntimeProjectSyncTarget,
 } from '@/lib/runtime-project-identity'
-import { useCallback, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import type { Dispatch } from 'react'
 import {
   checkoutProjectBranch,
@@ -29,8 +36,6 @@ import type {
   GitRepoInfo,
   ProjectWithTasks,
   RuntimeProjectAppearanceRequest,
-  RuntimeProjectAiSettings,
-  RuntimeProjectSpaceRef,
   RuntimeRemoteProjectRegistration,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
@@ -142,6 +147,10 @@ export function useWorkbenchProjectActions({
 }: UseWorkbenchProjectActionsOptions) {
   const { t } = useTranslation('common')
   const runtimeTaskPinMutationTailsRef = useRef(new Map<string, Promise<void>>())
+  const currentDevicesRef = useRef(state.devices)
+  useLayoutEffect(() => {
+    currentDevicesRef.current = state.devices
+  }, [state.devices])
 
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
@@ -312,35 +321,41 @@ export function useWorkbenchProjectActions({
   )
 
   const updateLocalRuntimeProject = useCallback(
-    async (data: {
-      deviceId: string
-      projectKey: string
-      name: string
-      roots: string[]
-      defaultProjectSpace: RuntimeProjectSpaceRef | null
-      aiSettings: RuntimeProjectAiSettings | null
-    }) => {
-      const response = await executorClient.runtime.upsertLocalRuntimeProject({
-        ...data,
-        runtime: 'codex',
-      })
-      if (!response.accepted) {
-        const message = response.error || 'Failed to update local project'
-        dispatch({ type: 'error_set', error: message })
-        throw new Error(message)
+    async (data: ProjectEditingSave) => {
+      const device = findWorkbenchDevice(state.devices, data.deviceId)
+      if (!device || (device.status !== 'online' && device.status !== 'busy')) {
+        throw new Error(t('workbench.project_device_offline_settings'))
       }
+      const deviceRevision = projectEditingDeviceRevision(device)
+      const ensureSameRuntime = () => {
+        if (
+          projectEditingDeviceRevision(
+            findWorkbenchDevice(currentDevicesRef.current, data.deviceId)
+          ) !== deviceRevision
+        ) {
+          throw new Error(t('workbench.project_runtime_changed'))
+        }
+      }
+      const existing = findOwnedRuntimeProject(getRuntimeWorkSnapshot(), device, data.projectKey)
+      if (!existing) throw new Error(t('workbench.project_owner_unresolved'))
+      const update = await saveProjectOnOwningRuntime(data, {
+        device,
+        projectWork: existing,
+        runtime: executorClient.runtime,
+        pluginApi: services.projectDevicePluginApi?.(data.deviceId),
+        ensureSameRuntime,
+        onRejected: message => dispatch({ type: 'error_set', error: message }),
+        messages: {
+          upgrade: t('workbench.project_settings_upgrade_required'),
+          plugins: t('workbench.project_plugins_upgrade_required'),
+          rejected: t('workbench.project_save_verification_failed'),
+          mismatch: t('workbench.project_save_verification_failed'),
+        },
+      })
       clearRemoteProjectSyncRemoval({
-        deviceId: response.deviceId,
-        projectKey: response.projectKey,
-      })
-      const update: RuntimeProjectUpdate = {
         deviceId: data.deviceId,
-        projectKey: response.projectKey,
-        name: response.name,
-        roots: response.roots,
-        defaultProjectSpace: response.defaultProjectSpace ?? null,
-        aiSettings: response.aiSettings ?? null,
-      }
+        projectKey: data.projectKey,
+      })
       updateRuntimeProject(update)
       const localStateDeviceId = getLocalRuntimeStateDeviceId(state.devices)
       if (localStateDeviceId && localStateDeviceId !== data.deviceId && state.runtimeWork) {
@@ -373,6 +388,7 @@ export function useWorkbenchProjectActions({
       refreshWorkLists,
       state.devices,
       state.runtimeWork,
+      services,
       t,
       updateRuntimeProject,
     ]

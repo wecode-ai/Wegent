@@ -89,6 +89,7 @@ import type {
   LocalDeviceApp,
   ProjectWithTasks,
   RuntimeTaskAddress,
+  RuntimeLocalProjectUpsertRequest,
   RuntimeTaskCreateResponse,
   RuntimeGoal,
   RuntimeGoalGetResponse,
@@ -11334,24 +11335,49 @@ describe('WorkbenchProvider runtime tasks', () => {
       })),
       totalTasks: 0,
     })
+    let ownerWork = initialWork
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi
         .fn()
-        .mockImplementation(() =>
-          holdRefresh ? delayedRefresh.promise : Promise.resolve(initialWork)
+        .mockImplementation((options?: { deviceId?: string }) =>
+          options?.deviceId
+            ? Promise.resolve(ownerWork)
+            : holdRefresh
+              ? delayedRefresh.promise
+              : Promise.resolve(initialWork)
         ),
       removeRuntimeWorkspace: vi
         .fn()
         .mockResolvedValueOnce({ accepted: true })
         .mockImplementationOnce(() => localRemoval.promise),
-      upsertLocalRuntimeProject: vi.fn().mockResolvedValue({
-        accepted: true,
-        deviceId: 'alias-8',
-        projectKey: 'shared-key',
-        name: 'Edited B',
-        roots: ['/srv/edited'],
-        aiSettings: { instructions: 'New defaults' },
-      }),
+      upsertLocalRuntimeProject: vi
+        .fn()
+        .mockImplementation(async (data: RuntimeLocalProjectUpsertRequest) => {
+          ownerWork = createRuntimeWork({
+            projects: [
+              {
+                project: {
+                  key: data.projectKey,
+                  name: data.name,
+                  source: 'local_project',
+                  stateDeviceId: data.deviceId,
+                  roots: data.roots.map(path => ({ kind: 'local', path })),
+                  aiSettings: data.aiSettings,
+                  defaultProjectSpace: data.defaultProjectSpace,
+                },
+                deviceWorkspaces: [
+                  {
+                    deviceId: data.deviceId,
+                    workspacePath: data.roots[0],
+                    tasks: [],
+                    available: true,
+                  },
+                ],
+              },
+            ],
+          })
+          return { ...data, accepted: true }
+        }),
     })
     const services = createWorkbenchServices({
       deviceApi: {
@@ -11362,6 +11388,7 @@ describe('WorkbenchProvider runtime tasks', () => {
               device_id: 'remote-' + id,
               socket_device_id: 'alias-' + id,
               device_type: 'remote',
+              executor_version: '2.0.21',
               is_default: false,
             })
           ),
@@ -11376,6 +11403,7 @@ describe('WorkbenchProvider runtime tasks', () => {
               device_id: 'remote-' + id,
               socket_device_id: 'alias-' + id,
               device_type: 'remote',
+              executor_version: '2.0.21',
               is_default: false,
             })
           )

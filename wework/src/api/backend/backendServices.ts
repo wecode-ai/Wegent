@@ -15,6 +15,7 @@ import { createImSessionApi } from '@/api/imSessions'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
 import { createRuntimeProfileApi } from '@/api/runtimeProfiles'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
@@ -24,6 +25,8 @@ import { getRuntimeConfig } from '@/config/runtime'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
+import { createWorkbenchDeviceResolver } from '@/lib/workbench-device'
+import type { DeviceInfo } from '@/types/api'
 import {
   createCloudRuntimeIpcClient,
   createSocketClient,
@@ -114,6 +117,42 @@ export function createBackendWorkbenchServices(
       clientOrigin: 'wework',
     })
   const projectDevicePluginApis = new Map<string, ProjectDevicePluginApi>()
+  let knownDevices: DeviceInfo[] | null = null
+  let discoveryRevision = 0
+  let lastDiscoveryRevision = 0
+  const discoverDevices = deviceApi.listDevices
+  const observeDevices: typeof discoverDevices = async options => {
+    const revision = ++discoveryRevision
+    const devices = await discoverDevices(options)
+    if (revision >= lastDiscoveryRevision) {
+      lastDiscoveryRevision = revision
+      knownDevices = devices
+      const resolver = createWorkbenchDeviceResolver(devices)
+      projectDevicePluginApis.forEach((api, id) => api.observeDevice?.(resolver.resolve(id)))
+    }
+    return devices
+  }
+  deviceApi.listDevices = observeDevices
+  deviceApi.getAllDevices = observeDevices
+  const ownerRuntimeApis = new Map<string, ReturnType<typeof createRuntimeWorkApiFromIpc>>()
+  const ownerRuntimeApi = (deviceId: string) => {
+    let api = ownerRuntimeApis.get(deviceId)
+    if (!api) {
+      api = createRuntimeWorkApiFromIpc(
+        (method, params) => composerRuntimeIpc.request(method, params, deviceId),
+        async () => deviceId
+      )
+      ownerRuntimeApis.set(deviceId, api)
+    }
+    return api
+  }
+  const listAllRuntimeWork = runtimeWorkApi.listRuntimeWork
+  runtimeWorkApi.listRuntimeWork = options =>
+    options?.deviceId
+      ? ownerRuntimeApi(options.deviceId).listRuntimeWork(options)
+      : listAllRuntimeWork(options)
+  runtimeWorkApi.upsertLocalRuntimeProject = data =>
+    ownerRuntimeApi(data.deviceId).upsertLocalRuntimeProject(data)
   const projectDevicePluginApi = (deviceId: string) => {
     let api = projectDevicePluginApis.get(deviceId)
     if (!api) {
@@ -121,6 +160,8 @@ export function createBackendWorkbenchServices(
         composerRuntimeIpc.request('runtime.codex.app_server.request', { method, params }, deviceId)
       )
       projectDevicePluginApis.set(deviceId, api)
+      if (knownDevices)
+        api.observeDevice?.(createWorkbenchDeviceResolver(knownDevices).resolve(deviceId))
     }
     return api
   }
@@ -190,6 +231,7 @@ export function createBackendWorkbenchServices(
       },
     },
     async recoverRuntimeConnections() {
+      projectDevicePluginApis.forEach(api => api.invalidate?.())
       socketClient.disconnect()
       await socketClient.connect(undefined, true)
     },

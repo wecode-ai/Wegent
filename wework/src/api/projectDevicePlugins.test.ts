@@ -15,6 +15,179 @@ const item = {
 }
 
 describe('device project plugins', () => {
+  test('disables both concurrent installations without treating cache changes as a new runtime', async () => {
+    let finishSecond!: (value: unknown) => void
+    const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === 'plugin/installed') return { marketplaces: [] }
+      if (method === 'plugin/install' && params.pluginName === 'second')
+        return new Promise(resolve => {
+          finishSecond = resolve
+        })
+      return {}
+    })
+    const api = createRemoteProjectDevicePluginApi('remote', request as never)
+    const first = api.installAvailablePlugin(item as never)
+    const second = api.installAvailablePlugin({
+      ...item,
+      id: 'second@team',
+      name: 'second',
+    } as never)
+    await vi.waitFor(() => expect(finishSecond).toBeDefined())
+    await first
+    finishSecond({})
+    await expect(second).resolves.toMatchObject({ spec: { enabled: false } })
+    expect(request).toHaveBeenCalledWith(
+      'config/value/write',
+      expect.objectContaining({ keyPath: 'plugins."quality@team".enabled', value: false })
+    )
+    expect(request).toHaveBeenCalledWith(
+      'config/value/write',
+      expect.objectContaining({ keyPath: 'plugins."second@team".enabled', value: false })
+    )
+  })
+  test('does not read a replacement runtime catalogue after an old inventory resolves', async () => {
+    let finishRead!: (value: unknown) => void
+    const request = vi.fn(async (method: string) =>
+      method === 'plugin/installed'
+        ? new Promise(resolve => {
+            finishRead = resolve
+          })
+        : { marketplaces: [] }
+    )
+    const api = createRemoteProjectDevicePluginApi('remote', request as never)
+    const device = {
+      device_id: 'remote',
+      device_type: 'remote',
+      status: 'online',
+      runtime_instance_id: 'old',
+    }
+    api.observeDevice?.(device as never)
+    const reading = api.readState()
+    api.observeDevice?.({ ...device, runtime_instance_id: 'replacement' } as never)
+    finishRead({ marketplaces: [] })
+    await expect(reading).rejects.toThrow()
+    expect(request).not.toHaveBeenCalledWith('plugin/list', expect.anything())
+  })
+  test('does not start plugin RPC for an observed offline or missing owner', async () => {
+    const request = vi.fn()
+    const api = createRemoteProjectDevicePluginApi('remote', request as never)
+    api.observeDevice?.({ device_id: 'remote', device_type: 'remote', status: 'offline' } as never)
+    await expect(api.installAvailablePlugin(item as never)).rejects.toThrow()
+    api.observeDevice?.(null)
+    await expect(api.readState()).rejects.toThrow()
+    expect(request).not.toHaveBeenCalled()
+  })
+  test('never starts a plugin write after capability or runtime changes during its read', async () => {
+    let finishRead!: (result: unknown) => void
+    const request = vi.fn(async (method: string) =>
+      method === 'plugin/installed'
+        ? new Promise(resolve => {
+            finishRead = resolve
+          })
+        : { marketplaces: [] }
+    )
+    const api = createRemoteProjectDevicePluginApi('remote', request as never)
+    api.observeDevice?.({
+      device_id: 'remote',
+      device_type: 'remote',
+      status: 'online',
+      runtime_instance_id: 'old',
+    } as never)
+    const installing = api.installAvailablePlugin(item as never)
+    api.observeDevice?.({
+      device_id: 'remote',
+      device_type: 'remote',
+      status: 'online',
+      runtime_instance_id: 'replacement',
+      runtime_features: { schemaVersion: 4, projectEditing: { plugins: false } },
+    } as never)
+    finishRead({ marketplaces: [] })
+    await expect(installing).rejects.toThrow()
+    expect(request).not.toHaveBeenCalledWith('plugin/install', expect.anything())
+    expect(request).not.toHaveBeenCalledWith('config/value/write', expect.anything())
+  })
+  test('invalidates unsupported knowledge after runtime instance, version, and status changes', async () => {
+    const request = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          'unsupported_method: Unsupported runtime RPC method: runtime.codex.app_server.request'
+        )
+      )
+    const api = createRemoteProjectDevicePluginApi('remote', request as never)
+    const device = {
+      device_id: 'remote',
+      device_type: 'remote',
+      executor_version: '2.0.21',
+      runtime_instance_id: 'old',
+      status: 'online',
+    } as const
+    api.observeDevice?.(device as never)
+    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
+    request.mockResolvedValue({ marketplaces: [] })
+    api.observeDevice?.({ ...device, runtime_instance_id: 'replacement' } as never)
+    await expect(api.readState()).resolves.toMatchObject({ deviceId: 'remote' })
+    request.mockRejectedValue(
+      new Error('Unsupported runtime RPC method: runtime.codex.app_server.request')
+    )
+    api.observeDevice?.({ ...device, executor_version: '2.0.22' } as never)
+    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
+    request.mockResolvedValue({ marketplaces: [] })
+    api.observeDevice?.({ ...device, status: 'offline' } as never)
+    api.observeDevice?.({ ...device, status: 'online' } as never)
+    await expect(api.readState()).resolves.toMatchObject({ deviceId: 'remote' })
+  })
+
+  test('explicit false capability never probes or writes', async () => {
+    const request = vi.fn()
+    const api = createRemoteProjectDevicePluginApi('remote', request as never)
+    api.observeDevice?.({
+      device_id: 'remote',
+      device_type: 'remote',
+      status: 'online',
+      runtime_features: { schemaVersion: 4, projectEditing: { plugins: false } },
+    } as never)
+    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
+    await expect(api.installAvailablePlugin(item as never)).rejects.toMatchObject({
+      name: 'ProjectPluginsUnsupportedError',
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+  test.each(['', 'unsupported_method: ', 'runtime_rpc_failed: '])(
+    'remembers an exact unsupported runtime dispatcher with %s without repeating probes or writes',
+    async prefix => {
+      const request = vi
+        .fn()
+        .mockRejectedValue(
+          new Error(`${prefix}Unsupported runtime RPC method: runtime.codex.app_server.request`)
+        )
+      const api = createRemoteProjectDevicePluginApi('legacy', request as never)
+      await expect(api.readState()).rejects.toMatchObject({
+        name: 'ProjectPluginsUnsupportedError',
+      })
+      await expect(api.readState({ refresh: true })).rejects.toMatchObject({
+        name: 'ProjectPluginsUnsupportedError',
+      })
+      await expect(api.installAvailablePlugin(item as never)).rejects.toMatchObject({
+        name: 'ProjectPluginsUnsupportedError',
+      })
+      expect(request).toHaveBeenCalledTimes(1)
+      expect(request).toHaveBeenCalledWith('plugin/installed', {})
+    }
+  )
+
+  test.each([
+    'Unauthorized',
+    'Request timed out',
+    'executor disconnected',
+    'plugin/installed failed',
+  ])('keeps %s visible as a genuine error', async message => {
+    const request = vi.fn().mockRejectedValue(new Error(message))
+    const api = createRemoteProjectDevicePluginApi('remote', request as never)
+    await expect(api.readState()).rejects.toThrow(message)
+    await expect(api.readState({ refresh: true })).rejects.toThrow(message)
+    expect(request).toHaveBeenCalledTimes(2)
+  })
   test('refreshes installed membership after an external uninstall', async () => {
     let installed = true
     const request = vi.fn(async (method: string) => ({

@@ -426,6 +426,15 @@ export function createHybridWorkbenchServices(
   const rememberedCloudArchives = new Map<string, ArchivedConversationsListResponse>()
   const cloudArchiveRequests = new Map<string, Promise<void>>()
   const cloudArchiveFetchedAt = new Map<string, number>()
+  const projectDevicePluginApis = new Map<string, ProjectDevicePluginApi>()
+  const observeProjectPluginDevices = () => {
+    const resolver = createWorkbenchDeviceResolver([
+      ...rememberedLocalDevices,
+      ...currentAppDeviceRegistrations(),
+      ...rememberedCloudDevices,
+    ])
+    projectDevicePluginApis.forEach((api, id) => api.observeDevice?.(resolver.resolve(id)))
+  }
 
   const rememberLocalDevices = (devices: DeviceInfo[]) => {
     rememberedLocalDevices = devices
@@ -435,6 +444,7 @@ export function createHybridWorkbenchServices(
         localRuntimeInstanceIds.add(device.runtime_instance_id)
       }
     })
+    observeProjectPluginDevices()
   }
   const rememberCloudDevices = (
     devices: DeviceInfo[],
@@ -445,6 +455,7 @@ export function createHybridWorkbenchServices(
     rememberedCloudDevices = devices
     rememberedAppDeviceRegistrations = appDeviceRegistrations
     rememberedCloudDevicesRevision = revision
+    observeProjectPluginDevices()
   }
   const rememberLocalRuntimeWorkDevices = (work: RuntimeWorkListResponse) => {
     work.projects.forEach(project => {
@@ -601,7 +612,6 @@ export function createHybridWorkbenchServices(
     unscopedCloudDevicesRequest = request
     return request
   }
-  const projectDevicePluginApis = new Map<string, ProjectDevicePluginApi>()
   const projectDevicePluginApi = (deviceId: string): ProjectDevicePluginApi => {
     const cached = projectDevicePluginApis.get(deviceId)
     if (cached) return cached
@@ -612,10 +622,14 @@ export function createHybridWorkbenchServices(
     const resolve = async () =>
       (await runtimeApiForDevice(deviceId)) === localServices.runtimeWorkApi ? local : remote
     const api: ProjectDevicePluginApi = {
+      observeDevice: device => remote.observeDevice?.(device),
+      invalidate: () => remote.invalidate?.(),
+      checkSupport: async () => (await resolve()).checkSupport?.(),
       readState: async params => (await resolve()).readState(params),
       installAvailablePlugin: async item => (await resolve()).installAvailablePlugin(item),
     }
     projectDevicePluginApis.set(deviceId, api)
+    observeProjectPluginDevices()
     return api
   }
   const runtimeApiForDevice = async (deviceId?: string | null) => {
@@ -895,6 +909,10 @@ export function createHybridWorkbenchServices(
       return runtimeApiForDevice(data.deviceId).then(api => api.prepareRuntimeModel(data))
     },
     async listRuntimeWork(requestOptions) {
+      if (requestOptions?.deviceId) {
+        const api = await runtimeApiForDevice(requestOptions.deviceId)
+        return api.listRuntimeWork(requestOptions)
+      }
       return listLocalRuntimeWork(requestOptions)
     },
     getKeybindings() {
@@ -1557,6 +1575,7 @@ export function createHybridWorkbenchServices(
     }),
     chatStream: hybridChatStream,
     async recoverRuntimeConnections() {
+      projectDevicePluginApis.forEach(api => api.invalidate?.())
       await Promise.all([
         localServices.recoverRuntimeConnections?.(),
         cloudServices.recoverRuntimeConnections?.(),

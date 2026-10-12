@@ -293,8 +293,8 @@ interface DesktopSidebarProps {
     projectKey: string
     name: string
     roots: string[]
-    defaultProjectSpace: RuntimeProjectSpaceRef | null
-    aiSettings: RuntimeProjectAiSettings | null
+    defaultProjectSpace?: RuntimeProjectSpaceRef | null
+    aiSettings?: RuntimeProjectAiSettings | null
   }) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>

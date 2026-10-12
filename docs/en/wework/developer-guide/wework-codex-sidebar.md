@@ -46,6 +46,23 @@ Updated folders and AI settings apply to new conversations. Existing conversatio
 
 An offline device's editor can display saved settings, but saving and plugin installation are disabled. A failed save retains the draft. If the execution device saves successfully but local index synchronization fails, the UI reports the synchronization error.
 
+### Compatibility by feature
+
+Registration and heartbeat metadata declare `multiRoots`, `aiSettings`, `defaultProjectSpace`, and `plugins` independently in `runtime_features.projectEditing`. Explicit booleans take precedence; false, missing, or malformed explicit fields grant no writes. Devices without advertisements use only verified legacy contracts: Executor 1.8.5 supports names and multiple folders, and 1.8.6 and the verified published image version 2.0.21 additionally support AI settings, quick phrases, and the default project space. Other versions, including unknown and future versions, retain only the existing rename operation.
+
+Project plugin selections live inside the AI settings object, so changing them requires both AI settings writes and plugin RPC support; RPC support alone permits only read-only inventory. Plugin support cannot be inferred from the version. Without an advertisement, the client sends a read-only `plugin/installed` query to the owning runtime through `runtime.codex.app_server.request`. Only an explicitly unsupported runtime method produces an upgrade hint; authentication, disconnect, timeout, and plugin service failures remain visible errors. Device, runtime instance, version, and online-state changes invalidate support and inventory caches. Saved selections remain readable, unsupported controls are disabled, and plugin discovery does not block unrelated settings saves.
+
+Saves omit unsupported fields and compare the owner's response with its live project list, including the name, root order, and settings. Dropped or mismatched values leave the draft open and never replace the local projection with empty values.
+
+### Explicit, safe upgrade of a legacy Docker device
+
+The device maintainer initiates upgrades; Codex homes are never automatically migrated, merged, or overwritten.
+
+1. While the old container still exists, identify its actual Codex home, Executor home, workspaces, volumes, and mounts. A legacy image may omit `CODEX_HOME`; identify the default Codex home instead of backing up only the new version's expected path.
+2. Stop new task writes and back up the actual `.codex-global-state.json`, pending oplog, Codex configuration/sessions/plugins, persisted Executor identity, and workspaces to independent storage before destroying the old container. Verify projects, roots, and AI settings in the backup. Record the original `device_id`, `runtime_instance_id`, mounts, user/home identity, permissions, and image version. Treat backups as private data because they may contain credentials.
+3. Retain the original device ID, persisted runtime identity, volumes, and home mounts when preparing the replacement. Identify the new canonical persisted `CODEX_HOME`, restore the backup there, then start the replacement container. If the destination already contains data, back it up separately and explicitly choose which home to keep; never silently merge or overwrite two homes.
+4. Verify unchanged identity and compare the owning runtime's project names, root order, default spaces, AI settings, and plugin selections against the backup, then verify capability advertisement. Keep the old backup for rollback; a successful runtime upgrade alone does not confirm data preservation.
+
 ## Executor identity, projects, and local sidebar references
 
 - `deviceId` is the device address used for execution requests. `workbench-device.ts` resolves aliases centrally. When available, the persisted `runtime_instance_id` determines executor equality while requests retain the routable `device_id`. Records without a Runtime identity are associated only through known aliases; conflicting Runtime owners of one alias produce an explicit error.

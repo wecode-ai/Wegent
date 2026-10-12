@@ -230,6 +230,14 @@ async function verifyCloudProjectCreationSources(
     await control.command('waitFor', '[data-testid="local-project-edit-dialog"]')
   }
   await openEditor()
+  await control.command('waitFor', '[data-testid="add-local-project-folders"]', { enabled: true })
+  assert.equal(
+    Number(
+      await control.command('getElementCount', '[data-testid="project-folders-upgrade-hint"]')
+    ),
+    0,
+    'A capable owning runtime must retain folder editing without an upgrade hint'
+  )
   await control.command('fill', '[data-testid="local-project-name-input"]', {
     value: 'Cloud edited project',
   })
@@ -240,6 +248,16 @@ async function verifyCloudProjectCreationSources(
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
   await control.command('click', '[data-testid="make-primary-root-1"]')
   await control.command('click', '[data-testid="local-project-settings-ai-tab"]')
+  await control.command('waitFor', '[data-testid="local-project-instructions-input"]', {
+    enabled: true,
+  })
+  assert.equal(
+    Number(
+      await control.command('getElementCount', '[data-testid="project-ai-settings-upgrade-hint"]')
+    ),
+    0,
+    'A capable owning runtime must retain AI editing without an upgrade hint'
+  )
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: 'Cloud project instructions survive restart.',
   })
@@ -257,6 +275,13 @@ async function verifyCloudProjectCreationSources(
   await control.command('waitFor', '[data-testid="local-project-plugins-loading"]', {
     visible: false,
   })
+  assert.equal(
+    Number(
+      await control.command('getElementCount', '[data-testid="project-plugins-upgrade-hint"]')
+    ),
+    0,
+    'A real capable cloud runtime must advertise or confirm project plugin support'
+  )
   assert.equal(
     Number(
       await control.command(

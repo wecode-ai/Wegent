@@ -464,7 +464,11 @@ interface CloudModelGateway {
 interface RuntimeWorkIpcOptions {
   resolveDeviceId?: (data?: Record<string, unknown>) => Promise<string>
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
-  adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
+  adaptListResponse?: (
+    response: unknown,
+    deviceId: string,
+    options?: RuntimeWorkListRequestOptions
+  ) => RuntimeWorkListResponse
   cloudModelGateway?: CloudModelGateway
   resolveProxy?: RuntimeProxyResolver
   user?: User
@@ -2088,7 +2092,8 @@ function normalizeLocalDeviceRecord<T extends Record<string, unknown>>(
 
 function adaptRuntimeWorkListResponse(
   response: unknown,
-  localDeviceId: string
+  localDeviceId: string,
+  options?: RuntimeWorkListRequestOptions
 ): RuntimeWorkListResponse {
   const record = recordValue(response)
   if (Array.isArray(record.projects) && Array.isArray(record.chats)) {
@@ -2179,7 +2184,9 @@ function adaptRuntimeWorkListResponse(
       ? workspace.projectRoots
       : Array.isArray(workspace.project_roots)
         ? workspace.project_roots
-        : [workspacePath]
+        : options?.requireExplicitProjectRoots
+          ? undefined
+          : [workspacePath]
     const projectKind =
       stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local'
     const projectSource =
@@ -2271,10 +2278,14 @@ function adaptRuntimeWorkListResponse(
         stateDeviceId: localDeviceId,
         ownerDeviceId: workspaceDeviceId,
         ownerProjectKey: ownerProjectKey ?? null,
-        roots: rawRoots
-          .map(root => stringValue(root))
-          .filter((root): root is string => Boolean(root))
-          .map(path => ({ kind: 'local', path })),
+        ...(rawRoots
+          ? {
+              roots: rawRoots
+                .map(root => stringValue(root))
+                .filter((root): root is string => Boolean(root))
+                .map(path => ({ kind: 'local' as const, path })),
+            }
+          : {}),
         sidebarOrder:
           typeof projectSidebarOrder === 'number' && Number.isInteger(projectSidebarOrder)
             ? projectSidebarOrder
@@ -2550,7 +2561,7 @@ export function createRuntimeWorkApiFromIpc(
     async listRuntimeWork(
       requestOptions?: RuntimeWorkListRequestOptions
     ): Promise<RuntimeWorkListResponse> {
-      const localDeviceId = await getDefaultDeviceId()
+      const localDeviceId = requestOptions?.deviceId ?? (await getDefaultDeviceId())
       const startedAt = nowMs()
       try {
         const response = await request(
@@ -2558,7 +2569,7 @@ export function createRuntimeWorkApiFromIpc(
           requestOptions?.preferCached ? { preferCached: true } : {},
           localDeviceId
         )
-        const runtimeWork = adaptListResponse(response, localDeviceId)
+        const runtimeWork = adaptListResponse(response, localDeviceId, requestOptions)
         return runtimeWork
       } catch (error) {
         console.error(`[Wework] ${transportLabel} runtime IPC list failed`, {
