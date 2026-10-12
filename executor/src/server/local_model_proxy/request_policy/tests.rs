@@ -50,7 +50,9 @@ fn codex_request() -> Value {
             {"type": "namespace", "name": "app", "tools": [
                 {"type": "function", "name": "read", "parameters": {"type": "object"}}
             ]},
-            {"type": "custom", "name": "apply_patch", "format": {"type": "text"}}
+            {"type": "custom", "name": "apply_patch", "format": {"type": "text"}},
+            {"type": "web_search", "external_web_access": true},
+            {"type": "image_generation", "quality": "high"}
         ]
     })
 }
@@ -123,7 +125,7 @@ async fn passthrough_skips_image_sidecar_requests() {
 }
 
 #[tokio::test]
-async fn standard_mode_bridges_all_tools_even_with_native_flags_enabled() {
+async fn standard_mode_bridges_client_tools_and_omits_hosted_tools() {
     let prepared = prepare(
         &upstream("standard"),
         &serde_json::to_vec(&codex_request()).unwrap(),
@@ -135,6 +137,7 @@ async fn standard_mode_bridges_all_tools_even_with_native_flags_enabled() {
     .await
     .expect("standard request");
     let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+    assert_eq!(request["tools"].as_array().unwrap().len(), 3);
     assert!(request["tools"]
         .as_array()
         .unwrap()
@@ -145,6 +148,100 @@ async fn standard_mode_bridges_all_tools_even_with_native_flags_enabled() {
         Some(Conversion::Responses(_))
     ));
     assert_eq!(request["max_output_tokens"], 12345);
+}
+
+#[tokio::test]
+async fn auto_mode_preserves_hosted_tools() {
+    let original = codex_request();
+    let prepared = prepare(
+        &upstream("auto"),
+        &serde_json::to_vec(&original).unwrap(),
+        None,
+        &Default::default(),
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+    for tool_type in ["web_search", "image_generation"] {
+        let find_tool = |body: &Value| {
+            body["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["type"] == tool_type)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(find_tool(&request), find_tool(&original));
+    }
+}
+
+#[tokio::test]
+async fn standard_mode_rejects_forced_hosted_tools_before_sending() {
+    for choice in [
+        json!({"type": "web_search"}),
+        json!({"type": "image_generation"}),
+        json!({"type": "allowed_tools", "mode": "required", "tools": [
+            {"type": "web_search"}
+        ]}),
+        json!("required"),
+    ] {
+        let request = json!({
+            "model": "catalog",
+            "tools": [{"type": "web_search"}],
+            "tool_choice": choice,
+        });
+        let error = prepare(
+            &upstream("standard"),
+            &serde_json::to_vec(&request).unwrap(),
+            None,
+            &Default::default(),
+            false,
+            false,
+        )
+        .await
+        .err()
+        .expect("a forced hosted tool is unavailable in standard mode");
+        assert_eq!(error.status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(error.detail.contains("tool_choice"));
+    }
+}
+
+#[tokio::test]
+async fn standard_mode_preserves_supported_tool_choices() {
+    for choice in [
+        json!("auto"),
+        json!("none"),
+        json!("required"),
+        json!({"type": "function", "name": "read"}),
+        json!({"type": "allowed_tools", "mode": "required", "tools": [
+            {"type": "function", "name": "read"}
+        ]}),
+    ] {
+        let request = json!({
+            "model": "catalog",
+            "tools": [
+                {"type": "function", "name": "read", "parameters": {"type": "object"}},
+                {"type": "web_search"}
+            ],
+            "tool_choice": choice,
+        });
+        let prepared = prepare(
+            &upstream("standard"),
+            &serde_json::to_vec(&request).unwrap(),
+            None,
+            &Default::default(),
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+        let result: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert_eq!(result["tool_choice"], choice);
+        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
+    }
 }
 
 #[test]

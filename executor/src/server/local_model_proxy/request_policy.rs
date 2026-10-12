@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 use axum::http::StatusCode;
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::{
     prepare_fork_request, prepare_model_switch_request, prepare_request_with_history,
@@ -49,6 +50,45 @@ pub(super) struct PreparedRequest {
     pub stripped_encrypted_content: usize,
 }
 
+/// Standard providers can execute client functions but cannot supply hosted tools.
+/// Validate forced choices instead of silently changing the requested tool.
+pub(super) fn retain_function_tools(request: &mut Value) -> Result<(), HttpError> {
+    if let Some(tools) = request.get_mut("tools").and_then(Value::as_array_mut) {
+        tools.retain(|tool| tool.get("type").and_then(Value::as_str) == Some("function"));
+    }
+    let choice = &request["tool_choice"];
+    let valid_choice = match choice.get("type").and_then(Value::as_str) {
+        Some("function") => true,
+        Some("allowed_tools") => {
+            choice
+                .get("tools")
+                .and_then(Value::as_array)
+                .is_some_and(|tools| {
+                    !tools.is_empty()
+                        && tools.iter().all(|tool| {
+                            tool.get("type").and_then(Value::as_str) == Some("function")
+                        })
+                })
+        }
+        Some(_) => false,
+        None => {
+            choice.as_str() != Some("required")
+                || request
+                    .get("tools")
+                    .and_then(Value::as_array)
+                    .is_some_and(|tools| !tools.is_empty())
+        }
+    };
+    if !valid_choice {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: "Codex standard mode tool_choice requires client function tools".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Preserve the routed request in passthrough mode or apply protocol adaptations.
 pub(super) async fn prepare(
     upstream: &LocalModelProxyUpstream,
     body: &[u8],

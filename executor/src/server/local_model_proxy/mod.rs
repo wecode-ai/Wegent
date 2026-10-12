@@ -183,6 +183,7 @@ struct ResponsesToolCapabilities {
     convert_custom_tools: bool,
     native_tool_search: bool,
     native_namespace_tools: bool,
+    function_tools_only: bool,
 }
 
 impl LocalModelProxyUpstream {
@@ -192,6 +193,7 @@ impl LocalModelProxyUpstream {
                 convert_custom_tools: true,
                 native_tool_search: false,
                 native_namespace_tools: false,
+                function_tools_only: true,
             };
         }
         if self.codex_request_mode == CodexRequestMode::Passthrough {
@@ -199,12 +201,14 @@ impl LocalModelProxyUpstream {
                 convert_custom_tools: false,
                 native_tool_search: true,
                 native_namespace_tools: true,
+                function_tools_only: false,
             };
         }
         ResponsesToolCapabilities {
             convert_custom_tools: self.convert_custom_tools,
             native_tool_search: self.native_tool_search,
             native_namespace_tools: self.native_namespace_tools,
+            function_tools_only: false,
         }
     }
 }
@@ -1576,6 +1580,7 @@ fn prepare_request(
             convert_custom_tools,
             native_tool_search: true,
             native_namespace_tools: true,
+            function_tools_only: false,
         },
         max_output_tokens,
         None,
@@ -1611,6 +1616,9 @@ fn prepare_request_with_model_hint(
             detail: format!("Failed to convert local model request: {error}"),
         })?;
         responses_body = converted;
+        if tool_capabilities.function_tools_only {
+            request_policy::retain_function_tools(&mut responses_body)?;
+        }
         let conversion = (!context.is_empty()).then_some(Conversion::Responses(context));
         let expanded_browser_tools = HashSet::new();
         let body = serde_json::to_vec(&responses_body).map_err(|error| HttpError {
@@ -3035,6 +3043,7 @@ mod tests {
                 convert_custom_tools: false,
                 native_tool_search: false,
                 native_namespace_tools: false,
+                function_tools_only: false,
             },
             None,
             Some("wework-kimi-k3"),
