@@ -307,7 +307,9 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('- name: Prepare desktop release assets')
     expect(workflow).toContain('release-manifests/*')
     expect(workflow).toContain("! -name 'WeworkComponent_*.tar.gz'")
-    expect(workflow).toContain('desktop-component-release.mjs release-assets version')
+    expect(workflow).toMatch(
+      /node wework\/scripts\/upload-desktop-component-assets\.mjs\s+\\\s+release-assets version "\$RELEASE_TAG"/
+    )
     expect(workflow).toContain('desktop-component-release.mjs release-assets shared')
     expect(workflow).toContain('Reusing immutable component asset')
     expect(workflow).toContain('collect-harness-runtime-release-assets.mjs')
