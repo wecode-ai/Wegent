@@ -162,9 +162,10 @@ mod tests {
     }
 
     struct WorkspaceEnv {
-        _lock: std::sync::MutexGuard<'static, ()>,
         _guards: Vec<EnvGuard>,
         _home: tempfile::TempDir,
+        // Restore the environment before releasing its shared test lock.
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     fn clear_workspace_env() -> WorkspaceEnv {

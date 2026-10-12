@@ -1786,7 +1786,8 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         return run_codex_app_server_turn_with_cancel(&client.binary, request, options).await;
     }
-    let _capability_lease = crate::services::capability_activation::begin_execution().await;
+    let mut capability_lease =
+        Some(crate::services::capability_activation::begin_execution().await);
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -1901,6 +1902,10 @@ async fn run_codex_app_server_turn_on_shared_client(
                 )
                 .await?;
         }
+
+        // Thread initialization captures native capabilities; model work must not
+        // keep capability publication or other task startups waiting.
+        drop(capability_lease.take());
 
         if awaits_initial_goal_turn {
             if let Some(settings_params) =
@@ -2135,7 +2140,8 @@ pub async fn run_codex_app_server_turn_with_cancel(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    let _capability_lease = crate::services::capability_activation::begin_execution().await;
+    let mut capability_lease =
+        Some(crate::services::capability_activation::begin_execution().await);
     let _home_lease = super::instance_home::acquire(&request)?;
     super::environment_setup::prepare_execution_environment(&request).await?;
     super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
@@ -2258,6 +2264,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             )
             .await?;
         }
+        drop(capability_lease.take());
         if !request.ephemeral {
             if let Some(goal) = initial_thread_goal.as_ref() {
                 let goal_params = thread_goal_set_params(&thread_id, goal)?;

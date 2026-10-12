@@ -255,7 +255,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           payload,
           isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed'
         )
-        if (match && !match.settled) {
+        if (match) {
           void reconcileTerminalTranscript(
             match.address,
             isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed',

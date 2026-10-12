@@ -136,8 +136,8 @@ function setLocalizedActionCopy() {
       : `Disable ${failedPluginName} and restart`
   }
   retryButton.textContent = isChinese ? '重新启动' : 'Restart'
-  recoverButton.textContent = isChinese ? '恢复工作台' : 'Recover workbench'
-  resetOpenButton.textContent = isChinese ? '更多重置选项' : 'More reset options'
+  recoverButton.textContent = isChinese ? '修复启动' : 'Repair startup'
+  resetOpenButton.textContent = isChinese ? '重置个人状态' : 'Reset personal state'
   confirmationCancel.textContent = isChinese ? '取消' : 'Cancel'
 }
 
@@ -152,21 +152,21 @@ function showConfirmation(mode) {
   confirmationElement.hidden = false
   document.documentElement.dataset.confirmationVisible = 'true'
   if (mode === 'recover') {
-    confirmationTitle.textContent = isChinese ? '恢复工作台？' : 'Recover the workbench?'
+    confirmationTitle.textContent = isChinese ? '修复启动？' : 'Repair startup?'
     confirmationDescription.textContent = isChinese
-      ? '将清除标签页、分屏和上次会话恢复状态。登录、项目、任务和偏好设置不会受到影响。'
-      : 'This clears tabs, split layouts, and previous-session restore state. Your sign-in, projects, tasks, and preferences are preserved.'
-    confirmationSubmit.textContent = isChinese ? '恢复并重启' : 'Recover and restart'
+      ? '将清理运行环境和缓存，重启后自动重建。登录、设置、布局、插件、任务和会话都会保留。'
+      : 'This rebuilds the runtime and clears caches. Your sign-in, settings, layout, plugins, tasks, and conversations are preserved.'
+    confirmationSubmit.textContent = isChinese ? '修复并重启' : 'Repair and restart'
     confirmationSubmit.classList.remove('startup-button-danger')
     confirmationSubmit.classList.add('startup-button-primary')
     confirmationSubmit.focus()
     return
   }
-  confirmationTitle.textContent = isChinese ? '彻底重置应用状态？' : 'Reset all app state?'
+  confirmationTitle.textContent = isChinese ? '重置个人状态？' : 'Reset personal state?'
   confirmationDescription.textContent = isChinese
-    ? '将退出登录，并清除界面偏好、标签页和应用缓存。本地任务、插件、智能应用和工作目录会保留。'
-    : 'This signs you out and clears UI preferences, tabs, and app caches. Local tasks, plugins, Smart apps, and workspaces are preserved.'
-  confirmationSubmit.textContent = isChinese ? '彻底重置并重启' : 'Reset and restart'
+    ? '将修复启动，并退出登录、恢复默认设置和布局、移除已安装插件。任务、会话、智能应用和项目文件都会保留。'
+    : 'This repairs startup, signs you out, restores default settings and layouts, and removes installed plugins. Tasks, conversations, Smart apps, and project files are preserved.'
+  confirmationSubmit.textContent = isChinese ? '重置并重启' : 'Reset and restart'
   confirmationSubmit.classList.remove('startup-button-primary')
   confirmationSubmit.classList.add('startup-button-danger')
   confirmationSubmit.focus()
@@ -213,7 +213,14 @@ setLocalizedActionCopy()
 disablePluginButton.addEventListener('click', () => {
   if (failedPluginName) void runRecoveryAction('disablePlugin', failedPluginName)
 })
-retryButton.addEventListener('click', () => void runRecoveryAction('retry'))
+retryButton.addEventListener('click', () => {
+  if (pendingResetMode) {
+    const action = pendingResetMode === 'recover' ? 'recoverWorkbench' : pendingResetMode
+    void runRecoveryAction(action)
+    return
+  }
+  void runRecoveryAction('retry')
+})
 recoverButton.addEventListener('click', () => showConfirmation('recover'))
 resetOpenButton.addEventListener('click', () => showConfirmation('resetAppState'))
 confirmationCancel.addEventListener('click', hideConfirmation)
