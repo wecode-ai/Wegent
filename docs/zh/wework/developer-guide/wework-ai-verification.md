@@ -8,6 +8,8 @@ Wework 支持启动隔离的开发验证会话，让 AI 在真实 Electron 应�
 
 ## 启动会话
 
+构建时的 `prepare-codex-binary.mjs` 使用 Node 原生 HTTP/HTTPS 流下载锁定版本，处理重定向并删除失败的临时文件；归档通过完整性校验后才解包使用。下载流不依赖 Node 内置 Fetch 的 Undici 解析器，避免其异常终止构建进程。
+
 ```bash
 pnpm --filter wework ai:verify start
 ```

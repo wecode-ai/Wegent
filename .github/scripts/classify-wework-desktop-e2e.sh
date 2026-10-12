@@ -14,6 +14,7 @@ core_segments=(
   collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
   collaboration-remote-group-coordinate
+  collaboration-remote-group-planning-details
   collaboration-human-round-resume
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
@@ -175,7 +176,7 @@ core_shards=(
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate
+  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details
   # Keep the startup benchmark isolated from concurrent Electron cold starts.
   dsh-runtime-upgrade
 )
@@ -319,6 +320,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
   select_target "core:collaboration-remote-group-coordinate"
+  select_target "core:collaboration-remote-group-planning-details"
   select_target "core:collaboration-human-round-resume"
   select_target "core:collaboration-local-group-cancellation"
 }
@@ -658,6 +660,11 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-remote-group-coordinate.scenario.mjs)
       select_target "core:collaboration-remote-group-coordinate"
+      select_target "core:collaboration-remote-group-planning-details"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-remote-group-planning-details.scenario.mjs)
+      select_target "core:collaboration-remote-group-planning-details"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-human-round-resume.scenario.mjs)

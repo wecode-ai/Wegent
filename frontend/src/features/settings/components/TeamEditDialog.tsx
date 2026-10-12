@@ -394,6 +394,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Shells data for resolving custom shell runtime types
   const [shells, setShells] = useState<UnifiedShell[]>([])
+  const [loadingShells, setLoadingShells] = useState(true)
 
   // Simplified editor state
   const [simpleExecutorMode, setSimpleExecutorMode] = useState<SimpleExecutorMode>('simple')
@@ -430,15 +431,22 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   // Load shells data on mount
   useEffect(() => {
     if (!open) return
+    let active = true
+    setLoadingShells(true)
     const fetchShells = async () => {
       try {
         const response = await shellApis.getUnifiedShells(scope, groupName)
-        setShells(response.data || [])
+        if (active) setShells(response.data || [])
       } catch (error) {
         console.error('Failed to fetch shells:', error)
+      } finally {
+        if (active) setLoadingShells(false)
       }
     }
-    fetchShells()
+    void fetchShells()
+    return () => {
+      active = false
+    }
   }, [open, scope, groupName])
 
   // Filter bots based on current mode
@@ -1641,7 +1649,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               disabled={
                 saving ||
                 (useSimpleEditor &&
-                  (!selectedSimpleShell || (!!simpleModelName && simpleLoadingModels)))
+                  (loadingShells ||
+                    !selectedSimpleShell ||
+                    (!!simpleModelName && simpleLoadingModels)))
               }
               variant="primary"
             >

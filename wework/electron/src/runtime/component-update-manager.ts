@@ -247,7 +247,11 @@ export class ComponentUpdateManager {
     current?: ComponentSet
   ): Promise<ComponentPaths> {
     const paths = await this.resolvePaths(packaged, current)
-    const executor = current?.components.executor ?? packaged.components.executor
+    const installedExecutor = current?.components.executor
+    const executor =
+      installedExecutor?.workbenchSchema !== undefined
+        ? installedExecutor
+        : packaged.components.executor
     const sha256 = 'contentSha256' in executor ? executor.contentSha256 : executor.sha256
     await this.validateExecutor(
       paths.executor,

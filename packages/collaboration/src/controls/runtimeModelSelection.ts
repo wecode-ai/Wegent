@@ -1,6 +1,7 @@
 import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type { RuntimeSendRequest } from "@wegent/chat-core/runtime-task-api-types";
 import {
+  getCloudModelReasoning,
   getCloudModelUpstreamApiFormat,
   resolveModelExecutionSelection,
   supportsCloudExecution,
@@ -33,6 +34,8 @@ export const CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION =
   "weworkCloudModelNativeToolSearch";
 export const CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION =
   "weworkCloudModelNativeNamespaceTools";
+export const CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION =
+  "weworkCloudModelCodexRequestMode";
 
 const CLOUD_VISION_SIDECAR_CONFIG_KEY = "visionSidecarModel";
 
@@ -124,6 +127,13 @@ function cloudNativeToolCapabilities(
   upstreamApiFormat: string,
 ): { nativeToolSearch: boolean; nativeNamespaceTools: boolean } {
   const nativeByDefault = upstreamApiFormat === "openai-responses";
+  const mode = model.config?.codex_request_mode;
+  if (mode === "standard" || mode === "passthrough") {
+    return {
+      nativeToolSearch: mode === "passthrough",
+      nativeNamespaceTools: mode === "passthrough",
+    };
+  }
   return {
     nativeToolSearch:
       configuredBooleanValue(
@@ -280,6 +290,21 @@ export function selectedModelExecutionFields(
     executionModel.modelType === "user" ||
     executionModel.modelType === "group"
   ) {
+    const reasoning = getCloudModelReasoning(selectedModel);
+    if (reasoning.effort && modelOptions.reasoning == null) {
+      modelOptions.reasoning = reasoning.effort;
+    }
+    if (reasoning.summary && modelOptions.summary == null) {
+      modelOptions.summary = reasoning.summary;
+    }
+    const requestMode = selectedModel.config?.codex_request_mode;
+    if (
+      requestMode === "auto" ||
+      requestMode === "standard" ||
+      requestMode === "passthrough"
+    ) {
+      modelOptions[CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION] = requestMode;
+    }
     if (executionModel.modelNamespace) {
       modelOptions[CLOUD_MODEL_NAMESPACE_OPTION] =
         executionModel.modelNamespace;

@@ -39,6 +39,35 @@ afterEach(async () => {
 })
 
 describe('ComponentUpdateManager', () => {
+  test('uses packaged schema for an identical executor selected by old update metadata', async () => {
+    const fixture = await createFixture()
+    const schema = { protocol_version: 1, workbench_layout_versions: [1] }
+    const packaged = JSON.parse(await readFile(join(fixture.resources, 'components.json'), 'utf8'))
+    Object.assign(packaged.components.executor, { workbenchSchema: schema })
+    await writeFile(join(fixture.resources, 'components.json'), JSON.stringify(packaged))
+    const update = await createExecutorUpdate(fixture.root, 'executor-v1')
+    await mkdir(join(fixture.data, 'managed-components'), { recursive: true })
+    await writeFile(
+      join(fixture.data, 'managed-components', 'state.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        current: { appVersion, components: update.manifest.components },
+      })
+    )
+    const validateExecutor = vi.fn(async () => {})
+    const manager = createManager(
+      fixture,
+      async () => new Response(null, { status: 404 }),
+      appVersion,
+      validateExecutor
+    )
+    await manager.prepareStartup()
+    expect(validateExecutor).toHaveBeenLastCalledWith(
+      join(fixture.resources, 'bin', 'wegent-executor'),
+      { sha256: packaged.components.executor.sha256, response: schema }
+    )
+  })
+
   test('passes the selected update schema with its verified executor hash', async () => {
     const fixture = await createFixture()
     const update = await createExecutorUpdate(fixture.root, 'executor-schema')

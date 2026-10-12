@@ -139,6 +139,7 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
+mod reply_prediction;
 mod text_generation;
 use text_generation::configure_text_generation;
 #[path = "codex/diagnostics.rs"]
@@ -3608,7 +3609,7 @@ pub(crate) fn bind_codex_thread_model_route(
             runtime_proxy_url(&request.model_config),
         )
     } else {
-        local_model_proxy::upstream_from_model_config(&request.model_config)
+        local_model_proxy::upstream_from_model_config(&request.model_config)?
     };
     let Some(upstream) = upstream else {
         return Ok(None);
@@ -3788,7 +3789,7 @@ fn build_codex_launch_config_with_route_scope(
             ));
         }
     } else if let Some(upstream) =
-        local_model_proxy::upstream_from_model_config(&request.model_config)
+        local_model_proxy::upstream_from_model_config(&request.model_config)?
     {
         let mut upstream = upstream;
         inject_session_headers(&mut upstream.default_headers, &request.task_id);
@@ -4033,6 +4034,7 @@ fn explicit_codex_upstream(
     object.insert("base_url".to_owned(), Value::String(base_url.to_owned()));
     object.insert("api_key".to_owned(), Value::String(api_key.to_owned()));
     local_model_proxy::upstream_from_model_config(&config)
+        .expect("explicit model config should be valid")
         .expect("explicit model config should produce an upstream")
 }
 
@@ -4284,6 +4286,7 @@ fn configured_codex_provider(
         proxy_url: proxy_url.map(str::to_owned),
         model_id: None,
         routing_model_id: None,
+        codex_request_mode: Default::default(),
         max_output_tokens: None,
     })
 }

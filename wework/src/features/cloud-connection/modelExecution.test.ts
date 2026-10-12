@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { UnifiedModel } from '@/types/api'
 import {
+  getCloudModelReasoning,
   getCloudModelUpstreamApiFormat,
   resolveModelExecutionSelection,
   supportsCloudExecution,
@@ -15,6 +16,18 @@ function buildUnifiedModel(config?: Record<string, unknown>): UnifiedModel {
 }
 
 describe('modelExecution', () => {
+  it('selects valid reasoning fields without carrying unknown provider options', () => {
+    expect(
+      getCloudModelReasoning(
+        buildUnifiedModel({
+          reasoning: { effort: 'HIGH', summary: 'detailed', secret: 'provider-key' },
+        })
+      )
+    ).toEqual({ effort: 'high', summary: 'detailed' })
+    expect(getCloudModelReasoning(buildUnifiedModel({ reasoning: [] }))).toEqual({})
+    expect(getCloudModelReasoning(buildUnifiedModel({ reasoning: { effort: false } }))).toEqual({})
+  })
+
   it('uses the canonical model identity for execution', () => {
     expect(
       resolveModelExecutionSelection({

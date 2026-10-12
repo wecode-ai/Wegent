@@ -39,6 +39,10 @@ const CHECKPOINT_RESOURCES = new Map([
   ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  [
+    'collaboration-remote-group-planning-details',
+    ['collaboration-runtime', 'desktop-runtime-intensive'],
+  ],
   ['collaboration-human-round-resume', ['collaboration-runtime', 'desktop-runtime-intensive']],
   [
     'collaboration-local-group-cancellation',
@@ -106,6 +110,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-group-coordinate.scenario.mjs',
   'collaboration-remote-group-coordinate':
     './scenarios/collaboration-remote-group-coordinate.scenario.mjs',
+  'collaboration-remote-group-planning-details':
+    './scenarios/collaboration-remote-group-planning-details.scenario.mjs',
   'collaboration-human-round-resume': './scenarios/collaboration-human-round-resume.scenario.mjs',
   'collaboration-local-group-cancellation':
     './scenarios/collaboration-local-group-cancellation.scenario.mjs',
@@ -154,6 +160,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
   'collaboration-remote-group-coordinate',
+  'collaboration-remote-group-planning-details',
   'collaboration-human-round-resume',
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',

@@ -38,15 +38,11 @@
     }
   },
   "workbench": {
-    "reply_prediction_model_description": "Used only for reply suggestions, without changing the task model.",
     "reply_prediction_generating": "Generating a suggestion…",
     "reply_prediction_accept": "Accept suggestion",
     "reply_prediction_title": "Reply suggestions",
     "reply_prediction_enable": "Predict the next reply",
-    "reply_prediction_description": "After an AI response, show a suggestion in the empty composer. Press Tab, Right Arrow, or Enter to accept, then edit and send. Predictions use the selected model's allowance.",
-    "reply_prediction_model": "Prediction model",
-    "reply_prediction_choose_model": "Choose a separate prediction model",
-    "reply_prediction_unavailable": "Prediction model unavailable. Choose another model.",
+    "reply_prediction_description": "After an AI response, show a suggestion in the empty composer. Press Tab, Right Arrow, or Enter to accept, then edit and send. Predictions use the current conversation's model and allowance.",
     "reply_prediction_save_failed": "Could not save reply suggestion settings",
     "github_cli_login_title": "GitHub · GitHub CLI",
     "github_cli_login_description": "Sign in with GitHub CLI on this device. Enter the one-time code on GitHub; credentials stay with gh. No ChatGPT authorization is needed.",

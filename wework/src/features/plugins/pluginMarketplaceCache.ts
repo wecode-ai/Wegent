@@ -7,6 +7,7 @@ import type {
 } from '@/types/api'
 import type { InstalledPluginItem } from '@/components/plugins/PluginManagementRows'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
+import { slimPluginManifestForCache } from '@/features/plugins/slimPluginManifest'
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
 import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugins'
 import { isOpenAiOfficialRemoteMarketplaceId } from './marketplaceIdentity'
@@ -117,25 +118,6 @@ function slimInterface(interfaceData?: PluginInterface | null): PluginInterface 
   }
 }
 
-function slimManifest(manifest?: Record<string, unknown> | null): Record<string, unknown> {
-  if (!manifest) return {}
-  const keys = [
-    'name',
-    'id',
-    'marketplaceId',
-    'marketplacePath',
-    'source',
-    'installPolicy',
-    'authPolicy',
-    'availability',
-    'disabledReason',
-    'eligiblePlanTypes',
-  ] as const
-  return Object.fromEntries(
-    keys.flatMap(key => (manifest[key] === undefined ? [] : [[key, manifest[key]]]))
-  )
-}
-
 function hasOversizedLogo(interfaceData?: PluginInterface | null): boolean {
   if (!interfaceData) return false
   return [interfaceData.logo, interfaceData.logoDark, interfaceData.composerIcon].some(
@@ -150,7 +132,7 @@ function persistableMarketplaceManifest(
   item: PluginMarketplaceItem,
   marketplaces: PluginMarketplaceCacheSnapshot['marketplaces']
 ): Record<string, unknown> {
-  const manifest = slimManifest(item.manifest)
+  const manifest = slimPluginManifestForCache(item.manifest)
   // Earlier inventory compaction omitted the per-plugin path but preserved the
   // declared marketplace source. Restore that source when upgrading the cache.
   if (item.sourceProvider === 'codex' && !manifest.marketplacePath) {

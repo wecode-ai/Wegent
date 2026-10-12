@@ -840,6 +840,42 @@ describe('Simple TeamEditDialog', () => {
     expect(screen.queryByTestId('simple-section-basic-trigger')).not.toBeInTheDocument()
   })
 
+  it('waits for the execution engine catalog before enabling save', async () => {
+    let resolveShells!: (value: unknown) => void
+    mockedGetUnifiedShells.mockReturnValue(
+      new Promise(resolve => {
+        resolveShells = resolve
+      })
+    )
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Delayed engine catalog' },
+    })
+    const save = screen.getByRole('button', { name: /^save$/i })
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(mockedCreateBot).not.toHaveBeenCalled()
+    resolveShells({
+      data: [
+        { name: 'ClaudeCode', type: 'public', displayName: 'Claude Code', shellType: 'ClaudeCode' },
+      ],
+    })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+    await waitFor(() => expect(mockedCreateTeam).toHaveBeenCalled())
+  })
+
   it('saves a new simple solo agent through bot and team payloads', async () => {
     const onSaved = jest.fn().mockResolvedValue(undefined)
 

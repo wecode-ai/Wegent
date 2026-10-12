@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
+import { get as httpGet } from 'node:http'
+import { get as httpsGet } from 'node:https'
 import { chmod, cp, mkdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -127,6 +129,38 @@ async function download(url, destination, fetchImpl) {
   await pipeline(response.body, createWriteStream(destination))
 }
 
+function openDownload(url, redirects = 0) {
+  return new Promise((resolveResponse, reject) => {
+    const address = new URL(url)
+    const get = address.protocol === 'https:' ? httpsGet : httpGet
+    if (!['http:', 'https:'].includes(address.protocol)) {
+      reject(new Error(`Unsupported download protocol: ${address.protocol}`))
+      return
+    }
+    const request = get(address, response => {
+      const status = response.statusCode ?? 0
+      response.on('error', reject)
+      if (status >= 300 && status < 400 && response.headers.location) {
+        response.resume()
+        if (redirects >= 5) {
+          reject(new Error('Too many download redirects'))
+          return
+        }
+        resolveResponse(openDownload(new URL(response.headers.location, address), redirects + 1))
+        return
+      }
+      if (status < 200 || status >= 300) response.resume()
+      resolveResponse({
+        ok: status >= 200 && status < 300,
+        status,
+        statusText: response.statusMessage ?? '',
+        body: response,
+      })
+    })
+    request.on('error', reject)
+  })
+}
+
 function sleep(delayMs) {
   return new Promise(resolvePromise => setTimeout(resolvePromise, delayMs))
 }
@@ -137,7 +171,7 @@ export async function downloadWithRetry(
   {
     attempts = DOWNLOAD_ATTEMPTS,
     retryDelayMs = DOWNLOAD_RETRY_DELAY_MS,
-    fetchImpl = fetch,
+    fetchImpl = openDownload,
     sleepImpl = sleep,
   } = {}
 ) {

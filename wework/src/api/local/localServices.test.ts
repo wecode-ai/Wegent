@@ -895,6 +895,97 @@ describe('createLocalAppServices', () => {
     expect(unsubscribe).toHaveBeenCalledOnce()
   })
 
+  test('predicts on the owning session without preparing a model or sending a transcript', async () => {
+    const request = vi.fn<(method: string, payload?: Record<string, unknown>) => Promise<object>>(
+      async method => (method === 'runtime.text.predict_reply' ? { suggestion: '请继续' } : {})
+    )
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(async () => vi.fn()),
+    })
+    await expect(
+      services.replyPredictionApi!.predict({
+        address: { deviceId: 'device-uuid', taskId: 'task-1' },
+        latestTurnId: 'turn-1',
+      })
+    ).resolves.toEqual({ suggestion: '请继续' })
+    const call = request.mock.calls.find(([method]) => method === 'runtime.text.predict_reply')
+    expect(call).toEqual([
+      'runtime.text.predict_reply',
+      expect.objectContaining({
+        deviceId: 'device-uuid',
+        taskId: 'task-1',
+        latestTurnId: 'turn-1',
+        requestId: expect.stringMatching(/^reply-prediction-/),
+      }),
+    ])
+    expect(call?.[1]).not.toHaveProperty('executionRequest')
+    expect(call?.[1]).not.toHaveProperty('modelId')
+    expect(request.mock.calls.some(([method]) => method === 'runtime.text.generate')).toBe(false)
+  })
+
+  test('cancels a prediction using its request identity on the owning device', async () => {
+    const controller = new AbortController()
+    const request = vi.fn<(method: string, payload?: Record<string, unknown>) => Promise<object>>(
+      async method => {
+        if (method === 'runtime.text.predict_reply') return new Promise(() => {})
+        return { success: true, cancelled: true }
+      }
+    )
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(async () => vi.fn()),
+    })
+    const prediction = services.replyPredictionApi!.predict({
+      address: { deviceId: 'device-uuid', taskId: 'task-1' },
+      signal: controller.signal,
+    })
+    const rejection = expect(prediction).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledWith('runtime.text.predict_reply', expect.any(Object))
+    )
+    const start = request.mock.calls.find(([method]) => method === 'runtime.text.predict_reply')!
+    controller.abort()
+    await rejection
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        'runtime.text.cancel',
+        expect.objectContaining({ deviceId: 'device-uuid', taskId: start[1]!.requestId })
+      )
+    )
+  })
+
+  test('does not start a prediction cancelled while resolving the local device', async () => {
+    let resolveStatus!: (status: { running: boolean; ready: boolean; deviceId: string }) => void
+    const status = new Promise<{ running: boolean; ready: boolean; deviceId: string }>(resolve => {
+      resolveStatus = resolve
+    })
+    const ensure = vi.fn(() => status)
+    const request = vi.fn(async () => ({}))
+    const services = createLocalAppServices({
+      ensure,
+      request,
+      subscribe: vi.fn(async () => vi.fn()),
+    })
+    const controller = new AbortController()
+    const prediction = services.replyPredictionApi!.predict({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+      signal: controller.signal,
+    })
+    const rejection = expect(prediction).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(ensure).toHaveBeenCalled())
+    controller.abort()
+    await rejection
+    resolveStatus({ running: true, ready: true, deviceId: 'device-uuid' })
+    await status
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledWith('runtime.text.cancel', expect.any(Object))
+    )
+    expect(request).not.toHaveBeenCalledWith('runtime.text.predict_reply', expect.any(Object))
+  })
+
   test('streams the final content when an older executor does not emit deltas', async () => {
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({
@@ -974,6 +1065,7 @@ describe('createLocalAppServices', () => {
           convert_custom_tools: true,
           native_tool_search: false,
           native_namespace_tools: false,
+          codex_request_mode: 'auto',
           api_key: 'provider-secret',
           default_headers: [],
           proxy_url: 'socks5://127.0.0.1:7890',
@@ -4409,6 +4501,9 @@ describe('createLocalAppServices', () => {
       modelId: 'shared-model',
       modelType: 'user',
       modelOptions: {
+        weworkCloudModelCodexRequestMode: 'passthrough',
+        reasoning: 'high',
+        summary: 'detailed',
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelContextWindow: '1048576',
@@ -4421,6 +4516,8 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         model: 'openai',
         model_id: 'shared-model',
+        codex_request_mode: 'passthrough',
+        reasoning: { effort: 'high', summary: 'detailed' },
         api_format: 'responses',
         tool_profile: 'custom',
         protocol: 'openai-responses',

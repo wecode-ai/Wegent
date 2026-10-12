@@ -285,8 +285,7 @@ pub(crate) fn register_space_mcp_context(
         #[cfg(test)]
         {
             return Ok(RegisteredSpaceMcpContext {
-                endpoint: space_mcp_http_endpoint()
-                    .expect("test project-space MCP endpoint should exist"),
+                endpoint: unstarted_test_endpoint(),
                 context_handle: "test-space-mcp-context-handle".to_owned(),
             });
         }
@@ -324,11 +323,16 @@ pub(crate) fn register_cloud_collaboration_dispatcher(
 }
 
 #[cfg(test)]
-pub(crate) fn space_mcp_http_endpoint() -> Option<SpaceMcpEndpoint> {
-    Some(SpaceMcpEndpoint {
+fn unstarted_test_endpoint() -> SpaceMcpEndpoint {
+    SpaceMcpEndpoint {
         url: "http://127.0.0.1:1/mcp".to_owned(),
-        token: "test-space-mcp-instance-token".to_owned(),
-    })
+        token: local_mcp_token().to_owned(),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn space_mcp_http_endpoint() -> Option<SpaceMcpEndpoint> {
+    Some(active_endpoint().unwrap_or_else(unstarted_test_endpoint))
 }
 
 #[cfg(not(test))]
@@ -588,8 +592,13 @@ mod tests {
         let same_endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
         assert_eq!(endpoint.url, same_endpoint.url);
         assert_eq!(endpoint.token, same_endpoint.token);
+        let active = space_mcp_http_endpoint().unwrap();
+        assert_eq!(active.url, endpoint.url);
+        assert_eq!(active.token, endpoint.token);
         let registered =
             register_space_mcp_context(SpaceMcpRequestContext::new(None, None, None)).unwrap();
+        assert_eq!(registered.endpoint.url, active.url);
+        assert_eq!(registered.endpoint.token, active.token);
 
         let client = reqwest::Client::new();
         let unauthorized = client
