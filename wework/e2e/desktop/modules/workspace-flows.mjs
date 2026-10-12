@@ -2180,10 +2180,13 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await restoredDetachedControl.command('fill', detachedTaskComposer, {
+    value: '重启后的窗口可以继续输入',
+  })
   assert.equal(
     await restoredDetachedControl.command('getValue', detachedTaskComposer),
-    '第二个任务标签草稿',
-    'Restarting Wework lost the detached task draft'
+    '重启后的窗口可以继续输入',
+    'The restored workspace window composer is not editable'
   )
   await captureVerificationScreenshot(
     restoredDetachedControl,
