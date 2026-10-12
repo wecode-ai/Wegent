@@ -1349,6 +1349,7 @@ class RealCloudEnvironment {
           model_id: model.modelId,
           base_url: `${this.modelServerUrl}/v1`,
           api_key: MODEL_API_KEY,
+          ...(model.reasoning ? { thinking_config: { reasoning: model.reasoning } } : {}),
         },
         is_active: true,
         wework_available: true,
@@ -1378,7 +1379,7 @@ class RealCloudEnvironment {
         api_format: 'responses',
       },
     ]
-    await fetchJson(`${this.backendUrl}/api/models/batch`, {
+    const seeded = await fetchJson(`${this.backendUrl}/api/models/batch`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.authToken}`,
@@ -1386,6 +1387,27 @@ class RealCloudEnvironment {
       },
       body: JSON.stringify(items),
     })
+    const savedModels = [...seeded.created, ...seeded.updated]
+    for (const model of CLOUD_MODEL_CASES.filter(candidate => candidate.requestMode)) {
+      const saved = savedModels.find(candidate => candidate.name === model.optionIds[0])
+      assert.ok(saved?.id, `The public cloud model ${model.optionIds[0]} was not seeded`)
+      const url = `${this.backendUrl}/api/models/${saved.id}`
+      const headers = {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      }
+      await fetchJson(url, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          config: {
+            ...saved.config,
+            codex_request_mode: model.requestMode,
+            max_output_tokens: 4321,
+          },
+        }),
+      })
+    }
   }
 
   async seedCloudVisionSidecarModels() {

@@ -296,6 +296,16 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         let (cancel_tx, cancel_rx) = oneshot::channel();
+        let (request, model_proxy_token) = match prepare_claude_model_proxy(request) {
+            Ok(prepared) => prepared,
+            Err(message) => {
+                self.fail_local_task_execution_start(
+                    &local_task_id,
+                    &AppIpcError::new("invalid_model_configuration", message),
+                );
+                return;
+            }
+        };
         let (stopped_tx, stopped_rx) = oneshot::channel();
         let execution_id =
             self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
@@ -311,7 +321,6 @@ impl RuntimeWorkRpcHandler {
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
             let _scheduled_turn_guard =
                 ScheduledTurnGuard::new(handler.clone(), local_task_id.clone());
-            let (request, model_proxy_token) = prepare_claude_model_proxy(request);
             let model = string_field(&request.model_config, "model_id").unwrap_or_default();
             let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
             let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
@@ -658,13 +667,15 @@ fn is_claude_goal_invocation(request: &ExecutionRequest) -> bool {
         .unwrap_or(false)
 }
 
-fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionRequest, Option<String>) {
-    let Some(upstream) = local_model_proxy::upstream_from_model_config(&request.model_config)
+fn prepare_claude_model_proxy(
+    mut request: ExecutionRequest,
+) -> Result<(ExecutionRequest, Option<String>), String> {
+    let Some(upstream) = local_model_proxy::upstream_from_model_config(&request.model_config)?
     else {
-        return (request, None);
+        return Ok((request, None));
     };
     let Some(loopback) = executor_loopback_base_url() else {
-        return (request, None);
+        return Ok((request, None));
     };
     let token = local_model_proxy::register_harness(
         &format!("claude-runtime:{}:{}", request.task_id, request.subtask_id),
@@ -672,7 +683,7 @@ fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionReques
     );
     let Some(model_config) = request.model_config.as_object_mut() else {
         local_model_proxy::unregister_harness(&token);
-        return (request, None);
+        return Ok((request, None));
     };
     model_config.insert(
         "base_url".to_owned(),
@@ -686,7 +697,7 @@ fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionReques
         model_config,
         &format!("{loopback}/v1/harness-router/{token}"),
     );
-    (request, Some(token))
+    Ok((request, Some(token)))
 }
 
 fn apply_claude_proxy_environment(model_config: &mut serde_json::Map<String, Value>, url: &str) {
