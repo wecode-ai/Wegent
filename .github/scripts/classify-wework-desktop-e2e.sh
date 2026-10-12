@@ -101,6 +101,7 @@ cloud_worktree_segments=(
 )
 cloud_segments=(
   cloud-model-recovery
+  task-model-deletion
   cloud-model-presets
   cloud-project-creation
   cloud-device-lifecycle
@@ -143,7 +144,7 @@ cloud_shards=(
   cloud-worktree-create,automation-lifecycle,browser-multi-tabs
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
-  model-routing,cloud-model-recovery,cloud-model-presets
+  model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion
   plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
@@ -529,6 +530,11 @@ classify_wework_path() {
       wework/src/components/chat/composer/composerMentionCandidates*)
       select_target "plugins:skill-mention-rendering"
       select_target "core:core-task-flow"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/task-model-deletion.scenario.mjs)
+      select_target "cloud:task-model-deletion"
       return
       ;;
 

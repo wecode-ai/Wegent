@@ -340,6 +340,88 @@ describe('ChatInput', () => {
     }
   )
 
+  test.each(['desktop', 'compact'] as const)(
+    'keeps the %s model selector usable with an empty unresolved catalog',
+    async variant => {
+      const props = {
+        value: 'follow-up draft',
+        onChange: vi.fn(),
+        onSubmit: vi.fn(),
+        disabled: false,
+        variant,
+      }
+      const { rerender } = render(
+        <ChatInput
+          {...props}
+          projectChat={projectChatControls({
+            models: [],
+            selectedModel: null,
+            isModelSelectionReady: false,
+          })}
+        />
+      )
+
+      const trigger = screen.getByTestId('model-selector-button')
+      expect(trigger).toHaveTextContent('No models available')
+      expect(trigger).toBeEnabled()
+      expect(screen.getByTestId('send-message-button')).toBeDisabled()
+      await userEvent.click(trigger)
+      expect(screen.getByTestId('model-selector-empty-state')).toBeInTheDocument()
+      expect(screen.getByTestId('model-selector-add-custom-model')).toBeInTheDocument()
+      await userEvent.keyboard('{Escape}')
+
+      const model: UnifiedModel = { name: 'replacement', type: 'runtime' }
+      const setSelectedModel = vi.fn()
+      rerender(
+        <ChatInput
+          {...props}
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: null,
+            isModelSelectionReady: false,
+            setSelectedModel,
+          })}
+        />
+      )
+      expect(screen.getByTestId('model-selector-button')).toBe(trigger)
+      await userEvent.click(trigger)
+      await userEvent.click(screen.getByTestId('model-option-replacement'))
+      expect(setSelectedModel).toHaveBeenCalledWith(model)
+
+      rerender(
+        <ChatInput
+          {...props}
+          projectChat={projectChatControls({ models: [model], selectedModel: model })}
+        />
+      )
+      expect(screen.getByTestId('send-message-button')).toBeEnabled()
+    }
+  )
+
+  test('keeps model recovery visible in the fullscreen compact editor', async () => {
+    render(
+      <ChatInput
+        value={'line 1\nline 2\nline 3\nline 4\nline 5'}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="compact"
+        projectChat={projectChatControls({
+          models: [],
+          selectedModel: null,
+          isModelSelectionReady: false,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('expand-input-button'))
+    const trigger = screen.getByTestId('model-selector-button')
+    expect(screen.getByTestId('fullscreen-input-sheet')).toContainElement(trigger)
+    expect(trigger).toBeEnabled()
+    await userEvent.click(trigger)
+    expect(screen.getByTestId('model-selector-empty-state')).toBeInTheDocument()
+  })
+
   test('does not move selection when an unfocused composer syncs its value', async () => {
     const renderComposers = (backgroundValue?: string) => (
       <>
