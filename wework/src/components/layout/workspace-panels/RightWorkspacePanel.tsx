@@ -27,10 +27,8 @@ import {
   useSyncExternalStore,
 } from 'react'
 import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
-import {
-  FileChangesReviewPanel,
-  type FileChangesReviewViewOption,
-} from '@/components/chat/FileChangesReviewPanel'
+import type { FileChangesReviewViewOption } from '@/components/chat/FileChangesReviewPanel'
+import { FileChangesReviewPanel, FileWorkspacePanel } from './LazyWorkspaceFiles'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { CentralHarnessTerminal } from '@/components/layout/CentralHarnessTerminal'
 import type { LocalHarnessWorkbenchSession } from '@/components/layout/localHarnessWorkbench'
@@ -66,11 +64,7 @@ import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/a
 import type { GitPatchAction } from '@/api/environment'
 import type { DesktopReviewMode } from '../desktopWorkbenchPaneTypes'
 import { shouldIgnoreWorkbenchShortcut } from '@/lib/keybindings'
-import {
-  FileWorkspacePanel,
-  type FileWorkspacePanelHandle,
-  type FileWorkspacePanelSelection,
-} from './FileWorkspacePanel'
+import type { FileWorkspacePanelHandle, FileWorkspacePanelSelection } from './FileWorkspacePanel'
 import {
   isWorkspaceFileTab,
   workspaceFileTabLabel,

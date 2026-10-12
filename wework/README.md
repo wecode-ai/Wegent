@@ -88,12 +88,14 @@ resources use directory links. The version stamp is written only after every plu
 has finished, and any copy failure prevents startup.
 
 Core 使用标准 pnpm hoisted 依赖布局，减少 Node 模块解析的文件查询；旧运行时
-保留既有归档格式。终端和文本编辑器在打开面板时加载，减少首次任务列表所需的脚本。
+保留既有归档格式。终端、文件预览、文本编辑器和差异面板在打开时加载，减少首次任务
+列表所需的脚本；本地与云端文件预览复用同一加载入口。
 Core 入口日志记录 CPU 时间、文件读取与内存峰值，用于定位启动耗时。
 
 Core uses pnpm's standard hoisted dependency layout to reduce module-resolution
-file lookups, while legacy runtimes retain their archive format. Terminal and text
-editor code loads when its panel opens. Core endpoint logs include CPU time, file
+file lookups, while legacy runtimes retain their archive format. Terminal, file preview,
+text editor and diff panels load when opened; local and cloud previews share the
+same loading boundary. Core endpoint logs include CPU time, file
 reads and peak memory to diagnose startup latency.
 
 任务快照的增量更新同步当前任务地址与清单，保留本地消息和模型信息，同时补齐
