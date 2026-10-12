@@ -24,6 +24,7 @@ function setUserAgent(userAgent: string) {
 describe('Wework app updater', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.useRealTimers()
     vi.restoreAllMocks()
     desktopHostMocks.invoke.mockReset()
   })
@@ -60,7 +61,7 @@ describe('Wework app updater', () => {
     desktopHostMocks.invoke.mockImplementation(async capability => {
       if (capability === 'appUpdate.check') return update
       if (capability === 'appUpdate.downloadProgress') {
-        return { downloadedBytes: 100, totalBytes: 100 }
+        return { downloadedBytes: 100, totalBytes: 100, phase: 'ready' }
       }
       return undefined
     })
@@ -80,11 +81,67 @@ describe('Wework app updater', () => {
     expect(onProgress).toHaveBeenLastCalledWith({
       downloadedBytes: 100,
       totalBytes: 100,
+      phase: 'ready',
     })
     expect(
       desktopHostMocks.invoke.mock.calls.filter(
         ([capability]) => capability === 'appUpdate.download'
       )
     ).toHaveLength(1)
+  })
+
+  test('follows the reported progress until the download is ready', async () => {
+    vi.useFakeTimers()
+    let polls = 0
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.check') {
+        return { currentVersion: '0.2.6', version: '0.2.7' }
+      }
+      if (capability === 'appUpdate.downloadProgress') {
+        polls += 1
+        return polls < 3
+          ? { downloadedBytes: polls * 40, totalBytes: 100, phase: 'host' }
+          : { downloadedBytes: 100, totalBytes: 100, phase: 'ready' }
+      }
+      return undefined
+    })
+    const onProgress = vi.fn()
+
+    await checkForWeworkUpdate('stable')
+    const download = downloadPendingWeworkUpdate(onProgress)
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    await expect(download).resolves.toBeUndefined()
+    expect(polls).toBe(3)
+    expect(onProgress).toHaveBeenLastCalledWith({
+      downloadedBytes: 100,
+      totalBytes: 100,
+      phase: 'ready',
+    })
+  })
+
+  test('surfaces the download failure reported by the desktop host', async () => {
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.check') {
+        return { currentVersion: '0.2.6', version: '0.2.7' }
+      }
+      if (capability === 'appUpdate.downloadProgress') {
+        return {
+          downloadedBytes: 10,
+          totalBytes: 100,
+          phase: 'failed',
+          failure: {
+            message: 'Cannot download "https://example.com/private" status 404',
+            code: 'ERR_UPDATER_HTTP_ERROR',
+          },
+        }
+      }
+      return undefined
+    })
+
+    await checkForWeworkUpdate('stable')
+    await expect(downloadPendingWeworkUpdate()).rejects.toThrow(
+      'Cannot download "https://example.com/private" status 404'
+    )
   })
 })
