@@ -31,8 +31,14 @@ export function reduceRuntimeTaskLifecycle(
         (!isTerminalTaskStatus(state.task?.status) ||
           event.task.status !== state.task?.status ||
           completionAdvanced)
+      const awaitingContinuationAdmission =
+        state.executionPhase === 'starting' &&
+        state.task !== null &&
+        isRuntimeTaskAuthoritativeCompletion(state.task)
       const snapshotConfirmsSettlement =
         terminalStatus &&
+        // A terminal snapshot cannot settle an unresolved admission request.
+        !awaitingContinuationAdmission &&
         (!hasIdentifiedActiveTurn || completionAdvanced) &&
         (expectedRunning !== true || terminalSnapshotAdvanced)
       const transitionMismatch =

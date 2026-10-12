@@ -5325,3 +5325,30 @@ fn codex_run_state_ignores_cross_thread_turn_completion() {
         }
     );
 }
+
+#[tokio::test]
+async fn named_home_action_protects_only_its_request_scoped_process() {
+    let _environment = environment::LaunchEnvironment::new();
+    let client = CodexAppServerClient::new("codex-named-thread-action-test");
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "user_name": "synthetic", "team_namespace": "default",
+        "team_name": "compact-agent", "team_id": 12,
+        "bot": [{"id": 31, "shell_type": "Codex"}]
+    }))
+    .unwrap();
+    let scoped = client.for_request(&request).unwrap();
+    scoped
+        .run_thread_action("compact-thread", async {
+            assert_eq!(
+                client
+                    .for_request(&request)
+                    .unwrap()
+                    .restart_if_idle()
+                    .await,
+                Err((1, 0))
+            );
+            assert_eq!(client.restart_if_idle().await, Ok(()));
+        })
+        .await;
+    assert_eq!(scoped.restart_if_idle().await, Ok(()));
+}

@@ -109,6 +109,8 @@ The sidebar keeps running tasks visible with their running indicators. Collapsin
 
 Context compaction is shown as complete only after its turn succeeds. Plugin synchronization and idle-only process restarts wait during compaction, and a failed or interrupted compaction is not shown as successful.
 
+While a start request remains unconfirmed, a previous completion snapshot cannot clear its running indicator. Once the executor confirms execution has started, completion of the current turn ends the running state normally.
+
 | Action                  | Shortcut                       | Use it when                             |
 | ----------------------- | ------------------------------ | --------------------------------------- |
 | Send after the response | `Enter`                        | Queue the next instruction              |

@@ -316,6 +316,12 @@ export function createDesktopScenario({
         )
         assert.equal(restart.restarted, false, 'An idle restart interrupted the active compaction')
         assert.ok(restart.activeTaskCount >= 1, 'The compaction was not tracked as an active turn')
+        const compacting = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        assert.equal(
+          compacting.pane?.status?.isBusy,
+          true,
+          'A previous completion snapshot cleared the pending compaction lifecycle'
+        )
         assert.equal(
           Number(
             await control.command('getElementCount', '[data-testid="context-compaction-indicator"]')

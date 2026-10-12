@@ -125,6 +125,7 @@ mod claude_turns;
 mod codex_accounts;
 mod codex_config;
 mod collection;
+mod context_compaction;
 mod fork_transfer;
 mod hooks;
 mod notifications;
@@ -209,7 +210,6 @@ const CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL: Duration = Duration::from_secs(30);
 const CODEX_TRANSCRIPT_NAVIGATION_CACHE_MAX_ENTRIES: usize = 64;
 const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
-const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
 /// How long a context-compaction action waits for the Codex app-server to finish
 /// the compaction turn.
 const CONTEXT_COMPACTION_WAIT_BUDGET: Duration = Duration::from_secs(120);

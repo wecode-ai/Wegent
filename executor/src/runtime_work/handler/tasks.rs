@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::context_compaction::context_compaction_notification_outcome;
+#[cfg(test)]
+use super::context_compaction::context_compaction_outcome;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
@@ -1600,21 +1603,32 @@ impl RuntimeWorkRpcHandler {
             ));
         };
 
-        self.codex_app_server
+        let client = match self
+            .codex_app_server
+            .for_request(&runtime_event_request_from_link(&link))
+        {
+            Ok(client) => client,
+            Err(error) => return Ok(task_action_failure(&link, error)),
+        };
+        client
             .run_thread_action(
                 &thread_id,
-                self.compact_codex_task(&link, &local_task_id, &thread_id),
+                self.compact_codex_task(&client, &link, &local_task_id, &thread_id),
             )
             .await
     }
 
     async fn compact_codex_task(
         &self,
+        client: &CodexAppServerClient,
         link: &RuntimeTaskLink,
         local_task_id: &str,
         thread_id: &str,
     ) -> Result<Value, AppIpcError> {
-        let thread_id = match self.resume_codex_thread_for_action(link, thread_id).await {
+        let thread_id = match self
+            .resume_codex_thread_with_client(client, link, thread_id)
+            .await
+        {
             Ok(resumed_thread_id) => resumed_thread_id,
             Err(error) => return Ok(task_action_failure(link, error)),
         };
@@ -1628,12 +1642,32 @@ impl RuntimeWorkRpcHandler {
             Err(error) => return Ok(task_action_failure(link, error)),
         };
         self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);
-        let previous_turn_id = match self.read_codex_recent_turns(&thread_id).await {
+        let previous_turn_id = match self
+            .read_codex_recent_turns_with_client(client, &thread_id)
+            .await
+        {
             Ok(thread) => latest_codex_turn_id(&thread),
             Err(error) => return Ok(task_action_failure(link, error)),
         };
-        match self
-            .call_codex_thread_method(
+        log_executor_event(
+            "context compaction requested",
+            &[
+                ("thread_id", thread_id.clone()),
+                (
+                    "previous_turn_id",
+                    previous_turn_id.clone().unwrap_or_default(),
+                ),
+                ("dedicated_home", client.has_dedicated_home().to_string()),
+            ],
+        );
+        // History can briefly label a newly admitted turn as interrupted.
+        // Subscribe before starting it and settle only on native completion.
+        let notifications = match client.subscribe_notifications().await {
+            Ok(receiver) => receiver,
+            Err(error) => return Ok(task_action_failure(link, error)),
+        };
+        match client
+            .request(
                 "thread/compact/start",
                 json!({"threadId": thread_id.clone()}),
             )
@@ -1641,7 +1675,12 @@ impl RuntimeWorkRpcHandler {
         {
             Ok(_) => {
                 let (turn_id, item_id) = match self
-                    .wait_for_context_compaction(&thread_id, previous_turn_id.as_deref())
+                    .wait_for_context_compaction(
+                        client,
+                        notifications,
+                        &thread_id,
+                        previous_turn_id.as_deref(),
+                    )
                     .await
                 {
                     Ok(completion) => completion,
@@ -1663,33 +1702,63 @@ impl RuntimeWorkRpcHandler {
 
     async fn wait_for_context_compaction(
         &self,
+        client: &CodexAppServerClient,
+        mut notifications: broadcast::Receiver<Value>,
         thread_id: &str,
         previous_turn_id: Option<&str>,
     ) -> Result<(String, String), String> {
-        let mut last_error = None;
         let deadline = tokio::time::Instant::now() + CONTEXT_COMPACTION_WAIT_BUDGET;
+        let mut items = HashMap::new();
         loop {
-            // A single Codex app-server read may wait far longer than the whole
-            // budget, so the read itself has to be bounded by the deadline.
-            match tokio::time::timeout_at(deadline, self.read_codex_recent_turns(thread_id)).await {
-                Ok(Ok(thread)) => {
-                    if let Some(outcome) = context_compaction_outcome(&thread, previous_turn_id) {
-                        return outcome;
-                    }
-                }
-                Ok(Err(error)) => last_error = Some(error),
-                Err(_) => break,
+            let message = tokio::time::timeout_at(deadline, notifications.recv())
+                .await
+                .map_err(|_| "context compaction timed out".to_owned())?
+                .map_err(|error| {
+                    format!("context compaction notification stream failed: {error}")
+                })?;
+            if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
+                return Err("Codex app-server exited during context compaction".to_owned());
             }
-            if tokio::time::Instant::now() >= deadline {
-                break;
+            if codex_notification_thread_id(&message).as_deref() != Some(thread_id) {
+                continue;
             }
-            sleep(Duration::from_millis(CONTEXT_COMPACTION_WAIT_MS)).await;
+            if client.has_dedicated_home() {
+                self.route_codex_notification(message.clone());
+            }
+            if let Some(outcome) =
+                context_compaction_notification_outcome(&message, previous_turn_id, &mut items)
+            {
+                log_executor_event(
+                    "context compaction settled",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        (
+                            "turn_id",
+                            codex_notification_turn_id(&message).unwrap_or_default(),
+                        ),
+                        ("success", outcome.is_ok().to_string()),
+                    ],
+                );
+                return outcome;
+            }
         }
-        Err(last_error.unwrap_or_else(|| "context compaction timed out".to_owned()))
     }
 
     pub(super) async fn resume_codex_thread_for_action(
         &self,
+        link: &RuntimeTaskLink,
+        thread_id: &str,
+    ) -> Result<String, String> {
+        let client = self
+            .codex_app_server
+            .for_request(&runtime_event_request_from_link(link))?;
+        self.resume_codex_thread_with_client(&client, link, thread_id)
+            .await
+    }
+
+    async fn resume_codex_thread_with_client(
+        &self,
+        client: &CodexAppServerClient,
         link: &RuntimeTaskLink,
         thread_id: &str,
     ) -> Result<String, String> {
@@ -1709,9 +1778,6 @@ impl RuntimeWorkRpcHandler {
 
         self.register_thread_event_route_from_store(thread_id);
         self.ensure_notification_router().await;
-        let client = self
-            .codex_app_server
-            .for_request(&runtime_event_request_from_link(link))?;
         let response = client
             .request("thread/resume", Value::Object(params))
             .await?;
@@ -2334,53 +2400,6 @@ fn latest_codex_turn_id(thread: &Value) -> Option<String> {
         .and_then(Value::as_array)
         .and_then(|turns| turns.last())
         .and_then(|turn| string_field(turn, "id"))
-}
-
-/// Reports what the newest turn says about a compaction action.
-///
-/// Only the newest turn can be the compaction turn: while it is still the turn
-/// that preceded the action the provider has not started compacting, and no
-/// older turn may be mistaken for the result. `None` means "keep waiting".
-///
-/// A turn that already ended without producing a compaction item never will -
-/// the provider can fail the compaction turn (a model or route error, for
-/// example) and still report it as completed - so it reports its own reason
-/// instead of letting the caller surface a generic timeout.
-fn context_compaction_outcome(
-    thread: &Value,
-    previous_turn_id: Option<&str>,
-) -> Option<Result<(String, String), String>> {
-    let turn = thread.get("turns").and_then(Value::as_array)?.last()?;
-    let turn_id = string_field(turn, "id")?;
-    if Some(turn_id.as_str()) == previous_turn_id {
-        return None;
-    }
-    let status = string_field(turn, "status")?;
-    if matches!(
-        status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
-        "inprogress" | "running" | "active"
-    ) {
-        return None;
-    }
-    if let Some(item) = turn
-        .get("items")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find(|item| {
-            status == "completed" && is_codex_context_compaction_item_type(&item_type(item))
-        })
-    {
-        return Some(Ok((turn_id, item_id(item, "context_compaction"))));
-    }
-    let detail = turn
-        .get("error")
-        .and_then(|error| string_field(error, "message"))
-        .or_else(|| string_field(turn, "error"));
-    Some(Err(match detail {
-        Some(detail) => format!("context compaction ended without compacting: {detail}"),
-        None => format!("context compaction ended without compacting ({status})"),
-    }))
 }
 
 #[cfg(test)]

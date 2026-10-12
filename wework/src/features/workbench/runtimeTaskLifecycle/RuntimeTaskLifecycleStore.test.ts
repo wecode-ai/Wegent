@@ -58,6 +58,53 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
 }
 
 describe('RuntimeTaskLifecycleStore', () => {
+  test('keeps an unresolved action running when the previous completion gains precision', () => {
+    const store = new RuntimeTaskLifecycleStore('pending-action-completion-test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({ status: 'done', completedAt: 1_791_829_759_000, updatedAt: 1_791_829_758_994 })
+      )
+    )
+    store.sendRequested(address)
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({ status: 'done', completedAt: 1_791_829_759_167, updatedAt: 1_791_829_759_167 })
+      )
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('starting')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+    store.sendAccepted(address)
+    store.executorSettled(address)
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
+  test('accepts completion once the executor confirms the pending action is running', () => {
+    const store = new RuntimeTaskLifecycleStore('confirmed-pending-action-test')
+    store.syncRuntimeWork(
+      runtimeWork(task({ status: 'done', completedAt: 1_000, updatedAt: 1_000 }))
+    )
+    store.sendRequested(address)
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+          updatedAt: 2_000,
+        })
+      )
+    )
+    store.syncRuntimeWork(
+      runtimeWork(task({ status: 'done', completedAt: 3_000, updatedAt: 3_000 }))
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
   test('preserves a live turn when an older completion snapshot arrives late', () => {
     const store = new RuntimeTaskLifecycleStore('late-completion-test')
     store.syncRuntimeWork(
