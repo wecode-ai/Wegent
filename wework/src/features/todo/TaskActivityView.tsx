@@ -22,6 +22,7 @@ import {
   groupIssueActivityThreads,
   createCollaborationTranslator,
   compareIssueTimestamps,
+  issueActivityTimestamp,
   formatIssueTimestamp,
   IssueStatusHistoryList,
   type SharedIssueStatusHistoryEntry,
@@ -565,7 +566,7 @@ export function TaskActivityView({
   const activityEntries = useMemo(() => {
     const comments = commentCards.map((card, index) => ({
       kind: 'comment' as const,
-      at: card.root.createdAt,
+      at: issueActivityTimestamp(card.root),
       index,
       card,
     }))
@@ -1172,7 +1173,7 @@ export function TaskActivityView({
                       {issueTimeline ? (
                         <TimelineReply
                           rootId={rootId}
-                          createdAt={card.root.createdAt}
+                          createdAt={issueActivityTimestamp(card.root)}
                           replyLabel={t('workbench.task_activity_reply_action')}
                           active={replyTarget?.root.messageId === rootId}
                           onReply={() => setReplyTarget(card)}

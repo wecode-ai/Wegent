@@ -25,6 +25,28 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Execution activity ordering regression
+
+Run `collaboration-local-agent-dispatch` and `collaboration-remote-agent-dispatch`
+in isolated Electron sessions with independent project and Issue fixtures. Mock
+only model responses; storage, scheduling, and executors remain real.
+
+1. Assign an Issue to one Agent and hold its model response. The in-progress
+   status event must precede the execution card.
+2. Release the response and wait for review. The completion status event must
+   precede the execution details, which must contain the actual result.
+3. Follow-up replies keep their original thread and execution session when a
+   result timestamp changes.
+4. Persistence tests compare status events with activity timestamps, including
+   different subsecond precision within one second. Cover success, failure,
+   cancellation, and reconnect reconciliation; user discussions keep creation time.
+
+Execution cards use UTC `metadata.activity_at` recorded after the status change.
+Historical executions without this field use their stored update time at its
+original precision. Display and sorting use the same shared function. Stop the
+isolated Electron session after verification and retain runner logs and screenshots
+in the test-results directory without committing temporary artifacts.
+
 ### Execution duration timezone regression
 
 `collaboration-shared-core` runs the real Backend and isolated Electron with

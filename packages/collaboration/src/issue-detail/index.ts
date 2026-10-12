@@ -26,6 +26,7 @@ export * from "./IssueThreadReplyComposer";
 export * from "./IssueChatMessage";
 export {
   compareIssueTimestamps,
+  issueActivityTimestamp,
   formatIssueTimestamp,
   issueExecutionElapsedMinutes,
 } from "./issueTimestamp";

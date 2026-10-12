@@ -3,7 +3,42 @@ import {
   compareIssueTimestamps,
   formatIssueTimestamp,
   issueExecutionElapsedMinutes,
+  issueActivityTimestamp,
 } from "./issueTimestamp";
+import type { ProjectChatMessage } from "@wegent/chat-core";
+
+describe("issueActivityTimestamp", () => {
+  const message = {
+    sender: { type: "agent" },
+    metadata: { activity_at: "2026-10-10T08:10:03.456789+00:00" },
+    createdAt: "2026-10-10T08:09:43Z",
+    updatedAt: "2026-10-10T08:10:03Z",
+  } as ProjectChatMessage;
+
+  it("orders execution results after the status transition in the same second", () => {
+    expect(
+      compareIssueTimestamps(
+        issueActivityTimestamp(message),
+        "2026-10-10T08:10:03.123456Z",
+      ),
+    ).toBeGreaterThan(0);
+  });
+
+  it("uses the stored update time for messages without an activity timestamp", () => {
+    expect(issueActivityTimestamp({ ...message, metadata: {} })).toBe(
+      message.updatedAt,
+    );
+  });
+
+  it("keeps user discussions at creation time when their content is updated", () => {
+    expect(
+      issueActivityTimestamp({
+        ...message,
+        sender: { type: "user", id: "1", name: "Ada" },
+      }),
+    ).toBe(message.createdAt);
+  });
+});
 
 describe("formatIssueTimestamp", () => {
   it("treats timezone-less backend timestamps as UTC", () => {

@@ -1346,6 +1346,69 @@ describe('TaskActivityView', () => {
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
+  it.each(['streaming', 'completed'] as const)(
+    'places a %s execution activity after its status transition',
+    async status => {
+      const activityAt =
+        status === 'streaming' ? '2026-10-10T08:09:43.234567Z' : '2026-10-10T08:10:03.234567Z'
+      const execution = {
+        ...agentMessage,
+        content: '执行详情',
+        status,
+        createdAt: '2026-10-10T08:09:43Z',
+        updatedAt: '2026-10-10T08:10:03Z',
+        metadata: { activity_at: activityAt },
+      }
+      const client = {
+        subscribe: vi.fn(async () => ({
+          snapshot: { messages: [execution], latestSequence: 2, currentUserId: '1' },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(),
+        startAgentResponse: vi.fn(),
+        failAgentResponse: vi.fn(),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+      const statusHistory = [
+        {
+          from_status: 'inbox',
+          to_status: 'in_progress',
+          trigger: 'ai_started',
+          at: '2026-10-10T08:09:43.123456Z',
+        },
+        ...(status === 'completed'
+          ? [
+              {
+                from_status: 'in_progress',
+                to_status: 'in_review',
+                trigger: 'ai_completed',
+                at: '2026-10-10T08:10:03.123456Z',
+              },
+            ]
+          : []),
+      ]
+      render(
+        <TaskActivityView
+          client={client}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={{ id: 'WEG-1', title: '执行', status: 'in_progress', version: 1 } as never}
+          issueTimeline
+          linear
+          statusHistory={statusHistory}
+        />
+      )
+      const list = await screen.findByTestId('cloud-task-activity-list')
+      await within(list).findByText('执行详情')
+      const entries = Array.from(list.children[0].children)
+      expect(entries.map(entry => entry.getAttribute('data-testid') ?? entry.className)).toEqual([
+        'cloud-task-status-event-0',
+        ...(status === 'completed' ? ['cloud-task-status-event-1'] : []),
+        'task-detail-thread is-timeline',
+      ])
+      expect(entries.at(-1)?.querySelector('time')).toHaveAttribute('datetime', activityAt)
+    }
+  )
+
   it('interleaves UTC-naive comments and offset-aware status changes and keeps execution status inside the comment', async () => {
     const user = userEvent.setup()
     const openTaskConversation = vi.fn()

@@ -16,7 +16,10 @@ import { IssueMarkdownProvider } from "./IssueMarkdownProvider";
 import { IssueWebCommentComposer } from "./IssueWebCommentComposer";
 import { groupIssueActivityThreads } from "./IssueActivityThread";
 import { IssueActivityContent } from "./IssueActivityContent";
-import { compareIssueTimestamps } from "./issueTimestamp";
+import {
+  compareIssueTimestamps,
+  issueActivityTimestamp,
+} from "./issueTimestamp";
 import { IssueActivityMarkdown } from "./IssueActivityMarkdown";
 import { IssueProjectChatThread } from "./IssueProjectChatThread";
 import { useIssueProjectChat } from "./useIssueProjectChat";
@@ -265,7 +268,7 @@ export function IssueActivityPanel({
           {[
             ...threads.map((thread) => ({
               kind: "thread" as const,
-              at: thread.root.createdAt,
+              at: issueActivityTimestamp(thread.root),
               thread,
             })),
             ...entries,
