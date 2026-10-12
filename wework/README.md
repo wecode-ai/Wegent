@@ -30,6 +30,13 @@ stage and support dark mode and reduced motion. Core DSH has up to 120 seconds
 to become ready. If it times out or another desktop runtime fails to start,
 replace the preparation animation with the concrete error and a retry action.
 
+生产构建将首屏静态依赖的 Lucide 图标合并为一个共享模块，减少本地 HTTP
+加载的独立请求。动态贡献使用的其他图标仍按需加载；可选查看器保持原有动态导入边界。
+
+Production builds combine statically imported Lucide icons into one shared module
+to reduce separate local HTTP requests. Other icons used by dynamic contributions
+remain demand-loaded, and optional viewers retain their dynamic import boundaries.
+
 ## Project Space Board Progress
 
 项目空间看板中的运行中卡片展示智能体当前输出的过程文本，而不是内部思考文本。标准视图按内容自然增高，最多展示两行过程文本，并在其下展示已移除 Shell 启动包装的真实命令摘要。状态分组下可启用“专注视图”，将进行中与待确认两列从 `292px` 展开到 `480px`，展示最多八行过程文本和最近三条工具活动；入口作为独立的视图操作右对齐展示。该偏好按用户和项目保存，切换到其他分组时隐藏，返回状态分组后恢复。

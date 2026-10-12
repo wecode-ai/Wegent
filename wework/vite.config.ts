@@ -207,6 +207,15 @@ export default defineConfig({
         ),
       },
       output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'initial-icons',
+              test: /node_modules[\\/]lucide-react[\\/]/,
+              tags: ['$initial'],
+            },
+          ],
+        },
         entryFileNames: chunk =>
           chunk.name.startsWith('wework-ui-') ? 'plugins/[name].js' : 'assets/[name]-[hash].js',
       },
