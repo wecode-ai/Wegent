@@ -30,6 +30,8 @@ const AI_TASK = `智能体采集证据-${process.pid}`
 const MARKER = `HUMAN_ROUND_RESUME_${process.pid}`
 const ROUND_ID = `${MARKER}-round-1`
 const HUMAN_ASSIGNMENT_ID = `${MARKER}-human-assignment`
+const HUMAN_TIMELINE_COMMENT = `${MARKER}-人工时间线评论`
+const HUMAN_REPLY = `${MARKER}-人工回复开始任务`
 const HUMAN_DELIVERY_COMPLETION = `${HUMAN_TASK} 已交付：人工证据已核对。`
 const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const CALLS = {
@@ -714,6 +716,77 @@ export function createDesktopScenario({
         '人工交付前根 Issue 被错误迁移'
       )
       await captureScreenshot(control, 'human-round-02-ai-finished-human-pending.png', CONTENT)
+
+      // 人工执行人从时间线直接开始自己的任务：在一条没有可继续会话的讨论里回复，
+      // 必须按负责人分配的工作项打开预填的个人 Task 面板，而不是只留下评论。
+      const timelineComposer = scoped('[data-testid="cloud-task-activity-composer"]')
+      await control.command('waitFor', timelineComposer, { visible: true, timeoutMs: uiTimeoutMs })
+      await control.command('fill', timelineComposer, { value: HUMAN_TIMELINE_COMMENT })
+      await control.command('press', timelineComposer, { key: 'Enter' })
+      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+        text: HUMAN_TIMELINE_COMMENT,
+        timeoutMs: uiTimeoutMs,
+      })
+      const replyRootId = await (async () => {
+        const deadline = Date.now() + uiTimeoutMs
+        while (Date.now() < deadline) {
+          const snapshot = JSON.parse(await control.command('snapshot', CONTENT))
+          for (const testId of snapshot.testIds) {
+            if (!testId.startsWith('cloud-task-activity-card-')) continue
+            const text = await control
+              .command('getText', scoped(`[data-testid="${testId}"]`))
+              .catch(() => '')
+            if (text.includes(HUMAN_TIMELINE_COMMENT)) {
+              return testId.slice('cloud-task-activity-card-'.length)
+            }
+          }
+          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+        }
+        assert.fail('Issue 时间线没有渲染刚发布的人工评论卡片')
+      })()
+      // The timeline scrolls, so the newest thread action can sit below the
+      // fold; the synthetic click does not require the button to be on screen.
+      await control.command(
+        'click',
+        scoped(`[data-testid="cloud-task-activity-reply-toggle-${replyRootId}"]`)
+      )
+      await control.command('waitFor', scoped('[data-testid="issue-reply-starts-task-hint"]'), {
+        text: HUMAN_TASK,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'human-round-02b-reply-offers-assigned-task.png', CONTENT)
+      const replyComposer = scoped(
+        '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
+      )
+      await control.command('fill', replyComposer, { value: HUMAN_REPLY })
+      await control.command('press', replyComposer, { key: 'Enter' })
+      await control.command(
+        'waitFor',
+        scoped(`[data-testid="cloud-task-activity-replies-${replyRootId}"]`),
+        { text: HUMAN_REPLY, timeoutMs: uiTimeoutMs }
+      )
+      const assignedTaskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
+      await control.command('waitFor', assignedTaskPanel, { timeoutMs: uiTimeoutMs })
+      const assignedTaskInput = await control.command(
+        'getValue',
+        `${assignedTaskPanel} [data-testid="chat-message-input"]`
+      )
+      assert.ok(
+        assignedTaskInput.includes(HUMAN_REPLY),
+        `从回复打开的个人 Task 面板没有带入人工回复: ${assignedTaskInput}`
+      )
+      assert.ok(
+        assignedTaskInput.includes(HUMAN_TASK),
+        `从回复打开的个人 Task 面板没有带入负责人分配的工作项: ${assignedTaskInput}`
+      )
+      await captureScreenshot(control, 'human-round-02c-reply-starts-assigned-task.png', CONTENT)
+      await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'), {
+        visible: true,
+      })
+      await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
 
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
