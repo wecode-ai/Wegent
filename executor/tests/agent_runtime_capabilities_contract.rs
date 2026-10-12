@@ -2097,12 +2097,12 @@ fn request_has_header(request: &str, expected_name: &str, expected_value: &str) 
     })
 }
 
-fn make_executable(path: &Path) {
+fn make_executable(_path: &Path) {
     #[cfg(unix)]
     {
-        let mut permissions = fs::metadata(path).unwrap().permissions();
+        let mut permissions = fs::metadata(_path).unwrap().permissions();
         permissions.set_mode(0o700);
-        fs::set_permissions(path, permissions).unwrap();
+        fs::set_permissions(_path, permissions).unwrap();
     }
 }
 

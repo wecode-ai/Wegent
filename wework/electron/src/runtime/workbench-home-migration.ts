@@ -193,22 +193,39 @@ async function repairRelativeLinks(home: string, journal: MigrationJournal): Pro
     if (!contains(home, await fs.realpath(dirname(path)))) {
       throw new Error('Workbench Home migration relative link parent changed')
     }
-    if (!(await metadata(path))?.isSymbolicLink()) {
+    const temporary = `${path}.migration-${journal.token}.tmp`
+    const current = await metadata(path)
+    const pending = await metadata(temporary)
+    if (
+      !current &&
+      process.platform === 'win32' &&
+      pending?.isSymbolicLink() &&
+      (await fs.readlink(temporary)) === link.destination
+    ) {
+      await fs.rename(temporary, path)
+      continue
+    }
+    if (!current?.isSymbolicLink()) {
       throw new Error('Workbench Home migration relative link changed')
     }
     const value = await fs.readlink(path)
     if (value === link.destination) continue
     if (value !== link.original) throw new Error('Workbench Home migration relative link changed')
-    const temporary = `${path}.migration-${journal.token}.tmp`
-    const pending = await metadata(temporary)
     if (pending) {
       if (!pending.isSymbolicLink() || (await fs.readlink(temporary)) !== link.destination) {
         throw new Error('Workbench Home migration temporary relative link conflict')
       }
     } else {
       const target = await fs.stat(path)
-      await fs.symlink(link.destination, temporary, target.isDirectory() ? 'dir' : 'file')
+      await fs.symlink(
+        link.destination,
+        temporary,
+        target.isDirectory() ? (process.platform === 'win32' ? 'junction' : 'dir') : 'file'
+      )
     }
+    // Windows cannot replace a directory link with rename. The journal and
+    // owned temporary link recover the gap if publication is interrupted.
+    if (process.platform === 'win32' && (await fs.stat(path)).isDirectory()) await fs.unlink(path)
     await fs.rename(temporary, path)
   }
 }
@@ -229,7 +246,7 @@ async function prepareBridge(
       throw new Error('Workbench Home migration temporary link conflict')
     }
   } else {
-    await fs.symlink(targetHome, temporary, 'dir')
+    await fs.symlink(targetHome, temporary, process.platform === 'win32' ? 'junction' : 'dir')
   }
   if (
     !(await metadata(temporary))?.isSymbolicLink() ||
@@ -304,7 +321,7 @@ async function resumeMigration(
       throw new Error('Workbench Home migration found an unjournaled external relative link')
     }
     await fs.mkdir(dirname(targetHome), { recursive: true, mode: 0o700 })
-    // Prove directory symlink privileges before making the old Home unavailable.
+    // Prove the directory bridge can be created before making the old Home unavailable.
     await prepareBridge(options, journal)
     await assertAbsent(targetHome)
     assertHeld()

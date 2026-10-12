@@ -329,8 +329,14 @@ mod tests {
         moved.preserve_execution_path = true;
         let rows = workspace_response(vec![moved], vec![project("target", None)]);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0]["workspacePath"], "/srv/work");
-        assert_eq!(rows[0]["tasks"][0]["workspacePath"], "/other/checkout");
+        assert_eq!(
+            rows[0]["workspacePath"],
+            crate::runtime_work::util::normalize_workspace_path("/srv/work")
+        );
+        assert_eq!(
+            rows[0]["tasks"][0]["workspacePath"],
+            crate::runtime_work::util::normalize_workspace_path("/other/checkout")
+        );
     }
 
     #[test]

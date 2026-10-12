@@ -56,7 +56,7 @@ describe('startup recovery file boundaries', () => {
       if (
         path.includes('managed-components') ||
         path.endsWith('.wework-runtime.json') ||
-        path.includes('node_modules/@wegent/dsh-app-wework')
+        path.includes(join('node_modules', '@wegent', 'dsh-app-wework'))
       ) {
         await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
       } else {

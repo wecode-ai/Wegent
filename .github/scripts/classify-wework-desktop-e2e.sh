@@ -427,10 +427,15 @@ classify_wework_path() {
       wework/e2e/desktop/modules/native-agent-mcp.mjs | \
       wework/e2e/desktop/modules/workbench-home-migration.mjs | \
       wework/e2e/desktop/modules/workbench-schema-compatibility.mjs | \
+      wework/e2e/desktop/modules/workbench-desktop-startup.mjs | \
+      wework/e2e/desktop/modules/workbench-component-publication.mjs | \
+      wework/electron/src/runtime/immutable-directory* | \
       wework/electron/src/runtime/workbench-environment* | \
       wework/electron/src/runtime/development-isolation* | \
       wework/electron/src/runtime/workbench-executor-schema* | \
+      wework/electron/src/runtime/workbench-codex-migration* | \
       wework/electron/src/runtime/workbench-migration-lock* | \
+      wework/electron/src/runtime/workbench-desktop-startup* | \
       wework/electron/src/runtime/workbench-home-migration* | \
       wework/electron/src/runtime/workbench-mode* | \
       wework/src/features/workbench-mode/*)

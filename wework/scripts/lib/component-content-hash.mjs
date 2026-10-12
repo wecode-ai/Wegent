@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 export async function hashComponentPath(path) {
@@ -15,7 +15,7 @@ async function hashTree(root, relative = '') {
   const hash = createHash('sha256')
   const entries = await readdir(join(root, relative), { withFileTypes: true })
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const child = join(relative, entry.name)
+    const child = posix.join(relative, entry.name)
     if (entry.isDirectory()) {
       hash.update(`directory:${child}\0${await hashTree(root, child)}\0`)
     } else if (entry.isFile()) {

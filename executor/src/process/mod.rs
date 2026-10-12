@@ -43,6 +43,8 @@ use crate::{
 
 #[cfg(windows)]
 mod windows_batch;
+#[cfg(windows)]
+pub(crate) use windows_batch::shell_command as windows_shell_command;
 
 pub(crate) mod debug_stdout;
 mod stream_diagnostics;
@@ -960,7 +962,7 @@ pub fn spawn_program_parts(program: &str) -> (PathBuf, Vec<String>) {
                 return (target.program, target.prefix_args);
             }
         }
-        return (program_path, Vec::new());
+        (program_path, Vec::new())
     }
     #[cfg(not(windows))]
     (PathBuf::from(program), Vec::new())

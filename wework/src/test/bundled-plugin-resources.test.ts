@@ -257,105 +257,113 @@ describe('bundled plugin resources', () => {
     expect(skill).toContain('structured error code')
   })
 
-  test('uses the Electron release builder and publishes both updater protocols', () => {
-    const workflow = readFileSync(
-      resolve(process.cwd(), '../.github/workflows/wework-app.yml'),
-      'utf8'
-    )
-    const signingKeychainStep = workflow.match(
-      / {6}- name: Prepare Apple signing keychain\n(?:(?!\n {6}- name:)[\s\S])*/
-    )?.[0]
-    const packageManifest = JSON.parse(
-      readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')
-    ) as {
-      scripts: Record<string, string>
-    }
-    const builderConfig = readFileSync(
-      resolve(process.cwd(), 'electron/electron-builder.config.cjs'),
-      'utf8'
-    )
-    const packageAssetsScript = readFileSync(
-      resolve(process.cwd(), 'electron/scripts/prepare-package-assets.mjs'),
-      'utf8'
-    )
+  test.each([
+    ['LF', '\n'],
+    ['CRLF', '\r\n'],
+  ])(
+    'uses the Electron release builder and publishes both updater protocols (%s)',
+    (_name, lineEnding) => {
+      const workflow = readFileSync(
+        resolve(process.cwd(), '../.github/workflows/wework-app.yml'),
+        'utf8'
+      ).replace(/\r?\n/g, lineEnding)
+      const signingKeychainStep = workflow.match(
+        / {6}- name: Prepare Apple signing keychain\r?\n(?:(?!\r?\n {6}- name:)[\s\S])*/
+      )?.[0]
+      const packageManifest = JSON.parse(
+        readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')
+      ) as {
+        scripts: Record<string, string>
+      }
+      const builderConfig = readFileSync(
+        resolve(process.cwd(), 'electron/electron-builder.config.cjs'),
+        'utf8'
+      )
+      const packageAssetsScript = readFileSync(
+        resolve(process.cwd(), 'electron/scripts/prepare-package-assets.mjs'),
+        'utf8'
+      )
 
-    expect(workflow).toContain('pnpm --filter wework build:release')
-    expect(packageManifest.scripts['build:release']).toContain('pnpm --dir electron build:release')
-    expect(packageAssetsScript).toMatch(
-      /WEWORK_SOURCE_SHA\?\.trim\(\)\s*\|\|\s*process\.env\.GITHUB_SHA\?\.trim\(\)/
-    )
-    expect(builderConfig).toContain('appId: identity.identifier')
-    expect(builderConfig).toContain('productName: identity.productName')
-    expect(builderConfig).toContain('executableName: identity.executableName')
-    expect(builderConfig).toContain('weworkAppId: identity.identifier')
-    expect(signingKeychainStep).toContain('security import')
-    expect(signingKeychainStep).toContain('security list-keychains -d user -s')
-    expect(signingKeychainStep).toContain(
-      'echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"'
-    )
-    expect(signingKeychainStep).toContain('echo "CSC_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"')
-    expect(signingKeychainStep).toContain(
-      'echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"'
-    )
-    expect(workflow).not.toMatch(/^\s+CSC_LINK:/m)
-    expect(workflow).not.toMatch(/^\s+CSC_KEY_PASSWORD:/m)
-    expect(workflow).toContain('generate-desktop-update-manifests.mjs')
-    expect(workflow).toContain('plan-desktop-release.mjs')
-    expect(workflow).not.toContain('prepare-rolling-desktop-installers.mjs')
-    expect(workflow).toContain('CURRENT_SOURCE_REF')
-    expect(workflow).toContain('RELEASE_KIND')
-    expect(workflow).toContain('- name: Prepare desktop release assets')
-    expect(workflow).toContain('release-manifests/*')
-    expect(workflow).toContain("! -name 'WeworkComponent_*.tar.gz'")
-    expect(workflow).toMatch(
-      /node wework\/scripts\/upload-desktop-component-assets\.mjs\s+\\\s+release-assets version "\$RELEASE_TAG"/
-    )
-    expect(workflow).toContain('desktop-component-release.mjs release-assets shared')
-    expect(workflow).toContain('Reusing immutable component asset')
-    expect(workflow).toContain('collect-harness-runtime-release-assets.mjs')
-    expect(workflow).toContain('Reusing immutable Harness Runtime asset')
-    expect(workflow).toContain('components-${channel}-linux-x64.json')
-    expect(
-      readFileSync(
-        resolve(process.cwd(), 'electron/src/runtime/component-update-manager.ts'),
-        'utf8'
+      expect(workflow).toContain('pnpm --filter wework build:release')
+      expect(packageManifest.scripts['build:release']).toContain(
+        'pnpm --dir electron build:release'
       )
-    ).toContain("'bundledPlugins'")
-    expect(
-      readFileSync(
-        resolve(process.cwd(), 'electron/src/runtime/component-update-manager.ts'),
-        'utf8'
+      expect(packageAssetsScript).toMatch(
+        /WEWORK_SOURCE_SHA\?\.trim\(\)\s*\|\|\s*process\.env\.GITHUB_SHA\?\.trim\(\)/
       )
-    ).toContain("'dws'")
-    expect(workflow).toMatch(
-      /gh release upload wework-updater "\$component_asset"\s+echo "\$component_name"/
-    )
-    expect(workflow).toMatch(
-      /if \[\[ "\$RELEASE_KIND" == "component" \]\]; then[\s\S]*release-manifests\/components-\$\{channel\}-macos-arm64\.json/
-    )
-    expect(workflow).toMatch(
-      /- name: Commit Wework version files[\s\S]*?GH_TOKEN: \$\{\{ steps\.release-app-token\.outputs\.token \}\}/
-    )
-    expect(workflow).toMatch(
-      /- name: Create or update draft release[\s\S]*?GH_REPO: \$\{\{ github\.repository \}\}/
-    )
-    expect(workflow).toMatch(
-      /- name: Resolve previous Wework release[\s\S]*?resolve-previous-release-tag\.mjs/
-    )
-    expect(workflow).toContain(
-      "PREVIOUS_TAG: ${{ steps.plan.outputs.kind == 'component' && steps.plan.outputs.base_tag || steps.previous-release.outputs.tag }}"
-    )
-    expect(workflow).toMatch(
-      /- name: Upload formal release assets\s+env:[\s\S]*find release-assets/
-    )
-    expect(workflow.indexOf('- name: Publish version release')).toBeLessThan(
-      workflow.indexOf('- name: Publish rolling update channels')
-    )
-    expect(workflow.indexOf('- name: Publish rolling update channels')).toBeLessThan(
-      workflow.indexOf('- name: Promote stable release to latest')
-    )
-    expect(workflow).toMatch(/gh release edit "\$RELEASE_TAG"[\s\S]*--target "\$RELEASE_SHA"/)
-  })
+      expect(builderConfig).toContain('appId: identity.identifier')
+      expect(builderConfig).toContain('productName: identity.productName')
+      expect(builderConfig).toContain('executableName: identity.executableName')
+      expect(builderConfig).toContain('weworkAppId: identity.identifier')
+      expect(signingKeychainStep).toContain('security import')
+      expect(signingKeychainStep).toContain('security list-keychains -d user -s')
+      expect(signingKeychainStep).toContain(
+        'echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"'
+      )
+      expect(signingKeychainStep).toContain('echo "CSC_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"')
+      expect(signingKeychainStep).toContain(
+        'echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"'
+      )
+      expect(workflow).not.toMatch(/^\s+CSC_LINK:/m)
+      expect(workflow).not.toMatch(/^\s+CSC_KEY_PASSWORD:/m)
+      expect(workflow).toContain('generate-desktop-update-manifests.mjs')
+      expect(workflow).toContain('plan-desktop-release.mjs')
+      expect(workflow).not.toContain('prepare-rolling-desktop-installers.mjs')
+      expect(workflow).toContain('CURRENT_SOURCE_REF')
+      expect(workflow).toContain('RELEASE_KIND')
+      expect(workflow).toContain('- name: Prepare desktop release assets')
+      expect(workflow).toContain('release-manifests/*')
+      expect(workflow).toContain("! -name 'WeworkComponent_*.tar.gz'")
+      expect(workflow).toMatch(
+        /node wework\/scripts\/upload-desktop-component-assets\.mjs\s+\\\s+release-assets version "\$RELEASE_TAG"/
+      )
+      expect(workflow).toContain('desktop-component-release.mjs release-assets shared')
+      expect(workflow).toContain('Reusing immutable component asset')
+      expect(workflow).toContain('collect-harness-runtime-release-assets.mjs')
+      expect(workflow).toContain('Reusing immutable Harness Runtime asset')
+      expect(workflow).toContain('components-${channel}-linux-x64.json')
+      expect(
+        readFileSync(
+          resolve(process.cwd(), 'electron/src/runtime/component-update-manager.ts'),
+          'utf8'
+        )
+      ).toContain("'bundledPlugins'")
+      expect(
+        readFileSync(
+          resolve(process.cwd(), 'electron/src/runtime/component-update-manager.ts'),
+          'utf8'
+        )
+      ).toContain("'dws'")
+      expect(workflow).toMatch(
+        /gh release upload wework-updater "\$component_asset"\s+echo "\$component_name"/
+      )
+      expect(workflow).toMatch(
+        /if \[\[ "\$RELEASE_KIND" == "component" \]\]; then[\s\S]*release-manifests\/components-\$\{channel\}-macos-arm64\.json/
+      )
+      expect(workflow).toMatch(
+        /- name: Commit Wework version files[\s\S]*?GH_TOKEN: \$\{\{ steps\.release-app-token\.outputs\.token \}\}/
+      )
+      expect(workflow).toMatch(
+        /- name: Create or update draft release[\s\S]*?GH_REPO: \$\{\{ github\.repository \}\}/
+      )
+      expect(workflow).toMatch(
+        /- name: Resolve previous Wework release[\s\S]*?resolve-previous-release-tag\.mjs/
+      )
+      expect(workflow).toContain(
+        "PREVIOUS_TAG: ${{ steps.plan.outputs.kind == 'component' && steps.plan.outputs.base_tag || steps.previous-release.outputs.tag }}"
+      )
+      expect(workflow).toMatch(
+        /- name: Upload formal release assets\s+env:[\s\S]*find release-assets/
+      )
+      expect(workflow.indexOf('- name: Publish version release')).toBeLessThan(
+        workflow.indexOf('- name: Publish rolling update channels')
+      )
+      expect(workflow.indexOf('- name: Publish rolling update channels')).toBeLessThan(
+        workflow.indexOf('- name: Promote stable release to latest')
+      )
+      expect(workflow).toMatch(/gh release edit "\$RELEASE_TAG"[\s\S]*--target "\$RELEASE_SHA"/)
+    }
+  )
 
   test('publishes packaged Electron artifacts for all desktop platforms', () => {
     const workflow = readFileSync(
