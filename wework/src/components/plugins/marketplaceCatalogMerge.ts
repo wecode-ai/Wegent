@@ -5,6 +5,7 @@ import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { marketplaceItemMarketplaceId } from './pluginDistribution'
 import {
   hasLocalCodexMaterialization,
+  isWegentManagedStorePlugin,
   linkedCloudPluginId,
   linkedCloudInstalledPluginId,
   localMaterializedVersion,
@@ -99,7 +100,11 @@ export function mergeMarketplaceCatalog(
     // cloud row; overlay from the installed list so the card shows "..." immediately.
     if (typeof plugin.spec.pluginId === 'number') {
       cloudManagedInstalls.set(String(plugin.spec.pluginId), plugin)
-    } else if (cloudPluginId !== null && linkedCloudInstalledPluginId(plugin) !== null) {
+    } else if (
+      cloudPluginId !== null &&
+      linkedCloudInstalledPluginId(plugin) !== null &&
+      isWegentManagedStorePlugin(plugin)
+    ) {
       cloudManagedInstalls.set(String(cloudPluginId), plugin)
     }
   }
