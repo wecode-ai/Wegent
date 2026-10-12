@@ -4,6 +4,62 @@
 
 use super::*;
 
+pub(super) async fn wait_for_context_compaction(
+    mut route_notification: impl FnMut(&Value),
+    mut notifications: broadcast::Receiver<Value>,
+    thread_id: &str,
+    previous_turn_id: Option<&str>,
+) -> Result<(String, String), String> {
+    let deadline = tokio::time::Instant::now() + CONTEXT_COMPACTION_WAIT_BUDGET;
+    let mut items = HashMap::new();
+    loop {
+        let message = match tokio::time::timeout_at(deadline, notifications.recv())
+            .await
+            .map_err(|_| "context compaction timed out".to_owned())?
+        {
+            Ok(message) => message,
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                log_executor_event(
+                    "context compaction notifications lagged",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        ("skipped", skipped.to_string()),
+                    ],
+                );
+                continue;
+            }
+            Err(error @ broadcast::error::RecvError::Closed) => {
+                return Err(format!(
+                    "context compaction notification stream failed: {error}"
+                ));
+            }
+        };
+        if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
+            return Err("Codex app-server exited during context compaction".to_owned());
+        }
+        if codex_notification_thread_id(&message).as_deref() != Some(thread_id) {
+            continue;
+        }
+        route_notification(&message);
+        if let Some(outcome) =
+            context_compaction_notification_outcome(&message, previous_turn_id, &mut items)
+        {
+            log_executor_event(
+                "context compaction settled",
+                &[
+                    ("thread_id", thread_id.to_owned()),
+                    (
+                        "turn_id",
+                        codex_notification_turn_id(&message).unwrap_or_default(),
+                    ),
+                    ("success", outcome.is_ok().to_string()),
+                ],
+            );
+            return outcome;
+        }
+    }
+}
+
 pub(super) fn context_compaction_notification_outcome(
     message: &Value,
     previous_turn_id: Option<&str>,
@@ -83,6 +139,34 @@ pub(super) fn context_compaction_outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn keeps_waiting_after_notification_lag_when_completion_is_still_buffered() {
+        let (sender, receiver) = broadcast::channel(2);
+        for _ in 0..4 {
+            sender.send(json!({"method": "thread/tokenUsage/updated", "params": {"threadId": "other-thread"}})).unwrap();
+        }
+        sender.send(json!({"method": "item/completed", "params": {
+            "threadId": "thread", "turnId": "compact-turn", "item": {"id": "compact-item", "type": "contextCompaction"}
+        }})).unwrap();
+        sender.send(json!({"method": "turn/completed", "params": {
+            "threadId": "thread", "turn": {"id": "compact-turn", "status": "completed", "items": []}
+        }})).unwrap();
+        assert_eq!(
+            wait_for_context_compaction(|_| {}, receiver, "thread", Some("previous")).await,
+            Ok(("compact-turn".to_owned(), "compact-item".to_owned()))
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_a_closed_notification_stream_without_waiting_for_timeout() {
+        let (sender, receiver) = broadcast::channel(2);
+        drop(sender);
+        assert_eq!(
+            wait_for_context_compaction(|_| {}, receiver, "thread", Some("previous")).await,
+            Err("context compaction notification stream failed: channel closed".to_owned())
+        );
+    }
 
     #[test]
     fn waits_for_turn_completion_after_the_compaction_item_completes() {

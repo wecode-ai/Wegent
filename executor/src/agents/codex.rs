@@ -776,6 +776,17 @@ impl CodexAppServerClient {
         Ok(self.ensure_process().await?.notifications.subscribe_all())
     }
 
+    pub(crate) async fn subscribe_thread_notifications(
+        &self,
+        thread_id: &str,
+    ) -> Result<broadcast::Receiver<Value>, String> {
+        Ok(self
+            .ensure_process()
+            .await?
+            .notifications
+            .subscribe_thread(thread_id))
+    }
+
     async fn subscribe_thread_notifications_for_launch_config(
         &self,
         launch_config: &CodexLaunchConfig,

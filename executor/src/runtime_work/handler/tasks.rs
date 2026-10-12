@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::context_compaction::context_compaction_notification_outcome;
 #[cfg(test)]
 use super::context_compaction::context_compaction_outcome;
+use super::context_compaction::wait_for_context_compaction;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
@@ -1662,7 +1662,7 @@ impl RuntimeWorkRpcHandler {
         );
         // History can briefly label a newly admitted turn as interrupted.
         // Subscribe before starting it and settle only on native completion.
-        let notifications = match client.subscribe_notifications().await {
+        let notifications = match client.subscribe_thread_notifications(&thread_id).await {
             Ok(receiver) => receiver,
             Err(error) => return Ok(task_action_failure(link, error)),
         };
@@ -1674,14 +1674,17 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(_) => {
-                let (turn_id, item_id) = match self
-                    .wait_for_context_compaction(
-                        client,
-                        notifications,
-                        &thread_id,
-                        previous_turn_id.as_deref(),
-                    )
-                    .await
+                let (turn_id, item_id) = match wait_for_context_compaction(
+                    |message| {
+                        if client.has_dedicated_home() {
+                            self.route_codex_notification(message.clone());
+                        }
+                    },
+                    notifications,
+                    &thread_id,
+                    previous_turn_id.as_deref(),
+                )
+                .await
                 {
                     Ok(completion) => completion,
                     Err(error) => return Ok(task_action_failure(link, error)),
@@ -1697,50 +1700,6 @@ impl RuntimeWorkRpcHandler {
                 Ok(response)
             }
             Err(error) => Ok(task_action_failure(link, error)),
-        }
-    }
-
-    async fn wait_for_context_compaction(
-        &self,
-        client: &CodexAppServerClient,
-        mut notifications: broadcast::Receiver<Value>,
-        thread_id: &str,
-        previous_turn_id: Option<&str>,
-    ) -> Result<(String, String), String> {
-        let deadline = tokio::time::Instant::now() + CONTEXT_COMPACTION_WAIT_BUDGET;
-        let mut items = HashMap::new();
-        loop {
-            let message = tokio::time::timeout_at(deadline, notifications.recv())
-                .await
-                .map_err(|_| "context compaction timed out".to_owned())?
-                .map_err(|error| {
-                    format!("context compaction notification stream failed: {error}")
-                })?;
-            if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
-                return Err("Codex app-server exited during context compaction".to_owned());
-            }
-            if codex_notification_thread_id(&message).as_deref() != Some(thread_id) {
-                continue;
-            }
-            if client.has_dedicated_home() {
-                self.route_codex_notification(message.clone());
-            }
-            if let Some(outcome) =
-                context_compaction_notification_outcome(&message, previous_turn_id, &mut items)
-            {
-                log_executor_event(
-                    "context compaction settled",
-                    &[
-                        ("thread_id", thread_id.to_owned()),
-                        (
-                            "turn_id",
-                            codex_notification_turn_id(&message).unwrap_or_default(),
-                        ),
-                        ("success", outcome.is_ok().to_string()),
-                    ],
-                );
-                return outcome;
-            }
         }
     }
 
