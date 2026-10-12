@@ -125,15 +125,19 @@ async function requestExecutor(control, method, params, timeoutMs) {
   return payload.result
 }
 
-function seedPaginatedTurnHistory(sqliteHome, threadId, cwd) {
+async function seedPaginatedTurnHistory(sqliteHome, threadId, cwd, timeoutMs) {
   const database = new DatabaseSync(join(sqliteHome, 'thread_history_1.sqlite'))
   try {
     database.exec('PRAGMA busy_timeout = 10000')
-    const turn = database
-      .prepare(
-        'SELECT turn_id FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 1'
-      )
-      .get(threadId)
+    const readTurn = database.prepare(
+      'SELECT turn_id FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 1'
+    )
+    const deadline = Date.now() + timeoutMs
+    let turn = readTurn.get(threadId)
+    while (!turn && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+      turn = readTurn.get(threadId)
+    }
     assert.ok(turn, 'The native running turn was not persisted')
     const ordinal = database
       .prepare(
@@ -567,7 +571,12 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="pause-response-button"]', {
         timeoutMs: uiTimeoutMs,
       })
-      seedPaginatedTurnHistory(codexSqliteHome, pagedAddress.threadId, pagedAddress.workspacePath)
+      await seedPaginatedTurnHistory(
+        codexSqliteHome,
+        pagedAddress.threadId,
+        pagedAddress.workspacePath,
+        uiTimeoutMs
+      )
       const pageRequest = { address: pagedAddress, limit: 50 }
       const nativePage = await requestExecutor(
         control,
