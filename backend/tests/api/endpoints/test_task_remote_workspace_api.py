@@ -6,7 +6,10 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.schemas.remote_workspace import RemoteWorkspaceStatusResponse
+from app.schemas.remote_workspace import (
+    RemoteWorkspaceStatusResponse,
+    RemoteWorkspaceTreeResponse,
+)
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -44,3 +47,17 @@ def test_remote_workspace_tree_endpoint_rejects_escape(
     )
 
     assert response.status_code == 400
+
+
+def test_tree_without_path_requests_the_resolved_task_root(test_client, test_token):
+    root = "/srv/workspaces/demo-12345678"
+    with patch(
+        "app.api.endpoints.adapter.tasks.remote_workspace_service.list_tree",
+        return_value=RemoteWorkspaceTreeResponse(path=root, entries=[]),
+    ) as list_tree:
+        response = test_client.get(
+            "/api/tasks/1/remote-workspace/tree", headers=_auth_header(test_token)
+        )
+    assert response.status_code == 200
+    assert response.json() == {"path": root, "entries": []}
+    assert list_tree.call_args.kwargs["path"] is None
