@@ -473,6 +473,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx ]]; then
         select_target "core:temporary-chat"
+        select_target "core:background-terminals"
       fi
       return
       ;;
@@ -774,6 +775,10 @@ classify_wework_path() {
         "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:project-ai-settings"
       fi
+      if [[ "$path" == wework/src/api/local/localServices* || \
+        "$path" == wework/src/api/hybrid/hybridServices* ]]; then
+        select_target "core:background-terminals"
+      fi
       if [[ "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:send-key-preference"
       fi
@@ -827,6 +832,7 @@ classify_wework_path() {
       wework/src/components/layout/DesktopWorkbenchLayout.test.tsx)
       select_target "core:environment-panel-scroll"
       if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
+        select_target "core:background-terminals"
         select_target "core:temporary-chat"
         select_target "core:cloud-context-resilience"
         select_target "core:task-board-association"
@@ -836,8 +842,7 @@ classify_wework_path() {
 
     # Right-workspace temporary chats have an independently bootstrapped
     # ephemeral-thread scenario.
-    wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx | \
-      wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
+    wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
       wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
       select_target "core:temporary-chat"
       return

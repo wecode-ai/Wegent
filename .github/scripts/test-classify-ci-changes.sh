@@ -416,6 +416,21 @@ wework_desktop_other_e2e='
   fi
 }
 
+for terminal_wiring_path in \
+  wework/src/components/layout/DesktopWorkbenchMain.tsx \
+  wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx \
+  wework/src/api/hybrid/hybridServices.ts \
+  wework/src/api/hybrid/hybridServices.test.ts \
+  wework/src/api/local/localServices.ts \
+  wework/src/api/local/localServices.test.ts; do
+  terminal_wiring_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$terminal_wiring_path")"
+  if [[ "$terminal_wiring_output" != *"background-terminals"* ]]; then
+    printf 'Terminal wiring changes must select background-terminal coverage: %s\n%s\n' \
+      "$terminal_wiring_path" "$terminal_wiring_output" >&2
+    exit 1
+  fi
+done
+
 assert_desktop_case "cloud catalog recovery changes select the real backend checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
@@ -674,7 +689,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "shared right workspace panel selects plugin development and temporary chat" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat"},{"id":"core-16","name":"Core / shard 16","segments":"plugin-development"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat"},{"id":"core-13","name":"Core / shard 13","segments":"background-terminals"},{"id":"core-16","name":"Core / shard 16","segments":"plugin-development"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx"
@@ -682,7 +697,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "main workbench changes select fixed environment panel coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat"},{"id":"core-5","name":"Core / shard 5","segments":"cloud-context-resilience"},{"id":"core-7","name":"Core / shard 7","segments":"task-board-association"},{"id":"core-10","name":"Core / shard 10","segments":"environment-panel-scroll"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat"},{"id":"core-5","name":"Core / shard 5","segments":"cloud-context-resilience"},{"id":"core-7","name":"Core / shard 7","segments":"task-board-association"},{"id":"core-10","name":"Core / shard 10","segments":"environment-panel-scroll"},{"id":"core-13","name":"Core / shard 13","segments":"background-terminals"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/DesktopWorkbenchMain.tsx"
