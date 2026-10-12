@@ -1406,7 +1406,7 @@ describe('createHybridWorkbenchServices', () => {
       }))
     )
     mocks.cloudRuntimeIpcRequest.mockImplementation(async (method, payload, deviceId) => {
-      expect(method).toBe('codex.app_server_request')
+      expect(method).toBe('runtime.codex.app_server.request')
       if (payload.method === 'plugin/installed') return { marketplaces: [] }
       return {
         marketplaces:
@@ -1430,12 +1430,12 @@ describe('createHybridWorkbenchServices', () => {
     expect((await cloud.readState()).marketplaceItems).toHaveLength(1)
     expect((await remote.readState()).marketplaceItems).toEqual([])
     expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
-      'codex.app_server_request',
+      'runtime.codex.app_server.request',
       { method: 'plugin/list', params: { cwds: null } },
       'cloud-device'
     )
     expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
-      'codex.app_server_request',
+      'runtime.codex.app_server.request',
       { method: 'plugin/list', params: { cwds: null } },
       'remote-device'
     )

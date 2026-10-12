@@ -118,7 +118,7 @@ export function createBackendWorkbenchServices(
     let api = projectDevicePluginApis.get(deviceId)
     if (!api) {
       api = createRemoteProjectDevicePluginApi(deviceId, (method, params) =>
-        composerRuntimeIpc.request('codex.app_server_request', { method, params }, deviceId)
+        composerRuntimeIpc.request('runtime.codex.app_server.request', { method, params }, deviceId)
       )
       projectDevicePluginApis.set(deviceId, api)
     }

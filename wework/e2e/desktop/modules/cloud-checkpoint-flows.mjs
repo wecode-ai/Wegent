@@ -252,6 +252,21 @@ async function verifyCloudProjectCreationSources(
     value: 'Review the cloud project changes.',
   })
   await control.command('click', '[data-testid="local-project-quick-phrase-save-button"]')
+  await control.command('click', '[data-testid="local-project-settings-plugins-tab"]')
+  await control.command('waitFor', '[data-testid="local-project-plugin-search"]', { enabled: true })
+  await control.command('waitFor', '[data-testid="local-project-plugins-loading"]', {
+    visible: false,
+  })
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        '[data-testid="local-project-edit-dialog"] [role="alert"]'
+      )
+    ),
+    0,
+    'The cloud project plugin tab failed to read inventory from its owning executor'
+  )
   await control.command('clickWhenEnabled', '[data-testid="save-local-project-button"]')
   await control.command('waitFor', '[data-testid="local-project-edit-dialog"]', { visible: false })
   await control.command('waitFor', `[data-testid="project-row-${projectId}"]`, {

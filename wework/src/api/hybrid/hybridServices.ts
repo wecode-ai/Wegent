@@ -606,7 +606,7 @@ export function createHybridWorkbenchServices(
     if (cached) return cached
     const local = createLocalProjectDevicePluginApi()
     const remote = createRemoteProjectDevicePluginApi(deviceId, (method, params) =>
-      cloudRuntimeIpc.request('codex.app_server_request', { method, params }, deviceId)
+      cloudRuntimeIpc.request('runtime.codex.app_server.request', { method, params }, deviceId)
     )
     const resolve = async () =>
       (await runtimeApiForDevice(deviceId)) === localServices.runtimeWorkApi ? local : remote

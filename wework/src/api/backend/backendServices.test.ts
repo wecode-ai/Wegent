@@ -61,6 +61,29 @@ describe('createBackendWorkbenchServices', () => {
     expect(services.feedbackApi).toBeUndefined()
   })
 
+  test('reads project plugins through the addressed runtime app-server interface', async () => {
+    composerMocks.request.mockResolvedValue({ marketplaces: [] })
+    const services = createBackendWorkbenchServices(baseOptions)
+
+    await expect(
+      services.projectDevicePluginApi!('remote-device').readState()
+    ).resolves.toMatchObject({
+      deviceId: 'remote-device',
+      marketplaceItems: [],
+    })
+
+    expect(composerMocks.request).toHaveBeenCalledWith(
+      'runtime.codex.app_server.request',
+      { method: 'plugin/installed', params: {} },
+      'remote-device'
+    )
+    expect(composerMocks.request).toHaveBeenCalledWith(
+      'runtime.codex.app_server.request',
+      { method: 'plugin/list', params: { cwds: null } },
+      'remote-device'
+    )
+  })
+
   test('enables feedback only for the build-time feedback endpoint', () => {
     vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', 'https://feedback.example.com/v1/reports')
 

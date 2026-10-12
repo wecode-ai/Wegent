@@ -7,6 +7,9 @@ use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
+#[path = "runtime_rpc_tests.rs"]
+mod runtime_rpc_tests;
+
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
 
