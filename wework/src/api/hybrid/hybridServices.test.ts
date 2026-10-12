@@ -86,6 +86,11 @@ const mocks = vi.hoisted(() => {
     teamApi: { source: 'local' },
   }
 
+  const localDecisionRouterApi = {
+    resolveLaunch: vi.fn(),
+    unregister: vi.fn(),
+  }
+
   const localServices = {
     composerCatalogApi: { readCatalog: vi.fn() },
     teamApi: {
@@ -126,6 +131,7 @@ const mocks = vi.hoisted(() => {
       archiveProjectConversations: localArchiveProjectConversations,
     },
     automationApi: localAutomationApi,
+    localDecisionRouterApi,
     userApi: { updateCurrentUser: localUpdateCurrentUser },
     attachmentApi: {
       uploadAttachment: localUploadAttachment,
@@ -239,6 +245,7 @@ const mocks = vi.hoisted(() => {
     localDeleteAttachment,
     cloudUploadAttachment,
     localAutomationApi,
+    localDecisionRouterApi,
     captureLocalAppOptions,
     captureRuntimeIpcOptions,
     captureAutomationIpcOptions,
@@ -2518,5 +2525,19 @@ describe('createHybridWorkbenchServices', () => {
         syncConfiguredModelCatalog: true,
       })
     )
+  })
+
+  test('routes decision router registration through the local Executor only', async () => {
+    const services = createServices()
+
+    expect(services.localDecisionRouterApi).toBe(mocks.localServices.localDecisionRouterApi)
+    expect(services.localDecisionRouterApi).toBeDefined()
+
+    const launch = { token: 't', baseUrl: 'http://127.0.0.1:1/v1/decision-router/t' }
+    mocks.localDecisionRouterApi.resolveLaunch.mockResolvedValue(launch)
+    await expect(services.localDecisionRouterApi!.resolveLaunch('smart-app:42')).resolves.toBe(
+      launch
+    )
+    expect(mocks.localDecisionRouterApi.resolveLaunch).toHaveBeenCalledWith('smart-app:42')
   })
 })

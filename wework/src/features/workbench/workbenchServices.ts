@@ -133,6 +133,23 @@ export interface AutomationApi {
   listAutomationRuns: (automationId?: string) => Promise<AutomationRunListResponse>
 }
 
+/**
+ * Launch descriptor for the Wework built-in decision router.
+ *
+ * The renderer only forwards this to the Smart App host; it never inspects or
+ * assembles the decision upstream, and it never reads the upstream credential.
+ */
+export interface LocalDecisionRouterLaunch {
+  token: string
+  baseUrl: string
+  protocolVersion: 1
+}
+
+export interface LocalDecisionRouterApi {
+  resolveLaunch(scope?: string): Promise<LocalDecisionRouterLaunch>
+  unregister(token: string): Promise<void>
+}
+
 export interface WorkbenchServices {
   agentResourceApi?: ReturnType<typeof createAgentResourceApi>
   teamApi: ReturnType<typeof createTeamApi>
@@ -210,6 +227,12 @@ export interface WorkbenchServices {
     unregisterProxy: (token: string) => Promise<void>
     unregisterContext: (token: string) => Promise<void>
   }
+  /**
+   * Wework built-in decision router. Kept separate from
+   * `localHarnessModelApi`: it speaks the decision protocol and does not depend
+   * on a `LocalHarnessModelOption`.
+   */
+  localDecisionRouterApi?: LocalDecisionRouterApi
   workspaceSessionApi?: WorkspaceSessionApi
   branchNameApi?: {
     generateBranchName: (data: {
