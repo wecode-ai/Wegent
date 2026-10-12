@@ -147,6 +147,41 @@ describe('DSH runtime readiness', () => {
     await expect(started).resolves.toBeUndefined()
   })
 
+  test('checks independent readiness routes without waiting for an earlier route', async () => {
+    const requested = new Set<string>()
+    let releaseHost: (() => void) | undefined
+    const server = createServer((request, response) => {
+      requested.add(request.url ?? '')
+      if (request.url === '/host') releaseHost = () => response.end('ready')
+      else response.end('ready')
+    })
+    servers.push(server)
+    await listen(server)
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
+    const origin = `http://127.0.0.1:${address.port}`
+    const runtime = new DshRuntime({
+      url: origin,
+      probeUrls: [`${origin}/host`, `${origin}/executor`, `${origin}/terminal`],
+    })
+    let ready = false
+    const started = runtime.start(2_000).then(() => {
+      ready = true
+    })
+    try {
+      await vi.waitFor(
+        () => expect(requested).toEqual(new Set(['/host', '/executor', '/terminal'])),
+        { timeout: 500 }
+      )
+      expect(ready).toBe(false)
+    } finally {
+      releaseHost?.()
+      await started
+      await runtime.stop()
+    }
+    expect(ready).toBe(true)
+  })
+
   test('uses the configured managed-process startup timeout', async () => {
     const runtime = new DshRuntime({
       url: 'http://127.0.0.1/pending',

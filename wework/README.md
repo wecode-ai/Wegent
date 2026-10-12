@@ -51,6 +51,8 @@ the same editor.
 正常启动直接加载 Core 页面；旧错误页面仅在准备窗口无法显示错误时加载。
 Core 进程使用 `--port 0` 直接绑定系统分配的端口，通过已认证的宿主管道传回实际地址，
 再完成认证并校验全部必需接口，避免预选端口在进程启动前被其他进程占用。
+必需接口并行探测，全部通过后才加载工作台。已校验组件的组合和 profile 复制不再
+计算未使用的内容哈希；组件下载与激活的完整性校验保持不变。
 管道中的会话地址不写入日志，也不等待非首屏插件完成全部启动。
 Core 崩溃自动重启后，工作台在必需接口重新就绪时切换到新地址，更新安全来源并
 恢复固定窗口；Executor 保持运行，旧 Smart app 的运行时选择和缓存保持有效。
@@ -68,6 +70,9 @@ the error page loads only if the preparation window cannot display the error.
 Core binds an OS-assigned port with `--port 0`. The host discovers its actual
 address through the authenticated host pipe before authentication and required
 endpoint checks, eliminating the gap between selecting a port and binding it.
+Required endpoints are probed concurrently; all must pass before the workbench loads.
+Composition and profile copies of verified components omit unused content hashes.
+Component download and activation integrity checks remain in place.
 The session URL stays out of logs, and readiness does not wait for optional plugins.
 After an automatic Core restart, the workbench reloads the ready endpoint, updates
 its allowed origin, and restores fixed windows. The Executor keeps running, and

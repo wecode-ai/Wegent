@@ -184,8 +184,9 @@ async function waitForHttpEndpoints(
   signal: AbortSignal,
   authenticate?: () => Promise<string>
 ): Promise<void> {
-  for (const url of urls) {
-    await waitForHttp(url, signal, authenticate)
+  const results = await Promise.allSettled(urls.map(url => waitForHttp(url, signal, authenticate)))
+  for (const result of results) {
+    if (result.status === 'rejected') throw result.reason
   }
 }
 

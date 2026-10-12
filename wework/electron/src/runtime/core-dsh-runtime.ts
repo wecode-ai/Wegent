@@ -449,7 +449,7 @@ export async function copyManagedPlugin(
   const entries = await readdir(source, { withFileTypes: true })
   if (platform !== 'win32') {
     await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
-    await copyComponentTree(await realpath(source), destination, new Set(['web']))
+    await copyComponentTree(await realpath(source), destination, new Set(['web']), false)
     const web = entries.find(entry => entry.name === 'web')
     if (web?.isDirectory() || web?.isSymbolicLink()) {
       await linkDirectory(resolve(source, 'web'), join(destination, 'web'), 'dir')

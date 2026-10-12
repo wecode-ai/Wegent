@@ -2,10 +2,37 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink } from 'node:fs/prom
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
+import * as componentHashes from './component-content-hash.js'
 import { hashComponentPath } from './component-content-hash.js'
 import { copyComponentTree } from './component-copy.js'
 import { copyComponentSnapshot } from './component-snapshot.js'
+
+test('avoids reading copied contents when the caller does not consume a digest', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-component-copy-no-hash-'))
+  const source = join(root, 'source')
+  const target = join(root, 'target')
+  const hashFile = vi.spyOn(componentHashes, 'hashComponentFileContents')
+  const hashRecords = vi.spyOn(componentHashes, 'hashComponentRecords')
+  try {
+    await mkdir(join(source, 'nested'), { recursive: true })
+    await writeFile(join(source, 'nested', 'runtime.js'), 'runtime', { mode: 0o755 })
+    await symlink('nested/runtime.js', join(source, 'runtime.js'))
+
+    expect(await copyComponentTree(source, target, new Set(), false)).toBeUndefined()
+    expect(hashFile).not.toHaveBeenCalled()
+    expect(hashRecords).not.toHaveBeenCalled()
+    await rm(source, { recursive: true })
+    expect(await readFile(join(target, 'runtime.js'), 'utf8')).toBe('runtime')
+    if (process.platform !== 'win32') {
+      expect((await stat(join(target, 'nested', 'runtime.js'))).mode & 0o777).toBe(0o755)
+    }
+  } finally {
+    hashFile.mockRestore()
+    hashRecords.mockRestore()
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test('preserves runtime links, executable modes and checksums after removing the source', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-component-copy-'))

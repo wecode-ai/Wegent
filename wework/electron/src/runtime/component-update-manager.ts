@@ -602,7 +602,7 @@ export class ComponentUpdateManager {
       await mkdir(temporary, { mode: 0o700 })
       await this.linkDirectoryEntries(corePlugins, temporary, new Set(['wework-app']))
       const appRoot = join(temporary, 'wework-app')
-      await copyComponentTree(join(corePlugins, 'wework-app'), appRoot, new Set(['web']))
+      await copyComponentTree(join(corePlugins, 'wework-app'), appRoot, new Set(['web']), false)
       const webRoot = join(appRoot, 'web')
       await mkdir(webRoot, { recursive: true, mode: 0o700 })
       await this.linkDirectoryEntries(
