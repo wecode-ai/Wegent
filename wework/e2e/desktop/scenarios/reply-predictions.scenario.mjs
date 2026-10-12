@@ -74,7 +74,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
     async verify(control) {
       active = true
       const capture = name => captureScreenshot(control, name, 'body')
-      await control.command('navigate', 'body', { value: '/settings/personal/models' })
+      await control.command('navigate', 'body', { value: '/settings/general' })
       await control.command('waitFor', MODEL_SELECT)
       await control.command(
         'waitFor',
@@ -123,7 +123,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       })
       assert.equal(normalRequests, 2)
       await capture('reply-07-edited-sent.png')
-      await control.command('navigate', 'body', { value: '/settings/personal/models' })
+      await control.command('navigate', 'body', { value: '/settings/general' })
       await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
       await control.command('click', '[data-testid="reply-prediction-enabled"]')
       await control.command(

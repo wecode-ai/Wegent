@@ -1,3 +1,4 @@
+import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 import { useContext, useEffect, useState } from 'react'
 import {
   Activity,
@@ -1021,6 +1022,8 @@ export function GeneralSettingsPage() {
           />
         </SettingsGroup>
       </section>
+
+      <ReplyPredictionSettings />
 
       {telemetryDistribution === 'public' ? (
         <section data-testid="general-settings-privacy-section" className="mt-12">

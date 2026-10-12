@@ -34,12 +34,13 @@ export function ReplyPredictionSettings() {
     }
   }
   return (
-    <section data-testid="reply-prediction-settings" className="mt-8">
-      <h2 className="mb-3 text-sm font-medium text-text-primary">
+    <section data-testid="reply-prediction-settings" className="mt-12">
+      <h2 className="mb-2 text-sm font-semibold text-text-primary">
         {t('workbench.reply_prediction_title')}
       </h2>
-      <SettingsGroup>
+      <SettingsGroup className="rounded-xl !bg-background">
         <SettingsRow
+          className="py-4"
           label={t('workbench.reply_prediction_enable')}
           description={t('workbench.reply_prediction_description')}
           control={

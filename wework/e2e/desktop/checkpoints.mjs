@@ -24,6 +24,7 @@ export const DESKTOP_CHECKPOINTS = [
   'external-content-import',
   'send-key-preference',
   'reply-predictions',
+  'model-settings',
   'system-proxy',
   'system-pac',
   'workbench-mode',

@@ -4,7 +4,7 @@ sidebar_position: 20
 
 # Reply suggestions
 
-Choose a configured model in **Settings → Models → Reply suggestions**. Selecting a model for the first time enables predictions. This model is independent of the conversation model. Without a selection, predictions stay disabled and no other model is used automatically. You can turn the feature off at any time.
+Choose a configured model in **Settings → General → Reply suggestions**. Selecting a model for the first time enables predictions. This model is independent of the conversation model. Without a selection, predictions stay disabled and no other model is used automatically. You can turn the feature off at any time.
 
 After an AI response completes in a task, temporary chat, or project activity conversation, the empty composer may display a gray suggestion. Press **Tab, Right Arrow, or Enter** to accept it as an editable draft. This key press only accepts the suggestion. Review the text, then send it using your normal send shortcut. You can edit, undo, or ignore the suggestion and type your own reply.
 

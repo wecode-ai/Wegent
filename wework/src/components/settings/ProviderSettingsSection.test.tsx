@@ -5,6 +5,7 @@ import type { ModelConfigurationSnapshot } from '@/features/model-settings/provi
 import { ProviderSettingsSection } from './ProviderSettingsSection'
 import { reloadProviderConfiguration } from '@/features/model-settings/providerModelConfiguration'
 import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
+import { findLocalModelProviderProfile } from '@/features/model-settings/localModelProviders'
 
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -60,6 +61,78 @@ function savedProviders() {
 }
 
 describe('Provider settings page', () => {
+  test('DeepSeek only needs a key and preserves the preset runtime settings', async () => {
+    render(<ProviderSettingsSection />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('provider-add'))
+    await user.selectOptions(screen.getByTestId('provider-preset'), 'deepseek')
+    expect(screen.queryByTestId('provider-base-url')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('provider-protocol')).not.toBeInTheDocument()
+    expect(screen.getByTestId('provider-discover')).toBeDisabled()
+    const profile = findLocalModelProviderProfile('deepseek')
+    const modelId = profile.allowedModelIds![0]
+    discover = async () => [modelId, 'unsupported-model']
+    await user.type(screen.getByTestId('provider-api-key'), 'deepseek-test-key')
+    await user.click(screen.getByTestId('provider-discover'))
+    expect(screen.queryByTestId('provider-discovered-unsupported-model')).not.toBeInTheDocument()
+    await user.click(await screen.findByTestId(`provider-discovered-${modelId}`))
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(savedProviders()).toHaveLength(2))
+    expect(savedProviders()[1]).toEqual(
+      expect.objectContaining({
+        base_url: profile.baseUrl,
+        api_format: profile.apiFormat,
+        request_path: profile.requestPath,
+        api_key: 'deepseek-test-key',
+        models: [
+          expect.objectContaining({
+            model_id: modelId,
+            provider_profile_id: 'deepseek',
+            context_window: profile.contextWindow,
+            tool_profile: profile.toolProfile,
+            web_search_mode: profile.webSearchMode,
+          }),
+        ],
+      })
+    )
+  })
+
+  test('custom endpoint is the last service option and switching services invalidates discovery', async () => {
+    render(<ProviderSettingsSection />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('provider-add'))
+    expect(within(screen.getByTestId('provider-preset')).getAllByRole('option').at(-1)).toHaveValue(
+      'custom'
+    )
+    await user.selectOptions(screen.getByTestId('provider-preset'), 'deepseek')
+    await user.type(screen.getByTestId('provider-api-key'), 'draft-key')
+    let finish!: (value: string[]) => void
+    discover = () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+    await user.click(screen.getByTestId('provider-discover'))
+    await user.selectOptions(screen.getByTestId('provider-preset'), 'custom')
+    expect(screen.getByTestId('provider-base-url')).toHaveValue('')
+    expect(screen.getByTestId('provider-api-key')).toHaveValue('')
+    await act(async () => finish(['stale-model']))
+    expect(screen.queryByTestId('provider-discovered-stale-model')).not.toBeInTheDocument()
+  })
+
+  test('selected models can be unchecked without saving and the modal restores trigger focus', async () => {
+    const user = await openEditor()
+    expect(screen.getByTestId('provider-editor')).toHaveAttribute('role', 'dialog')
+    await user.click(screen.getByTestId('provider-discover'))
+    await user.click(await screen.findByTestId('provider-discovered-upstream-a'))
+    expect(screen.getByTestId('provider-discovered-upstream-a')).toBeChecked()
+    await user.click(screen.getByTestId('provider-discovered-upstream-a'))
+    expect(screen.queryByTestId(/^provider-model-editor-/)).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByTestId('provider-editor')).not.toBeInTheDocument())
+    expect(screen.getByTestId('provider-edit-relay')).toHaveFocus()
+    expect(savedProviders()).toBeUndefined()
+  })
+
   test('keeps a provider with a missing device key editable and allows replacement', async () => {
     snapshot.providers[0].api_key_ref = 'wework-model-key.missing'
     snapshot.providers[0].api_key_configured = false
@@ -111,6 +184,7 @@ describe('Provider settings page', () => {
     render(<ProviderSettingsSection />)
     const user = userEvent.setup()
     await user.click(await screen.findByTestId('provider-add'))
+    await user.selectOptions(screen.getByTestId('provider-preset'), 'custom')
     expect(screen.getByTestId('provider-discover')).toBeDisabled()
     await user.type(screen.getByTestId('provider-base-url'), 'https://new.example/v1')
     await user.type(screen.getByTestId('provider-api-key'), 'draft-key')
@@ -136,7 +210,7 @@ describe('Provider settings page', () => {
     const user = await openEditor()
     await user.click(screen.getByTestId('provider-discover'))
     await user.click(await screen.findByTestId('provider-discovered-upstream-a'))
-    expect(screen.getByTestId('provider-discovered-upstream-a')).toBeDisabled()
+    expect(screen.getByTestId('provider-discovered-upstream-a')).toBeChecked()
     expect(screen.getAllByTestId(/^provider-model-editor-/)).toHaveLength(1)
     await user.click(screen.getByTestId('provider-discovered-upstream-b'))
     expect(screen.getAllByTestId(/^provider-model-editor-/)).toHaveLength(2)
@@ -173,7 +247,7 @@ describe('Provider settings page', () => {
     await user.type(model.getByTestId(/^provider-model-id-/), 'upstream-a')
     const context = model.getByTestId('local-model-context-window-input')
     expect(context).toBeVisible()
-    expect(context.closest('details')).toBeNull()
+    expect(context.closest('details')).toHaveAttribute('open')
     expect(model.queryByTestId(/^provider-model-capabilities-/)).not.toBeInTheDocument()
     await user.click(model.getByTestId('local-model-input-modality-image'))
     await user.click(model.getByTestId('local-model-reasoning-level-high'))
@@ -246,6 +320,7 @@ describe('Provider settings page', () => {
     render(<ProviderSettingsSection />)
     const user = userEvent.setup()
     await user.click(await screen.findByTestId('provider-add'))
+    await user.selectOptions(screen.getByTestId('provider-preset'), 'custom')
     await user.type(screen.getByTestId('provider-base-url'), 'https://new.example/v1')
     await user.click(screen.getByTestId('provider-discover'))
     await screen.findByTestId('provider-discovered-upstream-a')
