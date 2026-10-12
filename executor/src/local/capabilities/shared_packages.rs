@@ -11,6 +11,15 @@ use crate::services::workbench::{
 
 pub(super) struct ActivationRevision;
 
+pub(super) struct PublicationLock(fs::File);
+
+impl Drop for PublicationLock {
+    fn drop(&mut self) {
+        // A concurrent fork can retain the open file description after sync ends.
+        let _ = FileExt::unlock(&self.0);
+    }
+}
+
 pub(super) fn validate_component(value: &str) -> Result<(), CapabilitySyncError> {
     if value.is_empty()
         || value != value.trim()
@@ -43,7 +52,9 @@ impl GlobalCapabilityStore {
         }
     }
 
-    pub(super) fn lock_shared_manifest(&self) -> Result<Option<fs::File>, CapabilitySyncError> {
+    pub(super) fn lock_shared_manifest(
+        &self,
+    ) -> Result<Option<PublicationLock>, CapabilitySyncError> {
         if !self.shared_packages {
             return Ok(None);
         }
@@ -64,7 +75,7 @@ impl GlobalCapabilityStore {
                 "Capability publication is locked: {error}"
             ))
         })?;
-        Ok(Some(file))
+        Ok(Some(PublicationLock(file)))
     }
 }
 
@@ -560,6 +571,22 @@ mod tests {
         .with_codex_skills_dir(root.join("codex/skills"))
         .with_codex_plugins_dir(root.join("codex/plugins"))
         .with_workbench_root(root.join("workbench"))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publication_lock_releases_with_a_retained_descriptor() {
+        let root = tempfile::tempdir().unwrap();
+        let store = store(root.path());
+        let publication = store.lock_shared_manifest().unwrap().unwrap();
+        // A concurrent fork can retain the same open file description.
+        let inherited = publication.0.try_clone().unwrap();
+        assert!(store.lock_shared_manifest().is_err());
+        drop(publication);
+        let next = store.lock_shared_manifest().unwrap().unwrap();
+        assert!(store.lock_shared_manifest().is_err());
+        drop(next);
+        drop(inherited);
     }
 
     #[tokio::test]
