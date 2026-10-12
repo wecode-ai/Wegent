@@ -11,16 +11,21 @@ const cache = new WeakMap<PMNode, SerializedDocument>();
 
 // Bare URLs stay lossless until neighboring text needs an explicit link boundary.
 function inlineMarks(fragment: Fragment, index: number): readonly Mark[] {
+  // Keep wider formatting spans outside nested marks after normalization.
   return fragment
     .child(index)
     .marks.filter((mark) => mark.type.name !== "composer_mention_separator")
     .map((mark) => {
-      if (mark.type.name !== "link" || !mark.attrs.autolink) return mark;
       let from = index;
       let to = index + 1;
       while (from > 0 && mark.isInSet(fragment.child(from - 1).marks)) from--;
       while (to < fragment.childCount && mark.isInSet(fragment.child(to).marks))
         to++;
+      return { mark, from, to };
+    })
+    .sort((left, right) => left.from - right.from || right.to - left.to)
+    .map(({ mark, from, to }) => {
+      if (mark.type.name !== "link" || !mark.attrs.autolink) return mark;
       let label = "";
       for (let i = from; i < to; i++) label += fragment.child(i).textContent;
       const before = from > 0 ? fragment.child(from - 1).textContent : "";

@@ -1707,7 +1707,7 @@ function pasteDesktopControlText(command: DesktopControlCommand): string {
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   const text = command.value ?? ''
   const transfer = new DataTransfer()
-  transfer.setData('text/plain', text)
+  transfer.setData(command.mimeType ?? 'text/plain', text)
   const event = new ClipboardEvent('paste', {
     bubbles: true,
     cancelable: true,
