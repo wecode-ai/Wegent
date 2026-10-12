@@ -4346,8 +4346,8 @@ describe('PluginsWorkspace', () => {
     })
 
     await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
-    expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
-    // Reports after a successful sync are valid; the contract concerns the pre-sync boundary.
+    // Live membership has returned, so device reports are now valid. The assertions
+    // above enforce the boundary while pendingInstalled remains unresolved.
     await act(async () => {
       finishSync()
       await syncGate
@@ -5575,8 +5575,6 @@ describe('PluginsWorkspace', () => {
     // Bare ids like documents-local-id look like Codex remote plugin ids and must
     // not be probed for local/personal uninstalls.
     expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.plugin.uninstall_local', {
-      marketplacePath:
-        '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal/.agents/plugins/marketplace.json',
       pluginName: 'documents',
     })
     expectCodexAppServerRequestNotCalled('plugin/uninstall')

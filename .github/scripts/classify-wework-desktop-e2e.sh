@@ -52,6 +52,7 @@ core_segments=(
   running-plan-history
   codex-notification-isolation
   executor-stream-recovery
+  model-overload-recovery
   transcript-sync
   context-compaction
   split-workbench
@@ -64,6 +65,8 @@ core_segments=(
   tray-lifecycle
   conversation-state
   send-key-preference
+  reply-predictions
+  model-settings
   system-proxy
   system-pac
   environment-panel-scroll
@@ -102,6 +105,7 @@ cloud_worktree_segments=(
 )
 cloud_segments=(
   cloud-model-recovery
+  task-model-deletion
   cloud-model-presets
   cloud-project-creation
   cloud-device-lifecycle
@@ -144,7 +148,7 @@ cloud_shards=(
   cloud-worktree-create,automation-lifecycle,browser-multi-tabs
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
-  model-routing,cloud-model-recovery,cloud-model-presets
+  model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion
   plugin-account-auth,cloud-device-lifecycle,plugin-uninstall-resilience,plugin-composer-long-list
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
@@ -156,7 +160,7 @@ cloud_shards=(
 core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
@@ -169,7 +173,7 @@ core_shards=(
   rendering-extensions,transcript-sync
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery
+  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate
   # Keep the startup benchmark isolated from concurrent Electron cold starts.
@@ -451,6 +455,11 @@ classify_wework_path() {
     # Plugin development verifies the installed Codex guide, generated local
     # project, conditional conversation sidebar, isolated Wework, and HMR.
     wework/dsh/plugin-developer/* | \
+      wework/e2e/desktop/modules/bundled-plugin-upgrades.mjs | \
+      executor/src/local/plugin_cache.rs | \
+      executor/src/runtime_work/handler/plugin_install.rs | \
+      wework/src/desktop/localExecutor* | \
+      wework/src/components/plugins/BundledPluginUpdateNotice* | \
       wework/e2e/desktop/scenarios/plugin-development.scenario.mjs | \
       wework/electron/src/runtime/plugin-development-manager* | \
       wework/resources/bundled-plugins/wework-personal/plugins/wework-plugin-developer/* | \
@@ -532,6 +541,11 @@ classify_wework_path() {
       wework/src/components/chat/composer/composerMentionCandidates*)
       select_target "plugins:skill-mention-rendering"
       select_target "core:core-task-flow"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/task-model-deletion.scenario.mjs)
+      select_target "cloud:task-model-deletion"
       return
       ;;
 
@@ -939,6 +953,10 @@ classify_wework_path() {
       select_target "core:executor-stream-recovery"
       return
       ;;
+    wework/e2e/desktop/scenarios/model-overload-recovery.scenario.mjs)
+      select_target "core:model-overload-recovery"
+      return
+      ;;
     wework/e2e/desktop/scenarios/send-key-preference.scenario.mjs)
       select_target "core:send-key-preference"
       return
@@ -958,6 +976,18 @@ classify_wework_path() {
       wework/src/types/gitCredentials.ts | \
       wework/e2e/desktop/scenarios/change-request-status.scenario.mjs)
       select_target "core:change-request-status"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/model-settings.scenario.mjs | \
+      wework/src/components/settings/ProviderSettingsSection* | \
+      wework/src/components/settings/ProviderEditor* | \
+      wework/src/components/settings/ProviderModelFields* | \
+      wework/src/components/settings/ModelSettingsPage* | \
+      wework/src/features/model-settings/provider*)
+      select_target "core:model-settings"
+      select_target "core:codex-account-login"
+      select_target "core:model-routing"
       return
       ;;
 

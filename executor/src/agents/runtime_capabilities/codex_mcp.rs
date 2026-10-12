@@ -83,8 +83,7 @@ fn native_definition(server: Value) -> Result<Value, String> {
         .as_object()
         .cloned()
         .ok_or("Invalid MCP definition")?;
-    let stdio = native.contains_key("command")
-        || native.get("type").and_then(Value::as_str) == Some("stdio");
+    let stdio = crate::mcp_utils::is_stdio_mcp_server(&server);
     for (from, to) in [
         ("headers", "http_headers"),
         ("base_url", "url"),

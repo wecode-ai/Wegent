@@ -14,6 +14,8 @@ import {
 import type { CollaborationTranslate } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
+import type { ReplyPredictionSource } from '@/features/reply-predictions/replyPredictionService'
 
 export function TaskCommentComposer({
   value,
@@ -28,6 +30,8 @@ export function TaskCommentComposer({
   projectWork,
   serverExecution = false,
   placeholder,
+  predictionSource,
+  predictionAddress,
 }: {
   value: string
   onChange: (value: string) => void
@@ -41,64 +45,74 @@ export function TaskCommentComposer({
   projectWork: ProjectWorkControls
   serverExecution?: boolean
   placeholder?: string
+  predictionSource?: ReplyPredictionSource | null
+  predictionAddress?: import('@/types/api').RuntimeTaskAddress | null
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const sendKey = workbench?.state?.user?.preferences?.send_key ?? 'enter'
   return (
-    <IssueMainCommentComposer
-      value={value}
-      onChange={onChange}
-      onSubmit={onSubmit}
-      disabled={disabled}
-      sending={sending}
-      uploading={controls.uploadingFiles.size > 0}
-      error={error}
-      sendKey={sendKey}
-      mentionCandidates={mentionCandidates}
-      translate={translate}
-      labels={{
-        placeholder: placeholder ?? t('workbench.task_activity_placeholder'),
-        send: t('workbench.send_message'),
-        attach: t('workbench.task_activity_attachment_attach'),
-        settings: t('workbench.task_activity_execution_settings'),
-      }}
-      onSelectFiles={controls.handleFileSelect}
-      attachments={
-        <AttachmentBadges
-          attachments={controls.attachments}
-          uploadingFiles={controls.uploadingFiles}
-          errors={controls.errors}
-          onRemoveAttachment={controls.removeAttachment}
-        />
+    <ReplyPredictionProvider
+      address={predictionAddress}
+      source={predictionAddress ? undefined : predictionSource}
+      blocked={
+        disabled || sending || controls.attachments.length > 0 || controls.uploadingFiles.size > 0
       }
-      settings={
-        serverExecution ? undefined : (
-          <>
-            {projectWork.projects.length > 0 ? (
-              <ProjectWorkBar
-                {...projectWork}
-                showClearButton={projectWork.showProjectClearButton}
+    >
+      <IssueMainCommentComposer
+        value={value}
+        onChange={onChange}
+        onSubmit={onSubmit}
+        disabled={disabled}
+        sending={sending}
+        uploading={controls.uploadingFiles.size > 0}
+        error={error}
+        sendKey={sendKey}
+        mentionCandidates={mentionCandidates}
+        translate={translate}
+        labels={{
+          placeholder: placeholder ?? t('workbench.task_activity_placeholder'),
+          send: t('workbench.send_message'),
+          attach: t('workbench.task_activity_attachment_attach'),
+          settings: t('workbench.task_activity_execution_settings'),
+        }}
+        onSelectFiles={controls.handleFileSelect}
+        attachments={
+          <AttachmentBadges
+            attachments={controls.attachments}
+            uploadingFiles={controls.uploadingFiles}
+            errors={controls.errors}
+            onRemoveAttachment={controls.removeAttachment}
+          />
+        }
+        settings={
+          serverExecution ? undefined : (
+            <>
+              {projectWork.projects.length > 0 ? (
+                <ProjectWorkBar
+                  {...projectWork}
+                  showClearButton={projectWork.showProjectClearButton}
+                />
+              ) : null}
+              <ModelSelector
+                models={controls.models}
+                selectedModel={controls.selectedModel}
+                selectedModelOptions={controls.selectedModelOptions}
+                disabled={disabled || sending}
+                onSelectModel={controls.setSelectedModel}
+                onSelectModelOption={controls.setSelectedModelOption}
               />
-            ) : null}
-            <ModelSelector
-              models={controls.models}
-              selectedModel={controls.selectedModel}
-              selectedModelOptions={controls.selectedModelOptions}
-              disabled={disabled || sending}
-              onSelectModel={controls.setSelectedModel}
-              onSelectModelOption={controls.setSelectedModelOption}
-            />
-            <PermissionModeSelector
-              value={runtimePermissionMode(controls.selectedModelOptions)}
-              disabled={disabled || sending}
-              onChange={mode =>
-                controls.setSelectedModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
-              }
-            />
-          </>
-        )
-      }
-    />
+              <PermissionModeSelector
+                value={runtimePermissionMode(controls.selectedModelOptions)}
+                disabled={disabled || sending}
+                onChange={mode =>
+                  controls.setSelectedModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+                }
+              />
+            </>
+          )
+        }
+      />
+    </ReplyPredictionProvider>
   )
 }

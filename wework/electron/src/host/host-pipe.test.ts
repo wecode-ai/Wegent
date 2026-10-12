@@ -7,11 +7,68 @@ import type { AppUpdateService } from './app-update-service.js'
 import { HostCapabilityRouter } from './capability-router.js'
 import { registerAppUpdateCapabilities } from './electron-capabilities.js'
 import { HostPipeServer } from './host-pipe.js'
+import { SmartAppVerificationError } from './smart-app-verification-types.js'
+import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 
 // Pipe tests inject host services and must not load the native Electron runtime.
 vi.mock('electron', () => ({}))
 
 describe('HostPipeServer', () => {
+  test('transmits structured verification issues without exposing the entire report', async () => {
+    const issue = {
+      code: 'SA-PACKAGE-UNVERIFIED',
+      stage: 'package' as const,
+      file: null,
+      message: 'No passing report',
+      hint: 'Run verification',
+      expected: null,
+      actual: null,
+      blocking: true,
+    }
+    const router = new HostCapabilityRouter()
+    router.grant('@wegent/dsh-app-wework', ['smartApps.export'])
+    router.register('smartApps.export', () => {
+      throw new SmartAppVerificationError({
+        issues: [issue],
+        projectRoot: '/private/project',
+      } as SmartAppVerificationReport)
+    })
+    const server = new HostPipeServer(router)
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const replies = createInterface({ input: output })
+    const next = async () => JSON.parse((await once(replies, 'line'))[0])
+    server.attachStreams(input, output)
+    const hello = next()
+    input.write(
+      JSON.stringify({
+        type: 'hello',
+        protocolVersion: 1,
+        token: server.environment().WEWORK_ELECTRON_HOST_TOKEN,
+        principal: '@wegent/dsh-app-wework',
+      }) + '\n'
+    )
+    await hello
+    const response = next()
+    input.write(
+      JSON.stringify({
+        type: 'request',
+        id: 'export',
+        capability: 'smartApps.export',
+        params: {},
+      }) + '\n'
+    )
+    expect(await response).toMatchObject({
+      error: {
+        code: 'smart_app_verification_failed',
+        message: issue.code,
+        details: { issues: [{ code: issue.code, hint: issue.hint }] },
+      },
+    })
+    expect(JSON.stringify(await response)).not.toContain('/private/project')
+    server.stop()
+    replies.close()
+  })
   test('requires a versioned handshake and returns capability responses', async () => {
     const router = new HostCapabilityRouter()
     router.grant('@wegent/dsh-app-wework', ['window.getState'])

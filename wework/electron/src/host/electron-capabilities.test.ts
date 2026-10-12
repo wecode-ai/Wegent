@@ -641,6 +641,28 @@ describe('registerAppUpdateCapabilities', () => {
       )
     ).toThrow('App updates are unavailable')
   })
+
+  test('does not hold the host request open for the whole download', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const appUpdates = {
+      download: vi.fn(() => new Promise<void>(() => undefined)),
+    } as unknown as AppUpdateService
+
+    registerAppUpdateCapabilities(router, appUpdates)
+
+    expect(
+      handlers.get('appUpdate.download')?.(
+        {},
+        { principal: 'test', deferUntilResponseSent: vi.fn() }
+      )
+    ).toBeNull()
+    expect(appUpdates.download).toHaveBeenCalledOnce()
+  })
 })
 
 describe('registerRendererStorageCapabilities', () => {

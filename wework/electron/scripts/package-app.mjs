@@ -3,11 +3,13 @@ import { spawn } from 'node:child_process'
 import { cp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stringify } from 'yaml'
 
 import { electronToolchainLockPath } from '../../scripts/lib/electron-toolchain-lock.mjs'
 import { prepareSharedElectronZip } from '../../scripts/lib/electron-zip-cache.mjs'
 import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
 import identityModule from './build-identity.cjs'
+import builderConfig from '../electron-builder.config.cjs'
 import macosAppIcon from './macos-app-icon.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 
@@ -58,18 +60,12 @@ await writeFile(
   join(staging, 'package.json'),
   `${JSON.stringify(
     {
-      name: sourcePackage.name,
       productName: identity.productName,
       version: sourcePackage.version,
       type: sourcePackage.type,
       main: sourcePackage.main,
       dependencies: sourcePackage.dependencies,
-      weworkAppId: identity.identifier,
-      ...(identity.executorNamespace
-        ? { weworkExecutorNamespace: identity.executorNamespace }
-        : {}),
-      ...(identity.backendUrl ? { weworkBackendUrl: identity.backendUrl } : {}),
-      ...(identity.socketUrl ? { weworkSocketUrl: identity.socketUrl } : {}),
+      ...builderConfig.extraMetadata,
     },
     null,
     2
@@ -126,6 +122,20 @@ try {
     icon,
     prune: false,
   })
+
+  for (const application of applications) {
+    const resources =
+      process.platform === 'darwin'
+        ? join(application, `${identity.productName}.app`, 'Contents', 'Resources')
+        : join(application, 'resources')
+    await writeFile(
+      join(resources, 'app-update.yml'),
+      stringify({
+        ...builderConfig.publish,
+        updaterCacheDirName: `${identity.packageName.toLowerCase()}-updater`,
+      })
+    )
+  }
 
   if (process.platform === 'darwin') {
     for (const application of applications) {

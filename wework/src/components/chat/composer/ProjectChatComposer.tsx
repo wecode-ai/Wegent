@@ -37,6 +37,7 @@ import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhras
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
 import { ProjectComposerBody } from '@wegent/collaboration/composer'
 import { desktopComposerTransferServices } from './desktopComposerServices'
+import { useComposerModelSelector } from './useComposerModelSelector'
 
 interface ProjectChatComposerProps {
   presentation?: 'chat' | 'document'
@@ -206,6 +207,13 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
   ) {
     const { t } = useTranslation('common')
     const composerRef = useRef<ComposerTextareaHandle>(null)
+    const modelSelector = useComposerModelSelector(
+      modelSelectorOpenSignal,
+      onModelSelectorOpenChange
+    )
+    const [predictionStatusTarget, setPredictionStatusTarget] = useState<HTMLDivElement | null>(
+      null
+    )
 
     useImperativeHandle(
       ref,
@@ -336,6 +344,11 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           renderEditor={editorProps => (
             <ComposerTextarea
               {...editorProps}
+              predictionStatusTarget={predictionStatusTarget}
+              onOpenModelSelector={
+                modelSelectorOverride === undefined ? modelSelector.requestOpen : undefined
+              }
+              modelSelectorOpen={modelSelector.open}
               onSubmit={(submittedValue, options) =>
                 editorProps.onSubmit(submittedValue ?? getLiveValue(), options)
               }
@@ -381,8 +394,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               selectedModel={selectedModel}
               activeModel={activeModel}
               selectedModelOptions={selectedModelOptions}
-              modelSelectorOpenSignal={modelSelectorOpenSignal}
-              onModelSelectorOpenChange={onModelSelectorOpenChange}
+              modelSelectorOpenSignal={modelSelector.openSignal}
+              onModelSelectorOpenChange={modelSelector.onOpenChange}
               isModelSelectionReady={isModelSelectionReady}
               onSelectModel={onSelectModel}
               onSelectModelAndOptions={onSelectModelAndOptions}
@@ -420,7 +433,12 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               onSubmit={toolbarProps.onSubmit}
               sendKey={sendKey}
               followUpBehavior={followUpBehavior}
-              leadingContext={toolbarLeadingContext}
+              leadingContext={
+                <>
+                  {toolbarLeadingContext}
+                  <div ref={setPredictionStatusTarget} className="empty:hidden" />
+                </>
+              }
               onListLocalApps={onListLocalApps}
               workspaceTarget={workspaceTarget}
             />

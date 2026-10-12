@@ -23,6 +23,16 @@ const scripts = [
 ]
 
 describe('desktop resource migration', () => {
+  test('isolated Electron dependencies use the repository package manager version', async () => {
+    const [repositoryPackage, electronPackage] = await Promise.all([
+      readFile(join(weworkRoot, '..', 'package.json'), 'utf8').then(JSON.parse),
+      readFile(join(weworkRoot, 'electron', 'package.json'), 'utf8').then(JSON.parse),
+    ])
+
+    expect(repositoryPackage.packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+$/)
+    expect(electronPackage.packageManager).toBe(repositoryPackage.packageManager)
+  })
+
   test('desktop entrypoints install the isolated Electron workspace', async () => {
     const packageJson = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
     const devMacScript = await readFile(join(weworkRoot, 'scripts/dev-mac-app.sh'), 'utf8')
