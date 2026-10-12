@@ -76,6 +76,24 @@ export interface HarnessAppSavedExport extends HarnessAppExport {
   destinationPath: string
 }
 
+/**
+ * Options for `harnessAppsApi.start`.
+ *
+ * Positional arguments were replaced with an object so that each additional
+ * launch capability is named at the call site and cannot be slipped in by
+ * position. `decisionBaseUrl` and `decisionProtocolVersion` carry the Wework
+ * decision router route; the Electron host re-validates them and refuses to
+ * inject them for an installation that was not granted the capability.
+ */
+export interface SmartAppStartOptions {
+  installationId: string
+  modelBaseUrl?: string | null
+  contextBaseUrl?: string | null
+  contextToken?: string | null
+  decisionBaseUrl?: string | null
+  decisionProtocolVersion?: number | null
+}
+
 export type HarnessAppVerificationStage =
   | 'environment'
   | 'manifest'
@@ -209,25 +227,19 @@ export const harnessAppsApi = {
       releaseId: source?.releaseId ?? null,
     })
   },
-  start(
-    installationId: string,
-    modelBaseUrl: string | null,
-    contextBaseUrl: string | null = null,
-    contextToken: string | null = null,
-    decision: { baseUrl: string; protocolVersion: number } | null = null
-  ) {
+  start(options: SmartAppStartOptions) {
     const startupId = crypto.randomUUID()
     trackBusinessEvent('smart_app_start_attempted', { startup_id: startupId })
     return observeOperation(
       'smart_app.start',
       () =>
         invokeDesktopHost<HarnessAppInstallation>('smartApps.start', {
-          installationId,
-          modelBaseUrl,
-          contextBaseUrl,
-          contextToken,
-          decisionBaseUrl: decision?.baseUrl ?? null,
-          decisionProtocolVersion: decision?.protocolVersion ?? null,
+          installationId: options.installationId,
+          modelBaseUrl: options.modelBaseUrl ?? null,
+          contextBaseUrl: options.contextBaseUrl ?? null,
+          contextToken: options.contextToken ?? null,
+          decisionBaseUrl: options.decisionBaseUrl ?? null,
+          decisionProtocolVersion: options.decisionProtocolVersion ?? null,
         }),
       result => result.state === 'running',
       { properties: { startup_id: startupId } }

@@ -988,6 +988,8 @@ export function createElectronCapabilityRouter(
       modelBaseUrl: nullableStringParam(params, 'modelBaseUrl'),
       contextBaseUrl: nullableStringParam(params, 'contextBaseUrl'),
       contextToken: nullableStringParam(params, 'contextToken'),
+      decisionBaseUrl: nullableStringParam(params, 'decisionBaseUrl'),
+      decisionProtocolVersion: nullableNumberParam(params, 'decisionProtocolVersion'),
     })
   )
   router.register('smartApps.stop', params =>

@@ -127,13 +127,14 @@ describe('harnessAppDevelopmentRuntime', () => {
     })
 
     expect(resolveLaunch).toHaveBeenCalledWith('opencode', modelOption)
-    expect(mocks.start).toHaveBeenCalledWith(
-      installation.id,
-      'http://127.0.0.1:41000',
-      null,
-      null,
-      null
-    )
+    expect(mocks.start).toHaveBeenCalledWith({
+      installationId: installation.id,
+      modelBaseUrl: 'http://127.0.0.1:41000',
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: null,
+      decisionProtocolVersion: null,
+    })
     expect(mocks.storeProxyToken).toHaveBeenCalledWith(installation.id, 'proxy-token')
   })
 
@@ -145,7 +146,14 @@ describe('harnessAppDevelopmentRuntime', () => {
       missingWebUrlMessage: 'missing URL',
     })
 
-    expect(mocks.start).toHaveBeenCalledWith(installation.id, null, null, null, null)
+    expect(mocks.start).toHaveBeenCalledWith({
+      installationId: installation.id,
+      modelBaseUrl: null,
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: null,
+      decisionProtocolVersion: null,
+    })
   })
 
   test('releases Wework model registrations when stopping', async () => {
@@ -199,16 +207,14 @@ describe('harnessAppDevelopmentRuntime', () => {
 
     expect(mocks.decisionScope).toHaveBeenCalledWith(installation.id)
     expect(mocks.resolveDecisionLaunch).toHaveBeenCalledWith(`smart-app:${installation.id}:uuid`)
-    expect(mocks.start).toHaveBeenCalledWith(
-      installation.id,
-      'http://127.0.0.1:41000',
-      null,
-      null,
-      {
-        baseUrl: 'http://127.0.0.1:9500/v1/decision-router/decision-token',
-        protocolVersion: 1,
-      }
-    )
+    expect(mocks.start).toHaveBeenCalledWith({
+      installationId: installation.id,
+      modelBaseUrl: 'http://127.0.0.1:41000',
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: 'http://127.0.0.1:9500/v1/decision-router/decision-token',
+      decisionProtocolVersion: 1,
+    })
     expect(mocks.storeDecisionToken).toHaveBeenCalledWith(installation.id, 'decision-token')
   })
 

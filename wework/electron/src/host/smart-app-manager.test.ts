@@ -19,6 +19,9 @@ vi.mock('electron', () => ({
 
 const roots: string[] = []
 
+const DECISION_ROUTE_TOKEN = `decision-${'a'.repeat(64)}`
+const DECISION_ROUTE_URL = `http://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}`
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
@@ -520,6 +523,136 @@ describe('SmartAppManager', () => {
       expectedSha256: managedPreview.sha256,
     })
     expect(managed.grantedCapabilities).toEqual({ decisionModel: false })
+  })
+
+  test('refuses a decision route for an installation without the grant', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-unauthorized-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, {
+      ...validManifest(),
+      capabilities: { decisionModel: true },
+    })
+    // The manifest requests the capability, but this build's allowlist excludes it.
+    const manager = createManager(root, undefined, {
+      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[99]',
+    })
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+    expect(installation.grantedCapabilities).toEqual({ decisionModel: false })
+
+    await expect(
+      manager.start({
+        installationId: installation.id,
+        decisionBaseUrl: DECISION_ROUTE_URL,
+        decisionProtocolVersion: 1,
+      })
+    ).rejects.toThrow('Smart app is not authorized to use the Wework decision router')
+  })
+
+  test('rejects malformed decision routes even for a granted installation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-malformed-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, {
+      ...validManifest(),
+      capabilities: { decisionModel: true },
+    })
+    const manager = createManager(root, undefined, {
+      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[42]',
+    })
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+    expect(installation.grantedCapabilities).toEqual({ decisionModel: true })
+
+    const rejected = [
+      `https://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}`,
+      `http://attacker.example.com/v1/decision-router/${DECISION_ROUTE_TOKEN}`,
+      `http://user:pass@127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}`,
+      `http://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}?token=leak`,
+      `http://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}#fragment`,
+      'http://127.0.0.1:9500/v1/decision-router/short',
+      `http://127.0.0.1:9500/v2/decision-router/${DECISION_ROUTE_TOKEN}`,
+      `http://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}/extra`,
+      'http://127.0.0.1:9500/v1/decision-router/',
+    ]
+
+    for (const decisionBaseUrl of rejected) {
+      await expect(
+        manager.start({
+          installationId: installation.id,
+          decisionBaseUrl,
+          decisionProtocolVersion: 1,
+        })
+      ).rejects.toThrow(/Wework decision router base URL/)
+    }
+  })
+
+  test('rejects an unsupported decision router protocol version', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-version-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, {
+      ...validManifest(),
+      capabilities: { decisionModel: true },
+    })
+    const manager = createManager(root, undefined, {
+      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[42]',
+    })
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+
+    await expect(
+      manager.start({
+        installationId: installation.id,
+        decisionBaseUrl: DECISION_ROUTE_URL,
+        decisionProtocolVersion: 2,
+      })
+    ).rejects.toThrow('Wework decision router protocol version is not supported')
+  })
+
+  test('accepts a granted decision route and only then prepares the runtime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-accepted-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, {
+      ...validManifest(),
+      capabilities: { decisionModel: true },
+    })
+    const manager = createManager(root, undefined, {
+      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[42]',
+    })
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+
+    // The fixture has no bundled runtime, so the launch fails later; the point
+    // is that the address passed validation instead of being rejected here.
+    const failure = await manager
+      .start({
+        installationId: installation.id,
+        decisionBaseUrl: DECISION_ROUTE_URL,
+        decisionProtocolVersion: 1,
+      })
+      .then(() => null)
+      .catch((error: unknown) => String(error))
+    expect(failure).not.toBeNull()
+    expect(failure).not.toMatch(/decision router/i)
   })
 
   test('keeps decision route tokens separate from the generic routes', async () => {

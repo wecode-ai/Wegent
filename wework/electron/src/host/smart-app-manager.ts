@@ -101,6 +101,47 @@ export interface SmartAppVerificationService {
   pack(projectRoot: string, archivePath: string): Promise<SmartAppPackResult>
 }
 
+const DECISION_ROUTER_PROTOCOL_VERSION = 1
+const DECISION_ROUTER_LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+const DECISION_ROUTE_TOKEN = /^[A-Za-z0-9._~-]{8,200}$/
+
+/**
+ * Accepts only the loopback route Wework itself hands to a Smart app: an
+ * `http:` base URL whose path is exactly `/v1/decision-router/<token>`.
+ *
+ * Credentials, a query, a fragment, another host, or a deeper path are all
+ * rejected so a malformed value cannot aim the app at another service.
+ */
+function validateDecisionRouteUrl(raw: string): string {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error('Wework decision router base URL is not a valid URL')
+  }
+  if (
+    url.protocol !== 'http:' ||
+    !DECISION_ROUTER_LOOPBACK_HOSTS.has(url.hostname) ||
+    Boolean(url.username) ||
+    Boolean(url.password) ||
+    Boolean(url.search) ||
+    Boolean(url.hash)
+  ) {
+    throw new Error('Wework decision router base URL must be a loopback address')
+  }
+  const segments = url.pathname.split('/')
+  const token = segments[3] ?? ''
+  if (
+    segments.length !== 4 ||
+    segments[1] !== 'v1' ||
+    segments[2] !== 'decision-router' ||
+    !DECISION_ROUTE_TOKEN.test(token)
+  ) {
+    throw new Error('Wework decision router base URL has an invalid route path')
+  }
+  return raw
+}
+
 export class SmartAppManager {
   private readonly proxyTokens = new Map<string, string>()
   private readonly contextTokens = new Map<string, string>()
@@ -419,11 +460,21 @@ export class SmartAppManager {
     modelBaseUrl?: string | null
     contextBaseUrl?: string | null
     contextToken?: string | null
+    decisionBaseUrl?: string | null
+    decisionProtocolVersion?: number | null
   }): Promise<SmartAppInstallation> {
     return this.serial(async () => {
       const runtimeHost = this.requiredRuntimeHost()
       const installations = await this.readRegistry()
       const installation = requiredInstallation(installations, input.installationId)
+      // Defense in depth: the renderer only registers a decision route for an
+      // authorized installation, but the host re-validates the address and the
+      // grant, so a compromised renderer cannot smuggle in another service.
+      const decisionRoute = this.authorizeDecisionRoute(
+        installation,
+        input.decisionBaseUrl,
+        input.decisionProtocolVersion
+      )
       const id = tabId(installation.id)
       if (runtimeHost.runningTabIds().has(id)) {
         return installation
@@ -442,6 +493,8 @@ export class SmartAppManager {
           modelBaseUrl: input.modelBaseUrl,
           contextBaseUrl: input.contextBaseUrl,
           contextToken: input.contextToken,
+          decisionBaseUrl: decisionRoute?.baseUrl ?? null,
+          decisionProtocolVersion: decisionRoute?.protocolVersion ?? null,
         })
         await runtimeHost.open({
           tabId: id,
@@ -714,6 +767,37 @@ export class SmartAppManager {
     if (installation.grantedCapabilities?.decisionModel === decisionModel) return false
     installation.grantedCapabilities = { decisionModel }
     return true
+  }
+
+  /**
+   * Validates the renderer-supplied decision route and re-checks the grant.
+   *
+   * A grant is recomputed from trusted configuration instead of trusting the
+   * stored record, so a tampered `installations.json` cannot widen access.
+   */
+  private authorizeDecisionRoute(
+    installation: SmartAppInstallation,
+    decisionBaseUrl: string | null | undefined,
+    decisionProtocolVersion: number | null | undefined
+  ): { baseUrl: string; protocolVersion: 1 } | null {
+    const requested = typeof decisionBaseUrl === 'string' ? decisionBaseUrl.trim() : ''
+    if (!requested) return null
+    const granted = decideDecisionModelGrant({
+      manifest: installation.manifest,
+      source: installation.source as SmartAppCapabilitySource,
+      smartAppId: installation.smartAppId ?? null,
+      environment: this.options.environment,
+    })
+    if (!granted) {
+      throw new Error('Smart app is not authorized to use the Wework decision router')
+    }
+    if (decisionProtocolVersion !== DECISION_ROUTER_PROTOCOL_VERSION) {
+      throw new Error('Wework decision router protocol version is not supported')
+    }
+    return {
+      baseUrl: validateDecisionRouteUrl(requested),
+      protocolVersion: DECISION_ROUTER_PROTOCOL_VERSION,
+    }
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {

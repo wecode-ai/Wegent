@@ -132,13 +132,14 @@ describe('HarnessAppAutoLauncher', () => {
     render(<HarnessAppAutoLauncher installationId="app-1" />)
 
     await waitFor(() =>
-      expect(mocks.start).toHaveBeenCalledWith(
-        'app-1',
-        'http://127.0.0.1:9000',
-        'http://127.0.0.1:9001',
-        'context-token',
-        null
-      )
+      expect(mocks.start).toHaveBeenCalledWith({
+        installationId: 'app-1',
+        modelBaseUrl: 'http://127.0.0.1:9000',
+        contextBaseUrl: 'http://127.0.0.1:9001',
+        contextToken: 'context-token',
+        decisionBaseUrl: null,
+        decisionProtocolVersion: null,
+      })
     )
     expect(mocks.resolveDecisionLaunch).not.toHaveBeenCalled()
     expect(mocks.storeDecision).not.toHaveBeenCalled()
@@ -206,16 +207,14 @@ describe('HarnessAppAutoLauncher', () => {
     await waitFor(() => expect(mocks.storeDecision).toHaveBeenCalledWith('app-1', 'decision-token'))
     expect(mocks.decisionScope).toHaveBeenCalledWith('app-1')
     expect(mocks.resolveDecisionLaunch).toHaveBeenCalledWith('smart-app:app-1:uuid')
-    expect(mocks.start).toHaveBeenCalledWith(
-      'app-1',
-      'http://127.0.0.1:9000',
-      'http://127.0.0.1:9001',
-      'context-token',
-      {
-        baseUrl: 'http://127.0.0.1:9500/v1/decision-router/decision-token',
-        protocolVersion: 1,
-      }
-    )
+    expect(mocks.start).toHaveBeenCalledWith({
+      installationId: 'app-1',
+      modelBaseUrl: 'http://127.0.0.1:9000',
+      contextBaseUrl: 'http://127.0.0.1:9001',
+      contextToken: 'context-token',
+      decisionBaseUrl: 'http://127.0.0.1:9500/v1/decision-router/decision-token',
+      decisionProtocolVersion: 1,
+    })
     expect(mocks.resolveDecisionLaunch.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.start.mock.invocationCallOrder[0]!
     )

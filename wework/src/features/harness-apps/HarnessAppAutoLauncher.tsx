@@ -122,13 +122,14 @@ export function HarnessAppAutoLauncher({
               protocolVersion: decisionLaunch.protocolVersion,
             }
           }
-          const running = await harnessAppsApi.start(
+          const running = await harnessAppsApi.start({
             installationId,
-            launch.baseUrl,
-            launch.context?.baseUrl ?? null,
-            launch.context?.token ?? null,
-            decision
-          )
+            modelBaseUrl: launch.baseUrl,
+            contextBaseUrl: launch.context?.baseUrl ?? null,
+            contextToken: launch.context?.token ?? null,
+            decisionBaseUrl: decision?.baseUrl ?? null,
+            decisionProtocolVersion: decision?.protocolVersion ?? null,
+          })
           started = true
           if (!running.webUrl) {
             throw new Error(t('workbench.smart_apps_missing_web_url', '智能工作台没有返回可用地址'))

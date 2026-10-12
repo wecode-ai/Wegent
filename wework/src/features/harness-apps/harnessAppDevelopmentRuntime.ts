@@ -86,15 +86,14 @@ export async function startHarnessAppDevelopmentRuntime({
       decisionGranted && localDecisionRouterApi
         ? await localDecisionRouterApi.resolveLaunch(harnessAppDecisionScope(installation.id))
         : null
-    const running = await harnessAppsApi.start(
-      installation.id,
-      launch?.baseUrl ?? null,
-      launch?.context?.baseUrl ?? null,
-      launch?.context?.token ?? null,
-      decisionLaunch
-        ? { baseUrl: decisionLaunch.baseUrl, protocolVersion: decisionLaunch.protocolVersion }
-        : null
-    )
+    const running = await harnessAppsApi.start({
+      installationId: installation.id,
+      modelBaseUrl: launch?.baseUrl ?? null,
+      contextBaseUrl: launch?.context?.baseUrl ?? null,
+      contextToken: launch?.context?.token ?? null,
+      decisionBaseUrl: decisionLaunch?.baseUrl ?? null,
+      decisionProtocolVersion: decisionLaunch?.protocolVersion ?? null,
+    })
     started = true
     if (!running.webUrl) throw new Error(missingWebUrlMessage)
     if (launch) {
