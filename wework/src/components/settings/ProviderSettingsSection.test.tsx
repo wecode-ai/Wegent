@@ -6,6 +6,8 @@ import { ProviderSettingsSection } from './ProviderSettingsSection'
 import { reloadProviderConfiguration } from '@/features/model-settings/providerModelConfiguration'
 import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
 import { findLocalModelProviderProfile } from '@/features/model-settings/localModelProviders'
+import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -253,6 +255,32 @@ describe('Provider settings page', () => {
     await user.click(model.getByTestId('local-model-reasoning-level-high'))
     await user.click(model.getByTestId('local-model-parallel-tools-select'))
     await user.type(context, '128000')
+    expect(
+      (model.getByTestId('local-model-base-instructions-input') as HTMLTextAreaElement).value
+    ).toContain('# Working with the user')
+    await user.selectOptions(model.getByTestId('local-model-default-reasoning-input'), 'high')
+    await user.click(model.getByTestId(/^provider-model-image-generation-/))
+    await user.selectOptions(model.getByTestId(/^provider-model-web-search-/), 'live')
+    await user.click(model.getByTestId('local-model-advanced-capabilities-toggle'))
+    await user.selectOptions(
+      screen.getByTestId('local-model-codex-tool-compatibility-select'),
+      'standard'
+    )
+    await user.click(screen.getByTestId('local-model-advanced-section-metadata'))
+    await user.type(screen.getByTestId('local-model-speed-tiers-input'), 'fast')
+    await user.click(screen.getByTestId('local-model-speed-tiers-add'))
+    await user.click(screen.getByTestId('local-model-service-tiers-add'))
+    await user.type(screen.getByTestId('local-model-service-tiers-0-id'), 'priority')
+    await user.type(screen.getByTestId('local-model-service-tiers-0-name'), 'Priority')
+    await user.type(
+      screen.getByTestId('local-model-service-tiers-0-description'),
+      'Faster requests'
+    )
+    await user.selectOptions(
+      screen.getByTestId('local-model-default-service-tier-input'),
+      'priority'
+    )
+    await user.click(screen.getByTestId('local-model-advanced-capabilities-close'))
     await user.click(screen.getByTestId('provider-editor-save'))
     await waitFor(() => expect(savedProviders()).toBeDefined())
     const saved = savedProviders()[0].models[0]
@@ -264,6 +292,87 @@ describe('Provider settings page', () => {
       expect.objectContaining({ effort: 'high' }),
     ])
     expect(saved.catalog_entry.supports_parallel_tool_calls).toBe(true)
+    expect(saved).toMatchObject({
+      image_generation_enabled: true,
+      web_search_mode: 'live',
+      codex_tool_compatibility: 'standard',
+    })
+    expect(saved.catalog_entry).toMatchObject({
+      default_reasoning_level: 'high',
+      service_tiers: [{ id: 'priority', name: 'Priority', description: 'Faster requests' }],
+      additional_speed_tiers: ['fast'],
+      default_service_tier: 'priority',
+    })
+    expect(saved.catalog_entry.base_instructions).toContain('# Rules for getting work done')
+  })
+
+  test.each(['kimi-coding', 'minimax', 'minimax-global'])(
+    '%s discovers and saves models with managed endpoint and capability defaults',
+    async preset => {
+      const profile = findLocalModelProviderProfile(preset)
+      const modelId = preset === 'kimi-coding' ? 'k3' : 'MiniMax-M2.7'
+      discover = async () => [modelId]
+      render(<ProviderSettingsSection />)
+      const user = userEvent.setup()
+      await user.click(await screen.findByTestId('provider-add'))
+      expect(screen.getByTestId('provider-preset')).toHaveValue('')
+      await user.selectOptions(screen.getByTestId('provider-preset'), preset)
+      await user.type(screen.getByTestId('provider-api-key'), 'test-key')
+      await user.click(screen.getByTestId('provider-discover'))
+      await user.click(await screen.findByTestId(`provider-discovered-${modelId}`))
+      await user.click(screen.getByTestId('provider-editor-save'))
+      await waitFor(() => expect(savedProviders()).toHaveLength(2))
+      expect(invoke).toHaveBeenCalledWith(
+        'modelConfiguration.discover',
+        expect.objectContaining({
+          provider: expect.objectContaining({
+            base_url: profile.modelsBaseUrl ?? profile.baseUrl,
+            api_format: profile.apiFormat,
+            models_path: profile.modelsPath,
+            models_api_key_header: profile.modelsApiKeyHeader,
+          }),
+        })
+      )
+      expect(savedProviders()[1]).toMatchObject({
+        base_url: profile.baseUrl,
+        request_path: profile.requestPath,
+        models: [
+          expect.objectContaining({
+            model_id: modelId,
+            provider_profile_id: preset,
+            context_window:
+              profile.modelDefaults?.[modelId]?.contextWindow ?? profile.contextWindow,
+          }),
+        ],
+      })
+    }
+  )
+
+  test('offers image models as vision proxies and preserves the selected model ID', async () => {
+    const entry = createDefaultLocalModelCatalogEntry({
+      id: 'vision',
+      displayName: 'Vision Model',
+      toolProfile: 'custom',
+    })
+    entry.input_modalities = ['text', 'image']
+    const user = await openEditor()
+    saveLocalModelConfig({
+      id: 'vision',
+      providerProfileId: 'custom',
+      displayName: 'Vision Model',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+      catalogEntry: entry,
+      enabled: true,
+    })
+    await user.click(screen.getByTestId('provider-model-add'))
+    await user.type(screen.getByTestId(/^provider-model-id-/), 'text-model')
+    const visionSelect = screen.getByTestId(/^provider-model-vision-/)
+    expect(visionSelect).toHaveTextContent('Vision Model')
+    await user.selectOptions(visionSelect, 'vision')
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(savedProviders()).toBeDefined())
+    expect(savedProviders()[0].models[0].vision_model_config_id).toBe('vision')
   })
 
   test('a late discovery response is discarded when connection settings change', async () => {
