@@ -309,9 +309,7 @@ async function runRecoveryVerification() {
     )
     await fs.rm(path.join(dataDirectory, 'app-preferences.json'), { recursive: true })
     await put(path.join(dataDirectory, 'app-preferences.json'), '{}')
-    await splash.webContents.executeJavaScript(
-      "document.querySelector('#startup-confirmation-submit').click()"
-    )
+    await splash.webContents.executeJavaScript("document.querySelector('#startup-retry').click()")
   }
   setTimeout(() => {
     throw new Error('The splash recovery action did not relaunch Electron')

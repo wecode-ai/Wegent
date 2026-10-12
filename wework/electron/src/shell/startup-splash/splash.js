@@ -213,7 +213,14 @@ setLocalizedActionCopy()
 disablePluginButton.addEventListener('click', () => {
   if (failedPluginName) void runRecoveryAction('disablePlugin', failedPluginName)
 })
-retryButton.addEventListener('click', () => void runRecoveryAction('retry'))
+retryButton.addEventListener('click', () => {
+  if (pendingResetMode) {
+    const action = pendingResetMode === 'recover' ? 'recoverWorkbench' : pendingResetMode
+    void runRecoveryAction(action)
+    return
+  }
+  void runRecoveryAction('retry')
+})
 recoverButton.addEventListener('click', () => showConfirmation('recover'))
 resetOpenButton.addEventListener('click', () => showConfirmation('resetAppState'))
 confirmationCancel.addEventListener('click', hideConfirmation)
