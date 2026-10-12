@@ -384,6 +384,7 @@ async def test_runtime_terminal_event_notifies_im_dispatcher(
         status=expected_status,
         content=expected_content,
         source=None,
+        notification_id=None,
     )
 
 

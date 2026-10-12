@@ -415,7 +415,19 @@ const CLOUD_MODEL_CASES = MODEL_PROTOCOLS.map(protocol => ({
       : protocol === 'chat'
         ? 'moonshot-kimi-k3'
         : `desktop-e2e-cloud-${protocol}-upstream`,
+  ...(protocol === 'responses'
+    ? { requestMode: 'passthrough', reasoning: { effort: 'high', summary: 'detailed' } }
+    : {}),
 }))
+CLOUD_MODEL_CASES.push({
+  source: 'cloud',
+  protocol: 'responses',
+  optionIds: ['desktop-e2e-cloud-responses-standard'],
+  labels: ['moonshot-kimi-k3-responses'],
+  modelId: 'moonshot-kimi-k3-responses',
+  requestMode: 'standard',
+  reasoning: { summary: 'detailed' },
+})
 const MODEL_PROTOCOL_MATRIX_CASES = [
   ...LOCAL_MODEL_CASES.map(model => ({ ...model, source: 'local' })),
   ...MODEL_PROTOCOLS.map(protocol => ({
