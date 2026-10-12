@@ -1,3 +1,9 @@
+import { useTranslation } from '@/hooks/useTranslation'
+import { type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
+import {
+  getLocalRuntimeStateDeviceId,
+  getRuntimeRemoteProjectRegistrations,
+} from '@/lib/runtime-project-state'
 import { useCallback, useRef } from 'react'
 import type { Dispatch } from 'react'
 import {
@@ -53,6 +59,8 @@ interface UseWorkbenchProjectActionsOptions {
   executorClient: ExecutorClient
   services: WorkbenchServices
   refreshWorkLists: RefreshWorkLists
+  updateRuntimeProject: (update: RuntimeProjectUpdate) => void
+  getRuntimeWorkSnapshot: () => WorkbenchState['runtimeWork']
   updateLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest) => number | null
   rollbackLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest, requestId: number | null) => void
   markRuntimeProjectRemoved: (
@@ -119,6 +127,8 @@ export function useWorkbenchProjectActions({
   executorClient,
   services,
   refreshWorkLists,
+  updateRuntimeProject,
+  getRuntimeWorkSnapshot,
   updateLocalRuntimeTaskPinned,
   rollbackLocalRuntimeTaskPinned,
   markRuntimeProjectRemoved,
@@ -126,6 +136,7 @@ export function useWorkbenchProjectActions({
   clearRemoteProjectSyncRemoval,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
+  const { t } = useTranslation('common')
   const runtimeTaskPinMutationTailsRef = useRef(new Map<string, Promise<void>>())
 
   const createProject = useCallback(
@@ -312,17 +323,48 @@ export function useWorkbenchProjectActions({
         throw new Error(message)
       }
       response.roots.forEach(clearRemoteProjectSyncRemoval)
-      dispatch({
-        type: 'runtime_local_project_updated',
+      const update: RuntimeProjectUpdate = {
+        deviceId: data.deviceId,
         projectKey: response.projectKey,
         name: response.name,
         roots: response.roots,
         defaultProjectSpace: response.defaultProjectSpace ?? null,
         aiSettings: response.aiSettings ?? null,
-      })
+      }
+      updateRuntimeProject(update)
+      const localStateDeviceId = getLocalRuntimeStateDeviceId(state.devices)
+      if (localStateDeviceId && localStateDeviceId !== data.deviceId && state.runtimeWork) {
+        await enqueueRemoteProjectStateMutation(async () => {
+          const currentWork = getRuntimeWorkSnapshot()
+          if (!currentWork) throw new Error('Project list is unavailable')
+          const projects = getRuntimeRemoteProjectRegistrations(currentWork, localStateDeviceId)
+          const sync = await executorClient.runtime.syncRuntimeRemoteProjects({
+            deviceId: localStateDeviceId,
+            projects,
+          })
+          if (!sync.accepted) throw new Error(sync.error || 'Failed to sync project settings')
+        }).catch(error => {
+          throw new Error(
+            t('workbench.project_saved_sync_failed', {
+              error: error instanceof Error ? error.message : String(error),
+            })
+          )
+        })
+      }
       await refreshWorkLists()
     },
-    [clearRemoteProjectSyncRemoval, dispatch, executorClient, refreshWorkLists]
+    [
+      clearRemoteProjectSyncRemoval,
+      dispatch,
+      enqueueRemoteProjectStateMutation,
+      executorClient,
+      getRuntimeWorkSnapshot,
+      refreshWorkLists,
+      state.devices,
+      state.runtimeWork,
+      t,
+      updateRuntimeProject,
+    ]
   )
 
   const removeListedRuntimeProject = useCallback(

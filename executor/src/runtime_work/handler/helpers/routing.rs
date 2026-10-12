@@ -271,6 +271,7 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
             project_key: project.key.clone(),
             project_kind: project.kind.clone(),
             project_source: project.source.clone(),
+            owner_project_key: project.owner_project_key.clone(),
             project_roots: project.roots.clone(),
             project_sidebar_order: Some(project_sidebar_order),
             project_pinned: project.pinned,

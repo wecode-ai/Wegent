@@ -1,3 +1,4 @@
+import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { createPluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
 import {
   useCallback,
@@ -820,8 +821,8 @@ export function WorkbenchProvider({
     const runtimeProject = state.runtimeWork.projects.find(
       item => runtimeProjectUiId(item.project) === state.currentProject?.id
     )?.project
-    return runtimeProject?.source === 'local_project'
-      ? (runtimeProject.aiSettings?.modelSelection ?? null)
+    return isDeviceRuntimeProject(runtimeProject)
+      ? (runtimeProject?.aiSettings?.modelSelection ?? null)
       : null
   }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
   const modelSelectionConfig = useMemo(() => {
@@ -1051,6 +1052,8 @@ export function WorkbenchProvider({
   })
   const {
     cloudWorkStatus,
+    getRuntimeWorkSnapshot,
+    updateRuntimeProject,
     markRuntimeTasksArchived,
     markRuntimeProjectRemoved,
     refreshWorkLists,
@@ -1152,7 +1155,18 @@ export function WorkbenchProvider({
       }
       attempt.queued = false
       return executorClient.runtime
-        .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
+        .syncRuntimeRemoteProjects({
+          deviceId: localRuntimeStateDeviceId,
+          projects: getRuntimeRemoteProjectRegistrations(
+            getRuntimeWorkSnapshot(),
+            localRuntimeStateDeviceId
+          ).filter(
+            project =>
+              !removedRemoteProjectPathsRef.current.has(
+                normalizeRuntimeWorkspacePath(project.remotePath)
+              )
+          ),
+        })
         .then(response => {
           if (!response.accepted) {
             throw new Error(response.error || 'Failed to sync remote projects')
@@ -1173,11 +1187,13 @@ export function WorkbenchProvider({
           setRemoteProjectSyncRetryRevision(revision => revision + 1)
         }
       }
+      dispatch({ type: 'error_set', error: error instanceof Error ? error.message : String(error) })
       console.warn('[Wework] Failed to sync remote projects into Codex global state', error)
     })
   }, [
     enqueueRemoteProjectStateMutation,
     executorClient,
+    getRuntimeWorkSnapshot,
     localRuntimeStateDeviceId,
     refreshWorkLists,
     remoteProjectSyncRetryRevision,
@@ -1794,6 +1810,8 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     refreshWorkLists,
+    updateRuntimeProject,
+    getRuntimeWorkSnapshot,
     updateLocalRuntimeTaskPinned,
     rollbackLocalRuntimeTaskPinned,
     markRuntimeProjectRemoved,

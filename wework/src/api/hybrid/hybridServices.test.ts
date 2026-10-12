@@ -1393,6 +1393,54 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudServices.deviceApi.executeCommand).not.toHaveBeenCalled()
   })
 
+  it('targets project plugin RPC and inventory to each cloud or remote execution device', async () => {
+    mocks.cloudListDevices.mockResolvedValue(
+      ['cloud', 'remote'].map((deviceType, index) => ({
+        id: index + 1,
+        device_id: `${deviceType}-device`,
+        name: deviceType,
+        status: 'online',
+        is_default: false,
+        device_type: deviceType,
+        bind_shell: 'claudecode',
+      }))
+    )
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async (method, payload, deviceId) => {
+      expect(method).toBe('codex.app_server_request')
+      if (payload.method === 'plugin/installed') return { marketplaces: [] }
+      return {
+        marketplaces:
+          deviceId === 'cloud-device'
+            ? [
+                {
+                  name: 'team',
+                  path: '/cloud/plugins',
+                  plugins: [
+                    { id: 'quality@team', name: 'quality', installed: false, enabled: false },
+                  ],
+                },
+              ]
+            : [],
+      }
+    })
+    const services = createServices()
+    await services.cloudBackgroundApi?.listDevices?.()
+    const cloud = services.projectDevicePluginApi!('cloud-device')
+    const remote = services.projectDevicePluginApi!('remote-device')
+    expect((await cloud.readState()).marketplaceItems).toHaveLength(1)
+    expect((await remote.readState()).marketplaceItems).toEqual([])
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'codex.app_server_request',
+      { method: 'plugin/list', params: { cwds: null } },
+      'cloud-device'
+    )
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'codex.app_server_request',
+      { method: 'plugin/list', params: { cwds: null } },
+      'remote-device'
+    )
+  })
+
   it('routes extension commands through the Backend command API', async () => {
     mocks.cloudServices.deviceApi.executeCommand.mockResolvedValueOnce({
       success: true,

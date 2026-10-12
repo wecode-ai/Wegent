@@ -93,6 +93,10 @@ describe('runtime project state', () => {
         hostId: 'remote-device',
         remotePath: '/srv/remote',
         label: 'Remote',
+        projectKey: '/srv/remote',
+        roots: ['/srv/remote'],
+        defaultProjectSpace: null,
+        aiSettings: null,
       },
     ])
   })
@@ -105,6 +109,37 @@ describe('runtime project state', () => {
       remoteHostId: 'remote-device',
     })
     expect(findActiveRuntimeProjectId(runtimeWork)).toBe(2)
+  })
+
+  test('syncs the full owner metadata with a stable sidebar id and new primary root', () => {
+    const work = structuredClone(runtimeWork)
+    Object.assign(work.projects[1].project, {
+      ownerProjectKey: 'stable-key',
+      ownerDeviceId: 'remote-device',
+      roots: [
+        { kind: 'local', path: '/new' },
+        { kind: 'local', path: '/extra' },
+      ],
+      aiSettings: {
+        instructions: 'Test',
+        quickPhrases: [
+          { id: 'review', title: 'Review', content: 'Review changes', mode: 'normal' },
+        ],
+      },
+      defaultProjectSpace: { projectStore: 'backend', projectId: 'space' },
+    })
+    expect(getRuntimeRemoteProjectRegistrations(work, 'local-device')).toEqual([
+      {
+        id: 'remote-project-id',
+        hostId: 'remote-device',
+        projectKey: 'stable-key',
+        remotePath: '/new',
+        roots: ['/new', '/extra'],
+        label: 'Remote',
+        aiSettings: work.projects[1].project.aiSettings,
+        defaultProjectSpace: work.projects[1].project.defaultProjectSpace,
+      },
+    ])
   })
 
   test('prefers an active remote project over retained local active roots', () => {

@@ -1,4 +1,9 @@
 import * as codexPlugins from './codexPlugins'
+import { mergeRuntimeWorkLists } from '@/features/workbench/workbenchCloudStatus'
+import {
+  readCachedRemoteRuntimeWork,
+  writeCachedRemoteRuntimeWork,
+} from '@/features/workbench/remoteRuntimeWorkCache'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import {
@@ -5333,6 +5338,8 @@ describe('createLocalAppServices', () => {
             kind: 'local',
             source: 'local_project',
             stateDeviceId: 'device-uuid',
+            ownerDeviceId: 'device-uuid',
+            ownerProjectKey: 'local:/Users/me/project',
             roots: [{ kind: 'local', path: '/Users/me/project' }],
             sidebarOrder: 3,
             pinned: false,
@@ -5435,6 +5442,67 @@ describe('createLocalAppServices', () => {
       workspaceSource: 'remote',
       remoteHostId: 'remote-device',
     })
+  })
+
+  test('keeps owner project identity through registration, primary switch, and offline cache', async () => {
+    const workspace = {
+      workspacePath: '/old',
+      label: 'Project',
+      projectKey: 'stable-owner',
+      projectSource: 'local_project',
+      projectRoots: ['/old', '/new'],
+      tasks: [],
+    }
+    const live = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ ready: true, running: true, deviceId: 'remote-device' }),
+      request: vi.fn().mockResolvedValue({ success: true, workspaces: [workspace] }),
+      subscribe: vi.fn(),
+    })
+    const liveWork = (await live.runtimeWorkApi!.listRuntimeWork())!
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: [
+        {
+          ...workspace,
+          projectKey: 'wegent-remote:remote-device:stable-owner',
+          ownerProjectKey: 'stable-owner',
+          projectSource: 'remote_project',
+          workspaceSource: 'remote',
+          remoteHostId: 'remote-device',
+        },
+      ],
+    })
+    const mirror = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ ready: true, running: true, deviceId: 'local-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+    const mirrored = (await mirror.runtimeWorkApi!.listRuntimeWork())!
+    expect(mirrored.projects[0].project.id).toBe(liveWork.projects[0].project.id)
+    const merged = mergeRuntimeWorkLists(mirrored, liveWork)
+    expect(merged.projects).toHaveLength(1)
+    expect(merged.projects[0].project.id).toBe(liveWork.projects[0].project.id)
+    request.mockResolvedValue({
+      success: true,
+      workspaces: [
+        {
+          ...workspace,
+          workspacePath: '/new',
+          projectRoots: ['/new', '/old'],
+          projectKey: 'wegent-remote:remote-device:stable-owner',
+          ownerProjectKey: 'stable-owner',
+          projectSource: 'remote_project',
+          workspaceSource: 'remote',
+          remoteHostId: 'remote-device',
+        },
+      ],
+    })
+    const switched = (await mirror.runtimeWorkApi!.listRuntimeWork())!
+    expect(switched.projects[0].project.id).toBe(liveWork.projects[0].project.id)
+    writeCachedRemoteRuntimeWork(99, switched)
+    expect(readCachedRemoteRuntimeWork(99).projects[0].project.id).toBe(
+      liveWork.projects[0].project.id
+    )
   })
 
   test('routes local project archive requests with decoded workspace path', async () => {

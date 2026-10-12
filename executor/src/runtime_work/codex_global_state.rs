@@ -80,6 +80,7 @@ pub(crate) struct CodexGlobalProject {
     pub source: String,
     pub kind: String,
     pub remote_host_id: Option<String>,
+    pub owner_project_key: Option<String>,
     pub pinned: bool,
     pub pinned_order: Option<usize>,
     pub active: bool,
@@ -387,8 +388,16 @@ pub(crate) fn sync_codex_global_remote_projects(
             Some(CodexGlobalRemoteProject {
                 id,
                 host_id,
-                remote_path,
+                remote_path: remote_path.clone(),
                 label: project.label.as_deref().and_then(clean_text),
+                project_key: project.project_key.clone(),
+                roots: if project.roots.is_empty() {
+                    vec![remote_path.clone()]
+                } else {
+                    project.roots.clone()
+                },
+                default_project_space: project.default_project_space.clone(),
+                ai_settings: project.ai_settings.clone(),
             })
         })
         .collect::<Vec<_>>();
@@ -866,6 +875,10 @@ fn apply_codex_global_state_ops(
                             host_id: remote_host_id.to_owned(),
                             remote_path: op.workspace_path.clone(),
                             label: op.label.clone(),
+                            project_key: None,
+                            roots: vec![op.workspace_path.clone()],
+                            default_project_space: None,
+                            ai_settings: None,
                         },
                     );
                     upsert_project_order(payload, project_key);
@@ -1288,6 +1301,7 @@ fn local_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobalP
                 source: "local_project".to_owned(),
                 kind: "local".to_owned(),
                 remote_host_id: None,
+                owner_project_key: None,
                 pinned: false,
                 pinned_order: None,
                 active: false,
@@ -1312,17 +1326,18 @@ fn remote_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobal
             CodexGlobalProject {
                 key: item.key,
                 workspace_path: item.remote_path.clone(),
-                roots: vec![item.remote_path],
+                roots: item.roots,
                 name,
                 source: "remote_project".to_owned(),
                 kind: "remote".to_owned(),
                 remote_host_id: Some(item.host_id),
+                owner_project_key: item.project_key,
                 pinned: false,
                 pinned_order: None,
                 active: false,
                 appearance: None,
-                default_project_space: None,
-                ai_settings: None,
+                default_project_space: item.default_project_space,
+                ai_settings: item.ai_settings,
             }
         })
         .collect()
@@ -1383,6 +1398,7 @@ fn local_project_from_label(workspace_path: &str, label: Option<&str>) -> CodexG
         source: "legacy_root".to_owned(),
         kind: "local".to_owned(),
         remote_host_id: None,
+        owner_project_key: None,
         pinned: false,
         pinned_order: None,
         active: false,
@@ -2286,6 +2302,10 @@ mod tests {
                 host_id: "new-host".to_owned(),
                 remote_path: "/retained".to_owned(),
                 label: Some("Current".to_owned()),
+                project_key: None,
+                roots: Vec::new(),
+                default_project_space: None,
+                ai_settings: None,
             }],
             ..Default::default()
         };
@@ -2300,7 +2320,11 @@ mod tests {
                     "id": "retained",
                     "hostId": "new-host",
                     "remotePath": "/retained",
-                    "label": "Current"
+                    "label": "Current",
+                    "projectKey": null,
+                    "roots": [],
+                    "defaultProjectSpace": null,
+                    "aiSettings": null
                 }
             ])
         );
@@ -2328,6 +2352,41 @@ mod tests {
     }
 
     #[test]
+    fn remote_project_oplog_projects_full_owner_settings() {
+        let mut payload =
+            payload(json!({"pinned-project-ids": ["sidebar"], "project-order": ["sidebar"]}));
+        let operation = CodexGlobalStateOplogRecord {
+            kind: OPLOG_KIND_UPSERT_REMOTE_PROJECTS.to_owned(),
+            remote_projects: vec![CodexGlobalRemoteProject {
+                id: "sidebar".to_owned(),
+                host_id: "remote".to_owned(),
+                remote_path: "/new".to_owned(),
+                label: Some("Updated".to_owned()),
+                project_key: Some("owner".to_owned()),
+                roots: vec!["/new".to_owned(), "/extra".to_owned()],
+                default_project_space: Some(
+                    json!({"projectStore": "backend", "projectId": "space"}),
+                ),
+                ai_settings: Some(
+                    json!({"instructions": "New", "modelSelection": {"modelName": "model"}}),
+                ),
+            }],
+            ..Default::default()
+        };
+        apply_codex_global_state_ops(&mut payload, &[operation]);
+        let index = index_from_payload(&payload);
+        let project = index.project_for_key("sidebar").unwrap();
+        assert_eq!(project.owner_project_key.as_deref(), Some("owner"));
+        assert_eq!(project.roots, vec!["/new", "/extra"]);
+        assert!(project.pinned);
+        assert_eq!(project.ai_settings.as_ref().unwrap()["instructions"], "New");
+        assert_eq!(
+            project.default_project_space.as_ref().unwrap()["projectId"],
+            "space"
+        );
+    }
+
+    #[test]
     fn remote_project_batch_removes_stale_projects_from_synchronized_hosts() {
         let mut payload = payload(json!({
             "remote-projects": [
@@ -2348,6 +2407,10 @@ mod tests {
                 host_id: "host".to_owned(),
                 remote_path: "/retained".to_owned(),
                 label: Some("Current".to_owned()),
+                project_key: None,
+                roots: Vec::new(),
+                default_project_space: None,
+                ai_settings: None,
             }],
             ..Default::default()
         };
@@ -2361,7 +2424,11 @@ mod tests {
                     "id": "retained",
                     "hostId": "host",
                     "remotePath": "/retained",
-                    "label": "Current"
+                    "label": "Current",
+                    "projectKey": null,
+                    "roots": [],
+                    "defaultProjectSpace": null,
+                    "aiSettings": null
                 },
                 {"id": "other-host", "hostId": "other", "remotePath": "/other"}
             ])

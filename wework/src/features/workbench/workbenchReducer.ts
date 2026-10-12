@@ -1,3 +1,4 @@
+import { updateRuntimeWorkProject } from '@/lib/runtime-project-update'
 import type {
   DeviceWorkspaceResponse,
   DeviceInfo,
@@ -25,6 +26,7 @@ import {
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import {
   findRuntimeTaskProjectWork,
+  getDefaultProjectDeviceWorkspaceId,
   mergeRuntimeTaskAddresses,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
@@ -107,6 +109,7 @@ export type WorkbenchAction =
   | { type: 'project_selected'; project: ProjectWithTasks }
   | {
       type: 'runtime_local_project_updated'
+      deviceId: string
       projectKey: string
       name: string
       roots: string[]
@@ -756,6 +759,31 @@ function resolveCurrentProjectAfterRefresh(
   return runtimeProject ? runtimeProjectToProject(runtimeProject) : null
 }
 
+function reconcileProjectWorkspaceSelection(
+  state: WorkbenchState,
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): number | null {
+  if (state.currentRuntimeTask || !state.currentProject || state.selectedDeviceWorkspaceId == null)
+    return state.selectedDeviceWorkspaceId
+  const nextProject = runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === state.currentProject?.id
+  )
+  if (
+    !nextProject ||
+    nextProject.deviceWorkspaces.some(workspace => workspace.id === state.selectedDeviceWorkspaceId)
+  )
+    return state.selectedDeviceWorkspaceId
+  const previousProject = state.runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === state.currentProject?.id
+  )
+  const previousWorkspace = previousProject?.deviceWorkspaces.find(
+    workspace => workspace.id === state.selectedDeviceWorkspaceId
+  )
+  if (previousWorkspace?.worktreeId || previousWorkspace?.workspaceKind === 'worktree')
+    return state.selectedDeviceWorkspaceId
+  return getDefaultProjectDeviceWorkspaceId(runtimeWork, state.currentProject.id)
+}
+
 function runtimeWorkspaceFromMapping(
   mapping: DeviceWorkspaceResponse,
   devices: DeviceInfo[]
@@ -1031,6 +1059,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
             ? state.standaloneWorkspacePath
             : action.standaloneWorkspacePath,
       }
+      refreshedState.selectedDeviceWorkspaceId = reconcileProjectWorkspaceSelection(
+        state,
+        runtimeWork
+      )
       debugRuntimeSidebarState('reducer-lists-refreshed', {
         incomingTaskIds: summarizeRuntimeWorkTaskIds(action.runtimeWork ?? null),
         previousTaskIds: summarizeRuntimeWorkTaskIds(state.runtimeWork ?? null),
@@ -1084,6 +1116,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           currentRuntimeTask
         ),
         currentRuntimeTask,
+        selectedDeviceWorkspaceId: reconcileProjectWorkspaceSelection(state, runtimeWork),
       }
     }
     case 'runtime_task_pin_changed': {
@@ -1149,23 +1182,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: state.runtimeWork
-          ? {
-              ...state.runtimeWork,
-              projects: state.runtimeWork.projects.map(projectWork =>
-                projectWork.project.key === action.projectKey
-                  ? {
-                      ...projectWork,
-                      project: {
-                        ...projectWork.project,
-                        name: action.name,
-                        roots: action.roots.map(path => ({ kind: 'local', path })),
-                        defaultProjectSpace: action.defaultProjectSpace,
-                        aiSettings: action.aiSettings,
-                      },
-                    }
-                  : projectWork
-              ),
-            }
+          ? updateRuntimeWorkProject(state.runtimeWork, action)
           : state.runtimeWork,
       }
     case 'runtime_project_removed': {

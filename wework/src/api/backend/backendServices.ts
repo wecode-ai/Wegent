@@ -1,3 +1,7 @@
+import {
+  createRemoteProjectDevicePluginApi,
+  type ProjectDevicePluginApi,
+} from '@/api/projectDevicePlugins'
 import { getToken } from '@/api/auth'
 import { createAgentResourceApi } from '@/api/agentResources'
 import { createAttachmentApi } from '@/api/attachments'
@@ -109,6 +113,17 @@ export function createBackendWorkbenchServices(
       getToken: resolveToken,
       clientOrigin: 'wework',
     })
+  const projectDevicePluginApis = new Map<string, ProjectDevicePluginApi>()
+  const projectDevicePluginApi = (deviceId: string) => {
+    let api = projectDevicePluginApis.get(deviceId)
+    if (!api) {
+      api = createRemoteProjectDevicePluginApi(deviceId, (method, params) =>
+        composerRuntimeIpc.request('codex.app_server_request', { method, params }, deviceId)
+      )
+      projectDevicePluginApis.set(deviceId, api)
+    }
+    return api
+  }
   const pluginApi = {
     async listPlugins(deviceId: string) {
       const response = await cloudPluginApi.listInstalledPlugins(deviceId)
@@ -153,6 +168,7 @@ export function createBackendWorkbenchServices(
       cloudPluginApi.listInstalledPlugins(deviceId).then(response => response.items)
     ),
     pluginApi,
+    projectDevicePluginApi,
     attachmentApi: createAttachmentApi({
       apiBaseUrl,
       getToken: resolveToken,

@@ -1,3 +1,4 @@
+import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { createLocalProjectAutomationApi } from './localProjectAutomations'
 import {
   createRuntimeComposerApi,
@@ -2264,18 +2265,27 @@ function adaptRuntimeWorkListResponse(
             ...(projectQuickPhrases.length > 0 ? { quickPhrases: projectQuickPhrases } : {}),
           }
         : null
+    const ownerProjectKey =
+      stringValue(workspace.ownerProjectKey) ??
+      (projectSource === 'remote_project'
+        ? parseRuntimeRemoteProjectStateId(projectKey)?.projectKey
+        : projectKey)
     const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
         key: projectKey,
         ...(projectSource === 'remote_project' ? { sidebarStateKey: projectKey } : {}),
         id:
           projectSource === 'remote_project'
-            ? workspaceId
+            ? ownerProjectKey
+              ? stableLocalId(`${workspaceDeviceId}\0${ownerProjectKey}`)
+              : workspaceId
             : stableLocalId(`${localDeviceId}\0${projectKey}`),
         name: label,
         kind: projectKind,
         source: projectSource,
         stateDeviceId: localDeviceId,
+        ownerDeviceId: workspaceDeviceId,
+        ownerProjectKey: ownerProjectKey ?? null,
         roots: rawRoots
           .map(root => stringValue(root))
           .filter((root): root is string => Boolean(root))
@@ -4189,6 +4199,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
       deps.listCloudInstalledPlugins ?? (async () => [])
     ),
+    projectDevicePluginApi: () => createLocalProjectDevicePluginApi(),
     pluginApi: projectPluginApi,
     branchNameApi,
     textGenerationApi,

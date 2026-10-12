@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
 import { basename, dirname } from 'node:path'
@@ -172,7 +172,12 @@ async function createCloudProjectFixture(control, workspacePath) {
   }
 }
 
-async function verifyCloudProjectCreationSources(control, workspacePath) {
+async function verifyCloudProjectCreationSources(
+  control,
+  workspacePath,
+  cloudEnvironment,
+  restartDesktopApp
+) {
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -208,11 +213,90 @@ async function verifyCloudProjectCreationSources(control, workspacePath) {
     value: 'cloud-blank-project',
   })
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
-  await waitForCloudProject(
+  const blankProjectMenu = await waitForStableCloudProjectMenu(
     control,
     blankMenus,
     'Creating a blank cloud project did not add it to the sidebar'
   )
+  const projectId = blankProjectMenu.slice('project-menu-'.length)
+  const openEditor = async () => {
+    await control.command('hover', `[data-testid="project-row-${projectId}"]`)
+    await control.command('click', `[data-testid="project-menu-${projectId}"]`)
+    const menu = JSON.parse(await control.command('snapshot', 'body'))
+    const editId = menu.testIds.includes(`edit-project-${projectId}`)
+      ? `edit-project-${projectId}`
+      : `rename-project-${projectId}`
+    await control.command('click', `[data-testid="${editId}"]`)
+    await control.command('waitFor', '[data-testid="local-project-edit-dialog"]')
+  }
+  await openEditor()
+  await control.command('fill', '[data-testid="local-project-name-input"]', {
+    value: 'Cloud edited project',
+  })
+  await control.command('click', '[data-testid="add-local-project-folders"]')
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]')
+  await control.command('fill', '[data-testid="device-folder-path-input"]', { value: homePath })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  await control.command('click', '[data-testid="make-primary-root-1"]')
+  await control.command('click', '[data-testid="local-project-settings-ai-tab"]')
+  await control.command('fill', '[data-testid="local-project-instructions-input"]', {
+    value: 'Cloud project instructions survive restart.',
+  })
+  await control.command('click', '[data-testid="local-project-settings-quick-phrases-tab"]')
+  await control.command('click', '[data-testid="local-project-add-quick-phrase-button"]')
+  await control.command('fill', '[data-testid="local-project-quick-phrase-title-input"]', {
+    value: 'Cloud review',
+  })
+  await control.command('fill', '[data-testid="local-project-quick-phrase-content-input"]', {
+    value: 'Review the cloud project changes.',
+  })
+  await control.command('click', '[data-testid="local-project-quick-phrase-save-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="save-local-project-button"]')
+  await control.command('waitFor', '[data-testid="local-project-edit-dialog"]', { visible: false })
+  await control.command('waitFor', `[data-testid="project-row-${projectId}"]`, {
+    text: 'Cloud edited project',
+  })
+  const savedStateDeadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let state
+  let saved
+  while (Date.now() < savedStateDeadline) {
+    state = JSON.parse(
+      await readFile(join(cloudEnvironment.remoteCodexHome, '.codex-global-state.json'), 'utf8')
+    )
+    saved = Object.values(state['local-projects'] || {}).find(
+      project => project.name === 'Cloud edited project'
+    )
+    if (saved?.aiSettings?.instructions === 'Cloud project instructions survive restart.') break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.ok(saved, 'Cloud project settings were not saved to the owning executor')
+  assert.equal(saved.aiSettings.instructions, 'Cloud project instructions survive restart.')
+  assert.equal(saved.aiSettings.quickPhrases[0].title, 'Cloud review')
+  assert.deepEqual(
+    state['project-writable-roots'][saved.id].map(root => root.path),
+    [homePath, join(homePath, 'cloud-blank-project')]
+  )
+  await restartDesktopApp()
+  await control.command('waitFor', `[data-testid="project-row-${projectId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    text: 'Cloud edited project',
+  })
+  await openEditor()
+  assert.equal(
+    await control.command('getValue', '[data-testid="local-project-name-input"]'),
+    'Cloud edited project'
+  )
+  await control.command('click', '[data-testid="local-project-settings-ai-tab"]')
+  assert.equal(
+    await control.command('getValue', '[data-testid="local-project-instructions-input"]'),
+    'Cloud project instructions survive restart.'
+  )
+  await control.command('click', '[data-testid="local-project-settings-quick-phrases-tab"]')
+  await control.command('waitFor', '[data-testid="local-project-settings-quick-phrases-panel"]', {
+    text: 'Cloud review',
+  })
+  await control.command('click', '[data-testid="close-local-project-edit-dialog"]')
 
   await runChecked('git', ['rev-parse', '--is-inside-work-tree'], { cwd: workspacePath })
   const gitMenus = await createProjectAndSnapshotMenus('remote-project-source-git')
@@ -652,7 +736,12 @@ async function verifyCloudCheckpoint({
 
   if (checkpoint === 'cloud-project-creation') {
     setPhase('cloud-project-creation-sources')
-    await verifyCloudProjectCreationSources(control, workspacePath)
+    await verifyCloudProjectCreationSources(
+      control,
+      workspacePath,
+      cloudEnvironment,
+      restartDesktopApp
+    )
     return
   }
 

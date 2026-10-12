@@ -1,3 +1,8 @@
+import {
+  createLocalProjectDevicePluginApi,
+  createRemoteProjectDevicePluginApi,
+  type ProjectDevicePluginApi,
+} from '@/api/projectDevicePlugins'
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { runtimeExecutionSnapshot } from '@wegent/chat-core/runtime-execution-snapshot'
 import { ApiError, createHttpClient } from '@/api/http'
@@ -594,6 +599,23 @@ export function createHybridWorkbenchServices(
     })
     unscopedCloudDevicesRequest = request
     return request
+  }
+  const projectDevicePluginApis = new Map<string, ProjectDevicePluginApi>()
+  const projectDevicePluginApi = (deviceId: string): ProjectDevicePluginApi => {
+    const cached = projectDevicePluginApis.get(deviceId)
+    if (cached) return cached
+    const local = createLocalProjectDevicePluginApi()
+    const remote = createRemoteProjectDevicePluginApi(deviceId, (method, params) =>
+      cloudRuntimeIpc.request('codex.app_server_request', { method, params }, deviceId)
+    )
+    const resolve = async () =>
+      (await runtimeApiForDevice(deviceId)) === localServices.runtimeWorkApi ? local : remote
+    const api: ProjectDevicePluginApi = {
+      readState: async params => (await resolve()).readState(params),
+      installAvailablePlugin: async item => (await resolve()).installAvailablePlugin(item),
+    }
+    projectDevicePluginApis.set(deviceId, api)
+    return api
   }
   const runtimeApiForDevice = async (deviceId?: string | null) => {
     const normalizedDeviceId = deviceId?.trim()
@@ -1516,6 +1538,7 @@ export function createHybridWorkbenchServices(
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
+    projectDevicePluginApi,
     automationApi,
     attachmentApi: {
       uploadAttachment: localServices.attachmentApi!.uploadAttachment,

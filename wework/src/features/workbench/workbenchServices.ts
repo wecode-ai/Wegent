@@ -1,3 +1,4 @@
+import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { createDeviceApi } from '@/api/devices'
 import type { createRuntimeComposerApi } from '@wegent/chat-core/runtime-composer-api'
 import type { createLocalProjectAutomationApi } from '@/api/local/localProjectAutomations'
@@ -182,6 +183,7 @@ export interface WorkbenchServices {
   localExecutionServices?: Pick<WorkbenchServices, 'runtimeWorkApi' | 'deviceApi'>
   composerCatalogApi?: Pick<ReturnType<typeof createRuntimeComposerApi>, 'readCatalog'>
   pluginApi?: ProjectPluginCatalogApi
+  projectDevicePluginApi?: (deviceId: string) => ProjectDevicePluginApi
   automationApi?: AutomationApi
   attachmentApi?: {
     uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>

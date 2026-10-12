@@ -1,3 +1,4 @@
+import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
 import {
   canUseForRemoteProjectCreation,
   filterClaudeCodeDevices,
@@ -657,6 +658,7 @@ function mergeRuntimeProjects(
   const projects = new Map<string, RuntimeProjectWork>()
   const remoteProjectAliases = new Map<string, string>()
   const workspaceProjectAliases = new Map<string, string>()
+  const ownerProjectAliases = new Map<string, string>()
 
   const upsertProject = (project: RuntimeProjectWork) => {
     const normalizedProject: RuntimeProjectWork = {
@@ -666,17 +668,25 @@ function mergeRuntimeProjects(
     normalizedProject.totalTasks = countWorkspaceTasks(normalizedProject.deviceWorkspaces)
 
     const defaultKey = runtimeProjectKey(normalizedProject)
+    const owner = getRuntimeProjectOwner(normalizedProject)
+    const ownerIdentity = owner.projectKey
+      ? `${canonicalizer.resolve(owner.deviceId)?.device_id || owner.deviceId}\0${owner.projectKey}`
+      : defaultKey
+    const ownerAlias = ownerProjectAliases.get(ownerIdentity)
     const workspaceIdentity = normalizedProject.deviceWorkspaces
       .map(runtimeWorkspaceRouteIdentity)
       .find(identity => workspaceProjectAliases.has(identity))
     const remoteIdentity = normalizedProject.deviceWorkspaces
       .map(runtimeRemoteWorkspaceIdentity)
       .find(identity => remoteProjectAliases.has(identity))
-    const key = workspaceIdentity
-      ? (workspaceProjectAliases.get(workspaceIdentity) ?? defaultKey)
-      : remoteIdentity
-        ? (remoteProjectAliases.get(remoteIdentity) ?? defaultKey)
-        : defaultKey
+    const key =
+      ownerAlias ??
+      (workspaceIdentity
+        ? (workspaceProjectAliases.get(workspaceIdentity) ?? defaultKey)
+        : remoteIdentity
+          ? (remoteProjectAliases.get(remoteIdentity) ?? defaultKey)
+          : defaultKey)
+    ownerProjectAliases.set(ownerIdentity, key)
     if (isRuntimeRemoteProjectDescriptor(normalizedProject)) {
       normalizedProject.deviceWorkspaces.forEach(workspace => {
         remoteProjectAliases.set(runtimeRemoteWorkspaceIdentity(workspace), key)
@@ -725,11 +735,15 @@ function mergeRuntimeProjects(
               normalizedProject.project.id ??
               runtimeProjectUiId(normalizedProject.project),
             key: normalizedProject.project.key,
+            ownerDeviceId: owner.deviceId,
+            ownerProjectKey: owner.projectKey,
             sidebarStateKey: existing.project.sidebarStateKey ?? existing.project.key,
             stateDeviceId: existing.project.stateDeviceId,
             kind: 'remote',
             source: 'remote_project',
-            name: existing.project.name,
+            name: existing.project.ownerProjectKey
+              ? normalizedProject.project.name
+              : existing.project.name,
             sidebarOrder: existing.project.sidebarOrder,
             pinned: existing.project.pinned,
             pinnedOrder: existing.project.pinnedOrder,

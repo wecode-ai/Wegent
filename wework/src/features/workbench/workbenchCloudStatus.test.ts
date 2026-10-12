@@ -1000,6 +1000,58 @@ describe('cloud runtime sync state', () => {
     ])
   })
 
+  test('merges a mirror by owner identity after the primary root changes', () => {
+    const mirror = {
+      project: {
+        key: 'sidebar-id',
+        sidebarStateKey: 'sidebar-id',
+        id: 101,
+        name: 'Mirror',
+        source: 'remote_project',
+        stateDeviceId: 'local',
+        ownerDeviceId: 'remote',
+        ownerProjectKey: 'stable-key',
+        pinned: true,
+      },
+      deviceWorkspaces: [
+        {
+          ...workspace('remote', []),
+          remoteHostId: 'remote',
+          workspaceSource: 'remote',
+          workspacePath: '/old',
+          available: false,
+        },
+      ],
+    }
+    const live = {
+      project: {
+        key: 'stable-key',
+        name: 'Live',
+        stateDeviceId: 'remote',
+        roots: [
+          { kind: 'local', path: '/new' },
+          { kind: 'local', path: '/second' },
+        ],
+        aiSettings: { instructions: 'New defaults' },
+      },
+      deviceWorkspaces: [{ ...workspace('remote', []), workspacePath: '/new', available: true }],
+    }
+    const merged = mergeRuntimeWorkLists(
+      { projects: [mirror], chats: [], totalTasks: 0 },
+      { projects: [live], chats: [], totalTasks: 0 }
+    )
+    expect(merged.projects).toHaveLength(1)
+    expect(merged.projects[0].project).toMatchObject({
+      id: 101,
+      sidebarStateKey: 'sidebar-id',
+      ownerProjectKey: 'stable-key',
+      pinned: true,
+      roots: live.project.roots,
+      aiSettings: live.project.aiSettings,
+    })
+    expect(merged.projects[0].deviceWorkspaces[0].workspacePath).toBe('/new')
+  })
+
   test('preserves one remote project UI id across descriptor and executor sources', () => {
     const workspacePath = '/srv/repo'
     const remoteProject = {

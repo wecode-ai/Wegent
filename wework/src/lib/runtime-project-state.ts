@@ -9,6 +9,36 @@ import type {
 } from '@/types/api'
 import { runtimeProjectUiId } from './runtime-project'
 
+export function isDeviceRuntimeProject(project?: RuntimeProjectRef | null): boolean {
+  return project?.source === 'local_project' || project?.source === 'remote_project'
+}
+
+export function getRuntimeProjectOwner(projectWork: RuntimeProjectWork) {
+  const { project, deviceWorkspaces } = projectWork
+  const workspace = deviceWorkspaces[0]
+  const sidebarIdentity = parseRuntimeRemoteProjectStateId(
+    project.sidebarStateKey || project.key || ''
+  )
+  const deviceId =
+    project.ownerDeviceId?.trim() ||
+    workspace?.remoteHostId?.trim() ||
+    sidebarIdentity?.hostId ||
+    workspace?.deviceId?.trim() ||
+    project.stateDeviceId?.trim() ||
+    ''
+  const unresolvedRemoteAlias =
+    project.source === 'remote_project' &&
+    project.sidebarStateKey &&
+    project.key === (project.sidebarStateKey || project.key)
+  return {
+    deviceId,
+    projectKey:
+      project.ownerProjectKey?.trim() ||
+      sidebarIdentity?.projectKey ||
+      (unresolvedRemoteAlias ? '' : project.key || ''),
+  }
+}
+
 export function getLocalRuntimeStateDeviceId(devices: DeviceInfo[]): string | null {
   const localDevices = devices.filter(device => device.device_type === 'local')
   return (
@@ -55,14 +85,19 @@ export function getRuntimeRemoteProjectRegistrations(
   runtimeWork.projects.forEach(projectWork => {
     const workspace = getRemoteProjectWorkspace(projectWork, localStateDeviceId)
     if (!workspace) return
-    const hostId = workspace.remoteHostId?.trim() || workspace.deviceId.trim()
+    const owner = getRuntimeProjectOwner(projectWork)
+    const hostId = owner.deviceId
     const stateKey = projectWork.project.sidebarStateKey?.trim()
-    const id = stateKey || buildRuntimeRemoteProjectStateId(hostId, projectWork.project.key)
+    const id = stateKey || buildRuntimeRemoteProjectStateId(hostId, owner.projectKey)
     registrations.set(id, {
       id,
       hostId,
-      remotePath: workspace.workspacePath,
+      remotePath: projectWork.project.roots?.[0]?.path || workspace.workspacePath,
       label: projectWork.project.name,
+      projectKey: owner.projectKey || null,
+      roots: projectWork.project.roots?.map(root => root.path) ?? [workspace.workspacePath],
+      defaultProjectSpace: projectWork.project.defaultProjectSpace ?? null,
+      aiSettings: projectWork.project.aiSettings ?? null,
     })
   })
   return [...registrations.values()]

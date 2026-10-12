@@ -508,6 +508,7 @@ pub(crate) struct RuntimeWorkspaceLink {
     pub project_key: String,
     pub project_kind: String,
     pub project_source: String,
+    pub owner_project_key: Option<String>,
     pub project_roots: Vec<String>,
     pub project_sidebar_order: Option<usize>,
     pub project_pinned: bool,
@@ -531,6 +532,7 @@ impl Default for RuntimeWorkspaceLink {
             project_key: String::new(),
             project_kind: "local".to_owned(),
             project_source: "legacy_root".to_owned(),
+            owner_project_key: None,
             project_roots: Vec::new(),
             project_sidebar_order: None,
             project_pinned: false,
@@ -641,6 +643,9 @@ pub(crate) fn workspace_response(
                 workspace_json["projectKind"] = Value::String(workspace.project_kind.clone());
                 workspace_json["projectSource"] = Value::String(workspace.project_source.clone());
                 workspace_json["projectRoots"] = json!(workspace.project_roots);
+                if let Some(owner_project_key) = workspace.owner_project_key.as_ref() {
+                    workspace_json["ownerProjectKey"] = json!(owner_project_key);
+                }
                 if let Some(order) = workspace.project_sidebar_order {
                     workspace_json["projectSidebarOrder"] = json!(order);
                 }

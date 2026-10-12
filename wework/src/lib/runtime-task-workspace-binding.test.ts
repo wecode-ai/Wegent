@@ -77,6 +77,29 @@ describe('runtime task workspace binding', () => {
     })
   })
 
+  test('binds a new remote conversation to its primary source even with an existing worktree', () => {
+    const work = structuredClone(runtimeWork)
+    work.projects[1].deviceWorkspaces.push({
+      deviceId: 'cloud-executor',
+      workspacePath: '/trees/existing',
+      workspaceKind: 'worktree',
+      worktreeId: 'existing',
+      available: true,
+      tasks: [],
+    })
+    expect(
+      resolveRuntimeTaskWorkspaceBinding({
+        runtimeWork: work,
+        projectUiId: runtimeProjectUiId(work.projects[1].project),
+      })
+    ).toEqual({
+      deviceId: 'cloud-executor',
+      runtimeProjectKey: 'remote:docs',
+      runtimeProjectName: '文档',
+      runtimeWorkspaceRoots: ['/srv/docs'],
+    })
+  })
+
   test('resolves the UI project from either stable binding', () => {
     expect(
       runtimeTaskProjectUiId(runtimeWork, {

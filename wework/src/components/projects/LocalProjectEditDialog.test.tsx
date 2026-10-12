@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
@@ -33,13 +33,314 @@ const projectWork = {
 }
 
 const folderPickerProps = {
-  device: { device_id: 'local-device', name: 'Local' },
+  device: { device_id: 'local-device', device_type: 'local', name: 'Local' },
   onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/repo'),
   onListDeviceDirectories: vi.fn().mockResolvedValue([]),
   onCreateDeviceDirectory: vi.fn().mockResolvedValue(undefined),
 }
 
 describe('LocalProjectEditDialog', () => {
+  test('saves a cached remote descriptor through the owning device and project key', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        device={{
+          device_id: 'remote-device',
+          device_type: 'remote',
+          status: 'online',
+          name: 'Remote',
+        }}
+        open
+        projectWork={{
+          ...projectWork,
+          project: {
+            ...projectWork.project,
+            key: 'sidebar-alias',
+            source: 'remote_project',
+            ownerDeviceId: 'remote-device',
+            ownerProjectKey: 'real-key',
+          },
+        }}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />
+    )
+    await userEvent.click(screen.getByTestId('save-local-project-button'))
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'remote-device', projectKey: 'real-key' })
+    )
+  })
+
+  test('opens remote directory browsing without invoking the native picker', async () => {
+    pickerMocks.open.mockClear()
+    const getHome = vi.fn().mockResolvedValue('/srv')
+    const listDirectories = vi.fn().mockResolvedValue([])
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        device={{
+          device_id: 'remote-device',
+          device_type: 'remote',
+          status: 'online',
+          name: 'Remote',
+        }}
+        onGetDeviceHomeDirectory={getHome}
+        onListDeviceDirectories={listDirectories}
+        open
+        projectWork={{
+          ...projectWork,
+          project: { ...projectWork.project, ownerDeviceId: 'remote-device' },
+        }}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+    await userEvent.click(screen.getByTestId('add-local-project-folders'))
+    expect(pickerMocks.open).not.toHaveBeenCalled()
+    await waitFor(() => expect(listDirectories).toHaveBeenCalledWith('remote-device', '/repo/web'))
+  })
+
+  test('keeps an offline project readable while disabling save and directory mutations', () => {
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        device={{
+          device_id: 'remote-device',
+          device_type: 'remote',
+          status: 'offline',
+          name: 'Remote',
+        }}
+        open
+        projectWork={{
+          ...projectWork,
+          project: { ...projectWork.project, ownerDeviceId: 'remote-device' },
+        }}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('local-project-name-input')).toHaveValue('Product')
+    expect(screen.getByTestId('save-local-project-button')).toBeDisabled()
+    expect(screen.getByTestId('add-local-project-folders')).toBeDisabled()
+  })
+
+  test('shows configured plugins for a cached missing device without permitting installation', async () => {
+    const pluginApi = { readState: vi.fn(), installAvailablePlugin: vi.fn() }
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        device={null}
+        open
+        projectWork={{
+          ...projectWork,
+          project: {
+            ...projectWork.project,
+            ownerDeviceId: 'missing-device',
+            aiSettings: {
+              plugins: [
+                {
+                  id: 'quality@team',
+                  pluginName: 'quality',
+                  marketplaceId: 'team',
+                  displayName: 'Quality',
+                },
+              ],
+            },
+          },
+          deviceWorkspaces: [
+            { deviceId: 'missing-device', workspacePath: '/repo', available: false, tasks: [] },
+          ],
+        }}
+        pluginApi={pluginApi as never}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('save-local-project-button')).toBeDisabled()
+    await userEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
+    expect(screen.getByTestId('project-selected-plugin-quality@team')).toHaveTextContent('Quality')
+    expect(screen.getByTestId('remove-project-selected-plugin-quality@team')).toBeDisabled()
+    expect(pluginApi.readState).not.toHaveBeenCalled()
+  })
+
+  test('waits for a legacy remote project owner key before enabling save', async () => {
+    const onSave = vi.fn()
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        device={{
+          device_id: 'remote-device',
+          name: 'Remote',
+          status: 'online',
+          device_type: 'remote',
+        }}
+        open
+        projectWork={{
+          ...projectWork,
+          project: {
+            ...projectWork.project,
+            key: 'native-uuid',
+            sidebarStateKey: 'native-uuid',
+            source: 'remote_project',
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              remoteHostId: 'remote-device',
+              workspacePath: '/repo',
+              available: false,
+              tasks: [],
+            },
+          ],
+        }}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('project-owner-unresolved')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('save-local-project-button'))
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  test('stops pending catalog display offline and refreshes on reconnect without applying stale results', async () => {
+    let resolveOldRead: (state: unknown) => void = () => {}
+    let resolveNewRead: (state: unknown) => void = () => {}
+    const pluginApi = {
+      readState: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveOldRead = resolve
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveNewRead = resolve
+            })
+        ),
+      installAvailablePlugin: vi.fn(),
+    }
+    const props = {
+      ...folderPickerProps,
+      open: true,
+      device: { device_id: 'remote', device_type: 'remote', status: 'online', name: 'Remote' },
+      projectWork: {
+        ...projectWork,
+        project: {
+          ...projectWork.project,
+          ownerDeviceId: 'remote',
+          aiSettings: {
+            plugins: [
+              {
+                id: 'quality@team',
+                pluginName: 'quality',
+                marketplaceId: 'team',
+                displayName: 'Quality',
+              },
+            ],
+          },
+        },
+      },
+      pluginApi: pluginApi as never,
+      onClose: vi.fn(),
+      onSave: vi.fn(),
+      onDelete: vi.fn(),
+    }
+    const view = render(<LocalProjectEditDialog {...props} />)
+    await userEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
+    expect(screen.getByTestId('local-project-plugin-search')).toBeDisabled()
+    expect(screen.getByTestId('local-project-plugins-loading')).toBeInTheDocument()
+    view.rerender(
+      <LocalProjectEditDialog {...props} device={{ ...props.device, status: 'offline' }} />
+    )
+    expect(screen.getByTestId('local-project-plugin-search')).toBeEnabled()
+    expect(screen.queryByTestId('local-project-plugins-loading')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-selected-plugin-quality@team')).toHaveTextContent('Quality')
+    expect(screen.getByTestId('remove-project-selected-plugin-quality@team')).toBeDisabled()
+    view.rerender(<LocalProjectEditDialog {...props} />)
+    await waitFor(() => expect(pluginApi.readState).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('local-project-plugins-loading')).toBeInTheDocument()
+    expect(pluginApi.readState).toHaveBeenLastCalledWith({
+      mergeAllMarketplaces: true,
+      refresh: true,
+    })
+    await act(async () => {
+      resolveOldRead({
+        marketplaceItems: [
+          {
+            id: 'old',
+            name: 'stale',
+            displayName: 'Stale catalog',
+            manifest: { marketplaceId: 'team' },
+          },
+        ],
+      })
+    })
+    expect(screen.queryByTestId('local-project-plugin-row-stale')).not.toBeInTheDocument()
+    await act(async () => {
+      resolveNewRead({
+        marketplaceItems: [
+          {
+            id: 'fresh',
+            name: 'fresh',
+            displayName: 'Fresh catalog',
+            manifest: { marketplaceId: 'team' },
+          },
+        ],
+      })
+    })
+    expect(await screen.findByTestId('local-project-plugin-row-fresh')).toHaveTextContent(
+      'Fresh catalog'
+    )
+    expect(screen.getByTestId('local-project-plugin-search')).toBeEnabled()
+    expect(screen.queryByTestId('local-project-plugins-loading')).not.toBeInTheDocument()
+  })
+
+  test('retains an unsaved draft when a known owner mirror receives its live project key', async () => {
+    const onSave = vi.fn().mockRejectedValue(new Error('Save rejected'))
+    const props = {
+      ...folderPickerProps,
+      device: { device_id: 'remote', device_type: 'remote', status: 'online', name: 'Remote' },
+      open: true,
+      projectWork: {
+        ...projectWork,
+        project: {
+          ...projectWork.project,
+          key: 'mirror',
+          ownerDeviceId: 'remote',
+          ownerProjectKey: 'real',
+          sidebarStateKey: 'mirror',
+        },
+      },
+      onSave,
+      onClose: vi.fn(),
+      onDelete: vi.fn(),
+    }
+    const view = render(<LocalProjectEditDialog {...props} />)
+    await userEvent.clear(screen.getByTestId('local-project-name-input'))
+    await userEvent.type(screen.getByTestId('local-project-name-input'), 'Unsaved draft')
+    await userEvent.click(screen.getByTestId('save-local-project-button'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Save rejected')
+    view.rerender(
+      <LocalProjectEditDialog
+        {...props}
+        projectWork={{
+          ...props.projectWork,
+          project: { ...props.projectWork.project, key: 'real' },
+        }}
+      />
+    )
+    expect(screen.getByTestId('local-project-name-input')).toHaveValue('Unsaved draft')
+    expect(screen.getByRole('alert')).toHaveTextContent('Save rejected')
+  })
   test('hides the default project space while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
     render(
@@ -236,7 +537,7 @@ describe('LocalProjectEditDialog', () => {
     })
   })
 
-  test('installs a marketplace plugin for this project without leaving it globally enabled', async () => {
+  test('selects a plugin installed through the device project adapter', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     const installedPlugin = {
       metadata: { labels: { id: 'quality-gate@team-market' } },
@@ -286,9 +587,7 @@ describe('LocalProjectEditDialog', () => {
         manifest: { marketplaceId: 'team-market' },
       })
     )
-    expect(pluginApi.updateInstalledPlugin).toHaveBeenCalledWith('quality-gate@team-market', {
-      enabled: false,
-    })
+    expect(pluginApi.updateInstalledPlugin).not.toHaveBeenCalled()
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
         aiSettings: expect.objectContaining({

@@ -5286,6 +5286,56 @@ describe('DesktopSidebar', () => {
     expect(projectSpaceApi.listCloudProjects).not.toHaveBeenCalled()
   })
 
+  test.each(['remote', 'cloud'])(
+    'opens full project settings for an offline %s device',
+    async deviceType => {
+      const user = userEvent.setup()
+      const projectDevicePluginApi = vi.fn()
+      renderSidebar({
+        projects: [],
+        devices: [
+          { device_id: 'owner', device_type: deviceType, status: 'offline', name: 'Owner' },
+        ] as never,
+        runtimeWork: {
+          projects: [
+            {
+              project: {
+                id: 7,
+                key: 'real',
+                sidebarStateKey: 'mirror',
+                source: 'remote_project',
+                stateDeviceId: 'local-device',
+                ownerDeviceId: 'owner',
+                ownerProjectKey: 'real',
+                name: 'Device project',
+                roots: [{ kind: 'local', path: '/owner' }],
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'owner',
+                  remoteHostId: 'owner',
+                  workspaceSource: 'remote',
+                  workspacePath: '/owner',
+                  available: false,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        },
+        onUpdateLocalRuntimeProject: vi.fn(),
+        projectDevicePluginApi,
+      })
+      await user.click(screen.getByTestId('project-menu-7'))
+      await user.click(screen.getByTestId('rename-project-7'))
+      expect(screen.getByTestId('local-project-edit-dialog')).toBeInTheDocument()
+      expect(screen.getByTestId('save-local-project-button')).toBeDisabled()
+      expect(projectDevicePluginApi).toHaveBeenCalledWith('owner')
+    }
+  )
+
   test('creates a permanent worktree from a runtime project', async () => {
     const user = userEvent.setup()
     const onCreatePermanentWorktree = vi.fn().mockResolvedValue(undefined)
