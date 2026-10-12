@@ -9,7 +9,7 @@ mod prompt_processor;
 
 pub(crate) use paths::{
     device_runtime_attachment_dir, device_runtime_attachment_dir_at,
-    device_runtime_attachment_task_dir,
+    device_runtime_attachment_task_dir, legacy_device_runtime_attachment_task_dir,
 };
 
 pub use handler::{

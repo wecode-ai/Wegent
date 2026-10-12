@@ -42,26 +42,32 @@ export function ConfirmDialog({
   if (!open) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4">
       <div
         ref={dialogRef}
         data-testid={dialogTestId}
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${confirmTestId}-title`}
-        className="w-full max-w-[420px] rounded-[20px] border border-border bg-popover p-5 text-text-primary shadow-lg"
+        aria-describedby={`${confirmTestId}-description`}
+        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-[420px] flex-col rounded-[20px] border border-border bg-popover p-5 text-text-primary shadow-lg"
       >
-        <h2 id={`${confirmTestId}-title`} className="text-lg font-medium">
+        <h2 id={`${confirmTestId}-title`} className="shrink-0 break-words text-lg font-medium">
           {title}
         </h2>
-        <p className="mt-2 text-sm leading-5 text-text-secondary">{description}</p>
-        <div className="mt-6 flex justify-end gap-2">
+        <p
+          id={`${confirmTestId}-description`}
+          className="mt-2 min-h-0 overflow-y-auto break-words text-sm leading-5 text-text-secondary"
+        >
+          {description}
+        </p>
+        <div className="mt-6 flex shrink-0 flex-wrap justify-end gap-2">
           <button
             type="button"
             data-testid={cancelTestId ?? `${confirmTestId}-cancel-button`}
             disabled={pending}
             onClick={onClose}
-            className="h-8 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+            className="min-h-11 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8"
           >
             {cancelLabel}
           </button>
@@ -72,8 +78,8 @@ export function ConfirmDialog({
             onClick={onConfirm}
             className={
               destructive
-                ? 'h-8 rounded-lg bg-red-600 px-3 text-sm text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-45'
-                : 'h-8 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45'
+                ? 'min-h-11 rounded-lg bg-red-600 px-3 text-sm text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
+                : 'min-h-11 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
             }
           >
             <span className="inline-flex items-center gap-1.5">

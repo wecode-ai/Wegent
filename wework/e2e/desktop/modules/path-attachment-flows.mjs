@@ -704,15 +704,62 @@ async function verifySideChatAttachmentIsolation({
     ACTIVE_WORKBENCH_SELECTOR
   )
   control.setScenario('side_chat_attachment')
-  await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
-  await control.command('waitFor', '[data-testid="right-workspace-chat-option"]', {
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  const visibleEntryPoint = async () => {
+    const [newTabCount, chatOptionCount] = await Promise.all([
+      control
+        .command('getElementCount', '[data-testid="right-workspace-new-tab-button"]', {
+          visible: true,
+        })
+        .then(Number),
+      control
+        .command('getElementCount', '[data-testid="right-workspace-chat-option"]', {
+          visible: true,
+        })
+        .then(Number),
+    ])
+    if (newTabCount > 0) return 'new-tab'
+    if (chatOptionCount > 0) return 'launcher'
+    return null
+  }
+  let entryPoint = await visibleEntryPoint()
+  if (!entryPoint) {
+    await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+    entryPoint = await withTimeout(
+      (async () => {
+        let visible = null
+        while (!visible) {
+          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+          visible = await visibleEntryPoint()
+        }
+        return visible
+      })(),
+      DEFAULT_STEP_TIMEOUT_MS,
+      'The right workspace panel did not expose a visible temporary-chat entry point'
+    )
+  }
+  const usesNewTabMenu = entryPoint === 'new-tab'
+  const chatOptionSelector = usesNewTabMenu
+    ? '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-chat-option"]'
+    : '[data-testid="right-workspace-chat-option"]'
+  if (usesNewTabMenu) {
+    await control.command('clickWhenEnabled', '[data-testid="right-workspace-new-tab-button"]', {
+      stableMs: 300,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="right-workspace-new-tab-menu"]', {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+  await control.command('waitFor', chatOptionSelector, {
     stableMs: 300,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const [launcherMetrics] = JSON.parse(
     await control.command('getElementMetrics', rightPanelShellSelector)
   )
-  await control.command('click', '[data-testid="right-workspace-chat-option"]')
+  await control.command('click', chatOptionSelector)
   await control.command('waitFor', sideComposerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
 
   await waitForElementWidth(
@@ -826,21 +873,30 @@ async function verifySideChatAttachmentIsolation({
     sideChatSelector
   )
 
+  control.releaseSideChatGuidanceToolExecution()
+  await withTimeout(
+    control.awaitScenarioRequestCount('side_chat_guidance', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The side-chat turn did not report its tool output before guidance'
+  )
+  await withTimeout(
+    (async () => {
+      while (control.sideChatGuidanceStage !== 'awaiting_guidance') {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+      }
+    })(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The side-chat turn did not remain open after reporting its tool output'
+  )
+
   await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_GUIDANCE_FOLLOW_UP })
   await control.command('click', `${sideChatSelector} [data-testid="send-mode-menu-button"]`)
   await control.command('click', '[data-testid="guide-current-turn-option"]')
-  await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
-    text: SIDE_CHAT_GUIDANCE_FOLLOW_UP,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const sideChatGuidanceStatus = await control.command(
-    'getText',
-    `${sideChatSelector} [data-testid="conversation-queue-panel"]`
-  )
-  assert.match(
-    sideChatGuidanceStatus,
-    /引导中|Guiding/,
-    'The side-chat follow-up was queued instead of guiding the active turn'
+  await control.awaitScenarioRequestCount('side_chat_guidance', 3, MODEL_REQUEST_TIMEOUT_MS)
+  assert.equal(
+    await control.command('getValue', sideComposerSelector),
+    '',
+    'Applying side-chat guidance did not clear the side composer'
   )
   await captureVerificationScreenshot(control, '05-side-chat-follow-up-guiding.png')
   for (const prompt of [
@@ -860,7 +916,7 @@ async function verifySideChatAttachmentIsolation({
     )
   }
   control.releaseSideChatGuidanceResponse()
-  await control.awaitScenarioRequestCount('side_chat_guidance', 5, MODEL_REQUEST_TIMEOUT_MS)
+  await control.awaitScenarioRequestCount('side_chat_guidance', 6, MODEL_REQUEST_TIMEOUT_MS)
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),

@@ -145,6 +145,11 @@ import {
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import {
+  createModelLoadingTrace,
+  logModelLoading,
+  traceModelLoading,
+} from '@/lib/model-loading-diagnostics'
 import { buildConversationWorkspacePath } from '@/lib/runtime-conversation-workspace'
 import {
   normalizeWorkspaceTextFile,
@@ -3888,6 +3893,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   let rememberedCodexAuthConfigured: boolean | null = null
   const modelApi = {
     listModels: async () => {
+      const traceId = createModelLoadingTrace()
+      const started = performance.now()
+      logModelLoading(traceId, 'catalog.started')
       // The picker merges this catalog with the cloud one, so a broken local
       // environment (unreadable preferences, an executor that refuses to start)
       // must degrade to "custom local models only" instead of rejecting the
@@ -3897,7 +3905,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         // Always reconcile pending local model catalogs (custom model
         // interfaces) so they appear in the picker even when the Codex
         // subscription is off.
-        await ensureStatus()
+        await traceModelLoading(traceId, 'catalog.ensure_status', ensureStatus)
         localCodexSubscriptionEnabled = (await getAppPreferences()).localCodexSubscriptionEnabled
       } catch (error) {
         console.warn('[Wework] Failed to read the local model environment', error)
@@ -3911,14 +3919,16 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       let codexAuthConfigured: boolean
       try {
         const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
-          requestLocalCodexOfficialModels(request).then(
+          traceModelLoading(traceId, 'catalog.models', () =>
+            requestLocalCodexOfficialModels(request)
+          ).then(
             value => ({ value, error: null }),
             error => ({
               value: null,
               error: error instanceof Error ? error.message : String(error),
             })
           ),
-          loadLocalCodexAuthConfigured(request),
+          traceModelLoading(traceId, 'catalog.auth', () => loadLocalCodexAuthConfigured(request)),
         ])
         const listedModels = codexOfficialResult.value
         const catalogError = listedModels ? codexModelCatalogError(listedModels) : null
@@ -3953,9 +3963,13 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           }
         }
       }
-      return {
-        data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
-      }
+      const data = localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured)
+      logModelLoading(traceId, 'catalog.finished', {
+        elapsedMs: Math.round(performance.now() - started),
+        modelCount: data.length,
+        officialQueryFailed: codexOfficialError !== null,
+      })
+      return { data }
     },
   }
   const textGenerationApi: NonNullable<WorkbenchServices['textGenerationApi']> = {

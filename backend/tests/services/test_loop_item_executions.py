@@ -2969,9 +2969,8 @@ def test_claim_binds_canonical_runtime_identity(
     assert payload is not None
     assert payload["taskId"] == f"codex-queue-{claimed.id}"
     assert payload["executionRequest"]["task_id"] == f"codex-queue-{claimed.id}"
-    assert payload["executionRequest"]["subtask_id"] == (
-        f"codex-queue-{claimed.id}-assistant"
-    )
+    assert isinstance(payload["executionRequest"]["subtask_id"], int)
+    assert payload["executionRequest"]["subtask_id"] > 0
 
 
 def test_issue_cloud_moonshot_intent_overrides_local_robot_default_immutably(

@@ -546,18 +546,13 @@ class TaskRequestBuilder:
         resolved_bot_namespace = getattr(bot, "namespace", None) or "default"
         fork_runtime = self._extract_task_fork_runtime(task)
         fork_sessions = self._extract_inherited_sessions(fork_runtime)
-        persisted_sessions: list[dict[str, Any]] = []
-        if getattr(subtask, "executor_deleted_at", False):
-            persisted_sessions = self._extract_persisted_sessions(
-                subtask_store.list_assistant_by_task(
-                    self.db,
-                    task_id=task.id,
-                    owner_user_id=user.id,
-                )
-            )
-        inherited_sessions = self._merge_inherited_sessions(
-            fork_sessions,
-            persisted_sessions,
+        inherited_sessions, legacy_session_bindings = self._build_session_context(
+            task=task,
+            user=user,
+            bot_configs=bot_config,
+            fork_sessions=fork_sessions,
+            executor_deleted=getattr(subtask, "executor_deleted_at", False),
+            new_session=new_session,
         )
 
         execution_request = ExecutionRequest(
@@ -613,6 +608,7 @@ class TaskRequestBuilder:
             new_session=new_session,
             fork_runtime=fork_runtime,
             inherited_sessions=inherited_sessions,
+            legacy_session_bindings=legacy_session_bindings,
             collaboration_model=collaboration_model,
             mode=collaboration_model,
             task_mode=self._derive_task_mode(task),
@@ -689,6 +685,82 @@ class TaskRequestBuilder:
         if not isinstance(sessions, list):
             return []
         return [session for session in sessions if isinstance(session, dict)]
+
+    def _build_session_context(
+        self,
+        *,
+        task: TaskResource,
+        user: User,
+        bot_configs: list[dict[str, Any]],
+        fork_sessions: list[dict[str, Any]],
+        executor_deleted: bool,
+        new_session: bool,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        needs_bindings = (
+            not new_session
+            and task.user_id == user.id
+            and any(
+                config.get("shell_type") in {"Codex", "ClaudeCode"}
+                for config in bot_configs
+            )
+        )
+        persisted = []
+        if executor_deleted or needs_bindings:
+            persisted = self._extract_persisted_sessions(
+                subtask_store.list_assistant_by_task(
+                    self.db, task_id=task.id, owner_user_id=user.id
+                )
+            )
+        inherited = self._merge_inherited_sessions(
+            fork_sessions, persisted if executor_deleted else []
+        )
+        bindings = (
+            self._build_legacy_session_bindings(task, user, bot_configs, persisted)
+            if needs_bindings
+            else []
+        )
+        return inherited, bindings
+
+    @staticmethod
+    def _build_legacy_session_bindings(
+        task: TaskResource,
+        user: User,
+        bot_configs: list[dict[str, Any]],
+        persisted_sessions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if task.user_id != user.id:
+            return []
+        engines = {
+            "Codex": ("codex", "threadId"),
+            "ClaudeCode": ("claudecode", "sessionId"),
+        }
+        allowed = {
+            (str(config.get("id")), engines[config["shell_type"]][0]): engines[
+                config["shell_type"]
+            ][1]
+            for config in bot_configs
+            if config.get("shell_type") in engines
+            and str(config.get("id", "")).isascii()
+            and str(config.get("id", "")).isdigit()
+            and int(config["id"]) > 0
+        }
+        bindings = []
+        # Owner filtering cannot authenticate historical writes retroactively.
+        for session in persisted_sessions:
+            engine = str(session.get("agent", "")).replace(" ", "").lower()
+            key = allowed.get((str(session.get("botId")), engine))
+            session_id = session.get(key) if key else None
+            if (
+                not isinstance(session_id, str)
+                or not session_id
+                or not all(
+                    char.isascii() and (char.isalnum() or char in "-_")
+                    for char in session_id
+                )
+            ):
+                continue
+            bindings.append({**session, "task_id": task.id, "user_id": user.id})
+        return bindings
 
     @staticmethod
     def _extract_persisted_sessions(subtasks: list[Any]) -> list[dict[str, Any]]:
@@ -1604,15 +1676,8 @@ class TaskRequestBuilder:
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
 
-                    # Build skill_refs entry (prefer Ghost stored refs for precision)
-                    if ghost_skill_ref:
-                        ref_meta = ghost_skill_ref.model_dump()
-                        ref_meta["content_hash"] = ref_meta.get("content_hash") or (
-                            build_skill_ref_meta(skill).get("content_hash")
-                        )
-                        skill_refs[skill_name] = ref_meta
-                    else:
-                        skill_refs[skill_name] = build_skill_ref_meta(skill)
+                    # The Ghost selects identity; the current Skill supplies its version.
+                    skill_refs[skill_name] = build_skill_ref_meta(skill)
 
                     # Add to preload and user_selected if configured in Ghost
                     # All preloaded skills are treated as user-selected so the model
@@ -1622,12 +1687,18 @@ class TaskRequestBuilder:
                         user_selected_skills.append(skill_name)
                         ghost_preload_ref = ghost_preload_skill_refs.get(skill_name)
                         if ghost_preload_ref:
-                            # Preload explicit reference overrides same-name skill ref
-                            ref_meta = ghost_preload_ref.model_dump()
-                            ref_meta["content_hash"] = ref_meta.get("content_hash") or (
-                                build_skill_ref_meta(skill).get("content_hash")
+                            preload_skill = (
+                                skill
+                                if ghost_preload_ref.skill_id == skill.id
+                                else self._find_attached_skill_by_ref(
+                                    skill_name, skill_id=ghost_preload_ref.skill_id
+                                )
                             )
-                            skill_refs[skill_name] = ref_meta
+                            if preload_skill is None:
+                                raise ValueError(
+                                    f"Preloaded Skill not found: {skill_name}"
+                                )
+                            skill_refs[skill_name] = build_skill_ref_meta(preload_skill)
                         logger.info(
                             "[_get_bot_skills] Skill '%s' added to preload and user_selected (from Ghost)",
                             skill_name,

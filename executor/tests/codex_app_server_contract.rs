@@ -35,6 +35,105 @@ macro_rules! shared_runtime_tests {
 }
 
 shared_runtime_tests! {
+async fn codex_named_home_persists_mcp_and_rebinds_followup_credentials() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _workbench = EnvGuard::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+    let log = root.path().join("native.jsonl");
+    let native = write_fake_codex_logging_start(&log, &["CODEX_HOME"]);
+    let engine = CodexAppServerEngine::new(native.display().to_string());
+    let mut request: ExecutionRequest = serde_json::from_value(json!({
+        "task_id":"persist", "new_session":true,
+        "backend_url":"https://backend.example", "user_id":7, "user_name":"synthetic",
+        "team_id":12, "team_namespace":"default", "team_name":"agent",
+        "team_owner":{"kind":"user","id":7,"name":"synthetic"},
+        "bot":[{"id":7,"shell_type":"Codex"}], "prompt":"hello",
+        "auth_token":"synthetic-first-secret",
+        "mcp_servers":[{"name":"retained", "command":"probe", "env":{"TOKEN":"${{auth_token}}"}}],
+        "model_config":{"model":"openai","model_id":"gpt-5","protocol":"openai-responses"}
+    })).unwrap();
+    assert!(matches!(engine.run(request.clone()).await, ExecutionOutcome::Completed { .. }));
+    let path = root.path().join("agents/synthetic/default/agent/config.toml");
+    let content = fs::read_to_string(&path).unwrap();
+    assert!(content.contains("[mcp_servers.retained]"));
+    assert!(!content.contains("synthetic-first-secret"));
+    request.task_id = "another-task".to_owned();
+    request.mcp_servers.clear();
+    request.auth_token = Some("synthetic-second-secret".to_owned());
+    assert!(matches!(engine.run(request).await, ExecutionOutcome::Completed { .. }));
+    assert_eq!(fs::read_to_string(&path).unwrap(), content);
+    let messages: Vec<Value> = fs::read_to_string(&log).unwrap().lines()
+        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    let starts: Vec<_> = messages.iter().filter(|message| message["method"] == "thread/start").collect();
+    assert_eq!(starts.len(), 2);
+    for (start, secret) in starts.iter().zip(["synthetic-first-secret", "synthetic-second-secret"]) {
+        assert_eq!(start["params"]["config"]["mcp_servers.retained"]["env"]["TOKEN"], secret);
+    }
+    let launches: Vec<_> = messages.iter().filter(|message| message.get("args").is_some()).collect();
+    assert_eq!(launches.len(), 2);
+    for message in launches {
+        let args = message["args"].to_string();
+        assert!(!args.contains("synthetic-first-secret"));
+        assert!(!args.contains("synthetic-second-secret"));
+        assert!(!args.contains("mcp_servers.retained"));
+    }
+}
+
+async fn codex_agent_home_preserves_spaces_in_environment_and_config_paths() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let workbench = root.path().join("workbench with spaces");
+    let _workbench = EnvGuard::set("WEGENT_WORKBENCH_HOME", workbench.to_str().unwrap());
+    let log = root.path().join("native.jsonl");
+    let native = write_fake_codex_logging_start(&log, &["CODEX_HOME", "CODEX_SQLITE_HOME"]);
+    let engine = CodexAppServerEngine::new(native.display().to_string());
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "task_id":"spaces", "new_session":true,
+        "backend_url":"https://backend.example", "user_id":7, "user_name":"executing user",
+        "team_id":12, "team_namespace":"design  space", "team_name":"agent name",
+        "team_owner":{"kind":"group","id":8,"name":"design team"},
+        "bot":[{"id":7,"shell_type":"Codex"}], "prompt":"hello",
+        "model_config":{"model":"openai","model_id":"gpt-5","protocol":"openai-responses"}
+    })).unwrap();
+    assert!(matches!(engine.run(request).await, ExecutionOutcome::Completed { .. }));
+    let first: Value = serde_json::from_str(fs::read_to_string(&log).unwrap().lines().next().unwrap()).unwrap();
+    let home = workbench.join("agents/executing user/design  space/agent name");
+    assert_eq!(first["env"]["CODEX_HOME"], home.to_str().unwrap());
+    assert_eq!(first["env"]["CODEX_SQLITE_HOME"], home.to_str().unwrap());
+    assert!(home.join("runtime/tasks/spaces.json").is_file());
+}
+
+async fn codex_bot_home_requires_account_identity_before_starting_native_process() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _workbench = EnvGuard::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+    let log = root.path().join("native.jsonl");
+    let native = write_fake_codex(&log);
+    let engine = CodexAppServerEngine::new(native.display().to_string());
+    let mut request = ExecutionRequest {
+        task_id: "identity-contract".to_owned(),
+        new_session: true,
+        bot: json!([{"id":7,"shell_type":"Codex"}]),
+        prompt: json!("implement feature"),
+        model_config: json!({"model":"openai","model_id":"gpt-5","protocol":"openai-responses"}),
+        ..ExecutionRequest::default()
+    };
+    assert!(matches!(engine.run(request.clone()).await,
+        ExecutionOutcome::Failed { ref message } if message.contains("backend identity")));
+    assert!(!log.exists());
+    request.backend_url = Some("https://backend.example".to_owned());
+    assert!(matches!(engine.run(request.clone()).await,
+        ExecutionOutcome::Failed { ref message } if message.contains("user identity")));
+    assert!(!log.exists());
+    request.extra.insert("user_id".to_owned(), json!(7));
+    request.user_name = Some("user7".to_owned());
+    request.team_namespace = Some("default".to_owned());
+    request.extra.insert("team_id".to_owned(), json!(12));
+    request.extra.insert("team_name".to_owned(), json!("design"));
+    assert!(matches!(engine.run(request).await, ExecutionOutcome::Completed { .. }));
+    assert!(log.exists());
+}
+
 async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     let _lock = env_lock().await;
     let log_path = std::env::temp_dir().join(format!(
@@ -634,8 +733,10 @@ async fn codex_app_server_engine_uses_isolated_wework_runtime_home() {
 
 async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
     let _lock = env_lock().await;
+    let _stdio_environment = EnvGuard::remove("FOO");
     let executor_home = unique_dir("codex-mcp-home");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _capabilities = EnvGuard::set("WEGENT_CAPABILITIES_HOME", executor_home.join("capabilities").to_str().unwrap());
     let manifest_path = executor_home.join("capabilities/manifest.json");
     fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
     fs::write(
@@ -671,7 +772,7 @@ async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
         "wegent-executor-codex-mcp-rpc-{}.jsonl",
         std::process::id()
     ));
-    let fake_codex = write_fake_codex_logging_start(&log_path, &[]);
+    let fake_codex = write_fake_codex_logging_start(&log_path, &["FOO"]);
     let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
     let request = ExecutionRequest {
         prompt: json!("implement feature"),
@@ -704,18 +805,22 @@ async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
     assert_config_arg(args, "mcp_servers.docs.bearer_token_env_var=\"DOCS_TOKEN\"");
     assert_config_arg(args, "mcp_servers.shell.command=\"uvx\"");
     assert_config_arg(args, "mcp_servers.shell.args=[\"tool\",\"--flag\"]");
-    assert_config_arg(args, "mcp_servers.shell.env.FOO=\"bar\"");
+    assert_eq!(messages[0]["env"]["FOO"], "");
+    assert!(!args.iter().filter_map(Value::as_str).any(|argument| argument.starts_with("mcp_servers.shell.env")));
+    let start = messages.iter().find(|message| message["method"] == "thread/start").unwrap();
+    assert_eq!(start["params"]["config"]["mcp_servers.shell.env"]["FOO"], "bar");
 }
 
 async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
     let _lock = env_lock().await;
+    let _stdio_environment = EnvGuard::remove("BOT_ENV");
     let executor_home = unique_dir("codex-request-mcp-home");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
     let log_path = std::env::temp_dir().join(format!(
         "wegent-executor-codex-request-mcp-rpc-{}.jsonl",
         std::process::id()
     ));
-    let fake_codex = write_fake_codex_logging_start(&log_path, &[]);
+    let fake_codex = write_fake_codex_logging_start(&log_path, &["BOT_ENV"]);
     let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
     let request = ExecutionRequest {
         prompt: json!("implement feature"),
@@ -780,13 +885,16 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
         args,
         "mcp_servers.request-docs.bearer_token_env_var=\"REQUEST_DOCS_TOKEN\"",
     );
-    assert_config_arg(
-        args,
-        "mcp_servers.request-docs.http_headers.Authorization=\"Bearer task-token\"",
-    );
+    assert!(args.iter().filter_map(Value::as_str).any(|argument| argument.starts_with(
+        "mcp_servers.request-docs.env_http_headers.Authorization=\"WEGENT_MCP_HEADER_"
+    )));
+    assert!(!args.iter().filter_map(Value::as_str).any(|argument| argument.contains("Bearer task-token")));
     assert_config_arg(args, "mcp_servers.bot-shell.command=\"uvx\"");
     assert_config_arg(args, "mcp_servers.bot-shell.args=[\"bot-tool\"]");
-    assert_config_arg(args, "mcp_servers.bot-shell.env.BOT_ENV=\"1\"");
+    assert_eq!(messages[0]["env"]["BOT_ENV"], "");
+    assert!(!args.iter().filter_map(Value::as_str).any(|argument| argument.starts_with("mcp_servers.bot-shell.env")));
+    let start = messages.iter().find(|message| message["method"] == "thread/start").unwrap();
+    assert_eq!(start["params"]["config"]["mcp_servers.bot-shell.env"]["BOT_ENV"], "1");
     assert_config_arg(
         args,
         "mcp_servers.bot-shell.default_tools_approval_mode=\"approve\"",

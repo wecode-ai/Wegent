@@ -113,6 +113,21 @@ const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
+const REQUEST_USER_INPUT_ASYNC_PROMPT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC: ask which implementation direction to use without blocking the turn.'
+const REQUEST_USER_INPUT_ASYNC_QUESTION = 'Which async implementation direction should be used?'
+const REQUEST_USER_INPUT_ASYNC_ANSWER = 'Complete'
+const REQUEST_USER_INPUT_ASYNC_CALL_ID = 'wework-e2e-request-user-input-async'
+const REQUEST_USER_INPUT_ASYNC_WAITING_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_WAITING'
+const REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_COMPLETE'
+const REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_BUSY: ask which implementation direction to use while the turn keeps running.'
+const REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION =
+  'Which implementation direction should be used while the turn keeps running?'
+const REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER = 'Proceed'
+const REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID = 'wework-e2e-request-user-input-async-busy'
+const REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_BUSY_COMPLETE'
 const MCP_ELICITATION_PROMPT =
   'WEWORK_DESKTOP_E2E_MCP_ELICITATION: confirm the inner-site access audience.'
 const MCP_ELICITATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MCP_ELICITATION_COMPLETE'
@@ -461,9 +476,9 @@ const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 // the official option is served from the cloud model catalog with a canonical
 // model id that does not collide with the local Codex catalog.
 const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'gpt-5.5'
-const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
+const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
-const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
+const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT-5.5'
 const PROVIDER_SWITCH_PROMPT =
   'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with official GPT.'
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
@@ -964,9 +979,8 @@ function commandOutput(command, args, options = {}) {
   })
   if (result.error) throw result.error
   if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(' ')} exited with ${result.status}: ${result.stderr || result.stdout}`
-    )
+    const failureOutput = [result.stderr, result.stdout].filter(Boolean).join('\n')
+    throw new Error(`${command} ${args.join(' ')} exited with ${result.status}: ${failureOutput}`)
   }
   return result.stdout.trim()
 }
@@ -994,9 +1008,10 @@ async function commandOutputAsync(command, args, options = {}) {
         resolvePromise(stdout.trim())
         return
       }
+      const failureOutput = [stderr, stdout].filter(Boolean).join('\n')
       reject(
         new Error(
-          `${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}: ${stderr || stdout}`
+          `${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}: ${failureOutput}`
         )
       )
     })
@@ -1261,15 +1276,35 @@ function modelProviderSelector(providerId) {
 
 async function visibleModelOptionId(control, targetOptionIds, providerId) {
   for (const targetOptionId of targetOptionIds) {
-    const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`
-    await control.command('scrollIntoView', targetSelector).catch(() => undefined)
+    const targetSelectors = [
+      `[data-testid="model-selector-menu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+      `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+    ]
+    for (const targetSelector of targetSelectors) {
+      await control.command('scrollIntoView', targetSelector).catch(() => undefined)
+      const visibleCount = await control
+        .command('getElementCount', targetSelector, { visible: true })
+        .then(value => Number(value))
+        .catch(() => 0)
+      if (visibleCount > 0) {
+        return targetOptionId
+      }
+    }
+  }
+  return null
+}
+
+async function visibleModelOptionSelector(control, targetOptionId, providerId) {
+  const selectors = [
+    `[data-testid="model-selector-menu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+    `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+  ]
+  for (const selector of selectors) {
     const visibleCount = await control
-      .command('getElementCount', targetSelector, { visible: true })
+      .command('getElementCount', selector, { visible: true })
       .then(value => Number(value))
       .catch(() => 0)
-    if (visibleCount > 0) {
-      return targetOptionId
-    }
+    if (visibleCount > 0) return selector
   }
   return null
 }
@@ -1308,7 +1343,7 @@ function hasModelOption(menu, targetOptionIds) {
 }
 
 async function hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId) {
-  if (!expectedProviderId) return hasModelOption(menu, targetOptionIds)
+  if (!hasModelOption(menu, targetOptionIds)) return false
   return Boolean(await visibleModelOptionId(control, targetOptionIds, expectedProviderId))
 }
 
@@ -1324,10 +1359,11 @@ async function ensureModelOptionVisible(
     let menu = JSON.parse(await control.command('snapshot', 'body'))
     if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
       return menu
-    if (menu.testIds.includes('model-control-menu-model')) {
+    if (menu.testIds.includes('model-advanced-toggle')) {
       await control
-        .command('hover', '[data-testid="model-control-menu-model"]', {
+        .command('clickWhenEnabled', '[data-testid="model-advanced-toggle"]', {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
         })
         .catch(() => undefined)
     } else {
@@ -1465,7 +1501,12 @@ async function selectE2EModel(
     targetOptionId = await visibleModelOptionId(control, targetOptionIds, expectedProviderId)
   }
   assert.ok(targetOptionId, `No visible model option matched ${modelOptionIdCandidates(modelIds)}`)
-  const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(expectedProviderId)}`
+  const targetSelector = await visibleModelOptionSelector(
+    control,
+    targetOptionId,
+    expectedProviderId
+  )
+  assert.ok(targetSelector, `No visible selector matched ${targetOptionId}`)
   await control.command('waitFor', targetSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -1479,6 +1520,14 @@ async function selectE2EModel(
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       }
     )
+  } else if (selectionSnapshot.testIds.includes('model-selector-menu')) {
+    await waitForE2EModelOptionSelected(control, targetSelector)
+    await control.command('press', 'body', { key: 'Escape' })
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('model-selector-menu'),
+      'The model selector menu did not close after selecting the E2E model'
+    )
   }
   await waitForE2EModelLabel(control, labels, modelSelectorButton)
   if (expectedProviderId) {
@@ -1490,15 +1539,21 @@ async function selectE2EModel(
       'The model selector did not retain the expected provider'
     )
   }
-  const menuSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (menuSnapshot.testIds.includes('model-selector-menu')) {
-    await control.command('press', 'body', { key: 'Escape' })
-    await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('model-selector-menu'),
-      'The model selector menu did not close after selecting the E2E model'
-    )
+}
+
+async function waitForE2EModelOptionSelected(control, targetSelector) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    if (
+      (await control.command('getAttribute', targetSelector, {
+        value: 'aria-checked',
+      })) === 'true'
+    ) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
+  throw new Error(`The model option did not become selected: ${targetSelector}`)
 }
 
 async function waitForE2EModelLabel(
@@ -1579,6 +1634,17 @@ export {
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   REQUEST_USER_INPUT_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
+  REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT,
   MCP_ELICITATION_PROMPT,
   MCP_ELICITATION_COMPLETION_TEXT,
   MCP_ELICITATION_ACCEPTED_MARKER,

@@ -282,6 +282,11 @@ class ExternalLoopItemProvider:
         self._require_external(project)
         if not has_permission(access.role, BaseRole.Developer):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        if values.start_at is not None or values.due_at is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Scheduling is not supported by this Issue provider",
+            )
         item_status = values.status or "inbox"
         if item_status not in EXTERNAL_BOARD_STATUSES:
             raise HTTPException(
@@ -682,6 +687,12 @@ class ExternalLoopItemProvider:
     ) -> dict[str, object]:
         project, number = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
+        schedule_fields = {"start_at", "due_at"} & values.model_fields_set
+        if any(getattr(values, field) is not None for field in schedule_fields):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Scheduling is not supported by this Issue provider",
+            )
         current = self._get_issue(project, number)
         current_response = self._response(db, project, current, access, user_id)
         if not current_response["can_edit"]:
@@ -1846,6 +1857,7 @@ class ExternalLoopItemProvider:
             "assignee_group_id": assignee_group_id,
             "assignee_group_name": assignee_group_name,
             "priority": self._priority(labels),
+            "start_at": None,
             "due_at": None,
             "sort_order": number,
             "tags": self._public_tags(labels),

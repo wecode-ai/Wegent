@@ -103,6 +103,8 @@ interface IssueCreateProps {
 
 const browserDueDateExtensions = {
   dueDateInputType: "datetime-local" as const,
+  startDateFromSource: dueDateTimeLocalFromSource,
+  startDateToSource: dueDateTimeLocalToSource,
   dueDateFromSource: dueDateTimeLocalFromSource,
   dueDateToSource: dueDateTimeLocalToSource,
 };

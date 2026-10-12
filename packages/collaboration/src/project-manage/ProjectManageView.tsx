@@ -466,6 +466,7 @@ export function ProjectManageView<
       const updated = await updateProject(
         {
           board_config: {
+            ...project.board_config,
             group_by: project.board_config?.group_by ?? "status",
             statuses: next,
             processing_start_status_id:

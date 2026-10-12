@@ -21,6 +21,7 @@ use crate::{
         clear_connector_gateway_config, persist_connector_gateway_config, ConnectorGatewayConfig,
     },
     local::app_ipc::AppIpcError,
+    services::capability_activation,
 };
 
 use super::util::{now_ms, string_field};
@@ -131,7 +132,18 @@ impl ConnectorRuntime {
         clear_connector_gateway_config()
             .map_err(|error| AppIpcError::new("connector_authorization_clear_failed", error))?;
         let config_result = self.write_mcp_config(false).await;
+        drop(_mutation);
+        let _activation = capability_activation::activate().await;
+        let _mutation = self.mutation.lock().await;
+        if self.revision.load(Ordering::Acquire) != sync_revision {
+            config_result?;
+            return Ok(json!({
+                "configured": self.cloud.read().await.is_some(),
+                "stale": true,
+            }));
+        }
         let skills_result = materialize_skills(&skills_root(), &[]);
+        capability_activation::mark_changed();
         config_result?;
         skills_result?;
         Ok(json!({ "configured": false }))
@@ -171,6 +183,8 @@ impl ConnectorRuntime {
             .get("apps")
             .and_then(Value::as_array)
             .ok_or_else(|| AppIpcError::new("bad_request", "apps must be an array"))?;
+        // Waiting for an idle turn must not prevent connector-token refresh.
+        let _activation = capability_activation::activate().await;
         let _mutation = self.mutation.lock().await;
         if self.cloud.read().await.is_none() {
             return Err(AppIpcError::new(
@@ -179,7 +193,9 @@ impl ConnectorRuntime {
             ));
         }
         self.write_mcp_config(true).await?;
-        let result = materialize_skills(&skills_root(), apps)?;
+        let result = materialize_skills(&skills_root(), apps);
+        capability_activation::mark_changed();
+        let result = result?;
         *self.synced_apps.write().await = result
             .get("apps")
             .and_then(Value::as_array)
@@ -442,6 +458,31 @@ mod tests {
         assert!(!advance_revision(&revision, 10));
         assert!(!advance_revision(&revision, 9));
         assert!(advance_revision(&revision, 11));
+    }
+
+    #[tokio::test]
+    async fn waiting_skill_activation_does_not_block_token_refresh() {
+        let runtime = ConnectorRuntime {
+            codex_app_server: CodexAppServerClient::new("unused-test-binary"),
+            cloud: Arc::new(RwLock::new(None)),
+            synced_apps: Arc::new(RwLock::new(Vec::new())),
+            mutation: Arc::new(Mutex::new(())),
+            revision: Arc::new(AtomicU64::new(0)),
+        };
+        let execution = capability_activation::begin_execution().await;
+        let mut sync = Box::pin(runtime.sync_apps(json!({"apps": []})));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut sync)
+                .await
+                .is_err()
+        );
+        let token_refresh = runtime
+            .mutation
+            .try_lock()
+            .expect("token refresh must remain available during an active turn");
+        drop(token_refresh);
+        drop(execution);
+        assert_eq!(sync.await.unwrap_err().code, "connector_cloud_disconnected");
     }
 
     #[tokio::test]

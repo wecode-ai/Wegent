@@ -10,11 +10,11 @@ test('persists updater diagnostics and redacts credentials', async () => {
   const logger = new AppUpdateLogger(path)
 
   logger.info('Full: 365 MB, To download: 20 MB')
-  logger.error(new Error('Cannot download differentially: token=secret-token'))
+  logger.error(new Error('Cannot download update: token=secret-token'))
   await logger.flush()
 
   const contents = await readFile(path, 'utf8')
   expect(contents).toContain('[info] Full: 365 MB, To download: 20 MB')
-  expect(contents).toContain('[error] Error: Cannot download differentially')
+  expect(contents).toContain('[error] Error: Cannot download update')
   expect(contents).not.toContain('secret-token')
 })

@@ -291,15 +291,14 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain('async function findDirectory')
   })
 
-  test('requires differential update blockmaps in formal release assets', async () => {
+  test('copies only installable update artifacts into formal release assets', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
       'utf8'
     )
 
-    expect(source).toContain('const blockmap = `${path}.blockmap`')
-    expect(source).toContain('await requireFile(blockmap)')
-    expect(source).not.toContain('if (await isFile(blockmap))')
+    expect(source).toContain('await cp(path, join(output, basename(path)))')
+    expect(source).not.toContain('`${path}.blockmap`')
   })
 
   test('desktop E2E reuses packaged Harness runtime assets', async () => {

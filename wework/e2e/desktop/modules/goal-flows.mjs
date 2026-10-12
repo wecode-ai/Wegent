@@ -44,6 +44,7 @@ import {
   SUPERVISOR_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  ensureModelOptionVisible,
   processIsAlive,
   readFile,
   selectE2EModel,
@@ -146,12 +147,12 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
 }
 
 async function selectSupervisorModel(control) {
+  const selector = '[data-testid="task-supervisor-model"] [data-testid="model-selector-button"]'
+  await ensureModelOptionVisible(control, CLOUD_PUBLIC_MODEL_NAME, selector, undefined)
   await control.command(
     'click',
-    '[data-testid="task-supervisor-model"] [data-testid="model-selector-button"]'
+    `[data-testid="model-selector-menu"] [data-testid="model-option-${CLOUD_PUBLIC_MODEL_NAME}"]`
   )
-  await control.command('click', '[data-testid="model-control-menu-model"]')
-  await control.command('click', `[data-testid="model-option-${CLOUD_PUBLIC_MODEL_NAME}"]`)
 }
 
 async function getSelectedSupervisorModel(control) {

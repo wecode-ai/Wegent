@@ -179,6 +179,9 @@ class TestSandboxManager:
             return_value=(True, "terminated"),
         )
 
+        mocker.patch.object(
+            manager, "_archive_sandbox_before_cleanup", new=AsyncMock(return_value=True)
+        )
         result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
 
         assert result["skipped"] == []
@@ -217,10 +220,10 @@ class TestSandboxManager:
         archive.assert_awaited_once_with(sample_sandbox)
 
     @pytest.mark.asyncio
-    async def test_cleanup_stale_sandboxes_continues_when_archive_fails(
+    async def test_cleanup_stale_sandboxes_keeps_runtime_when_archive_fails(
         self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
     ):
-        """Test archive failure does not block stale sandbox termination."""
+        """Test archive failure preserves the only copy of runtime state."""
         manager = sandbox_manager_with_mock_redis
         sample_sandbox.last_activity_at = time.time() - (25 * 3600)
         mocker.patch.object(
@@ -244,8 +247,9 @@ class TestSandboxManager:
 
         result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
 
-        assert result["deleted"][0]["sandbox_id"] == "12345"
-        terminate.assert_awaited_once_with("12345")
+        assert result["deleted"] == []
+        assert result["failed"][0]["reason"] == "archive_failed"
+        terminate.assert_not_awaited()
 
     # ----- create_sandbox Tests -----
 
@@ -429,57 +433,85 @@ class TestSandboxManager:
         restore.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_ensure_sandbox_workspace_creates_required_directories(
-        self,
-        sandbox_manager_with_mock_redis,
-        sample_sandbox,
-        mock_httpx_async_client,
-        mocker,
+    async def test_create_sandbox_fails_when_archive_restore_fails(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
     ):
-        """Test initialization creates sandbox home and task workspace."""
+        """Test a sandbox is not returned as ready without its task workspace."""
         manager = sandbox_manager_with_mock_redis
-        mocker.patch(
-            "executor_manager.services.sandbox.manager.httpx.AsyncClient",
-            return_value=mock_httpx_async_client,
+        mock_redis_client.hget.return_value = None
+        mocker.patch.object(
+            manager,
+            "_start_sandbox_container",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        mocker.patch.object(
+            manager,
+            "_ensure_sandbox_workspace",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        restore = mocker.patch.object(
+            manager,
+            "_restore_sandbox_after_create",
+            new_callable=AsyncMock,
+            return_value=False,
         )
 
-        error = await manager._ensure_sandbox_workspace(sample_sandbox)
+        sandbox, error = await manager.create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=100,
+            user_name="testuser",
+            metadata={"task_id": 99999},
+        )
 
-        assert error is None
-        assert mock_httpx_async_client.post.await_args_list == [
-            call(
-                "http://localhost:10001/filesystem.Filesystem/MakeDir",
-                json={"path": "/home/user"},
-                headers={"Content-Type": "application/json"},
-            ),
-            call(
-                "http://localhost:10001/filesystem.Filesystem/MakeDir",
-                json={"path": "/workspace/12345"},
-                headers={"Content-Type": "application/json"},
-            ),
-        ]
+        assert "archive restoration failed" in error
+        assert sandbox.error_message == error
+        restore.assert_awaited_once_with(sandbox)
 
     @pytest.mark.asyncio
-    async def test_ensure_sandbox_workspace_accepts_existing_directory(
+    @pytest.mark.parametrize("prepare_status", [200, 404, 403, 500])
+    async def test_ensure_workspace_negotiates_only_missing_legacy_protocol(
         self,
         sandbox_manager_with_mock_redis,
         sample_sandbox,
         mock_httpx_async_client,
         mocker,
+        prepare_status,
     ):
-        """Test existing sandbox directories keep initialization idempotent."""
         manager = sandbox_manager_with_mock_redis
-        mock_httpx_async_client.post.return_value.status_code = 409
+        url = "http://localhost:10001/api/runtime/prepare"
+        first = httpx.Response(
+            prepare_status,
+            request=httpx.Request("POST", url),
+            json={
+                "home_path": "/synthetic/home",
+                "workspace_path": "/synthetic/workspace/12345",
+                "executor_home": "/synthetic/executor",
+                "workbench_home": "/synthetic/workbench",
+            },
+        )
+        mkdir = "http://localhost:10001/filesystem.Filesystem/MakeDir"
+        existing = httpx.Response(409, request=httpx.Request("POST", mkdir))
+        created = httpx.Response(200, request=httpx.Request("POST", mkdir))
+        mock_httpx_async_client.post.side_effect = [first, existing, created]
         mocker.patch(
             "executor_manager.services.sandbox.manager.httpx.AsyncClient",
             return_value=mock_httpx_async_client,
         )
-
         error = await manager._ensure_sandbox_workspace(sample_sandbox)
-
-        assert error is None
-        assert mock_httpx_async_client.post.await_count == 2
-        mock_httpx_async_client.post.return_value.raise_for_status.assert_not_called()
+        calls = [call(url, json={"task_id": 12345})]
+        if prepare_status == 404:
+            calls += [
+                call(
+                    mkdir,
+                    json={"path": path},
+                    headers={"Content-Type": "application/json"},
+                )
+                for path in ("/home/user", "/workspace/12345")
+            ]
+        assert mock_httpx_async_client.post.await_args_list == calls
+        assert (error is None) == (prepare_status in (200, 404))
 
     @pytest.mark.asyncio
     async def test_create_sandbox_serializes_concurrent_requests_for_same_task(

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button } from '@/components/ui/button'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import type { InstalledPlugin, PluginPublicationRequestItem } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
@@ -40,6 +41,7 @@ interface PluginDetailViewProps {
   showUninstall?: boolean
   primaryActionDisabled?: boolean
   actionError?: string | null
+  onRetryAction?: () => void
   tertiaryActionLabel?: string
   tertiaryActionDisabled?: boolean
   onTertiaryAction?: () => void
@@ -48,6 +50,7 @@ interface PluginDetailViewProps {
   onEditAction?: () => void
   onManageConnector?: (slug: string) => void
   connectorAuthBySlug?: Record<string, 'connected' | 'disconnected'>
+  connectorAuthBusySlug?: string | null
   accessRole?: 'catalog' | 'owner' | 'recipient'
   pluginVisibility?: 'personal' | 'workspace' | 'public' | null
   shareGrantUserCount?: number
@@ -451,6 +454,7 @@ export function PluginDetailView({
   showUninstall = true,
   primaryActionDisabled = false,
   actionError,
+  onRetryAction,
   tertiaryActionLabel,
   tertiaryActionDisabled = false,
   onTertiaryAction,
@@ -459,6 +463,7 @@ export function PluginDetailView({
   onEditAction,
   onManageConnector,
   connectorAuthBySlug,
+  connectorAuthBusySlug,
   accessRole,
   pluginVisibility = null,
   shareGrantUserCount = 0,
@@ -920,6 +925,16 @@ export function PluginDetailView({
             className="mt-4 rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm leading-5 text-red-600"
           >
             {actionError}
+            {onRetryAction && (
+              <Button
+                variant="outline"
+                className="ml-3"
+                data-testid="plugin-detail-load-retry"
+                onClick={onRetryAction}
+              >
+                {t('common.retry', '重试')}
+              </Button>
+            )}
           </div>
         )}
 
@@ -946,6 +961,7 @@ export function PluginDetailView({
           connectors={plugin.raw.spec.components.connectors ?? []}
           installed={isInstalled}
           authBySlug={connectorAuthBySlug}
+          busySlug={connectorAuthBusySlug}
           onManage={onManageConnector}
         />
 

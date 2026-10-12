@@ -136,18 +136,53 @@ See [wework/README.md](wework/README.md) for desktop development, build, and rel
 
 ## Repository map
 
-| Directory                  | Responsibility                                     |
-| -------------------------- | -------------------------------------------------- |
-| `wework/`                  | Wegent Desktop (Electron, Vite, React)             |
-| `executor/`                | Local and remote agent task execution environments |
-| `frontend/`                | Wegent platform web administration                 |
-| `backend/`                 | REST API and core business logic                   |
-| `backend-rs/`              | Incremental Rust API migration gateway and handlers |
-| `executor_manager/`        | Executor scheduling and orchestration              |
-| `chat_shell/`              | Chat runtime                                       |
-| `knowledge_runtime/`       | Knowledge retrieval services                       |
-| `knowledge_doc_converter/` | Document parsing and conversion                    |
-| `shared/`                  | Modules shared across services                     |
+### Products and services
+
+| Directory                  | Responsibility                                                  |
+| -------------------------- | --------------------------------------------------------------- |
+| `wework/`                  | Wegent Desktop (Electron, Vite, React)                          |
+| `wework-mobile/`           | Independent Expo application for iOS and Android                |
+| `frontend/`                | Wegent Web (Next.js, React)                                     |
+| `backend/`                 | Default public API, business logic, and data models             |
+| `backend-rs/`              | Rust hybrid gateway and APIs that have completed migration      |
+| `executor/`                | Rust task executor, local-device runtime, and Codex integration |
+| `executor_manager/`        | Server-side executor scheduling, sandboxes, and orchestration   |
+| `chat_shell/`              | Lightweight chat and agent runtime                              |
+| `knowledge_runtime/`       | Knowledge indexing and retrieval API                            |
+| `knowledge_doc_converter/` | Document parsing and asynchronous conversion service            |
+
+### Shared code and developer tools
+
+| Directory           | Responsibility                                                             |
+| ------------------- | -------------------------------------------------------------------------- |
+| `knowledge_engine/` | Reusable Python kernel for parsing, indexing, vector stores, and retrieval |
+| `shared/`           | Python models, protocols, utilities, and telemetry shared by services      |
+| `packages/`         | TypeScript chat and collaboration modules shared by Web and Desktop        |
+| `sdk/`              | Plugin authentication, build, creation, and DingTalk workspace SDKs        |
+| `wegent-cli/`       | Python CLI for managing Wegent CRD resources                               |
+
+### Infrastructure, tests, and documentation
+
+| Directory   | Responsibility                                                                        |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `docker/`   | Service images, standalone resources, and the `docker/telemetry/` observability stack |
+| `scripts/`  | Installation, release, acceptance, repository-policy, and development automation      |
+| `tests/`    | Cross-service Playwright integration tests and installation tests                     |
+| `docs/`     | English and Chinese user docs, developer docs, architecture, and historical designs   |
+| `patches/`  | Third-party dependency patches used by pnpm `patchedDependencies`                     |
+| `LICENSES/` | Third-party license texts required for repository distribution                        |
+| `.github/`  | CI, release workflows, composite actions, and repository automation                   |
+
+### Root entry points
+
+| File                                   | Responsibility                                    |
+| -------------------------------------- | ------------------------------------------------- |
+| `start.sh`, `install.sh`               | Local startup and self-hosted installation        |
+| `build_image.sh`, `build_image_mac.sh` | Multi-architecture and host Docker image builds   |
+| `docker-compose*.yml`                  | Default, build, and E2E Compose orchestration     |
+| `package.json`, `pnpm-workspace.yaml`  | JavaScript/TypeScript workspace definition        |
+| `pyproject.toml`, `uv.lock`            | Repository-level Python tooling and lock metadata |
+| `AGENTS.md`, `CLAUDE.md`               | Contributor rules and compatibility symlink       |
 
 ## Documentation
 
@@ -244,17 +279,17 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/johnny0120">
-                    <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
-                    <br />
-                    <sub><b>Johnny0120</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/sunnights">
                     <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
                     <br />
                     <sub><b>Jake Zhang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/johnny0120">
+                    <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
+                    <br />
+                    <sub><b>Johnny0120</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -265,20 +300,6 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/joyway1978">
-                    <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
-                    <br />
-                    <sub><b>Joyway78</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/yixiangxx">
-                    <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
-                    <br />
-                    <sub><b>Yi Xiang</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/sdadunderscoresdad">
                     <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
                     <br />
@@ -286,10 +307,24 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/joyway1978">
+                    <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
+                    <br />
+                    <sub><b>Joyway78</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/hustfisher">
                     <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
                     <br />
                     <sub><b>fishermen</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/yixiangxx">
+                    <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+                    <br />
+                    <sub><b>Yi Xiang</b></sub>
                 </a>
             </td>
 		</tr>
@@ -302,17 +337,17 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/2561056571">
-                    <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
-                    <br />
-                    <sub><b>Xuemin</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/lvmowei">
                     <img src="https://avatars.githubusercontent.com/u/5328905?v=4" width="80;" alt="lvmowei"/>
                     <br />
                     <sub><b>lvmowei</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/2561056571">
+                    <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+                    <br />
+                    <sub><b>Xuemin</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -388,17 +423,17 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/fingki">
-                    <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
-                    <br />
-                    <sub><b>Fingki</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/sleetdrop">
                     <img src="https://avatars.githubusercontent.com/u/88603?v=4" width="80;" alt="sleetdrop"/>
                     <br />
                     <sub><b>sleetdrop</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/fingki">
+                    <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
+                    <br />
+                    <sub><b>Fingki</b></sub>
                 </a>
             </td>
             <td align="center">

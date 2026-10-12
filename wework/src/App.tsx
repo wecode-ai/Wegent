@@ -474,6 +474,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
+              composerAppsSourceActive={active && !iframe}
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
               loadTaskComposerCatalogs
@@ -860,8 +861,12 @@ function AppShell() {
   )
   const fixedWorkspaceTabs = useMemo(
     () =>
-      isMainWindow && appPreferences?.loaded
+      appPreferences?.loaded
         ? appPreferences.preferences.fixedWorkspaceTabs.flatMap(preference => {
+            const belongsToCurrentWindow = isMainWindow
+              ? !preference.windowLabel
+              : preference.windowLabel === currentWindowLabel
+            if (!belongsToCurrentWindow) return []
             if (preference.kind === 'smart_app') {
               if (
                 !appPreferences.preferences.experimentalFeaturesEnabled ||
@@ -881,12 +886,14 @@ function AppShell() {
             return [
               createWorkspaceTab(preference.kind, workspaceTabLabels, {
                 id: preference.id,
+                ...(preference.title ? { title: preference.title } : {}),
+                ...(preference.contentRoute ? { contentRoute: preference.contentRoute } : {}),
                 fixed: true,
               }),
             ]
           })
         : [],
-    [appPreferences, isMainWindow, t, workspaceTabLabels]
+    [appPreferences, currentWindowLabel, isMainWindow, t, workspaceTabLabels]
   )
   const startupWorkspaceTabId = useMemo(() => {
     if (!isMainWindow || !appPreferences?.loaded) return undefined

@@ -17,12 +17,16 @@ export function EditToolRenderer({ tool }: ToolRendererProps) {
   const { t } = useTranslation('chat')
   const [isOldExpanded, setIsOldExpanded] = useState(false)
   const [isNewExpanded, setIsNewExpanded] = useState(false)
+  const [isDiffExpanded, setIsDiffExpanded] = useState(false)
 
   const input = tool.toolUse.details?.input as Record<string, unknown> | undefined
   const filePath = input?.file_path as string | undefined
   const oldString = input?.old_string as string | undefined
   const newString = input?.new_string as string | undefined
   const replaceAll = input?.replace_all as boolean | undefined
+  const diff = typeof input?.diff === 'string' ? input.diff : undefined
+  const isDiffCollapsible = diff ? shouldCollapse(diff) : false
+  const displayDiff = diff && isDiffCollapsible && !isDiffExpanded ? getContentPreview(diff) : diff
 
   const output = (tool.toolResult?.details?.content || tool.toolResult?.details?.output) as
     | string
@@ -50,14 +54,14 @@ export function EditToolRenderer({ tool }: ToolRendererProps) {
       )}
 
       {/* Replace Mode */}
-      {replaceAll !== undefined && (
+      {!diff && replaceAll !== undefined && (
         <div className="text-xs text-text-muted">
           Mode: {replaceAll ? 'Replace All' : 'Replace First Match'}
         </div>
       )}
 
       {/* Old String */}
-      {oldString && (
+      {!diff && oldString && (
         <div>
           <div className="flex items-center justify-between mb-1">
             <div className="text-xs font-medium text-red-600">Old String</div>
@@ -80,7 +84,7 @@ export function EditToolRenderer({ tool }: ToolRendererProps) {
       )}
 
       {/* New String */}
-      {newString && (
+      {!diff && newString && (
         <div>
           <div className="flex items-center justify-between mb-1">
             <div className="text-xs font-medium text-green-600">New String</div>
@@ -98,6 +102,28 @@ export function EditToolRenderer({ tool }: ToolRendererProps) {
           <pre className="text-xs p-2 rounded overflow-x-auto whitespace-pre-wrap break-words font-mono bg-green-50 border border-green-200 text-green-700">
             {displayNew}
             {isNewCollapsible && !isNewExpanded && <span className="text-blue-400">...</span>}
+          </pre>
+        </div>
+      )}
+
+      {diff && (
+        <div data-testid="edit-tool-diff">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs font-medium text-text-secondary">{t('thinking.file_diff')}</div>
+            {isDiffCollapsible && (
+              <button
+                data-testid="edit-tool-diff-toggle"
+                aria-expanded={isDiffExpanded}
+                onClick={() => setIsDiffExpanded(!isDiffExpanded)}
+                className="min-h-[44px] md:min-h-0 text-xs text-blue-400 hover:text-blue-500"
+              >
+                {t(isDiffExpanded ? 'thinking.collapse' : 'thinking.expand')}
+              </button>
+            )}
+          </div>
+          <pre className="text-xs text-text-tertiary bg-fill-tert p-2 rounded overflow-x-auto whitespace-pre-wrap break-words font-mono">
+            {displayDiff}
+            {isDiffCollapsible && !isDiffExpanded && <span className="text-blue-400">...</span>}
           </pre>
         </div>
       )}

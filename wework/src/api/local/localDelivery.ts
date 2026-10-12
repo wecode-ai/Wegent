@@ -360,6 +360,8 @@ export function createExternalIssueApi(request: LocalRequest) {
         description?: string
         status?: CloudLoopItem['status']
         priority?: CloudLoopItem['priority']
+        start_at?: string
+        due_at?: string
         parent_id?: string | null
         tags?: string[]
         creator_name?: string
@@ -392,6 +394,8 @@ export function createExternalIssueApi(request: LocalRequest) {
           description: data.description ?? '',
           status: data.status ?? 'inbox',
           priority: data.priority ?? 'none',
+          start_at: data.start_at ?? null,
+          due_at: data.due_at ?? null,
           parent_id: data.parent_id ?? null,
           tags: [...(data.tags ?? []), ...creatorLabel, ...localProjectLabel],
         },
@@ -813,6 +817,8 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     description: record.description,
     status: (record.status ?? 'inbox') as CloudLoopItem['status'],
     priority: (record.priority ?? 'none') as CloudLoopItem['priority'],
+    start_at:
+      typeof record.metadata.start_at === 'string' ? record.metadata.start_at || null : null,
     due_at: typeof record.metadata.due_at === 'string' ? record.metadata.due_at || null : null,
     tags: visibleLoopItemTags(storedTags),
     sort_order: record.sort_order,
@@ -1111,6 +1117,7 @@ export function createLocalDeliveryApi(
         description?: string
         status?: CloudLoopItem['status']
         priority?: CloudLoopItem['priority']
+        start_at?: string
         due_at?: string
         parent_id?: string | null
         tags?: string[]
@@ -1139,6 +1146,8 @@ export function createLocalDeliveryApi(
           description: data.description ?? '',
           status: data.status ?? 'inbox',
           priority: data.priority ?? 'none',
+          ...(data.start_at !== undefined ? { start_at: data.start_at } : {}),
+          ...(data.due_at !== undefined ? { due_at: data.due_at } : {}),
           parent_id: data.parent_id ?? null,
           tags: [...(data.tags ?? []), ...localProjectLabel],
           ...(data.assignee_user_id !== undefined

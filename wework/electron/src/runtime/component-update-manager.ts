@@ -106,6 +106,7 @@ export interface ComponentUpdateManagerOptions {
   fetch?: typeof fetch
   retryDelay?: (attempt: number) => Promise<void>
   log?: (event: Record<string, unknown>) => void
+  validateExecutor?: (path: string) => Promise<void>
 }
 
 export class ComponentUpdateManager {
@@ -126,8 +127,11 @@ export class ComponentUpdateManager {
     progress?: ComponentDownloadProgress
   } | null = null
   private packaged: PackagedComponentManifest | null = null
+  private readonly validateExecutor: (path: string) => Promise<void>
+  private usingPackagedFallback = false
 
   constructor(options: ComponentUpdateManagerOptions) {
+    this.validateExecutor = options.validateExecutor ?? (async () => undefined)
     this.log = event => options.log?.({ stageId: this.activeStage?.id, ...event })
     this.resourcesRoot = resolve(options.resourcesRoot)
     this.root = join(resolve(options.dataDirectory), 'managed-components')
@@ -145,8 +149,10 @@ export class ComponentUpdateManager {
   }
 
   async prepareStartup(): Promise<ComponentPaths> {
+    this.usingPackagedFallback = false
     const packaged = await this.packagedManifest()
-    let state = await this.readState()
+    const saved = await this.readState()
+    let state = saved
     if (state.activationInProgress) {
       const crossedHostVersion =
         state.current?.stagedFromAppVersion !== undefined &&
@@ -156,7 +162,6 @@ export class ComponentUpdateManager {
           schemaVersion: 1,
           current: state.current,
         }
-        await this.writeState(state)
       } else {
         state = {
           schemaVersion: 1,
@@ -165,7 +170,6 @@ export class ComponentUpdateManager {
             : {}),
           ...(state.pending ? { pending: state.pending } : {}),
         }
-        await this.writeState(state)
       }
     } else if (state.pending?.appVersion === this.currentAppVersion) {
       state = {
@@ -174,24 +178,25 @@ export class ComponentUpdateManager {
         current: state.pending,
         activationInProgress: true,
       }
-      await this.writeState(state)
     }
 
+    const current = state.current?.appVersion === this.currentAppVersion ? state.current : undefined
+    let paths: ComponentPaths
     try {
-      const current =
-        state.current?.appVersion === this.currentAppVersion ? state.current : undefined
-      return await this.resolvePaths(packaged, current)
+      paths = await this.checkedPaths(packaged, current)
     } catch (error) {
+      if (!current) throw error
       console.error('[components] active component set is invalid; using packaged resources', error)
-      await this.writeState({
-        schemaVersion: 1,
-        ...(state.pending ? { pending: state.pending } : {}),
-      })
-      return this.resolvePaths(packaged)
+      // A local build may reject components that another installed build still needs.
+      this.usingPackagedFallback = true
+      return this.checkedPaths(packaged)
     }
+    if (state !== saved) await this.writeState(state)
+    return paths
   }
 
   async confirmStartup(): Promise<void> {
+    if (this.usingPackagedFallback) return
     const state = await this.readState()
     if (!state.activationInProgress) return
     await this.writeState({
@@ -201,6 +206,7 @@ export class ComponentUpdateManager {
   }
 
   async rollbackStartup(): Promise<boolean> {
+    if (this.usingPackagedFallback) return false
     const state = await this.readState()
     if (!state.activationInProgress) return false
     if (
@@ -213,11 +219,24 @@ export class ComponentUpdateManager {
       })
       return false
     }
+    const previous =
+      state.previous?.appVersion === this.currentAppVersion ? state.previous : undefined
+    // Never select an older executor that could mutate a newer on-disk layout.
+    await this.checkedPaths(await this.packagedManifest(), previous)
     await this.writeState({
       schemaVersion: 1,
-      ...(state.previous ? { current: state.previous } : {}),
+      ...(previous ? { current: previous } : {}),
     })
     return true
+  }
+
+  private async checkedPaths(
+    packaged: PackagedComponentManifest,
+    current?: ComponentSet
+  ): Promise<ComponentPaths> {
+    const paths = await this.resolvePaths(packaged, current)
+    await this.validateExecutor(paths.executor)
+    return paths
   }
 
   async stageAvailableUpdate(): Promise<boolean> {
@@ -298,7 +317,10 @@ export class ComponentUpdateManager {
       target.arch
     )
     const state = await this.readState()
-    const current = state.current?.appVersion === this.currentAppVersion ? state.current : undefined
+    const current =
+      !this.usingPackagedFallback && state.current?.appVersion === this.currentAppVersion
+        ? state.current
+        : undefined
     const effective = current?.components
     const changed = MANAGED_COMPONENT_IDS.some(
       id =>
@@ -319,36 +341,29 @@ export class ComponentUpdateManager {
       const effectiveComponent = effective?.[id]
       const expectedCurrentContentSha256 =
         effectiveComponent?.contentSha256 ?? packaged.components[id].sha256
-      if (
+      const reusesCurrentContent =
         appVersion === this.currentAppVersion &&
         component.contentSha256 === expectedCurrentContentSha256
-      ) {
-        this.log({ event: 'component-reused', id, reason: 'current-content' })
-        stagedComponents[id] =
-          effectiveComponent ??
-          (await this.packagedComponentDescriptor(
-            packaged.components[id].version,
-            reusablePaths[id],
-            packaged.components[id].sha256
-          ))
-        continue
-      }
       const reusableContentSha256 = await hashComponentPath(reusablePaths[id])
-      if (component.contentSha256 === reusableContentSha256) {
-        this.log({ event: 'component-reused', id, reason: 'verified-installed-content' })
+      if (reusesCurrentContent || component.contentSha256 === reusableContentSha256) {
+        this.log({
+          event: 'component-reused',
+          id,
+          reason: reusesCurrentContent ? 'current-content' : 'verified-installed-content',
+        })
+        // Packaged binaries may have changed during signing or stripping.
+        // Cache the installed bytes with their actual hash, independently of the app bundle.
         const reusable =
-          effectiveComponent ??
-          (await this.packagedComponentDescriptor(
-            packaged.components[id].version,
-            reusablePaths[id],
-            reusableContentSha256
-          ))
+          effectiveComponent?.contentSha256 === reusableContentSha256
+            ? effectiveComponent
+            : await this.packagedComponentDescriptor(
+                packaged.components[id].version,
+                reusablePaths[id],
+                reusableContentSha256
+              )
         stagedComponents[id] = {
           ...reusable,
           version: component.version,
-        }
-        if (appVersion === this.currentAppVersion) {
-          continue
         }
         await this.ensureReusableComponent(id, stagedComponents[id], reusablePaths[id])
       } else {

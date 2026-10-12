@@ -699,6 +699,27 @@ impl RuntimeWorkRpcHandler {
         } else {
             source_workspace_path
         };
+        log_executor_event(
+            "runtime task workspace resolved",
+            &[
+                ("task_id", local_task_id.clone()),
+                (
+                    "requested_source",
+                    payload
+                        .pointer("/execution/workspace/source")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+                (
+                    "execution_source",
+                    request.workspace_source.clone().unwrap_or_default(),
+                ),
+                ("side_source", side_source.is_some().to_string()),
+                ("source_path", request.cwd().unwrap_or_default().to_owned()),
+                ("workspace_path", workspace_path.clone()),
+            ],
+        );
         if request.project_workspace_path.as_deref() != Some(workspace_path.as_str()) {
             request.project_workspace_path = Some(workspace_path.clone());
         }
@@ -1709,11 +1730,13 @@ impl RuntimeWorkRpcHandler {
             params.insert("path".to_owned(), Value::String(thread_path));
         }
 
-        let response = self
-            .call_codex_thread_method_without_list_invalidation(
-                "thread/resume",
-                Value::Object(params),
-            )
+        self.register_thread_event_route_from_store(thread_id);
+        self.ensure_notification_router().await;
+        let client = self
+            .codex_app_server
+            .for_request(&runtime_event_request_from_link(link))?;
+        let response = client
+            .request("thread/resume", Value::Object(params))
             .await?;
         Ok(response
             .get("thread")

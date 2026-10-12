@@ -22,6 +22,15 @@ import {
   CollaborationProjectViewShell,
   ProjectLoadingSkeleton,
 } from "./project-shell";
+import {
+  ProjectCalendarView,
+  ProjectGanttView,
+} from "./project-schedule/ProjectScheduleViews";
+import {
+  scheduleViewConfigFromOptions,
+  type ScheduleViewOptions,
+} from "./project-schedule/model";
+import { useProjectScheduleViewOptions } from "./project-schedule/useProjectScheduleViewOptions";
 import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapter";
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
 import {
@@ -204,6 +213,34 @@ export function CollaborationApp({
     api,
     project,
   });
+  const scheduleView = useProjectScheduleViewOptions(project);
+  const [savingScheduleView, setSavingScheduleView] = useState(false);
+  const canSaveScheduleView =
+    project?.project_store === "local" ||
+    project?.access_role === "Owner" ||
+    project?.access_role === "Maintainer";
+  const saveScheduleView = async (options: ScheduleViewOptions) => {
+    if (!project || !canSaveScheduleView || savingScheduleView) return;
+    const statuses = projectStatuses(project, messages, translate);
+    const boardConfig = project.board_config ?? {
+      group_by: "status" as const,
+      processing_start_status_id: statuses[1]?.id ?? statuses[0]?.id ?? null,
+      statuses,
+    };
+    setSavingScheduleView(true);
+    try {
+      const updated = await commands.updateProject(project.id, {
+        version: project.version,
+        boardConfig: {
+          ...boardConfig,
+          schedule_view: scheduleViewConfigFromOptions(options),
+        },
+      });
+      if (updated) scheduleView.acceptProjectOptions();
+    } finally {
+      setSavingScheduleView(false);
+    }
+  };
   const requestIssueCreate = () => {
     if (!project) return;
     setCreateIssueOpen(true);
@@ -384,7 +421,10 @@ export function CollaborationApp({
         testId={collaborationTestIds.root}
         label={messages.loading}
         layout={
-          host.location.projectId && host.location.view === "board"
+          host.location.projectId &&
+          (host.location.view === "board" ||
+            host.location.view === "calendar" ||
+            host.location.view === "gantt")
             ? "board"
             : "list"
         }
@@ -477,6 +517,76 @@ export function CollaborationApp({
                 files: messages.files,
                 manage: messages.settings,
               }}
+              extensions={[
+                {
+                  id: "calendar",
+                  label: messages.calendar,
+                  testId: `${collaborationTestIds.calendar}-tab`,
+                  content: (
+                    <ProjectCalendarView
+                      issues={issues}
+                      locale={locale}
+                      statuses={projectStatuses(project, messages, translate)}
+                      viewOptions={scheduleView.options}
+                      hasPersonalViewOptions={scheduleView.hasPersonalOverride}
+                      savingProjectViewOptions={savingScheduleView}
+                      onViewOptionsChange={scheduleView.changeOptions}
+                      onResetViewOptions={scheduleView.resetOptions}
+                      onSaveProjectViewOptions={
+                        canSaveScheduleView ? saveScheduleView : undefined
+                      }
+                      onOpen={(issue) =>
+                        host.navigate({
+                          projectId: project.id,
+                          issueId: issue.id,
+                          view: "calendar",
+                        })
+                      }
+                      onSchedule={async (issue, range) => {
+                        await commands.updateIssue(issue.id, {
+                          version: issue.version,
+                          startAt: range.startAt,
+                          dueAt: range.dueAt,
+                        });
+                      }}
+                    />
+                  ),
+                },
+                {
+                  id: "gantt",
+                  label: messages.gantt,
+                  testId: `${collaborationTestIds.gantt}-tab`,
+                  content: (
+                    <ProjectGanttView
+                      issues={issues}
+                      locale={locale}
+                      statuses={projectStatuses(project, messages, translate)}
+                      viewOptions={scheduleView.options}
+                      hasPersonalViewOptions={scheduleView.hasPersonalOverride}
+                      savingProjectViewOptions={savingScheduleView}
+                      onViewOptionsChange={scheduleView.changeOptions}
+                      onResetViewOptions={scheduleView.resetOptions}
+                      onSaveProjectViewOptions={
+                        canSaveScheduleView ? saveScheduleView : undefined
+                      }
+                      onOpen={(issue) =>
+                        host.navigate({
+                          projectId: project.id,
+                          issueId: issue.id,
+                          view: "gantt",
+                        })
+                      }
+                      onSchedule={async (issue, range) => {
+                        await commands.updateIssue(issue.id, {
+                          version: issue.version,
+                          startAt: range.startAt,
+                          dueAt: range.dueAt,
+                        });
+                      }}
+                    />
+                  ),
+                },
+              ]}
               testIds={{
                 board: "collaboration-tab-board",
                 table: "collaboration-tab-table",
@@ -526,7 +636,9 @@ export function CollaborationApp({
               }
               renderRightActions={({ actionRefs, showLabels }) => (
                 <>
-                  {host.location.view === "board" ? (
+                  {host.location.view === "board" ||
+                  host.location.view === "calendar" ||
+                  host.location.view === "gantt" ? (
                     <button
                       ref={actionRefs.add}
                       type="button"
@@ -752,22 +864,40 @@ export function CollaborationApp({
                       issueLabel={messages.issueTitle}
                       statusLabel={messages.issueStatus}
                       assignmentsLabel={messages.assignments}
-                      assignmentSourceLabel={messages.assignmentSource}
                       executionLabel={messages.executionStatus}
                       updatedLabel={messages.updatedAt}
+                      startAtLabel={messages.startTime}
+                      dueAtLabel={messages.endTime}
                       projectKey={project.project_key}
                       searchPlaceholder={messages.searchIssues}
                       createLabel={messages.createIssue}
                       allLabel={locale === "zh-CN" ? "全部" : "All"}
                       tagLabel={messages.issueTags}
-                      manualAssignmentLabel={translate(
-                        "todo.manual_assignment",
-                        locale === "zh-CN"
-                          ? "Issue 内分配"
-                          : "Assigned in Issue",
-                      )}
                       actionsLabel={translate("common.actions", "操作")}
                       deleteLabel={translate("todo.archive_issue", "归档任务")}
+                      selectAllLabel={
+                        locale === "zh-CN"
+                          ? "选择当前筛选结果中的全部任务"
+                          : "Select all visible issues"
+                      }
+                      selectIssueLabel={
+                        locale === "zh-CN" ? "选择任务" : "Select issue"
+                      }
+                      selectedLabel={
+                        locale === "zh-CN" ? "项已选择" : "selected"
+                      }
+                      batchStatusLabel={
+                        locale === "zh-CN" ? "批量修改状态" : "Change status"
+                      }
+                      batchApplyLabel={locale === "zh-CN" ? "应用" : "Apply"}
+                      batchDeleteLabel={
+                        locale === "zh-CN" ? "批量归档" : "Archive selected"
+                      }
+                      availableStatuses={projectStatuses(
+                        project,
+                        messages,
+                        translate,
+                      ).map((status) => status.id)}
                       canDelete={(issue) => issue.status === "completed"}
                       onDelete={
                         issueArchiveAvailable
@@ -777,6 +907,37 @@ export function CollaborationApp({
                             }
                           : undefined
                       }
+                      onBulkDelete={
+                        issueArchiveAvailable
+                          ? (selectedIssues) => {
+                              const completedIssues = selectedIssues.filter(
+                                (issue) => issue.status === "completed",
+                              );
+                              if (completedIssues.length === 0) return;
+                              setArchiveIssueError(null);
+                              setArchiveIssueTargets(completedIssues);
+                            }
+                          : undefined
+                      }
+                      onBulkStatusChange={async (selectedIssues, status) => {
+                        const results = await Promise.allSettled(
+                          selectedIssues.map((issue) =>
+                            commands.updateIssue(
+                              issue.id,
+                              {
+                                version: issue.version,
+                                status,
+                              },
+                              { throwOnError: true },
+                            ),
+                          ),
+                        );
+                        if (
+                          results.some((result) => result.status === "rejected")
+                        ) {
+                          throw new Error(messages.saveFailed);
+                        }
+                      }}
                       statusName={(status) =>
                         projectStatuses(project, messages, translate).find(
                           (candidate) => candidate.id === status,

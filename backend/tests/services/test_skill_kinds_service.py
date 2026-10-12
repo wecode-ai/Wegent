@@ -5,6 +5,7 @@
 """
 Integration tests for SkillKindsService
 """
+import hashlib
 import io
 import zipfile
 
@@ -13,9 +14,11 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.skill_binary import SkillBinary
 from app.models.user import User
 from app.services.adapters.skill_kinds import SkillKindsService
 from app.services.skill_binding_service import skill_binding_service
+from app.services.skill_resolution import build_skill_ref_meta
 
 
 @pytest.mark.integration
@@ -31,6 +34,70 @@ class TestSkillKindsService:
             zf.writestr(f"{folder_name}/SKILL.md", skill_md_content)
             zf.writestr(f"{folder_name}/script.py", "print('test')")
         return zip_buffer.getvalue()
+
+    @pytest.mark.parametrize("with_mcp", [False, True])
+    @pytest.mark.parametrize(
+        "operation",
+        ["create", "update", "restore", "update_missing", "restore_missing"],
+    )
+    def test_archive_version_preserves_uploaded_metadata(
+        self, test_db: Session, test_user: User, with_mcp: bool, operation: str
+    ):
+        service = SkillKindsService()
+        arguments = dict(
+            db=test_db,
+            name="integrity-skill",
+            namespace="default",
+            file_name="test.zip",
+            user_id=test_user.id,
+        )
+        if operation != "create":
+            original = service.create_skill(
+                **arguments,
+                file_content=self.create_test_zip("---\ndescription: Original\n---\n"),
+            )
+            skill_id = int(original.metadata.labels["id"])
+            if operation.endswith("_missing"):
+                test_db.query(SkillBinary).filter_by(kind_id=skill_id).delete()
+            if operation.startswith("restore"):
+                test_db.get(Kind, skill_id).is_active = False
+                test_db.flush()
+        mcp = (
+            "mcpServers:\n  example:\n    type: http\n    url: https://example.invalid/mcp\n"
+            if with_mcp
+            else ""
+        )
+        uploaded = self.create_test_zip(f"---\ndescription: Updated\n{mcp}---\nBody\n")
+        if operation.startswith("update"):
+            result = service.update_skill(
+                db=test_db,
+                skill_id=skill_id,
+                user_id=test_user.id,
+                file_content=uploaded,
+                file_name="test.zip",
+            )
+        else:
+            result = service.create_skill(**arguments, file_content=uploaded)
+        skill_id = int(result.metadata.labels["id"])
+        test_db.expire_all()
+        kind = test_db.get(Kind, skill_id)
+        binary = test_db.query(SkillBinary).filter_by(kind_id=skill_id).one()
+        downloaded = service.get_skill_binary(
+            test_db,
+            skill_id=skill_id,
+            user_id=test_user.id,
+        )
+        digest = hashlib.sha256(uploaded).hexdigest()
+        assert result.status.fileHash == binary.file_hash == digest
+        assert kind.json["status"]["fileHash"] == digest
+        assert build_skill_ref_meta(kind)["content_hash"] == f"sha256:{digest}"
+        assert result.status.fileSize == binary.file_size == len(uploaded)
+        assert kind.json["status"]["fileSize"] == len(uploaded)
+        assert bool(kind.json["spec"]["mcpServers"]) == with_mcp
+        assert (uploaded != downloaded) == with_mcp
+        with zipfile.ZipFile(io.BytesIO(downloaded)) as archive:
+            assert b"mcpServers" not in archive.read("test/SKILL.md")
+            assert archive.read("test/script.py") == b"print('test')"
 
     def test_create_skill_success(self, test_db: Session, test_user: User):
         """Test successful skill creation"""

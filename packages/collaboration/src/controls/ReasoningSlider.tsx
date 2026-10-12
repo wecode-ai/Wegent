@@ -31,12 +31,14 @@ interface ReasoningSliderProps {
   control: ModelControlConfig;
   selectedModelOptions: ModelOptions;
   onSelectOption: (optionId: string, value: string) => void;
+  compact?: boolean;
   clearSubmenuOnHover?: boolean;
   onClearSubmenu?: () => void;
   onInteractionChange?: (interacting: boolean) => void;
   steps?: ReasoningSliderStep[];
   selectedStepValue?: string;
   onSelectStep?: (value: string) => void;
+  accentPulse?: boolean;
 }
 
 export interface ReasoningSliderStep {
@@ -58,12 +60,14 @@ export function ReasoningSlider({
   control,
   selectedModelOptions,
   onSelectOption,
+  compact = false,
   clearSubmenuOnHover = true,
   onClearSubmenu,
   onInteractionChange,
   steps: providedSteps,
   selectedStepValue,
   onSelectStep,
+  accentPulse = false,
 }: ReasoningSliderProps) {
   const dragActiveRef = useRef(false);
   const dragMovedRef = useRef(false);
@@ -208,7 +212,7 @@ export function ReasoningSlider({
       data-interacting={interacting ? "true" : "false"}
       onMouseEnter={clearHoverSubmenu}
       onPointerEnter={clearHoverSubmenu}
-      className="relative h-14 px-3"
+      className={compact ? "relative h-9 px-0" : "relative h-10 px-0"}
     >
       <div
         data-testid="model-control-reasoning-track"
@@ -218,7 +222,10 @@ export function ReasoningSlider({
         aria-valuemax={steps.length - 1}
         aria-valuenow={selectedIndex}
         aria-valuetext={selectedStep?.label}
-        className="absolute inset-x-3 top-2 h-8 cursor-pointer touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+        className={[
+          "absolute inset-x-0 h-8 cursor-pointer touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+          compact ? "top-0.5" : "top-1",
+        ].join(" ")}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={finishPointerDrag}
@@ -226,18 +233,22 @@ export function ReasoningSlider({
         onClickCapture={suppressClickAfterDrag}
         onKeyDown={handleKeyDown}
       >
-        <div className="absolute inset-x-0 top-1/2 h-5 -translate-y-1/2 rounded-full bg-muted shadow-sm" />
+        <div className="absolute inset-x-0 top-1/2 h-6 -translate-y-1/2 rounded-full bg-muted shadow-sm" />
         <div
           data-testid="model-control-reasoning-progress"
           data-ultra={ultraSelected ? "true" : "false"}
+          data-accent-pulse={accentPulse ? "true" : "false"}
           className={[
-            "absolute left-0 top-1/2 h-5 -translate-y-1/2 overflow-hidden rounded-full",
+            `${styles.progress} absolute left-0 top-1/2 h-6 -translate-y-1/2 overflow-hidden rounded-full`,
             ultraSelected
               ? `${styles.ultraTrack} bg-gradient-to-r from-reasoning-ultra-start to-reasoning-ultra-end`
               : "bg-reasoning-standard",
           ].join(" ")}
           style={{ width: getSliderPosition(selectedIndex, steps.length) }}
         >
+          {accentPulse ? (
+            <span aria-hidden="true" className={styles.accentPulse} />
+          ) : null}
           {ultraSelected ? (
             <span
               data-testid="reasoning-ultra-burst"
@@ -283,7 +294,7 @@ export function ReasoningSlider({
                 className={[
                   "absolute left-1/2 top-1/2 block -translate-x-1/2 -translate-y-1/2 rounded-full",
                   selected
-                    ? "h-6 w-6 border border-border bg-background shadow-md"
+                    ? "h-1.5 w-1.5 bg-transparent"
                     : index < selectedIndex
                       ? "h-1.5 w-1.5 bg-reasoning-contrast/60"
                       : "h-1.5 w-1.5 bg-text-muted/70",
@@ -292,6 +303,12 @@ export function ReasoningSlider({
             </button>
           );
         })}
+        <span
+          aria-hidden="true"
+          data-testid="model-control-reasoning-thumb"
+          className={`${styles.thumb} absolute top-1/2 z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border border-border bg-background shadow-md`}
+          style={{ left: getSliderPosition(selectedIndex, steps.length) }}
+        />
       </div>
     </div>
   );

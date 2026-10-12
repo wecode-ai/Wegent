@@ -146,6 +146,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     project: activePaneProject,
   })
   const connectorAuthGate = useLocalConnectorAuthGate({
+    onError: message => paneSession.setError(message),
     messages: paneSession.messages,
     onResumeSend: async input => {
       await paneSession.send(input)

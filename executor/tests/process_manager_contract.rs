@@ -120,16 +120,24 @@ fn restart_plan_uses_nohup_binary_and_optional_verbose_log() {
     );
     assert!(quiet.log_file.is_none());
 
+    let temp = tempfile::tempdir().unwrap();
+    let previous = std::env::var_os("WEGENT_EXECUTOR_HOME");
+    std::env::set_var("WEGENT_EXECUTOR_HOME", temp.path());
     let verbose =
         RestartPlan::for_binary("/usr/local/bin/wegent-executor", ["--config", "x"], true);
+    if let Some(value) = previous {
+        std::env::set_var("WEGENT_EXECUTOR_HOME", value);
+    } else {
+        std::env::remove_var("WEGENT_EXECUTOR_HOME");
+    }
     assert_eq!(
         verbose.command,
         vec!["nohup", "/usr/local/bin/wegent-executor", "--config", "x"]
     );
-    assert!(verbose
-        .log_file
-        .unwrap()
-        .ends_with(".wegent-executor/logs/executor-restart.log"));
+    assert_eq!(
+        verbose.log_file.unwrap(),
+        temp.path().join("logs/executor-restart.log")
+    );
 }
 
 #[cfg(unix)]

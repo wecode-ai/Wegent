@@ -939,6 +939,133 @@ fn transcript_restores_pending_request_user_input_as_interactive_block() {
 }
 
 #[test]
+fn transcript_restores_pending_async_request_user_input_as_interactive_block() {
+    let thread = json!({
+        "id": "thread-1",
+        "turns": [
+            {
+                "id": "turn-1",
+                "startedAt": 1_780_000_000,
+                "status": "completed",
+                "items": [
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "call_id": "call-1",
+                            "name": "request_user_input_async",
+                            "arguments": "{\"questions\":[{\"title\":\"Which state jitters?\",\"options\":[\"Following\",\"Reading\"]}]}"
+                        }
+                    },
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call_output",
+                            "call_id": "call-1",
+                            "output": "{\"accepted\":true}"
+                        }
+                    }
+                ]
+            }
+        ]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let block = messages
+        .iter()
+        .flat_map(|message| message["blocks"].as_array().into_iter().flatten().cloned())
+        .find(|block| block["tool_name"] == "request_user_input")
+        .expect("async question block");
+
+    assert_eq!(block["type"], "tool");
+    // The async tool call itself returns immediately, so only the render payload
+    // marks the interaction; it stays unanswered until the next user message.
+    assert_eq!(block["render_payload"]["kind"], "request_user_input");
+    assert_eq!(block["render_payload"]["delivery"], "async");
+    assert_eq!(block["render_payload"]["itemId"], "call-1");
+    assert_eq!(
+        block["render_payload"]["questions"][0]["question"],
+        "Which state jitters?"
+    );
+    assert_eq!(
+        block["render_payload"]["questions"][0]["options"][0]["label"],
+        "Following"
+    );
+    // The `accepted` tool output is not an answer, so the card must stay open.
+    assert!(block["render_payload"].get("response").is_none());
+}
+
+#[test]
+fn transcript_restores_async_question_recorded_as_agent_message() {
+    let thread = json!({
+        "id": "thread-1",
+        "turns": [
+            {
+                "id": "turn-1",
+                "startedAt": 1_780_000_000,
+                "status": "completed",
+                "items": [
+                    {
+                        "type": "AgentMessage",
+                        "id": "call-question",
+                        "content": [{"type": "Text", "text": "Which state jitters?\n- Following\n- Reading"}],
+                        "phase": "final_answer",
+                        "delivery": "async",
+                        "questions": [
+                            {"title": "Which state jitters?", "options": ["Following", "Reading"]}
+                        ]
+                    }
+                ]
+            }
+        ]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let block = messages
+        .iter()
+        .flat_map(|message| message["blocks"].as_array().into_iter().flatten().cloned())
+        .find(|block| block["tool_name"] == "request_user_input")
+        .expect("async question block");
+
+    assert_eq!(block["type"], "tool");
+    assert_eq!(block["render_payload"]["kind"], "request_user_input");
+    assert_eq!(block["render_payload"]["delivery"], "async");
+    assert_eq!(block["render_payload"]["itemId"], "call-question");
+    assert_eq!(
+        block["render_payload"]["questions"][0]["question"],
+        "Which state jitters?"
+    );
+    assert_eq!(
+        block["render_payload"]["questions"][0]["options"][1]["label"],
+        "Reading"
+    );
+    // The plain-text fallback must not also become the assistant's final text.
+    assert!(messages.iter().all(|message| !message["content"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Reading")));
+    // Turn projection feeds the workspace from `runtimeItems`, so the interactive
+    // block has to be listed there as well.
+    let runtime_block = messages
+        .iter()
+        .flat_map(|message| {
+            message["runtimeItems"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .cloned()
+        })
+        .find(|item| {
+            item["type"] == "block"
+                && item["block"]["tool_name"].as_str() == Some("request_user_input")
+        });
+    assert!(
+        runtime_block.is_some(),
+        "runtimeItems must carry the question block"
+    );
+}
+
+#[test]
 fn transcript_restores_answered_request_user_input_response() {
     let thread = json!({
         "id": "thread-1",

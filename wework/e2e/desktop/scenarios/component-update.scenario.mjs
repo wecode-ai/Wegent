@@ -123,6 +123,23 @@ export async function createDesktopScenario({
         return state.pending?.components?.weworkCorePlugins?.contentSha256 === contentSha256
       }, 'The component update was not staged')
 
+      const staged = await readJson(statePath)
+      for (const [id, component] of Object.entries(staged.pending.components)) {
+        const cached = join(
+          electronUserDataDirectory,
+          'managed-components',
+          'blobs',
+          id,
+          component.archiveSha256,
+          component.entryPath
+        )
+        assert.equal(
+          await hashComponentPath(cached),
+          component.contentSha256,
+          `The pending ${id} component must be usable without the original app bundle`
+        )
+      }
+
       assert.equal(typeof restartDesktopApp, 'function')
       await restartDesktopApp()
       await control.command('waitFor', '[data-testid="app-shell"]', {

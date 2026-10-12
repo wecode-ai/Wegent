@@ -280,8 +280,11 @@ describe('LocalProjectEditDialog', () => {
     await userEvent.click(screen.getByTestId('save-local-project-button'))
 
     expect(pluginApi.installAvailablePlugin).toHaveBeenCalledWith(
-      'team-market:quality-gate',
-      'team-market'
+      expect.objectContaining({
+        id: 'team-market:quality-gate',
+        name: 'quality-gate',
+        manifest: { marketplaceId: 'team-market' },
+      })
     )
     expect(pluginApi.updateInstalledPlugin).toHaveBeenCalledWith('quality-gate@team-market', {
       enabled: false,

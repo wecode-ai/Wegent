@@ -14,7 +14,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
 
 use crate::{
-    codex_phase::{codex_item_id, codex_phase_is_final, codex_phase_name},
+    codex_phase::{codex_item_id, codex_phase_is_final},
     logging::log_executor_event,
 };
 
@@ -210,67 +210,6 @@ pub(crate) fn log_dropped_notification(
     );
 }
 
-pub(crate) fn log_text_mapping(
-    local_task_id: &str,
-    method: &str,
-    action: &str,
-    resolved_phase: Option<&str>,
-    params: &Value,
-    text: &str,
-) {
-    let mut fields = text_mapping_log_fields(
-        local_task_id,
-        method,
-        action,
-        resolved_phase,
-        params,
-        text.len(),
-    );
-    fields.push(("text_preview", truncate_log_text(text, 160)));
-    log_executor_event("codex runtime text mapping", &fields);
-}
-
-fn text_mapping_log_fields(
-    local_task_id: &str,
-    method: &str,
-    action: &str,
-    resolved_phase: Option<&str>,
-    params: &Value,
-    text_len: usize,
-) -> Vec<(&'static str, String)> {
-    vec![
-        ("local_task_id", local_task_id.to_owned()),
-        ("method", method.to_owned()),
-        ("action", action.to_owned()),
-        (
-            "resolved_phase",
-            resolved_phase.unwrap_or("<none>").to_owned(),
-        ),
-        (
-            "phase",
-            codex_phase_name(params).unwrap_or_else(|| "<none>".to_owned()),
-        ),
-        (
-            "item_id",
-            notification_item_id(params).unwrap_or_else(|| "<none>".to_owned()),
-        ),
-        ("text_len", text_len.to_string()),
-    ]
-}
-
-pub(crate) fn log_stream_text_mapping(
-    local_task_id: &str,
-    method: &str,
-    action: &str,
-    resolved_phase: Option<&str>,
-    params: &Value,
-    text: &str,
-) {
-    if codex_stream_mapping_debug_enabled() {
-        log_text_mapping(local_task_id, method, action, resolved_phase, params, text);
-    }
-}
-
 pub(crate) fn codex_stream_debug_enabled() -> bool {
     codex_stream_debug_flag().load(Ordering::Relaxed)
 }
@@ -282,11 +221,6 @@ pub(crate) fn set_codex_stream_debug_enabled(enabled: bool) {
 fn codex_stream_debug_flag() -> &'static AtomicBool {
     static ENABLED: OnceLock<AtomicBool> = OnceLock::new();
     ENABLED.get_or_init(|| AtomicBool::new(env_bool("WEGENT_CODEX_STREAM_DEBUG", false)))
-}
-
-fn codex_stream_mapping_debug_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| env_bool("WEGENT_CODEX_STREAM_MAPPING_DEBUG", false))
 }
 
 fn env_bool(name: &str, default_value: bool) -> bool {
@@ -341,18 +275,6 @@ fn nested_json_string_field(value: &Value, object_key: &str, key: &str) -> Strin
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned()
-}
-
-fn truncate_log_text(text: &str, max_chars: usize) -> String {
-    let mut result = String::new();
-    for (index, ch) in text.chars().enumerate() {
-        if index >= max_chars {
-            result.push_str("...");
-            return result;
-        }
-        result.push(ch);
-    }
-    result
 }
 
 #[cfg(test)]

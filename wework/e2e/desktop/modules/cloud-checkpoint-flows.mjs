@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
-import { basename } from 'node:path'
+import { basename, dirname } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
 
@@ -154,14 +154,11 @@ async function createCloudProjectFixture(control, workspacePath) {
     'The cloud checkpoint project was not shown in the sidebar'
   )
   const projectId = projectMenuTestId.slice('project-menu-'.length)
-  await control.command('waitFor', `[data-testid="project-device-status-${projectId}"]`, {
-    stableMs: COMPOSER_READY_STABILITY_MS * 2,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   const projectRowSelector = `[data-testid="project-row-${projectId}"]`
   await control.command(
     'clickWhenEnabled',
-    `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -594,7 +591,7 @@ async function verifyCloudCheckpoint({
 
   if (checkpoint === 'workspace-tabs') {
     setPhase('cloud-workspace-tab-isolation')
-    await verifyWorkspaceTabIsolation(control)
+    await verifyWorkspaceTabIsolation(control, restartDesktopApp)
     return
   }
 
@@ -794,13 +791,7 @@ async function verifyCloudCheckpoint({
         appIdentifier,
         composerSelector,
         control,
-        runtimeAttachmentRoot: join(
-          resultDir,
-          'cloud-executor-home',
-          'workspace',
-          'attachments',
-          'runtime'
-        ),
+        runtimeWorkspaceRoot: dirname(workspacePath),
         workspacePath,
       })
       setPhase('cloud-pasted-zip')

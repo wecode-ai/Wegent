@@ -6,6 +6,15 @@ import { describe, expect, test } from 'vitest'
 const scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), 'dev-mac-app.sh')
 
 describe('dev-mac-app', () => {
+  test('rejects release data sharing and keeps isolated development data after exit', async () => {
+    const source = await readFile(scriptPath, 'utf8')
+    expect(source).toContain("development apps cannot share the release app's Executor Home")
+    expect(source).toContain('persistent development data (always enabled)')
+    expect(source).toContain('--import-legacy-development-history')
+    expect(source).not.toContain('rm -rf "$ISOLATED_EXECUTOR_HOME"')
+    expect(source).not.toContain('<release app default>')
+  })
+
   test('isolates desktop state and uses Electron Node for child runtimes', async () => {
     const source = await readFile(scriptPath, 'utf8')
 
@@ -42,9 +51,11 @@ describe('dev-mac-app', () => {
     expect(source).toContain('$WEWORK_DIR/node_modules/.cache/harness-runtime-dev')
     expect(source).toContain('WEWORK_DEV_EXECUTOR_PATH')
     expect(source).toContain('WEGENT_EXECUTOR_DEV_BUILD_ID="$WEWORK_DEV_INSTANCE_ID"')
-    expect(source).toContain('WEGENT_EXECUTOR_DEV_RELOAD="${WEGENT_EXECUTOR_DEV_RELOAD:-1}"')
-    expect(source).toContain('WEWORK_EXECUTOR_PATH="$SCRIPT_DIR/dev-executor-sidecar.sh"')
-    expect(source).not.toContain('node_modules/.cache/wework-executor-dev/wegent-executor')
+    expect(source).toContain('$WEWORK_DIR/node_modules/.cache/wework-executor-dev/wegent-executor')
+    expect(source).toContain('export WEWORK_EXECUTOR_PATH="$WEGENT_EXECUTOR_BINARY"')
+    expect(source).not.toContain('WEWORK_EXECUTOR_PATH="$SCRIPT_DIR/dev-executor-sidecar.sh"')
+    expect(source).toContain('cp "$MANAGED_SOURCE_EXECUTOR_BINARY" "$EXECUTOR_BINARY_TEMP"')
+    expect(source).toContain('mv -f "$EXECUTOR_BINARY_TEMP" "$WEGENT_EXECUTOR_BINARY"')
     expect(source).toContain('PREBUILD_SOURCE_EXECUTOR="true"')
     expect(source).toContain(
       'cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor'

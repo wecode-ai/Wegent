@@ -3,6 +3,15 @@ export const conversationMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
+    "conversation.request_user_input.url_title": "{{server}} 请求浏览器授权",
+    "conversation.request_user_input.url_destination": "将打开：{{host}}",
+    "conversation.request_user_input.url_hint":
+      "请在浏览器中完成授权。打开页面不代表授权成功；完成后返回此对话。若未继续，可停止后重试。",
+    "conversation.request_user_input.url_open": "打开浏览器授权",
+    "conversation.request_user_input.url_failed":
+      "无法打开授权页面或提交响应，请重试。",
+    "conversation.request_user_input.url_summary":
+      "已响应浏览器授权请求；授权结果由连接器确认。",
     "conversation.workbench.context_compaction_incomplete": "上下文压缩未完成",
     "conversation.workbench.context_compaction_completed": "上下文已自动压缩",
     "conversation.workbench.context_compaction_running": "正在自动压缩上下文",
@@ -369,6 +378,16 @@ export const conversationMessages: Record<
     "conversation.file_changes.review_failed": "加载文件变更失败",
   },
   en: {
+    "conversation.request_user_input.url_title":
+      "{{server}} requests browser authorization",
+    "conversation.request_user_input.url_destination": "Destination: {{host}}",
+    "conversation.request_user_input.url_hint":
+      "Complete authorization in your browser, then return here. Opening the page does not confirm authorization. If the task does not continue, stop it and retry.",
+    "conversation.request_user_input.url_open": "Authorize in browser",
+    "conversation.request_user_input.url_failed":
+      "Could not open authorization or submit the response. Try again.",
+    "conversation.request_user_input.url_summary":
+      "Browser authorization request answered; the connector confirms the result.",
     "conversation.workbench.context_compaction_incomplete":
       "Context compaction did not complete",
     "conversation.workbench.context_compaction_completed": "Context compacted",

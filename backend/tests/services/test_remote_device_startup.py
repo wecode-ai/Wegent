@@ -43,6 +43,7 @@ def test_remote_docker_command_binds_device_identity_to_stable_home(monkeypatch)
         "-v remote-device-1-home:/home/wegent/.wecode/wegent-executor" in first.command
     )
     assert "-e WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true" in first.command
+    assert "-v remote-device-1-data:/home/wegent/.wegent" in first.command
     assert "-e DEVICE_CODE_SERVER_ENABLED=true" in first.command
     assert "-e DEVICE_TERMINAL_ENABLED=true" in first.command
     # Only cloud devices support the desktop, and the published device image

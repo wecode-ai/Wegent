@@ -343,6 +343,7 @@ function createIsolatedClipboardRouter(
     {} as never,
     {} as never,
     {
+      executorHome: '/tmp/wework-clipboard-test/executor',
       cleanupStaleTemporaryImages: vi.fn(),
       coreDshPlugins: () => null,
       events: { read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })) },

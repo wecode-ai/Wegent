@@ -1,5 +1,6 @@
 import { createServer } from 'node:net'
 import { resolve } from 'node:path'
+import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import {
   createCoreDshLaunch,
@@ -260,6 +261,9 @@ export class DesktopRuntime {
     const executorPath = this.options.environment.WEWORK_EXECUTOR_PATH?.trim()
     if (!executorPath) return null
     const generation = this.lifecycleGeneration
+    // Device identity and managed auth preparation may write Homes. Gate both first.
+    await assertExecutorWorkbenchCompatibility(this.options.environment)
+    if (this.lifecycleGeneration !== generation) return null
     const deviceId = await this.resolveDesktopDeviceId()
     if (this.lifecycleGeneration !== generation) return null
     const deviceName = await resolveDesktopDeviceName({
@@ -312,7 +316,7 @@ export class DesktopRuntime {
   }
 
   private async prepareCoreDshLaunch(
-    portPrerequisite: Promise<unknown>
+    executorPrerequisite: Promise<unknown>
   ): Promise<PreparedCoreDshLaunch | null> {
     this.startupStep('core-dsh-prepare', 'started')
     const generation = this.lifecycleGeneration
@@ -359,10 +363,11 @@ export class DesktopRuntime {
         this.developmentPlugin = developmentPlugin
       }
     }
+    // External DSH also resolves device identity, so it must wait for the Home compatibility gate.
+    await executorPrerequisite
+    if (this.lifecycleGeneration !== generation) return null
     let port: number | null = null
     if (!externalDshUrl) {
-      await portPrerequisite
-      if (this.lifecycleGeneration !== generation) return null
       this.startupStep('core-dsh-port-allocation', 'started')
       try {
         port = await freePort(this.coreDshPort)

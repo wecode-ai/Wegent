@@ -1,8 +1,16 @@
 use super::*;
 
 #[test]
-fn transcript_restores_file_and_folder_references_from_saved_user_content() {
+fn transcript_restores_native_references_from_saved_user_content() {
     for (original, provider) in [
+        (
+            "[$GitHub](app://connector_account_specific_id) 查看项目列表",
+            "$GitHub 查看项目列表",
+        ),
+        (
+            "[$GitHub](plugin://github@openai-curated-remote) 查看项目列表",
+            "GitHub (gh) 查看项目列表",
+        ),
         (
             "[$甲乙.pdf](file://%2Ftmp%2F甲乙.pdf) 请阅读",
             "/tmp/甲乙.pdf 请阅读",
@@ -25,7 +33,7 @@ fn transcript_restores_file_and_folder_references_from_saved_user_content() {
             "message": original
         }))
         .expect("saved user presentation");
-        // Previously saved messages have no file reference descriptors.
+        // Previously saved messages may lack native reference descriptors.
         presentation["references"] = json!([]);
         let mut messages = vec![json!({
             "id": "provider-user",

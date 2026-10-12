@@ -28,6 +28,11 @@ async function openIssueProperties() {
   expect(await screen.findByTestId('cloud-todo-more-properties-popover')).toBeInTheDocument()
 }
 
+async function openIssueScheduleRange() {
+  await userEvent.click(screen.getByRole('button', { name: '时间范围' }))
+  expect(await screen.findByTestId('cloud-todo-detail-due-date')).toBeInTheDocument()
+}
+
 import {
   IssueCreate,
   IssueDetail,
@@ -591,6 +596,8 @@ describe('shared IssueDetail', () => {
     expect(screen.queryByTestId('collaboration-assignment-workflow-step')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
+    // Let the editor's animation-frame focus finish before opening another control.
+    await waitFor(() => expect(screen.getByTestId('cloud-todo-detail-description')).toHaveFocus())
     fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
       target: { value: '新描述' },
     })
@@ -608,6 +615,7 @@ describe('shared IssueDetail', () => {
         status: 'pending',
         priority: 'high',
         parentId: null,
+        startAt: null,
         dueAt: null,
         tags: [],
       })
@@ -937,7 +945,7 @@ describe('shared IssueDetail', () => {
     expect(screen.getByTestId('cloud-todo-detail-priority')).toBeDisabled()
     expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeEnabled()
     expect(screen.getByTestId('cloud-todo-detail-parent')).toBeDisabled()
-    expect(screen.getByTestId('cloud-todo-detail-due-date')).toBeDisabled()
+    expect(screen.getByRole('button', { name: '时间范围' })).toBeDisabled()
     expect(screen.queryByTestId('cloud-todo-detail-tag-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-tag-tag-remove-只读')).not.toBeInTheDocument()
     expect(screen.getByTestId('collaboration-issue-comment')).toHaveAttribute(
@@ -1042,6 +1050,7 @@ describe('shared IssueDetail', () => {
     renderDetail(api, { issue: dateOnlyIssue, allIssues: [dateOnlyIssue] })
 
     await openIssueProperties()
+    await openIssueScheduleRange()
     expect(screen.getByTestId('cloud-todo-detail-due-date')).toHaveValue('2026-09-12T00:00')
     await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
@@ -1057,6 +1066,7 @@ describe('shared IssueDetail', () => {
         status: 'pending',
         priority: 'none',
         parentId: null,
+        startAt: null,
         dueAt: '2026-09-12',
         tags: [],
       })
@@ -1077,6 +1087,7 @@ describe('shared IssueDetail', () => {
     renderDetail(api, { issue: timestampIssue, allIssues: [timestampIssue] })
 
     await openIssueProperties()
+    await openIssueScheduleRange()
     expect(screen.getByTestId('cloud-todo-detail-due-date')).toHaveValue(
       dueDateTimeLocalFromSource(timestampIssue.due_at)
     )

@@ -4,6 +4,7 @@ import {
   miniProgramMarketplacePlugin,
   sitesMarketplacePlugin,
 } from './preferences-automation-flows.mjs'
+import { accountCommandResult } from './account-auth-command.mjs'
 
 import {
   assistantMessage,
@@ -67,6 +68,7 @@ import {
   BACKGROUND_COMPLETION_RESTORE_TEXT,
   BACKGROUND_FOLLOW_UP_RESTORE_PROMPT,
   BACKGROUND_FOLLOW_UP_RESTORE_TEXT,
+  BACKGROUND_GUIDANCE,
   BLOCKED_CLOUD_MODEL_PATH,
   BACKGROUND_GUIDANCE_CONTINUATION,
   CANCELLATION_COMPLETION_TEXT,
@@ -137,6 +139,7 @@ import {
   GOAL_RESTART_PROMPT,
   GUIDANCE_SCROLL_ACTIVE_PROMPT,
   GUIDANCE_SCROLL_COMPLETION_TEXT,
+  GUIDANCE_SCROLL_MESSAGE,
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
@@ -220,6 +223,17 @@ import {
   REQUEST_USER_INPUT_COMPLETION_TEXT,
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
   RETRY_COMPLETION_TEXT,
   RETRY_CONTINUATION_PROMPT,
   RETRY_FAILURE_TEXT,
@@ -360,6 +374,28 @@ function toolOutputText(request, callId) {
     return null
   }
   return findOutput(request.input ?? [])
+}
+
+/** Text of the user-authored turns codex forwarded to the model, in order. */
+function inputUserMessageTexts(request) {
+  const texts = []
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    if (value.type === 'message' && value.role === 'user') {
+      const content = Array.isArray(value.content) ? value.content : [value.content]
+      for (const part of content) {
+        const text = typeof part === 'string' ? part : part?.text
+        if (typeof text === 'string' && text.trim()) texts.push(text)
+      }
+    }
+    Object.values(value).forEach(visit)
+  }
+  visit(request.input)
+  return texts
 }
 
 function pluginWorkspacePublishCommand(body) {
@@ -505,6 +541,9 @@ class DesktopE2EServer {
     this.initialCompletionRelease = new Promise(resolvePromise => {
       this.releaseInitialCompletion = resolvePromise
     })
+    this.initialGuidanceArrival = new Promise(resolvePromise => {
+      this.releaseInitialGuidanceArrival = resolvePromise
+    })
     this.followUpRelease = new Promise(resolvePromise => {
       this.releaseFollowUp = resolvePromise
     })
@@ -515,6 +554,9 @@ class DesktopE2EServer {
     this.guidanceScrollCompletionRelease = new Promise(resolvePromise => {
       this.releaseGuidanceScrollResponse = resolvePromise
     })
+    this.guidanceScrollGuidanceArrival = new Promise(resolvePromise => {
+      this.releaseGuidanceScrollGuidanceArrival = resolvePromise
+    })
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
     })
@@ -523,6 +565,9 @@ class DesktopE2EServer {
     })
     this.requestUserInputResponseWritten = new Promise(resolvePromise => {
       this.resolveRequestUserInputResponseWritten = resolvePromise
+    })
+    this.asyncRequestUserInputKeepsRunningRelease = new Promise(resolvePromise => {
+      this.releaseAsyncRequestUserInputKeepsRunning = resolvePromise
     })
     this.taskPlanCompletionRelease = new Promise(resolvePromise => {
       this.releaseTaskPlanCompletion = resolvePromise
@@ -542,6 +587,13 @@ class DesktopE2EServer {
     this.sideChatGuidanceRelease = new Promise(resolvePromise => {
       this.resolveSideChatGuidanceRelease = resolvePromise
     })
+    this.sideChatGuidanceArrival = new Promise(resolvePromise => {
+      this.resolveSideChatGuidanceArrival = resolvePromise
+    })
+    this.sideChatGuidanceCompletionRelease = new Promise(resolvePromise => {
+      this.resolveSideChatGuidanceCompletionRelease = resolvePromise
+    })
+    this.sideChatGuidanceStage = 'initial'
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
     })
@@ -818,6 +870,7 @@ class DesktopE2EServer {
         'fork_provider_follow_up',
         'task_plan',
         'request_user_input',
+        'request_user_input_async',
         'mcp_elicitation',
         'window_lifecycle',
         'background_completion_restore',
@@ -975,6 +1028,10 @@ class DesktopE2EServer {
     return this.guard(this.requestUserInputResponseWritten)
   }
 
+  releaseAsyncRequestUserInputHold() {
+    this.releaseAsyncRequestUserInputKeepsRunning()
+  }
+
   releaseTaskPlanResponse() {
     this.releaseTaskPlanCompletion()
     return this.guard(this.taskPlanCompletionWritten)
@@ -993,6 +1050,10 @@ class DesktopE2EServer {
   }
 
   releaseSideChatGuidanceResponse() {
+    this.resolveSideChatGuidanceCompletionRelease()
+  }
+
+  releaseSideChatGuidanceToolExecution() {
     this.resolveSideChatGuidanceRelease()
   }
 
@@ -2222,8 +2283,22 @@ class DesktopE2EServer {
     }
 
     const publishCommand = pluginWorkspacePublishCommand(body)
-    if (requestContainsToolOutput(body, PLUGIN_WORKSPACE_PUBLISH_CALL_ID)) {
-      const publishedResult = publishedPluginWorkspaceResult(body)
+    const publishResult = accountCommandResult(body.input, PLUGIN_WORKSPACE_PUBLISH_CALL_ID)
+    if (publishResult?.sessionId) {
+      const tool = selectTool(body, 'write_stdin', {
+        session_id: publishResult.sessionId,
+        chars: '',
+        yield_time_ms: 1000,
+      })
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(publishResult.pollId, tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (publishResult) {
+      const publishedResult = publishedPluginWorkspaceResult(publishResult.output)
       assert.ok(
         publishedResult,
         'The Plugin Creator publish command did not return a result marker'
@@ -2797,24 +2872,48 @@ class DesktopE2EServer {
     }
 
     if (this.scenario === 'initial') {
-      assert.equal(
-        this.modelStage,
-        'awaiting_tool_output',
-        `Unexpected desktop E2E model stage: ${this.modelStage}`
-      )
       this.recordScenarioRequest('initial', modelRequest)
-      assert.equal(
-        requestContainsToolOutput(body, 'wework-e2e-view-image'),
-        true,
-        'The real Codex request did not report the view_image tool output to the model service'
-      )
-      this.toolOutput = JSON.stringify(body.input)
-      this.modelStage = 'complete'
-      // Let the workbench commit the completed tool items before the final response
-      // triggers a transcript refresh. Real providers have network latency here; an
-      // immediate mock response can otherwise race the live image-view rendering.
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-      if (this.initialCompletionHeld) {
+      if (this.modelStage === 'awaiting_tool_output') {
+        assert.equal(
+          requestContainsToolOutput(body, 'wework-e2e-view-image'),
+          true,
+          'The real Codex request did not report the view_image tool output to the model service'
+        )
+        this.toolOutput = JSON.stringify(body.input)
+        // Let the workbench commit the completed tool items before the final response
+        // triggers a transcript refresh. Real providers have network latency here; an
+        // immediate mock response can otherwise race the live image-view rendering.
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+        if (this.initialCompletionHeld) {
+          this.modelStage = 'awaiting_guidance'
+          response.writeHead(200, {
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+            'Content-Type': 'text/event-stream; charset=utf-8',
+          })
+          response.write(createSse([responseCreated(responseId)]))
+          await this.initialGuidanceArrival
+          response.end()
+          return
+        }
+        this.modelStage = 'complete'
+        const responseEvents = [
+          responseCreated(responseId),
+          encryptedReasoningItem('wework-e2e-encrypted-reasoning', FORK_ENCRYPTED_CONTENT),
+          assistantMessage(COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ]
+        this.writeSse(response, responseEvents)
+        return
+      }
+      if (this.modelStage === 'awaiting_guidance') {
+        assert.ok(
+          JSON.stringify(body).includes(BACKGROUND_GUIDANCE),
+          'The guided Codex request did not contain the queued guidance'
+        )
+        this.modelStage = 'complete'
+        this.releaseInitialGuidanceArrival()
         const text = `${BACKGROUND_GUIDANCE_CONTINUATION}\n\n${COMPLETION_TEXT}`
         const stream = streamingTextEvents(responseId, text)
         response.writeHead(200, {
@@ -2852,14 +2951,7 @@ class DesktopE2EServer {
         )
         return
       }
-      const responseEvents = [
-        responseCreated(responseId),
-        encryptedReasoningItem('wework-e2e-encrypted-reasoning', FORK_ENCRYPTED_CONTENT),
-        assistantMessage(COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ]
-      this.writeSse(response, responseEvents)
-      return
+      assert.fail(`Unexpected desktop E2E model stage: ${this.modelStage}`)
     }
 
     if (this.scenario === 'guidance_scroll') {
@@ -2896,24 +2988,40 @@ class DesktopE2EServer {
         return
       }
 
-      assert.equal(
-        this.guidanceScrollStage,
-        'awaiting_tool_output',
-        `Unexpected guidance scroll model stage: ${this.guidanceScrollStage}`
-      )
-      assert.equal(
-        requestContainsToolOutput(body),
-        true,
-        'The guided turn did not return its tool output'
-      )
-      this.guidanceScrollStage = 'complete'
-      await this.guidanceScrollCompletionRelease
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(GUIDANCE_SCROLL_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
+      if (this.guidanceScrollStage === 'awaiting_tool_output') {
+        assert.equal(
+          requestContainsToolOutput(body),
+          true,
+          'The active turn did not return its tool output before guidance'
+        )
+        this.guidanceScrollStage = 'awaiting_guidance'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.guidanceScrollGuidanceArrival
+        response.end()
+        return
+      }
+      if (this.guidanceScrollStage === 'awaiting_guidance') {
+        assert.ok(
+          JSON.stringify(body).includes(GUIDANCE_SCROLL_MESSAGE),
+          'The active turn did not apply the queued guidance'
+        )
+        this.guidanceScrollStage = 'complete'
+        this.releaseGuidanceScrollGuidanceArrival()
+        await this.guidanceScrollCompletionRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GUIDANCE_SCROLL_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.fail(`Unexpected guidance scroll model stage: ${this.guidanceScrollStage}`)
     }
 
     if (this.scenario === 'view_image' && this.viewImageStage === 'initial') {
@@ -3750,6 +3858,75 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'request_user_input_async') {
+      this.recordScenarioRequest('request_user_input_async', modelRequest)
+      const serializedBody = JSON.stringify(body)
+      // Two variants share this scenario: a question answered after the turn
+      // settles, and one answered while the model is still working.
+      const keepsRunning = serializedBody.includes(REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT)
+      const questionText = keepsRunning
+        ? REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION
+        : REQUEST_USER_INPUT_ASYNC_QUESTION
+      const callId = keepsRunning
+        ? REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID
+        : REQUEST_USER_INPUT_ASYNC_CALL_ID
+      const toolOutput = toolOutputText(body, callId)
+      if (toolOutput !== null) {
+        // The non-blocking tool acknowledges immediately and never carries the
+        // answer, so the chosen option must arrive as the next user message.
+        assert.deepEqual(
+          JSON.parse(toolOutput),
+          { accepted: true },
+          'The async request-user-input tool must acknowledge without an answer'
+        )
+        if (keepsRunning) {
+          // Keep the turn running until the test has answered the live question,
+          // then let the model finish with its completion message.
+          await this.asyncRequestUserInputKeepsRunningRelease
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT),
+            responseCompleted(responseId),
+          ])
+          return
+        }
+        const answered = inputUserMessageTexts(body).some(text =>
+          text.includes(REQUEST_USER_INPUT_ASYNC_ANSWER)
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(
+            answered
+              ? REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT
+              : REQUEST_USER_INPUT_ASYNC_WAITING_TEXT
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.ok(
+        keepsRunning || serializedBody.includes(REQUEST_USER_INPUT_ASYNC_PROMPT),
+        'The real Codex request did not contain the async request-user-input prompt'
+      )
+      const tool = selectTool(body, 'request_user_input_async', {
+        questions: [
+          {
+            title: questionText,
+            options: [
+              'Minimal',
+              keepsRunning ? REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER : REQUEST_USER_INPUT_ASYNC_ANSWER,
+            ],
+          },
+        ],
+      })
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(callId, tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
       const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
@@ -4382,12 +4559,14 @@ class DesktopE2EServer {
       this.recordScenarioRequest('side_chat_guidance', modelRequest)
       const requestText = JSON.stringify(body)
       const requestCount = this.scenarioRequests.get('side_chat_guidance')?.length ?? 0
-      if (requestCount === 1) {
+      if (this.sideChatGuidanceStage === 'initial') {
+        assert.equal(requestCount, 1, 'The initial side-chat guidance turn was duplicated')
         assert.ok(
           requestText.includes(SIDE_CHAT_GUIDANCE_INITIAL),
           'The initial side-chat guidance request lost its prompt'
         )
         const tool = selectShellTool(body, this.workspacePath)
+        this.sideChatGuidanceStage = 'awaiting_tool_output'
         await this.sideChatGuidanceRelease
         this.writeSse(response, [
           responseCreated(responseId),
@@ -4396,8 +4575,47 @@ class DesktopE2EServer {
         ])
         return
       }
-      if (requestCount >= 3 && requestCount <= 5) {
-        const queueIndex = requestCount - 2
+      if (this.sideChatGuidanceStage === 'awaiting_tool_output') {
+        assert.equal(requestCount, 2, 'The side-chat tool output started an unexpected extra turn')
+        assert.equal(
+          requestContainsToolOutput(body, 'wework-e2e-side-chat-guidance-tool'),
+          true,
+          'The side-chat guidance turn did not return its tool output'
+        )
+        this.sideChatGuidanceStage = 'awaiting_guidance'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.sideChatGuidanceArrival
+        response.end()
+        return
+      }
+      if (this.sideChatGuidanceStage === 'awaiting_guidance') {
+        assert.equal(requestCount, 3, 'Side-chat guidance started an unexpected extra turn')
+        assert.ok(
+          requestText.includes(SIDE_CHAT_GUIDANCE_FOLLOW_UP),
+          'The side-chat follow-up was not delivered as guidance to the active turn'
+        )
+        this.sideChatGuidanceStage = 'draining_queue'
+        this.resolveSideChatGuidanceArrival()
+        await this.sideChatGuidanceCompletionRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(SIDE_CHAT_GUIDANCE_COMPLETION),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (
+        this.sideChatGuidanceStage === 'draining_queue' &&
+        requestCount >= 4 &&
+        requestCount <= 6
+      ) {
+        const queueIndex = requestCount - 3
         const expectedPrompt =
           queueIndex === 1
             ? SIDE_CHAT_QUEUE_FOLLOW_UP
@@ -4418,22 +4636,9 @@ class DesktopE2EServer {
         ])
         return
       }
-      assert.equal(requestCount, 2, 'Side-chat guidance started an unexpected extra turn')
-      assert.equal(
-        requestContainsToolOutput(body, 'wework-e2e-side-chat-guidance-tool'),
-        true,
-        'The side-chat guidance turn did not return its tool output'
+      assert.fail(
+        `Unexpected side-chat guidance stage ${this.sideChatGuidanceStage} at request ${requestCount}`
       )
-      assert.ok(
-        requestText.includes(SIDE_CHAT_GUIDANCE_FOLLOW_UP),
-        'The side-chat follow-up was not delivered as guidance to the active turn'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(SIDE_CHAT_GUIDANCE_COMPLETION),
-        responseCompleted(responseId),
-      ])
-      return
     }
 
     if (this.scenario === 'cancellation') {
@@ -5891,4 +6096,4 @@ class DesktopE2EServer {
   }
 }
 
-export { DesktopE2EServer }
+export { DesktopE2EServer, inputUserMessageTexts }

@@ -21,6 +21,8 @@ use crate::{
 
 type Aes256CbcDecryptor = Decryptor<Aes256>;
 
+mod askpass;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitCredentials {
     pub username: String,
@@ -100,6 +102,7 @@ pub fn task_git_auth_environment(
     request: &ExecutionRequest,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut values = task_git_metadata_environment(request);
+    values.extend(crate::services::git_credentials::environment());
     let Some(git_domain) = request_git_domain(request) else {
         return Ok(values);
     };
@@ -109,11 +112,7 @@ pub fn task_git_auth_environment(
         }
         return Ok(values);
     };
-    values.extend(write_task_git_auth_environment(
-        request,
-        &git_domain,
-        &credentials,
-    )?);
+    values.extend(askpass::environment(&git_domain, &credentials)?);
     Ok(values)
 }
 
@@ -208,6 +207,9 @@ fn raw_git_token_for_domain(
     request: &ExecutionRequest,
 ) -> Option<(String, &'static str)> {
     if uses_device_local_git_credentials(request) {
+        if !crate::services::git_credentials::environment().is_empty() {
+            return None;
+        }
         return token_file(git_domain, request).map(|token| (token, "home_ssh_domain_file"));
     }
     let request_scoped_encrypted =
@@ -615,73 +617,6 @@ fn decrypt_sensitive_data(token: &str) -> Option<String> {
     String::from_utf8(decrypted.to_vec()).ok()
 }
 
-fn write_task_git_auth_environment(
-    request: &ExecutionRequest,
-    git_domain: &str,
-    credentials: &GitCredentials,
-) -> Result<BTreeMap<String, String>, String> {
-    let home = home_dir().ok_or_else(|| "home directory is unavailable".to_owned())?;
-    let task_key = format!(
-        "{}-{}",
-        safe_path_component(&request.task_id),
-        safe_path_component(&request.subtask_id)
-    );
-    let auth_dir = home.join(".wegent").join("git-auth").join(task_key);
-    fs::create_dir_all(&auth_dir).map_err(|error| {
-        format!(
-            "failed to create task Git authentication directory {}: {error}",
-            auth_dir.display()
-        )
-    })?;
-    set_mode(&auth_dir, 0o700)?;
-
-    let username_file = auth_dir.join("username");
-    let token_file = auth_dir.join("token");
-    let askpass_file = auth_dir.join("askpass.sh");
-    write_private_file(&username_file, credentials.username.as_bytes(), 0o600)?;
-    write_private_file(&token_file, credentials.token.as_bytes(), 0o600)?;
-    write_private_file(
-        &askpass_file,
-        b"#!/bin/sh\ncase \"$1\" in\n  *sername*) exec cat \"$WEGENT_GIT_USERNAME_FILE\" ;;\n  *) exec cat \"$WEGENT_GIT_TOKEN_FILE\" ;;\nesac\n",
-        0o700,
-    )?;
-
-    let mut values = BTreeMap::from([
-        ("GIT_ASKPASS".to_owned(), askpass_file.display().to_string()),
-        ("GIT_ASKPASS_REQUIRE".to_owned(), "force".to_owned()),
-        ("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned()),
-        (
-            "WEGENT_GIT_USERNAME_FILE".to_owned(),
-            username_file.display().to_string(),
-        ),
-        (
-            "WEGENT_GIT_TOKEN_FILE".to_owned(),
-            token_file.display().to_string(),
-        ),
-    ]);
-    if git_domain.to_ascii_lowercase().contains("github") {
-        values.insert("GH_HOST".to_owned(), git_domain.to_owned());
-        values.insert("GH_TOKEN".to_owned(), credentials.token.clone());
-    } else {
-        values.insert("GITLAB_HOST".to_owned(), git_domain.to_owned());
-        values.insert("GITLAB_TOKEN".to_owned(), credentials.token.clone());
-    }
-    Ok(values)
-}
-
-fn safe_path_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 fn write_private_file(path: &std::path::Path, contents: &[u8], mode: u32) -> Result<(), String> {
     let mut options = fs::OpenOptions::new();
     options.create(true).truncate(true).write(true);
@@ -966,9 +901,38 @@ mod tests {
         let _ = fs::remove_dir_all(temp_home);
     }
 
+    #[test]
+    fn device_store_does_not_read_legacy_ssh_token_files() {
+        let home = tempfile::tempdir().unwrap();
+        let workbench = home.path().join("development/workbench");
+        let _env = EnvGuard::set_many_and_unset(
+            &[
+                ("HOME", home.path().to_str().unwrap()),
+                ("WEGENT_WORKBENCH_HOME", workbench.to_str().unwrap()),
+                ("DEVICE_TYPE", "remote"),
+            ],
+            &[],
+        );
+        fs::create_dir_all(home.path().join(".ssh")).unwrap();
+        let legacy = home.path().join(".ssh/github.com");
+        fs::write(&legacy, "synthetic-old-secret").unwrap();
+        let request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([
+                ("git_domain".to_owned(), json!("github.com")),
+                ("git_auth_transport".to_owned(), json!(DEVICE_LOCAL)),
+            ]),
+            ..ExecutionRequest::default()
+        };
+        let values = task_git_auth_environment(&request).unwrap();
+        assert!(!values.contains_key("GH_TOKEN"));
+        assert!(!values.contains_key("GIT_ASKPASS"));
+        assert!(PathBuf::from(&values["GIT_CONFIG_GLOBAL"]).starts_with(workbench));
+        assert_eq!(fs::read_to_string(legacy).unwrap(), "synthetic-old-secret");
+    }
+
     #[cfg(unix)]
     #[test]
-    fn task_git_auth_environment_uses_private_askpass_files() {
+    fn task_git_auth_environment_does_not_persist_credentials() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp_home =
@@ -976,6 +940,7 @@ mod tests {
         fs::create_dir_all(&temp_home).unwrap();
         let _env = EnvGuard::set_many(&[
             ("HOME", temp_home.to_str().unwrap()),
+            ("WEGENT_WORKBENCH_HOME", temp_home.to_str().unwrap()),
             ("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012"),
             ("GIT_TOKEN_AES_IV", "1234567890123456"),
         ]);
@@ -1000,26 +965,29 @@ mod tests {
         };
 
         let values = task_git_auth_environment(&request).unwrap();
-        let token_path = PathBuf::from(values.get("WEGENT_GIT_TOKEN_FILE").unwrap());
         let askpass_path = PathBuf::from(values.get("GIT_ASKPASS").unwrap());
 
-        assert_eq!(fs::read_to_string(&token_path).unwrap(), "ghp_test_token");
+        assert!(!values.contains_key("WEGENT_GIT_TOKEN_FILE"));
+        assert!(!values.contains_key("WEGENT_GIT_USERNAME_FILE"));
         assert_eq!(
             values.get("GH_TOKEN").map(String::as_str),
             Some("ghp_test_token")
         );
         assert_eq!(
-            token_path.metadata().unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        assert_eq!(
             askpass_path.metadata().unwrap().permissions().mode() & 0o777,
             0o700
         );
-        assert!(token_path
-            .parent()
+        assert!(askpass_path.ends_with("runtime/git-auth/askpass.sh"));
+        assert!(!temp_home.join(".wegent/git-auth/task_10-20").exists());
+        assert!(!fs::read_to_string(&askpass_path)
             .unwrap()
-            .ends_with("git-auth/task_10-20"));
+            .contains("ghp_test_token"));
+        let mut next = request.clone();
+        next.subtask_id = "21".into();
+        assert_eq!(
+            task_git_auth_environment(&next).unwrap().get("GIT_ASKPASS"),
+            values.get("GIT_ASKPASS")
+        );
         let _ = fs::remove_dir_all(temp_home);
     }
 

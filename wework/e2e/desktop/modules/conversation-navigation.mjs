@@ -430,19 +430,37 @@ async function verifyBackgroundGuidanceNavigation({
     await control.command('getElementCount', '[data-testid="message-user"]')
   )
 
+  control.holdInitialCompletionResponse()
+  control.releaseInitialToolExecution()
+  await withTimeout(
+    control.awaitScenarioRequestCount('initial', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The background task did not report its tool output before guidance'
+  )
+  await withTimeout(
+    (async () => {
+      while (control.modelStage !== 'awaiting_guidance') {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+      }
+    })(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The background task did not remain active after its tool output'
+  )
+
   await control.command('fill', composerSelector, { value: BACKGROUND_GUIDANCE })
   await control.command('click', '[data-testid="send-mode-menu-button"]')
   await control.command('click', '[data-testid="guide-current-turn-option"]')
-  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
-    text: BACKGROUND_GUIDANCE,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const guidanceStatus = await control.command(
-    'getText',
-    '[data-testid="conversation-queue-panel"]'
+  await withTimeout(
+    control.awaitScenarioRequestCount('initial', 3),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The guided background task did not continue after guidance was applied'
   )
-  assert.match(guidanceStatus, /引导中|Guiding/, 'The guidance did not enter its sending state')
-  await captureVerificationScreenshot(control, 'guidance-background-01-sending.png')
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    '',
+    'Applying background guidance did not clear the source composer'
+  )
+  await captureVerificationScreenshot(control, 'guidance-background-01-submitted.png')
 
   await ensureTaskRowVisible(control, otherTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${otherTaskRowTestId}"]`, {
@@ -460,13 +478,6 @@ async function verifyBackgroundGuidanceNavigation({
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
   await captureVerificationScreenshot(control, 'guidance-background-02-other-task.png')
 
-  control.holdInitialCompletionResponse()
-  control.releaseInitialToolExecution()
-  await withTimeout(
-    control.awaitScenarioRequestCount('initial', 2),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The guided background task did not continue after its tool completed'
-  )
   await waitForSnapshot(
     control,
     snapshot =>
@@ -692,19 +703,34 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
   })
   await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.2' })
 
-  await control.command('fill', composerSelector, { value: GUIDANCE_SCROLL_MESSAGE })
-  await control.command('click', '[data-testid="send-mode-menu-button"]')
-  await control.command('click', '[data-testid="guide-current-turn-option"]')
-  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
-    text: GUIDANCE_SCROLL_MESSAGE,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-
   control.releaseGuidanceScrollToolExecution()
   await withTimeout(
     control.awaitScenarioRequestCount('guidance_scroll', 3),
     DEFAULT_STEP_TIMEOUT_MS,
-    'The guided turn did not continue after its tool completed'
+    'The active turn did not report its tool output before guidance'
+  )
+  await withTimeout(
+    (async () => {
+      while (control.guidanceScrollStage !== 'awaiting_guidance') {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+      }
+    })(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The active turn did not remain open after reporting its tool output'
+  )
+
+  await control.command('fill', composerSelector, { value: GUIDANCE_SCROLL_MESSAGE })
+  await control.command('click', '[data-testid="send-mode-menu-button"]')
+  await control.command('click', '[data-testid="guide-current-turn-option"]')
+  await withTimeout(
+    control.awaitScenarioRequestCount('guidance_scroll', 4),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The guided turn did not continue after guidance was applied'
+  )
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    '',
+    'Applying foreground guidance did not clear the composer'
   )
   await control.command('waitFor', '[data-testid="message-user"]', {
     text: GUIDANCE_SCROLL_MESSAGE,
@@ -771,6 +797,7 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: GUIDANCE_SCROLL_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+
   if (returnTaskRowTestId) {
     await ensureTaskRowVisible(control, returnTaskRowTestId)
     await control.command('clickWhenEnabled', `[data-testid="${returnTaskRowTestId}"]`, {

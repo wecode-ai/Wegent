@@ -1450,12 +1450,25 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
 
   const connectorAuthGate = useLocalConnectorAuthGate({
+    active: paneActive && paneVisible && workbenchVisible,
+    onError: message => paneSession.setError(message),
     messages: paneSession.messages,
     onResumeSend: async input => {
       await sendPaneInputWithContext(input)
     },
     onRetryMessage: message => paneSession.retryFailedMessage(message),
   })
+
+  const connectorAuthCard = connectorAuthGate.pending ? (
+    <ConnectorAuthCard
+      target={connectorAuthGate.pending.target}
+      title={connectorAuthGate.pending.title}
+      onSuccess={() => {
+        void connectorAuthGate.completePending()
+      }}
+      onCancel={connectorAuthGate.clearPending}
+    />
+  ) : null
 
   const submitPaneInput = useCallback(
     async (
@@ -5251,6 +5264,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
                                 </button>
                               )}
+                              {connectorAuthCard}
                               {issueExecutionReadOnly ? (
                                 <div
                                   data-testid="project-execution-reply-in-issue"
@@ -5275,15 +5289,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     {t('workbench.back_to_work_item', '返回 Issue')}
                                   </button>
                                 </div>
-                              ) : connectorAuthGate.pending ? (
-                                <ConnectorAuthCard
-                                  target={connectorAuthGate.pending.target}
-                                  title={connectorAuthGate.pending.title}
-                                  onSuccess={() => {
-                                    void connectorAuthGate.completePending()
-                                  }}
-                                  onCancel={connectorAuthGate.clearPending}
-                                />
                               ) : !displayedRightPanelExpanded ? (
                                 <>
                                   {showConversationDeviceBanner ? (
@@ -5554,6 +5559,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 </div>
               ) : displayedRightPanelExpanded ? null : (
                 <DesktopEmptyTaskLauncher
+                  connectorAuthCard={connectorAuthCard}
                   compact={presentation === 'popout'}
                   projectName={currentProject?.name}
                   onOpenProjectSelector={anchorElement => {

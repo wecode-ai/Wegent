@@ -8,6 +8,18 @@ A Skill gives AI task-specific instructions and resources. A plugin can package 
 
 Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
+## Conversation picker and app authorization
+
+The marketplace, plugin manager, and conversation picker share the installed inventory for the current account and device. The picker retains all installed, enabled plugins; scroll or search when the visible list has a fixed height. Plugins awaiting authorization remain selectable. Disabled plugins stay in the management list but are excluded from new conversation pickers.
+
+Manage the matching app under **App authorizations** on the plugin detail page; authorization for one app cannot authorize another. GitHub uses GitHub CLI (`gh`) on the execution device: Wework checks existing authentication first, offers logout when connected, and starts GitHub login only when needed. That device's `gh` manages the credentials, without authorizing ChatGPT. Environment-provided credentials cannot be removed by logout; remove them from the execution device's configuration instead.
+
+Other Codex apps use their own provided authorization entry. Complete that app's authorization in the browser, then return to Wework and choose **Authorization completed, verify connection**. Opening a browser does not establish a connection. A blocked, timed-out, or unavailable app catalog produces a short message and leaves the app disconnected, rather than displaying a raw HTML error page as an authorization result.
+
+Plugins supporting local QR login can show a login card before task submission. Cancellation or login failure preserves the draft. Switching to a new conversation must not submit the previous draft automatically, and a plugin's pending authorization must not block ordinary text messages.
+
+For cloud-managed plugins, uninstall completes when the account removal is committed; local cleanup synchronizes asynchronously. The backend retains pending cleanup for disconnected devices or failed cleanup and resumes it on later connections, rather than keeping the marketplace button waiting for a device response. Update the backend, desktop, and executor together for these behaviors; no new database migration is required.
+
 ## Refresh and repair installation state
 
 If the installed strip disagrees with marketplace cards, or a local installation remains after uninstalling, click **Refresh** at the top right of the Plugins page. Wework first refreshes plugin data, then asynchronously checks cloud-managed plugins for the current account and device and reports the result.

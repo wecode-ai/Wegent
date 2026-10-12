@@ -268,27 +268,11 @@ fn workspace_roots() -> Vec<PathBuf> {
 }
 
 fn default_local_workspace_root() -> PathBuf {
-    env_path("WEGENT_EXECUTOR_HOME")
-        .unwrap_or_else(|| {
-            home_dir()
-                .unwrap_or_else(|| env::temp_dir().join("wegent-executor"))
-                .join(".wegent-executor")
-        })
-        .join("workspace")
+    crate::workspace_paths::workspace_root()
 }
 
 fn executor_home_session_root() -> PathBuf {
-    if let Ok(value) = env::var("WEGENT_EXECUTOR_HOME") {
-        let value = value.trim();
-        if !value.is_empty() {
-            return PathBuf::from(value).join("sessions");
-        }
-    }
-
-    home_dir()
-        .unwrap_or_else(|| env::temp_dir().join("wegent-executor"))
-        .join(".wegent-executor")
-        .join("sessions")
+    crate::config::paths::executor_home().join("sessions")
 }
 
 fn env_path(key: &str) -> Option<PathBuf> {
@@ -313,10 +297,6 @@ fn dedup_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
         }
     }
     deduped
-}
-
-fn home_dir() -> Option<PathBuf> {
-    dirs::home_dir()
 }
 
 fn bot_id(bot: &Value) -> Option<String> {

@@ -84,6 +84,7 @@ class LoopNode(Base):
     source = Column(String(20), nullable=True)
     status = Column(String(32), nullable=True, index=True)
     priority = Column(String(20), nullable=True)
+    start_at = Column(DateTime, nullable=True)
     due_at = Column(DateTime, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     current_delivery_id = Column(String(64), nullable=True)
@@ -409,6 +410,7 @@ _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "source": "",
     "status": "",
     "priority": "",
+    "start_at": _MYSQL_UNSET_DATETIME,
     "due_at": _MYSQL_UNSET_DATETIME,
     "current_delivery_id": "",
     "local_project_id": 0,

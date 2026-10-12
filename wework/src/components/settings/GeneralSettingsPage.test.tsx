@@ -30,6 +30,7 @@ const defaultPreferences: AppPreferences = {
   trayRunningEnabled: true,
   trayUsageEnabled: true,
   trayWegentUsageEnabled: true,
+  localCodexSubscriptionEnabled: true,
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
@@ -98,6 +99,7 @@ vi.mock('@/desktop/appPreferences', () => ({
     trayRunningEnabled: true,
     trayUsageEnabled: true,
     trayWegentUsageEnabled: true,
+    localCodexSubscriptionEnabled: true,
     browserExternalLinkTarget: 'system',
     browserLocalLinkTarget: 'wework',
     browserDownloadDirectory: null,
@@ -761,6 +763,23 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayUsageEnabled: false })
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayWegentUsageEnabled: false })
     })
+  })
+
+  test('hides the Codex tray quota toggle when the local Codex subscription is off', async () => {
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      localCodexSubscriptionEnabled: false,
+    })
+
+    render(<GeneralSettingsPage />)
+
+    expect(
+      await screen.findByText('workbench.general_settings_tray_display_content')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('general-tray-unread-toggle')).toBeInTheDocument()
+    expect(screen.getByTestId('general-tray-running-toggle')).toBeInTheDocument()
+    expect(screen.queryByTestId('general-tray-usage-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByText('workbench.general_settings_tray_usage')).not.toBeInTheDocument()
   })
 
   test('imports compatible content from Codex and Claude Code', async () => {

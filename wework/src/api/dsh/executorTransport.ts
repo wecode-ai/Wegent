@@ -1,9 +1,19 @@
 import { createRequestId } from '@/lib/request-id'
+import { logModelLoading } from '@/lib/model-loading-diagnostics'
 
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
 const executorEventReconnectors = new Set<() => void>()
 const INITIAL_RECONNECT_DELAY_MS = 500
 const MAX_RECONNECT_DELAY_MS = 10_000
+const modelDiagnosticsDeadline = performance.now() + 30_000
+const modelDiagnosticMethods = new Set([
+  'runtime.tasks.list',
+  'runtime.codex.runtime_config.update',
+  'runtime.codex.ensure_started',
+  'executor.plugins.initialize_bundled_marketplace',
+  'runtime.codex.models.list',
+])
+const modelDiagnosticCounts = new Map<string, number>()
 
 export interface DshExecutorDescription {
   protocol_version: number
@@ -84,12 +94,27 @@ export async function requestDshExecutor<T>(
 ): Promise<T> {
   const requestId = createRequestId('wework-local')
   const startedAt = Date.now()
+  const diagnosticCount = modelDiagnosticCounts.get(method) ?? 0
+  const diagnose =
+    performance.now() < modelDiagnosticsDeadline &&
+    modelDiagnosticMethods.has(method) &&
+    diagnosticCount < 3
+  if (diagnose) modelDiagnosticCounts.set(method, diagnosticCount + 1)
+  const diagnosticStart = performance.now()
+  const diagnostic = (stage: string, details: Record<string, number | boolean> = {}) => {
+    if (!diagnose) return
+    logModelLoading(requestId, `rpc.${method}.${stage}`, {
+      elapsedMs: Math.round(performance.now() - diagnosticStart),
+      ...details,
+    })
+  }
   console.debug('[Wework] Executor RPC request started', {
     request_id: requestId,
     method,
   })
   let response: Response
   try {
+    diagnostic('fetch_started')
     response = await fetch(`${EXECUTOR_BASE_PATH}/rpc`, {
       method: 'POST',
       headers: {
@@ -100,6 +125,7 @@ export async function requestDshExecutor<T>(
       body: JSON.stringify({ id: requestId, method, params }),
     })
   } catch (error) {
+    diagnostic('fetch_failed')
     console.warn('[Wework] Executor RPC transport failed', {
       request_id: requestId,
       method,
@@ -108,6 +134,7 @@ export async function requestDshExecutor<T>(
     })
     throw error
   }
+  diagnostic('headers_received', { status: response.status })
   console.debug('[Wework] Executor RPC response received', {
     request_id: requestId,
     method,
@@ -119,7 +146,9 @@ export async function requestDshExecutor<T>(
     body = (await response.json()) as
       | { ok: true; result: T }
       | ({ ok?: false } & DshExecutorErrorBody)
+    diagnostic('body_parsed', { ok: response.ok && body.ok === true })
   } catch (error) {
+    diagnostic('body_parse_failed')
     console.warn('[Wework] Executor RPC response parsing failed', {
       request_id: requestId,
       method,

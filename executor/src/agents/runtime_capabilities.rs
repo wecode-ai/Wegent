@@ -5,7 +5,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     env, fs,
-    io::Cursor,
     path::{Component, Path, PathBuf},
     time::Duration,
 };
@@ -21,9 +20,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{
         backend_url::{backend_http_client, is_local_mode, request_backend_url_or_default},
-        claude_config_dir,
-        claude_options::merge_claude_mcp_servers,
-        claude_task_dir, extract_claude_options,
+        claude_config_dir, claude_task_dir, extract_claude_options,
         skill_download::skill_download_concurrency,
     },
     attachments::{
@@ -40,8 +37,18 @@ use crate::{
 
 use super::claude_code::has_task_skill_names;
 
+mod claude_mcp;
 mod codex;
+mod codex_mcp;
+mod home_skills;
+mod skill_archive;
 pub use codex::prepare_codex_runtime;
+pub(crate) use codex::prepare_codex_runtime_locked;
+use home_skills::HomeSkillsStage;
+pub(crate) mod mcp_environment;
+#[cfg(test)]
+use crate::services::workbench::archive_hash;
+use skill_archive::{expected_hash, publish_archive};
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
@@ -365,7 +372,7 @@ pub async fn prepare_claude_runtime(
     write_claude_user_config(&config_dir);
     install_deferred_mcp_hook(&config_dir);
     prepare_project_custom_instructions(&task_dir);
-    setup_coordinate_subagents(request, &task_dir);
+    setup_coordinate_subagents(request, &config_dir)?;
     let skills_dir = spec
         .envs()
         .get("SKILLS_DIR")
@@ -389,7 +396,11 @@ pub async fn prepare_claude_runtime(
     }
     deploy_request_skills(request, &skills_dir).await?;
 
-    let global_mcps = load_global_mcp_records();
+    let global_mcps = if super::instance_home::request_home(request).is_some() {
+        BTreeMap::new()
+    } else {
+        load_global_mcp_records()?
+    };
     log_runtime_event(
         request,
         "claude mcp input summary",
@@ -408,40 +419,15 @@ pub async fn prepare_claude_runtime(
     if managed_wework_mcp_required(request) {
         crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     }
-    let claude_options = extract_claude_options(request, &global_mcps);
-    let runtime_dir = task_dir.join(".wework/runtime");
-    let cache_path = runtime_dir.join(format!(
-        "claude-mcp-cache-{}.json",
-        safe_mcp_file_component(&request.task_id)
-    ));
-    let mut mcp_servers = merge_claude_mcp_servers(&cache_path, claude_options.mcp_servers)?;
-    if !mcp_servers.is_empty() {
-        write_json_file(&cache_path, &json!({"mcpServers": mcp_servers}))?;
-    }
-    // Executor-managed MCP credentials are resolved for each turn, not cached.
-    inject_managed_wework_mcps(request, &mut mcp_servers)?;
-    if !mcp_servers.is_empty() {
-        let mcp_config_path = runtime_dir.join(claude_mcp_config_file_name(request));
-        write_json_file(&mcp_config_path, &json!({"mcpServers": mcp_servers}))?;
-        spec = spec
-            .arg("--mcp-config")
-            .arg(mcp_config_path.display().to_string())
-            .env(
-                "WEGENT_MCP_CONFIG_PATH",
-                mcp_config_path.display().to_string(),
-            );
-        log_runtime_event(
-            request,
-            "claude mcp config prepared",
-            vec![
-                ("mcp_config", mcp_config_path.display().to_string()),
-                ("bot_mcp_count", bot_mcp_count(request).to_string()),
-                ("top_level_mcp_count", request.mcp_servers.len().to_string()),
-                ("global_mcp_count", global_mcps.len().to_string()),
-                ("mcp_headers", mcp_server_headers_summary(&mcp_servers)),
-            ],
-        );
-    }
+    spec = claude_mcp::prepare(&config_dir, request, &global_mcps, spec)?;
+    log_runtime_event(
+        request,
+        "claude mcp config prepared",
+        vec![(
+            "mcp_config",
+            config_dir.join("mcp.json").display().to_string(),
+        )],
+    );
 
     Ok(spec)
 }
@@ -500,8 +486,16 @@ fn inject_managed_wework_mcps(
     Ok(())
 }
 
-pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+pub fn request_mcp_config_overrides(
+    request: &ExecutionRequest,
+    thread_config: &mut Map<String, Value>,
+) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
+    if let Some(home) = super::instance_home::request_home(request) {
+        codex_mcp::prepare(&home, request, thread_config)?;
+        return Ok((Vec::new(), BTreeMap::new()));
+    }
     let mut overrides = Vec::new();
+    let mut environment = BTreeMap::new();
     let mcp_servers = collect_request_mcp_servers(request);
     let server_names = mcp_servers.keys().cloned().collect::<Vec<_>>().join(",");
     let stdio_count = mcp_servers
@@ -512,7 +506,32 @@ pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
         })
         .count();
     for (name, server) in &mcp_servers {
-        overrides.extend(codex_mcp_server_overrides(name, server));
+        let mut server = server.clone();
+        mcp_environment::append_stdio_environment(name, &server, thread_config)?;
+        if let Some(object) = server.as_object_mut() {
+            let native_headers = object.remove("http_headers");
+            if let Some(headers) = object.remove("headers").or(native_headers) {
+                if let Some(headers) = headers.as_object() {
+                    for (header, value) in headers {
+                        let Some(value) = value.as_str() else {
+                            continue;
+                        };
+                        use sha2::{Digest, Sha256};
+                        let variable = format!(
+                            "WEGENT_MCP_HEADER_{:x}",
+                            Sha256::digest(format!("{name}:{header}").as_bytes())
+                        );
+                        environment.insert(variable.clone(), value.to_owned());
+                        overrides.push(format!(
+                            "{}={}",
+                            toml_key_path(&["mcp_servers", name, "env_http_headers", header]),
+                            toml_value(&variable)
+                        ));
+                    }
+                }
+            }
+        }
+        overrides.extend(codex_mcp_server_overrides(name, &server));
     }
     let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.extend([
@@ -538,7 +557,7 @@ pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
         ),
     ]);
     log_executor_event("codex MCP request config compiled", &fields);
-    overrides
+    Ok((overrides, environment))
 }
 
 async fn deploy_request_skills(
@@ -552,15 +571,23 @@ async fn deploy_request_skills(
             .then_some(())
             .ok_or_else(|| "required Skills cannot be deployed without a bot".to_owned());
     };
-    let Some(plan) = build_skill_deployment_plan(
+    let Some(mut plan) = build_skill_deployment_plan(
         primary_bot,
         request,
         SkillDeploymentOptions {
-            skills_dir: skills_dir.to_path_buf(),
+            skills_dir: skills_dir.to_owned(),
             clear_cache: is_docker_mode(),
             skip_existing: false,
         },
     ) else {
+        if required_skills.is_empty() {
+            return super::instance_home::request_home(request)
+                .map(|home| {
+                    let skills = HomeSkillsStage::prepare(&home)?;
+                    skills.activate()
+                })
+                .unwrap_or(Ok(()));
+        }
         return required_skills.is_empty().then_some(()).ok_or_else(|| {
             format!(
                 "required Skills are missing from the deployment plan: {}",
@@ -568,12 +595,22 @@ async fn deploy_request_skills(
             )
         });
     };
+    let home_skills = super::instance_home::request_home(request)
+        .map(|home| HomeSkillsStage::prepare(&home))
+        .transpose()?;
+    if let Some(home_skills) = &home_skills {
+        home_skills.reuse(&plan.skills)?;
+        plan.skills_dir = home_skills.skills_dir();
+    }
 
     let api_base_url = request_api_base_url(request);
     let report = deploy_skills(&plan, &api_base_url).await?;
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
         return Err(required_skill_failure_message(&missing_required, &report));
+    }
+    if let Some(home_skills) = home_skills {
+        home_skills.activate()?;
     }
     Ok(())
 }
@@ -586,9 +623,35 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
             .then(|| json!({"success": true, "skill_count": 0, "failed_skills": []}))
             .ok_or_else(|| "required Skills cannot be deployed without a bot".to_owned());
     };
-    let skills_dir = claude_config_dir(&request, None)
-        .ok_or_else(|| "Claude config directory is unavailable".to_owned())?
-        .join("skills");
+    // Chat Shell executes skill scripts directly at the sandbox's legacy path.
+    // Other requests only prewarm packages; native Agent Homes activate them later.
+    let sandbox = request.task_type.as_deref() == Some("sandbox");
+    let root = crate::services::workbench::workbench_root()?;
+    let staging = if sandbox {
+        None
+    } else {
+        let staging_root = root.join("shared/staging");
+        fs::create_dir_all(&staging_root).map_err(|error| error.to_string())?;
+        Some(tempfile::tempdir_in(&staging_root).map_err(|error| error.to_string())?)
+    };
+    let skills_dir = match &staging {
+        Some(staging) => staging.path().join("skills"),
+        None => dirs::home_dir()
+            .ok_or_else(|| "Sandbox home directory is unavailable".to_owned())?
+            .join(".claude/skills"),
+    };
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    fields.push((
+        "mode",
+        if sandbox {
+            "sandbox_install"
+        } else {
+            "prewarm"
+        }
+        .to_owned(),
+    ));
+    fields.push(("skills_dir", skills_dir.display().to_string()));
+    log_executor_event("skill sync destination resolved", &fields);
     let Some(plan) = build_skill_deployment_plan(
         primary_bot,
         &request,
@@ -624,7 +687,7 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
         "failed_skills": report.failed_skills,
         "failed_skill_reasons": report.failed_skill_reasons,
         "required_skills": required_skills,
-        "skills_dir": plan.skills_dir,
+        "skills_dir": if sandbox { plan.skills_dir } else { root.join("shared/skills") },
     }))
 }
 
@@ -742,8 +805,11 @@ fn resolve_attachments_dir(
         .iter()
         .find_map(|attachment| attachment.subtask_id.clone())
         .unwrap_or(fallback_subtask_id);
-    if is_local_mode() {
-        let task_id = runtime_attachment_task_id(request);
+    // Runtime-work turns carry their device task identity even when the cloud
+    // device has no EXECUTOR_MODE environment override.
+    let runtime_task_id = runtime_attachment_task_id(request);
+    if runtime_task_id.is_some() || is_local_mode() {
+        let task_id = runtime_task_id.unwrap_or(&request.task_id);
         return (
             device_runtime_attachment_dir(task_id, &attachment_subtask_id),
             "device_private",
@@ -768,7 +834,7 @@ fn resolve_attachments_dir(
     (attachments_dir, storage_scope)
 }
 
-fn runtime_attachment_task_id(request: &ExecutionRequest) -> &str {
+fn runtime_attachment_task_id(request: &ExecutionRequest) -> Option<&str> {
     request
         .extra
         .get("runtimeLocalTaskId")
@@ -776,7 +842,6 @@ fn runtime_attachment_task_id(request: &ExecutionRequest) -> &str {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or(&request.task_id)
 }
 
 fn mark_attachments_failed(attachments: &[AttachmentRecord], error: &str) -> Vec<AttachmentRecord> {
@@ -1038,7 +1103,7 @@ async fn deploy_skills(
     })?;
 
     let client = backend_http_client()?;
-    let results = stream::iter(plan.skills.iter().cloned())
+    let mut results = stream::iter(plan.skills.iter().cloned())
         .map(|skill| {
             let client = &client;
             async move {
@@ -1144,6 +1209,11 @@ async fn deploy_skills(
         .collect::<Vec<_>>()
         .await;
 
+    for result in &mut results {
+        if let Some(installed) = result.installed.take() {
+            publish_downloaded_skill(&plan.skills_dir, installed)?;
+        }
+    }
     let success_count = results.iter().filter(|result| result.success).count();
     let success_skills = results
         .iter()
@@ -1164,16 +1234,6 @@ async fn deploy_skills(
                 .map(|reason| (result.skill_name.clone(), reason.clone()))
         })
         .collect::<BTreeMap<_, _>>();
-    for installed in results.into_iter().filter_map(|result| result.installed) {
-        record_installed_skill(
-            &plan.skills_dir,
-            &installed.skill_name,
-            installed.skill_id,
-            &installed.namespace,
-            installed.content_hash,
-        )?;
-    }
-
     log_executor_event(
         "skills deployed",
         &[
@@ -1269,6 +1329,7 @@ struct DownloadedSkillRecord {
     skill_id: i64,
     namespace: String,
     content_hash: Option<String>,
+    staging: tempfile::TempDir,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1307,8 +1368,16 @@ fn write_skill_manifest(
     }
     let content = serde_json::to_string_pretty(manifest)
         .map_err(|error| format!("failed to serialize skill manifest: {error}"))?;
-    fs::write(&path, content)
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+    use std::io::Write;
+    let mut staging = tempfile::NamedTempFile::new_in(skills_dir)
+        .map_err(|error| format!("failed to stage skill manifest: {error}"))?;
+    staging
+        .write_all(content.as_bytes())
+        .map_err(|error| format!("failed to write skill manifest: {error}"))?;
+    staging
+        .persist(&path)
+        .map_err(|error| format!("failed to publish {}: {error}", path.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1338,17 +1407,13 @@ fn skill_cache_miss_reason(
     if installed.skill_id != skill_ref.skill_id || installed.namespace != skill_ref.namespace {
         return Ok(Some("identity_changed".to_owned()));
     }
-    let Some(content_hash) = skill_ref.content_hash.as_deref() else {
+    let Some(content_hash) = expected_hash(skill_ref.content_hash.as_deref()) else {
         return Ok(None);
     };
-    if installed.content_hash.as_deref() == Some(content_hash) {
+    if installed.content_hash.as_deref() == Some(content_hash.as_str()) {
         return Ok(None);
     }
-    if installed.content_hash.is_some() {
-        Ok(Some("content_hash_changed".to_owned()))
-    } else {
-        Ok(Some("installed_hash_missing".to_owned()))
-    }
+    Ok(Some("content_hash_changed".to_owned()))
 }
 
 fn installed_skill_hash(skills_dir: &Path, skill_name: &str) -> Option<String> {
@@ -1366,7 +1431,7 @@ fn record_installed_skill(
     namespace: &str,
     content_hash: Option<String>,
 ) -> Result<(), String> {
-    let mut manifest = read_skill_manifest(skills_dir).unwrap_or_default();
+    let mut manifest = read_skill_manifest(skills_dir)?;
     manifest.insert(
         skill_name.to_owned(),
         InstalledSkillRecord {
@@ -1376,6 +1441,26 @@ fn record_installed_skill(
         },
     );
     write_skill_manifest(skills_dir, &manifest)
+}
+
+fn publish_downloaded_skill(
+    skills_dir: &Path,
+    installed: DownloadedSkillRecord,
+) -> Result<(), String> {
+    publish_archive(installed.staging, &installed.skill_name, skills_dir, || {
+        let target = skills_dir.join(&installed.skill_name);
+        if target.is_symlink() {
+            let source = fs::canonicalize(&target).map_err(|error| error.to_string())?;
+            crate::services::workbench::link_package(&source, &target)?;
+        }
+        record_installed_skill(
+            skills_dir,
+            &installed.skill_name,
+            installed.skill_id,
+            &installed.namespace,
+            installed.content_hash,
+        )
+    })
 }
 
 async fn download_skill(
@@ -1402,6 +1487,24 @@ async fn download_skill(
     if let Some(task_id) = &plan.task_id {
         path.push_str(&format!("&task_id={task_id}"));
     }
+    let expected = expected_hash(skill_ref.and_then(|value| value.content_hash.as_deref()));
+    let root = crate::services::workbench::workbench_root()?;
+    if let Some(hash) = &expected {
+        let digest = hash
+            .strip_prefix("sha256:")
+            .unwrap_or(hash)
+            .to_ascii_lowercase();
+        let cached = root.join("shared/skills").join(&digest);
+        if cached.exists() || cached.is_symlink() {
+            let package = crate::services::workbench::verify_published_package(
+                &root,
+                crate::services::workbench::PackageKind::Skill,
+                hash,
+            )
+            .map_err(|error| format!("Skill immutable cache integrity failure: {error}"))?;
+            return stage_shared_skill(plan, skill_name, skill_id, namespace, package);
+        }
+    }
     let local_hash = installed_skill_hash(&plan.skills_dir, skill_name);
     let download = download_skill_archive_with_retry(
         client,
@@ -1412,37 +1515,70 @@ async fn download_skill(
     )
     .await?;
     match download {
-        SkillArchiveResponse::NotModified => Ok(SkillDeploymentResult {
-            skill_name: skill_name.to_owned(),
-            success: true,
-            installed: None,
-            failure_reason: None,
-        }),
+        SkillArchiveResponse::NotModified => {
+            if !plan.skills_dir.join(skill_name).join("SKILL.md").is_file() {
+                return Err("Skill archive 304 has no installed content".to_owned());
+            }
+            Ok(SkillDeploymentResult {
+                skill_name: skill_name.to_owned(),
+                success: true,
+                installed: None,
+                failure_reason: None,
+            })
+        }
         SkillArchiveResponse::Archive {
             bytes,
             content_hash,
         } => {
-            let extracted = extract_skill_zip(skill_name, &bytes, &plan.skills_dir)?;
-            let installed = extracted.then(|| DownloadedSkillRecord {
-                skill_name: skill_name.to_owned(),
-                skill_id,
-                namespace,
-                content_hash: skill_ref
-                    .and_then(|value| value.content_hash.clone())
-                    .or(content_hash),
-            });
-            Ok(SkillDeploymentResult {
-                skill_name: skill_name.to_owned(),
-                success: extracted,
-                installed,
-                failure_reason: None,
-            })
+            let root = crate::services::workbench::workbench_root()?;
+            let package = crate::services::workbench::publish_skill_archive(
+                &root,
+                &bytes,
+                expected.as_deref().or(content_hash.as_deref()),
+            )
+            .map_err(|error| {
+                if error == "Package is missing its skill or plugin manifest" {
+                    "downloaded Skill ZIP is missing required SKILL.md".to_owned()
+                } else {
+                    error
+                }
+            })?;
+            stage_shared_skill(plan, skill_name, skill_id, namespace, package)
         }
     }
 }
 
+fn stage_shared_skill(
+    plan: &SkillDeploymentPlan,
+    skill_name: &str,
+    skill_id: i64,
+    namespace: String,
+    package: crate::services::workbench::PublishedPackage,
+) -> Result<SkillDeploymentResult, String> {
+    let staging = tempfile::tempdir_in(&plan.skills_dir).map_err(|error| error.to_string())?;
+    let staged = staging.path().join(skill_name);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&package.path, &staged).map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&package.path, &staged).map_err(|error| error.to_string())?;
+    Ok(SkillDeploymentResult {
+        skill_name: skill_name.to_owned(),
+        success: true,
+        failure_reason: None,
+        installed: Some(DownloadedSkillRecord {
+            skill_name: skill_name.to_owned(),
+            skill_id,
+            namespace,
+            content_hash: Some(package.archive_hash),
+            staging,
+        }),
+    })
+}
+
 fn safe_skill_deployment_reason(error: &str) -> String {
-    if error.starts_with("downloaded Skill ZIP is missing required SKILL.md for skill ") {
+    if error == "downloaded Skill ZIP is missing required SKILL.md"
+        || error.starts_with("downloaded Skill ZIP is missing required SKILL.md for skill ")
+    {
         return "downloaded Skill ZIP is missing required SKILL.md".to_owned();
     }
     if let Some(status) = error.strip_prefix("backend download failed with HTTP ") {
@@ -1475,6 +1611,7 @@ fn safe_skill_deployment_reason(error: &str) -> String {
     "Skill deployment failed".to_owned()
 }
 
+#[derive(Debug)]
 enum SkillArchiveResponse {
     NotModified,
     Archive {
@@ -1559,6 +1696,11 @@ async fn get_skill_archive(
             "backend download request failed".to_owned()
         }
     })?;
+    let etag = response
+        .headers()
+        .get(ETAG)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| expected_hash(Some(value)));
     if response.status() == StatusCode::NOT_MODIFIED {
         return Ok(SkillArchiveResponse::NotModified);
     }
@@ -1568,16 +1710,12 @@ async fn get_skill_archive(
             response.status()
         ));
     }
-    let content_hash = response
-        .headers()
-        .get(ETAG)
-        .and_then(|value| value.to_str().ok())
-        .map(normalize_etag_hash);
     let bytes = response
         .bytes()
         .await
         .map(|bytes| bytes.to_vec())
         .map_err(|_| "backend download body read failed".to_owned())?;
+    let content_hash = etag;
     Ok(SkillArchiveResponse::Archive {
         bytes,
         content_hash,
@@ -1587,10 +1725,6 @@ async fn get_skill_archive(
 fn quote_etag(value: &str) -> String {
     let trimmed = value.trim().trim_matches('"');
     format!("\"{trimmed}\"")
-}
-
-fn normalize_etag_hash(value: &str) -> String {
-    value.trim().trim_matches('"').to_owned()
 }
 
 pub(super) async fn resolve_skill(
@@ -1659,151 +1793,53 @@ async fn get_json(
         .map_err(|error| format!("backend response JSON parse failed: {error}"))
 }
 
-fn extract_skill_zip(skill_name: &str, content: &[u8], skills_dir: &Path) -> Result<bool, String> {
-    let cursor = Cursor::new(content);
-    let mut archive = zip::ZipArchive::new(cursor)
-        .map_err(|error| format!("invalid ZIP for skill {skill_name}: {error}"))?;
-    let strip_prefix = validate_skill_zip_entries(skill_name, &mut archive)?;
-    let skill_root = skills_dir.join(skill_name);
-    for index in 0..archive.len() {
-        let mut file = archive
-            .by_index(index)
-            .map_err(|error| format!("failed to read ZIP entry: {error}"))?;
-        let Some(enclosed) = file.enclosed_name().map(PathBuf::from) else {
-            return Err(format!("unsafe ZIP path for skill {skill_name}"));
-        };
-        if enclosed
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
-        {
-            return Err(format!("unsafe ZIP path for skill {skill_name}"));
-        }
-        if is_macos_metadata_entry(&enclosed) {
-            continue;
-        }
-        let relative = match &strip_prefix {
-            Some(prefix) => enclosed.strip_prefix(prefix).unwrap_or(&enclosed),
-            None => enclosed.as_path(),
-        };
-        if relative.as_os_str().is_empty() {
-            continue;
-        }
-        let target = skill_root.join(relative);
-        if file.name().ends_with('/') {
-            fs::create_dir_all(&target)
-                .map_err(|error| format!("failed to create skill dir: {error}"))?;
-            continue;
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("failed to create skill parent dir: {error}"))?;
-        }
-        let mut output = fs::File::create(&target).map_err(|error| {
-            format!("failed to create skill file {}: {error}", target.display())
-        })?;
-        std::io::copy(&mut file, &mut output)
-            .map_err(|error| format!("failed to extract skill file: {error}"))?;
+fn setup_coordinate_subagents(request: &ExecutionRequest, home: &Path) -> Result<(), String> {
+    let agents_dir = home.join("agents");
+    let bots = request
+        .bot
+        .as_array()
+        .filter(|_| request_mode(request).as_deref() == Some("coordinate"));
+    if bots.map_or(true, |bots| bots.len() <= 1) && !agents_dir.join(".wegent-managed").exists() {
+        return Ok(());
     }
-    Ok(skill_root.join("SKILL.md").is_file())
-}
-
-/// Validates a downloaded Skill ZIP and returns the archive root prefix to strip.
-///
-/// The archive is not required to be wrapped in a directory named after the
-/// skill: historical packages use arbitrary top-level folders. When every entry
-/// shares a single top-level directory it is remapped onto
-/// `skills_dir/{skill_name}/`; otherwise entries are kept at the archive root.
-/// Only SKILL.md presence and zip-slip safety are enforced.
-fn validate_skill_zip_entries<R: std::io::Read + std::io::Seek>(
-    skill_name: &str,
-    archive: &mut zip::ZipArchive<R>,
-) -> Result<Option<PathBuf>, String> {
-    let mut entries: Vec<PathBuf> = Vec::with_capacity(archive.len());
-    for index in 0..archive.len() {
-        let file = archive
-            .by_index(index)
-            .map_err(|error| format!("failed to read ZIP entry: {error}"))?;
-        let Some(enclosed) = file.enclosed_name() else {
-            return Err(format!("unsafe ZIP path for skill {skill_name}"));
-        };
-        if enclosed
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
-        {
-            return Err(format!("unsafe ZIP path for skill {skill_name}"));
-        }
-        if is_macos_metadata_entry(enclosed) {
-            continue;
-        }
-        entries.push(enclosed.to_path_buf());
+    if agents_dir.exists() && !agents_dir.join(".wegent-managed").is_file() {
+        return Err("Refusing to replace unmanaged native subagents".to_owned());
     }
-    let strip_prefix = skill_zip_root_prefix(&entries);
-    let has_skill_md = entries.iter().any(|entry| {
-        let relative = match &strip_prefix {
-            Some(prefix) => entry.strip_prefix(prefix).unwrap_or(entry),
-            None => entry.as_path(),
-        };
-        relative == Path::new("SKILL.md")
-    });
-    if !has_skill_md {
-        return Err(format!(
-            "downloaded Skill ZIP is missing required SKILL.md for skill {skill_name}"
-        ));
-    }
-    Ok(strip_prefix)
-}
-
-/// Returns the shared top-level directory to strip when every archive entry is
-/// wrapped in the same folder, otherwise `None` to keep entries at the root.
-fn skill_zip_root_prefix(entries: &[PathBuf]) -> Option<PathBuf> {
-    let mut root: Option<std::ffi::OsString> = None;
-    let mut has_nested = false;
-    for entry in entries {
-        let mut components = entry.components();
-        let first = match components.next() {
-            Some(Component::Normal(component)) => component.to_owned(),
-            _ => return None,
-        };
-        if components.next().is_some() {
-            has_nested = true;
-        }
-        match &root {
-            Some(existing) if existing != &first => return None,
-            Some(_) => {}
-            None => root = Some(first),
-        }
-    }
-    if !has_nested {
-        return None;
-    }
-    root.map(PathBuf::from)
-}
-
-fn is_macos_metadata_entry(path: &Path) -> bool {
-    path.components()
-        .next()
-        .is_some_and(|component| component.as_os_str() == "__MACOSX")
-}
-
-fn setup_coordinate_subagents(request: &ExecutionRequest, task_dir: &Path) {
-    if request_mode(request).as_deref() != Some("coordinate") {
-        return;
-    }
-    let Some(bots) = request.bot.as_array() else {
-        return;
-    };
-    if bots.len() <= 1 {
-        return;
-    }
-    let agents_dir = task_dir.join(".claude/agents");
-    if fs::create_dir_all(&agents_dir).is_err() {
-        return;
-    }
-    for bot in bots.iter().skip(1) {
+    let staging = tempfile::tempdir_in(home).map_err(|error| error.to_string())?;
+    let next = staging.path().join("agents");
+    fs::create_dir(&next).map_err(|error| error.to_string())?;
+    let mut names = BTreeSet::new();
+    for bot in bots.into_iter().flatten().skip(1) {
         if let Some((name, content)) = subagent_file(bot) {
-            let _ = fs::write(agents_dir.join(format!("{name}.md")), content);
+            if bot
+                .get("shell_type")
+                .and_then(Value::as_str)
+                .is_some_and(|shell| !shell.eq_ignore_ascii_case("ClaudeCode"))
+            {
+                return Err("Claude native subagents require ClaudeCode Bots".to_owned());
+            }
+            if !names.insert(name.clone()) {
+                return Err("Duplicate Claude native subagent name".to_owned());
+            }
+            fs::write(next.join(format!("{name}.md")), content)
+                .map_err(|error| format!("write native subagent: {error}"))?;
         }
     }
+    fs::write(next.join(".wegent-managed"), "1\n").map_err(|error| error.to_string())?;
+    let retained = staging.keep();
+    let previous = retained.join("previous");
+    let had_previous = agents_dir.exists();
+    if had_previous {
+        fs::rename(&agents_dir, &previous).map_err(|error| error.to_string())?;
+    }
+    if let Err(error) = fs::rename(&next, &agents_dir) {
+        if had_previous {
+            fs::rename(&previous, &agents_dir).map_err(|error| error.to_string())?;
+        }
+        return Err(error.to_string());
+    }
+    let _ = fs::remove_dir_all(retained);
+    Ok(())
 }
 
 fn prepare_project_custom_instructions(project_path: &Path) {
@@ -2279,14 +2315,6 @@ fn preserve_explicit_mcp_approval_mode(
     server.insert("default_tools_approval_mode".to_owned(), mode);
 }
 
-fn mcp_server_headers_summary(servers: &BTreeMap<String, Value>) -> String {
-    servers
-        .iter()
-        .map(|(name, server)| format!("{name}:headers={}", has_mcp_headers(server)))
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
 fn bot_mcp_headers_summary(request: &ExecutionRequest) -> String {
     if request_mode(request).as_deref() == Some("coordinate") {
         return request
@@ -2349,36 +2377,6 @@ fn has_mcp_headers(server: &Value) -> bool {
         .is_some_and(|headers| !headers.is_empty())
 }
 
-fn bot_mcp_count(request: &ExecutionRequest) -> usize {
-    if request_mode(request).as_deref() == Some("coordinate") {
-        return request
-            .bot
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(bot_mcp_count_from_value)
-            .sum();
-    }
-    primary_bot(request)
-        .map(bot_mcp_count_from_value)
-        .unwrap_or(0)
-}
-
-fn bot_mcp_count_from_value(bot: &Value) -> usize {
-    bot.get("mcp_servers")
-        .or_else(|| bot.get("mcpServers"))
-        .map(mcp_count_from_value)
-        .unwrap_or(0)
-}
-
-fn mcp_count_from_value(value: &Value) -> usize {
-    match value {
-        Value::Array(values) => values.len(),
-        Value::Object(object) => object.len(),
-        _ => 0,
-    }
-}
-
 fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
     let Some(object) = server.as_object() else {
         return Vec::new();
@@ -2406,16 +2404,8 @@ fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
                 toml_json_value(&Value::Array(args))
             ));
         }
-        if let Some(env) = object.get("env").and_then(Value::as_object) {
-            for (env_key, env_value) in env {
-                if let Some(env_value) = env_value.as_str() {
-                    overrides.push(format!(
-                        "{key}.env.{}={}",
-                        toml_key_segment(env_key),
-                        toml_value(env_value)
-                    ));
-                }
-            }
+        if let Some(names) = object.get("env_vars") {
+            overrides.push(format!("{key}.env_vars={}", toml_json_value(names)));
         }
         append_codex_mcp_server_approval_override(&key, object, &mut overrides);
         return overrides;
@@ -2475,15 +2465,12 @@ fn append_codex_mcp_server_approval_override(
     ));
 }
 
-fn load_global_mcp_records() -> BTreeMap<String, Value> {
-    let path = executor_home().join("capabilities/manifest.json");
-    let Ok(content) = fs::read_to_string(path) else {
-        return BTreeMap::new();
-    };
-    let Ok(value) = serde_json::from_str::<Value>(&content) else {
-        return BTreeMap::new();
-    };
-    value
+pub(super) fn load_global_mcp_records() -> Result<BTreeMap<String, Value>, String> {
+    let path = crate::local::capabilities::default_manifest_path();
+    let value = crate::local::capabilities::ManagedCapabilityManifest::new(path)
+        .load()
+        .map_err(|error| format!("Load managed MCP manifest: {error}"))?;
+    Ok(value
         .get("mcps")
         .and_then(Value::as_object)
         .map(|object| {
@@ -2492,7 +2479,7 @@ fn load_global_mcp_records() -> BTreeMap<String, Value> {
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 fn request_api_base_url(_request: &ExecutionRequest) -> String {
@@ -2503,48 +2490,25 @@ fn api_url(api_base_url: &str, path: &str) -> String {
     format!("{}{}", api_base_url.trim_end_matches('/'), path)
 }
 
-fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
+pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     }
     let content = serde_json::to_string_pretty(value)
         .map_err(|error| format!("failed to serialize JSON: {error}"))?;
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(path)
-        .map_err(|error| format!("failed to open {}: {error}", path.display()))?;
+    let parent = path.parent().ok_or("JSON file has no parent")?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("failed to stage JSON: {error}"))?;
     use std::io::Write;
     file.write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
-}
-
-fn safe_mcp_file_component(value: &str) -> String {
-    let value = value
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-        .take(64)
-        .collect::<String>();
-    if value.is_empty() {
-        "unknown".to_owned()
-    } else {
-        value
-    }
-}
-
-fn claude_mcp_config_file_name(request: &ExecutionRequest) -> String {
-    format!(
-        "claude-mcp-{}-{}.json",
-        safe_mcp_file_component(&request.task_id),
-        safe_mcp_file_component(&request.subtask_id)
-    )
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    file.as_file()
+        .sync_all()
+        .map_err(|error| error.to_string())?;
+    file.persist(path)
+        .map_err(|error| format!("failed to publish JSON: {}", error.error))?;
+    Ok(())
 }
 
 fn primary_bot(request: &ExecutionRequest) -> Option<&Value> {
@@ -2566,29 +2530,7 @@ fn request_mode(request: &ExecutionRequest) -> Option<String> {
 }
 
 pub(crate) fn workspace_root() -> PathBuf {
-    if let Some(root) = env::var_os("WORKSPACE_ROOT")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("WEGENT_WORKSPACE_ROOT").map(PathBuf::from))
-    {
-        return root;
-    }
-    if is_local_mode() {
-        return env::var_os("LOCAL_WORKSPACE_ROOT")
-            .map(PathBuf::from)
-            .or_else(|| {
-                env::var_os("WEGENT_EXECUTOR_HOME")
-                    .map(|home| PathBuf::from(home).join("workspace"))
-            })
-            .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor/workspace")))
-            .unwrap_or_else(|| env::temp_dir().join("wegent-executor/workspace"));
-    }
-    PathBuf::from("/workspace")
-}
-
-fn executor_home() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root")))
+    crate::workspace_paths::workspace_root()
 }
 
 fn is_docker_mode() -> bool {
@@ -2688,11 +2630,43 @@ mod tests {
     mod codex;
 
     use super::*;
-    use std::io::Write;
+    use std::io::{Cursor, Write};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[test]
+    fn native_mcp_reader_imports_legacy_and_rejects_corrupt_current_manifest() {
+        let _lock = crate::test_env::lock();
+        let root = tempfile::tempdir().unwrap();
+        let _capabilities =
+            EnvGuard::set("WEGENT_CAPABILITIES_HOME", root.path().to_str().unwrap());
+        let original =
+            json!({"version":1,"mcps":{"docs":{"server":{"command":"tool","type":"stdio"}}}})
+                .to_string();
+        fs::write(root.path().join("manifest.json"), &original).unwrap();
+        let records = load_global_mcp_records().unwrap();
+        assert_eq!(records["docs"]["server"]["command"], "tool");
+        let current = crate::local::capabilities::default_manifest_path();
+        assert!(current.is_file());
+        assert_eq!(
+            fs::read_to_string(root.path().join("manifest.json")).unwrap(),
+            original
+        );
+        fs::write(&current, "invalid JSON").unwrap();
+        assert!(load_global_mcp_records().is_err());
+        assert_eq!(fs::read_to_string(current).unwrap(), "invalid JSON");
+    }
+
+    #[test]
+    fn native_mcp_reader_accepts_a_new_empty_managed_home() {
+        let _lock = crate::test_env::lock();
+        let root = tempfile::tempdir().unwrap();
+        let _capabilities =
+            EnvGuard::set("WEGENT_CAPABILITIES_HOME", root.path().to_str().unwrap());
+        assert!(load_global_mcp_records().unwrap().is_empty());
+    }
 
     #[test]
     fn injects_executor_owned_project_space_mcp_for_claude_board_task() {
@@ -2850,13 +2824,13 @@ mod tests {
         assert!(content.contains("model: inherit"));
     }
 
-    struct EnvGuard {
+    pub(super) struct EnvGuard {
         key: &'static str,
         old_value: Option<String>,
     }
 
     impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
+        pub(super) fn set(key: &'static str, value: &str) -> Self {
             let old_value = env::var(key).ok();
             env::set_var(key, value);
             Self { key, old_value }
@@ -2951,6 +2925,7 @@ mod tests {
         let _lock = crate::test_env::lock();
         let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
         let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", "/tmp/device-executor");
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", "/tmp/device-workspace");
         let request = ExecutionRequest {
             task_id: "runtime-123".to_owned(),
             project_workspace_path: Some("/tmp/project".to_owned()),
@@ -2965,7 +2940,7 @@ mod tests {
 
         assert_eq!(
             path,
-            PathBuf::from("/tmp/device-executor/workspace/attachments/runtime/runtime-123/203")
+            PathBuf::from("/tmp/device-workspace/runtime-123/attachments/203")
         );
         assert_eq!(storage_scope, "device_private");
     }
@@ -2975,6 +2950,7 @@ mod tests {
         let _lock = crate::test_env::lock();
         let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
         let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", "/tmp/device-executor");
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", "/tmp/device-workspace");
         let mut request = ExecutionRequest {
             task_id: "backend-task".to_owned(),
             ..ExecutionRequest::default()
@@ -2988,10 +2964,37 @@ mod tests {
 
         assert_eq!(
             path,
-            PathBuf::from(
-                "/tmp/device-executor/workspace/attachments/runtime/runtime-local-task/turn-1"
-            )
+            PathBuf::from("/tmp/device-workspace/runtime-local-task/attachments/turn-1")
         );
+    }
+
+    #[test]
+    fn runtime_device_attachment_resolution_does_not_require_local_mode() {
+        let _lock = crate::test_env::lock();
+        let root = tempfile::tempdir().unwrap();
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", root.path().to_str().unwrap());
+        for mode in [None, Some("local"), Some("docker")] {
+            let _mode = match mode {
+                Some(mode) => EnvGuard::set("EXECUTOR_MODE", mode),
+                None => EnvGuard::remove("EXECUTOR_MODE"),
+            };
+            for key in ["runtimeLocalTaskId", "runtime_local_task_id"] {
+                for project in [None, Some(root.path().join("repository"))] {
+                    let request = ExecutionRequest {
+                        task_id: "backend-task".to_owned(),
+                        project_workspace_path: project.map(|path| path.display().to_string()),
+                        extra: Map::from_iter([(key.to_owned(), json!("runtime-device-task"))]),
+                        ..ExecutionRequest::default()
+                    };
+                    let (path, scope) = resolve_attachments_dir(&request, &[], "turn-1".into());
+                    assert_eq!(
+                        path,
+                        root.path().join("runtime-device-task/attachments/turn-1")
+                    );
+                    assert_eq!(scope, "device_private");
+                }
+            }
+        }
     }
 
     #[test]
@@ -3011,6 +3014,54 @@ mod tests {
             PathBuf::from("/workspace/project/.wegent/attachments/task-123/turn-1")
         );
         assert_eq!(storage_scope, "managed_project");
+    }
+
+    #[test]
+    fn managed_attachment_resolution_preserves_task_layout() {
+        let _lock = crate::test_env::lock();
+        let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", "/tmp/sandbox-workspace");
+        let request = ExecutionRequest {
+            task_id: "task-123".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        let (path, scope) = resolve_attachments_dir(&request, &[], "turn-1".into());
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/sandbox-workspace/task-123/task-123:executor:attachments/turn-1")
+        );
+        assert_eq!(scope, "managed_task");
+    }
+
+    #[test]
+    fn device_attachment_preparation_keeps_existing_legacy_paths() {
+        let _lock = crate::test_env::lock();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = temp
+            .path()
+            .join("executor/workspace/attachments/runtime/task-1/turn-1/image.png");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(&legacy, b"historical attachment").unwrap();
+        let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+        let workspace = temp.path().join("workspace");
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace.to_str().unwrap());
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "task_id": "task-1", "subtask_id": "turn-2", "prompt": "read [attachment:1]",
+            "attachments": [{"id": 1, "original_filename": "image.png", "local_path": legacy, "status": "success"}]
+        })).unwrap();
+
+        let prepared = runtime.block_on(prepare_claude_execution_request(request));
+        assert!(prepared
+            .prompt
+            .to_string()
+            .contains(legacy.to_str().unwrap()));
+        assert_eq!(fs::read(&legacy).unwrap(), b"historical attachment");
+        assert!(!workspace.exists());
     }
 
     #[test]
@@ -3100,6 +3151,8 @@ mod tests {
                 stream.write_all(body).await.unwrap();
             });
             let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", temp.to_str().unwrap());
+            let _workspace =
+                EnvGuard::set("WORKSPACE_ROOT", temp.join("workspace").to_str().unwrap());
             let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
             let _task_api = EnvGuard::remove("TASK_API_DOMAIN");
             let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
@@ -3123,7 +3176,7 @@ mod tests {
             let prepared = prepare_claude_execution_request(request).await;
             let prompt = prepared.prompt.as_str().unwrap();
             let downloaded = temp
-                .join("workspace/attachments/runtime/72")
+                .join("workspace/72/attachments")
                 .join("203")
                 .join("image.png");
 
@@ -3206,7 +3259,7 @@ mod tests {
                 InstalledSkillRecord {
                     skill_id: 44,
                     namespace: "default".to_owned(),
-                    content_hash: Some("sha256:abc".to_owned()),
+                    content_hash: Some(archive_hash(b"archive")),
                 },
             )]),
         )
@@ -3216,7 +3269,7 @@ mod tests {
             skill_id: 44,
             namespace: "default".to_owned(),
             is_public: false,
-            content_hash: Some("sha256:abc".to_owned()),
+            content_hash: Some(archive_hash(b"archive")),
         };
 
         assert!(!should_download_skill(&skills_dir, "agent-skill", Some(&skill_ref)).unwrap());
@@ -3241,7 +3294,7 @@ mod tests {
                 InstalledSkillRecord {
                     skill_id: 44,
                     namespace: "default".to_owned(),
-                    content_hash: Some("sha256:abc".to_owned()),
+                    content_hash: Some(archive_hash(b"archive")),
                 },
             )]),
         )
@@ -3276,7 +3329,7 @@ mod tests {
                 InstalledSkillRecord {
                     skill_id: 44,
                     namespace: "default".to_owned(),
-                    content_hash: Some("sha256:old".to_owned()),
+                    content_hash: Some(archive_hash(b"old")),
                 },
             )]),
         )
@@ -3312,7 +3365,7 @@ mod tests {
                 InstalledSkillRecord {
                     skill_id: 44,
                     namespace: "default".to_owned(),
-                    content_hash: Some("sha256:abc".to_owned()),
+                    content_hash: Some(archive_hash(b"archive")),
                 },
             )]),
         )
@@ -3332,7 +3385,7 @@ mod tests {
                     skill_id: 44,
                     namespace: "default".to_owned(),
                     is_public: false,
-                    content_hash: Some("sha256:abc".to_owned()),
+                    content_hash: Some(archive_hash(b"archive")),
                 },
             )]),
         };
@@ -3347,67 +3400,84 @@ mod tests {
         let _ = fs::remove_dir_all(temp);
     }
 
-    #[tokio::test]
-    async fn deploy_skills_records_all_concurrent_downloads_in_manifest() {
-        let temp =
-            env::temp_dir().join(format!("skill-concurrent-manifest-{}", std::process::id()));
-        let skills_dir = temp.join("skills");
-        let api_base_url = serve_skill_archive_responses(BTreeMap::from([
-            (44, skill_zip_bytes("agent-skill-a")),
-            (45, skill_zip_bytes("agent-skill-b")),
-        ]))
-        .await;
-        let plan = SkillDeploymentPlan {
-            skills: vec!["agent-skill-a".to_owned(), "agent-skill-b".to_owned()],
-            skill_namespaces: BTreeMap::new(),
-            auth_token: "token".to_owned(),
-            team_namespace: "default".to_owned(),
-            task_id: Some(88),
-            skills_dir: skills_dir.clone(),
-            clear_cache: true,
-            skip_existing: false,
-            resolved_skill_map: BTreeMap::from([
-                (
-                    "agent-skill-a".to_owned(),
-                    SkillRef {
-                        skill_id: 44,
-                        namespace: "default".to_owned(),
-                        is_public: false,
-                        content_hash: Some("sha256:a".to_owned()),
-                    },
-                ),
-                (
-                    "agent-skill-b".to_owned(),
-                    SkillRef {
-                        skill_id: 45,
-                        namespace: "default".to_owned(),
-                        is_public: false,
-                        content_hash: Some("sha256:b".to_owned()),
-                    },
-                ),
-            ]),
-        };
+    #[test]
+    fn deploy_skills_records_all_concurrent_downloads_in_manifest() {
+        let _lock = crate::test_env::lock();
+        let temp = tempfile::tempdir().unwrap();
+        let _workbench = EnvGuard::set("WEGENT_WORKBENCH_HOME", temp.path().to_str().unwrap());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let skills_dir = temp.path().join("skills");
+            let archive_a = skill_zip_bytes("agent-skill-a");
+            let archive_b = skill_zip_bytes("agent-skill-b");
+            let hash_a = archive_hash(&archive_a);
+            let hash_b = archive_hash(&archive_b);
+            let (api_base_url, server) =
+                serve_skill_archive_responses(BTreeMap::from([(44, archive_a), (45, archive_b)]))
+                    .await;
+            let plan = SkillDeploymentPlan {
+                skills: vec!["agent-skill-a".to_owned(), "agent-skill-b".to_owned()],
+                skill_namespaces: BTreeMap::new(),
+                auth_token: "token".to_owned(),
+                team_namespace: "default".to_owned(),
+                task_id: Some(88),
+                skills_dir: skills_dir.clone(),
+                clear_cache: true,
+                skip_existing: false,
+                resolved_skill_map: BTreeMap::from([
+                    (
+                        "agent-skill-a".to_owned(),
+                        SkillRef {
+                            skill_id: 44,
+                            namespace: "default".to_owned(),
+                            is_public: false,
+                            content_hash: Some(hash_a.clone()),
+                        },
+                    ),
+                    (
+                        "agent-skill-b".to_owned(),
+                        SkillRef {
+                            skill_id: 45,
+                            namespace: "default".to_owned(),
+                            is_public: false,
+                            content_hash: Some(hash_b.clone()),
+                        },
+                    ),
+                ]),
+            };
 
-        deploy_skills(&plan, &api_base_url).await.unwrap();
+            deploy_skills(&plan, &api_base_url).await.unwrap();
 
-        let manifest = read_skill_manifest(&skills_dir).unwrap();
-        assert_eq!(manifest.len(), 2);
-        assert_eq!(
-            manifest["agent-skill-a"].content_hash.as_deref(),
-            Some("sha256:a")
-        );
-        assert_eq!(
-            manifest["agent-skill-b"].content_hash.as_deref(),
-            Some("sha256:b")
-        );
+            let mut requested = tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .expect("mock Skill archive server timed out")
+                .unwrap();
+            requested.sort_unstable();
+            assert_eq!(requested, vec![44, 45]);
 
-        let _ = fs::remove_dir_all(temp);
+            let manifest = read_skill_manifest(&skills_dir).unwrap();
+            assert_eq!(manifest.len(), 2);
+            assert_eq!(
+                manifest["agent-skill-a"].content_hash.as_deref(),
+                Some(hash_a.as_str())
+            );
+            assert_eq!(
+                manifest["agent-skill-b"].content_hash.as_deref(),
+                Some(hash_b.as_str())
+            );
+        });
     }
 
-    async fn serve_skill_archive_responses(bodies: BTreeMap<i64, Vec<u8>>) -> String {
+    async fn serve_skill_archive_responses(
+        bodies: BTreeMap<i64, Vec<u8>>,
+    ) -> (String, tokio::task::JoinHandle<Vec<i64>>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        tokio::spawn(async move {
+        let server = tokio::spawn(async move {
+            let mut requested = Vec::new();
             for _ in 0..bodies.len() {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut buffer = vec![0; 8192];
@@ -3421,6 +3491,7 @@ mod tests {
                     .and_then(|value| value.parse::<i64>().ok())
                     .unwrap();
                 let body = bodies.get(&skill_id).unwrap();
+                requested.push(skill_id);
                 let header = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()
@@ -3428,8 +3499,9 @@ mod tests {
                 stream.write_all(header.as_bytes()).await.unwrap();
                 stream.write_all(body).await.unwrap();
             }
+            requested
         });
-        format!("http://{address}")
+        (format!("http://{address}"), server)
     }
 
     fn skill_zip_bytes(skill_name: &str) -> Vec<u8> {
@@ -3437,7 +3509,7 @@ mod tests {
         skill_zip_entries(&[(&entry, "# Skill")])
     }
 
-    fn skill_zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
+    pub(super) fn skill_zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
         let cursor = Cursor::new(Vec::new());
         let mut writer = zip::ZipWriter::new(cursor);
         let options = zip::write::FileOptions::default();
@@ -3449,18 +3521,17 @@ mod tests {
     }
 
     #[test]
-    fn extract_skill_zip_remaps_mismatched_root_to_requested_skill() {
+    fn shared_skill_stage_remaps_mismatched_root_to_requested_skill() {
         let temp = env::temp_dir().join(format!("skill-wrong-root-{}", std::process::id()));
         let skills_dir = temp.join("skills");
 
-        let extracted = extract_skill_zip(
-            "requested-skill",
+        crate::services::workbench::stage_skill_archive(
             &skill_zip_bytes("unexpected-root"),
-            &skills_dir,
+            &skills_dir.join("requested-skill"),
+            None,
         )
         .unwrap();
 
-        assert!(extracted);
         assert_eq!(
             fs::read_to_string(skills_dir.join("requested-skill/SKILL.md")).unwrap(),
             "# Skill"
@@ -3470,7 +3541,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_skill_zip_rejects_missing_skill_md_before_writing() {
+    fn shared_skill_stage_rejects_ambiguous_roots_before_writing() {
         let temp = env::temp_dir().join(format!("skill-extra-root-{}", std::process::id()));
         let skills_dir = temp.join("skills");
         let archive = skill_zip_entries(&[
@@ -3478,19 +3549,21 @@ mod tests {
             ("other-skill/SKILL.md", "# Other Skill"),
         ]);
 
-        let error = extract_skill_zip("requested-skill", &archive, &skills_dir).unwrap_err();
+        let error = crate::services::workbench::stage_skill_archive(
+            &archive,
+            &skills_dir.join("requested-skill"),
+            None,
+        )
+        .unwrap_err();
 
-        assert_eq!(
-            error,
-            "downloaded Skill ZIP is missing required SKILL.md for skill requested-skill"
-        );
+        assert_eq!(error, "Package has ambiguous manifest roots");
         assert!(!skills_dir.join("requested-skill").exists());
         assert!(!skills_dir.join("other-skill").exists());
         let _ = fs::remove_dir_all(temp);
     }
 
     #[test]
-    fn extract_skill_zip_ignores_macos_metadata_when_remapping_archive_root() {
+    fn shared_skill_stage_ignores_macos_metadata_when_remapping_archive_root() {
         let temp = env::temp_dir().join(format!("skill-macos-metadata-{}", std::process::id()));
         let skills_dir = temp.join("skills");
         let archive = skill_zip_entries(&[
@@ -3499,9 +3572,13 @@ mod tests {
             ("__MACOSX/unexpected-root/._SKILL.md", "metadata"),
         ]);
 
-        let extracted = extract_skill_zip("requested-skill", &archive, &skills_dir).unwrap();
+        crate::services::workbench::stage_skill_archive(
+            &archive,
+            &skills_dir.join("requested-skill"),
+            None,
+        )
+        .unwrap();
 
-        assert!(extracted);
         assert_eq!(
             fs::read_to_string(skills_dir.join("requested-skill/SKILL.md")).unwrap(),
             "# Requested Skill"

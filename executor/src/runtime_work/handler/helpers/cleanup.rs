@@ -158,6 +158,14 @@ fn cleanup_targets_for_task(
     push_cleanup_target(
         &mut targets,
         &mut seen,
+        Some(CleanupTarget {
+            kind: "runtime_attachment",
+            path: crate::attachments::legacy_device_runtime_attachment_task_dir(&link.local_task_id),
+        }),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
         workspace_attachment_cleanup_target(link, ".wegent/attachments"),
     );
     push_cleanup_target(
@@ -332,6 +340,7 @@ fn path_size(path: &Path) -> Option<u64> {
 
 fn is_local_attachment_draft_path(path: &str) -> bool {
     path.contains("/.wegent-executor/workspace/attachments/draft/")
+        || path.contains("/.wegent/workbench/executor/workspace/attachments/draft/")
         || path.contains("/.wecode/wegent-executor/workspace/attachments/draft/")
 }
 

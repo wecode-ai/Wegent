@@ -24,8 +24,7 @@ vi.mock('@/api/local/localConnectorAuth', async importOriginal => {
 })
 
 import {
-  clearLocalConnectorAuthPrefetchCache,
-  peekWarmedLocalConnectorAuthPlugins,
+  loadLocalConnectorAuthPlugins,
   prefetchLocalConnectorAuthForPluginNames,
 } from '@/features/plugins/prefetchLocalConnectorAuth'
 
@@ -91,52 +90,45 @@ function detailedPlugin(pluginKey: string, id: string, connectorSlug: string): I
 
 describe('prefetchLocalConnectorAuthForPluginNames', () => {
   beforeEach(() => {
-    clearLocalConnectorAuthPrefetchCache()
     listInstalledPlugins.mockReset()
     readInstalledPluginDetail.mockReset()
     localConnectorAuthHealthMock.mockReset()
     localConnectorAuthHealthMock.mockResolvedValue({ status: 'logged_out' })
   })
 
-  test('keeps previously warmed connector detail when prefetching another plugin', async () => {
+  test('reads only mentioned manifests and does not retain a separate snapshot', async () => {
     const pluginA = barePlugin('plugin-a', '1')
     const pluginB = barePlugin('plugin-b', '2')
-    const detailedA = detailedPlugin('plugin-a', '1', 'connector-a')
-    const detailedB = detailedPlugin('plugin-b', '2', 'connector-b')
-
     listInstalledPlugins.mockResolvedValue({ items: [pluginA, pluginB] })
-    readInstalledPluginDetail.mockImplementation(async (plugin: InstalledPlugin) => {
-      if (plugin.spec.source.pluginKey === 'plugin-a') return detailedA
-      if (plugin.spec.source.pluginKey === 'plugin-b') return detailedB
-      return plugin
-    })
-
+    readInstalledPluginDetail.mockImplementation(async (plugin: InstalledPlugin) =>
+      detailedPlugin(plugin.spec.source.pluginKey, '1', 'connector-current')
+    )
     await prefetchLocalConnectorAuthForPluginNames(['plugin-a'])
-    const afterA = peekWarmedLocalConnectorAuthPlugins(['plugin-a'])
-    expect(
-      afterA?.find(p => p.spec.source.pluginKey === 'plugin-a')?.spec.components.connectors
-    ).toHaveLength(1)
-
-    await prefetchLocalConnectorAuthForPluginNames(['plugin-b'])
-    const afterBoth = peekWarmedLocalConnectorAuthPlugins(['plugin-a', 'plugin-b'])
-    expect(afterBoth).not.toBeNull()
-    expect(
-      afterBoth?.find(p => p.spec.source.pluginKey === 'plugin-a')?.spec.components.connectors
-    ).toHaveLength(1)
-    expect(
-      afterBoth?.find(p => p.spec.source.pluginKey === 'plugin-b')?.spec.components.connectors
-    ).toHaveLength(1)
+    expect(readInstalledPluginDetail).toHaveBeenCalledExactlyOnceWith(pluginA)
+    await loadLocalConnectorAuthPlugins(['plugin-b'])
+    expect(readInstalledPluginDetail).toHaveBeenLastCalledWith(pluginB)
+    expect(listInstalledPlugins).toHaveBeenCalledWith({ requireComplete: true })
   })
 
-  test('does not mark a name warm when detail enrich fails', async () => {
-    const pluginA = barePlugin('plugin-a', '1')
-    // Summaries sometimes list a connector shell without localAuth; enrich must
-    // succeed before the name is considered warm.
-    pluginA.spec.components.connectors = [{ slug: 'connector-a', authPolicy: 'on_install' }]
-    listInstalledPlugins.mockResolvedValue({ items: [pluginA] })
-    readInstalledPluginDetail.mockRejectedValue(new Error('plugin/read failed'))
+  test('replaces an old localAuth connector after an upgrade, including removal', async () => {
+    const oldPlugin = detailedPlugin('dingtalk', '1', 'dingtalk')
+    const upgraded = detailedPlugin('dingtalk', '1', 'dingtalk-local')
+    upgraded.spec.version = '0.3.4'
+    listInstalledPlugins.mockResolvedValue({ items: [oldPlugin] })
+    readInstalledPluginDetail.mockResolvedValueOnce(oldPlugin).mockResolvedValueOnce(upgraded)
+    await prefetchLocalConnectorAuthForPluginNames(['dingtalk'])
+    const current = await loadLocalConnectorAuthPlugins(['dingtalk'])
+    expect(current[0].spec.components.connectors?.[0].slug).toBe('dingtalk-local')
+    const withoutLocalAuth = barePlugin('dingtalk', '1')
+    readInstalledPluginDetail.mockResolvedValueOnce(withoutLocalAuth)
+    expect(
+      (await loadLocalConnectorAuthPlugins(['dingtalk']))[0].spec.components.connectors
+    ).toEqual([])
+  })
 
-    await prefetchLocalConnectorAuthForPluginNames(['plugin-a'])
-    expect(peekWarmedLocalConnectorAuthPlugins(['plugin-a'])).toBeNull()
+  test('reports detail read errors instead of reusing stale localAuth', async () => {
+    listInstalledPlugins.mockResolvedValue({ items: [detailedPlugin('plugin-a', '1', 'old')] })
+    readInstalledPluginDetail.mockRejectedValue(new Error('plugin/read failed'))
+    await expect(loadLocalConnectorAuthPlugins(['plugin-a'])).rejects.toThrow('plugin/read failed')
   })
 })

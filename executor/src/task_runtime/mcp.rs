@@ -581,17 +581,9 @@ fn write_space_mcp_log(message: &str) {
 }
 
 fn space_mcp_log_path() -> PathBuf {
-    if let Some(log_dir) = non_empty_env("WEGENT_EXECUTOR_LOG_DIR") {
-        return PathBuf::from(log_dir).join(SPACE_MCP_LOG_FILE);
-    }
-    if let Some(executor_home) = non_empty_env("WEGENT_EXECUTOR_HOME") {
-        return PathBuf::from(executor_home)
-            .join("logs")
-            .join(SPACE_MCP_LOG_FILE);
-    }
-    let home = non_empty_env("HOME").unwrap_or_else(|| ".".to_owned());
-    PathBuf::from(home)
-        .join(".wegent-executor/logs")
+    non_empty_env("WEGENT_EXECUTOR_LOG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::config::paths::executor_home().join("logs"))
         .join(SPACE_MCP_LOG_FILE)
 }
 

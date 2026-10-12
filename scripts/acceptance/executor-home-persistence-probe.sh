@@ -354,10 +354,6 @@ EXECUTOR_HOME="${EXECUTOR_HOME%/}"
 WORKSPACE_ROOT="${WORKSPACE_ROOT%/}"
 require_absolute_directory WEGENT_EXECUTOR_HOME "$EXECUTOR_HOME"
 require_absolute_directory LOCAL_WORKSPACE_ROOT "$WORKSPACE_ROOT"
-case "$WORKSPACE_ROOT/" in
-    "$EXECUTOR_HOME/"*) ;;
-    *) fail "LOCAL_WORKSPACE_ROOT must remain inside WEGENT_EXECUTOR_HOME" ;;
-esac
 
 STATE_DIR="$EXECUTOR_HOME/.acceptance/$PROBE_ID"
 SOURCE_REPO="$WORKSPACE_ROOT/projects/.wegent-acceptance-$PROBE_ID"

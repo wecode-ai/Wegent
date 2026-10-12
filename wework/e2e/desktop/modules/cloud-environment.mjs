@@ -38,11 +38,12 @@ import {
   stopProcess,
   stopProcessGroup,
   waitForLogPattern,
-  waitForUrl,
   weworkDir,
   writeFile,
 } from './shared.mjs'
 
+const BACKEND_START_ATTEMPTS = 5
+const BACKEND_PORT_CONFLICT_PATTERN = /Address already in use|AddrInUse/
 const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
@@ -78,6 +79,25 @@ async function waitForMysqlReady(connectionOptions, mysqlProcess, logPath) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
   }
   throw new Error(`Timed out waiting for MySQL readiness: ${String(lastError)}`)
+}
+
+async function waitForProcessUrl(url, child, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `${message}; process exited with ${child.exitCode ?? child.signalCode ?? 'unknown status'}`
+      )
+    }
+    try {
+      const response = await fetch(url)
+      if (response.ok) return
+    } catch {
+      // The real service is still starting.
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  }
+  throw new Error(message)
 }
 
 async function startMysqlServer(logPath) {
@@ -332,6 +352,24 @@ class RealCloudEnvironment {
     this.pluginAutoUpdateFixtures = []
   }
 
+  async reserveBackendPorts() {
+    this.backendPort = await reservePort()
+    do {
+      this.pythonBackendPort = await reservePort()
+    } while (this.pythonBackendPort === this.backendPort)
+    this.backendUrl = `http://127.0.0.1:${this.backendPort}`
+    this.socketUrl = `http://localhost:${this.backendPort}`
+  }
+
+  updateBackendEndpointEnv() {
+    this.backendEnv = {
+      ...this.backendEnv,
+      BACKEND_INTERNAL_URL: this.backendUrl,
+      WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
+      WEGENT_SOCKET_URL: this.socketUrl,
+    }
+  }
+
   async startBackend() {
     const backendDirectory = join(repoDir, 'backend')
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
@@ -355,12 +393,7 @@ class RealCloudEnvironment {
     this.databaseName = mysqlServer.databaseName
     this.databaseUrl = mysqlServer.databaseUrl
 
-    this.backendPort = await reservePort()
-    do {
-      this.pythonBackendPort = await reservePort()
-    } while (this.pythonBackendPort === this.backendPort)
-    this.backendUrl = `http://127.0.0.1:${this.backendPort}`
-    this.socketUrl = `http://localhost:${this.backendPort}`
+    await this.reserveBackendPorts()
 
     const backendEnv = {
       ...process.env,
@@ -407,7 +440,7 @@ class RealCloudEnvironment {
       cwd: backendDirectory,
       env: backendEnv,
     })
-    await this.launchBackend()
+    await this.launchBackend({ retryPortConflicts: true })
 
     const password = `wework-desktop-e2e-${process.pid}`
     const setup = await fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
@@ -421,9 +454,39 @@ class RealCloudEnvironment {
     await this.seedCloudVisionSidecarModels()
   }
 
-  async launchBackend() {
+  async launchBackend({ retryPortConflicts = false } = {}) {
     const rustLogDirectory = join(resultDir, 'backend-rs-logs')
     await mkdir(rustLogDirectory, { recursive: true })
+    const attempts = retryPortConflicts ? BACKEND_START_ATTEMPTS : 1
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const existingLog = await readFile(this.backendLogPath, 'utf8').catch(() => '')
+      const fromOffset = existingLog.length
+      if (attempt > 1) {
+        await this.reserveBackendPorts()
+        this.updateBackendEndpointEnv()
+        await appendFile(
+          this.backendLogPath,
+          `Backend start attempt ${attempt} on gateway ${this.backendPort} and Python ${this.pythonBackendPort}\n`
+        )
+      }
+      try {
+        await this.launchBackendAttempt(rustLogDirectory)
+        return
+      } catch (error) {
+        await this.stopBackend()
+        const attemptOutput = (await readFile(this.backendLogPath, 'utf8').catch(() => '')).slice(
+          fromOffset
+        )
+        if (attempt < attempts && BACKEND_PORT_CONFLICT_PATTERN.test(attemptOutput)) {
+          continue
+        }
+        throw error
+      }
+    }
+    throw new Error(`Cloud backend did not start after ${attempts} attempts`)
+  }
+
+  async launchBackendAttempt(rustLogDirectory) {
     this.pythonBackend = spawn(
       'uv',
       [
@@ -449,8 +512,9 @@ class RealCloudEnvironment {
       appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
       appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
     ])
-    await waitForUrl(
+    await waitForProcessUrl(
       `http://127.0.0.1:${this.pythonBackendPort}/api/docs`,
+      this.pythonBackend,
       `Real cloud Python backend did not start; see ${this.backendLogPath}`
     )
 
@@ -474,8 +538,9 @@ class RealCloudEnvironment {
       appendProcessOutput(this.rustBackend.stdout, this.backendLogPath),
       appendProcessOutput(this.rustBackend.stderr, this.backendLogPath),
     ])
-    await waitForUrl(
+    await waitForProcessUrl(
       `${this.backendUrl}/api/startup`,
+      this.rustBackend,
       `Real cloud Rust gateway did not start; see ${this.backendLogPath}`
     )
   }
@@ -664,10 +729,13 @@ class RealCloudEnvironment {
         '2.0.0',
         `Plugin ${slug} kept stale local runtime metadata after update`
       )
+      const capabilities = JSON.parse(
+        await readFile(join(dirname(codexHome), 'capabilities/manifest-v2.json'), 'utf8')
+      )
       assert.equal(
-        await pathExists(join(codexHome, 'plugins', 'cache', 'wegent', slug, '1.0.0')),
-        false,
-        `Plugin ${slug} kept its old local runtime after update`
+        capabilities.plugins[`${slug}@wegent`].runtime.codex_link,
+        dirname(dirname(currentManifest)),
+        `Plugin ${slug} did not activate its updated native cache`
       )
     }
   }
@@ -695,11 +763,12 @@ class RealCloudEnvironment {
       CODEX_BIN: this.codexBinary,
       CODEX_HOME: codexHome,
       HOME: home,
+      USERPROFILE: home,
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: home,
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: logFile,
-      WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED: 'true',
+      WEGENT_EXECUTOR_DISABLE_FILE_LOG: 'false',
       EXECUTOR_MODE: 'local',
       WEGENT_BACKEND_URL: this.backendUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
@@ -715,6 +784,14 @@ class RealCloudEnvironment {
       DEVICE_SESSION_GATEWAY_PORT: '0',
     }
     for (const key of [
+      'WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED',
+      'WEGENT_WORKBENCH_HOME',
+      'WEGENT_CAPABILITIES_HOME',
+      'WEGENT_CLAUDE_HOME',
+      'CLAUDE_CONFIG_DIR',
+      'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+      'CODEX_SQLITE_HOME',
+      'WEWORK_E2E_NATIVE_CODEX_HOME',
       'WEGENT_APP_IPC_DEVICE_ID',
       'WEGENT_APP_IPC_ENDPOINT',
       'WEGENT_APP_IPC_OWNER_TOKEN',

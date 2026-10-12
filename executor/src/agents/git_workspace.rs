@@ -40,6 +40,9 @@ const MAX_GIT_HTTP_LOW_SPEED_TIME_SECONDS: u64 = 3_600;
 const GIT_REPOSITORY_VALIDATION_TIMEOUT_SECONDS: u64 = 10;
 const GIT_CLONE_TERMINATION_GRACE_SECONDS: u64 = 1;
 
+mod managed;
+pub(crate) use managed::{acquire_archive_lease, acquire_execution_lease};
+
 pub async fn prepare_git_workspace(request: ExecutionRequest) -> Result<ExecutionRequest, String> {
     let repositories = execution_repositories(&request)?;
     if repositories.is_empty() {
@@ -100,6 +103,15 @@ async fn prepare_single_git_workspace(
     };
 
     let repo_name = repo_name_from_url(&git_url);
+    if (!request.skip_git_clone
+        || crate::workspace_paths::task_repository::read(&request.task_id)?.is_some())
+        && request
+            .project_workspace_path
+            .as_deref()
+            .map_or(true, |path| path.trim().is_empty())
+    {
+        return managed::prepare(request, &git_url, &repo_name).await;
+    }
     let project_path = resolve_git_project_path(&request, &repo_name);
     request.project_workspace_path = Some(project_path.display().to_string());
 
@@ -335,7 +347,7 @@ fn repo_name_from_url(url: &str) -> String {
         .map(|(_, rest)| rest)
         .unwrap_or(without_fragment);
     let repo = path
-        .rsplit('/')
+        .rsplit(['/', '\\'])
         .next()
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -899,7 +911,7 @@ mod tests {
         );
     }
 
-    fn create_local_repository(
+    pub(super) fn create_local_repository(
         root: &Path,
         name: &str,
         file_name: &str,
@@ -932,6 +944,117 @@ mod tests {
             ]),
         );
         repository
+    }
+
+    #[test]
+    fn unified_workspace_clones_reuses_and_exposes_the_same_logical_tree() {
+        let _lock = crate::test_env::lock();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let temp = tempfile::tempdir().unwrap();
+            let home = temp.path().join("home");
+            fs::create_dir(&home).unwrap();
+            let keys = [
+                "HOME",
+                "USERPROFILE",
+                "WORKSPACE_ROOT",
+                "WEGENT_WORKSPACE_ROOT",
+                "LOCAL_WORKSPACE_ROOT",
+                "WEGENT_EXECUTOR_PROJECTS_DIR",
+                "WEGENT_EXECUTOR_HOME",
+                "EXECUTOR_MODE",
+            ];
+            struct Restore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+            impl Drop for Restore {
+                fn drop(&mut self) {
+                    for (key, value) in &self.0 {
+                        match value {
+                            Some(value) => env::set_var(key, value),
+                            None => env::remove_var(key),
+                        }
+                    }
+                }
+            }
+            let _restore = Restore(
+                keys.into_iter()
+                    .map(|key| {
+                        let old = env::var_os(key);
+                        env::remove_var(key);
+                        (key, old)
+                    })
+                    .collect(),
+            );
+            env::set_var("HOME", &home);
+            env::set_var("USERPROFILE", &home);
+            env::set_var("EXECUTOR_MODE", "docker");
+            let source =
+                create_local_repository(temp.path(), "demo", "README.md", "synthetic repository");
+            let request = ExecutionRequest {
+                task_id: "564".into(),
+                subtask_id: "894".into(),
+                extra: serde_json::Map::from_iter([(
+                    "git_url".into(),
+                    json!(source.display().to_string()),
+                )]),
+                ..ExecutionRequest::default()
+            };
+            let identity =
+                crate::repository_identity::RepositoryIdentity::from_url(source.to_str().unwrap())
+                    .unwrap();
+            let expected = home.join(".wegent/workspace").join(identity.key(8));
+            let prepared = prepare_git_workspace(request.clone()).await.unwrap();
+            assert_eq!(
+                prepared.project_workspace_path.as_deref(),
+                expected.to_str()
+            );
+            assert_eq!(
+                fs::read_to_string(expected.join("README.md")).unwrap(),
+                "synthetic repository"
+            );
+            let logical_name = format!("/workspace/{}", identity.key(8));
+            let logical = crate::workspace_paths::resolve_logical_path(&logical_name);
+            assert_eq!(logical, expected);
+            assert_eq!(
+                crate::workspace_paths::display_workspace_path(
+                    &fs::canonicalize(&expected).unwrap()
+                )
+                .as_deref(),
+                Some(logical_name.as_str())
+            );
+            fs::write(expected.join("uncommitted.txt"), "retain on next turn").unwrap();
+            prepare_git_workspace(request.clone()).await.unwrap();
+            assert_eq!(
+                fs::read_to_string(expected.join("uncommitted.txt")).unwrap(),
+                "retain on next turn"
+            );
+            let mut next = request.clone();
+            next.task_id = "565".into();
+            let separate = prepare_git_workspace(next).await.unwrap();
+            assert_eq!(
+                prepared.project_workspace_path,
+                separate.project_workspace_path
+            );
+            assert!(Path::new(separate.project_workspace_path.as_ref().unwrap())
+                .join("uncommitted.txt")
+                .exists());
+            let mut explicit = request;
+            explicit.project_workspace_path = Some(source.display().to_string());
+            assert_eq!(
+                prepare_git_workspace(explicit)
+                    .await
+                    .unwrap()
+                    .project_workspace_path
+                    .as_deref(),
+                source.to_str()
+            );
+            assert_eq!(
+                fs::read_to_string(source.join("README.md")).unwrap(),
+                "synthetic repository"
+            );
+        });
     }
 
     #[test]

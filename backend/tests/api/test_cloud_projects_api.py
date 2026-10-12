@@ -469,6 +469,43 @@ def test_cloud_project_board_config_supports_custom_statuses(
     assert refreshed.json()["status"] == ""
 
 
+def test_cloud_project_board_config_shares_schedule_view(
+    test_client: TestClient, test_token: str
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "schedule", "name": "Schedule view"},
+    ).json()
+
+    configured = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": project["version"],
+            "board_config": {
+                **project["board_config"],
+                "schedule_view": {
+                    "status_filter": "pending",
+                    "assignee_filter": "user:8",
+                    "tag_filter": "frontend",
+                    "group_by": "assignee",
+                    "sort_by": "updated_desc",
+                },
+            },
+        },
+    )
+
+    assert configured.status_code == 200
+    assert configured.json()["board_config"]["schedule_view"] == {
+        "status_filter": "pending",
+        "assignee_filter": "user:8",
+        "tag_filter": "frontend",
+        "group_by": "assignee",
+        "sort_by": "updated_desc",
+    }
+
+
 def test_cloud_project_ai_automation_is_shared_through_project_metadata(
     test_client: TestClient, test_token: str
 ) -> None:
