@@ -20,7 +20,6 @@ import { isEditableShortcutTarget } from '@/lib/keybindings'
 import { publishSelectedTextSelection, writeSelectedTextDragData } from '@/lib/selected-text-drag'
 import { installCodeViewTextDrag } from './codeViewTextDrag'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
-import { WorkspaceTextFileEditor } from './WorkspaceTextFileEditor'
 import { isMarkdownFile } from './workspaceFileTypes'
 import type { WorkspaceBinaryFile } from './WorkspaceBinaryFilePreview'
 
@@ -100,6 +99,22 @@ const WorkspaceBinaryFilePreview = lazy(() =>
     default: module.WorkspaceBinaryFilePreview,
   }))
 )
+
+const WorkspaceTextFileEditor = lazy(() =>
+  import('./WorkspaceTextFileEditor').then(module => ({ default: module.WorkspaceTextFileEditor }))
+)
+
+function FilePreviewLoading() {
+  const { t } = useTranslation('common')
+  return (
+    <section
+      role="status"
+      className="flex min-w-0 flex-1 items-center justify-center px-6 text-sm text-text-secondary"
+    >
+      {t('workbench.workspace_file_preview_loading')}
+    </section>
+  )
+}
 
 interface WorkspaceFilePreviewProps {
   file: WorkspaceTextFileResponse | null
@@ -549,16 +564,7 @@ export function WorkspaceFilePreview({
   if (!file) {
     if (binaryFile) {
       return (
-        <Suspense
-          fallback={
-            <section
-              role="status"
-              className="flex min-w-0 flex-1 items-center justify-center px-6 text-sm text-text-secondary"
-            >
-              {t('workbench.workspace_file_preview_loading')}
-            </section>
-          }
-        >
+        <Suspense fallback={<FilePreviewLoading />}>
           <WorkspaceBinaryFilePreview file={binaryFile} themeType={themeType} />
         </Suspense>
       )
@@ -573,16 +579,18 @@ export function WorkspaceFilePreview({
   if (editing && onEditedContentChange && onSave) {
     return (
       <section className="flex min-w-0 flex-1 overflow-hidden bg-background">
-        <WorkspaceTextFileEditor
-          key={file.path}
-          path={file.path}
-          value={editedContent}
-          themeType={themeType}
-          targetLineStart={targetLineStart}
-          targetLineEnd={targetLineEnd}
-          onChange={onEditedContentChange}
-          onSave={onSave}
-        />
+        <Suspense fallback={<FilePreviewLoading />}>
+          <WorkspaceTextFileEditor
+            key={file.path}
+            path={file.path}
+            value={editedContent}
+            themeType={themeType}
+            targetLineStart={targetLineStart}
+            targetLineEnd={targetLineEnd}
+            onChange={onEditedContentChange}
+            onSave={onSave}
+          />
+        </Suspense>
       </section>
     )
   }

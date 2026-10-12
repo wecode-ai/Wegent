@@ -15,6 +15,14 @@ export async function apply(ctx) {
   if (process.env.WEWORK_DSH_MANAGED_ENDPOINT === '1') {
     ctx.inject(['connection'], endpointCtx => {
       const url = `http://127.0.0.1:${endpointCtx.webServer.port}/`
+      const usage = process.resourceUsage()
+      console.info('[startup][core-dsh-endpoint]', {
+        elapsedMs: Math.round(process.uptime() * 1000),
+        userCpuMs: Math.round(usage.userCPUTime / 1000),
+        systemCpuMs: Math.round(usage.systemCPUTime / 1000),
+        fsReadBlocks: usage.fsRead,
+        maxRssKiB: usage.maxRSS,
+      })
       client.reportRuntimeEndpoint(endpointCtx.connection.authenticatedUrl(url))
     })
   }

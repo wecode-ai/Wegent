@@ -87,6 +87,22 @@ remains an independent copy so dependencies resolve from the profile; static web
 resources use directory links. The version stamp is written only after every plugin
 has finished, and any copy failure prevents startup.
 
+Core 使用标准 pnpm hoisted 依赖布局，减少 Node 模块解析的文件查询；旧运行时
+保留既有归档格式。终端和文本编辑器在打开面板时加载，减少首次任务列表所需的脚本。
+Core 入口日志记录 CPU 时间、文件读取与内存峰值，用于定位启动耗时。
+
+Core uses pnpm's standard hoisted dependency layout to reduce module-resolution
+file lookups, while legacy runtimes retain their archive format. Terminal and text
+editor code loads when its panel opens. Core endpoint logs include CPU time, file
+reads and peak memory to diagnose startup latency.
+
+任务快照的增量更新同步当前任务地址与清单，保留本地消息和模型信息，同时补齐
+真实 thread ID 与工作树路径，避免任务完成后继续使用创建时的占位地址。
+
+Incremental task snapshots reconcile the selected address with the worklist,
+preserving local messages and model settings while updating the real thread ID
+and worktree path after task creation.
+
 生产环境同时关闭 DSH 的配置热更新和客户端模块热更新，安装、更新、启停与卸载插件
 均在显式重启后生效，避免安装改写文件时卸载正在使用的工作台。插件开发会话显式开启
 两种热更新，继续支持源码与客户端页面的即时更新。

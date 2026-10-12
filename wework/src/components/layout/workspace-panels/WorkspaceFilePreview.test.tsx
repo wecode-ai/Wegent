@@ -263,7 +263,7 @@ test('uses the application dark theme for code and binary previews', async () =>
   )
 })
 
-test('uses the application dark theme while editing text files', () => {
+test('uses the application dark theme while editing text files', async () => {
   document.documentElement.dataset.theme = 'dark'
   appearanceMocks.resolvedMode = 'dark'
 
@@ -288,7 +288,7 @@ test('uses the application dark theme while editing text files', () => {
     />
   )
 
-  expect(screen.getByTestId('workspace-file-editor')).toHaveAttribute('data-theme', 'dark')
+  expect(await screen.findByTestId('workspace-file-editor')).toHaveAttribute('data-theme', 'dark')
 })
 
 test('keeps the code view mounted while switching between text files', () => {

@@ -35,7 +35,7 @@ import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
+import { RemoteTerminal } from '@/components/layout/workspace-panels/LazyWorkspaceTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import {
   isClaudeCodeDevice,

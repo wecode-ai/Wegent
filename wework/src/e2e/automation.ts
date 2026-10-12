@@ -16,7 +16,6 @@ import {
   normalizeCloudBackendUrl,
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
-import { EditorView } from '@codemirror/view'
 import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
@@ -1392,7 +1391,9 @@ export async function fillDesktopControlElement(element: HTMLElement, value: str
   element.focus()
 
   const codeMirrorRoot = element.closest<HTMLElement>('.cm-editor')
-  const codeMirrorView = codeMirrorRoot ? EditorView.findFromDOM(codeMirrorRoot) : null
+  const codeMirrorView = codeMirrorRoot
+    ? (await import('@codemirror/view')).EditorView.findFromDOM(codeMirrorRoot)
+    : null
   if (codeMirrorView) {
     codeMirrorView.dispatch({
       changes: { from: 0, to: codeMirrorView.state.doc.length, insert: value },

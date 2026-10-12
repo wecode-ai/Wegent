@@ -39,6 +39,7 @@ const {
 } = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
 const archiveFormatVersion = 'dsh-runtime-tar-gzip-v8'
+const coreArchiveFormatVersion = 'dsh-runtime-tar-gzip-v9-hoisted'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -145,7 +146,7 @@ async function runtimeSources() {
 
 function runtimeIdentity(runtime) {
   const sourceFingerprint = createHash('sha256')
-    .update(archiveFormatVersion)
+    .update(runtime.role === 'core' ? coreArchiveFormatVersion : archiveFormatVersion)
     .update('\0')
     .update(process.versions.modules)
     .update('\0')
@@ -318,7 +319,9 @@ async function buildRuntime(runtime) {
         '--virtual-store-dir=node_modules/.pnpm',
         '--package-import-method=copy',
         '--config.enable-global-virtual-store=false',
-        ...(process.platform === 'win32' ? ['--config.node-linker=hoisted'] : []),
+        ...(runtime.role === 'core' || process.platform === 'win32'
+          ? ['--config.node-linker=hoisted']
+          : []),
       ],
       staging
     )

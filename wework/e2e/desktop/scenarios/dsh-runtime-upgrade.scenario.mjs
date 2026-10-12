@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, readlink, realpath, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readlink, realpath, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { seedNativeDshProfile } from './release-package-startup.scenario.mjs'
 import { packagedResourcesRoot } from '../modules/runtime-assets.mjs'
@@ -157,11 +157,13 @@ export function createDesktopScenario({ resultDir, electronUserDataDirectory }) 
       assert.equal(core.directory, core.sourceFingerprint)
       const coreRoot = join(packagedResourcesRoot(appBinary), 'harness-runtime', core.directory)
       const dshPackage = join(coreRoot, 'node_modules', '@deepseek-ai', 'dsh')
-      assert.equal(
-        isAbsolute(await readlink(dshPackage)),
-        false,
-        'Packaged DSH must be relocatable'
-      )
+      if ((await lstat(dshPackage)).isSymbolicLink()) {
+        assert.equal(
+          isAbsolute(await readlink(dshPackage)),
+          false,
+          'Packaged DSH must be relocatable'
+        )
+      }
       assert.equal(relative(coreRoot, await realpath(dshPackage)).startsWith('..'), false)
       legacyDescriptor = catalog.runtimes.find(
         runtime => runtime.role === 'workbench' && runtime.dshVersion === LEGACY_VERSION

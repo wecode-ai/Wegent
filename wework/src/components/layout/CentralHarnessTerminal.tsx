@@ -1,6 +1,6 @@
 import { SquareTerminal, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { EmbeddedLocalTerminal } from './workspace-panels/EmbeddedLocalTerminal'
+import { EmbeddedLocalTerminal } from './workspace-panels/LazyWorkspaceTerminal'
 
 interface CentralHarnessTerminalProps {
   sessionId: string

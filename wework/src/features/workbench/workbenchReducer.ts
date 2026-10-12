@@ -1366,11 +1366,18 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           supervisor: action.supervisor,
         }),
       }
-    case 'runtime_task_snapshot_updated':
+    case 'runtime_task_snapshot_updated': {
+      const runtimeWork = updateRuntimeWorkTask(state.runtimeWork, action.address, action.task)
       return {
         ...state,
-        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, action.task),
+        runtimeWork,
+        currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
+          state.currentRuntimeTask,
+          state.devices,
+          runtimeWork
+        ),
       }
+    }
     case 'runtime_tasks_archived':
       return {
         ...state,

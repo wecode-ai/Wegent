@@ -3,6 +3,59 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 describe('workbenchReducer', () => {
+  test.each(['task-1', 'task-2'])(
+    'hydrates the selected address when an incremental snapshot updates %s',
+    taskId => {
+      const state = {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          taskId: 'task-1',
+          workspacePath: '/workspace',
+          runtimeHandle: { messages: ['optimistic message'] },
+        },
+        runtimeWork: {
+          projects: [],
+          chats: [
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace',
+              available: true,
+              mapped: true,
+              tasks: ['task-1', 'task-2'].map(taskId => ({
+                taskId,
+                title: taskId,
+                runtime: 'codex' as const,
+                workspacePath: '/workspace',
+              })),
+            },
+          ],
+          totalTasks: 2,
+        },
+      }
+      const next = workbenchReducer(state, {
+        type: 'runtime_task_snapshot_updated',
+        address: { deviceId: 'device-1', taskId },
+        task: {
+          taskId,
+          title: taskId,
+          runtime: 'codex',
+          workspacePath: '/worktree',
+          threadId: 'ready-thread',
+          runtimeHandle: { threadId: 'ready-thread' },
+        },
+      })
+      expect(next.currentRuntimeTask?.taskId).toBe('task-1')
+      expect(next.currentRuntimeTask?.runtimeHandle?.messages).toEqual(['optimistic message'])
+      expect(next.currentRuntimeTask?.threadId).toBe(
+        taskId === 'task-1' ? 'ready-thread' : undefined
+      )
+      expect(next.currentRuntimeTask?.workspacePath).toBe(
+        taskId === 'task-1' ? '/worktree' : '/workspace'
+      )
+    }
+  )
+
   test('applies a local project mutation response before the next list refresh', () => {
     const state = {
       ...initialWorkbenchState,
