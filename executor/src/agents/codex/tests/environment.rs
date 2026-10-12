@@ -28,6 +28,18 @@ impl LaunchEnvironment {
             fs::create_dir_all(&path).unwrap();
             env::set_var(key, path);
         }
+        // Start the shared endpoint before capturing launch configuration expectations.
+        // A dedicated thread also supports callers already inside a Tokio runtime.
+        std::thread::spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint())
+                .unwrap();
+        })
+        .join()
+        .unwrap();
         Self {
             _restore: restore,
             _root: root,
