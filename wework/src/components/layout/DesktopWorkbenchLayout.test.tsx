@@ -4970,7 +4970,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
     expect(listLocalSkills).toHaveBeenCalled()
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
-    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+    expect(await screen.findByTestId('embedded-local-terminal')).toHaveAttribute(
       'data-session-id',
       'local-harness-1'
     )

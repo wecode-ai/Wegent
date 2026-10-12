@@ -1159,8 +1159,19 @@ async function verifyWorktreeCreationStatus({
   const beforeRestart = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const currentTask = currentRuntimeTaskFromDebugSnapshot(beforeRestart)
   const restoredTaskId = currentTask?.taskId
-  const threadId = currentTask?.threadId ?? currentTask?.runtimeHandle?.threadId
   assert.ok(restoredTaskId, 'The project task must be selected before restarting')
+  const threadSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => {
+      const task = currentRuntimeTaskFromDebugSnapshot(snapshot)
+      return (
+        task?.taskId === restoredTaskId && Boolean(task.threadId ?? task.runtimeHandle?.threadId)
+      )
+    },
+    'The project task did not publish its Codex thread before rollout recovery'
+  )
+  const threadTask = currentRuntimeTaskFromDebugSnapshot(threadSnapshot)
+  const threadId = threadTask?.threadId ?? threadTask?.runtimeHandle?.threadId
   assert.ok(threadId, 'The project task must expose its Codex thread before rollout recovery')
   const rolloutPath = await findCodexRollout(join(executorHome, 'codex', 'sessions'), threadId)
   assert.ok(rolloutPath, 'The project task rollout was not persisted before recovery')
