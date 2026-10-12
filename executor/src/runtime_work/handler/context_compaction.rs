@@ -10,13 +10,10 @@ pub(super) async fn wait_for_context_compaction(
     thread_id: &str,
     previous_turn_id: Option<&str>,
 ) -> Result<(String, String), String> {
-    let deadline = tokio::time::Instant::now() + CONTEXT_COMPACTION_WAIT_BUDGET;
     let mut items = HashMap::new();
     loop {
-        let message = match tokio::time::timeout_at(deadline, notifications.recv())
-            .await
-            .map_err(|_| "context compaction timed out".to_owned())?
-        {
+        // Native completion owns cleanup, even after the IPC caller times out.
+        let message = match notifications.recv().await {
             Ok(message) => message,
             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                 log_executor_event(
@@ -139,6 +136,30 @@ pub(super) fn context_compaction_outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn keeps_waiting_for_native_completion_after_the_former_timeout() {
+        let (sender, receiver) = broadcast::channel(2);
+        let action = tokio::spawn(async move {
+            wait_for_context_compaction(|_| {}, receiver, "thread", Some("previous")).await
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(121)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            !action.is_finished(),
+            "A live native turn must retain its action"
+        );
+        sender.send(json!({"method": "turn/completed", "params": {
+            "threadId": "thread", "turn": {"id": "compact-turn", "status": "completed", "items": [
+                {"id": "compact-item", "type": "contextCompaction"}
+            ]}
+        }})).unwrap();
+        assert_eq!(
+            action.await.unwrap(),
+            Ok(("compact-turn".to_owned(), "compact-item".to_owned()))
+        );
+    }
 
     #[tokio::test]
     async fn keeps_waiting_after_notification_lag_when_completion_is_still_buffered() {

@@ -1610,12 +1610,16 @@ impl RuntimeWorkRpcHandler {
             Ok(client) => client,
             Err(error) => return Ok(task_action_failure(&link, error)),
         };
+        let handler = self.clone();
+        let action_client = client.clone();
         client
-            .run_thread_action(
-                &thread_id,
-                self.compact_codex_task(&client, &link, &local_task_id, &thread_id),
-            )
+            .run_owned_thread_action(thread_id.clone(), async move {
+                handler
+                    .compact_codex_task(&action_client, &link, &local_task_id, &thread_id)
+                    .await
+            })
             .await
+            .map_err(|error| AppIpcError::new("internal_error", error.to_string()))?
     }
 
     async fn compact_codex_task(

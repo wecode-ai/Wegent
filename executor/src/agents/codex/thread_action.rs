@@ -32,6 +32,16 @@ impl Drop for ThreadActionActivity {
 }
 
 impl CodexAppServerClient {
+    /// Caller cancellation detaches the worker without dropping its resources.
+    pub(crate) async fn run_owned_thread_action<T: Send + 'static>(
+        &self,
+        thread_id: String,
+        action: impl Future<Output = T> + Send + 'static,
+    ) -> Result<T, tokio::task::JoinError> {
+        let client = self.clone();
+        tokio::spawn(async move { client.run_thread_action(&thread_id, action).await }).await
+    }
+
     /// Keep multi-RPC actions active between requests, just like ordinary turns.
     pub(crate) async fn run_thread_action<T>(
         &self,
@@ -79,6 +89,42 @@ impl CodexAppServerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelled_caller_keeps_owned_action_active_until_native_completion() {
+        let client = CodexAppServerClient::new("codex-owned-action-caller-test");
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let (resource_tx, mut resource_rx) = oneshot::channel::<()>();
+        let action_client = client.clone();
+        let caller = tokio::spawn(async move {
+            action_client
+                .run_owned_thread_action("compact-thread".to_owned(), async move {
+                    let _resource = resource_tx;
+                    started_tx.send(()).unwrap();
+                    release_rx.await.unwrap();
+                })
+                .await
+        });
+        started_rx.await.unwrap();
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        assert_eq!(
+            resource_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        );
+        assert_eq!(client.restart_if_idle().await, Err((1, 0)));
+        release_tx.send(()).unwrap();
+        assert!(resource_rx.await.is_err());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !client.state.lock().await.active_threads.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("Native completion must release owned action activity");
+        assert_eq!(client.restart_if_idle().await, Ok(()));
+    }
 
     #[tokio::test]
     async fn cancelled_thread_action_releases_its_active_thread() {
