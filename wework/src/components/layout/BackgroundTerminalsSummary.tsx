@@ -1,5 +1,6 @@
 import { Loader2, Square, SquareTerminal } from 'lucide-react'
 import { useState } from 'react'
+import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { BackgroundTerminal } from './backgroundTerminals'
 
@@ -51,7 +52,7 @@ export function BackgroundTerminalsSummary({
             >
               <SquareTerminal className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="min-w-0 truncate">
-                {terminal.command || t('workbench.background_terminal')}
+                {unwrapShellCommand(terminal.command) || t('workbench.background_terminal')}
               </span>
             </button>
             {onStop && (

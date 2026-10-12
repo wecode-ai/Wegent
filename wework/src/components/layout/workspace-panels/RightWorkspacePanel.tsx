@@ -32,6 +32,7 @@ import {
   type FileChangesReviewViewOption,
 } from '@/components/chat/FileChangesReviewPanel'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
+import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
 import { CentralHarnessTerminal } from '@/components/layout/CentralHarnessTerminal'
 import type { LocalHarnessWorkbenchSession } from '@/components/layout/localHarnessWorkbench'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
@@ -840,6 +841,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           key={tab}
           tab={tab}
           active={activeView === tab}
+          title={backgroundTerminals.find(terminal => terminal.tabId === tab)?.command}
           filePath={
             isWorkspaceFileTab(tab)
               ? fileTabs[tab]?.path
@@ -1232,6 +1234,7 @@ function RightWorkspaceTitleTab({
   tab,
   active,
   label,
+  title,
   filePath,
   icon: Icon,
   extensionState,
@@ -1244,6 +1247,7 @@ function RightWorkspaceTitleTab({
   tab: RightWorkspacePanelTab
   active: boolean
   label: string
+  title?: string
   filePath?: string
   icon: LucideIcon
   extensionState?: RightWorkspaceExtensionTabState
@@ -1267,7 +1271,7 @@ function RightWorkspaceTitleTab({
       data-testid={getRightWorkspaceTabTestId(tab)}
       role="tab"
       aria-selected={active}
-      title={filePath}
+      title={title ?? filePath}
       tabIndex={0}
       onClick={onSelect}
       onKeyDown={handleKeyDown}
@@ -1534,8 +1538,9 @@ function getRightWorkspaceTabLabel(
 ) {
   if (tab.startsWith('background-terminal:')) {
     return (
-      backgroundTerminals.find(terminal => terminal.tabId === tab)?.command ||
-      t('workbench.background_terminal')
+      unwrapShellCommand(
+        backgroundTerminals.find(terminal => terminal.tabId === tab)?.command ?? ''
+      ) || t('workbench.background_terminal')
     )
   }
   if (isRightWorkspaceExtensionTab(tab)) {

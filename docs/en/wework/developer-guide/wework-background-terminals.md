@@ -6,6 +6,8 @@ sidebar_position: 19
 
 Codex commands can continue running after their AI turn finishes. The conversation environment summary lists these commands and their count under Background processes. Selecting a command opens a read-only terminal tab on the right with live output and a No output yet placeholder when empty. An exited process disappears from the running list; an open log tab remains available to read and close.
 
+Process rows and log tabs reuse the tool cards' command display rules, removing shell wrappers such as `/opt/homebrew/bin/zsh -lc` to show the actual command. Hovering reveals the full original command. This changes presentation only; execution arguments and process identities remain intact.
+
 Each row's stop action stops all background terminals in the current task's Codex thread. It does not stop only that row's process or interrupt the AI turn. Cleanup failures keep the running list visible and show an error.
 
 ## State and events

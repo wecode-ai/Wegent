@@ -32,6 +32,20 @@ async function showSummary(control) {
   await control.command('waitFor', SECTION)
 }
 
+async function verifyCommandLabels(control) {
+  for (const marker of MARKERS) {
+    const row = `${SECTION} [data-testid^="open-background-terminal-"][title*="${marker}"]`
+    const label = await control.command('getText', row)
+    assert.ok(label.startsWith('node -e '), `Expected the actual Node command, received: ${label}`)
+    assert.ok(label.includes(marker), `The process label must identify ${marker}`)
+    assert.ok(!label.includes(' -lc '), 'The process label must omit shell launchers')
+    assert.ok(
+      (await control.command('getAttribute', row, { value: 'title' })).includes(marker),
+      'The full original command must remain available in the tooltip'
+    )
+  }
+}
+
 async function waitForIdle(control, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -172,6 +186,7 @@ export function createDesktopScenario({
         JSON.stringify(snapshot, null, 2)
       )
       await showSummary(control)
+      await verifyCommandLabels(control)
       assert.equal(
         Number(
           await control.command(
@@ -197,6 +212,12 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid^="right-workspace-background-terminal:"]', {
         text: MARKERS[0],
       })
+      const tabLabel = await control.command(
+        'getText',
+        '[data-testid^="right-workspace-background-terminal:"][role="tab"]'
+      )
+      assert.ok(tabLabel.startsWith('node -e '), 'The terminal tab must show the actual command')
+      assert.ok(!tabLabel.includes(' -lc '), 'The terminal tab must omit shell launchers')
       const textarea = '[data-testid="background-terminal-output-panel"] .xterm-helper-textarea'
       await control.command('waitFor', textarea)
       await capture(control, 'background-terminals-03-live-output.png')
@@ -233,6 +254,7 @@ export function createDesktopScenario({
         2,
         'Reload must restore running terminal processes'
       )
+      await verifyCommandLabels(control)
       await capture(control, 'background-terminals-04-restored-summary.png')
       await control.command(
         'click',

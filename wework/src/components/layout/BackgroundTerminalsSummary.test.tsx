@@ -22,6 +22,22 @@ const terminal: BackgroundTerminal = {
 }
 
 describe('BackgroundTerminalsSummary', () => {
+  test.each([
+    ['/opt/homebrew/bin/zsh -lc "pnpm dev"', 'pnpm dev'],
+    [String.raw`/bin/zsh -lc '/bin/bash -lc "npm run server"'`, 'npm run server'],
+    ['pnpm dev', 'pnpm dev'],
+  ])('shows the actual command and preserves the original launcher %s', (command, label) => {
+    const onOpen = vi.fn()
+    const entry = { ...terminal, command }
+    render(<BackgroundTerminalsSummary terminals={[entry]} onOpen={onOpen} />)
+    const button = screen.getByTestId('open-background-terminal-command-1')
+    expect(button).toHaveTextContent(label)
+    expect(button).not.toHaveTextContent(' -lc ')
+    expect(button).toHaveAttribute('title', command)
+    fireEvent.click(button)
+    expect(onOpen).toHaveBeenCalledWith(entry)
+  })
+
   test('opens the selected terminal and prevents duplicate stop requests while pending', async () => {
     let finish!: () => void
     const onStop = vi.fn(

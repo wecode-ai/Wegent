@@ -2,6 +2,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef } from 'react'
+import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
 import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from '@/lib/xterm-theme'
@@ -78,7 +79,9 @@ export function BackgroundTerminalPanel({
         ref={containerRef}
         className="h-full min-h-0 w-full overflow-hidden py-3 pl-3"
         role="region"
-        aria-label={terminal?.command || t('workbench.background_terminal')}
+        aria-label={
+          unwrapShellCommand(terminal?.command ?? '') || t('workbench.background_terminal')
+        }
       />
       {!hasOutput && (
         <p className="absolute left-4 top-4 text-code text-text-muted">
