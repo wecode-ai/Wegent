@@ -39,7 +39,7 @@ fn named_home_rpc_clients_preserve_process_isolation() {
 }
 
 #[path = "tests/environment.rs"]
-mod environment;
+pub(super) mod environment;
 
 #[test]
 fn inject_session_headers_adds_plain_header_for_direct_providers() {

@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) struct LaunchEnvironment {
+pub(in crate::agents::codex) struct LaunchEnvironment {
     // Restore variables before deleting files and releasing the process-wide lock.
     _restore: Vec<EnvRestore>,
     _root: tempfile::TempDir,
@@ -11,7 +11,7 @@ pub(super) struct LaunchEnvironment {
 }
 
 impl LaunchEnvironment {
-    pub(super) fn new() -> Self {
+    pub(in crate::agents::codex) fn new() -> Self {
         let lock = crate::test_env::lock();
         let root = tempfile::tempdir().unwrap();
         let mut restore = Vec::new();
