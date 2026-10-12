@@ -15,6 +15,7 @@ mod fork;
 mod harness_protocol;
 mod history;
 mod image_budget;
+mod passthrough_stream;
 mod request_policy;
 mod vision;
 
@@ -1109,7 +1110,7 @@ async fn handle_for_token(
         }
         None if upstream.codex_request_mode == CodexRequestMode::Passthrough => {
             Response::new(Body::from_stream(history::record_responses_stream(
-                response_stream.map(|chunk| chunk.map_err(std::io::Error::other)),
+                passthrough_stream::guard(response_stream),
                 history,
             )))
         }

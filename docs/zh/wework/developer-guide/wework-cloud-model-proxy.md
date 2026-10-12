@@ -77,6 +77,8 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 模型目录遇到不合法的 `codex_request_mode` 时会忽略该字段，保留模型的其他有效信息，避免一个错误配置导致整个模型列表不可用。目录读取不会修改存储的 Model CRD；实际调用仍校验原始配置，本机和云端执行都会在请求发送至模型服务前返回 HTTP 400。
 
+透传响应保留上游正常数据块的原始字节。若发生读取错误或流在 Responses 终态之前结束，仅追加 `response.failed`；已有 `response.completed`、`response.failed` 或 `response.incomplete` 后不会重复追加。独立的 `[DONE]` 不能代替 Responses 终态。
+
 `standard` 模式只向上游提供客户端可执行的 function tools，不提供 `web_search`、`image_generation` 等服务端内置工具。若请求通过 `tool_choice` 强制选择服务端工具，代理返回 HTTP 400；`auto` 和 `passthrough` 继续保留这些工具。
 
 #### Kimi K3 Chat Completions 兼容

@@ -215,6 +215,8 @@ fn legacy_bytecode_does_not_hide_modified_plugin_sources() {
     let result = verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash);
 
     assert!(result.unwrap_err().contains("integrity check failed"));
+    assert!(package.path.join("scripts/legacy.pyc").exists());
+    assert!(package.path.join("scripts/__pycache__").exists());
 }
 
 #[test]
@@ -232,6 +234,99 @@ fn published_plugin_keeps_bytecode_already_in_the_verified_archive() {
         fs::read_to_string(package.path.join("scripts/precompiled.pyc")).unwrap(),
         "verified bytecode"
     );
+}
+
+fn compiled_plugin_fixture(root: &Path) -> PublishedPackage {
+    publish_plugin_archive(
+        root,
+        &zip(&[
+            ("plugin/.claude-plugin/plugin.json", "{\"name\":\"demo\"}"),
+            ("plugin/scripts/precompiled.pyc", "verified bytecode"),
+            (
+                "plugin/scripts/__pycache__/canonical.pyc",
+                "verified cache bytecode",
+            ),
+        ]),
+        None,
+    )
+    .unwrap()
+}
+
+#[test]
+fn legacy_cache_recovery_preserves_all_published_bytecode_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let package = compiled_plugin_fixture(root.path());
+    add_legacy_bytecode(&package);
+
+    verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(package.path.join("scripts/precompiled.pyc")).unwrap(),
+        "verified bytecode"
+    );
+    assert_eq!(
+        fs::read_to_string(package.path.join("scripts/__pycache__/canonical.pyc")).unwrap(),
+        "verified cache bytecode"
+    );
+    assert!(!package.path.join("scripts/legacy.pyc").exists());
+    assert!(!package.path.join("scripts/__pycache__/nested").exists());
+}
+
+#[test]
+fn legacy_records_never_delete_ambiguous_bytecode_or_caches() {
+    let root = tempfile::tempdir().unwrap();
+    let package = compiled_plugin_fixture(root.path());
+    let record_path = root
+        .path()
+        .join("shared/metadata")
+        .join(format!("plugins-{}.json", &package.archive_hash[7..]));
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record
+        .as_object_mut()
+        .unwrap()
+        .remove("published_bytecode_paths");
+    fs::write(&record_path, record.to_string()).unwrap();
+    add_legacy_bytecode(&package);
+
+    let result = verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash);
+
+    assert!(result.unwrap_err().contains("integrity check failed"));
+    assert!(package.path.join("scripts/legacy.pyc").exists());
+    assert!(package.path.join("scripts/__pycache__/nested").exists());
+    assert_eq!(
+        fs::read_to_string(package.path.join("scripts/precompiled.pyc")).unwrap(),
+        "verified bytecode"
+    );
+    assert_eq!(
+        fs::read_to_string(package.path.join("scripts/__pycache__/canonical.pyc")).unwrap(),
+        "verified cache bytecode"
+    );
+}
+
+#[test]
+fn legacy_records_recover_only_when_the_original_hash_proves_cache_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    let package = plugin_fixture(root.path());
+    let record_path = root
+        .path()
+        .join("shared/metadata")
+        .join(format!("plugins-{}.json", &package.archive_hash[7..]));
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record
+        .as_object_mut()
+        .unwrap()
+        .remove("published_bytecode_paths");
+    fs::write(&record_path, record.to_string()).unwrap();
+    let record_bytes = fs::read(&record_path).unwrap();
+    add_legacy_bytecode(&package);
+
+    verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).unwrap();
+
+    assert_eq!(fs::read(&record_path).unwrap(), record_bytes);
+    assert!(!package.path.join("scripts/legacy.pyc").exists());
+    assert!(!package.path.join("scripts/__pycache__").exists());
 }
 
 #[test]

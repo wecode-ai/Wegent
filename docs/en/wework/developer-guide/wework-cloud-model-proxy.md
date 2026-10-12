@@ -79,6 +79,8 @@ Responses services that fully support Codex requests can set this field to `"pas
 
 The model catalog omits invalid `codex_request_mode` values while preserving other valid model metadata, so one misconfigured model cannot break the entire list. Catalog reads do not modify the stored Model CRD. Actual calls still validate the original configuration: both local and cloud execution return HTTP 400 before sending a request to the model provider.
 
+Passthrough preserves the original bytes of normal upstream chunks. A read error or EOF before a Responses terminal event only appends `response.failed`; no additional failure is emitted after `response.completed`, `response.failed`, or `response.incomplete`. A standalone `[DONE]` marker does not replace a Responses terminal event.
+
 `standard` mode advertises only client-executable function tools. It omits provider-hosted tools such as `web_search` and `image_generation`. If `tool_choice` forces a hosted tool, the proxy returns HTTP 400. `auto` and `passthrough` continue to preserve these tools.
 
 #### Kimi K3 Chat Completions Compatibility

@@ -291,7 +291,7 @@ async fn passthrough_http_forwards_business_fields_and_raw_response_with_provide
         let captured = Arc::new(Mutex::new(None));
         let capture = Arc::clone(&captured);
         let raw_response =
-            b"data: {\"type\":\"provider.extension\",\"unknown\":true}\n\ndata: [DONE]\n\n";
+            b"data: {\"type\":\"provider.extension\",\"unknown\":true}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"provider/response\",\"output\":[],\"opaque\":true}}\n\ndata: [DONE]\n\n";
         let app = Router::new().route(
             "/responses",
             post(move |headers: HeaderMap, body: Bytes| {
