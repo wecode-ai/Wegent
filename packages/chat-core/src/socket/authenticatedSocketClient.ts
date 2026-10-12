@@ -108,7 +108,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
   private rawSocket: RawSocket | null = null
   private connectGeneration = 0
   private isConnecting = false
-  private connectRequestPending = false
+  private connectRequest: Promise<void> | null = null
   private reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
   private manualReconnectAttempt = 0
   private intentionalDisconnect = false
@@ -181,21 +181,32 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
     }
   }
 
-  async connect(token?: string, notifyReconnectOnConnect = false): Promise<void> {
-    if (this.rawSocket?.connected || this.isConnecting || this.connectRequestPending) {
-      return
+  connect(token?: string, notifyReconnectOnConnect = false): Promise<void> {
+    if (this.connectRequest) return this.connectRequest
+    if (this.rawSocket?.connected || this.isConnecting) {
+      return Promise.resolve()
     }
 
-    const generationAtStart = this.connectGeneration
+    const generationAtStart = ++this.connectGeneration
     this.clearReconnectTimer()
+    this.disconnectCurrentSocket()
+    this.updateState({
+      socket: null,
+      isConnected: false,
+      connectionError: null,
+    })
     this.notifyOnNextConnect = this.notifyOnNextConnect || notifyReconnectOnConnect
-    this.connectRequestPending = true
+    this.connectRequest = this.resolveConnection(token, generationAtStart).finally(() => {
+      if (generationAtStart === this.connectGeneration) this.connectRequest = null
+    })
+    return this.connectRequest
+  }
 
+  private async resolveConnection(token: string | undefined, generationAtStart: number) {
     try {
       const resolvedToken = token ?? this.options.getToken()
       if (!resolvedToken) {
-        this.options.logger?.error?.('[Socket.IO] No token found, skipping connection')
-        return
+        throw new Error('Socket.IO connection requires an authentication token')
       }
 
       const socketBaseUrl = await this.options.socketBaseUrl()
@@ -203,7 +214,6 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
         return
       }
 
-      this.connectRequestPending = false
       this.createSocketConnection(resolvedToken, socketBaseUrl)
     } catch (error) {
       if (generationAtStart !== this.connectGeneration) {
@@ -216,8 +226,6 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
         connectionError,
         isConnected: false,
       })
-    } finally {
-      this.connectRequestPending = false
     }
   }
 
@@ -225,13 +233,14 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
     if (this.rawSocket?.connected) {
       return
     }
-    await this.connect(undefined, this.hasConnectionHistory)
-    if (this.rawSocket?.connected) {
-      return
-    }
+    const connection = this.connect(undefined, this.hasConnectionHistory)
+    const generation = this.connectGeneration
     await new Promise<void>((resolve, reject) => {
       const onState = (state: SocketClientState) => {
-        if (state.isConnected) {
+        if (generation !== this.connectGeneration) {
+          finish()
+          reject(new Error('Socket.IO connection attempt was cancelled'))
+        } else if (state.isConnected) {
           finish()
           resolve()
         } else if (state.connectionError) {
@@ -249,6 +258,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
       }, this.options.timeout)
       this.stateListeners.add(onState)
       onState(this.state)
+      void connection.then(() => onState(this.state))
     })
   }
 
@@ -257,7 +267,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
     this.intentionalDisconnect = true
     this.clearReconnectTimer()
     this.isConnecting = false
-    this.connectRequestPending = false
+    this.connectRequest = null
     this.manualReconnectAttempt = 0
     this.notifyOnNextConnect = false
     this.hasConnectionHistory = false
@@ -436,7 +446,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
       this.intentionalDisconnect ||
       this.rawSocket?.connected ||
       this.isConnecting ||
-      this.connectRequestPending ||
+      this.connectRequest ||
       this.reconnectTimer !== null
     ) {
       return
@@ -454,7 +464,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
 
     this.reconnectTimer = globalThis.setTimeout(() => {
       this.reconnectTimer = null
-      if (this.connectRequestPending || this.isConnecting) {
+      if (this.connectRequest || this.isConnecting) {
         this.queueReconnect(reason)
         return
       }

@@ -1,8 +1,10 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CircleCheck, Loader2, RotateCcw, Sparkles } from 'lucide-react'
+import { isImeComposingEvent } from '@wegent/chat-core/ime'
 import type { CloudLoopItem } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 type HumanWorkApi = Pick<
@@ -40,6 +42,19 @@ export function HumanIssueWorkPanel({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const requestId = useRef<{ key: string; value: string } | null>(null)
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(
+    () => {
+      if (!busy) setDialog(null)
+    },
+    Boolean(dialog && work),
+    dialog === 'return'
+      ? '[data-testid="human-issue-return-reason-input"]'
+      : '[data-testid="human-issue-work-cancel"]'
+  )
+  useEffect(() => {
+    // Disabled controls may lose focus while a request is pending.
+    if (busy && dialog) dialogRef.current?.focus()
+  }, [busy, dialog, dialogRef])
 
   if (!work) return null
 
@@ -249,8 +264,27 @@ export function HumanIssueWorkPanel({
 
       {dialog ? (
         <div
+          ref={dialogRef}
           role="dialog"
           aria-modal="true"
+          aria-busy={busy}
+          tabIndex={-1}
+          onKeyDown={event => {
+            // Isolate the nested dialog before the Issue editor handles Escape
+            // or its save shortcut. IME keys keep their native editing behavior.
+            event.stopPropagation()
+            if (event.key === 'Escape') {
+              if (isImeComposingEvent(event)) return
+              event.preventDefault()
+              if (!busy) setDialog(null)
+            } else if (
+              event.key === 'Enter' &&
+              event.target instanceof HTMLButtonElement &&
+              isImeComposingEvent(event)
+            ) {
+              event.preventDefault()
+            }
+          }}
           aria-label={
             dialog === 'submit' ? t('todo.human_work_submit') : t('todo.human_work_request_changes')
           }
@@ -279,7 +313,7 @@ export function HumanIssueWorkPanel({
                   value={reason}
                   onChange={event => setReason(event.target.value)}
                   maxLength={10000}
-                  autoFocus
+                  disabled={busy}
                 />
               </label>
             )}

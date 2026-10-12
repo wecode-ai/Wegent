@@ -7,6 +7,8 @@
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { IssueDetail } from "../IssueDetail";
 import { ResourceDestinationDialog } from "./ResourceDestinationDialog";
@@ -1840,6 +1842,103 @@ describe("CollaborationPlatformApp real component flow", () => {
       ),
     ).toBeNull();
   });
+
+  it.each(["none", "changes_requested"] as const)(
+    "keeps read human work in Inbox after start or return (%s)",
+    async (state) => {
+      const { api } = createApi();
+      api.myWork = {
+        list: emptyAsync([
+          {
+            ...issue,
+            id: "ready-to-submit",
+            status: "in_progress",
+            is_unread: false,
+            human_work: {
+              assignment_id: "assignment-1",
+              assignee_user_id: 7,
+              reviewer_user_id: 1,
+              submission_message_id: null,
+              submitted_by_user_id: null,
+              state,
+              result: "Existing result",
+              return_reason: "",
+              ai_draft_delivery_id: null,
+              can_start: false,
+              can_submit: true,
+              can_review: false,
+            },
+          },
+          { ...issue, id: "read-ordinary", is_unread: false },
+        ]),
+      };
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{ ...initialLocation, rootView: "inbox" }}
+        />,
+      );
+      expect(byTestId("collaboration-home-work-ready-to-submit")).toBeTruthy();
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-home-work-read-ordinary"]',
+        ),
+      ).toBeNull();
+    },
+  );
+
+  it.each(["zh-CN", "en"] as const)(
+    "documents the human review filter and visible group in %s",
+    async (locale) => {
+      const { api } = createApi();
+      api.myWork = {
+        list: emptyAsync([
+          {
+            ...issue,
+            id: "review-human",
+            status: "in_review",
+            human_work: {
+              assignment_id: "assignment-1",
+              assignee_user_id: 7,
+              reviewer_user_id: 1,
+              submission_message_id: null,
+              submitted_by_user_id: 7,
+              state: "submitted",
+              result: "Done",
+              return_reason: "",
+              ai_draft_delivery_id: null,
+              can_start: false,
+              can_submit: false,
+              can_review: true,
+            },
+          },
+        ]),
+      };
+      await render(
+        <PlatformHarness
+          api={api}
+          locale={locale}
+          start={{ ...initialLocation, rootView: "my-work" }}
+        />,
+      );
+      const filter = byTestId("collaboration-my-work-human-filter");
+      await click(filter);
+      const label = locale === "en" ? "Needs my review" : "待我确认";
+      expect(
+        byTestId("collaboration-work-group-human-review").textContent,
+      ).toContain(label);
+      const docs = readFileSync(
+        resolve(
+          `../../docs/${locale === "en" ? "en" : "zh"}/wegent/user-guide/coding/collaboration-issue-home.md`,
+        ),
+        "utf8",
+      );
+      const step = docs
+        .split("\n")
+        .find((line) => line.startsWith("4. ") && line.includes(label));
+      expect(step).toContain(`**${filter.textContent?.trim()}**`);
+    },
+  );
 
   it("reports readiness only after the initial platform data is loaded", async () => {
     const { api } = createApi();

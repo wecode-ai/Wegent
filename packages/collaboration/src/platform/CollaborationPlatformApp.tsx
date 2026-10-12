@@ -3964,6 +3964,7 @@ export function CollaborationPlatformApp({
       return (
         item.is_unread ||
         item.human_work?.can_start ||
+        item.human_work?.can_submit ||
         item.human_work?.can_review ||
         operation === "failed" ||
         operation === "review"

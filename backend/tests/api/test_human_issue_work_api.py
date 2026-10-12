@@ -228,6 +228,12 @@ def test_assignee_submits_and_assigner_accepts(
     )
     assert started.status_code == 200, started.text
     assert started.json()["issue"]["status"] == "in_progress"
+    started_work = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=_auth(assignee_token)
+    ).json()["items"]
+    started_row = next(row for row in started_work if row["id"] == item_id)
+    assert started_row["is_unread"] is False
+    assert started_row["human_work"]["can_submit"] is True
     ai_binding = started.json()["issue"]["human_work"]["ai_task_binding"]
     assert ai_binding["assignmentId"] == active[0].id
     assert ai_binding["dispatchRoundId"] == "direct"
@@ -351,6 +357,15 @@ def test_reviewer_can_request_changes_but_assignee_cannot_review(
     assert returned.status_code == 200, returned.text
     assert returned.json()["issue"]["status"] == "in_progress"
     assert returned.json()["issue"]["human_work"]["can_review"] is False
+    assignee_work = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=_auth(assignee_token)
+    ).json()["items"]
+    assert (
+        next(row for row in assignee_work if row["id"] == item_id)["human_work"][
+            "can_submit"
+        ]
+        is True
+    )
 
 
 def test_non_creator_assigner_appears_in_review_queue(
@@ -402,6 +417,51 @@ def test_non_creator_assigner_appears_in_review_queue(
     )
     assert review_item["human_work"]["can_review"] is True
 
+    # Revoking the assigner's project membership activates live fallback,
+    # even though the submission still stores that assigner as reviewer.
+    membership = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_id == project.id,
+            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
+            ResourceMember.entity_id == str(maintainer.id),
+        )
+        .one()
+    )
+    test_db.delete(membership)
+    test_db.commit()
+    revoked_work = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=_auth(maintainer_token)
+    ).json()["items"]
+    assert not any(row["id"] == created["id"] for row in revoked_work)
+    fallback_work = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=_auth(test_token)
+    ).json()["items"]
+    fallback = next(row for row in fallback_work if row["id"] == created["id"])
+    assert fallback["human_work"]["can_review"] is True
+    assert fallback["human_work"]["reviewer_user_id"] is None
+
+    # Restoring membership makes the original assigner eligible again.
+    test_db.add(
+        ResourceMember.create(
+            resource_type=ResourceType.CLOUD_PROJECT.value,
+            resource_id=project.id,
+            entity_id=str(maintainer.id),
+            role="Maintainer",
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+    restored_work = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=_auth(maintainer_token)
+    ).json()["items"]
+    assert (
+        next(row for row in restored_work if row["id"] == created["id"])["human_work"][
+            "can_review"
+        ]
+        is True
+    )
+
 
 def test_self_assignment_uses_maintainer_fallback(
     test_client: TestClient,
@@ -449,6 +509,30 @@ def test_self_assignment_uses_maintainer_fallback(
     ).json()
     assert maintainer_view["human_work"]["can_review"] is True
     assert developer_view["human_work"]["can_review"] is False
+    fallback_queue = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=_auth(maintainer_token)
+    ).json()["items"]
+    assert (
+        next(row for row in fallback_queue if row["id"] == created["id"])["human_work"][
+            "can_review"
+        ]
+        is True
+    )
+    membership = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
+            ResourceMember.resource_id == project.id,
+            ResourceMember.entity_id == str(_maintainer.id),
+        )
+        .one()
+    )
+    membership.role = "Developer"
+    test_db.commit()
+    demoted_queue = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=_auth(maintainer_token)
+    ).json()["items"]
+    assert not any(row["id"] == created["id"] for row in demoted_queue)
 
 
 @pytest.mark.parametrize("initial_status", ["in_review", "completed"])
