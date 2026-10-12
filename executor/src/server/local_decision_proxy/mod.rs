@@ -14,6 +14,7 @@
 #![allow(dead_code, unused_imports)]
 
 mod protocol;
+mod registry;
 
 pub(crate) use protocol::{
     DecisionModel, DecisionProxyErrorBody, DecisionProxyErrorPayload, DecisionRequest,
