@@ -23,6 +23,7 @@ from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.provider_credentials import decrypt_provider_token
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_value_is_unset
@@ -70,7 +71,6 @@ EXTERNAL_BOARD_STATUSES = {
 }
 ISSUE_LIST_PAGE_SIZE = 100
 MAX_EXTERNAL_COMMENT_PAGES = 100
-ISSUE_PAGE_CACHE_SECONDS = 30
 GITLAB_PROVIDER_UPLOAD_PATTERN = re.compile(
     r"(?P<image>!)?\[(?P<name>[^\]]+)\]\((?P<url>[^)]*/uploads/[^)]+)\)"
 )
@@ -2169,7 +2169,7 @@ class ExternalLoopItemProvider:
                     if value[0] > now
                 }
                 self._issue_page_cache[cache_key] = (
-                    time.monotonic() + ISSUE_PAGE_CACHE_SECONDS,
+                    time.monotonic() + settings.ISSUE_PAGE_CACHE_SECONDS,
                     batch,
                 )
             future.set_result(batch)
