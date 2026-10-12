@@ -1576,40 +1576,6 @@ class RealCloudEnvironment {
     throw new Error('The real cloud backend still returned the removed project')
   }
 
-  async aliasCloudDeviceToCurrentApp() {
-    const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    })
-    const localCandidates = (devices.items ?? []).filter(
-      device => device.device_id !== CLOUD_DEVICE_ID && device.status === 'online'
-    )
-    const localDevice =
-      localCandidates.find(device => device.device_type === 'app') ?? localCandidates[0]
-    assert.ok(localDevice?.device_id, 'The connected local app device was not registered')
-    assert.match(
-      localDevice.device_id,
-      /^[A-Za-z0-9._-]+$/,
-      'The connected local app device ID is not safe for the database fixture'
-    )
-
-    await this.executeDatabase(
-      `UPDATE kinds
-       SET json = JSON_SET(json, '$.spec.appDeviceId', %s)
-       WHERE kind = 'Device' AND name = %s`,
-      [localDevice.device_id, CLOUD_DEVICE_ID]
-    )
-
-    const updated = await fetchJson(`${this.backendUrl}/api/devices`, {
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    })
-    const cloudDevice = updated.items?.find(device => device.device_id === CLOUD_DEVICE_ID)
-    assert.equal(
-      cloudDevice?.app_device_id,
-      localDevice.device_id,
-      'The cloud route was not associated with the connected local app device'
-    )
-  }
-
   async cancelRunningTasks() {
     if (!this.backendUrl || !this.authToken) return
     const work = await fetchJson(`${this.backendUrl}/api/runtime-work`, {
