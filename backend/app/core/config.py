@@ -162,6 +162,8 @@ class Settings(BaseSettings):
     # Cache configuration
     REPO_CACHE_EXPIRED_TIME: int = 7200  # 2 hour in seconds
     REPO_UPDATE_INTERVAL_SECONDS: int = 3600  # 1 hour in seconds
+    # External issue page cache TTL in seconds; 0 disables cache reuse.
+    ISSUE_PAGE_CACHE_SECONDS: int = Field(default=30, ge=0)
 
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10
