@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -40,6 +41,27 @@ __all__ = ["SyncResponseEmitter", "StreamingResponseEmitter"]
 
 _WAITING_FOR_INPUT_CONTENT = "等待你在 Wework 中确认后继续。"
 _EMPTY_FINAL_CONTENT = "本轮已结束，未生成最终回复。"
+
+
+def normalize_dingtalk_markdown(content: str) -> str:
+    """Remove separators that DingTalk renders as empty table rows."""
+    # DingTalk AI cards absorb a block break immediately before or after a
+    # table into the table itself. Collapse those breaks to single separators.
+    content = re.sub(r"(?i)<br\s*/?>[ \t]*\n?", "\n", content)
+    content = re.sub(r"(?:\n[ \t]*){3,}", "\n\n", content)
+    content = re.sub(
+        r"(?m)(?<=[^\n])\n(?:[ \t]*\n)*(?=[ \t]*\|)",
+        "\n",
+        content,
+    )
+    # The same happens to the blank line separating a table from the next
+    # heading. Keep only one newline so DingTalk closes the table cleanly.
+    content = re.sub(
+        r"(?m)(^[ \t]*\|[^\n]*\|[ \t]*)\n+(?=#[^\n]*)",
+        r"\1\n",
+        content,
+    )
+    return content
 
 
 class StreamingResponseEmitter(ResultEmitter):
@@ -452,6 +474,7 @@ class StreamingResponseEmitter(ResultEmitter):
         self._finished = True
 
     def _truncate_final(self, content: str, *, max_length: Optional[int] = None) -> str:
+        content = normalize_dingtalk_markdown(content)
         limit = self.MAX_FINAL_CONTENT_LENGTH if max_length is None else max_length
         suffix = self.FINAL_TRUNCATION_SUFFIX
         if len(content) <= limit:
