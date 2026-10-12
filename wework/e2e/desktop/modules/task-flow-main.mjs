@@ -3075,6 +3075,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )
 
       phase = 'file-changes-revert-confirmation'
+      await control.command('waitFor', '[data-testid="revert-file-changes-button"]')
+      await control.command('scrollIntoViewAsUser', '[data-testid="revert-file-changes-button"]')
       await control.command('clickWhenEnabled', '[data-testid="revert-file-changes-button"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
