@@ -111,7 +111,7 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.WEWORK_SHARED_EXECUTOR_HOME).toBeUndefined()
     expect(environment.WEWORK_APP_CONFIG_DIR).toBe(path.join('/tmp/session', 'app-config'))
     expect(environment.WEWORK_DESKTOP_CONTROL_REGISTRY_DIR).toBe(
-      path.join('/tmp/session', 'desktop-instances')
+      path.join('/tmp/session', 'desktop-control')
     )
     expect(environment.PATH).toBe('/usr/bin')
   })

@@ -86,6 +86,8 @@ export function buildAiVerifyEnvironment(
     WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),
     WEGENT_EXECUTOR_LOG_DIR: sessionDirectory,
     WEWORK_APP_CONFIG_DIR: join(sessionDirectory, 'app-config'),
-    WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(sessionDirectory, 'desktop-instances'),
+    // WEWORK_USER_DATA_DIR makes the desktop data migration skip this run, so the
+    // registry must stay in the session or it would leave a shared target without a journal.
+    WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(sessionDirectory, 'desktop-control'),
   }
 }
