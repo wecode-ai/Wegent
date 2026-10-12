@@ -12,13 +12,16 @@
 use crate::board_snapshot::external_provider;
 use crate::board_snapshot::repository::ProjectRow;
 
+use super::page_cache;
 use super::{PARENT_MARKER, PageIssue, STATUS_PREFIX};
 
 /// `_request_issue_page` -> `_request`: fetch one page of issues from the
-/// provider API. Mirrors the source URL construction and header setup. On
-/// transport failure, returns `Err(error_text)` where `error_text` is the
-/// rendered httpx/OpenSSL error string (used by the caller to build the 502
-/// `detail`). On non-2xx status, returns `Err("HTTP status {status}")`.
+/// provider API, through the source's 30-second issue-page cache
+/// (`_list_issue_page`). Mirrors the source URL construction and header
+/// setup. A transport failure returns [`ProviderError::Failed`] carrying the
+/// rendered httpx/OpenSSL error text, and a `404` response returns
+/// [`ProviderError::NotFound`]; the caller turns those into the source's
+/// `502 "Provider request failed: {e}"` and `404 "TODO not found"`.
 pub(super) async fn request_issue_page(
     client: &brz_http::Client,
     zinfo_key: &str,
@@ -27,10 +30,65 @@ pub(super) async fn request_issue_page(
     parent_id: Option<&str>,
     page: u32,
     limit: i64,
-) -> Result<Vec<PageIssue>, String> {
+) -> Result<Vec<PageIssue>, ProviderError> {
+    // The cache stores the raw issue JSON values (the source caches the raw
+    // dicts); each read re-projects them into `PageIssue` rows.
+    if let Some(values) = page_cache::cached_page(
+        &project.id,
+        project.version,
+        item_status,
+        parent_id,
+        page,
+        limit,
+    ) {
+        return project_page(values);
+    }
+    let values = fetch_issue_page(
+        client,
+        zinfo_key,
+        project,
+        item_status,
+        parent_id,
+        page,
+        limit,
+    )
+    .await?;
+    page_cache::store_page(
+        &project.id,
+        project.version,
+        item_status,
+        parent_id,
+        page,
+        limit,
+        values.clone(),
+    );
+    project_page(values)
+}
+
+/// Project the raw provider issue JSON into typed `PageIssue` rows.
+fn project_page(values: Vec<serde_json::Value>) -> Result<Vec<PageIssue>, ProviderError> {
+    values
+        .into_iter()
+        .map(|value| serde_json::from_value(value).map_err(|error| error.to_string()))
+        .collect::<Result<Vec<PageIssue>, String>>()
+        .map_err(ProviderError::Failed)
+}
+
+/// `_request_issue_page` -> `_request`: the uncached provider HTTP fetch.
+async fn fetch_issue_page(
+    client: &brz_http::Client,
+    zinfo_key: &str,
+    project: &ProjectRow,
+    item_status: &str,
+    parent_id: Option<&str>,
+    page: u32,
+    limit: i64,
+) -> Result<Vec<serde_json::Value>, ProviderError> {
     let task_provider = project.task_provider();
-    let (config, token) = external_provider::resolve_provider_config(zinfo_key, project)?;
-    let repository = external_provider::provider_repository(&config)?;
+    let (config, token) = external_provider::resolve_provider_config(zinfo_key, project)
+        .map_err(ProviderError::Failed)?;
+    let repository =
+        external_provider::provider_repository(&config).map_err(ProviderError::Failed)?;
 
     let default_domain = if task_provider == "github" {
         "github.com"
@@ -102,9 +160,9 @@ pub(super) async fn request_issue_page(
 
     let url = format!("{api_base}{path}?{query_string}");
 
-    let mut request = client
-        .get(&url)
-        .map_err(|error| external_provider::python_httpx_error_text(&error))?;
+    let mut request = client.get(&url).map_err(|error| {
+        ProviderError::Failed(external_provider::python_httpx_error_text(&error))
+    })?;
     if task_provider == "github" {
         request = request
             .header("Authorization", format!("Bearer {token}"))
@@ -112,20 +170,54 @@ pub(super) async fn request_issue_page(
     } else {
         request = request.header("PRIVATE-TOKEN", token.as_str());
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| external_provider::python_httpx_error_text(&error))?;
+    let response = request.send().await.map_err(|error| {
+        ProviderError::Failed(external_provider::python_httpx_error_text(&error))
+    })?;
     let status = response.status();
-    let body = response
-        .bytes()
-        .await
-        .map_err(|error| external_provider::python_httpx_error_text(&error))?;
+    let body = response.bytes().await.map_err(|error| {
+        ProviderError::Failed(external_provider::python_httpx_error_text(&error))
+    })?;
     if !status.is_success() {
-        return Err(format!("HTTP status {status}"));
+        // `_request` maps a provider `404` to `404 "TODO not found"` and every
+        // other `HTTPStatusError` to `502 "Provider request failed: {exc}"`,
+        // where `{exc}` is httpx's rendering of the failed response.
+        if status.as_u16() == 404 {
+            return Err(ProviderError::NotFound);
+        }
+        return Err(ProviderError::Failed(python_httpx_status_error_text(
+            status, &url,
+        )));
     }
-    let batch: Vec<PageIssue> = serde_json::from_slice(&body).map_err(|error| error.to_string())?;
+    let batch: Vec<serde_json::Value> =
+        serde_json::from_slice(&body).map_err(|error| ProviderError::Failed(error.to_string()))?;
     Ok(batch)
+}
+
+/// A provider-page failure classified the way the source's `_request` does.
+pub(super) enum ProviderError {
+    /// `httpx.HTTPStatusError` with a `404` status.
+    NotFound,
+    /// Any other `httpx.HTTPError`; carries httpx's rendered error text.
+    Failed(String),
+}
+
+/// `httpx.HTTPStatusError.__str__`: `raise_for_status` renders the failed
+/// response as `"{error_type} '{status} {reason}' for url '{url}'"` followed
+/// by the MDN status reference line.
+fn python_httpx_status_error_text(status: brz_http::StatusCode, url: &str) -> String {
+    let code = status.as_u16();
+    let reason = status.canonical_reason().unwrap_or_default();
+    let error_type = match code / 100 {
+        1 => "Informational response",
+        3 => "Redirect response",
+        4 => "Client error",
+        5 => "Server error",
+        _ => "Invalid status code",
+    };
+    format!(
+        "{error_type} '{code} {reason}' for url '{url}'\n\
+         For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{code}"
+    )
 }
 
 /// `urllib.parse.quote(repository, safe='')`: percent-encode every byte
@@ -182,6 +274,33 @@ mod tests {
         assert_eq!(
             url_encode_query("Wegent-Parent: 507"),
             "Wegent-Parent%3A+507"
+        );
+    }
+
+    /// `python_httpx_status_error_text` reproduces httpx's
+    /// `HTTPStatusError.__str__` for a failed response.
+    #[test]
+    fn failed_status_renders_httpx_raise_for_status_text() {
+        let text = python_httpx_status_error_text(
+            brz_http::StatusCode::UNAUTHORIZED,
+            "https://gitlab.example/api/v4/projects/Web%2FV7%2FApp/issues",
+        );
+        assert_eq!(
+            text,
+            "Client error '401 Unauthorized' for url \
+             'https://gitlab.example/api/v4/projects/Web%2FV7%2FApp/issues'\n\
+             For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401"
+        );
+    }
+
+    /// `_request` maps a provider `404` to the source's `TODO not found`
+    /// branch, distinct from the generic provider failure.
+    #[test]
+    fn failed_status_classifies_not_found() {
+        assert_eq!(
+            python_httpx_status_error_text(brz_http::StatusCode::NOT_FOUND, "https://x/y"),
+            "Client error '404 Not Found' for url 'https://x/y'\n\
+             For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"
         );
     }
 }

@@ -3,7 +3,11 @@ import { createHash } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import {
+  createSingleRootLocalProject,
+  selectE2EModel,
+  waitForLogPattern,
+} from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -283,6 +287,14 @@ export function createDesktopScenario({
         )
       }
       await createSingleRootLocalProject(control, workspacePath, 'codex-invalid-launch-cwd')
+      // The restarted runtime must refresh the real catalog before interacting with its menu.
+      const modelCatalogLogOffset = (await readFile(executorLogPath, 'utf8')).length
+      await control.command('dispatchLocalModelSettingsChanged', '')
+      await waitForLogPattern(
+        executorLogPath,
+        /app IPC request started request_id=(\S+) method=runtime\.codex\.models\.list[\s\S]*?app IPC request finished request_id=\1 method=runtime\.codex\.models\.list[^\n]*ok=true/,
+        { fromOffset: modelCatalogLogOffset, timeoutMs: uiTimeoutMs }
+      )
       await selectE2EModel(control, BUILTIN_MODEL_ID, BUILTIN_MODEL_LABEL, '', 'openai')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })

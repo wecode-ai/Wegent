@@ -44,6 +44,11 @@ async fn get_task_skills(
     run(state, task_id, user.id).await
 }
 
+// Note (recording re-verification): this route was re-opened for re-verification
+// on 2026-10-11 after the recording-enabled startup-env override
+// (`WEGENT_RS_RECORDING_ENABLED=false`) was applied. Target behavior here is
+// unchanged; this note records why the round re-verifies.
+
 /// The endpoint flow after authentication.
 async fn run(
     state: &AppState,

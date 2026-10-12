@@ -177,7 +177,8 @@ export class RuntimeTaskLifecycleStore {
     const completedAt = terminalTurn?.completedAt
     if (completedAt == null) return
 
-    const currentTask = this.getTask(address)?.task
+    const currentLifecycle = this.getTask(address)
+    const currentTask = currentLifecycle?.task
     if (!currentTask) {
       this.executorSettled(address)
       return
@@ -199,6 +200,7 @@ export class RuntimeTaskLifecycleStore {
       ...currentTask,
       running: false,
       completedAt,
+      interactionStatus: outcome === 'succeeded' ? currentLifecycle.interactionStatus : null,
       status:
         outcome === 'failed'
           ? 'failed'
@@ -278,8 +280,8 @@ export class RuntimeTaskLifecycleStore {
     this.dispatch(address, { type: 'turn_settled', turnId, outcome })
   }
 
-  userInputRequested(address: RuntimeTaskAddress): void {
-    this.dispatch(address, { type: 'user_input_requested' })
+  userInputRequested(address: RuntimeTaskAddress, delivery?: 'async'): void {
+    this.dispatch(address, { type: 'user_input_requested', delivery })
   }
 
   userInputResponded(address: RuntimeTaskAddress): void {

@@ -98,7 +98,6 @@ import {
   type RuntimeTaskConversationStatus,
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
-import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
 import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
 import {
   loadProjectSpaceCodeWorkspacePreference,
@@ -702,9 +701,6 @@ export function WeworkSharedProject({
         ? issue.human_work.ai_task_binding
         : null
       const currentProject = latestProjectRef.current
-      const environmentTaskRequest = humanWorkBinding
-        ? projectExecutionEnvironmentTaskRequest(currentProject)
-        : null
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
@@ -714,7 +710,6 @@ export function WeworkSharedProject({
           schemaVersion: 2,
           runtime: 'codex',
           message: '',
-          ...environmentTaskRequest,
           ...(dispatch
             ? {
                 message: issueDispatchPersonalTaskInput(dispatch),

@@ -9,9 +9,9 @@
 //! `Depends(security.get_current_user)` then
 //! `QueueMessageService.get_unread_counts` grouped by queue.
 //!
-//! The recorded case sends no `Authorization` header, so the OAuth2 scheme
-//! rejects the request before any dependency SQL runs with
-//! `401 {"detail":"Not authenticated"}` and `WWW-Authenticate: Bearer`.
+//! The handler reads the authenticated user's unread message counts; the
+//! `TeamsUser` extraction (`#[auth]`) runs before any dependency SQL, and a
+//! request without valid credentials would be rejected before this handler.
 use std::collections::BTreeMap;
 
 use crate::http_compat::FastApiError;

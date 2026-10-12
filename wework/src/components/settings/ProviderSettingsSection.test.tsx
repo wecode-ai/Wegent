@@ -63,6 +63,45 @@ function savedProviders() {
 }
 
 describe('Provider settings page', () => {
+  test.each(['success', 'failure'])(
+    'waits for a superseding catalog refresh before completing a deletion: %s',
+    async outcome => {
+      snapshot.providers[0].models = [{ id: 'deleted', model_id: 'deleted-model' }]
+      await reloadProviderConfiguration()
+      const user = await openEditor()
+      const original = invoke.getMockImplementation()!
+      const releases: Array<() => void> = []
+      invoke.mockImplementation(async (method, params) => {
+        if (method === 'modelConfiguration.runtime' && snapshot.revision === 'two') {
+          const requestIndex = releases.length
+          await new Promise<void>(resolve => releases.push(resolve))
+          if (requestIndex === 1 && outcome === 'failure') throw new Error('Refresh failed')
+        }
+        return original(method, params)
+      })
+      await user.click(screen.getByTestId('provider-model-remove-deleted'))
+      await user.click(screen.getByTestId('provider-editor-save'))
+      await waitFor(() => expect(releases).toHaveLength(1))
+      const newerRefresh = reloadProviderConfiguration()
+      await waitFor(() => expect(releases).toHaveLength(2))
+      await act(async () => releases[0]())
+      expect(screen.getByTestId('provider-editor')).toBeInTheDocument()
+      expect(screen.getByTestId('provider-model-deleted')).toBeInTheDocument()
+      await act(async () => {
+        releases[1]()
+        await newerRefresh
+      })
+      if (outcome === 'success') {
+        await waitFor(() => expect(screen.queryByTestId('provider-editor')).not.toBeInTheDocument())
+        expect(screen.queryByTestId('provider-model-deleted')).not.toBeInTheDocument()
+      } else {
+        expect(screen.getByTestId('provider-editor')).toBeInTheDocument()
+        expect(screen.getByTestId('provider-editor-error')).toHaveTextContent('Refresh failed')
+        expect(screen.getByTestId('provider-model-deleted')).toBeInTheDocument()
+      }
+    }
+  )
+
   test('DeepSeek only needs a key and preserves the preset runtime settings', async () => {
     render(<ProviderSettingsSection />)
     const user = userEvent.setup()

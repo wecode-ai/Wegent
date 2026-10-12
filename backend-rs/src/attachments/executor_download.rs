@@ -122,10 +122,12 @@ pub(super) async fn executor_download(
     // knowledge-document policy probe (`knowledge_documents` by
     // `attachment_id`, then the active `KnowledgeBase` `Kind`). A database
     // failure raises the source's unhandled 500.
+    let file_extension = context.file_extension();
     match super::download_policy::require_attachment_download_allowed(
         &state.mysql,
         attachment_id,
         &context.mime_type(),
+        Some(&file_extension),
         super::download_policy::Purpose::Executor,
     )
     .await
@@ -226,21 +228,7 @@ fn attachment_header_error(error: brz_http_server::HeaderBlockError) -> FastApiE
 /// (`ATTACHMENT_S3_*`); `None` when not configured, leaving the `mysql`
 /// backend in effect.
 fn minio_config_from_env() -> Option<MinioConfig> {
-    let endpoint = crate::config::env_or_dotenv("ATTACHMENT_S3_ENDPOINT").unwrap_or_default();
-    let access_key = crate::config::env_or_dotenv("ATTACHMENT_S3_ACCESS_KEY").unwrap_or_default();
-    let secret_key = crate::config::env_or_dotenv("ATTACHMENT_S3_SECRET_KEY").unwrap_or_default();
-    if endpoint.is_empty() || access_key.is_empty() || secret_key.is_empty() {
-        return None;
-    }
-    Some(MinioConfig {
-        endpoint,
-        access_key,
-        secret_key,
-        bucket: crate::config::env_or_dotenv("ATTACHMENT_S3_BUCKET")
-            .unwrap_or_else(|| "attachments".to_string()),
-        region: crate::config::env_or_dotenv("ATTACHMENT_S3_REGION")
-            .unwrap_or_else(|| "us-east-1".to_string()),
-    })
+    MinioConfig::from_env()
 }
 
 #[cfg(test)]

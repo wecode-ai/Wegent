@@ -13,26 +13,29 @@
 //! `LoopItemPageResponse { items, task_bindings, next_cursor }`.
 //!
 //! Source pipeline (`app.services.loop_items.external_provider.list_page`):
-//! 1. `require_cloud_project_role(db, project_id, user_id, RestrictedAnalyst)`
-//!    — the set-based `project_access_query` resolves the active project row
-//!    and the caller's effective role in one statement; raises 404 when no
-//!    permission source grants the caller access to that project.
+//! 1. `require_cloud_project_role(db, project_id, user_id, Viewer)` — the
+//!    set-based `project_access_query` resolves the active project row and the
+//!    caller's effective role in one statement; raises 404 when no permission
+//!    source grants the caller access to that project and 403 when the
+//!    resolved role is below `Viewer` (`RestrictedAnalyst`).
 //! 2. `_require_external(project)` — 409 when the project is not github/gitlab.
 //! 3. `item_status not in EXTERNAL_BOARD_STATUSES` — 422 "Unsupported board
 //!    status".
 //! 4. `_decode_page_cursor(cursor)` — 422 "Invalid page cursor" on bad base64
 //!    or out-of-range page.
 //! 5. `_list_issue_page` -> `_request_issue_page` -> `_request` — the provider
-//!    HTTP call. The recorded case is a gitlab-backed public project whose
-//!    provider API call fails TLS verification during Replay, so the source
-//!    raises `HTTPException(502, "Provider request failed: {e}")`.
+//!    HTTP call, then one `_response` projection per matched issue (the active
+//!    `loop_item_executions` run overlay plus assignee lookups).
+//! 6. `loop_item_service.list_project_task_bindings` — the active execution
+//!    bindings for the matched item ids, after a second `Viewer` role check.
 //!
-//! The recorded case fails at step 5 before any items or bindings are
-//! produced, so `items` and `task_bindings` are always empty in the response
-//! and `next_cursor` is `None`. The handler mirrors the exact source pipeline
-//! so the recorded dependency sequence through the provider failure matches:
-//! the authenticated `users` read followed by the single
-//! `project_access_query` statement.
+//! The provider call may fail: a `404` response becomes `404 "TODO not found"`
+//! and every other provider failure becomes
+//! `502 "Provider request failed: {e}"`; on success the handler mirrors the
+//! source's dependency sequence — the authenticated `users` read, the
+//! `project_access_query`, the provider request, one
+//! `loop_item_executions` lookup and assignee `users` read per matched item,
+//! the second `project_access_query`, and the bindings read.
 use base64::Engine as _;
 use serde::Serialize;
 use serde_json::json;
@@ -44,11 +47,13 @@ use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectRow, has
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
-mod projection;
+mod execution;
+mod page_cache;
+pub(crate) mod projection;
 mod provider;
 
 use projection::{LoopItemResponse, issue_response};
-use provider::request_issue_page;
+use provider::{ProviderError, request_issue_page};
 
 /// `EXTERNAL_BOARD_STATUSES` (`app.services.loop_items.external_provider`).
 const EXTERNAL_BOARD_STATUSES: &[&str] =
@@ -68,6 +73,9 @@ const ASSIGNEE_PREFIX: &str = "wegent:assignee:";
 
 /// `PRIORITY_PREFIX` (`app.services.loop_items.external_provider`).
 const PRIORITY_PREFIX: &str = "wegent:priority:";
+
+/// `SECURITY_PREFIX` (`app.services.loop_items.external_provider`).
+const SECURITY_PREFIX: &str = "wegent:security:";
 
 /// Query parameters for `GET /api/v1/cloud-projects/{project_id}/loop-item-pages`.
 ///
@@ -242,12 +250,12 @@ async fn loop_item_page(
         .parse()
         .map_err(|_| path_validation_error(project_id))?;
 
-    // `require_cloud_project_role(db, project_id, user_id, RestrictedAnalyst)`:
+    // `require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)`:
     // the set-based `project_access_query` resolves the active project row and
     // the caller's effective role in one statement, so the request is
     // authorized against the same grants as every other cloud-project route.
-    // Every resolved role satisfies `RestrictedAnalyst`, so this call cannot
-    // raise the source's 403.
+    // A caller below `Viewer` fails `has_permission(role, Viewer)` and the
+    // source raises `403 {"detail": "Insufficient permission"}`.
     let access = repository
         .require_cloud_project_role(project_number, current_user.id)
         .await
@@ -260,6 +268,9 @@ async fn loop_item_page(
         })?;
     let project = access.project;
     let role = access.role;
+    if !has_permission(&role, "Viewer") {
+        return Err(FastApiError::forbidden("Insufficient permission"));
+    }
 
     // `_require_external(project)`: 409 when the project is not github/gitlab.
     let task_provider = project.task_provider();
@@ -282,12 +293,12 @@ async fn loop_item_page(
     let page = decode_page_cursor(cursor.as_deref())?;
 
     // `_list_issue_page` -> `_request_issue_page` -> `_request`: the provider
-    // HTTP call. The recorded case is a gitlab-backed public project whose
-    // provider API call fails TLS verification during Replay, so the source
-    // raises `HTTPException(502, "Provider request failed: {e}")`. The provider
-    // request carries the decrypted `provider_config` credential and the
-    // project's `task_provider`/`api_base`, both read from the already-resolved
-    // access row, so the failure reaches this branch without another read.
+    // HTTP call. The source maps a `404` response to `404 "TODO not found"`
+    // and every other provider failure to
+    // `502 "Provider request failed: {e}"`. The provider request carries the
+    // decrypted `provider_config` credential and the project's
+    // `task_provider`/`api_base`, both read from the already-resolved access
+    // row, so the failure reaches this branch without another read.
     let batch = request_issue_page(
         &state.attachment_http,
         &state.auth.jwt_key,
@@ -298,11 +309,14 @@ async fn loop_item_page(
         limit,
     )
     .await
-    .map_err(|error| {
-        FastApiError::detail(
+    .map_err(|error| match error {
+        ProviderError::NotFound => {
+            FastApiError::detail(brz_http_server::StatusCode::NOT_FOUND, "TODO not found")
+        }
+        ProviderError::Failed(text) => FastApiError::detail(
             brz_http_server::StatusCode::BAD_GATEWAY,
-            format!("{PROVIDER_REQUEST_FAILED_PREFIX}{error}"),
-        )
+            format!("{PROVIDER_REQUEST_FAILED_PREFIX}{text}"),
+        ),
     })?;
 
     // The source projects each issue to a `LoopItemResponse` row via
@@ -329,14 +343,20 @@ async fn loop_item_page(
         None
     };
 
-    let item_ids: Vec<String> = matched.iter().map(|item| item.id()).collect();
+    // `list_page` returns `[r for r in responses if r["can_view_detail"]]`, and
+    // the endpoint derives the bindings lookup from exactly those items.
+    let items: Vec<LoopItemResponse> = matched
+        .into_iter()
+        .filter(LoopItemResponse::can_view_detail)
+        .collect();
+    let item_ids: Vec<String> = items.iter().map(|item| item.id()).collect();
 
     // `loop_item_service.list_project_task_bindings`: active execution rows
     // whose `loop_item_id` is in the item list. The source resolves
     // `require_cloud_project_role(db, project_id, user_id)` again with the
-    // default `required_role = Reporter` before the query. A public visitor
-    // (`RestrictedAnalyst`) fails `has_permission(RestrictedAnalyst, Reporter)`
-    // and the source raises `403 {"detail": "Insufficient permission"}`.
+    // default `required_role = Viewer` before the query. A caller below
+    // `Viewer` fails `has_permission(role, Viewer)` and the source raises
+    // `403 {"detail": "Insufficient permission"}`.
     let bindings_access = repository
         .require_cloud_project_role(project_number, current_user.id)
         .await
@@ -347,7 +367,7 @@ async fn loop_item_page(
                 "Cloud project not found",
             )
         })?;
-    if !has_permission(&bindings_access.role, "Reporter") {
+    if !has_permission(&bindings_access.role, "Viewer") {
         return Err(FastApiError::forbidden("Insufficient permission"));
     }
 
@@ -357,7 +377,7 @@ async fn loop_item_page(
         .map_err(internal_error)?;
 
     Ok(LoopItemPageResponse {
-        items: matched,
+        items,
         task_bindings: bindings.iter().map(binding_response).collect(),
         next_cursor,
     })
@@ -416,7 +436,7 @@ fn encode_page_cursor(page: u32) -> String {
 /// the loop-item-pages read path are typed; the remaining fields are ignored
 /// by serde.
 #[derive(Debug, serde::Deserialize)]
-struct PageIssue {
+pub(crate) struct PageIssue {
     #[serde(default)]
     number: Option<i64>,
     #[serde(default)]
@@ -457,12 +477,12 @@ enum IssueLabel {
 
 impl PageIssue {
     /// `_number(issue)`: `number` (github) or `iid` (gitlab).
-    fn number(&self) -> i64 {
+    pub(crate) fn number(&self) -> i64 {
         self.number.or(self.iid).unwrap_or(0)
     }
 
     /// `_labels(issue)`: the issue's label names.
-    fn labels(&self) -> Vec<String> {
+    pub(crate) fn labels(&self) -> Vec<String> {
         self.labels
             .as_deref()
             .unwrap_or_default()

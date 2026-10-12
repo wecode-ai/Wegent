@@ -499,7 +499,7 @@ describe('Wework Issue conversation drawers', () => {
     expect(runtimePort.unbindTask).toHaveBeenCalledWith(issue.id, task)
   })
 
-  it('preserves the human AI-assistance binding when refreshing the execution environment', async () => {
+  it('keeps human AI assistance on the current computer while preserving its assignment binding', async () => {
     const binding = {
       humanAssignmentId: 'human-assignment-1',
       dispatchId: 'dispatch-1',
@@ -550,14 +550,8 @@ describe('Wework Issue conversation drawers', () => {
     await user.click(screen.getByText('Open Issue'))
     await user.click(screen.getByRole('button', { name: 'Add task' }))
 
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-device-id',
-      'shared-runtime-device'
-    )
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-workspace-path',
-      '/srv/collaboration/fresh-environment'
-    )
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-device-id')
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-workspace-path')
     expect(JSON.parse(screen.getByTestId('ai-chat-modal').getAttribute('data-origin')!)).toEqual({
       type: 'issue_dispatch',
       cloudProjectId: 'project',

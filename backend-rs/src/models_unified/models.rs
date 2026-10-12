@@ -5,7 +5,7 @@
 //! Unified model aggregation, ported from
 //! `app/services/model_aggregation_service.py` and
 //! `app/services/adapters/public_model.py`.
-use crate::json_compat::raw_json;
+use brz_json::raw_json;
 use serde_json::{Map as JsonMap, Value as Json};
 
 pub const MODEL_TYPE_USER: &str = "user";
@@ -63,7 +63,7 @@ pub struct UnifiedModel {
     pub context_window: Option<i64>,
     pub max_output_tokens: Option<i64>,
     pub cost_index: Option<String>,
-    pub model_capabilities: Option<crate::json_compat::OpaqueJson>,
+    pub model_capabilities: Option<brz_json::OpaqueJson>,
     pub resource_id: Option<i64>,
     pub resource_user_id: Option<i64>,
     pub created_at: Option<String>,
@@ -120,9 +120,10 @@ impl UnifiedModel {
             context_window: self.context_window,
             max_output_tokens: self.max_output_tokens,
             cost_index: self.cost_index,
-            model_capabilities: self.model_capabilities.as_ref().map(|value| {
-                serde_json::value::to_raw_value(value).expect("capabilities serialize")
-            }),
+            model_capabilities: self
+                .model_capabilities
+                .as_ref()
+                .map(|value| brz_json::to_raw_value(value).expect("capabilities serialize")),
             runtime,
             config: raw_json(&serde_json::Value::Object(safe_config)),
             created_at: self.created_at,
@@ -156,9 +157,9 @@ pub struct UnifiedModelResponse {
     context_window: Option<i64>,
     max_output_tokens: Option<i64>,
     cost_index: Option<String>,
-    model_capabilities: Option<Box<serde_json::value::RawValue>>,
+    model_capabilities: Option<brz_json::RawJson>,
     runtime: ModelRuntimeResponse,
-    config: Box<serde_json::value::RawValue>,
+    config: brz_json::RawJson,
     #[serde(rename = "created_at")]
     created_at: Option<String>,
     #[serde(rename = "updated_at")]
@@ -353,7 +354,7 @@ fn normalize_capabilities(value: Json) -> Option<ModelCapabilities> {
         #[serde(rename = "supportsVideo")]
         supports_video: Option<bool>,
     }
-    let input = crate::json_compat::JsonProjection::<Input>::from(value).value?;
+    let input = brz_json::JsonProjection::<Input>::from(value).value?;
     let capabilities = ModelCapabilities {
         supports_image: input.supports_image,
         supports_video: input.supports_video,
@@ -362,7 +363,7 @@ fn normalize_capabilities(value: Json) -> Option<ModelCapabilities> {
         .then_some(capabilities)
 }
 
-impl From<ModelCapabilities> for crate::json_compat::OpaqueJson {
+impl From<ModelCapabilities> for brz_json::OpaqueJson {
     fn from(value: ModelCapabilities) -> Self {
         serde_json::to_value(value)
             .expect("capabilities serialize")

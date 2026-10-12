@@ -63,6 +63,7 @@ export class RuntimeTaskMachine {
     const isTurnActive = turnPhase !== 'idle'
     const isThinking = turnPhase === 'submitting' || turnPhase === 'awaiting'
     const isWaitingForUserInput = interactionStatus === 'waitingForUserInput'
+    const hasPendingUserInput = isWaitingForUserInput || interactionStatus === 'awaitingUserReply'
     const isBusy = isQueued || isRunning || isTurnActive || isWaitingForUserInput
 
     return {
@@ -94,9 +95,9 @@ export class RuntimeTaskMachine {
         isBusy,
         canSend: continuable && !isBusy,
         canQueue: continuable && isBusy,
-        shouldShowSidebarRunning: isRunning && !isWaitingForUserInput,
-        shouldShowSidebarWaiting: isWaitingForUserInput,
-        shouldShowUnread: unread && !isRunning && !isWaitingForUserInput,
+        shouldShowSidebarRunning: isRunning && !hasPendingUserInput,
+        shouldShowSidebarWaiting: hasPendingUserInput,
+        shouldShowUnread: unread && !isRunning && !hasPendingUserInput,
       },
     }
   }

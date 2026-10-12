@@ -23,8 +23,8 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 
 use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
-use crate::json_compat::OpaqueJson;
 use crate::state::AppState;
+use brz_json::OpaqueJson;
 
 /// `app.services.user_runtime_config.USER_PROXY_CONFIG_KIND`.
 const USER_PROXY_CONFIG_KIND: &str = "UserProxyConfig";

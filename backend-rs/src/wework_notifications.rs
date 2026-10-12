@@ -34,6 +34,14 @@ enum Category {
     General,
 }
 
+/// The source `COLLABORATION_NOTIFICATION_KINDS`
+/// (`app/services/notification_copy.py`): the kinds the desktop bell files
+/// under its collaboration category — board work a member is pulled into
+/// (assigned, mentioned or run) rather than a message sent to them directly.
+/// Rendered as the SQLAlchemy `IN`/`NOT IN` literal list.
+const COLLABORATION_NOTIFICATION_KINDS: &str =
+    "'assignment', 'mention', 'execution', 'issue_dispatch_assignment'";
+
 impl Category {
     /// FastAPI `Literal` coercion: an absent value stays `None`, a value inside
     /// the literal set maps to its variant, and anything else is a 422
@@ -57,11 +65,15 @@ impl Category {
 
     /// SQL kind predicate appended after the `user_id` predicate, mirroring the
     /// source `WeworkNotification.kind.in_(COLLABORATION_NOTIFICATION_KINDS)`
-    /// and `.notin_(...)` rendering for `("assignment", "human_work")`.
-    fn kind_predicate(self) -> &'static str {
+    /// and `.notin_(...)` rendering.
+    fn kind_predicate(self) -> String {
         match self {
-            Self::Collaboration => " AND wework_notifications.kind IN ('assignment', 'human_work')",
-            Self::General => " AND (wework_notifications.kind NOT IN ('assignment', 'human_work'))",
+            Self::Collaboration => {
+                format!(" AND wework_notifications.kind IN ({COLLABORATION_NOTIFICATION_KINDS})")
+            }
+            Self::General => format!(
+                " AND (wework_notifications.kind NOT IN ({COLLABORATION_NOTIFICATION_KINDS}))"
+            ),
         }
     }
 }
@@ -83,7 +95,7 @@ fn validation_error(field: &str, kind: &str, message: &str) -> FastApiError {
             "type": kind,
             "loc": ["query", field],
             "msg": message,
-            "input": crate::json_compat::JsonNull,
+            "input": brz_json::JsonNull,
         }
     ]);
     FastApiError::validation(detail)
@@ -163,7 +175,7 @@ struct NotificationRow {
     #[mysql(rename = "wework_notifications_url")]
     url: String,
     #[mysql(rename = "wework_notifications_payload")]
-    payload: Json<crate::json_compat::OpaqueJson>,
+    payload: Json<brz_json::OpaqueJson>,
     #[mysql(rename = "wework_notifications_created_at")]
     created_at: NaiveDateTime,
     #[allow(dead_code, reason = "selected to match source column list")]
@@ -221,7 +233,7 @@ struct NotificationView {
     body: String,
     url: Option<String>,
     // Notification kinds own their payload schemas; preserve their JSON verbatim.
-    payload: Box<serde_json::value::RawValue>,
+    payload: brz_json::RawJson,
     created_at: String,
     read_at: Option<String>,
 }
@@ -240,7 +252,7 @@ fn notification_view(row: &NotificationRow) -> NotificationView {
         title: row.title.clone(),
         body: row.body.clone(),
         url: serialize_url(&row.url),
-        payload: serde_json::value::to_raw_value(&row.payload.0).expect("JSON value serializes"),
+        payload: brz_json::to_raw_value(&row.payload.0).expect("JSON value serializes"),
         created_at: pydantic_timestamp(row.created_at),
         read_at: (row.is_read != 0).then(|| pydantic_timestamp(row.read_status_changed_at)),
     }
@@ -455,7 +467,7 @@ mod tests {
     #[test]
     fn list_sql_collaboration_matches_recorded() {
         let expected = format!(
-            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'human_work') ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
+            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment') ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
         );
         assert_eq!(
             list_sql(151, 0, 51, Some(Category::Collaboration)),
@@ -466,7 +478,7 @@ mod tests {
     #[test]
     fn list_sql_general_matches_recorded() {
         let expected = format!(
-            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND (wework_notifications.kind NOT IN ('assignment', 'human_work')) ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
+            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND (wework_notifications.kind NOT IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment')) ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
         );
         assert_eq!(list_sql(151, 0, 51, Some(Category::General)), expected);
     }
@@ -482,7 +494,7 @@ mod tests {
     #[test]
     fn unread_count_sql_collaboration_matches_recorded() {
         let expected = format!(
-            "SELECT count(*) AS count_1 \nFROM (SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'human_work') AND wework_notifications.is_read IS false) AS anon_1"
+            "SELECT count(*) AS count_1 \nFROM (SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment') AND wework_notifications.is_read IS false) AS anon_1"
         );
         assert_eq!(
             unread_count_sql(151, Some(Category::Collaboration)),

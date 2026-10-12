@@ -364,10 +364,26 @@ async fn executions(
         Vec::new()
     };
 
+    // A public subscription is viewable by any authenticated user: the source
+    // loads the requested subscription and, when `spec.visibility` is
+    // `public`, filters executions by subscription_id alone instead of the
+    // user-id or followed-subscription predicate.
+    let public_subscription_id = match params.subscription_id {
+        Some(subscription_id)
+            if fetch_public_visibility(&state.mysql, subscription_id)
+                .await
+                .map_err(internal_error)? =>
+        {
+            Some(subscription_id)
+        }
+        _ => None,
+    };
+
     // Build the WHERE clause fragment and the count/select queries. The
     // source renders `(user_id = N OR subscription_id IN (...))` when
-    // follows exist, otherwise `user_id = N`.
-    let where_clause = build_where_clause(user_id, &followed_ids, &params);
+    // follows exist, otherwise `user_id = N`; for a public subscription it
+    // renders `subscription_id = N` alone.
+    let where_clause = build_where_clause(user_id, &followed_ids, &params, public_subscription_id);
     let total = count_executions(&state.mysql, &where_clause, &params)
         .await
         .map_err(internal_error)?;
@@ -471,6 +487,9 @@ struct SubscriptionSpec {
     task_type: Option<String>,
     #[serde(rename = "teamRef")]
     team_ref: Option<SubscriptionTeamRef>,
+    /// `spec.visibility`; only `public` widens the executions query to the
+    /// subscription alone (see `list_executions`).
+    visibility: Option<String>,
 }
 
 /// `spec.teamRef` value.
@@ -553,22 +572,35 @@ fn distinct_subscription_ids(executions: &[ExecutionRow]) -> Vec<i32> {
 
 /// Build the WHERE clause fragment for the execution queries. The source
 /// renders `(user_id = N OR subscription_id IN (...))` when followed ids
-/// exist, otherwise `user_id = N`. When `subscription_id` filter is set,
-/// it adds `AND subscription_id = N`.
-fn build_where_clause(user_id: i32, followed_ids: &[i32], params: &ExecutionsParams) -> String {
-    let mut clause = if !followed_ids.is_empty() {
-        let list = followed_ids
-            .iter()
-            .map(i32::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "(background_executions.user_id = {user_id} OR background_executions.subscription_id IN ({list}))"
-        )
-    } else {
-        format!("background_executions.user_id = {user_id}")
+/// exist, otherwise `user_id = N`; a `public_subscription_id` selects the
+/// source's public branch, which filters by that subscription id alone.
+/// When a non-public `subscription_id` filter is set, it adds
+/// `AND subscription_id = N`.
+fn build_where_clause(
+    user_id: i32,
+    followed_ids: &[i32],
+    params: &ExecutionsParams,
+    public_subscription_id: Option<i32>,
+) -> String {
+    let mut clause = match public_subscription_id {
+        Some(subscription_id) => {
+            format!("background_executions.subscription_id = {subscription_id}")
+        }
+        None if !followed_ids.is_empty() => {
+            let list = followed_ids
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "(background_executions.user_id = {user_id} OR background_executions.subscription_id IN ({list}))"
+            )
+        }
+        None => format!("background_executions.user_id = {user_id}"),
     };
-    if let Some(sub_id) = params.subscription_id {
+    if public_subscription_id.is_none()
+        && let Some(sub_id) = params.subscription_id
+    {
         clause.push_str(&format!(
             " AND background_executions.subscription_id = {sub_id}"
         ));
@@ -620,6 +652,32 @@ async fn followed_subscription_ids<M: Mysql>(
         )
         .await?;
     Ok(rows.into_iter().map(|r| r.subscription_id).collect())
+}
+
+/// Source `list_executions` visibility probe:
+/// `db.query(Kind).filter(Kind.id == subscription_id, Kind.kind ==
+/// "Subscription").first()`. Only `kind == 'Subscription'` counts, and a
+/// missing row is not public.
+async fn fetch_public_visibility<M: Mysql>(
+    mysql: &M,
+    subscription_id: i32,
+) -> Result<bool, brz_mysql::MysqlError> {
+    let sql = format!(
+        "SELECT {KIND_COLUMNS} \n\
+         FROM kinds \n\
+         WHERE kinds.id = {subscription_id} AND kinds.kind = 'Subscription' \n\
+         LIMIT 1"
+    );
+    let row: Option<KindRow> = mysql.fetch_optional(sql, ()).await?;
+    Ok(row.is_some_and(|row| is_public_visibility(&row.json.0)))
+}
+
+/// True when the subscription CRD's `spec.visibility` is `public`.
+fn is_public_visibility(crd: &SubscriptionCrd) -> bool {
+    crd.spec
+        .as_ref()
+        .and_then(|spec| spec.visibility.as_deref())
+        == Some("public")
 }
 
 /// Count matching executions. The source wraps the full select projection
@@ -677,13 +735,27 @@ async fn fetch_subscriptions<M: Mysql>(
     mysql.fetch_all(sql, ()).await
 }
 
-/// Batch-load team `kinds` rows for the referenced teamRefs. The source
-/// renders `(kinds.name = N1 AND kinds.namespace = NS1 OR kinds.name = N2
-/// AND kinds.namespace = NS2)`.
+/// Batch-load team `kinds` rows for the referenced teamRefs. Only called with
+/// at least one `teamRef`; the predicate renders `kinds.name = N AND
+/// kinds.namespace = NS` (single) or `(A AND B OR C AND D)` (multiple),
+/// matching SQLAlchemy's `or_(*team_conditions)`.
 async fn fetch_teams<M: Mysql>(
     mysql: &M,
     team_refs: &[(String, String)],
 ) -> Result<Vec<KindRow>, brz_mysql::MysqlError> {
+    let sql = format!(
+        "SELECT {KIND_COLUMNS} \n\
+         FROM kinds \n\
+         WHERE kinds.kind = 'Team' AND {predicate}",
+        predicate = team_predicate(team_refs)
+    );
+    mysql.fetch_all(sql, ()).await
+}
+
+/// Render the source's `or_(*team_conditions)` predicate. SQLAlchemy omits
+/// parentheses around a single `and_` condition and wraps a multi-element OR
+/// group in one pair of parentheses.
+fn team_predicate(team_refs: &[(String, String)]) -> String {
     let conditions = team_refs
         .iter()
         .map(|(name, ns)| {
@@ -693,14 +765,12 @@ async fn fetch_teams<M: Mysql>(
                 escape_sql_string(ns)
             )
         })
-        .collect::<Vec<_>>()
-        .join(" OR ");
-    let sql = format!(
-        "SELECT {KIND_COLUMNS} \n\
-         FROM kinds \n\
-         WHERE kinds.kind = 'Team' AND ({conditions})"
-    );
-    mysql.fetch_all(sql, ()).await
+        .collect::<Vec<_>>();
+    if conditions.len() == 1 {
+        conditions[0].clone()
+    } else {
+        format!("({})", conditions.join(" OR "))
+    }
 }
 
 /// Build one `BackgroundExecutionInDB` item in pydantic field order.
@@ -768,197 +838,4 @@ fn internal_error(error: brz_mysql::MysqlError) -> FastApiError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::NaiveDate;
-
-    fn exec_row(id: i32, sub_id: i32) -> ExecutionRow {
-        let dt = NaiveDate::from_ymd_opt(2026, 9, 10)
-            .unwrap()
-            .and_hms_opt(4, 59, 37)
-            .unwrap();
-        ExecutionRow {
-            id,
-            user_id: 1237,
-            subscription_id: sub_id,
-            task_id: 170011985603497,
-            inbox_message_id: 0,
-            trigger_type: "cron".to_string(),
-            trigger_reason: "Scheduled (cron: 29,59 8-19 * * *)".to_string(),
-            prompt: "test prompt".to_string(),
-            status: "COMPLETED".to_string(),
-            result_summary: "summary".to_string(),
-            error_message: String::new(),
-            retry_attempt: 0,
-            version: 1,
-            started_at: dt,
-            completed_at: dt,
-            created_at: dt,
-            updated_at: dt,
-        }
-    }
-
-    #[test]
-    fn execution_item_has_pydantic_field_order() {
-        let item = execution_item(
-            &exec_row(2164069, 259790),
-            Some("sub-name".to_string()),
-            Some("Display".to_string()),
-            Some("team".to_string()),
-            Some("collection".to_string()),
-            true,
-        );
-        let serialized = serde_json::to_value(&item).unwrap();
-        let keys: Vec<&str> = serialized
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(String::as_str)
-            .collect();
-        assert_eq!(
-            keys,
-            vec![
-                "subscription_id",
-                "trigger_type",
-                "trigger_reason",
-                "prompt",
-                "id",
-                "user_id",
-                "task_id",
-                "status",
-                "result_summary",
-                "error_message",
-                "retry_attempt",
-                "started_at",
-                "completed_at",
-                "created_at",
-                "updated_at",
-                "subscription_name",
-                "subscription_display_name",
-                "team_name",
-                "task_type",
-                "can_delete",
-            ]
-        );
-    }
-
-    #[test]
-    fn pydantic_datetime_renders_without_fraction() {
-        let dt = NaiveDate::from_ymd_opt(2026, 9, 10)
-            .unwrap()
-            .and_hms_opt(4, 59, 37)
-            .unwrap();
-        let rendered = serde_json::to_value(PydanticDateTime::new(dt)).unwrap();
-        assert_eq!(rendered, json!("2026-09-10T04:59:37"));
-    }
-
-    #[test]
-    fn pydantic_datetime_renders_with_microseconds() {
-        let dt = NaiveDate::from_ymd_opt(2026, 9, 10)
-            .unwrap()
-            .and_hms_micro_opt(4, 59, 37, 123456)
-            .unwrap();
-        let rendered = serde_json::to_value(PydanticDateTime::new(dt)).unwrap();
-        assert_eq!(rendered, json!("2026-09-10T04:59:37.123456"));
-    }
-
-    #[test]
-    fn parses_default_query_params() {
-        let params = ExecutionsQuery {
-            page: None,
-            limit: None,
-            subscription_id: None,
-            status: None,
-            start_date: None,
-            end_date: None,
-            include_silent: None,
-        }
-        .validated()
-        .unwrap();
-        assert_eq!(params.page, 1);
-        assert_eq!(params.limit, 50);
-        assert_eq!(params.subscription_id, None);
-        assert!(!params.include_silent);
-    }
-
-    #[test]
-    fn parses_explicit_query_params() {
-        let params = ExecutionsQuery {
-            page: Some("2".to_string()),
-            limit: Some("100".to_string()),
-            subscription_id: Some("42".to_string()),
-            status: Some(vec!["COMPLETED".to_string()]),
-            start_date: None,
-            end_date: None,
-            include_silent: Some("true".to_string()),
-        }
-        .validated()
-        .unwrap();
-        assert_eq!(params.page, 2);
-        assert_eq!(params.limit, 100);
-        assert_eq!(params.subscription_id, Some(42));
-        assert!(params.include_silent);
-        assert_eq!(params.status, vec!["COMPLETED"]);
-    }
-
-    #[test]
-    fn rejects_limit_over_100() {
-        let error = ExecutionsQuery {
-            page: None,
-            limit: Some("101".to_string()),
-            subscription_id: None,
-            status: None,
-            start_date: None,
-            end_date: None,
-            include_silent: None,
-        }
-        .validated()
-        .unwrap_err();
-        assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    }
-
-    #[test]
-    fn build_where_clause_excludes_silent_by_default() {
-        let params = ExecutionsParams {
-            page: 1,
-            limit: 50,
-            subscription_id: None,
-            status: Vec::new(),
-            start_date: None,
-            end_date: None,
-            include_silent: false,
-        };
-        let clause = build_where_clause(1237, &[], &params);
-        assert!(clause.contains("status != 'COMPLETED_SILENT'"));
-    }
-
-    #[test]
-    fn build_where_clause_includes_followed_ids() {
-        let params = ExecutionsParams {
-            page: 1,
-            limit: 50,
-            subscription_id: None,
-            status: Vec::new(),
-            start_date: None,
-            end_date: None,
-            include_silent: false,
-        };
-        let clause = build_where_clause(1237, &[237489, 259790], &params);
-        assert!(clause.contains(
-            "(background_executions.user_id = 1237 OR background_executions.subscription_id IN (237489, 259790))"
-        ));
-    }
-
-    #[test]
-    fn distinct_subscription_ids_dedupes() {
-        let rows = vec![exec_row(1, 10), exec_row(2, 20), exec_row(3, 10)];
-        let ids = distinct_subscription_ids(&rows);
-        assert_eq!(ids, vec![10, 20]);
-    }
-
-    #[test]
-    fn escape_sql_string_quotes_apostrophes() {
-        assert_eq!(escape_sql_string("a'b"), "a\\'b");
-        assert_eq!(escape_sql_string("normal"), "normal");
-    }
-}
+mod tests;

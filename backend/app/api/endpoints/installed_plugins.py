@@ -176,23 +176,24 @@ def _ensure_submission_matches_task_token(
     )
 
 
-@router.get("/installed", response_model=InstalledPluginListResponse)
-def list_installed_plugins(
-    device_id: str | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-) -> InstalledPluginListResponse:
-    """List Claude Code plugins installed by the current user."""
-    # Keep list read-only. Catalog repair runs on install/sync paths instead of
-    # every marketplace open.
-    return plugin_marketplace_service.enrich_installed_list(
-        db,
-        installed_plugin_service.list_installed_plugins(
-            db=db,
-            user_id=current_user.id,
-        ),
-        device_id=device_id,
-    )
+# Migrated to Rust; cutover is configured in backend-rs/config/routes.toml.
+# @router.get("/installed", response_model=InstalledPluginListResponse)
+# def list_installed_plugins(
+#     device_id: str | None = None,
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(security.get_current_user),
+# ) -> InstalledPluginListResponse:
+#     """List Claude Code plugins installed by the current user."""
+#     # Keep list read-only. Catalog repair runs on install/sync paths instead of
+#     # every marketplace open.
+#     return plugin_marketplace_service.enrich_installed_list(
+#         db,
+#         installed_plugin_service.list_installed_plugins(
+#             db=db,
+#             user_id=current_user.id,
+#         ),
+#         device_id=device_id,
+#     )
 
 
 @router.post(

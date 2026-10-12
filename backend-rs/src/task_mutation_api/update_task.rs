@@ -10,6 +10,7 @@
 //! (`app/services/adapters/task_kinds/converters.py:106`).
 
 use brz_http_server::StatusCode;
+use brz_json::FieldState as _;
 use serde_json::Value;
 use tracing::warn;
 
@@ -17,10 +18,11 @@ use super::models::{TaskInDbResponse, TaskUpdateBody};
 use super::task_crd;
 use crate::crd::CrdDocument;
 use crate::http_compat::FastApiError;
-use crate::json_compat::{OpaqueJson, python_json_value};
+use crate::json_compat::python_json_value;
 use crate::state::AppState;
 use crate::task_detail_api::repository::get_workspace_by_ref;
 use crate::task_store::task_update_timestamp;
+use brz_json::OpaqueJson;
 
 /// `PROMPT_MAX_BYTES`: `update_task`'s UTF-8 prompt bound.
 const PROMPT_MAX_BYTES: usize = 60_000;

@@ -142,6 +142,59 @@ fn own_team_share_status_from_labels() {
     assert_eq!(item["share_status"], json!(1));
 }
 #[test]
+fn display_config_drops_undeclared_keys() {
+    // Source validates through the typed `TeamDisplayConfig` model, whose only
+    // field is `show_final_answer_only`; pydantic drops every other stored key.
+    // See recording run 20261008093501 (case f4d91ebd): a stored
+    // `displayConfig: {"hide_tool_details": false}` must serialize as `{}`.
+    let preloaded = Preloaded {
+        bots: HashMap::new(),
+        group_bots: HashMap::new(),
+        shells: HashMap::new(),
+        public_shells: HashMap::new(),
+        models: HashMap::new(),
+        public_models: HashMap::new(),
+        users: HashMap::new(),
+    };
+    let team_row = |display_config: Value| TeamRow {
+        team_id: 1,
+        team_user_id: 5,
+        team_name: "t".to_string(),
+        team_namespace: "default".to_string(),
+        team_json: stored_json(serde_json::json!({
+            "metadata": { "name": "t", "displayName": "t" },
+            "spec": {
+                "members": [],
+                "collaborationModel": "solo",
+                "displayConfig": display_config,
+            }
+        })),
+        team_created_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
+        team_updated_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
+        share_status: 0,
+        context_user_id: 5,
+        access_source: "native".to_string(),
+    };
+
+    let item = team_item(
+        &team_row(json!({ "hide_tool_details": false })),
+        &preloaded,
+        &[],
+    );
+    assert_eq!(item["display_config"], json!({}));
+
+    let item = team_item(
+        &team_row(json!({ "hide_tool_details": false, "show_final_answer_only": true })),
+        &preloaded,
+        &[],
+    );
+    assert_eq!(
+        item["display_config"],
+        json!({ "show_final_answer_only": true })
+    );
+}
+
+#[test]
 fn bot_summary_uses_public_model_fallback() {
     let bot = KindRow {
         kinds_id: 2,

@@ -101,7 +101,7 @@ mod tests {
     use super::*;
     use crate::apps_installed::db::KindRow;
     use crate::apps_installed::service::row_to_app;
-    use crate::json_compat::OpaqueJson;
+    use brz_json::OpaqueJson;
 
     /// One `ConnectorApp` projection from a `{"spec": ...}` document text,
     /// which is the exact shape a connector spec stores.

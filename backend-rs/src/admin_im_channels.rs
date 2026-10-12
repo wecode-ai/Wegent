@@ -20,8 +20,8 @@ use serde_json::{Map, Value, json};
 
 use crate::auth::SessionUser;
 use crate::http_compat::FastApiError;
-use crate::json_compat::JsonProjection;
 use crate::state::AppState;
+use brz_json::JsonProjection;
 
 /// Config keys whose values are masked in API responses
 /// (`SENSITIVE_CONFIG_KEYS`). A key is sensitive when its lowercased form
