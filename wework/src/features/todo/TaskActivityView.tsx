@@ -20,11 +20,14 @@ import {
   IssueActivityFeed,
   IssueActivityThread,
   groupIssueActivityThreads,
+  groupIssueTimelineThreads,
   createCollaborationTranslator,
   compareIssueTimestamps,
+  issueThreadActivityTimestamp,
   formatIssueTimestamp,
   IssueStatusHistoryList,
   type SharedIssueStatusHistoryEntry,
+  type IssueActivityThreadModel,
 } from '@wegent/collaboration'
 import type { CollaborationAgent, CollaborationMember } from '@wegent/collaboration'
 import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActivityTools'
@@ -561,11 +564,17 @@ export function TaskActivityView({
       requestedTaskBindingAddresses.current.delete(key)
     })
   }, [messages, onRefreshExecutionArtifacts, taskBindings])
-  const commentCards = useMemo(() => groupIssueActivityThreads(threadMessages), [threadMessages])
+  const commentCards = useMemo<IssueActivityThreadModel<ProjectChatMessage>[]>(
+    () =>
+      issueTimeline
+        ? groupIssueTimelineThreads(threadMessages)
+        : groupIssueActivityThreads(threadMessages),
+    [issueTimeline, threadMessages]
+  )
   const activityEntries = useMemo(() => {
     const comments = commentCards.map((card, index) => ({
       kind: 'comment' as const,
-      at: card.root.createdAt,
+      at: issueThreadActivityTimestamp(card),
       index,
       card,
     }))
@@ -1121,6 +1130,7 @@ export function TaskActivityView({
                 )
               }
               const card = activity.card
+              const displayReplies = card.displayReplies ?? card.replies
               const rootId = card.root.messageId
               const role = issueActivityRole(card.root)
               if (
@@ -1159,8 +1169,8 @@ export function TaskActivityView({
                   }}
                   message={renderActivityMessage(card.root, false, issueTimeline)}
                   replies={
-                    card.replies.length
-                      ? card.replies.map(reply => renderActivityMessage(reply))
+                    displayReplies.length
+                      ? displayReplies.map(reply => renderActivityMessage(reply))
                       : null
                   }
                   repliesTestId={`cloud-task-activity-replies-${rootId}`}
@@ -1176,7 +1186,7 @@ export function TaskActivityView({
                       {issueTimeline ? (
                         <TimelineReply
                           rootId={rootId}
-                          createdAt={card.root.createdAt}
+                          createdAt={issueThreadActivityTimestamp(card)}
                           replyLabel={t('workbench.task_activity_reply_action')}
                           active={replyTarget?.root.messageId === rootId}
                           onReply={() => setReplyTarget(card)}
