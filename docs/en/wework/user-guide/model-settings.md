@@ -15,4 +15,4 @@ Models are grouped by endpoint and share its URL and key. Expand a group to edit
 
 Legacy local model settings migrate automatically, preserving model IDs and capabilities. Old records are removed only after persistence succeeds and the runtime loads the same revision. Failed migrations retain old data and can be retried.
 
-Reply suggestions are under **Settings → General → Reply suggestions**. See [Reply suggestions](reply-suggestions.md).
+Reply suggestions are under **Settings → General → AI assistance**. See [Reply suggestions](reply-suggestions.md).

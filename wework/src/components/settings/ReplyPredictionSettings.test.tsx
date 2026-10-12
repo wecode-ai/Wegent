@@ -62,29 +62,34 @@ describe('reply prediction settings', () => {
     setup({}, false, requestCatalogs)
     expect(requestCatalogs).toHaveBeenCalledTimes(1)
   })
-  it('requires explicit model selection and enables the first selection', async () => {
+  it('lets the user enable suggestions before choosing an independent model', async () => {
     setup()
-    expect(screen.getByTestId('reply-prediction-enabled')).toBeDisabled()
+    expect(screen.queryByTestId('reply-prediction-model')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('reply-prediction-enabled'))
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ replyPredictionsEnabled: true }))
+  })
+  it('requires explicit model selection after enabling suggestions', async () => {
+    setup({ replyPredictionsEnabled: true })
     fireEvent.change(screen.getByTestId('reply-prediction-model'), {
       target: { value: 'runtime:model-a' },
     })
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(
         expect.objectContaining({
-          replyPredictionsEnabled: true,
           replyPredictionModel: expect.objectContaining({ modelName: 'model-a' }),
         })
       )
     )
   })
-  it('preserves the disabled preference when changing an existing model', async () => {
+  it('switches back to the task model without changing the enabled preference', async () => {
+    setup({ replyPredictionModel: configured, replyPredictionsEnabled: true })
+    fireEvent.change(screen.getByTestId('reply-prediction-model'), { target: { value: '' } })
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ replyPredictionModel: null }))
+  })
+  it('hides the model selector without clearing the saved model when disabled', () => {
     setup({ replyPredictionModel: configured, replyPredictionsEnabled: false })
-    fireEvent.change(screen.getByTestId('reply-prediction-model'), {
-      target: { value: 'runtime:model-a' },
-    })
-    await waitFor(() =>
-      expect(save).toHaveBeenCalledWith(expect.objectContaining({ replyPredictionsEnabled: false }))
-    )
+    expect(screen.queryByTestId('reply-prediction-model')).not.toBeInTheDocument()
+    expect(save).not.toHaveBeenCalled()
   })
   it('keeps an unavailable selection and lets the user turn it off', async () => {
     setup({ replyPredictionModel: configured, replyPredictionsEnabled: true }, false)
@@ -94,7 +99,7 @@ describe('reply prediction settings', () => {
   })
   it('reports a save failure without silently choosing a different model', async () => {
     save.mockRejectedValue(new Error('storage unavailable'))
-    setup()
+    setup({ replyPredictionsEnabled: true })
     fireEvent.change(screen.getByTestId('reply-prediction-model'), {
       target: { value: 'runtime:model-a' },
     })

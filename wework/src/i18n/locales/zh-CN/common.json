@@ -39,6 +39,9 @@
     }
   },
   "workbench": {
+    "reply_prediction_model_description": "仅用于生成回复建议，不影响当前任务使用的模型。",
+    "reply_prediction_generating": "正在生成建议…",
+    "reply_prediction_accept": "接受建议",
     "reply_prediction_title": "自动回复建议",
     "reply_prediction_enable": "预测下一条回复",
     "reply_prediction_description": "AI 回复结束后，在空输入框中显示回复建议。按 Tab、右方向键或 Enter 接受，再编辑并发送。预测会使用所选模型的额度。",
@@ -2907,6 +2910,7 @@
     "general_settings_mode_developer_confirm_description": "切换后，Wework 会重启插件运行时，并启用 Git 分支、工作树和代码托管等完整研发功能。",
     "general_settings_mode_confirm_action": "切换模式",
     "general_settings_mode_save_failed": "模式切换失败，已恢复原设置",
+    "general_settings_ai_title": "AI 辅助",
     "general_settings_runtime_title": "运行",
     "project_settings_title": "设置",
     "project_settings_description": "管理项目空间的设备执行容量，并查看开放接口说明。",

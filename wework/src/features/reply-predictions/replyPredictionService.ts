@@ -85,6 +85,18 @@ export class ReplyPredictionService {
     this.api = api
   }
 
+  isPending(scope: string) {
+    return [...this.entries].some(
+      ([key, entry]) =>
+        key.startsWith(`${scope}\u0000`) && !entry.settled && !entry.controller.signal.aborted
+    )
+  }
+
+  private notify() {
+    this.revision += 1
+    for (const listener of this.listeners) listener()
+  }
+
   configure(model: FriendlyTaskTitleModelConfig | null) {
     const key = JSON.stringify(model)
     if (key === this.modelKey) return
@@ -148,8 +160,10 @@ export class ReplyPredictionService {
       const activeEntry = entry
       void promise.finally(() => {
         activeEntry.settled = true
+        this.notify()
       })
       this.entries.set(key, entry)
+      this.notify()
       this.trimCache()
     }
     const text = await entry.promise
@@ -213,12 +227,17 @@ export class ReplyPredictionService {
   }
 }
 
-const services = new WeakMap<GenerationApi, ReplyPredictionService>()
-export function replyPredictionService(api: GenerationApi) {
-  let service = services.get(api)
+const services = new WeakMap<GenerationApi, Map<string, ReplyPredictionService>>()
+export function replyPredictionService(api: GenerationApi, modelKey: string) {
+  let models = services.get(api)
+  if (!models) {
+    models = new Map()
+    services.set(api, models)
+  }
+  let service = models.get(modelKey)
   if (!service) {
     service = new ReplyPredictionService(api)
-    services.set(api, service)
+    models.set(modelKey, service)
   }
   return service
 }

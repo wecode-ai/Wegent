@@ -38,6 +38,9 @@
     }
   },
   "workbench": {
+    "reply_prediction_model_description": "Used only for reply suggestions, without changing the task model.",
+    "reply_prediction_generating": "Generating a suggestion…",
+    "reply_prediction_accept": "Accept suggestion",
     "reply_prediction_title": "Reply suggestions",
     "reply_prediction_enable": "Predict the next reply",
     "reply_prediction_description": "After an AI response, show a suggestion in the empty composer. Press Tab, Right Arrow, or Enter to accept, then edit and send. Predictions use the selected model's allowance.",
@@ -2909,6 +2912,7 @@
     "general_settings_mode_developer_confirm_description": "Wework will restart the plugin runtime and enable the complete development experience, including Git branches, worktrees, and code hosting.",
     "general_settings_mode_confirm_action": "Switch mode",
     "general_settings_mode_save_failed": "Failed to switch modes. The previous setting was restored.",
+    "general_settings_ai_title": "AI assistance",
     "general_settings_runtime_title": "Runtime",
     "project_settings_title": "Settings",
     "project_settings_description": "Manage device execution capacity for project spaces and view the public API guide.",

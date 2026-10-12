@@ -10,6 +10,7 @@ import {
   useImperativeHandle,
   startTransition,
 } from 'react'
+import { ComposerPredictionStatus } from './ComposerPredictionStatus'
 import { ComposerPredictionContext } from './ComposerPredictionContext'
 import type { LocalDeviceApp, LocalDeviceSkill } from '@wegent/chat-core/runtime-composer-catalog'
 import type { UnifiedModel } from '@wegent/chat-core/models'
@@ -92,6 +93,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   disabled,
   placeholder,
   testId = 'chat-message-input',
+  predictionStatusTarget,
   rows,
   textareaRef,
   className,
@@ -148,6 +150,8 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   transferServices,
 }: ComposerAutocompleteInputProps<Project, Conversation>) {
   const prediction = useContext(ComposerPredictionContext)
+  const [hasDraft, setHasDraft] = useState(Boolean(value.trim()))
+  useEffect(() => setHasDraft(Boolean(value.trim())), [value])
   type ComposerMentionCandidate = Candidate<Project, Conversation>
   type MentionMenuRow = SharedMentionMenuRow<
     ComposerMentionCandidate,
@@ -915,6 +919,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         value={value}
         onChange={nextValue => {
           valueRef.current = nextValue
+          setHasDraft(Boolean(nextValue.trim()))
           onChange(nextValue)
         }}
         onSnapshotChange={handleEditorSnapshot}
@@ -946,6 +951,15 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         scrollContainerClassName={scrollContainerClassName}
         services={editorServices}
         nativeEmptyCaret={nativeEmptyCaret}
+      />
+      <ComposerPredictionStatus
+        target={predictionStatusTarget}
+        hidden={hasDraft || disabled || isStreaming || showSkillMenu || showSlashMenu}
+        testId={testId}
+        onAccept={text => {
+          editorRef.current?.setValue(text)
+          editorRef.current?.focus()
+        }}
       />
       {showSkillMenu && (
         <ComposerMentionMenu

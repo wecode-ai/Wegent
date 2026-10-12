@@ -7,11 +7,16 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
-import { ComposerPredictionContext } from '@wegent/collaboration/composer'
+import {
+  ComposerPredictionContext,
+  ComposerPredictionPendingContext,
+} from '@wegent/collaboration/composer'
+import { useTranslation } from '@/hooks/useTranslation'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/workbenchContexts'
 import { RuntimeTaskLifecycleContext } from '@/features/workbench/runtimeTaskLifecycle/internalContext'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import {
   predictionTurns,
   replyPredictionService,
@@ -33,6 +38,7 @@ export function ReplyPredictionProvider({
   blocked?: boolean
   children: ReactNode
 }) {
+  const { t } = useTranslation('common')
   const globalWorkbench = useContext(WorkbenchContext)
   const paneWorkbench = useContext(WorkbenchPaneContext)
   const workbench = paneWorkbench ?? globalWorkbench
@@ -43,12 +49,29 @@ export function ReplyPredictionProvider({
     store?.getSnapshot ?? emptySnapshot
   )
   const lifecycle = snapshot && address ? store?.selectTask(snapshot, address) : null
-  const configured =
-    preferences?.loaded && preferences.preferences.replyPredictionsEnabled
-      ? preferences.preferences.replyPredictionModel
-      : null
+  const selectedModel = workbench?.projectChat.selectedModel
+  const selectedOptions = workbench?.projectChat.selectedModelOptions
+  const enabled = preferences?.loaded && preferences.preferences.replyPredictionsEnabled
+  const independentModel = preferences?.preferences.replyPredictionModel
+  const configured = useMemo(() => {
+    if (!enabled) return null
+    if (independentModel) return independentModel
+    if (!selectedModel) return null
+    const execution = selectedModelExecutionFields(selectedModel, selectedOptions ?? {})
+    return {
+      modelName: selectedModel.name,
+      modelType: selectedModel.type,
+      executionModelId: execution.modelId ?? '',
+      executionModelType: execution.modelType ?? null,
+      options: execution.modelOptions,
+    }
+  }, [enabled, independentModel, selectedModel, selectedOptions])
   const api = configured ? workbench?.services.textGenerationApi : undefined
-  const service = useMemo(() => (api ? replyPredictionService(api) : null), [api])
+  const configuredKey = JSON.stringify(configured)
+  const service = useMemo(
+    () => (api ? replyPredictionService(api, configuredKey) : null),
+    [api, configuredKey]
+  )
   useSyncExternalStore(service?.subscribe ?? noSubscription, service?.getSnapshot ?? emptySnapshot)
   const model =
     configured &&
@@ -128,6 +151,7 @@ export function ReplyPredictionProvider({
         prediction
           ? {
               text: prediction.text,
+              acceptLabel: t('workbench.reply_prediction_accept'),
               onAccept: () => {
                 prediction.onAccept()
                 setResult({ key: resultKey, prediction: null })
@@ -136,7 +160,15 @@ export function ReplyPredictionProvider({
           : null
       }
     >
-      {children}
+      <ComposerPredictionPendingContext.Provider
+        value={
+          !blocked && !busy && model && scope && service?.isPending(scope)
+            ? t('workbench.reply_prediction_generating')
+            : null
+        }
+      >
+        {children}
+      </ComposerPredictionPendingContext.Provider>
     </ComposerPredictionContext.Provider>
   )
 }

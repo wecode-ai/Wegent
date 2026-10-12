@@ -206,6 +206,9 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
   ) {
     const { t } = useTranslation('common')
     const composerRef = useRef<ComposerTextareaHandle>(null)
+    const [predictionStatusTarget, setPredictionStatusTarget] = useState<HTMLDivElement | null>(
+      null
+    )
 
     useImperativeHandle(
       ref,
@@ -336,6 +339,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           renderEditor={editorProps => (
             <ComposerTextarea
               {...editorProps}
+              predictionStatusTarget={predictionStatusTarget}
               onSubmit={(submittedValue, options) =>
                 editorProps.onSubmit(submittedValue ?? getLiveValue(), options)
               }
@@ -420,7 +424,12 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               onSubmit={toolbarProps.onSubmit}
               sendKey={sendKey}
               followUpBehavior={followUpBehavior}
-              leadingContext={toolbarLeadingContext}
+              leadingContext={
+                <>
+                  {toolbarLeadingContext}
+                  <div ref={setPredictionStatusTarget} className="empty:hidden" />
+                </>
+              }
               onListLocalApps={onListLocalApps}
               workspaceTarget={workspaceTarget}
             />

@@ -44,6 +44,7 @@ export interface ComposerAutocompleteInputProps<
   translate: CollaborationTranslate
   onSubmit(value?: string, options?: import('./composerInputTypes').ComposerSubmitOptions): void
   testId?: string
+  predictionStatusTarget?: HTMLElement | null
   skillMenuClassName?: string
   disableAutocomplete?: boolean
   onOpenSkillFile?: (path: string) => void

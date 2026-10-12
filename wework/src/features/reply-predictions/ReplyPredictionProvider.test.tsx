@@ -1,6 +1,9 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useContext } from 'react'
-import { ComposerPredictionContext } from '@wegent/collaboration/composer'
+import {
+  ComposerPredictionContext,
+  ComposerPredictionPendingContext,
+} from '@wegent/collaboration/composer'
 import { describe, expect, it, vi } from 'vitest'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
@@ -29,8 +32,11 @@ const apis = new WeakMap<
 >()
 function Consumer() {
   const prediction = useContext(ComposerPredictionContext)
+  const pending = useContext(ComposerPredictionPendingContext)
   return prediction ? (
     <button onClick={prediction.onAccept}>{prediction.text}</button>
+  ) : pending ? (
+    <span role="status">{pending}</span>
   ) : (
     <span>empty</span>
   )
@@ -40,7 +46,9 @@ function fixture(
   context: ReplyPredictionSource,
   blocked = false,
   enabled = true,
-  copies = 1
+  copies = 1,
+  configuredModel: typeof model | null = model,
+  taskModel = 'task-a'
 ) {
   let api = apis.get(generateText)
   if (!api) {
@@ -54,7 +62,7 @@ function fixture(
         preferences: {
           ...defaultAppPreferences,
           replyPredictionsEnabled: enabled,
-          replyPredictionModel: model,
+          replyPredictionModel: configuredModel,
         },
       }}
     >
@@ -62,7 +70,15 @@ function fixture(
         value={
           {
             services: { textGenerationApi: api },
-            projectChat: { models: [{ name: 'predictor', type: 'runtime', isActive: true }] },
+            projectChat: {
+              models: ['predictor', 'task-a', 'task-b'].map(name => ({
+                name,
+                type: 'runtime',
+                isActive: true,
+              })),
+              selectedModel: { name: taskModel, type: 'runtime', isActive: true },
+              selectedModelOptions: {},
+            },
           } as unknown as WorkbenchContextValue
         }
       >
@@ -77,6 +93,44 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  it('keeps an independent prediction model when the task model changes', async () => {
+    const generate = vi.fn<(data: { signal?: AbortSignal }) => Promise<string>>(
+      async () => '{"suggestion":"请继续"}'
+    )
+    const { rerender } = render(fixture(generate, source))
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    rerender(fixture(generate, source, false, true, 1, model, 'task-b'))
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(generate.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ modelId: 'predictor' }))
+  })
+  it('keeps pending predictions isolated when two task models share the API', async () => {
+    const signals: AbortSignal[] = []
+    const generate = vi.fn(async (data: { signal?: AbortSignal }) => {
+      signals.push(data.signal!)
+      return new Promise<string>(() => {})
+    })
+    render(
+      <>
+        {fixture(generate, source, false, true, 1, null, 'task-a')}
+        {fixture(generate, source, false, true, 1, null, 'task-b')}
+      </>
+    )
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2))
+    expect(signals.every(signal => !signal.aborted)).toBe(true)
+    expect(screen.getAllByRole('status')).toHaveLength(2)
+  })
+  it('uses the current task model when no independent model is configured', async () => {
+    const generate = vi.fn<(data: { signal?: AbortSignal }) => Promise<string>>(
+      async () => '{"suggestion":"请继续"}'
+    )
+    const { rerender } = render(fixture(generate, source, false, true, 1, null))
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    expect(generate.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ modelId: 'task-a' }))
+    rerender(fixture(generate, source, false, true, 1, null, 'task-b'))
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2))
+    expect(generate.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ modelId: 'task-b' }))
+  })
+
   it('uses lifecycle busy state to prevent generation and cancel an active prediction', async () => {
     let signal: AbortSignal | undefined
     const generate = vi.fn(async (data: { signal?: AbortSignal }) => {
@@ -87,9 +141,11 @@ describe('reply prediction provider', () => {
     expect(generate).not.toHaveBeenCalled()
     rerender(fixture(generate, source))
     await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('status')).toBeVisible()
     rerender(fixture(generate, { ...source, busy: true }))
     expect(signal?.aborted).toBe(true)
     expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
   })
 
   it('keeps blocked drafts untouched and consumes a cached suggestion across all composers', async () => {

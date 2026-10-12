@@ -4,7 +4,7 @@ import { useAppPreferencesState } from '@/features/app-preferences/useAppPrefere
 import { updateAppPreferences, type AppPreferencesPatch } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
-import { SettingsGroup, SettingsRow, SettingsSwitch } from './settings-ui'
+import { SettingsRow, SettingsSwitch } from './settings-ui'
 
 export function ReplyPredictionSettings() {
   const { t } = useTranslation('common')
@@ -34,49 +34,45 @@ export function ReplyPredictionSettings() {
     }
   }
   return (
-    <section data-testid="reply-prediction-settings" className="mt-12">
-      <h2 className="mb-2 text-sm font-semibold text-text-primary">
-        {t('workbench.reply_prediction_title')}
-      </h2>
-      <SettingsGroup className="rounded-xl !bg-background">
-        <SettingsRow
-          className="py-4"
-          label={t('workbench.reply_prediction_enable')}
-          description={t('workbench.reply_prediction_description')}
-          control={
-            <SettingsSwitch
-              checked={state?.preferences.replyPredictionsEnabled ?? false}
-              disabled={
-                !state?.loaded ||
-                (!available && !state.preferences.replyPredictionsEnabled) ||
-                saving
-              }
-              onCheckedChange={enabled => void save({ replyPredictionsEnabled: enabled })}
-              aria-label={t('workbench.reply_prediction_enable')}
-              data-testid="reply-prediction-enabled"
-            />
-          }
-        />
-        <SettingsRow
-          label={t('workbench.reply_prediction_model')}
-          control={
+    <div data-testid="reply-prediction-settings">
+      <SettingsRow
+        className="py-4"
+        labelClassName="font-normal"
+        label={t('workbench.reply_prediction_enable')}
+        description={t('workbench.reply_prediction_description')}
+        control={
+          <SettingsSwitch
+            checked={state?.preferences.replyPredictionsEnabled ?? false}
+            disabled={!state?.loaded || saving}
+            onCheckedChange={enabled => void save({ replyPredictionsEnabled: enabled })}
+            aria-label={t('workbench.reply_prediction_enable')}
+            data-testid="reply-prediction-enabled"
+          />
+        }
+      />
+      {state?.preferences.replyPredictionsEnabled && (
+        <div className="px-4 pb-3">
+          <div className="ml-3 flex items-center justify-between gap-4 rounded-lg bg-muted/50 px-3 py-2.5 max-sm:ml-0 max-sm:flex-col max-sm:items-stretch">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-text-primary">
+                {t('workbench.reply_prediction_model')}
+              </div>
+              <p className="mt-0.5 text-xs text-text-secondary">
+                {t('workbench.reply_prediction_model_description')}
+              </p>
+            </div>
             <select
               value={key}
               disabled={!state?.loaded || saving}
               aria-label={t('workbench.reply_prediction_model')}
               data-testid="reply-prediction-model"
-              className="h-8 max-w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary"
+              className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary md:w-[220px]"
               onChange={event => {
                 const selected = models.find(
                   candidate => `${candidate.type}:${candidate.name}` === event.target.value
                 )
                 const execution = selected ? selectedModelExecutionFields(selected, {}) : null
                 void save({
-                  replyPredictionsEnabled: selected
-                    ? model
-                      ? state!.preferences.replyPredictionsEnabled
-                      : true
-                    : false,
                   replyPredictionModel:
                     selected && execution
                       ? {
@@ -90,7 +86,7 @@ export function ReplyPredictionSettings() {
                 })
               }}
             >
-              <option value="">{t('workbench.reply_prediction_choose_model')}</option>
+              <option value="">{t('workbench.friendly_task_titles_model_task')}</option>
               {model && !available && (
                 <option value={key}>
                   {model.modelName} · {t('workbench.reply_prediction_unavailable')}
@@ -107,19 +103,19 @@ export function ReplyPredictionSettings() {
                   </option>
                 ))}
             </select>
-          }
-        />
-        {error && (
-          <p role="alert" className="text-sm text-red-500">
-            {t('workbench.reply_prediction_save_failed')}
-          </p>
-        )}
-        {model && !available && (
-          <p role="status" className="text-sm text-text-muted">
-            {t('workbench.reply_prediction_unavailable')}
-          </p>
-        )}
-      </SettingsGroup>
-    </section>
+          </div>
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="text-sm text-red-500">
+          {t('workbench.reply_prediction_save_failed')}
+        </p>
+      )}
+      {model && !available && (
+        <p role="status" className="text-sm text-text-muted">
+          {t('workbench.reply_prediction_unavailable')}
+        </p>
+      )}
+    </div>
   )
 }

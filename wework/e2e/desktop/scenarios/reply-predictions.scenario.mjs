@@ -8,6 +8,7 @@ import {
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const INPUT = `${ACTIVE} [data-testid="chat-message-input"]`
 const GHOST = `${ACTIVE} [data-testid="chat-message-input-prediction"]`
+const PENDING = `${ACTIVE} [data-testid="chat-message-input-prediction-pending"]`
 const INITIAL = '请分析迁移方案，保留运行中的任务，不要重启服务。'
 const ANSWER = '可以先迁移当前进程，再配置后续任务的启动入口。迁移不会中断正在运行的任务。'
 const SUGGESTION = '请按这个方案迁移，并配置后续启动入口，不要中断当前任务。'
@@ -43,6 +44,10 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
   let active = false
   let normalRequests = 0
   let predictionRequests = 0
+  let releasePrediction
+  const heldPrediction = new Promise(resolve => {
+    releasePrediction = resolve
+  })
   return {
     async handleHttp(request, response, url) {
       if (
@@ -60,6 +65,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
         assert.equal(body.model, PREDICTION_MODEL, 'Prediction used the conversation model')
         assert.deepEqual(body.tools ?? [], [], 'Prediction exposed tools to the model')
         assert.ok(input.includes(INITIAL), 'Prediction lost the original user constraints')
+        if (predictionRequests === 1) await heldPrediction
         complete(
           response,
           JSON.stringify({ suggestion: predictionRequests === 1 ? SUGGESTION : null })
@@ -75,6 +81,11 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       active = true
       const capture = name => captureScreenshot(control, name, 'body')
       await control.command('navigate', 'body', { value: '/settings/general' })
+      await control.command('waitFor', '[data-testid="reply-prediction-enabled"]')
+      assert.equal(Number(await control.command('getElementCount', MODEL_SELECT)), 0)
+      await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
+      await capture('reply-01-unconfigured.png')
+      await control.command('click', '[data-testid="reply-prediction-enabled"]')
       await control.command('waitFor', MODEL_SELECT)
       await control.command(
         'waitFor',
@@ -83,7 +94,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       )
       await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
       assert.equal(await control.command('getValue', MODEL_SELECT), '')
-      await capture('reply-01-unconfigured.png')
+      await capture('reply-01b-task-model-default.png')
       await control.command('select', MODEL_SELECT, {
         value: 'runtime:local-model:desktop-e2e-responses',
       })
@@ -99,7 +110,15 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await control.command('fill', INPUT, { value: INITIAL })
       await capture('reply-03-original-request.png')
       await control.command('press', INPUT, { key: 'Enter' })
+      await control.command('waitFor', PENDING, { text: '正在生成建议' })
+      await capture('reply-03b-generating-suggestion.png')
+      await control.command('fill', INPUT, { value: '生成时我也能输入' })
+      assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
+      await control.command('fill', INPUT, { value: '' })
+      await control.command('waitFor', PENDING)
+      releasePrediction()
       await control.command('waitFor', GHOST, { text: SUGGESTION, timeoutMs: 30000 })
+      assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       assert.equal(await control.command('getValue', INPUT), '')
       assert.equal(normalRequests, 1)
       await capture('reply-04-ghost-suggestion.png')
