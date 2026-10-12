@@ -20,6 +20,38 @@ function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
 }
 
 describe('runtimeTaskProjection', () => {
+  test('rejects completion from an older turn even when its projection was updated later', () => {
+    const active = task({
+      running: true,
+      status: 'running',
+      turnStatus: 'inProgress',
+      updatedAt: 1_786_676_410_200,
+    })
+    const previousCompletion = task({
+      running: false,
+      status: 'done',
+      completedAt: 1_786_676_400_000,
+      updatedAt: 1_786_676_420_000,
+    })
+
+    expect(shouldReplaceRuntimeTaskProjection(active, previousCompletion)).toBe(false)
+    expect(
+      shouldReplaceRuntimeTaskProjection(active, {
+        ...previousCompletion,
+        completedAt: 1_786_676_410_000,
+      })
+    ).toBe(true)
+  })
+
+  test('accepts completion for an idle task after a later metadata update', () => {
+    expect(
+      shouldReplaceRuntimeTaskProjection(
+        task({ running: false, status: 'active', updatedAt: 1_786_676_420_000 }),
+        task({ running: false, status: 'done', completedAt: 1_786_676_400_000 })
+      )
+    ).toBe(true)
+  })
+
   test('confirms idle only when runtime and every turn are terminal', () => {
     const transcript = projectRuntimePaneTranscript({
       running: false,

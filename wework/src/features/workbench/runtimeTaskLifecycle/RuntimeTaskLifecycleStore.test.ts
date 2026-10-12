@@ -58,6 +58,27 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
 }
 
 describe('RuntimeTaskLifecycleStore', () => {
+  test('preserves a live turn when an older completion snapshot arrives late', () => {
+    const store = new RuntimeTaskLifecycleStore('late-completion-test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({ running: true, status: 'running', turnStatus: 'inProgress', updatedAt: 20_200 })
+      )
+    )
+    store.turnStarted(address, 'current-turn')
+
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: false, status: 'done', completedAt: 10_000, updatedAt: 30_000 }))
+    )
+
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(store.getTask(address)?.turn.id).toBe('current-turn')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: false, status: 'done', completedAt: 30_000, updatedAt: 30_000 }))
+    )
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
   test('does not revive a completed turn from its earlier millisecond-precision snapshot', () => {
     const store = new RuntimeTaskLifecycleStore('completion-precision-test')
     const started = task({

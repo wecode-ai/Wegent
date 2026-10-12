@@ -105,6 +105,8 @@ If the existing context contains encrypted reasoning or compaction state produce
 
 ## Control a running task
 
+The sidebar keeps running tasks visible with their running indicators. Collapsing or expanding a project or its history list does not change execution state. When you continue a conversation, completion from an earlier turn does not end the new running turn; its indicator clears when the current turn ends.
+
 | Action                  | Shortcut                       | Use it when                             |
 | ----------------------- | ------------------------------ | --------------------------------------- |
 | Send after the response | `Enter`                        | Queue the next instruction              |
