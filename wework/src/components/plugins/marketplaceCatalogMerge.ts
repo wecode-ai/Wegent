@@ -90,7 +90,7 @@ export function mergeMarketplaceCatalog(
     if (
       cloudPluginId !== null &&
       localPluginId(plugin) !== null &&
-      typeof plugin.spec.pluginId !== 'number'
+      (plugin.spec.origin === 'created' || plugin.spec.source.type === 'local')
     ) {
       localPublishedInstalls.set(String(cloudPluginId), plugin)
     }
@@ -99,6 +99,8 @@ export function mergeMarketplaceCatalog(
     // cloud row; overlay from the installed list so the card shows "..." immediately.
     if (typeof plugin.spec.pluginId === 'number') {
       cloudManagedInstalls.set(String(plugin.spec.pluginId), plugin)
+    } else if (cloudPluginId !== null && linkedCloudInstalledPluginId(plugin) !== null) {
+      cloudManagedInstalls.set(String(cloudPluginId), plugin)
     }
   }
 

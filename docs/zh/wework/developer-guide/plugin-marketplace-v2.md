@@ -131,6 +131,8 @@ flowchart LR
 
 ## 4. 数据归属与身份
 
+受管云端插件的本地物化记录通过 `cloudPluginId` 和 `cloudInstalledPluginId` 关联目录与账号安装意图。仅刷新本地清单时也必须保留云端安装 ID，更新和设置请求使用该 ID；`name@marketplace` 只用于本地运行面。只有个人原件（`origin=created` 或 `source.type=local`）使用个人发布身份合并路径。
+
 | 数据                                   | 位置                                               | 事实语义                   |
 | -------------------------------------- | -------------------------------------------------- | -------------------------- |
 | Plugin、Release、Publication Request   | MySQL                                              | 云端控制面和发布状态       |

@@ -131,6 +131,8 @@ Four boundaries must remain distinct:
 
 ## 4. Data ownership and identity
 
+Local materialization records for managed cloud plugins link the catalog and account installation through `cloudPluginId` and `cloudInstalledPluginId`. A local-only inventory refresh must preserve the cloud installation ID for update and settings requests; `name@marketplace` addresses the local runtime. Only personal originals (`origin=created` or `source.type=local`) use the personal publication merge path.
+
 | Data                                      | Location                                           | Source-of-truth meaning                          |
 | ----------------------------------------- | -------------------------------------------------- | ------------------------------------------------ |
 | Plugin, Release, Publication Request      | MySQL                                              | Cloud catalog and publication state              |
