@@ -71,6 +71,7 @@ import { rankMarketplaceSearchResults } from '@/features/plugins/marketplaceSear
 import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPluginMigration'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
+import { slimPluginManifestForCache } from '@/features/plugins/slimPluginManifest'
 import { mergeLocalInstalledWithStorePackages } from '@/components/plugins/installedPluginMerge'
 import { installedPluginMarketplaceId } from '@/components/plugins/pluginDistribution'
 
@@ -573,26 +574,6 @@ function slimPluginInterfaceForDurableCache(
   }
 }
 
-function slimPluginManifestForDurableCache(
-  manifest: Record<string, unknown> | null | undefined
-): Record<string, unknown> {
-  if (!manifest) return {}
-  const keys = [
-    'name',
-    'id',
-    'marketplaceId',
-    'source',
-    'installPolicy',
-    'authPolicy',
-    'availability',
-    'disabledReason',
-    'eligiblePlanTypes',
-  ] as const
-  return Object.fromEntries(
-    keys.flatMap(key => (manifest[key] === undefined ? [] : [[key, manifest[key]]]))
-  )
-}
-
 /**
  * Persist a compact catalog snapshot so cold launches can paint OpenAI/local tabs
  * before plugin/list (~10s). Drop screenshots and keep skill/app/connector names
@@ -615,7 +596,7 @@ function toDurableReadState(state: LocalCodexPluginsState): LocalCodexPluginsSta
         (item.description.length > 240 ? `${item.description.slice(0, 240)}…` : item.description),
       components: slimPluginComponentsForCache(item.components),
       interface: slimPluginInterfaceForDurableCache(item.interface),
-      manifest: slimPluginManifestForDurableCache(item.manifest),
+      manifest: slimPluginManifestForCache(item.manifest),
     })),
     // Installed membership belongs to the renderer inventory and live plugin/installed.
     // Persisting it here created a second seven-day source that survived uninstall.

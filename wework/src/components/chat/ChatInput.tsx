@@ -58,7 +58,6 @@ import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
-import type { ReplyPredictionSource } from '@/features/reply-predictions/replyPredictionService'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
@@ -150,7 +149,6 @@ export interface ProjectWorkControls {
 
 export interface ChatInputProps {
   predictionAddress?: RuntimeTaskAddress | null
-  predictionSource?: ReplyPredictionSource | null
   presentation?: 'chat' | 'document'
   value: string
   onChange: (value: string) => void
@@ -285,8 +283,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
   function ChatInput(props, ref) {
     return (
       <ReplyPredictionProvider
-        address={props.predictionAddress ?? props.projectWork?.currentRuntimeTask}
-        source={props.predictionSource}
+        address={
+          props.predictionAddress === undefined
+            ? props.projectWork?.currentRuntimeTask
+            : props.predictionAddress
+        }
         blocked={
           props.disabled ||
           props.isStreaming ||

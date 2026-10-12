@@ -16,9 +16,7 @@ import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/wor
 import { RuntimeTaskLifecycleContext } from '@/features/workbench/runtimeTaskLifecycle/internalContext'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import {
-  predictionTurns,
   replyPredictionService,
   type ReplyPredictionSource,
   type ReplyPredictionResult,
@@ -29,12 +27,10 @@ const emptySnapshot = () => null
 
 export function ReplyPredictionProvider({
   address,
-  source,
   blocked = false,
   children,
 }: {
   address?: RuntimeTaskAddress | null
-  source?: ReplyPredictionSource | null
   blocked?: boolean
   children: ReactNode
 }) {
@@ -50,73 +46,37 @@ export function ReplyPredictionProvider({
   )
   const lifecycle = snapshot && address ? store?.selectTask(snapshot, address) : null
   const enabled = preferences?.loaded && preferences.preferences.replyPredictionsEnabled
-  const selectedModel = enabled ? workbench?.projectChat.selectedModel : null
-  const selectedOptions = enabled ? workbench?.projectChat.selectedModelOptions : undefined
-  const independentModel = preferences?.preferences.replyPredictionModel
-  const configured = useMemo(() => {
-    if (!enabled) return null
-    if (independentModel) return independentModel
-    if (!selectedModel) return null
-    const execution = selectedModelExecutionFields(selectedModel, selectedOptions ?? {})
-    return {
-      modelName: selectedModel.name,
-      modelType: selectedModel.type,
-      executionModelId: execution.modelId ?? '',
-      executionModelType: execution.modelType ?? null,
-      options: execution.modelOptions,
-    }
-  }, [enabled, independentModel, selectedModel, selectedOptions])
-  const model =
-    configured &&
-    workbench?.projectChat.models.some(
-      candidate =>
-        candidate.name === configured.modelName &&
-        candidate.type === configured.modelType &&
-        candidate.isActive !== false
-    )
-      ? configured
-      : null
-  const modelKey = JSON.stringify(model)
-  const api = model ? workbench?.services.textGenerationApi : undefined
-  const service = useMemo(
-    () => (api ? replyPredictionService(api, modelKey) : null),
-    [api, modelKey]
-  )
+  const api = enabled ? workbench?.services.replyPredictionApi : undefined
+  const service = useMemo(() => (api ? replyPredictionService(api) : null), [api])
   useSyncExternalStore(service?.subscribe ?? noSubscription, service?.getSnapshot ?? emptySnapshot)
   const runtimeRevision = `${lifecycle?.turn.id ?? ''}:${lifecycle?.task?.updatedAt ?? ''}`
   const runtimeBusy = lifecycle?.derived.isBusy || Boolean(lifecycle?.interactionStatus)
   const deviceId = address?.deviceId
   const taskId = address?.taskId
   const workspacePath = address?.workspacePath
-  const loadTranscript = workbench?.loadRuntimeTranscriptForPane
+  const latestTurnId = lifecycle?.turn.id
   const runtimeSource = useMemo<ReplyPredictionSource | null>(() => {
-    if (!deviceId || !taskId || !loadTranscript) return null
+    if (!deviceId || !taskId) return null
     return {
       scope: JSON.stringify([deviceId, taskId, workspacePath]),
       revision: runtimeRevision,
       busy: Boolean(runtimeBusy),
-      load: async () =>
-        predictionTurns(
-          await loadTranscript({ deviceId, taskId, workspacePath }, { includeFullContent: true })
-        ),
+      address: { deviceId, taskId, workspacePath },
+      latestTurnId,
     }
-  }, [deviceId, taskId, workspacePath, runtimeRevision, runtimeBusy, loadTranscript])
-  const target = source === undefined ? runtimeSource : source
+  }, [deviceId, taskId, workspacePath, runtimeRevision, runtimeBusy, latestTurnId])
+  const target = runtimeSource
   const scope = target?.scope
   const revision = target?.revision ?? ''
   const busy = target?.busy ?? false
-  const load = useEffectEvent(() => target!.load())
+  const currentSource = useEffectEvent(() => target!)
   const [result, setResult] = useState<{
     key: string
     prediction: ReplyPredictionResult | null
   } | null>(null)
-  const resultKey = JSON.stringify([target?.scope, target?.revision, modelKey])
-
+  const resultKey = JSON.stringify([target?.scope, target?.latestTurnId || revision])
   useEffect(() => {
-    service?.configure(model)
-  }, [service, model])
-  useEffect(() => {
-    if (!service || !scope || !model) return
+    if (!service || !scope) return
     if (busy) {
       service.invalidate(scope)
       return
@@ -124,7 +84,7 @@ export function ReplyPredictionProvider({
     let disposed = false
     const release = service.retain(scope)
     void service
-      .request({ scope, revision, busy, load }, model)
+      .request(currentSource())
       .then(prediction => {
         if (!disposed) setResult({ key: resultKey, prediction })
       })
@@ -135,11 +95,11 @@ export function ReplyPredictionProvider({
       disposed = true
       release()
     }
-  }, [service, scope, revision, busy, model, resultKey])
+  }, [service, scope, busy, resultKey])
   const prediction =
     !blocked &&
     !target?.busy &&
-    model &&
+    enabled &&
     result?.key === resultKey &&
     result.prediction?.isCurrent()
       ? result.prediction
@@ -161,7 +121,7 @@ export function ReplyPredictionProvider({
     >
       <ComposerPredictionPendingContext.Provider
         value={
-          !blocked && !busy && model && scope && service?.isPending(scope)
+          !blocked && !busy && enabled && scope && service?.isPending(scope)
             ? t('workbench.reply_prediction_generating')
             : null
         }

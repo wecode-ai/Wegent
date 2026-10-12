@@ -87,6 +87,7 @@ const mocks = vi.hoisted(() => {
   }
 
   const localServices = {
+    replyPredictionApi: { predict: vi.fn().mockResolvedValue({ suggestion: '继续' }) },
     composerCatalogApi: { readCatalog: vi.fn() },
     teamApi: {
       listTeams: vi.fn().mockResolvedValue([]),
@@ -573,6 +574,41 @@ describe('execution status write-back on history reads', () => {
 })
 
 describe('createHybridWorkbenchServices', () => {
+  it('routes predictions and cancellation to the session device', async () => {
+    const services = createServices()
+    const local = { address: { deviceId: 'local-device', taskId: 'local-task' } }
+    await services.replyPredictionApi!.predict(local)
+    expect(mocks.localServices.replyPredictionApi.predict).toHaveBeenCalledWith(local)
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+
+    const controller = new AbortController()
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async method =>
+      method === 'runtime.text.predict_reply' ? new Promise(() => {}) : { cancelled: true }
+    )
+    const pending = services.replyPredictionApi!.predict({
+      address: { deviceId: 'cloud-device', taskId: 'cloud-task' },
+      latestTurnId: 'turn-1',
+      signal: controller.signal,
+    })
+    const rejection = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() =>
+      expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+        'runtime.text.predict_reply',
+        expect.objectContaining({ taskId: 'cloud-task', latestTurnId: 'turn-1' }),
+        'cloud-device'
+      )
+    )
+    const start = mocks.cloudRuntimeIpcRequest.mock.calls.find(
+      ([method]) => method === 'runtime.text.predict_reply'
+    )!
+    controller.abort()
+    await rejection
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.text.cancel',
+      { deviceId: 'cloud-device', taskId: start[1].requestId },
+      'cloud-device'
+    )
+  })
   test('routes side composer catalogs to their device and rejects another APP registration', async () => {
     const services = createServices()
     mocks.localServices.composerCatalogApi.readCatalog.mockResolvedValue({ taskId: 'local-side' })

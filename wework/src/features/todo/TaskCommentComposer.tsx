@@ -15,7 +15,6 @@ import type { CollaborationTranslate } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
-import type { ReplyPredictionSource } from '@/features/reply-predictions/replyPredictionService'
 
 export function TaskCommentComposer({
   value,
@@ -30,7 +29,6 @@ export function TaskCommentComposer({
   projectWork,
   serverExecution = false,
   placeholder,
-  predictionSource,
   predictionAddress,
 }: {
   value: string
@@ -45,7 +43,6 @@ export function TaskCommentComposer({
   projectWork: ProjectWorkControls
   serverExecution?: boolean
   placeholder?: string
-  predictionSource?: ReplyPredictionSource | null
   predictionAddress?: import('@/types/api').RuntimeTaskAddress | null
 }) {
   const { t } = useTranslation('common')
@@ -54,7 +51,6 @@ export function TaskCommentComposer({
   return (
     <ReplyPredictionProvider
       address={predictionAddress}
-      source={predictionAddress ? undefined : predictionSource}
       blocked={
         disabled || sending || controls.attachments.length > 0 || controls.uploadingFiles.size > 0
       }

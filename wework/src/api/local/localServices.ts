@@ -1,4 +1,5 @@
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
+import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import { createLocalProjectAutomationApi } from './localProjectAutomations'
 import {
   cancellableTextGeneration,
@@ -3992,6 +3993,11 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return { data }
     },
   }
+  const replyPredictionApi = createReplyPredictionApi(async (method, params, signal) => {
+    const normalized = normalizeLocalDeviceRecord(params, await getLocalDeviceId())
+    signal?.throwIfAborted()
+    return request(method, normalized)
+  })
   const textGenerationApi: NonNullable<WorkbenchServices['textGenerationApi']> = {
     async generateText(data) {
       return cancellableTextGeneration(data.signal, data.timeoutMs, async signal => {
@@ -4220,6 +4226,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     pluginApi: projectPluginApi,
     branchNameApi,
     textGenerationApi,
+    replyPredictionApi,
     automationApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({
