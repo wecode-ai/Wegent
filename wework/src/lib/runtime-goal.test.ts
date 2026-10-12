@@ -149,6 +149,20 @@ describe('runtime goal continuation', () => {
     ).toBe(false)
   })
 
+  test('does not equate unidentified assistants from different turns', () => {
+    const assistant = { ...continuedAssistantMessage, turnId: undefined, subtaskId: undefined }
+    expect(
+      shouldReconcileActiveRuntimeGoalTranscript({
+        goalContinuing: true,
+        messages: [
+          { ...assistant, id: 'previous-assistant', status: 'done', content: 'Previous result' },
+          assistant,
+        ],
+        activeAssistantMessage: assistant,
+      })
+    ).toBe(true)
+  })
+
   test('keeps reconciliation active while earlier Goal results are visible', () => {
     expect(
       shouldReconcileActiveRuntimeGoalTranscript({

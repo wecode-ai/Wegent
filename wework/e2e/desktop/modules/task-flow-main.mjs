@@ -3010,6 +3010,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         console.log(`Wework message restoration desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
+      await control.command('waitFor', '[data-testid="processing-duration-label"]')
+      await control.command('scrollIntoView', '[data-testid="processing-duration-label"]')
       await control.command('waitFor', '[data-testid="processing-duration-label"]', {
         visible: true,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

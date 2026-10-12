@@ -93,6 +93,7 @@ export function shouldReconcileActiveRuntimeGoalTranscript({
   if (!goalContinuing || !activeAssistantMessage) return false
 
   const activeTurnId = activeAssistantMessage.turnId || activeAssistantMessage.subtaskId
+  if (!activeTurnId) return true
   return !messages.some(
     message =>
       message.id !== activeAssistantMessage.id &&
