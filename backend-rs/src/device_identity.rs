@@ -10,7 +10,7 @@
 //! its canonical identity and coalesces `plugin_device_installations` rows.
 //! Used by both the marketplace listing and installed-plugin APIs.
 
-use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
+use brz_mysql::{FromMysqlRow, Mysql, MysqlResult, MysqlTransaction};
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -304,6 +304,137 @@ where
         }
     }
     Ok(selected)
+}
+
+/// Full `plugin_device_installations` row used by `reconcile_plugin_device_rows`
+/// (`app/models/plugin_marketplace.py::PluginDeviceInstallation`). The aliases
+/// mirror SQLAlchemy's `db.query(...).with_for_update()` projection so the
+/// prepared statement matches the recorded `FOR UPDATE` exchange.
+#[derive(Debug, Clone, FromMysqlRow)]
+pub struct PluginDeviceInstallationRow {
+    #[mysql(rename = "plugin_device_installations_id")]
+    pub id: i64,
+    #[mysql(rename = "plugin_device_installations_installed_kind_id")]
+    pub installed_kind_id: i64,
+    #[mysql(rename = "plugin_device_installations_user_id")]
+    pub user_id: i64,
+    #[mysql(rename = "plugin_device_installations_device_id")]
+    pub device_id: String,
+    #[mysql(rename = "plugin_device_installations_desired_release_id")]
+    pub desired_release_id: i64,
+    #[mysql(rename = "plugin_device_installations_actual_release_id")]
+    pub actual_release_id: i64,
+    #[mysql(rename = "plugin_device_installations_state")]
+    pub state: String,
+    #[mysql(rename = "plugin_device_installations_error_code")]
+    pub error_code: String,
+    #[mysql(rename = "plugin_device_installations_error_message")]
+    pub error_message: String,
+    #[mysql(rename = "plugin_device_installations_attempt_count")]
+    pub attempt_count: i64,
+    #[mysql(rename = "plugin_device_installations_last_sync_at")]
+    pub last_sync_at: NaiveDateTime,
+    #[mysql(rename = "plugin_device_installations_updated_at")]
+    pub updated_at: NaiveDateTime,
+}
+
+impl DeviceRow for PluginDeviceInstallationRow {
+    fn user_id(&self) -> i64 {
+        self.user_id
+    }
+
+    fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    fn installed_kind_id(&self) -> i64 {
+        self.installed_kind_id
+    }
+
+    fn last_sync_at(&self) -> NaiveDateTime {
+        self.last_sync_at
+    }
+
+    fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+}
+
+/// `reconcile_plugin_device_rows` needs the primary key to delete superseded
+/// alias rows and to update the retained rows' canonical `device_id`.
+pub trait ReconcileRow: DeviceRow {
+    fn id(&self) -> i64;
+}
+
+impl ReconcileRow for PluginDeviceInstallationRow {
+    fn id(&self) -> i64 {
+        self.id
+    }
+}
+
+/// `db.query(PluginDeviceInstallation).filter(user_id=...).with_for_update()`:
+/// every mapped column with its SQLAlchemy alias.
+const RECONCILE_SELECT_QUERY: &str = "SELECT plugin_device_installations.id AS plugin_device_installations_id, \
+     plugin_device_installations.installed_kind_id AS plugin_device_installations_installed_kind_id, \
+     plugin_device_installations.user_id AS plugin_device_installations_user_id, \
+     plugin_device_installations.device_id AS plugin_device_installations_device_id, \
+     plugin_device_installations.desired_release_id AS plugin_device_installations_desired_release_id, \
+     plugin_device_installations.actual_release_id AS plugin_device_installations_actual_release_id, \
+     plugin_device_installations.state AS plugin_device_installations_state, \
+     plugin_device_installations.error_code AS plugin_device_installations_error_code, \
+     plugin_device_installations.error_message AS plugin_device_installations_error_message, \
+     plugin_device_installations.attempt_count AS plugin_device_installations_attempt_count, \
+     plugin_device_installations.last_sync_at AS plugin_device_installations_last_sync_at, \
+     plugin_device_installations.updated_at AS plugin_device_installations_updated_at \
+     FROM plugin_device_installations \
+     WHERE plugin_device_installations.user_id = ? FOR UPDATE";
+
+/// `db.delete(row)`: SQLAlchemy deletes by primary key.
+const DELETE_ROW_QUERY: &str =
+    "DELETE FROM plugin_device_installations WHERE plugin_device_installations.id = ?";
+
+/// `row.device_id = canonical_id`: the flush of the rewritten canonical alias.
+const UPDATE_DEVICE_ID_QUERY: &str =
+    "UPDATE plugin_device_installations SET device_id=? WHERE plugin_device_installations.id = ?";
+
+/// Source `app/services/plugin_device_identity.py::reconcile_plugin_device_rows`.
+///
+/// Converges legacy alias rows within the caller's write transaction. It locks
+/// the user's rows `FOR UPDATE`, coalesces them to one row per
+/// `(installed_kind_id, canonical device)`, deletes the superseded alias rows,
+/// then rewrites each retained row's `device_id` to its canonical id. Identity
+/// reads go through the pooled handle (`mysql`) because
+/// `coalesce_plugin_device_rows` resolves `plugin_device_id` per unique
+/// `(user_id, device_id)` pair, exactly like the source.
+pub async fn reconcile_plugin_device_rows<T, M, R>(
+    transaction: &mut T,
+    mysql: &M,
+    user_id: i64,
+) -> MysqlResult<()>
+where
+    T: MysqlTransaction,
+    M: Mysql,
+    R: ReconcileRow + Clone + FromMysqlRow + Send,
+{
+    let rows: Vec<R> = transaction
+        .fetch_all(RECONCILE_SELECT_QUERY, (user_id,))
+        .await?;
+    let selected = coalesce_plugin_device_rows(mysql, rows.clone()).await?;
+    let retained: std::collections::HashSet<i64> =
+        selected.iter().map(|(_, row)| row.id()).collect();
+    for row in &rows {
+        if !retained.contains(&row.id()) {
+            transaction.execute(DELETE_ROW_QUERY, (row.id(),)).await?;
+        }
+    }
+    for ((_, canonical_id), row) in &selected {
+        if row.device_id() != canonical_id {
+            transaction
+                .execute(UPDATE_DEVICE_ID_QUERY, (canonical_id.as_str(), row.id()))
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

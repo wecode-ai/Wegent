@@ -282,6 +282,31 @@ impl ApiKeyReloadRow {
     }
 }
 
+/// The `users` columns as `db.refresh(user)` renders them: SQLAlchemy's
+/// unlabeled full-entity projection read by primary key.
+const USER_RELOAD_COLUMNS: &str = "users.id, users.user_name, users.password_hash, users.email, \
+     users.git_info, users.is_active, users.`role`, users.auth_source, users.preferences, \
+     users.created_at, users.updated_at";
+
+/// `db.refresh(current_user)`: SQLAlchemy expires the ORM object on the write
+/// commit (`cancel_response`'s `db.commit()`), so the later
+/// `current_user.id` read inside `get_task_by_id` re-selects the authenticated
+/// user's row by primary key. The row itself is not consumed (only the id is
+/// read, and the target already holds it), so the call exists to keep the
+/// source's observable read.
+pub(crate) async fn reload_current_user(
+    mysql: &brz_mysql::MysqlService,
+    user_id: i32,
+) -> Result<(), brz_mysql::MysqlError> {
+    let _: Option<brz_mysql::MysqlRow> = mysql
+        .fetch_optional(
+            &format!("SELECT {USER_RELOAD_COLUMNS} \nFROM users \nWHERE users.id = ?"),
+            (user_id,),
+        )
+        .await?;
+    Ok(())
+}
+
 /// Task-token JWT claims (`app.services.auth.task_token.verify_task_token`).
 #[derive(Debug, Deserialize)]
 struct TaskTokenClaims {

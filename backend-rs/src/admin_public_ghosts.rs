@@ -25,8 +25,9 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
 use crate::http_compat::FastApiError;
-use crate::json_compat::{JsonField, OpaqueJson};
 use crate::state::AppState;
+use brz_json::FieldState as _;
+use brz_json::OpaqueJson;
 
 /// The `kinds` column projection rendered by `db.query(Kind)` (SQLAlchemy
 /// labels every column `kinds_<name>`), matching the recorded statement.
@@ -187,15 +188,16 @@ struct GhostSpec {
     description: Option<String>,
 }
 
-/// The `kinds.json` fields consumed by the response. `JsonField` mirrors the
+/// The `kinds.json` fields consumed by the response. presence-aware fields mirrors the
 /// source's `isinstance(..., dict)` guards: a non-object `metadata`/`spec`
 /// yields `None` instead of failing the whole projection.
+#[brz_json::model]
 #[derive(Debug, Deserialize)]
 struct GhostJsonView {
-    #[serde(default)]
-    metadata: JsonField<GhostMetadata>,
-    #[serde(default)]
-    spec: JsonField<GhostSpec>,
+    #[json(presence, lenient)]
+    metadata: GhostMetadata,
+    #[json(presence, lenient)]
+    spec: GhostSpec,
 }
 
 /// `GET /api/admin/public-ghosts`.
@@ -288,13 +290,13 @@ fn build_item(row: GhostRow) -> PublicGhostItem {
 /// `_get_ghost_display_name`: `json.metadata.displayName` when it is a
 /// non-empty string different from `ghost.name`.
 fn ghost_display_name(view: Option<&GhostJsonView>, name: &str) -> Option<String> {
-    let display = view?.metadata.value.as_ref()?.display_name.as_deref()?;
+    let display = view?.metadata.value()?.display_name.as_deref()?;
     (!display.is_empty() && display != name).then(|| display.to_string())
 }
 
 /// `_get_ghost_description`: `json.spec.description` when it is a string.
 fn ghost_description(view: Option<&GhostJsonView>) -> Option<String> {
-    view?.spec.value.as_ref()?.description.clone()
+    view?.spec.value()?.description.clone()
 }
 
 /// pydantic serializes a DB `datetime` as `YYYY-MM-DDTHH:MM:SS`, appending

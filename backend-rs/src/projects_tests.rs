@@ -4,6 +4,8 @@
 
 use super::*;
 
+use super::add_task::{add_task_to_project, parse_project_task_create, with_task_project_label};
+
 fn task_row(id: i64, name: &str, updated_at: &str) -> ProjectTaskRow {
     ProjectTaskRow {
         id,
@@ -323,6 +325,82 @@ fn remove_task_declares_the_json_response_model() {
     }
 
     assert_json_route(remove_task_from_project);
+}
+
+/// `_with_task_project_label(task, project_id)` sets only
+/// `metadata.labels.projectId` to `str(project_id)`, keeping every other key.
+#[test]
+fn with_task_project_label_sets_only_the_project_id_label() {
+    let task = serde_json::json!({
+        "metadata": {"labels": {"keep": "yes"}, "name": "t"},
+        "spec": {"title": "x"}
+    });
+    assert_eq!(
+        with_task_project_label(&task, 2498),
+        serde_json::json!({
+            "metadata": {"labels": {"keep": "yes", "projectId": "2498"}, "name": "t"},
+            "spec": {"title": "x"}
+        })
+    );
+}
+
+/// The source normalizes each level with `dict(... or {})`, so a task without
+/// metadata or labels renders them as empty objects plus the project label.
+#[test]
+fn with_task_project_label_materializes_missing_metadata_and_labels() {
+    assert_eq!(
+        with_task_project_label(&serde_json::json!({"spec": {}}), 7),
+        serde_json::json!({"spec": {}, "metadata": {"labels": {"projectId": "7"}}})
+    );
+    assert_eq!(
+        with_task_project_label(&serde_json::Value::Null, 7),
+        serde_json::json!({"metadata": {"labels": {"projectId": "7"}}})
+    );
+}
+
+/// `ProjectTaskCreate` requires an integer `task_id`; pydantic ignores unknown
+/// keys, and a missing, non-integer, or non-object body renders a 422.
+#[test]
+fn project_task_create_requires_an_integer_task_id() {
+    assert_eq!(
+        parse_project_task_create(&serde_json::json!({"task_id": 21577915845299i64})).unwrap(),
+        21577915845299i64
+    );
+    assert_eq!(
+        parse_project_task_create(&serde_json::json!({"task_id": 5, "extra": true})).unwrap(),
+        5
+    );
+    for invalid in [
+        serde_json::json!({}),
+        serde_json::json!({"task_id": "x"}),
+        serde_json::json!({"task_id": null}),
+        serde_json::json!([1]),
+    ] {
+        assert_eq!(
+            parse_project_task_create(&invalid).unwrap_err().status(),
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+            "expected 422 for {invalid}"
+        );
+    }
+}
+
+/// The add-task route returns the framework `Response` the adapter renders
+/// directly (the source's `status_code=201` with the `application/json` body).
+#[test]
+fn add_task_declares_the_json_response_model() {
+    fn assert_response_route<F>(_route: F)
+    where
+        F: for<'a> std::ops::AsyncFn(
+                &'a Arc<AppState>,
+                crate::auth::SessionUser,
+                i64,
+                Option<String>,
+                serde_json::Value,
+            ) -> Result<Response, FastApiError>,
+    {
+    }
+
+    assert_response_route(add_task_to_project);
 }
 
 /// The route returns the source's explicit `204` empty response, so the

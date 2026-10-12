@@ -143,7 +143,7 @@ pub(crate) fn current_user_response(
 /// The `UserPreferences`-modeled preference keys the response echoes.
 /// Dynamic-keyed objects (`wework_project_work_preferences`,
 /// `runtime_configs`, `options`) echo their stored JSON verbatim through
-/// [`RawEcho`].
+/// [`brz_json::RawJson`].
 #[derive(Debug, Default, Deserialize)]
 struct EchoedPreferences {
     #[serde(default)]
@@ -171,9 +171,9 @@ struct EchoedPreferences {
     #[serde(default)]
     wework_project_execution_mode: Option<String>,
     #[serde(default)]
-    wework_project_work_preferences: Option<RawEcho>,
+    wework_project_work_preferences: Option<brz_json::RawJson>,
     #[serde(default)]
-    runtime_configs: Option<RawEcho>,
+    runtime_configs: Option<brz_json::RawJson>,
 }
 
 /// `QuickAccessPreference`: both fields re-materialize their schema default
@@ -212,7 +212,7 @@ struct ModelSelectionPreference {
     #[serde(rename = "modelType", default)]
     model_type: Option<String>,
     #[serde(default)]
-    options: Option<RawEcho>,
+    options: Option<brz_json::RawJson>,
 }
 
 /// `ComposerQuickPhrase`: `id`, `title`, `content` and `mode` are required;
@@ -280,24 +280,6 @@ impl ComposerQuickPhrase {
     }
 }
 
-/// A raw JSON document echoed verbatim through `raw_value` (dynamic keys,
-/// no materialized dynamic value). Deserialization captures the exact
-/// stored serialization, which re-emits byte-identical JSON.
-#[derive(Debug, Clone)]
-struct RawEcho(Box<serde_json::value::RawValue>);
-
-impl<'de> Deserialize<'de> for RawEcho {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Box::<serde_json::value::RawValue>::deserialize(deserializer).map(RawEcho)
-    }
-}
-
-impl serde::Serialize for RawEcho {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
-    }
-}
-
 /// `UserPreferences`'s serialized shape: known fields keep their stored
 /// non-null value or fall back to the schema default; unknown fields are
 /// dropped; nested dict fields coerce to `{}` when absent. A
@@ -312,7 +294,7 @@ struct PreferencesResponse {
     memory_enabled: bool,
     chat_status_items: Option<Vec<String>>,
     tool_output_guard_enabled: bool,
-    mcp_provider_keys: Option<RawEcho>,
+    mcp_provider_keys: Option<brz_json::RawJson>,
     quick_access: Option<QuickAccessResponse>,
     composer_quick_phrases: Option<Vec<ComposerQuickPhraseResponse>>,
     default_execution_target: Option<String>,
@@ -320,15 +302,15 @@ struct PreferencesResponse {
     wework_project_execution_mode: String,
     #[serde(flatten)]
     extra: crate::user_profile::ErasedFields,
-    wework_project_work_preferences: RawEcho,
-    runtime_configs: RawEcho,
+    wework_project_work_preferences: brz_json::RawJson,
+    runtime_configs: brz_json::RawJson,
 }
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ModelSelectionResponse {
     model_name: Option<String>,
     model_type: Option<String>,
-    options: RawEcho,
+    options: brz_json::RawJson,
 }
 
 fn preferences_view(
@@ -384,8 +366,8 @@ fn preferences_view(
 
 /// The `{}` document for a schema-defaulted nested dict field
 /// (`default_factory=dict`).
-fn empty_object_echo() -> RawEcho {
-    RawEcho(serde_json::value::RawValue::from_string("{}".to_string()).expect("valid JSON"))
+fn empty_object_echo() -> brz_json::RawJson {
+    brz_json::RawJson::from_string("{}".to_string()).expect("valid JSON")
 }
 
 /// `git_info: Optional[List[GitInfo]]`: JSON `null` (the recorded column)

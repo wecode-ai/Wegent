@@ -15,7 +15,8 @@ use chrono::NaiveDateTime;
 
 use super::app_state::AppState;
 use super::redis_cache::CACHE_TTL_SECONDS;
-use crate::json_compat::{OpaqueJson, python_json_string, python_json_value};
+use crate::json_compat::{python_json_string, python_json_value};
+use brz_json::OpaqueJson;
 
 pub struct UserStore;
 

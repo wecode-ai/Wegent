@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::SessionUser;
 use crate::http_compat::FastApiError;
-use crate::json_compat::OpaqueJson;
 use crate::state::AppState;
+use brz_json::OpaqueJson;
 
 /// `get_admin_user`: the role that grants admin access.
 const ADMIN_ROLE: &str = "admin";

@@ -33,8 +33,8 @@ use brz_mysql::Json;
 
 use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
-use crate::json_compat::JsonProjection;
 use crate::state::AppState;
+use brz_json::JsonProjection;
 
 /// `MESSAGER_USER_ID` (`app.api.endpoints.admin.im_channels`): system-level
 /// Messager CRDs are owned by user `0`.
@@ -203,7 +203,7 @@ mod tests {
             user_name: "example-user".to_string(),
             users_password_hash: "hash".to_string(),
             email: None,
-            git_info: Json(crate::json_compat::OpaqueJson::from(json!(null))),
+            git_info: Json(brz_json::OpaqueJson::from(json!(null))),
             is_active: 1,
             role: "admin".to_string(),
             auth_source: "local".to_string(),

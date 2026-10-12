@@ -33,7 +33,7 @@ pub struct UserRow {
     /// `users.git_info` is a JSON column; decoding it as a plain string is a
     /// driver type error, so it decodes as JSON like the source `User` model.
     #[allow(dead_code)]
-    pub users_git_info: brz_mysql::Json<crate::json_compat::OpaqueJson>,
+    pub users_git_info: brz_mysql::Json<brz_json::OpaqueJson>,
     pub users_is_active: i8,
     #[allow(dead_code)]
     #[mysql(rename = "users_role")]

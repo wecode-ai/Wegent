@@ -32,8 +32,8 @@ pub struct UpstreamTool {
     pub name: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    pub input_schema: Option<crate::json_compat::OpaqueJson>,
-    pub annotations: Option<crate::json_compat::OpaqueJson>,
+    pub input_schema: Option<brz_json::OpaqueJson>,
+    pub annotations: Option<brz_json::OpaqueJson>,
 }
 
 /// One JSON-RPC response envelope.
@@ -66,9 +66,9 @@ struct ToolDefinition {
     #[serde(default)]
     description: Option<String>,
     #[serde(default, rename = "inputSchema")]
-    input_schema: Option<crate::json_compat::OpaqueJson>,
+    input_schema: Option<brz_json::OpaqueJson>,
     #[serde(default)]
-    annotations: Option<crate::json_compat::OpaqueJson>,
+    annotations: Option<brz_json::OpaqueJson>,
 }
 
 /// Errors while listing tools from one connector app.
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(
             tool.input_schema
                 .as_ref()
-                .map(crate::json_compat::OpaqueJson::to_value),
+                .map(brz_json::OpaqueJson::to_value),
             Some(json!({
                 "type": "object",
                 "properties": {},
@@ -299,7 +299,7 @@ mod tests {
         assert_eq!(
             tool.annotations
                 .as_ref()
-                .map(crate::json_compat::OpaqueJson::to_value),
+                .map(brz_json::OpaqueJson::to_value),
             Some(json!({
                 "readOnlyHint": true,
                 "destructiveHint": false,

@@ -15,7 +15,8 @@ use std::collections::HashMap;
 use brz_mysql::Mysql;
 use serde::Deserialize;
 
-use crate::json_compat::{JsonField, OpaqueJson};
+use brz_json::FieldState as _;
+use brz_json::OpaqueJson;
 
 use super::db::{KindRow, UserRow};
 use super::mcp::{self, UpstreamTool};
@@ -51,68 +52,63 @@ pub struct ConnectorApp {
 /// The `spec` object of one `kinds` row (`ConnectorAppService._spec`).
 ///
 /// Every field decodes like the source's `spec.get(key) or default` chain:
-/// missing, `null`, and empty-string values fall back to the default, and
-/// non-string / non-array shapes also fall back (the source `str()`/`list()`
-/// coercions are not reproduced beyond that; the recorded specs are strings).
+/// missing and `null` use field defaults. Wrong string/list shapes reject
+/// the typed projection, causing `from_row` to use the whole-spec default.
+#[brz_json::model]
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct AppSpec {
-    #[serde(deserialize_with = "text_or_default")]
+    #[serde(deserialize_with = "brz_json::adapters::null_as_default")]
     name: String,
-    #[serde(deserialize_with = "text_or_default")]
+    #[serde(deserialize_with = "brz_json::adapters::null_as_default")]
     description: String,
     #[serde(rename = "iconUrl")]
     icon_url: Option<String>,
     enabled: Option<bool>,
-    #[serde(deserialize_with = "text_or_default")]
+    #[serde(deserialize_with = "brz_json::adapters::null_as_default")]
     visibility: String,
-    #[serde(rename = "allowedRoles", deserialize_with = "text_list_or_default")]
+    #[serde(
+        rename = "allowedRoles",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
     allowed_roles: Vec<String>,
-    #[serde(rename = "authType", deserialize_with = "text_or_default")]
+    #[serde(
+        rename = "authType",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
     auth_type: String,
-    #[serde(deserialize_with = "text_or_default")]
+    #[serde(deserialize_with = "brz_json::adapters::null_as_default")]
     transport: String,
-    #[serde(rename = "mcpUrl", deserialize_with = "text_or_default")]
+    #[serde(
+        rename = "mcpUrl",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
     mcp_url: String,
-    #[serde(rename = "toolAllowlist", deserialize_with = "text_list_or_default")]
+    #[serde(
+        rename = "toolAllowlist",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
     tool_allowlist: Vec<String>,
     /// `spec.get("providerHeadersEncrypted")`: only a string is kept.
     #[serde(rename = "providerHeadersEncrypted")]
-    provider_headers_encrypted: JsonField<String>,
+    #[json(presence, lenient)]
+    provider_headers_encrypted: String,
     /// `bool(spec.get("forwardUserContextHeaders", False))`: only a JSON
     /// boolean is truthy here.
     #[serde(rename = "forwardUserContextHeaders")]
-    forward_user_context_headers: JsonField<bool>,
+    #[json(presence, lenient)]
+    forward_user_context_headers: bool,
     /// `list(spec.get("httpTools") or [])`: a JSON array of opaque tool
     /// definitions is kept, every other shape is empty.
     #[serde(rename = "httpTools")]
-    http_tools: JsonField<Vec<OpaqueJson>>,
+    #[json(presence, lenient)]
+    http_tools: Vec<OpaqueJson>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct AppDocument {
     #[serde(default)]
     spec: Option<AppSpec>,
-}
-
-/// `str(spec.get(key) or default)`: a non-empty string is kept, every other
-/// shape (missing, `null`, `""`, non-string) falls back to the field default.
-fn text_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value: Option<String> = Option::<String>::deserialize(deserializer)?;
-    Ok(value.unwrap_or_default())
-}
-
-/// `list(spec.get(key) or default)`: an array of strings is kept, every other
-/// shape falls back to the field default.
-fn text_list_or_default<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value: Option<Vec<String>> = Option::<Vec<String>>::deserialize(deserializer)?;
-    Ok(value.unwrap_or_default())
 }
 
 impl AppSpec {
@@ -175,9 +171,12 @@ pub fn row_to_app(row: &KindRow) -> ConnectorApp {
         },
         mcp_url: spec.mcp_url,
         tool_allowlist: spec.tool_allowlist,
-        provider_headers_encrypted: spec.provider_headers_encrypted.value,
-        forward_user_context_headers: spec.forward_user_context_headers.value.unwrap_or(false),
-        http_tools: spec.http_tools.value.unwrap_or_default(),
+        provider_headers_encrypted: spec.provider_headers_encrypted.into_value(),
+        forward_user_context_headers: spec
+            .forward_user_context_headers
+            .into_value()
+            .unwrap_or(false),
+        http_tools: spec.http_tools.into_value().unwrap_or_default(),
         created_at: row.kinds_created_at,
         updated_at: row.kinds_updated_at,
     }

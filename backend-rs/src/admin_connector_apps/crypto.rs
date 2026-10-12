@@ -18,7 +18,8 @@ use std::collections::BTreeMap;
 use aes_gcm::aes::cipher::{Block, BlockDecrypt, KeyInit};
 use aes_gcm::aes::{Aes128, Aes192, Aes256};
 
-use crate::json_compat::{JsonField, OpaqueJson};
+use brz_json::JsonProjection;
+use brz_json::OpaqueJson;
 
 /// `_get_encryption_key`'s `GIT_TOKEN_AES_KEY` default.
 const DEFAULT_AES_KEY: &str = "12345678901234567890123456789012";
@@ -83,9 +84,9 @@ fn parse_provider_header_names(decrypted: &str) -> Vec<String> {
         decrypted
     };
     // A `BTreeMap` keeps the keys sorted, matching `sorted(provider_headers)`;
-    // `JsonField<String>` keeps only entries whose value is a JSON string.
+    // `JsonProjection<String>` keeps only entries whose value is a JSON string.
     let Some(entries) = OpaqueJson::from_json_text(body)
-        .and_then(|document| document.project::<BTreeMap<String, JsonField<String>>>())
+        .and_then(|document| document.project::<BTreeMap<String, JsonProjection<String>>>())
     else {
         return Vec::new();
     };

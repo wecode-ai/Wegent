@@ -17,14 +17,16 @@
 use async_trait::async_trait;
 use brz_mysql::{Mysql, MysqlResult, MysqlRow};
 
-use crate::tasks_search::statements::{
-    owned_task_count_statement, owned_task_ids_statement, tasks_by_ids_statement,
-};
+use crate::tasks_search::statements::tasks_by_ids_statement;
 
-pub use crate::task_store_listing::{OwnedTaskPage, SubtaskListing, subtask_context_columns};
+pub use crate::task_store_default::DefaultTaskStore;
+pub use crate::task_store_listing::{
+    OwnedTaskPage, SubtaskListing, SubtaskPage, count_subtasks_by_task, load_subtasks_by_ids,
+    page_subtasks_by_task, subtask_context_columns,
+};
 pub use crate::task_store_project::{
-    active_project_task_statement, fetch_active_project_task, task_project_update_statement,
-    update_task_project_and_json,
+    active_project_task_statement, fetch_active_project_task, task_by_id_refresh_statement,
+    task_project_update_statement, update_task_project_and_json,
 };
 pub use crate::task_store_projects::{
     clear_project_ids_statement, clear_project_update_statement, project_tasks_statement,
@@ -43,10 +45,12 @@ pub enum ContextPolicy {
     OnlyWhenResolved,
 }
 
+pub use crate::task_store_create::*;
 pub use crate::task_store_statements::*;
+pub use crate::task_store_subtask_content::{SubtaskContentField, execute_subtask_content_update};
 
 #[async_trait]
-pub trait TaskStore: Send + Sync {
+pub trait TaskStore: crate::task_store_create::TaskStoreCreate {
     /// `task_store.list_by_ids` for the running task ids reported by one
     /// device: `user_id` owns the tasks, `task_ids` are the reported ids. An
     /// empty `task_ids` issues no statement.
@@ -84,9 +88,12 @@ pub trait TaskStore: Send + Sync {
         message_ids: Option<&[i64]>,
     ) -> MysqlResult<Vec<MysqlRow>>;
 
-    /// `task_store.list_recent_owner_only_tasks`: the owner's own tasks that
-    /// carry no approved member, one page at a time.
-    async fn list_recent_owner_only_tasks(
+    /// `task_store.list_recent_task_team_refs` (`recent_team_refs.py`): the
+    /// owner's recent non-group tasks carrying no approved member, projected to
+    /// the `metadata.labels.taskType` and `spec.teamRef` JSON extracts. The
+    /// source reads the base `tasks` table, so a deployment's sharded store must
+    /// not reroute this picker.
+    async fn list_recent_task_team_refs(
         &self,
         user_id: i64,
         limit: i64,
@@ -115,6 +122,17 @@ pub trait TaskStore: Send + Sync {
     /// total. The caller passes `limit + extra_limit` as `limit`; a sharded
     /// deployment merges the base and owner-shard tables.
     async fn list_owned_task_ids(
+        &self,
+        user_id: i64,
+        skip: i64,
+        limit: i64,
+    ) -> MysqlResult<OwnedTaskPage>;
+
+    /// `task_store.list_accessible_task_ids`: one page of the user's accessible
+    /// active non-system tasks (owned or approved member), newest `created_at`
+    /// first, plus the source's distinct count. The caller passes
+    /// `limit + extra_limit` as `limit`.
+    async fn list_accessible_task_ids(
         &self,
         user_id: i64,
         skip: i64,
@@ -176,8 +194,39 @@ pub trait TaskStore: Send + Sync {
         owner_user_id: i32,
     ) -> MysqlResult<Option<MysqlRow>>;
 
+    /// `task_store.get_task_by_states` with `states = [STATE_ACTIVE]` and no
+    /// owner filter (the internal workspace-archive endpoints'
+    /// `_get_active_task`): the active `Task` row of `task_id`, whichever user
+    /// owns it.
+    async fn get_active_task_any_owner(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>>;
+
     /// `subtask_store.get_by_id`: one subtask's `(id, user_id, task_id)`.
     async fn get_subtask_ref(&self, subtask_id: i64) -> MysqlResult<Option<MysqlRow>>;
+
+    /// `SubtaskStore.get_latest_assistant_for_user_by_statuses`: the newest
+    /// assistant subtask of `task_id`/`user_id` whose status is one of
+    /// `statuses`, or no row. An empty `statuses` issues no statement.
+    async fn latest_assistant_for_user_by_statuses(
+        &self,
+        task_id: i64,
+        user_id: i32,
+        statuses: &[&str],
+    ) -> MysqlResult<Option<MysqlRow>>;
+
+    /// `subtask_store.update_fields` for the cancel flow: mark one subtask
+    /// COMPLETED with its partial result. Returns the affected row count.
+    async fn update_subtask_completed(
+        &self,
+        task_id: i64,
+        subtask_id: i64,
+        result_json: &str,
+        updated_at: &str,
+        completed_at: &str,
+    ) -> MysqlResult<u64>;
+
+    /// `db.refresh(subtask)`: re-read one subtask row by primary key.
+    async fn refresh_subtask(&self, task_id: i64, subtask_id: i64)
+    -> MysqlResult<Option<MysqlRow>>;
 
     /// `subtask_store.list_by_user` (limit 1): the newest subtask of one user.
     async fn get_latest_subtask_ref_for_user(&self, user_id: i32) -> MysqlResult<Option<MysqlRow>>;
@@ -187,6 +236,22 @@ pub trait TaskStore: Send + Sync {
 
     /// `TaskStore.get_by_id`: the full task projection.
     async fn get_task(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>>;
+
+    /// `subtask_store.get_by_id`: the full subtask row for `subtask_id`
+    /// (`db.query(Subtask)`), positioned as [`subtask_by_id_statement`]
+    /// projects it.
+    async fn get_subtask(&self, subtask_id: i64) -> MysqlResult<Option<MysqlRow>>;
+
+    /// `subtask_store.update_fields` for the message-content update plus
+    /// `db.commit()`: flush the one dirty content column (when the source's
+    /// attribute history or `flag_modified` marks it) and `updated_at`, keyed
+    /// by the subtask's primary key.
+    async fn update_subtask_content(
+        &self,
+        subtask_id: i64,
+        field: Option<&SubtaskContentField>,
+        updated_at: &str,
+    ) -> MysqlResult<()>;
 
     /// `subtask_store.list_by_task` (`query.all()`, no ordering): the task's
     /// subtasks.
@@ -224,6 +289,12 @@ pub trait TaskStore: Send + Sync {
         updated_at: chrono::NaiveDateTime,
     ) -> MysqlResult<()>;
 
+    /// `db.refresh(task)`: the task row re-read by primary key after the
+    /// project-link write commits. `owner_user_id` lets a deployment resolve
+    /// the same table the write targeted.
+    async fn refresh_task(&self, task_id: i64, owner_user_id: i64)
+    -> MysqlResult<Option<MysqlRow>>;
+
     /// `task_store.clear_project_for_owned_tasks`: detach one project's tasks
     /// owned by `owner_user_id` by setting `project_id = 0`, returning the
     /// number of rows the store updated. A single-table deployment runs one
@@ -246,6 +317,31 @@ pub trait TaskStore: Send + Sync {
 
     /// `subtask_store.list_ids_by_task`: the task's subtask ids.
     async fn list_subtask_ids_by_task(&self, task_id: i64) -> MysqlResult<Vec<MysqlRow>>;
+
+    /// `subtask_store.list_by_task`: the page of fully-loaded subtask rows for
+    /// one task, ordered `message_id, created_at` ascending. `owner_user_id`
+    /// carries the non-member filter the caller's `is_member` produced (`Some`
+    /// restricts to that owner, `None` keeps the member view);
+    /// `before_message_id` bounds older messages, and `from_latest` selects
+    /// the descending page before the store restores ascending id order, as
+    /// the source does.
+    async fn list_subtasks_by_task_for_page(
+        &self,
+        task_id: i64,
+        owner_user_id: Option<i32>,
+        before_message_id: Option<i64>,
+        from_latest: bool,
+        skip: i64,
+        limit: i64,
+    ) -> MysqlResult<Vec<MysqlRow>>;
+
+    /// `subtask_store.count_by_task_for_user`: the number of subtasks of one
+    /// task, with the optional non-member owner filter.
+    async fn count_subtasks_for_task(
+        &self,
+        task_id: i64,
+        owner_user_id: Option<i32>,
+    ) -> MysqlResult<i64>;
 
     /// `subtask_store.list_by_task_ordered` with the source's default
     /// `order_by`: the task's subtasks ordered `message_id`, `created_at`,
@@ -337,18 +433,6 @@ pub trait TaskStore: Send + Sync {
     ) -> MysqlResult<u64>;
 }
 
-/// The single-table store: every statement reads the base `tasks` /
-/// `subtasks` tables on the handle it was built with.
-pub struct DefaultTaskStore<M: Mysql> {
-    pub(crate) mysql: M,
-}
-
-impl<M: Mysql> DefaultTaskStore<M> {
-    pub fn new(mysql: M) -> Self {
-        Self { mysql }
-    }
-}
-
 #[async_trait]
 impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     async fn list_running_tasks(
@@ -410,14 +494,14 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
             .await
     }
 
-    async fn list_recent_owner_only_tasks(
+    async fn list_recent_task_team_refs(
         &self,
         user_id: i64,
         limit: i64,
     ) -> MysqlResult<Vec<MysqlRow>> {
         self.mysql
             .fetch_all(
-                recent_owner_only_tasks_statement(TASKS_TABLE),
+                recent_task_team_refs_statement(TASKS_TABLE),
                 (user_id, limit),
             )
             .await
@@ -443,28 +527,14 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         cursor: Option<(chrono::NaiveDateTime, i64)>,
         client_origin: Option<&str>,
     ) -> MysqlResult<Vec<MysqlRow>> {
-        // Argument order follows the predicate order: `user_id`, the optional
-        // origin, the optional keyset (`created_at` twice, then `id`), `limit`.
-        let mut args: Vec<StatementArg> = vec![StatementArg::Int(user_id)];
-        if let Some(origin) = client_origin {
-            args.push(StatementArg::Str(origin.to_string()));
-        }
-        if let Some((created_at, id)) = cursor {
-            args.push(StatementArg::DateTime(created_at));
-            args.push(StatementArg::DateTime(created_at));
-            args.push(StatementArg::Int(id));
-        }
-        args.push(StatementArg::Int(limit));
-        self.mysql
-            .fetch_all(
-                personal_task_candidates_statement(
-                    TASKS_TABLE,
-                    client_origin.is_some(),
-                    cursor.is_some(),
-                ),
-                args,
-            )
-            .await
+        crate::task_store_listing::personal_task_candidates(
+            &self.mysql,
+            user_id,
+            limit,
+            cursor,
+            client_origin,
+        )
+        .await
     }
 
     async fn list_owned_task_ids(
@@ -473,25 +543,16 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         skip: i64,
         limit: i64,
     ) -> MysqlResult<OwnedTaskPage> {
-        let totals = self
-            .mysql
-            .fetch_all(owned_task_count_statement(TASKS_TABLE), (user_id,))
-            .await?;
-        let total = totals
-            .first()
-            .map_or(Ok(0), |row: &MysqlRow| row.get_required::<i64>("count_1"))?;
-        let rows = self
-            .mysql
-            .fetch_all(
-                owned_task_ids_statement(TASKS_TABLE, skip > 0),
-                (user_id, limit, skip),
-            )
-            .await?;
-        let ids = rows
-            .iter()
-            .map(|row: &MysqlRow| row.get_required::<i64>("id"))
-            .collect::<MysqlResult<Vec<_>>>()?;
-        Ok(OwnedTaskPage { total, ids })
+        crate::task_store_listing::owned_task_id_page(&self.mysql, user_id, skip, limit).await
+    }
+
+    async fn list_accessible_task_ids(
+        &self,
+        user_id: i64,
+        skip: i64,
+        limit: i64,
+    ) -> MysqlResult<OwnedTaskPage> {
+        crate::task_store_listing::accessible_task_id_page(&self.mysql, user_id, skip, limit).await
     }
 
     async fn list_tasks_by_ids(&self, task_ids: &[i64]) -> MysqlResult<Vec<MysqlRow>> {
@@ -507,27 +568,7 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     }
 
     async fn list_group_task_ids_for_accessible_user(&self, user_id: i64) -> MysqlResult<Vec<i64>> {
-        // `_OWNED_GROUP_CHAT_SQL` then `_MEMBER_TASK_IDS_SQL`, unioned as sets;
-        // the id list keeps a stable order so a caller can re-order or count it.
-        let owned: Vec<MysqlRow> = self
-            .mysql
-            .fetch_all(owned_group_chat_ids_statement(TASKS_TABLE), (1i8, user_id))
-            .await?;
-        let members: Vec<MysqlRow> = self
-            .mysql
-            .fetch_all(
-                member_task_ids_statement(TASKS_TABLE),
-                (user_id.to_string(), 1i8),
-            )
-            .await?;
-        let mut ids: Vec<i64> = Vec::new();
-        for row in owned.iter().chain(members.iter()) {
-            let id = row.get_required::<i64>("id")?;
-            if !ids.contains(&id) {
-                ids.push(id);
-            }
-        }
-        Ok(ids)
+        crate::task_store_listing::accessible_group_task_ids(&self.mysql, user_id).await
     }
 
     async fn count_non_deleted_by_ids(&self, task_ids: &[i64]) -> MysqlResult<i64> {
@@ -556,26 +597,16 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         limit: Option<i64>,
         exclude_deleted: bool,
     ) -> MysqlResult<Vec<MysqlRow>> {
-        if task_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let sql = tasks_by_ids_ordered_statement(
-            TASKS_TABLE,
-            task_ids.len(),
+        crate::task_store_listing::task_rows_by_ids_ordered(
+            &self.mysql,
+            task_ids,
             order_field,
             descending,
+            skip,
+            limit,
             exclude_deleted,
-            skip > 0,
-        );
-        // Argument order follows the statement: the id list, then the page
-        // bounds (the source binds `LIMIT` before `OFFSET`). A missing limit is
-        // the SQLAlchemy unbounded sentinel: every row the page can hold.
-        let mut args: Vec<StatementArg> = task_ids.iter().copied().map(StatementArg::Int).collect();
-        args.push(StatementArg::Int(limit.unwrap_or(i64::MAX)));
-        if skip > 0 {
-            args.push(StatementArg::Int(skip));
-        }
-        self.mysql.fetch_all(sql, args).await
+        )
+        .await
     }
 
     async fn get_workspace_by_ref(
@@ -618,16 +649,56 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
             .await
     }
 
-    async fn get_subtask_ref(&self, subtask_id: i64) -> MysqlResult<Option<MysqlRow>> {
+    async fn get_active_task_any_owner(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>> {
         self.mysql
-            .fetch_optional(subtask_ref_statement(SUBTASKS_TABLE), (subtask_id,))
+            .fetch_optional(active_task_no_owner_statement(TASKS_TABLE), (task_id,))
             .await
     }
 
+    async fn get_subtask_ref(&self, subtask_id: i64) -> MysqlResult<Option<MysqlRow>> {
+        crate::task_store_subtask_writes::get_subtask_ref(self, subtask_id).await
+    }
+
+    async fn latest_assistant_for_user_by_statuses(
+        &self,
+        task_id: i64,
+        user_id: i32,
+        statuses: &[&str],
+    ) -> MysqlResult<Option<MysqlRow>> {
+        crate::task_store_subtask_writes::latest_assistant_for_user_by_statuses(
+            self, task_id, user_id, statuses,
+        )
+        .await
+    }
+
+    async fn update_subtask_completed(
+        &self,
+        _task_id: i64,
+        subtask_id: i64,
+        result_json: &str,
+        updated_at: &str,
+        completed_at: &str,
+    ) -> MysqlResult<u64> {
+        crate::task_store_subtask_writes::update_subtask_completed(
+            self,
+            subtask_id,
+            result_json,
+            updated_at,
+            completed_at,
+        )
+        .await
+    }
+
+    async fn refresh_subtask(
+        &self,
+        _task_id: i64,
+        subtask_id: i64,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        crate::task_store_subtask_writes::refresh_subtask(self, subtask_id).await
+    }
+
     async fn get_latest_subtask_ref_for_user(&self, user_id: i32) -> MysqlResult<Option<MysqlRow>> {
-        self.mysql
-            .fetch_optional(latest_subtask_ref_statement(SUBTASKS_TABLE), (user_id,))
-            .await
+        crate::task_store_subtask_writes::latest_subtask_ref_for_user(self, user_id).await
     }
 
     async fn get_task_ref(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>> {
@@ -639,6 +710,22 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     async fn get_task(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>> {
         self.mysql
             .fetch_optional(task_by_id_statement(TASKS_TABLE), (task_id,))
+            .await
+    }
+
+    async fn get_subtask(&self, subtask_id: i64) -> MysqlResult<Option<MysqlRow>> {
+        self.mysql
+            .fetch_optional(subtask_by_id_statement(SUBTASKS_TABLE), (subtask_id,))
+            .await
+    }
+
+    async fn update_subtask_content(
+        &self,
+        subtask_id: i64,
+        field: Option<&SubtaskContentField>,
+        updated_at: &str,
+    ) -> MysqlResult<()> {
+        execute_subtask_content_update(&self.mysql, SUBTASKS_TABLE, subtask_id, field, updated_at)
             .await
     }
 
@@ -702,29 +789,29 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         .await
     }
 
+    async fn refresh_task(
+        &self,
+        task_id: i64,
+        _owner_user_id: i64,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        self.mysql
+            .fetch_optional(task_by_id_refresh_statement(TASKS_TABLE), (task_id,))
+            .await
+    }
+
     async fn clear_project_for_owned_tasks(
         &self,
         project_id: i64,
         owner_user_id: i64,
         client_origin: Option<&str>,
     ) -> MysqlResult<u64> {
-        // `TaskResource.updated_at`'s Python-side `onupdate` binds first; the
-        // single-table store runs the one bulk update the base store issues.
-        let timestamp = task_update_timestamp();
-        let sql = clear_project_update_statement(TASKS_TABLE, client_origin.is_some());
-        let execution = match client_origin {
-            Some(origin) => {
-                self.mysql
-                    .execute(sql, (timestamp.as_str(), project_id, owner_user_id, origin))
-                    .await?
-            }
-            None => {
-                self.mysql
-                    .execute(sql, (timestamp.as_str(), project_id, owner_user_id))
-                    .await?
-            }
-        };
-        Ok(execution.rows_affected)
+        crate::task_store_project::clear_project_for_owned_tasks(
+            &self.mysql,
+            project_id,
+            owner_user_id,
+            client_origin,
+        )
+        .await
     }
 
     async fn get_task_owned(
@@ -746,24 +833,45 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
             .await
     }
 
+    async fn list_subtasks_by_task_for_page(
+        &self,
+        task_id: i64,
+        owner_user_id: Option<i32>,
+        before_message_id: Option<i64>,
+        from_latest: bool,
+        skip: i64,
+        limit: i64,
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        page_subtasks_by_task(
+            &self.mysql,
+            SUBTASKS_TABLE,
+            task_id,
+            &SubtaskPage {
+                owner_user_id,
+                before_message_id,
+                from_latest,
+                skip,
+                limit,
+            },
+        )
+        .await
+    }
+
+    async fn count_subtasks_for_task(
+        &self,
+        task_id: i64,
+        owner_user_id: Option<i32>,
+    ) -> MysqlResult<i64> {
+        count_subtasks_by_task(&self.mysql, SUBTASKS_TABLE, task_id, owner_user_id).await
+    }
+
     async fn list_subtasks_by_task_ordered(
         &self,
         task_id: i64,
         _owner_user_id: i64,
     ) -> MysqlResult<SubtaskListing> {
-        let rows = self
-            .mysql
-            .fetch_all(
-                subtasks_by_message_ordered_statement(SUBTASKS_TABLE),
-                (task_id,),
-            )
-            .await?;
-        // The open-source store leaves the contexts to its callers, as the
-        // base store does.
-        Ok(SubtaskListing {
-            rows,
-            contexts: None,
-        })
+        crate::task_store_listing::ordered_subtasks_by_task(&self.mysql, SUBTASKS_TABLE, task_id)
+            .await
     }
 
     async fn get_active_task_by_id(
@@ -779,27 +887,7 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     }
 
     async fn task_owner_matches(&self, task_id: i64, owner_user_id: i64) -> MysqlResult<bool> {
-        let row: Option<MysqlRow> = self
-            .mysql
-            .fetch_optional(
-                owner_matches_task_id_statement(TASKS_TABLE),
-                (task_id, owner_user_id),
-            )
-            .await?;
-        if row.is_some() {
-            return Ok(true);
-        }
-        let owners: Vec<MysqlRow> = self
-            .mysql
-            .fetch_all(
-                distinct_subtask_owners_statement(SUBTASKS_TABLE),
-                (task_id,),
-            )
-            .await?;
-        if owners.len() != 1 {
-            return Ok(false);
-        }
-        Ok(owners[0].get_required::<i64>("user_id")? == owner_user_id)
+        crate::task_store_subtask_writes::task_owner_matches(self, task_id, owner_user_id).await
     }
 
     async fn get_active_or_archived_task(
@@ -858,29 +946,13 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         owner_user_id: i64,
         updated_at: &str,
     ) -> MysqlResult<u64> {
-        // `_queue_bulk_status_metrics`: the failed assistant subtasks feeding
-        // the run-metric hook, read before the update.
-        let _metrics: Vec<MysqlRow> = self
-            .mysql
-            .fetch_all(
-                failed_assistant_subtasks_statement(SUBTASKS_TABLE, true),
-                (task_id, owner_user_id),
-            )
-            .await?;
-        // SQLAlchemy runs the `synchronize_session='fetch'` id read before the
-        // bulk update, so the statement order matches the source.
-        let _ids: Vec<MysqlRow> = self
-            .mysql
-            .fetch_all(
-                subtask_ids_for_update_statement(SUBTASKS_TABLE, true),
-                (task_id, owner_user_id),
-            )
-            .await?;
-        let sql = mark_subtasks_deleted_statement(SUBTASKS_TABLE, true);
-        self.mysql
-            .execute(sql, (true, "DELETE", updated_at, task_id, owner_user_id))
-            .await
-            .map(|outcome| outcome.rows_affected)
+        crate::task_store_subtask_writes::mark_subtasks_deleted(
+            self,
+            task_id,
+            owner_user_id,
+            updated_at,
+        )
+        .await
     }
 
     async fn soft_delete_task(
@@ -915,3 +987,5 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
 #[cfg(test)]
 #[path = "task_store_tests.rs"]
 mod tests;
+
+mod create;

@@ -5,7 +5,7 @@
 //! Request and response models for the task mutation endpoints.
 use serde::{Deserialize, Serialize};
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// `MAX_TASK_DELETE_BATCH_SIZE` (`app/schemas/task.py`).
 pub const MAX_TASK_DELETE_BATCH_SIZE: usize = 50;
@@ -55,61 +55,26 @@ impl TaskBulkDeleteRequest {
     }
 }
 
-/// A `TaskUpdate` field that records whether the request carried it.
-///
-/// Pydantic's `model_dump(exclude_unset=True)` distinguishes an absent key
-/// from a present `null`; a bare `Option<T>` conflates them. `Present` is
-/// `None` when the key is absent, `Some(None)` for an explicit `null`, and
-/// `Some(Some(value))` otherwise.
-#[derive(Debug, Clone)]
-pub(crate) struct Present<T>(Option<Option<T>>);
-
-impl<T> Default for Present<T> {
-    fn default() -> Self {
-        Self(None)
-    }
-}
-
-impl<T> Present<T> {
-    /// The value when the key was present and not null.
-    pub(crate) fn value(&self) -> Option<&T> {
-        match &self.0 {
-            Some(Some(value)) => Some(value),
-            _ => None,
-        }
-    }
-
-    /// Whether the request carried the key (including an explicit `null`).
-    pub(crate) fn is_present(&self) -> bool {
-        self.0.is_some()
-    }
-}
-
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for Present<T> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(Self(Some(Option::<T>::deserialize(deserializer)?)))
-    }
-}
-
 /// `TaskUpdate` (`app/schemas/task.py`): the fields `update_task` consumes.
+#[brz_json::model]
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct TaskUpdateBody {
-    #[serde(default)]
-    pub title: Present<String>,
-    #[serde(default)]
-    pub prompt: Present<String>,
-    #[serde(default)]
-    pub status: Present<String>,
-    #[serde(default)]
-    pub progress: Present<i64>,
-    #[serde(default)]
-    pub result: Present<OpaqueJson>,
-    #[serde(default)]
-    pub error_message: Present<String>,
-    #[serde(default)]
-    pub git_url: Present<String>,
-    #[serde(default)]
-    pub git_repo_id: Present<i64>,
+    #[json(presence)]
+    pub title: String,
+    #[json(presence)]
+    pub prompt: String,
+    #[json(presence)]
+    pub status: String,
+    #[json(presence)]
+    pub progress: i64,
+    #[json(presence)]
+    pub result: OpaqueJson,
+    #[json(presence)]
+    pub error_message: String,
+    #[json(presence)]
+    pub git_url: String,
+    #[json(presence)]
+    pub git_repo_id: i64,
 }
 
 /// `TaskInDB` (`app/schemas/task.py`): the `PUT /api/tasks/{task_id}`

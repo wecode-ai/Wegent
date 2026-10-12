@@ -5,7 +5,7 @@
 //! `refresh_extended_video_result_urls` (`get_task_detail`'s last dependency
 //! step) for the remote-workspace endpoints: the registered video integration
 //! re-signs the temporary playback URLs of the assembled task detail response.
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 use super::error::ApiError;
 use super::task_detail::{SubtaskRow, TaskRow};
@@ -62,8 +62,8 @@ fn video_refresh_payloads(task: &mut TaskRow, subtasks: &mut [SubtaskRow]) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json_compat::OpaqueJson;
     use crate::remote_workspace_tree::task_detail::{test_subtask_with_result, test_task_row};
+    use brz_json::OpaqueJson;
     use serde_json::{Value, json};
 
     /// `_video_blocks` walks `task["result"]["blocks"]` first and then every

@@ -87,7 +87,58 @@ fn task_project_update_statement_clears_the_project_and_rewrites_json() {
         sql.contains("SET json = ?, updated_at = ?, project_id = ?"),
         "{sql}"
     );
-    assert!(sql.ends_with("WHERE id = ?"), "{sql}");
+    assert!(sql.ends_with("WHERE tasks.id = ?"), "{sql}");
+}
+
+/// `db.refresh(task)`: the by-primary-key re-read after the project-link
+/// write, with no kind/state filter and no `LIMIT`.
+#[test]
+fn task_by_id_refresh_statement_reads_by_primary_key_without_a_limit() {
+    let sql = task_by_id_refresh_statement("tasks");
+    assert!(sql.starts_with("SELECT id, user_id, kind, name"), "{sql}");
+    assert!(sql.contains("FROM tasks"), "{sql}");
+    assert!(sql.ends_with("WHERE tasks.id = ?"), "{sql}");
+    assert!(!sql.to_uppercase().contains("LIMIT"), "{sql}");
+}
+
+/// `subtask_store.get_latest_assistant_for_user_by_statuses`: the status list
+/// is inlined in the caller's order, the row is ordered newest-first, and the
+/// statement keeps the owner and assistant-role filters.
+#[test]
+fn latest_assistant_for_user_by_statuses_statement_inlines_the_statuses() {
+    let sql = latest_assistant_for_user_by_statuses_statement("subtasks", &["PENDING", "RUNNING"]);
+    assert!(
+        sql.contains("WHERE task_id = ? AND user_id = ? AND `role` = 'ASSISTANT'"),
+        "{sql}"
+    );
+    assert!(sql.contains("status IN ('PENDING', 'RUNNING')"), "{sql}");
+    assert!(sql.contains("ORDER BY id DESC"), "{sql}");
+    assert!(sql.trim_end().ends_with("LIMIT 1"), "{sql}");
+}
+
+/// `subtask_store.update_fields` for the cancel flow: the `SET` column order
+/// follows the source model, and the row is targeted by primary key.
+#[test]
+fn update_subtask_completed_statement_keeps_the_source_column_order() {
+    let sql = update_subtask_completed_statement("subtasks");
+    assert!(
+        sql.starts_with(
+            "UPDATE subtasks SET status=?, progress=?, result=?, updated_at=?, completed_at=?"
+        ),
+        "{sql}"
+    );
+    assert!(sql.contains("WHERE subtasks.id = ?"), "{sql}");
+}
+
+/// `db.refresh(subtask)`: the by-primary-key re-read of the whole projection,
+/// with no `LIMIT`.
+#[test]
+fn subtask_by_id_refresh_statement_reads_by_primary_key_without_a_limit() {
+    let sql = subtask_by_id_refresh_statement("subtasks");
+    assert!(sql.starts_with("SELECT id, user_id, task_id"), "{sql}");
+    assert!(sql.contains("FROM `subtasks`"), "{sql}");
+    assert!(sql.ends_with("WHERE subtasks.id = ?"), "{sql}");
+    assert!(!sql.to_uppercase().contains("LIMIT"), "{sql}");
 }
 
 /// The single-table store's project-task read binds the id, project, and owner
@@ -152,7 +203,7 @@ async fn the_public_store_updates_the_project_task_and_commits() {
     assert_eq!(writes.len(), 2, "{writes:?}");
     assert_eq!(
         writes[0].sql,
-        "UPDATE tasks SET json = ?, updated_at = ?, project_id = ? WHERE id = ?"
+        "UPDATE tasks SET json = ?, updated_at = ?, project_id = ? WHERE tasks.id = ?"
     );
     assert_eq!(writes[0].args, 4);
     assert_eq!(writes[1].sql, "COMMIT");

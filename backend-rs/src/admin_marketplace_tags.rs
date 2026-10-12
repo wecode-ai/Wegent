@@ -52,8 +52,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json_compat::OpaqueJson;
     use crate::sql_test_support::KindQueryCapture;
+    use brz_json::OpaqueJson;
     use brz_mysql::Json;
     use chrono::NaiveDate;
 
