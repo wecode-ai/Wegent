@@ -915,6 +915,7 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
         }
+        self.record_background_terminal_notification(local_task_id, &message);
         if codex_notification_requires_user_input(&message) {
             self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
         }

@@ -2730,6 +2730,21 @@ export function createRuntimeWorkApiFromIpc(
         localDeviceId
       )
     },
+    async cleanRuntimeBackgroundTerminals(
+      address: RuntimeTaskAddress
+    ): Promise<{ success: boolean; error?: string }> {
+      const deviceId = await resolveDeviceId({ address })
+      const normalizedAddress = normalizeLocalDeviceRecord({ address }, deviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.background_terminals.clean',
+        {
+          taskId: normalizedAddress.taskId,
+          address: normalizedAddress,
+        },
+        deviceId
+      )
+    },
     async guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
       const localDeviceId = await resolveDeviceId({ address: data.address })
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)

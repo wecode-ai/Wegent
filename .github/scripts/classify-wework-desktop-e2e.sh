@@ -73,6 +73,7 @@ core_segments=(
   temporary-chat
   workspace-attachments
   rendering-extensions
+  background-terminals
   change-request-status
   claude-runtime
   local-file-preview
@@ -170,7 +171,7 @@ core_shards=(
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
-  rendering-extensions,transcript-sync
+  rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
@@ -904,6 +905,15 @@ classify_wework_path() {
 
     wework/e2e/desktop/modules/shared-skill-runtime.mjs)
       select_target "core:claude-runtime"
+      return
+      ;;
+
+    wework/src/components/layout/BackgroundTerminalsSummary* | \
+      wework/src/components/layout/backgroundTerminals* | \
+      wework/src/components/layout/workspace-panels/BackgroundTerminalPanel* | \
+      wework/src/api/runtimeBackgroundTerminals.ts | \
+      wework/e2e/desktop/scenarios/background-terminals.scenario.mjs)
+      select_target "core:background-terminals"
       return
       ;;
 
