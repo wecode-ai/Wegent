@@ -599,8 +599,10 @@ export class ComponentUpdateManager {
     await rm(temporary, { recursive: true, force: true })
     await mkdir(dirname(target), { recursive: true, mode: 0o700 })
     try {
-      await copyComponentTree(corePlugins, temporary, new Set([join('wework-app', 'web')]))
+      await mkdir(temporary, { mode: 0o700 })
+      await this.linkDirectoryEntries(corePlugins, temporary, new Set(['wework-app']))
       const appRoot = join(temporary, 'wework-app')
+      await copyComponentTree(join(corePlugins, 'wework-app'), appRoot, new Set(['web']))
       const webRoot = join(appRoot, 'web')
       await mkdir(webRoot, { recursive: true, mode: 0o700 })
       await this.linkDirectoryEntries(

@@ -45,13 +45,24 @@ BlockNote and its dependencies out of the initial page load. Pending loading
 retains the current description and callbacks; task creation and editing use
 the same editor.
 
+内置插件组合目录引用不可变组件源，避免在写入 Core profile 前重复复制代码。
 Core profile 使用有界并发准备内置插件，代码保留独立副本以继续从 profile 解析依赖，
 静态网页资源使用目录链接。所有插件准备完成后才写入版本标记；任何复制失败都会阻止启动。
 
-Core profile preparation uses bounded concurrency for bundled plugins. Plugin code
+The bundled plugin composition references immutable component sources, avoiding
+a duplicate code copy before profile preparation. Core profile preparation uses
+bounded concurrency for bundled plugins. Plugin code
 remains an independent copy so dependencies resolve from the profile; static web
 resources use directory links. The version stamp is written only after every plugin
 has finished, and any copy failure prevents startup.
+
+本地任务数据库在单个事务中完成初始化与迁移，减少首次启动的磁盘同步次数。
+执行活动修复使用同一事务；失败会回滚全部迁移，已是当前结构的数据库继续直接读取。
+
+Local task database initialization and migration run in one transaction, reducing
+disk synchronization during first startup. Execution activity repair shares that
+transaction; failures roll back the entire migration, while current schemas
+retain their direct read path.
 
 ## Project Space Board Progress
 

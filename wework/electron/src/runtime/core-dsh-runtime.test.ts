@@ -30,28 +30,35 @@ async function prepareCoreDshLaunch(
 }
 
 describe('core DSH runtime', () => {
-  test('resolves plugin dependencies from the profile while linking immutable web assets', async () => {
-    const root = await temporaryDirectory('core-dsh-module-resolution-')
-    try {
-      const source = join(root.path, 'component', 'terminal-runtime')
-      const modules = join(root.path, 'profile', 'node_modules')
-      const destination = join(modules, '@wegent', 'dsh-terminal-runtime')
-      await mkdir(join(source, 'web'), { recursive: true })
-      await mkdir(join(modules, 'node-pty'), { recursive: true })
-      await writeFile(join(source, 'index.cjs'), 'module.exports = require("node-pty")\n')
-      await writeFile(join(source, 'web', 'index.html'), '<html></html>\n')
-      await writeFile(join(modules, 'node-pty', 'index.js'), 'module.exports = "profile PTY"\n')
+  test.each([false, true])(
+    'resolves profile dependencies from a composed source (linked=%s)',
+    async linked => {
+      const root = await temporaryDirectory('core-dsh-module-resolution-')
+      try {
+        const source = join(root.path, 'component', 'terminal-runtime')
+        const modules = join(root.path, 'profile', 'node_modules')
+        const destination = join(modules, '@wegent', 'dsh-terminal-runtime')
+        await mkdir(join(source, 'web'), { recursive: true })
+        await mkdir(join(modules, 'node-pty'), { recursive: true })
+        await writeFile(join(source, 'index.cjs'), 'module.exports = require("node-pty")\n')
+        await writeFile(join(source, 'web', 'index.html'), '<html></html>\n')
+        await writeFile(join(modules, 'node-pty', 'index.js'), 'module.exports = "profile PTY"\n')
 
-      await copyManagedPlugin(source, destination)
+        const composedSource = join(root.path, 'composed-source')
+        if (linked) {
+          await symlink(source, composedSource, process.platform === 'win32' ? 'junction' : 'dir')
+        }
+        await copyManagedPlugin(linked ? composedSource : source, destination)
 
-      const requirePlugin = createRequire(join(destination, 'package.json'))
-      expect(requirePlugin('./index.cjs')).toBe('profile PTY')
-      expect(await realpath(join(destination, 'web'))).toBe(await realpath(join(source, 'web')))
-      expect((await lstat(join(destination, 'index.cjs'))).isFile()).toBe(true)
-    } finally {
-      await root.remove()
+        const requirePlugin = createRequire(join(destination, 'package.json'))
+        expect(requirePlugin('./index.cjs')).toBe('profile PTY')
+        expect(await realpath(join(destination, 'web'))).toBe(await realpath(join(source, 'web')))
+        expect((await lstat(join(destination, 'index.cjs'))).isFile()).toBe(true)
+      } finally {
+        await root.remove()
+      }
     }
-  })
+  )
   test('copies code independently while preserving linked static web resources', async () => {
     const root = await temporaryDirectory('core-dsh-linked-web-')
     try {

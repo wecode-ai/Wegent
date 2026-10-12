@@ -1,20 +1,11 @@
 import { createHash } from 'node:crypto'
-import {
-  chmod,
-  lstat,
-  mkdtemp,
-  mkdir,
-  readFile,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import * as tar from 'tar'
 import * as componentSnapshot from './component-snapshot.js'
+import { copyManagedPlugin } from './core-dsh-runtime.js'
 import {
   ComponentUpdateManager,
   hashComponentPath,
@@ -194,9 +185,15 @@ describe('ComponentUpdateManager', () => {
     await expect(
       readFile(join(paths.weworkCorePlugins, 'wework-app', 'web', 'vendor', 'static.js'), 'utf8')
     ).resolves.toBe('stable static')
-    expect(
-      (await lstat(join(paths.weworkCorePlugins, 'wework-terminal-runtime'))).isSymbolicLink()
-    ).toBe(false)
+    const profilePlugin = join(fixture.data, 'profile', 'node_modules', 'terminal-runtime')
+    await copyManagedPlugin(join(paths.weworkCorePlugins, 'wework-terminal-runtime'), profilePlugin)
+    await writeFile(join(profilePlugin, 'index.js'), 'profile-local code')
+    await expect(
+      readFile(
+        join(fixture.resources, 'wework-core-plugins', 'wework-terminal-runtime', 'index.js'),
+        'utf8'
+      )
+    ).resolves.toBe('terminal code')
   })
 
   test('downloads changed components and atomically activates them on next startup', async () => {
