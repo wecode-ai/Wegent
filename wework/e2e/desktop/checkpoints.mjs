@@ -71,6 +71,7 @@ export const DESKTOP_CHECKPOINTS = [
   'transcript-sync',
   'running-conversation-history',
   'running-plan-history',
+  'running-sidebar-state',
   'codex-notification-isolation',
   'split-workbench',
   'release-package-startup',

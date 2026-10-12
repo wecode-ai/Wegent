@@ -13,6 +13,7 @@ import {
   isRuntimeTaskAuthoritativeCompletion,
   normalizeRuntimeTaskSummary,
   shouldReplaceRuntimeTaskProjection,
+  summarizeRuntimeTaskExecution,
 } from './projection'
 import { RuntimeTaskMachine, getRuntimeTaskLifecycleKey } from './RuntimeTaskMachine'
 import type {
@@ -392,6 +393,12 @@ export class RuntimeTaskLifecycleStore {
         execution: next.execution.phase,
         previousTurn: previous.turn.phase,
         turn: next.turn.phase,
+        ...(canonicalEvent.type === 'executor_snapshot_received'
+          ? {
+              previousTask: summarizeRuntimeTaskExecution(previous.task),
+              receivedTask: summarizeRuntimeTaskExecution(canonicalEvent.task),
+            }
+          : {}),
       })
     }
     if (

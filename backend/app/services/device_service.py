@@ -350,7 +350,7 @@ class DeviceService:
         app_device_id: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
     ) -> Kind:
-        """Register under the owner lock without requiring a schema migration."""
+        """Register in a fresh owner-serialized transaction and commit the result."""
         if not device_id.strip():
             raise DeviceIdentityConflictError("Device ID is required for registration")
         if (
@@ -360,63 +360,9 @@ class DeviceService:
             raise DeviceIdentityConflictError(
                 "App registration requires a persistent Runtime ID"
             )
-        arguments = dict(
-            user_id=user_id,
-            device_id=device_id,
-            name=name,
-            client_ip=client_ip,
-            device_type=device_type,
-            bind_shell=bind_shell,
-            runtime_transfer_host=runtime_transfer_host,
-            runtime_transfer_port=runtime_transfer_port,
-            update_runtime_transfer_port=update_runtime_transfer_port,
-            runtime_instance_id=runtime_instance_id,
-            app_device_id=app_device_id,
-            capabilities=capabilities,
-        )
-        return DeviceService._upsert_device_crd(db, **arguments)
-
-    @staticmethod
-    def _upsert_device_crd(
-        db: Session,
-        user_id: int,
-        device_id: str,
-        name: str,
-        client_ip: Optional[str] = None,
-        device_type: Optional[str] = None,
-        bind_shell: Optional[str] = None,
-        runtime_transfer_host: Optional[str] = None,
-        runtime_transfer_port: Optional[int] = None,
-        update_runtime_transfer_port: bool = False,
-        runtime_instance_id: Optional[str] = None,
-        app_device_id: Optional[str] = None,
-        capabilities: Optional[List[str]] = None,
-    ) -> Kind:
-        """Create or update a Device CRD record.
-
-        Called during WebSocket device registration.
-        The device_id is stored in Kind.name field for faster queries.
-
-        Args:
-            db: Database session
-            user_id: Device owner user ID
-            device_id: Device unique identifier (stored in Kind.name)
-            name: Device display name (stored in spec.displayName)
-            client_ip: Device's client IP address (stored in spec.clientIp)
-            device_type: Device type ('local', 'app', 'cloud', or 'remote'). If None, defaults
-                         to 'local' for new devices or preserves existing value.
-            bind_shell: Shell runtime binding ('claudecode' or 'openclaw').
-                        If None, defaults to 'claudecode' for new devices or
-                        preserves existing value.
-            runtime_transfer_host: Host peers should use for direct transfers
-            runtime_transfer_port: Executor session gateway port
-            update_runtime_transfer_port: Whether to persist or clear the gateway port
-            runtime_instance_id: Stable runtime installation ID shared by all routes
-            app_device_id: Desktop app IPC device ID for app registrations
-
-        Returns:
-            Kind model instance for the device
-        """
+        # Registration owns its commit boundary. Finish authentication reads
+        # before taking the owner lock so the identity read has a fresh snapshot.
+        db.commit()
         device_kind = find_registration_device(
             db,
             user_id,

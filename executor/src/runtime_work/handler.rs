@@ -125,6 +125,7 @@ mod claude_turns;
 mod codex_accounts;
 mod codex_config;
 mod collection;
+mod context_compaction;
 mod fork_transfer;
 mod hooks;
 mod notifications;
@@ -209,19 +210,9 @@ const CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL: Duration = Duration::from_secs(30);
 const CODEX_TRANSCRIPT_NAVIGATION_CACHE_MAX_ENTRIES: usize = 64;
 const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
-const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
-/// How long a context-compaction action waits for the Codex app-server to finish
-/// the compaction turn.
-const CONTEXT_COMPACTION_WAIT_BUDGET: Duration = Duration::from_secs(120);
-/// Margin covering the Codex app-server round trips around the wait loop and the
-/// App-IPC response for the action.
-const CONTEXT_COMPACTION_ACTION_MARGIN: Duration = Duration::from_secs(60);
-/// Wall-clock budget a single context-compaction action may consume: the wait
-/// loop below plus the round trips around it. The App-IPC deadline for
-/// `runtime.tasks.compact` must stay above this budget, otherwise the frontend
-/// reports a timeout for an action that is still running.
-pub(crate) const CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS: u64 =
-    CONTEXT_COMPACTION_WAIT_BUDGET.as_secs() + CONTEXT_COMPACTION_ACTION_MARGIN.as_secs();
+/// How long the App-IPC caller waits for a compaction response. The owned native
+/// action retains its activity and model route until completion beyond this.
+pub(crate) const CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS: u64 = 180;
 const PROVIDER_TURN_INTERRUPT_WAIT_MS: u64 = 100;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
