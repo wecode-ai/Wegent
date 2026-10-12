@@ -14,6 +14,7 @@ core_segments=(
   collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
   collaboration-remote-group-coordinate
+  collaboration-remote-group-planning-details
   collaboration-human-round-resume
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
@@ -64,6 +65,8 @@ core_segments=(
   tray-lifecycle
   conversation-state
   send-key-preference
+  reply-predictions
+  model-settings
   system-proxy
   system-pac
   environment-panel-scroll
@@ -157,7 +160,7 @@ cloud_shards=(
 core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
@@ -172,7 +175,7 @@ core_shards=(
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate
+  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details
 )
 
 validate_core_shards() {
@@ -314,6 +317,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
   select_target "core:collaboration-remote-group-coordinate"
+  select_target "core:collaboration-remote-group-planning-details"
   select_target "core:collaboration-human-round-resume"
   select_target "core:collaboration-local-group-cancellation"
 }
@@ -455,6 +459,11 @@ classify_wework_path() {
     # Plugin development verifies the installed Codex guide, generated local
     # project, conditional conversation sidebar, isolated Wework, and HMR.
     wework/dsh/plugin-developer/* | \
+      wework/e2e/desktop/modules/bundled-plugin-upgrades.mjs | \
+      executor/src/local/plugin_cache.rs | \
+      executor/src/runtime_work/handler/plugin_install.rs | \
+      wework/src/desktop/localExecutor* | \
+      wework/src/components/plugins/BundledPluginUpdateNotice* | \
       wework/e2e/desktop/scenarios/plugin-development.scenario.mjs | \
       wework/electron/src/runtime/plugin-development-manager* | \
       wework/resources/bundled-plugins/wework-personal/plugins/wework-plugin-developer/* | \
@@ -653,6 +662,11 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-remote-group-coordinate.scenario.mjs)
       select_target "core:collaboration-remote-group-coordinate"
+      select_target "core:collaboration-remote-group-planning-details"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-remote-group-planning-details.scenario.mjs)
+      select_target "core:collaboration-remote-group-planning-details"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-human-round-resume.scenario.mjs)
@@ -967,6 +981,18 @@ classify_wework_path() {
       wework/src/types/gitCredentials.ts | \
       wework/e2e/desktop/scenarios/change-request-status.scenario.mjs)
       select_target "core:change-request-status"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/model-settings.scenario.mjs | \
+      wework/src/components/settings/ProviderSettingsSection* | \
+      wework/src/components/settings/ProviderEditor* | \
+      wework/src/components/settings/ProviderModelFields* | \
+      wework/src/components/settings/ModelSettingsPage* | \
+      wework/src/features/model-settings/provider*)
+      select_target "core:model-settings"
+      select_target "core:codex-account-login"
+      select_target "core:model-routing"
       return
       ;;
 

@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createInterface, type Interface } from 'node:readline'
 import type { Readable, Writable } from 'node:stream'
+import { SmartAppVerificationError } from './smart-app-verification-types.js'
 import {
   HOST_PROTOCOL_VERSION,
   HostCapabilityError,
@@ -145,10 +146,20 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
       const normalized =
         error instanceof HostCapabilityError
           ? error
-          : new HostCapabilityError(
-              'capability_failed',
-              error instanceof Error ? error.message : String(error)
-            )
+          : error instanceof SmartAppVerificationError
+            ? new HostCapabilityError('smart_app_verification_failed', error.message, {
+                issues: error.report.issues.map(({ code, stage, file, message, hint }) => ({
+                  code,
+                  stage,
+                  file,
+                  message,
+                  hint,
+                })),
+              })
+            : new HostCapabilityError(
+                'capability_failed',
+                error instanceof Error ? error.message : String(error)
+              )
       this.write(session, {
         type: 'response',
         id: message.id,

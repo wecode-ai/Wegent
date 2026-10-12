@@ -16,6 +16,7 @@ pub mod connector_mcp;
 pub(crate) mod directory_link;
 pub mod emitter;
 pub mod envd;
+mod file_lease;
 pub mod heartbeat;
 pub mod hooks;
 pub mod image_preprocessor;

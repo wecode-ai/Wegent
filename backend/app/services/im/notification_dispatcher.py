@@ -14,6 +14,7 @@ from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.schemas.dingtalk_card import BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
+from app.services.im.runtime_notification_delivery import claim_runtime_notification
 from app.services.im.session_service import im_session_service
 from app.services.notification_copy import (
     RUNTIME_REPLY_HINT,
@@ -25,6 +26,7 @@ from app.services.notification_copy import (
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
+from shared.telemetry.decorators import trace_async
 from shared.utils.crypto import decrypt_sensitive_data
 
 if TYPE_CHECKING:
@@ -82,6 +84,7 @@ class IMNotificationDispatcher:
         status: str,
         content: str = "",
         source: str | None = None,
+        notification_id: str | None = None,
     ) -> dict[str, Any]:
         """Notify IM sessions about a runtime task update using priority rules."""
 
@@ -103,6 +106,7 @@ class IMNotificationDispatcher:
             sessions,
             notification_message(message.title, message.body),
             runtime_task=address,
+            notification_id=notification_id,
         )
 
     async def send_runtime_task_update_for_user(
@@ -114,6 +118,7 @@ class IMNotificationDispatcher:
         status: str,
         content: str = "",
         source: str | None = None,
+        notification_id: str | None = None,
     ) -> dict[str, Any]:
         """Notify IM sessions about a runtime task update without exposing DB plumbing."""
 
@@ -126,6 +131,7 @@ class IMNotificationDispatcher:
                 status=status,
                 content=content,
                 source=source,
+                notification_id=notification_id,
             )
 
     async def send_text(
@@ -281,6 +287,7 @@ class IMNotificationDispatcher:
         sessions: Sequence[IMPrivateSession],
         message: str,
         runtime_task: dict[str, Any] | None = None,
+        notification_id: str | None = None,
     ) -> dict[str, Any]:
         sent = 0
         results: list[dict[str, Any]] = []
@@ -288,7 +295,9 @@ class IMNotificationDispatcher:
             outbound_message = message
             if runtime_task is not None and session.channel_type == "dingtalk":
                 outbound_message = f"{message}\n\n{RUNTIME_REPLY_HINT}"
-            result = await self.send_text(db, session, outbound_message)
+            result = await self._send_runtime_notification(
+                db, session, outbound_message, runtime_task, notification_id
+            )
             result.setdefault("session_key", session.session_key)
             results.append(result)
             if result.get("success"):
@@ -308,6 +317,42 @@ class IMNotificationDispatcher:
                             runtime_task=runtime_task,
                         )
         return {"sent": sent, "results": results}
+
+    @trace_async("im.runtime_notification.send", tracer_name="backend.im")
+    async def _send_runtime_notification(
+        self,
+        db: Session,
+        session: IMPrivateSession,
+        message: str,
+        runtime_task: dict[str, Any] | None,
+        notification_id: str | None,
+    ) -> dict[str, Any]:
+        if runtime_task is None or notification_id is None:
+            return await self.send_text(db, session, message)
+        async with claim_runtime_notification(
+            user_id=session.user_id,
+            address=runtime_task,
+            session_key=session.session_key,
+            notification_id=notification_id,
+        ) as receipt:
+            if receipt is None:
+                logger.info(
+                    "[RuntimeTaskNotification] Skipped duplicate delivery: "
+                    "user_id=%s notification_id=%s session_key=%s",
+                    session.user_id,
+                    notification_id,
+                    session.session_key,
+                )
+                return {
+                    "success": False,
+                    "skipped": "duplicate",
+                    "channel_id": session.channel_id,
+                    "channel_type": session.channel_type,
+                }
+            result = await self.send_text(db, session, message)
+            if result.get("success"):
+                await receipt.record_sent()
+            return result
 
     def _get_channel(self, db: Session, channel_id: int) -> Kind | None:
         return (

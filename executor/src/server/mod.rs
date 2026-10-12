@@ -49,7 +49,7 @@ use crate::{
     process_environment,
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
     runner::BackgroundTaskRunner,
-    workspace_paths::{display_workspace_path, task_workspace_dir, workspace_root},
+    workspace_paths::{task_workspace_dir, workspace_root},
 };
 
 pub use config::{ServerConfig, ServerConfigError};
@@ -401,7 +401,17 @@ async fn connect_list_workspace_directory(
 async fn connect_stat_path(
     Json(payload): Json<ConnectStatRequest>,
 ) -> Result<Json<ConnectStatResponse>, HttpError> {
-    let path = resolve_envd_filesystem_path(&payload.path)?;
+    let resolved = resolve_envd_filesystem_path(&payload.path)?;
+    let path = fs::canonicalize(&resolved).map_err(|error| HttpError {
+        status: if error.kind() == std::io::ErrorKind::NotFound {
+            StatusCode::NOT_FOUND
+        } else if error.kind() == std::io::ErrorKind::PermissionDenied {
+            StatusCode::FORBIDDEN
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        },
+        detail: format!("Failed to resolve path: {error}"),
+    })?;
     log_executor_event(
         "envd filesystem stat request",
         &[
@@ -1418,7 +1428,7 @@ fn envd_filesystem_entry(path: &Path) -> Result<FsEntryInfo, HttpError> {
         } else {
             "FILE_TYPE_FILE".to_owned()
         },
-        path: display_workspace_path(path).unwrap_or_else(|| path.to_string_lossy().to_string()),
+        path: path.to_string_lossy().to_string(),
         size: metadata.len(),
         mode,
         permissions: file_permissions(mode, metadata.is_dir()),
@@ -1439,7 +1449,7 @@ fn workspace_entry(entry: fs::DirEntry) -> Option<WorkspaceEntry> {
     let is_directory = metadata.is_dir();
     Some(WorkspaceEntry {
         name: entry.file_name().to_string_lossy().to_string(),
-        path: display_workspace_path(&path)?,
+        path: path.to_string_lossy().to_string(),
         is_directory,
         size: if is_directory { 0 } else { metadata.len() },
         modified_at: metadata

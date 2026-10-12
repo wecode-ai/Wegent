@@ -1266,6 +1266,8 @@ impl LocalBackendTransport for RecordingTransport {
             .unwrap()
             .push((event.to_owned(), handler));
     }
+
+    fn on_close(&self, _: wegent_executor::local::backend::ConnectionClosedHandler) {}
 }
 
 #[derive(Clone, Default)]

@@ -5024,6 +5024,16 @@ class DesktopE2EServer {
     assert.equal(body.stream, true, `${matrixCaseId(model)} request was not streaming`)
     if (model.protocol === 'responses') {
       assert.ok(Array.isArray(body.input), `${matrixCaseId(model)} input was not an array`)
+      for (const [key, value] of Object.entries(model.reasoning ?? {})) {
+        assert.equal(body.reasoning?.[key], value, `${matrixCaseId(model)} lost configured ${key}`)
+      }
+      if (model.requestMode) {
+        assert.equal(
+          body.max_output_tokens,
+          model.requestMode === 'standard' ? 4321 : undefined,
+          `${matrixCaseId(model)} did not apply its complete request policy`
+        )
+      }
       return
     }
     assert.ok(Array.isArray(body.messages), `${matrixCaseId(model)} messages were not an array`)
@@ -5063,6 +5073,12 @@ class DesktopE2EServer {
     assert.ok(applyPatch, `${matrixCaseId(model)} did not advertise apply_patch`)
     if (model.protocol === 'responses') {
       const hasNativeToolSearch = tools.some(tool => tool?.type === 'tool_search')
+      if (model.requestMode === 'standard') {
+        assert.ok(
+          tools.every(tool => tool.type === 'function'),
+          `${matrixCaseId(model)} forwarded a nonstandard tool type`
+        )
+      }
       if (model.modelId === 'gpt-6-astra') {
         assert.ok(
           hasNativeToolSearch,
@@ -5078,7 +5094,7 @@ class DesktopE2EServer {
       }
       assert.equal(
         applyPatch.type,
-        model.source === 'local' ? 'function' : 'custom',
+        model.source === 'local' || model.requestMode === 'standard' ? 'function' : 'custom',
         `${matrixCaseId(model)} used the wrong Responses tool profile`
       )
       return
@@ -5094,7 +5110,9 @@ class DesktopE2EServer {
   assertMatrixToolOutput(model, body) {
     if (model.protocol === 'responses') {
       const expectedType =
-        model.source === 'local' ? 'function_call_output' : 'custom_tool_call_output'
+        model.source === 'local' || model.requestMode === 'standard'
+          ? 'function_call_output'
+          : 'custom_tool_call_output'
       assert.ok(
         body.input?.some(item => item?.type === expectedType),
         `${matrixCaseId(model)} lost ${expectedType}`
@@ -5162,7 +5180,7 @@ class DesktopE2EServer {
       const id = `matrix-${matrixCaseId(model)}-tool`
       this.writeSse(response, [
         responseCreated(id),
-        ...(model.source === 'local'
+        ...(model.source === 'local' || model.requestMode === 'standard'
           ? functionCall(id, 'apply_patch', { input: patch })
           : [customToolCall(id, 'apply_patch', patch)]),
         responseCompleted(id),
