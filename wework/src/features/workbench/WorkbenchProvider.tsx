@@ -1114,6 +1114,15 @@ export function WorkbenchProvider({
     [state.devices]
   )
 
+  const getRemoteProjectRegistrations = useCallback(
+    () =>
+      getRuntimeRemoteProjectRegistrations(getRuntimeWorkSnapshot(), localRuntimeStateDeviceId, {
+        devices: state.devices,
+        excludedTargets: removedRemoteProjectsRef.current,
+      }),
+    [getRuntimeWorkSnapshot, localRuntimeStateDeviceId, state.devices]
+  )
+
   useEffect(() => {
     if (syncRemoteProjects && !remoteProjectSyncActiveRef.current) {
       remoteProjectSyncActivationRevisionRef.current += 1
@@ -1128,11 +1137,9 @@ export function WorkbenchProvider({
       }
       return
     }
-    const projects = getRuntimeRemoteProjectRegistrations(
-      state.runtimeWork,
-      localRuntimeStateDeviceId,
-      { devices: state.devices, excludedTargets: removedRemoteProjectsRef.current }
-    ).sort((left, right) => left.id.localeCompare(right.id))
+    const projects = getRemoteProjectRegistrations().sort((left, right) =>
+      left.id.localeCompare(right.id)
+    )
     if (!localRuntimeStateDeviceId || projects.length === 0) {
       remoteProjectSyncSignatureRef.current = ''
       return
@@ -1165,11 +1172,7 @@ export function WorkbenchProvider({
       return executorClient.runtime
         .syncRuntimeRemoteProjects({
           deviceId: localRuntimeStateDeviceId,
-          projects: getRuntimeRemoteProjectRegistrations(
-            getRuntimeWorkSnapshot(),
-            localRuntimeStateDeviceId,
-            { devices: state.devices, excludedTargets: removedRemoteProjectsRef.current }
-          ),
+          projects: getRemoteProjectRegistrations(),
         })
         .then(response => {
           if (!response.accepted) {
@@ -1197,7 +1200,7 @@ export function WorkbenchProvider({
   }, [
     enqueueRemoteProjectStateMutation,
     executorClient,
-    getRuntimeWorkSnapshot,
+    getRemoteProjectRegistrations,
     localRuntimeStateDeviceId,
     refreshWorkLists,
     remoteProjectSyncRetryRevision,
@@ -1825,6 +1828,7 @@ export function WorkbenchProvider({
     refreshWorkLists,
     updateRuntimeProject,
     getRuntimeWorkSnapshot,
+    getRemoteProjectRegistrations,
     updateLocalRuntimeTaskPinned,
     rollbackLocalRuntimeTaskPinned,
     markRuntimeProjectRemoved,

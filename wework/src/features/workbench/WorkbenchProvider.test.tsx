@@ -11302,6 +11302,170 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('mutation-project-order')).toHaveTextContent('Offline Remote Project')
   })
 
+  test('does not re-register a removed host while another project save waits in the same queue', async () => {
+    let holdRefresh = false
+    const localRemoval = deferred<{ accepted: boolean }>()
+    const delayedRefresh = deferred<RuntimeWorkListResponse>()
+    const initialWork = createRuntimeWork({
+      projects: [7, 8].map(id => ({
+        project: {
+          id,
+          key: 'shared-key',
+          sidebarStateKey: 'mirror-' + id,
+          ownerDeviceId: 'alias-' + id,
+          ownerProjectKey: 'shared-key',
+          name: 'Project ' + id,
+          source: 'remote_project',
+          stateDeviceId: 'local-device',
+          roots: [{ kind: 'local', path: '/srv/shared' }],
+        },
+        deviceWorkspaces: [
+          {
+            deviceId: 'remote-' + id,
+            remoteHostId: 'alias-' + id,
+            workspaceSource: 'remote',
+            workspacePath: '/srv/shared',
+            mapped: true,
+            available: true,
+            tasks: [],
+          },
+        ],
+        totalTasks: 0,
+      })),
+      totalTasks: 0,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockImplementation(() =>
+          holdRefresh ? delayedRefresh.promise : Promise.resolve(initialWork)
+        ),
+      removeRuntimeWorkspace: vi
+        .fn()
+        .mockResolvedValueOnce({ accepted: true })
+        .mockImplementationOnce(() => localRemoval.promise),
+      upsertLocalRuntimeProject: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'alias-8',
+        projectKey: 'shared-key',
+        name: 'Edited B',
+        roots: ['/srv/edited'],
+        aiSettings: { instructions: 'New defaults' },
+      }),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([
+          createDevice({ device_id: 'local-device', device_type: 'local' }),
+          ...[7, 8].map(id =>
+            createDevice({
+              device_id: 'remote-' + id,
+              socket_device_id: 'alias-' + id,
+              device_type: 'remote',
+              is_default: false,
+            })
+          ),
+        ]),
+      } as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue(
+          [7, 8].map(id =>
+            createDevice({
+              device_id: 'remote-' + id,
+              socket_device_id: 'alias-' + id,
+              device_type: 'remote',
+              is_default: false,
+            })
+          )
+        ),
+        listRuntimeWork: vi.fn().mockResolvedValue(initialWork),
+      },
+    })
+    let removePromise: Promise<unknown> | undefined
+    let savePromise: Promise<unknown> | undefined
+    function ConcurrentProjectMutationProbe() {
+      const workbench = useWorkbench()
+      return (
+        <>
+          <span data-testid="concurrent-projects">
+            {workbench.state.runtimeWork?.projects.length ?? 0}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              holdRefresh = true
+              removePromise = workbench.removeProject(7)
+            }}
+          >
+            remove host A
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              savePromise = workbench.updateLocalRuntimeProject({
+                deviceId: 'alias-8',
+                projectKey: 'shared-key',
+                name: 'Edited B',
+                roots: ['/srv/edited'],
+                defaultProjectSpace: null,
+                aiSettings: { instructions: 'New defaults' },
+              })
+            }}
+          >
+            save host B
+          </button>
+        </>
+      )
+    }
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={services}
+        syncRemoteProjects={false}
+      >
+        <ConcurrentProjectMutationProbe />
+      </WorkbenchProvider>
+    )
+    await waitFor(() => expect(screen.getByTestId('concurrent-projects')).toHaveTextContent('2'))
+    await userEvent.click(screen.getByText('remove host A'))
+    await waitFor(() => expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledTimes(2))
+    await userEvent.click(screen.getByText('save host B'))
+    await waitFor(() => expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalled()
+    await act(async () => {
+      localRemoval.resolve({ accepted: true })
+    })
+    try {
+      await waitFor(() =>
+        expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
+      )
+      await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1))
+      expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        projects: [
+          expect.objectContaining({
+            id: 'mirror-8',
+            hostId: 'alias-8',
+            projectKey: 'shared-key',
+            label: 'Edited B',
+            roots: ['/srv/edited'],
+            aiSettings: { instructions: 'New defaults' },
+          }),
+        ],
+      })
+    } finally {
+      await act(async () => {
+        delayedRefresh.resolve({
+          ...initialWork,
+          projects: initialWork.projects.filter(work => work.project.id === 8),
+        })
+        await Promise.all([removePromise, savePromise])
+      })
+    }
+  })
+
   test('renames and removes remote projects from both the remote executor and local Codex index', async () => {
     const initialRemoteProjectSync = deferred<{ accepted: boolean; deviceId: string }>()
     const remoteRuntimeWork = createRuntimeWork({

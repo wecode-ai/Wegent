@@ -1,9 +1,6 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
-import {
-  getLocalRuntimeStateDeviceId,
-  getRuntimeRemoteProjectRegistrations,
-} from '@/lib/runtime-project-state'
+import { getLocalRuntimeStateDeviceId } from '@/lib/runtime-project-state'
 import {
   getRuntimeProjectSyncTarget,
   type RuntimeProjectSyncTarget,
@@ -34,6 +31,7 @@ import type {
   RuntimeProjectAppearanceRequest,
   RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
+  RuntimeRemoteProjectRegistration,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
@@ -65,6 +63,7 @@ interface UseWorkbenchProjectActionsOptions {
   refreshWorkLists: RefreshWorkLists
   updateRuntimeProject: (update: RuntimeProjectUpdate) => void
   getRuntimeWorkSnapshot: () => WorkbenchState['runtimeWork']
+  getRemoteProjectRegistrations: () => RuntimeRemoteProjectRegistration[]
   updateLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest) => number | null
   rollbackLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest, requestId: number | null) => void
   markRuntimeProjectRemoved: (
@@ -133,6 +132,7 @@ export function useWorkbenchProjectActions({
   refreshWorkLists,
   updateRuntimeProject,
   getRuntimeWorkSnapshot,
+  getRemoteProjectRegistrations,
   updateLocalRuntimeTaskPinned,
   rollbackLocalRuntimeTaskPinned,
   markRuntimeProjectRemoved,
@@ -347,7 +347,7 @@ export function useWorkbenchProjectActions({
         await enqueueRemoteProjectStateMutation(async () => {
           const currentWork = getRuntimeWorkSnapshot()
           if (!currentWork) throw new Error('Project list is unavailable')
-          const projects = getRuntimeRemoteProjectRegistrations(currentWork, localStateDeviceId)
+          const projects = getRemoteProjectRegistrations()
           const sync = await executorClient.runtime.syncRuntimeRemoteProjects({
             deviceId: localStateDeviceId,
             projects,
@@ -368,6 +368,7 @@ export function useWorkbenchProjectActions({
       dispatch,
       enqueueRemoteProjectStateMutation,
       executorClient,
+      getRemoteProjectRegistrations,
       getRuntimeWorkSnapshot,
       refreshWorkLists,
       state.devices,
