@@ -27,10 +27,6 @@ from app.core.constants import (
 )
 from app.db.session import get_async_db
 from app.models.user import User
-from app.schemas.remote_workspace import (
-    RemoteWorkspaceStatusResponse,
-    RemoteWorkspaceTreeResponse,
-)
 from app.schemas.service import (
     ServiceDeleteRequest,
     ServiceResponse,
@@ -228,37 +224,38 @@ def get_group_tasks_lite(
     return {"total": total, "items": items}
 
 
-@router.get("/lite/personal", response_model=TaskLiteListResponse)
-def get_personal_tasks_lite(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    types: str = Query(
-        "online,offline",
-        description="Comma-separated task types to include: online (chat), offline (code), flow",
-    ),
-    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get current user's personal (non-group-chat) task list (paginated) for fast loading.
-    Returns only personal tasks sorted by created_at descending (newest first).
-
-    Types filter:
-    - online: chat tasks (task_type != 'code' and not flow)
-    - offline: code tasks (task_type == 'code')
-    - flow: flow-triggered tasks (labels.type == 'flow')
-    """
-    skip = (page - 1) * limit
-    type_list = [t.strip() for t in types.split(",") if t.strip()]
-    items, total = task_kinds_service.get_user_personal_tasks_lite(
-        db=db,
-        user_id=current_user.id,
-        skip=skip,
-        limit=limit,
-        types=type_list,
-        client_origin=client_origin,
-    )
-    return {"total": total, "items": items}
+# Migrated to Rust; cutover is configured in backend-rs/config/routes.toml.
+# @router.get("/lite/personal", response_model=TaskLiteListResponse)
+# def get_personal_tasks_lite(
+#     page: int = Query(1, ge=1, description="Page number"),
+#     limit: int = Query(50, ge=1, le=100, description="Items per page"),
+#     types: str = Query(
+#         "online,offline",
+#         description="Comma-separated task types to include: online (chat), offline (code), flow",
+#     ),
+#     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+#     current_user: User = Depends(security.get_current_user),
+#     db: Session = Depends(get_db),
+# ):
+#     """Get current user's personal (non-group-chat) task list (paginated) for fast loading.
+#     Returns only personal tasks sorted by created_at descending (newest first).
+#
+#     Types filter:
+#     - online: chat tasks (task_type != 'code' and not flow)
+#     - offline: code tasks (task_type == 'code')
+#     - flow: flow-triggered tasks (labels.type == 'flow')
+#     """
+#     skip = (page - 1) * limit
+#     type_list = [t.strip() for t in types.split(",") if t.strip()]
+#     items, total = task_kinds_service.get_user_personal_tasks_lite(
+#         db=db,
+#         user_id=current_user.id,
+#         skip=skip,
+#         limit=limit,
+#         types=type_list,
+#         client_origin=client_origin,
+#     )
+#     return {"total": total, "items": items}
 
 
 @router.get("/lite/personal/grouped", response_model=TaskLiteGroupedListResponse)
@@ -421,42 +418,44 @@ def unarchive_task(
     return {"message": "Chat unarchived successfully", "task_id": task_id}
 
 
-@router.get(
-    "/{task_id}/remote-workspace/status",
-    response_model=RemoteWorkspaceStatusResponse,
-)
-def get_remote_workspace_status(
-    task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get remote workspace connection and availability status for a task."""
-    return remote_workspace_service.get_status(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-    )
+# Migrated to Rust; cutover is configured in backend-rs/config/routes.toml.
+# @router.get(
+#     "/{task_id}/remote-workspace/status",
+#     response_model=RemoteWorkspaceStatusResponse,
+# )
+# def get_remote_workspace_status(
+#     task_id: int = Depends(with_task_telemetry),
+#     current_user: User = Depends(security.get_current_user),
+#     db: Session = Depends(get_db),
+# ):
+#     """Get remote workspace connection and availability status for a task."""
+#     return remote_workspace_service.get_status(
+#         db=db,
+#         task_id=task_id,
+#         user_id=current_user.id,
+#     )
 
 
-@router.get(
-    "/{task_id}/remote-workspace/tree",
-    response_model=RemoteWorkspaceTreeResponse,
-)
-def get_remote_workspace_tree(
-    path: Optional[str] = Query(
-        None, description="Workspace path; defaults to the task root"
-    ),
-    task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """List files within the task's resolved remote workspace."""
-    return remote_workspace_service.list_tree(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-        path=path,
-    )
+# Migrated to Rust; cutover is configured in backend-rs/config/routes.toml.
+# @router.get(
+#     "/{task_id}/remote-workspace/tree",
+#     response_model=RemoteWorkspaceTreeResponse,
+# )
+# def get_remote_workspace_tree(
+#     path: Optional[str] = Query(
+#         None, description="Workspace path; defaults to the task root"
+#     ),
+#     task_id: int = Depends(with_task_telemetry),
+#     current_user: User = Depends(security.get_current_user),
+#     db: Session = Depends(get_db),
+# ):
+#     """List files within the task's resolved remote workspace."""
+#     return remote_workspace_service.list_tree(
+#         db=db,
+#         task_id=task_id,
+#         user_id=current_user.id,
+#         path=path,
+#     )
 
 
 @router.get("/{task_id}/remote-workspace/file")
