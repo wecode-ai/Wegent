@@ -256,6 +256,35 @@ fn invalid_modes_and_non_responses_passthrough_fail_before_registration() {
     }
 }
 
+#[test]
+fn invalid_modes_cannot_select_the_direct_provider_path() {
+    for config in [
+        json!({"codex_request_mode": "unknown"}),
+        json!({"base_url": "", "codex_request_mode": true}),
+        json!({"baseUrl": "  ", "codex_request_mode": {}}),
+        json!({"codex_request_mode": []}),
+        json!({"codex_request_mode": "passthrough",
+               "upstream_api_format": "openai-chat-completions"}),
+    ] {
+        assert!(super::super::upstream_from_model_config(&config).is_err());
+    }
+}
+
+#[test]
+fn valid_unconfigured_models_keep_the_direct_provider_path() {
+    for config in [
+        json!({}),
+        json!({"base_url": ""}),
+        json!({"baseUrl": "  ", "codex_request_mode": "auto"}),
+        json!({"codex_request_mode": "standard"}),
+        json!({"codex_request_mode": "passthrough"}),
+    ] {
+        assert!(super::super::upstream_from_model_config(&config)
+            .expect("unconfigured proxy with a valid request policy")
+            .is_none());
+    }
+}
+
 #[tokio::test]
 async fn passthrough_http_forwards_business_fields_and_raw_response_with_provider_auth() {
     let captured = Arc::new(Mutex::new(None));

@@ -222,9 +222,23 @@ fn canonical_upstream_api_format(api_format: &str) -> String {
     }
 }
 
+/// Validate request policy before selecting a proxy or the direct-provider path.
 pub(crate) fn upstream_from_model_config(
     model_config: &Value,
 ) -> Result<Option<LocalModelProxyUpstream>, String> {
+    let api_format = canonical_upstream_api_format(
+        &non_empty_string(model_config, "upstream_api_format")
+            .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
+            .or_else(|| non_empty_string(model_config, "api_format"))
+            .unwrap_or_else(|| "openai-responses".to_owned()),
+    );
+    let codex_request_mode = model_config
+        .get("codex_request_mode")
+        .map(|value| serde_json::from_value::<CodexRequestMode>(value.clone()))
+        .transpose()
+        .map_err(|_| "codex_request_mode must be auto, standard or passthrough".to_owned())?
+        .unwrap_or_default();
+    codex_request_mode.validate(&api_format)?;
     let Some(base_url) = non_empty_string(model_config, "base_url")
         .or_else(|| non_empty_string(model_config, "baseUrl"))
     else {
@@ -234,20 +248,7 @@ pub(crate) fn upstream_from_model_config(
         .or_else(|| non_empty_string(model_config, "apiKey"))
         .or_else(|| non_empty_string(model_config, "auth_token"))
         .unwrap_or_default();
-    let api_format = canonical_upstream_api_format(
-        &non_empty_string(model_config, "upstream_api_format")
-            .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
-            .or_else(|| non_empty_string(model_config, "api_format"))
-            .unwrap_or_else(|| "openai-responses".to_owned()),
-    );
     let native_by_default = api_format == "openai-responses";
-    let codex_request_mode = model_config
-        .get("codex_request_mode")
-        .map(|value| serde_json::from_value::<CodexRequestMode>(value.clone()))
-        .transpose()
-        .map_err(|_| "codex_request_mode must be auto, standard or passthrough".to_owned())?
-        .unwrap_or_default();
-    codex_request_mode.validate(&api_format)?;
     Ok(Some(LocalModelProxyUpstream {
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_string(model_config, "responses_url")
