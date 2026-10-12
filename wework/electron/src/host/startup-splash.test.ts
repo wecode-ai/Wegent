@@ -170,7 +170,10 @@ describe('StartupSplash', () => {
     )
   })
 
-  test('invokes recoverWorkbench after confirming workbench recovery', async () => {
+  test.each([
+    ['#startup-recover', 'recoverWorkbench'],
+    ['#startup-reset-open', 'resetAppState'],
+  ])('retries failed cleanup selected by %s', async (selector, action) => {
     const electronRoot =
       basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
     const script = await readFile(
@@ -185,7 +188,11 @@ describe('StartupSplash', () => {
       elements.set(selector, created)
       return created
     }
-    const recoverWorkbench = vi.fn(async () => undefined)
+    const cleanup = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Cleanup failed'))
+      .mockResolvedValue(undefined)
+    const retry = vi.fn()
     const windowListeners = new Map<string, () => void>()
     const documentElement = element('documentElement')
 
@@ -214,18 +221,25 @@ describe('StartupSplash', () => {
         setInterval: vi.fn(),
         setTimeout: vi.fn(),
         weworkStartupRecovery: {
-          recoverWorkbench,
-          resetAppState: vi.fn(),
-          retry: vi.fn(),
+          [action]: cleanup,
+          retry,
         },
       },
     })
 
-    element('#startup-recover').click()
+    element('#startup-retry').click()
+    expect(retry).toHaveBeenCalledOnce()
+    retry.mockClear()
+    element(selector).click()
     element('#startup-confirmation-submit').click()
     await Promise.resolve()
 
-    expect(recoverWorkbench).toHaveBeenCalledOnce()
+    expect(cleanup).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(element('#startup-action-error').hidden).toBe(false))
+    element('#startup-retry').click()
+    await Promise.resolve()
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    expect(retry).not.toHaveBeenCalled()
   })
 
   test('shows the branded animation in the main startup window and records its timeline', async () => {

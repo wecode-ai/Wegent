@@ -350,7 +350,7 @@ impl AgentEngine for AgentProcessEngine {
         let codex_engine = self.codex_engine.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
-            let _capability_lease = if agent_kind == AgentKind::ClaudeCode {
+            let capability_lease = if agent_kind == AgentKind::ClaudeCode {
                 Some(crate::services::capability_activation::begin_execution().await)
             } else {
                 None
@@ -472,6 +472,7 @@ impl AgentEngine for AgentProcessEngine {
                                 };
                                 run_pre_execute_hook(&request, &spec).await;
                             }
+                            drop(capability_lease);
                             stream_process_engine_for(&agent_kind, spec)
                                 .run(request)
                                 .await
@@ -511,7 +512,7 @@ impl AgentEngine for AgentProcessEngine {
         let codex_engine = self.codex_engine.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
-            let _capability_lease = if agent_kind == AgentKind::ClaudeCode {
+            let capability_lease = if agent_kind == AgentKind::ClaudeCode {
                 Some(crate::services::capability_activation::begin_execution().await)
             } else {
                 None
@@ -633,6 +634,7 @@ impl AgentEngine for AgentProcessEngine {
                                 };
                                 run_pre_execute_hook(&request, &spec).await;
                             }
+                            drop(capability_lease);
                             stream_process_engine_for(&agent_kind, spec)
                                 .run_with_events(request, sink, builder)
                                 .await

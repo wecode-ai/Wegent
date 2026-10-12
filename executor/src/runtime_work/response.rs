@@ -1001,6 +1001,7 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
             | "cached_messages"
             | "completedTranscriptMessages"
             | "transcriptSnapshotMessages"
+            | "transcriptSnapshotPagination"
     )
 }
 
@@ -1195,6 +1196,7 @@ mod tests {
                         ],
                     }
                 ],
+                "transcriptSnapshotPagination": {"beforeCursor": "large-native-cursor"},
                 "userMessagePresentations": [{
                     "clientUserMessageId": "runtime-local-pane-1",
                     "references": [{
@@ -1212,6 +1214,7 @@ mod tests {
         assert_eq!(handle["threadId"], "thread-1");
         assert_eq!(handle["modelSelection"]["model"], "gpt-5.5");
         assert!(handle.get("messages").is_none());
+        assert!(handle.get("transcriptSnapshotPagination").is_none());
         assert!(handle.get("userMessagePresentations").is_none());
     }
 

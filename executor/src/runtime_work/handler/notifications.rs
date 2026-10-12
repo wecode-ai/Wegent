@@ -964,6 +964,9 @@ fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {
             items.push(active_item);
         }
     }
-    turn_object.insert("itemsView".to_owned(), Value::String("full".to_owned()));
+    // Live notifications do not fill gaps in a paginated historical turn.
+    turn_object
+        .entry("itemsView".to_owned())
+        .or_insert_with(|| Value::String("full".to_owned()));
     turn_object.insert("status".to_owned(), Value::String("inProgress".to_owned()));
 }

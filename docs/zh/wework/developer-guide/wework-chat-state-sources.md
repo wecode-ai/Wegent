@@ -116,6 +116,18 @@ WebView 或 executor 重建后启动的新 turn 不会让历史 assistant 回复
 空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使
 stream 结算先于 Goal 持久化完成，active Goal 也能继续约束任务生命周期。
 
+历史快照必须同时保存 Provider 的前后分页游标。运行中的默认读取可以复用快照，
+但显式分页请求必须进入原生历史读取路径；不能把尾部快照当作完整历史。实时更新
+同一条 assistant 消息时，按条目 ID 合并已有 blocks 和 runtime items，避免少量
+新条目覆盖已经加载的历史。摘要 turn 的 `itemsView` 不能因实时条目补充而变成完整态。
+
+Goal 自动续跑是新的 turn，不能携带上一轮的用户消息关联，也不能重写上一轮的
+subtask 与 turn 映射。“正在开始下一轮”只表示该轮尚无可见输出；出现正文或工具
+条目后结束该提示，历史核对仍持续到续跑结算。
+
+能力发布锁只覆盖会话准备和运行时初始化。Codex 和 Claude Code 在开始模型执行前
+释放读锁，能力同步持有写锁发布资源，长时间模型执行不能阻塞其他任务启动。
+
 从 URL 恢复 runtime task 时，pane 最初可能只有 device ID 和 task ID，随后才从任务
 列表补全 workspace、thread 和 runtime 信息。Goal 和 transcript 加载请求都必须在
 地址补全后重新发起，但补全前后仍属于同一个稳定任务身份；重新水合不能创建新会话，
