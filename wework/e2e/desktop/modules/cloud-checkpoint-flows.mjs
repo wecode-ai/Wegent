@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
-import { basename } from 'node:path'
+import { basename, dirname } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
 
@@ -128,7 +128,9 @@ async function createCloudProjectFixture(control, workspacePath) {
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
-  await control.command('click', '[data-testid="remote-project-source-existing"]')
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForControlValue(
     control,
     '[data-testid="device-folder-path-input"]',
@@ -152,14 +154,11 @@ async function createCloudProjectFixture(control, workspacePath) {
     'The cloud checkpoint project was not shown in the sidebar'
   )
   const projectId = projectMenuTestId.slice('project-menu-'.length)
-  await control.command('waitFor', `[data-testid="project-device-status-${projectId}"]`, {
-    stableMs: COMPOSER_READY_STABILITY_MS * 2,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   const projectRowSelector = `[data-testid="project-row-${projectId}"]`
   await control.command(
     'clickWhenEnabled',
-    `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -192,7 +191,9 @@ async function verifyCloudProjectCreationSources(control, workspacePath) {
     await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
       value: CLOUD_DEVICE_ID,
     })
-    await control.command('click', `[data-testid="${sourceTestId}"]`)
+    await control.command('clickWhenEnabled', `[data-testid="${sourceTestId}"]`, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     return previousMenus
   }
 
@@ -590,7 +591,7 @@ async function verifyCloudCheckpoint({
 
   if (checkpoint === 'workspace-tabs') {
     setPhase('cloud-workspace-tab-isolation')
-    await verifyWorkspaceTabIsolation(control)
+    await verifyWorkspaceTabIsolation(control, restartDesktopApp)
     return
   }
 
@@ -706,6 +707,7 @@ async function verifyCloudCheckpoint({
         composerSelector,
         control,
         newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+        readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
         screenshotPrefix: 'cloud-model-routing',
         setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
         workspacePath,
@@ -789,13 +791,7 @@ async function verifyCloudCheckpoint({
         appIdentifier,
         composerSelector,
         control,
-        runtimeAttachmentRoot: join(
-          resultDir,
-          'cloud-executor-home',
-          'workspace',
-          'attachments',
-          'runtime'
-        ),
+        runtimeWorkspaceRoot: dirname(workspacePath),
         workspacePath,
       })
       setPhase('cloud-pasted-zip')

@@ -30,31 +30,31 @@ export function IssueExecutionEnvironmentNotice({
     readiness.kind === "unassigned"
       ? translate(
           "todo.issue_environment_notice_unassigned",
-          "当前项目还没有可用的执行环境。Issue 仍可创建；智能体会等待环境就绪。",
+          "当前项目未添加执行环境。AI 执行前需要配置，不影响创建和人工处理 Issue。",
         )
       : readiness.kind === "offline"
         ? translate(
             "todo.issue_environment_notice_offline",
-            "项目环境已配置，但运行设备当前离线。Issue 仍可创建；智能体会等待设备上线。",
+            "运行设备离线，暂时无法执行 AI 任务。可以继续创建和人工处理 Issue。",
           )
         : readiness.kind === "preparing"
           ? translate(
               "todo.issue_environment_notice_preparing",
-              "项目环境正在初始化。Issue 仍可创建；智能体会在环境就绪后执行。",
+              "项目环境正在初始化，AI 执行需等待环境就绪。可以继续创建和人工处理 Issue。",
             )
           : readiness.kind === "error"
             ? translate(
                 "todo.issue_environment_notice_error",
-                "项目环境初始化失败。Issue 仍可创建；请修复环境后再启动智能体执行。",
+                "项目环境初始化失败，AI 执行前需修复。可以继续创建和人工处理 Issue。",
               )
             : readiness.kind === "unknown"
               ? translate(
                   "todo.issue_environment_notice_unknown",
-                  "暂时无法检查项目执行环境。Issue 仍可创建。",
+                  "暂时无法检查项目执行环境，不影响创建和人工处理 Issue。",
                 )
               : translate(
                   "todo.issue_environment_notice_uninitialized",
-                  "项目运行设备尚未完成环境初始化。Issue 仍可创建；智能体会等待环境就绪。",
+                  "项目环境尚未初始化。AI 执行前需要初始化，不影响创建和人工处理 Issue。",
                 );
   const actionLabel =
     readiness.kind === "unknown"

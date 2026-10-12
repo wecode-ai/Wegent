@@ -109,7 +109,7 @@ async fn run(
     let user_id = i64::from(user.id);
 
     // `task_store.get_active_task`.
-    let Some(task) = repo::get_active_task(&state.mysql, task_id)
+    let Some(task) = repo::get_active_task(&*state.task_store, task_id)
         .await
         .map_err(ApiError::dependency)?
     else {
@@ -165,7 +165,7 @@ async fn is_member(
     owner_user_id: i64,
     user_id: i64,
 ) -> Result<bool, ApiError> {
-    if repo::get_active_task(&state.mysql, task_id)
+    if repo::get_active_task(&*state.task_store, task_id)
         .await
         .map_err(ApiError::dependency)?
         .is_none()
@@ -219,13 +219,13 @@ async fn stage_info(
     // `get_current_stage_index`: re-reads the task through
     // `task_member_service.get_task`; a missing task logs a warning and
     // yields stage 0 (the previously loaded row backs the same session).
-    let current_stage = match repo::get_active_task(&state.mysql, task_id).await {
+    let current_stage = match repo::get_active_task(&*state.task_store, task_id).await {
         Ok(refreshed) => current_stage_index(refreshed.as_ref(), task, total_stages),
         Err(error) => return Err(ApiError::dependency(error)),
     };
 
     // `get_stage_info` re-reads the task a second time for the status.
-    let status_task = match repo::get_active_task(&state.mysql, task_id).await {
+    let status_task = match repo::get_active_task(&*state.task_store, task_id).await {
         Ok(refreshed) => refreshed,
         Err(error) => return Err(ApiError::dependency(error)),
     };

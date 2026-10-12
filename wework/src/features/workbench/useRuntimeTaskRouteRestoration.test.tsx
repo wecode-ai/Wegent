@@ -53,6 +53,43 @@ describe('useRuntimeTaskRouteRestoration', () => {
     expect(openRuntimeTaskMock).not.toHaveBeenCalled()
   })
 
+  test('restores a newly created task after bootstrap before the work list loads', async () => {
+    workbenchState.currentRuntimeTask = null
+    workbenchState.isBootstrapping = true
+    window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=first-turn')
+
+    const { rerender } = renderHook(() => useRuntimeTaskRouteRestoration())
+    expect(openRuntimeTaskMock).not.toHaveBeenCalled()
+
+    workbenchState.isBootstrapping = false
+    rerender()
+
+    await waitFor(() =>
+      expect(openRuntimeTaskMock).toHaveBeenCalledExactlyOnceWith({
+        deviceId: 'local-device',
+        taskId: 'first-turn',
+      })
+    )
+  })
+
+  test('restores the notification destination when its new tab becomes active', async () => {
+    workbenchState.currentRuntimeTask = null
+    window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=first-turn')
+
+    const { rerender } = renderHook(({ enabled }) => useRuntimeTaskRouteRestoration(enabled), {
+      initialProps: { enabled: false },
+    })
+    expect(openRuntimeTaskMock).not.toHaveBeenCalled()
+    rerender({ enabled: true })
+
+    await waitFor(() =>
+      expect(openRuntimeTaskMock).toHaveBeenCalledExactlyOnceWith({
+        deviceId: 'local-device',
+        taskId: 'first-turn',
+      })
+    )
+  })
+
   test('switches tasks when navigation changes only the URL query', async () => {
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-a')
 

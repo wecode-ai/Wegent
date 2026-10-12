@@ -85,6 +85,10 @@ pub struct TaskCreate {
     #[serde(default)]
     pub assignee_user_id: Option<i64>,
     #[serde(default)]
+    pub assignee_agent_id: Option<String>,
+    #[serde(default)]
+    pub assignee_group_id: Option<String>,
+    #[serde(default)]
     pub workflow: Option<Value>,
 }
 
@@ -128,6 +132,8 @@ pub struct ChatAgentCreate {
     pub model: Option<String>,
     pub model_type: Option<String>,
     pub model_namespace: Option<String>,
+    #[serde(default)]
+    pub allowed_models: Option<Vec<Value>>,
     pub capability_description: Option<String>,
     #[serde(default)]
     pub capability_mode: Option<String>,
@@ -162,6 +168,7 @@ pub struct ChatAgentUpdate {
     pub model: Option<String>,
     pub model_type: Option<String>,
     pub model_namespace: Option<String>,
+    pub allowed_models: Option<Vec<Value>>,
     pub capability_description: Option<String>,
     pub capability_mode: Option<String>,
     pub system_prompt: Option<String>,
@@ -191,6 +198,7 @@ pub struct ChatAgent {
     pub model: Option<String>,
     pub model_type: Option<String>,
     pub model_namespace: String,
+    pub allowed_models: Vec<Value>,
     pub capability_description: String,
     pub capability_mode: String,
     pub system_prompt: String,
@@ -389,6 +397,12 @@ pub struct RuntimeTaskAddress {
         skip_serializing_if = "Option::is_none"
     )]
     pub model_selection: Option<Value>,
+    #[serde(
+        default,
+        alias = "executionContext",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub execution_context: Option<Value>,
     #[serde(default, alias = "workflowNodeId")]
     pub workflow_node_id: Option<String>,
 }
@@ -405,6 +419,8 @@ pub struct TaskBinding {
     pub backend_task_id: Option<i64>,
     #[serde(rename = "modelSelection", skip_serializing_if = "Option::is_none")]
     pub model_selection: Option<Value>,
+    #[serde(rename = "executionContext", skip_serializing_if = "Option::is_none")]
+    pub execution_context: Option<Value>,
     pub workflow_node_id: Option<String>,
     #[serde(default)]
     pub workflow_stage_input: Option<Value>,
@@ -533,6 +549,19 @@ pub struct LoopItem {
     pub execution_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArchivedLoopItem {
+    #[serde(flatten)]
+    pub item: LoopItem,
+    pub archived_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArchivedLoopItemPage {
+    pub items: Vec<ArchivedLoopItem>,
+    pub next_cursor: Option<String>,
 }
 
 pub fn default_status() -> String {

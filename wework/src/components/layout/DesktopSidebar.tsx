@@ -65,6 +65,7 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { executeDshCommand } from '@/features/dsh-runtime/dshExtensions'
 import { useDshMenuCommands } from '@/features/dsh-runtime/useDshMenuCommands'
+import { OPEN_NOTIFICATION_SETTINGS_EVENT } from '@/features/notifications/notificationPreferences'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -1214,11 +1215,9 @@ function GlobalImNotificationBell({
   const title = getGlobalImNotificationTitle(t, imNotificationSettings, cloud.status)
   const primaryActionLabel = requiresCloudLogin
     ? t('workbench.cloud_connection_login', '登录并连接')
-    : enabled
-      ? t('workbench.away_im_reminder_disable', '关闭提醒')
-      : needsSession
-        ? t('workbench.away_im_reminder_choose_session', '选择 IM 会话')
-        : t('workbench.away_im_reminder_enable', '开启离开电脑提醒')
+    : needsSession
+      ? t('workbench.away_im_reminder_choose_session', '选择 IM 会话')
+      : t('notifications.settings', '通知设置')
 
   const openCloudLogin = () => {
     onMenuOpenChange(false)
@@ -1241,17 +1240,12 @@ function GlobalImNotificationBell({
       openCloudLogin()
       return
     }
-    if (!onToggleGlobalImNotification) {
-      onMenuOpenChange(false)
-      onOpenSettings()
-      return
-    }
     if (needsSession) {
       openSessionSettings()
       return
     }
     onMenuOpenChange(false)
-    void onToggleGlobalImNotification()
+    window.dispatchEvent(new Event(OPEN_NOTIFICATION_SETTINGS_EVENT))
   }
 
   return (
@@ -1605,6 +1599,10 @@ function RuntimeTaskRow({
   const showQueuePausedStatus =
     queuePaused && !(queued && taskLifecycle?.derived.shouldShowSidebarRunning)
   const showQueuedStatus = queued && !taskLifecycle?.derived.shouldShowSidebarRunning
+  const showWaitingStatus =
+    !showQueuedStatus &&
+    !showQueuePausedStatus &&
+    (taskLifecycle?.derived.shouldShowSidebarWaiting || priorityReason === 'waiting')
   const queuePosition =
     queued && Number.isInteger(task.queuePosition) && Number(task.queuePosition) > 0
       ? Number(task.queuePosition)
@@ -1952,21 +1950,21 @@ function RuntimeTaskRow({
                       aria-hidden="true"
                     />
                   </span>
-                ) : taskLifecycle?.derived.shouldShowSidebarWaiting ||
-                  priorityReason === 'waiting' ? (
-                  <span
-                    data-testid={`runtime-local-task-waiting-${task.taskId}`}
-                    role="status"
-                    title={t('workbench.priority_filter_waiting', '等待回复')}
-                    aria-label={t('workbench.priority_filter_waiting', '等待回复')}
-                    className="flex h-[30px] w-[30px] items-center justify-center"
+                ) : showWaitingStatus ? (
+                  <Tooltip
+                    label={t('workbench.priority_filter_waiting')}
+                    testId={`runtime-local-task-waiting-tooltip-${task.taskId}`}
+                    className="visible"
                   >
-                    {priorityLayout ? (
-                      <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-                    ) : (
-                      <Bell className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
-                    )}
-                  </span>
+                    <span
+                      data-testid={`runtime-local-task-waiting-${task.taskId}`}
+                      role="status"
+                      aria-label={t('workbench.priority_filter_waiting')}
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[rgb(var(--color-sidebar-attention))]"
+                    >
+                      <Bell className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                  </Tooltip>
                 ) : taskLifecycle?.derived.shouldShowSidebarRunning ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
@@ -2027,7 +2025,8 @@ function RuntimeTaskRow({
               data-testid={`runtime-local-task-hover-actions-${task.taskId}`}
               data-sidebar-title-actions
               className={cn(
-                'pointer-events-none absolute right-0 top-1/2 z-[70] flex -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-visible/task:pointer-events-auto group-focus-visible/task:opacity-100 group-has-[:focus-visible]/task:pointer-events-auto group-has-[:focus-visible]/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100',
+                'pointer-events-none absolute top-1/2 z-[70] flex -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-visible/task:pointer-events-auto group-focus-visible/task:opacity-100 group-has-[:focus-visible]/task:pointer-events-auto group-has-[:focus-visible]/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100',
+                showWaitingStatus ? 'right-full mr-1' : 'right-0',
                 queued ? 'w-[96px]' : 'w-[72px]'
               )}
             >

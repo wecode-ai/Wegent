@@ -617,22 +617,24 @@ export function ProjectAgentConfiguration({
                           {translate("todo.edit_project_agent", "编辑")}
                         </button>
                       ) : null}
-                      <button
-                        className={styles.archiveButton}
-                        data-testid={`project-agent-archive-${agent.id}`}
-                        disabled={archivingId === agent.id}
-                        onClick={() => void archiveAgent(agent)}
-                        type="button"
-                      >
-                        {archivingId === agent.id
-                          ? translate("common.saving", "处理中…")
-                          : scope === "workspace"
-                            ? translate(
-                                "todo.remove_workspace_agent",
-                                "移出空间",
-                              )
-                            : translate("todo.archive_project_agent", "停用")}
-                      </button>
+                      {agent.deletable ? (
+                        <button
+                          className={styles.archiveButton}
+                          data-testid={`project-agent-archive-${agent.id}`}
+                          disabled={archivingId === agent.id}
+                          onClick={() => void archiveAgent(agent)}
+                          type="button"
+                        >
+                          {archivingId === agent.id
+                            ? translate("common.saving", "处理中…")
+                            : scope === "workspace"
+                              ? translate(
+                                  "todo.remove_workspace_agent",
+                                  "移出空间",
+                                )
+                              : translate("todo.archive_project_agent", "停用")}
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

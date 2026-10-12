@@ -47,7 +47,7 @@ pub struct ProcessManager {
 
 impl Default for ProcessManager {
     fn default() -> Self {
-        Self::for_pid_file(home_dir().join(".wegent-executor").join("executor.pid"))
+        Self::for_pid_file(crate::config::paths::executor_home().join("executor.pid"))
     }
 }
 
@@ -218,8 +218,7 @@ impl RestartPlan {
         Self {
             command,
             log_file: verbose.then(|| {
-                home_dir()
-                    .join(".wegent-executor")
+                crate::config::paths::executor_home()
                     .join("logs")
                     .join("executor-restart.log")
             }),
@@ -344,10 +343,6 @@ fn unix_timestamp_seconds() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .unwrap_or_default()
-}
-
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(std::env::temp_dir)
 }
 
 #[allow(dead_code)]

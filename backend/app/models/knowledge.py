@@ -239,8 +239,9 @@ class KnowledgeDocument(Base):
         """Return the external source metadata stored in source_config.
 
         Holds the provider identity, source title / URL, import health
-        (``status``, ``last_success_at``, ``last_error``). Always returns a
-        dict; missing metadata reads as empty.
+        (``status``, ``last_success_at``, ``last_error``) and which body the
+        last successful import indexed (``last_success_attachment_id``).
+        Always returns a dict; missing metadata reads as empty.
         """
         value = (self.source_config or {}).get("external")
         return dict(value) if isinstance(value, dict) else {}

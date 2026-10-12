@@ -61,21 +61,25 @@ impl brz_http_server::Authenticator<SkillDownloadUser> for crate::auth::AppAuthe
             ("x-api-key", x_api_key),
         ]);
         let runtime_download = is_runtime_skill_download(&self.state().auth, &headers.view());
-        get_current_user(&self.state().auth, &self.state().mysql, &headers.view())
-            .await
-            .map(|user| SkillDownloadUser {
-                user,
-                runtime_download,
-            })
-            .map_err(|error| match error.detail {
-                "Missing authentication credentials" => {
-                    brz_http_server::AuthFailure::missing_credentials(SKILL_AUTH_MISSING)
-                }
-                "Invalid or expired API key" => {
-                    brz_http_server::AuthFailure::invalid_credentials(SKILL_AUTH_INVALID_API_KEY)
-                }
-                _ => brz_http_server::AuthFailure::invalid_credentials("Bearer"),
-            })
+        get_current_user_or_skill_query_identity(
+            &self.state().auth,
+            &self.state().mysql,
+            &headers.view(),
+        )
+        .await
+        .map(|user| SkillDownloadUser {
+            user,
+            runtime_download,
+        })
+        .map_err(|error| match error.detail {
+            "Missing authentication credentials" => {
+                brz_http_server::AuthFailure::missing_credentials(SKILL_AUTH_MISSING)
+            }
+            "Invalid or expired API key" => {
+                brz_http_server::AuthFailure::invalid_credentials(SKILL_AUTH_INVALID_API_KEY)
+            }
+            _ => brz_http_server::AuthFailure::invalid_credentials("Bearer"),
+        })
     }
 
     fn api_log_id<'a>(
@@ -164,6 +168,16 @@ impl ApiKeyRow {
         let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S");
         self.expires_at.trim() < now.to_string().as_str()
     }
+}
+
+/// Skill identity token claims (`app.services.auth.skill_identity_token`).
+/// `runtime_type`/`runtime_name`/`iat`/`exp` are accepted but unread.
+#[derive(Debug, Deserialize)]
+struct SkillIdentityTokenClaims {
+    user_id: i64,
+    user_name: String,
+    #[serde(rename = "type")]
+    token_type: Option<String>,
 }
 
 /// Task token claims (`app.services.auth.task_token`).
@@ -267,6 +281,23 @@ where
     Ok(user.filter(|user| user.is_active != 0))
 }
 
+/// `verify_skill_identity_token`: decode a JWT and require the
+/// `skill_identity` type, the `user_id` and `user_name` claims, and the
+/// same key set as the session/task tokens.
+fn verify_skill_identity_token(
+    config: &AuthConfig,
+    token: &str,
+) -> Option<SkillIdentityTokenClaims> {
+    let claims: SkillIdentityTokenClaims = decode_jwt(config, token).ok()?;
+    if claims.token_type.as_deref() != Some("skill_identity") {
+        return None;
+    }
+    if claims.user_name.is_empty() {
+        return None;
+    }
+    Some(claims)
+}
+
 /// Extract the bearer token: `Bearer ` prefix or the plain header value.
 fn extract_bearer(authorization: Option<&str>) -> String {
     let Some(header) = authorization else {
@@ -348,8 +379,45 @@ where
     Err(AuthError::missing_credentials())
 }
 
-/// `_is_runtime_skill_download`: executor credentials (API key or task
-/// token) may download system skills.
+/// `_get_current_user_or_skill_query_identity`: after the JWT/API-key/task
+/// chain rejects the token, retry it as a runtime Skill identity token.
+/// Loads the user by `user_id` and requires an active user whose
+/// `user_name` matches the token claim.
+async fn get_current_user_or_skill_query_identity<M>(
+    config: &AuthConfig,
+    mysql: &M,
+    headers: &impl crate::headers::Headers,
+) -> Result<UserRow, AuthError>
+where
+    M: Mysql,
+{
+    match get_current_user(config, mysql, headers).await {
+        Ok(user) => Ok(user),
+        Err(auth_error) => {
+            let token = extract_bearer(headers.header("authorization"));
+            if token.is_empty() {
+                return Err(auth_error);
+            }
+            let Some(claims) = verify_skill_identity_token(config, &token) else {
+                return Err(auth_error);
+            };
+            let user: Option<UserRow> = mysql
+                .fetch_optional(
+                    "SELECT id, user_name, is_active, role FROM users WHERE id = ? LIMIT 1",
+                    (claims.user_id as i32,),
+                )
+                .await
+                .map_err(|_| AuthError::invalid_credentials())?;
+            match user {
+                Some(user) if user.is_active != 0 && user.user_name == claims.user_name => Ok(user),
+                _ => Err(AuthError::invalid_credentials()),
+            }
+        }
+    }
+}
+
+/// `_is_runtime_skill_download`: executor credentials (API key, task token,
+/// or Skill identity token) may download system skills.
 pub fn is_runtime_skill_download(
     config: &AuthConfig,
     headers: &impl crate::headers::Headers,
@@ -362,7 +430,9 @@ pub fn is_runtime_skill_download(
     if token.is_empty() {
         return false;
     }
-    is_api_key(&token) || decode_jwt::<TaskTokenClaims>(config, &token).is_ok()
+    is_api_key(&token)
+        || decode_jwt::<TaskTokenClaims>(config, &token).is_ok()
+        || verify_skill_identity_token(config, &token).is_some()
 }
 
 /// Lowercase hex SHA-256 digest of `data`.
@@ -454,6 +524,26 @@ mod tests {
     }
 
     #[test]
+    fn verifies_skill_identity_tokens_by_type_and_claims() {
+        let token = token_for(json!({
+            "type": "skill_identity", "user_id": 7, "user_name": "alice",
+            "runtime_type": "executor", "runtime_name": "task-1", "iat": 1, "exp": 2
+        }));
+        let claims = verify_skill_identity_token(&config(), &token).unwrap();
+        assert_eq!(claims.user_id, 7);
+        assert_eq!(claims.user_name, "alice");
+
+        // Wrong type and missing user_name are rejected.
+        let task = token_for(json!({"user_id": 1, "type": "task_token", "user_name": "a"}));
+        assert!(verify_skill_identity_token(&config(), &task).is_none());
+        let no_name = token_for(json!({"type": "skill_identity", "user_id": 1, "user_name": ""}));
+        assert!(verify_skill_identity_token(&config(), &no_name).is_none());
+
+        // A random string is not a decodable JWT at all.
+        assert!(verify_skill_identity_token(&config(), "not-a-jwt").is_none());
+    }
+
+    #[test]
     fn runtime_download_detects_executor_credentials() {
         let task = token_for(json!({"user_id": 1, "type": "task_token"}));
         let bearer: &'static str = Box::leak(format!("Bearer {task}").into_boxed_str());
@@ -466,6 +556,15 @@ mod tests {
             &config(),
             &headers(Some("Bearer session-token"))
         ));
+    }
+
+    #[test]
+    fn runtime_download_accepts_skill_identity_tokens() {
+        let token = token_for(json!({
+            "type": "skill_identity", "user_id": 7, "user_name": "alice"
+        }));
+        let bearer: &'static str = Box::leak(format!("Bearer {token}").into_boxed_str());
+        assert!(is_runtime_skill_download(&config(), &headers(Some(bearer))));
     }
 
     #[test]

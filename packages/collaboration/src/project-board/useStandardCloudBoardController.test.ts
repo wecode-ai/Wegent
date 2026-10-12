@@ -73,6 +73,29 @@ function column(groupValue: string): ProjectBoardColumn {
 }
 
 describe("standard cloud board controller", () => {
+  it("keeps the local user with ID zero in the assigned board column", () => {
+    const localItem = {
+      ...items[0],
+      assignee_user_id: 0,
+      assignee_name: "Me",
+    };
+    expect(
+      filterStandardCloudBoardItems({
+        column: column("0"),
+        currentParentId: null,
+        items: [localItem],
+        state: { groupBy: "assignee", groupFilter: "", query: "" },
+      }).map((item) => item.id),
+    ).toEqual([localItem.id]);
+    expect(
+      filterStandardCloudBoardItems({
+        column: column(""),
+        currentParentId: null,
+        items: [localItem],
+        state: { groupBy: "assignee", groupFilter: "", query: "" },
+      }),
+    ).toEqual([]);
+  });
   it("builds a cycle-safe parent breadcrumb", () => {
     expect(
       buildStandardCloudBoardBreadcrumb(items, "child-a").map(

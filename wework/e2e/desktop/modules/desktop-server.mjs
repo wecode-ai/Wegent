@@ -4,6 +4,7 @@ import {
   miniProgramMarketplacePlugin,
   sitesMarketplacePlugin,
 } from './preferences-automation-flows.mjs'
+import { accountCommandResult } from './account-auth-command.mjs'
 
 import {
   assistantMessage,
@@ -67,6 +68,7 @@ import {
   BACKGROUND_COMPLETION_RESTORE_TEXT,
   BACKGROUND_FOLLOW_UP_RESTORE_PROMPT,
   BACKGROUND_FOLLOW_UP_RESTORE_TEXT,
+  BACKGROUND_GUIDANCE,
   BLOCKED_CLOUD_MODEL_PATH,
   BACKGROUND_GUIDANCE_CONTINUATION,
   CANCELLATION_COMPLETION_TEXT,
@@ -126,6 +128,7 @@ import {
   GOAL_IDLE_FOLLOW_UP_PROMPT,
   GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_IDLE_INITIAL_TEXT,
+  GOAL_IDLE_CONTINUATION_TEXT,
   GOAL_IDLE_PROMPT,
   GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
   GOAL_SNAPSHOT_RECONCILIATION_TEXT,
@@ -137,6 +140,7 @@ import {
   GOAL_RESTART_PROMPT,
   GUIDANCE_SCROLL_ACTIVE_PROMPT,
   GUIDANCE_SCROLL_COMPLETION_TEXT,
+  GUIDANCE_SCROLL_MESSAGE,
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
@@ -150,6 +154,8 @@ import {
   LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
   LOCAL_MODEL_SWITCH_INITIAL_PROMPT,
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
+  LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
+  LATE_BOUND_PROJECT_SPACE_PROMPT,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
   MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
@@ -218,6 +224,17 @@ import {
   REQUEST_USER_INPUT_COMPLETION_TEXT,
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
   RETRY_COMPLETION_TEXT,
   RETRY_CONTINUATION_PROMPT,
   RETRY_FAILURE_TEXT,
@@ -360,6 +377,28 @@ function toolOutputText(request, callId) {
   return findOutput(request.input ?? [])
 }
 
+/** Text of the user-authored turns codex forwarded to the model, in order. */
+function inputUserMessageTexts(request) {
+  const texts = []
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    if (value.type === 'message' && value.role === 'user') {
+      const content = Array.isArray(value.content) ? value.content : [value.content]
+      for (const part of content) {
+        const text = typeof part === 'string' ? part : part?.text
+        if (typeof text === 'string' && text.trim()) texts.push(text)
+      }
+    }
+    Object.values(value).forEach(visit)
+  }
+  visit(request.input)
+  return texts
+}
+
 function pluginWorkspacePublishCommand(body) {
   const context = findNestedString(body, value =>
     value.includes(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX)
@@ -404,10 +443,11 @@ function readyPluginWorkspaceResult(body) {
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
 }
 
-const HELD_WORKTREE_SCENARIOS = new Set([
+const HELD_RESPONSE_SCENARIOS = new Set([
   'worktree_queue_hold',
   'worktree_restart_hold',
   'worktree_status_hold',
+  'attachment_submit_cleanup',
 ])
 
 class DesktopE2EServer {
@@ -502,6 +542,9 @@ class DesktopE2EServer {
     this.initialCompletionRelease = new Promise(resolvePromise => {
       this.releaseInitialCompletion = resolvePromise
     })
+    this.initialGuidanceArrival = new Promise(resolvePromise => {
+      this.releaseInitialGuidanceArrival = resolvePromise
+    })
     this.followUpRelease = new Promise(resolvePromise => {
       this.releaseFollowUp = resolvePromise
     })
@@ -512,6 +555,9 @@ class DesktopE2EServer {
     this.guidanceScrollCompletionRelease = new Promise(resolvePromise => {
       this.releaseGuidanceScrollResponse = resolvePromise
     })
+    this.guidanceScrollGuidanceArrival = new Promise(resolvePromise => {
+      this.releaseGuidanceScrollGuidanceArrival = resolvePromise
+    })
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
     })
@@ -520,6 +566,9 @@ class DesktopE2EServer {
     })
     this.requestUserInputResponseWritten = new Promise(resolvePromise => {
       this.resolveRequestUserInputResponseWritten = resolvePromise
+    })
+    this.asyncRequestUserInputKeepsRunningRelease = new Promise(resolvePromise => {
+      this.releaseAsyncRequestUserInputKeepsRunning = resolvePromise
     })
     this.taskPlanCompletionRelease = new Promise(resolvePromise => {
       this.releaseTaskPlanCompletion = resolvePromise
@@ -539,6 +588,13 @@ class DesktopE2EServer {
     this.sideChatGuidanceRelease = new Promise(resolvePromise => {
       this.resolveSideChatGuidanceRelease = resolvePromise
     })
+    this.sideChatGuidanceArrival = new Promise(resolvePromise => {
+      this.resolveSideChatGuidanceArrival = resolvePromise
+    })
+    this.sideChatGuidanceCompletionRelease = new Promise(resolvePromise => {
+      this.resolveSideChatGuidanceCompletionRelease = resolvePromise
+    })
+    this.sideChatGuidanceStage = 'initial'
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
     })
@@ -710,11 +766,17 @@ class DesktopE2EServer {
   }
 
   async awaitTelemetryEvent(eventName, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+    return this.awaitTelemetryEventAfter(eventName, 0, timeoutMs)
+  }
+
+  async awaitTelemetryEventAfter(eventName, requestCount, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
     const startedAt = Date.now()
     while (Date.now() - startedAt < timeoutMs) {
-      const request = this.telemetryRequests.find(candidate =>
-        telemetryEvents(candidate.payload).some(event => event.event === eventName)
-      )
+      const request = this.telemetryRequests
+        .slice(requestCount)
+        .find(candidate =>
+          telemetryEvents(candidate.payload).some(event => event.event === eventName)
+        )
       if (request) return request
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
@@ -809,6 +871,7 @@ class DesktopE2EServer {
         'fork_provider_follow_up',
         'task_plan',
         'request_user_input',
+        'request_user_input_async',
         'mcp_elicitation',
         'window_lifecycle',
         'background_completion_restore',
@@ -831,7 +894,8 @@ class DesktopE2EServer {
         'reconnect',
         'model_proxy_restart',
         'checkpoint_task',
-        ...HELD_WORKTREE_SCENARIOS,
+        'late_bound_project_space',
+        ...HELD_RESPONSE_SCENARIOS,
         'message_edit',
         'file_panel_anchor',
         'fresh_chat',
@@ -867,7 +931,7 @@ class DesktopE2EServer {
 
   holdScenarioResponse(scenario) {
     assert.ok(
-      HELD_WORKTREE_SCENARIOS.has(scenario),
+      HELD_RESPONSE_SCENARIOS.has(scenario),
       `Scenario "${scenario}" does not support held responses`
     )
     let release
@@ -965,6 +1029,10 @@ class DesktopE2EServer {
     return this.guard(this.requestUserInputResponseWritten)
   }
 
+  releaseAsyncRequestUserInputHold() {
+    this.releaseAsyncRequestUserInputKeepsRunning()
+  }
+
   releaseTaskPlanResponse() {
     this.releaseTaskPlanCompletion()
     return this.guard(this.taskPlanCompletionWritten)
@@ -983,6 +1051,10 @@ class DesktopE2EServer {
   }
 
   releaseSideChatGuidanceResponse() {
+    this.resolveSideChatGuidanceCompletionRelease()
+  }
+
+  releaseSideChatGuidanceToolExecution() {
     this.resolveSideChatGuidanceRelease()
   }
 
@@ -1243,7 +1315,15 @@ class DesktopE2EServer {
       pathname: url.pathname,
     })
     if (await this.handleControlRoute(request, response, url)) return
-    if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+    try {
+      if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+    } catch (error) {
+      console.error(
+        `[desktop-e2e] scenario HTTP handler failed for ${request.method} ${url.pathname}`,
+        error
+      )
+      throw error
+    }
 
     if (request.method === 'POST' && url.pathname === TELEMETRY_CAPTURE_PATH) {
       const rawBody = await readRawRequestBody(request)
@@ -1278,14 +1358,6 @@ class DesktopE2EServer {
         email: 'desktop-e2e@wework.local',
         preferences: this.userPreferences,
       })
-      return
-    }
-
-    if (
-      request.method === 'POST' &&
-      url.pathname === '/api/v1/loop-item-executions/claim-my-next'
-    ) {
-      json(response, 200, null)
       return
     }
 
@@ -1898,7 +1970,11 @@ class DesktopE2EServer {
       assert.equal(typeof ready.windowLabel, 'string', 'Desktop control window label is required')
       assert.ok(ready.windowLabel.length > 0, 'Desktop control window label cannot be empty')
       const previousClientId = this.controlClientsByWindow.get(ready.windowLabel)
-      this.activeControlClientId = ready.clientId
+      // Registration discovers a window; only explicit selection changes the command target.
+      // A selected window keeps ownership when its renderer reconnects.
+      if (!this.activeControlClientId || this.activeControlClientId === previousClientId) {
+        this.activeControlClientId = ready.clientId
+      }
       this.controlClientsByWindow.set(ready.windowLabel, ready.clientId)
       this.controlWindowsByClient.set(ready.clientId, ready.windowLabel)
       if (previousClientId && previousClientId !== ready.clientId) {
@@ -2208,8 +2284,22 @@ class DesktopE2EServer {
     }
 
     const publishCommand = pluginWorkspacePublishCommand(body)
-    if (requestContainsToolOutput(body, PLUGIN_WORKSPACE_PUBLISH_CALL_ID)) {
-      const publishedResult = publishedPluginWorkspaceResult(body)
+    const publishResult = accountCommandResult(body.input, PLUGIN_WORKSPACE_PUBLISH_CALL_ID)
+    if (publishResult?.sessionId) {
+      const tool = selectTool(body, 'write_stdin', {
+        session_id: publishResult.sessionId,
+        chars: '',
+        yield_time_ms: 1000,
+      })
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(publishResult.pollId, tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (publishResult) {
+      const publishedResult = publishedPluginWorkspaceResult(publishResult.output)
       assert.ok(
         publishedResult,
         'The Plugin Creator publish command did not return a result marker'
@@ -2783,24 +2873,48 @@ class DesktopE2EServer {
     }
 
     if (this.scenario === 'initial') {
-      assert.equal(
-        this.modelStage,
-        'awaiting_tool_output',
-        `Unexpected desktop E2E model stage: ${this.modelStage}`
-      )
       this.recordScenarioRequest('initial', modelRequest)
-      assert.equal(
-        requestContainsToolOutput(body, 'wework-e2e-view-image'),
-        true,
-        'The real Codex request did not report the view_image tool output to the model service'
-      )
-      this.toolOutput = JSON.stringify(body.input)
-      this.modelStage = 'complete'
-      // Let the workbench commit the completed tool items before the final response
-      // triggers a transcript refresh. Real providers have network latency here; an
-      // immediate mock response can otherwise race the live image-view rendering.
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-      if (this.initialCompletionHeld) {
+      if (this.modelStage === 'awaiting_tool_output') {
+        assert.equal(
+          requestContainsToolOutput(body, 'wework-e2e-view-image'),
+          true,
+          'The real Codex request did not report the view_image tool output to the model service'
+        )
+        this.toolOutput = JSON.stringify(body.input)
+        // Let the workbench commit the completed tool items before the final response
+        // triggers a transcript refresh. Real providers have network latency here; an
+        // immediate mock response can otherwise race the live image-view rendering.
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+        if (this.initialCompletionHeld) {
+          this.modelStage = 'awaiting_guidance'
+          response.writeHead(200, {
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+            'Content-Type': 'text/event-stream; charset=utf-8',
+          })
+          response.write(createSse([responseCreated(responseId)]))
+          await this.initialGuidanceArrival
+          response.end()
+          return
+        }
+        this.modelStage = 'complete'
+        const responseEvents = [
+          responseCreated(responseId),
+          encryptedReasoningItem('wework-e2e-encrypted-reasoning', FORK_ENCRYPTED_CONTENT),
+          assistantMessage(COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ]
+        this.writeSse(response, responseEvents)
+        return
+      }
+      if (this.modelStage === 'awaiting_guidance') {
+        assert.ok(
+          JSON.stringify(body).includes(BACKGROUND_GUIDANCE),
+          'The guided Codex request did not contain the queued guidance'
+        )
+        this.modelStage = 'complete'
+        this.releaseInitialGuidanceArrival()
         const text = `${BACKGROUND_GUIDANCE_CONTINUATION}\n\n${COMPLETION_TEXT}`
         const stream = streamingTextEvents(responseId, text)
         response.writeHead(200, {
@@ -2838,14 +2952,7 @@ class DesktopE2EServer {
         )
         return
       }
-      const responseEvents = [
-        responseCreated(responseId),
-        encryptedReasoningItem('wework-e2e-encrypted-reasoning', FORK_ENCRYPTED_CONTENT),
-        assistantMessage(COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ]
-      this.writeSse(response, responseEvents)
-      return
+      assert.fail(`Unexpected desktop E2E model stage: ${this.modelStage}`)
     }
 
     if (this.scenario === 'guidance_scroll') {
@@ -2882,24 +2989,40 @@ class DesktopE2EServer {
         return
       }
 
-      assert.equal(
-        this.guidanceScrollStage,
-        'awaiting_tool_output',
-        `Unexpected guidance scroll model stage: ${this.guidanceScrollStage}`
-      )
-      assert.equal(
-        requestContainsToolOutput(body),
-        true,
-        'The guided turn did not return its tool output'
-      )
-      this.guidanceScrollStage = 'complete'
-      await this.guidanceScrollCompletionRelease
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(GUIDANCE_SCROLL_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
+      if (this.guidanceScrollStage === 'awaiting_tool_output') {
+        assert.equal(
+          requestContainsToolOutput(body),
+          true,
+          'The active turn did not return its tool output before guidance'
+        )
+        this.guidanceScrollStage = 'awaiting_guidance'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.guidanceScrollGuidanceArrival
+        response.end()
+        return
+      }
+      if (this.guidanceScrollStage === 'awaiting_guidance') {
+        assert.ok(
+          JSON.stringify(body).includes(GUIDANCE_SCROLL_MESSAGE),
+          'The active turn did not apply the queued guidance'
+        )
+        this.guidanceScrollStage = 'complete'
+        this.releaseGuidanceScrollGuidanceArrival()
+        await this.guidanceScrollCompletionRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GUIDANCE_SCROLL_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.fail(`Unexpected guidance scroll model stage: ${this.guidanceScrollStage}`)
     }
 
     if (this.scenario === 'view_image' && this.viewImageStage === 'initial') {
@@ -3014,7 +3137,8 @@ class DesktopE2EServer {
       const tool = selectShellToolCommand(
         body,
         `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
-        this.cloudWorkspacePath
+        this.cloudWorkspacePath,
+        { yieldTimeMs: 10_000 }
       )
       const patch = selectCloudApplyPatchTool(body)
       this.cloudModelStage = 'awaiting_tool_output'
@@ -3374,12 +3498,34 @@ class DesktopE2EServer {
       if (this.goalIdleStage === 'continuation') {
         const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
         this.goalIdleStage = 'awaiting_update_output'
+        const stream = streamingTextEvents(responseId, GOAL_IDLE_CONTINUATION_TEXT, 'commentary')
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(
+          createSse([
+            ...stream.start,
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: GOAL_IDLE_CONTINUATION_TEXT,
+              offset: 0,
+            },
+          ])
+        )
         await this.goalIdleContinuationRelease
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...functionCall('wework-e2e-goal-idle-complete', updateGoal.name, updateGoal.arguments),
-          responseCompleted(responseId),
-        ])
+        response.end(
+          createSse([
+            ...stream.finish.slice(0, -1),
+            ...functionCall('wework-e2e-goal-idle-complete', updateGoal.name, updateGoal.arguments),
+            responseCompleted(responseId),
+          ])
+        )
         return
       }
       if (this.goalIdleStage === 'awaiting_update_output') {
@@ -3735,6 +3881,75 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'request_user_input_async') {
+      this.recordScenarioRequest('request_user_input_async', modelRequest)
+      const serializedBody = JSON.stringify(body)
+      // Two variants share this scenario: a question answered after the turn
+      // settles, and one answered while the model is still working.
+      const keepsRunning = serializedBody.includes(REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT)
+      const questionText = keepsRunning
+        ? REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION
+        : REQUEST_USER_INPUT_ASYNC_QUESTION
+      const callId = keepsRunning
+        ? REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID
+        : REQUEST_USER_INPUT_ASYNC_CALL_ID
+      const toolOutput = toolOutputText(body, callId)
+      if (toolOutput !== null) {
+        // The non-blocking tool acknowledges immediately and never carries the
+        // answer, so the chosen option must arrive as the next user message.
+        assert.deepEqual(
+          JSON.parse(toolOutput),
+          { accepted: true },
+          'The async request-user-input tool must acknowledge without an answer'
+        )
+        if (keepsRunning) {
+          // Keep the turn running until the test has answered the live question,
+          // then let the model finish with its completion message.
+          await this.asyncRequestUserInputKeepsRunningRelease
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT),
+            responseCompleted(responseId),
+          ])
+          return
+        }
+        const answered = inputUserMessageTexts(body).some(text =>
+          text.includes(REQUEST_USER_INPUT_ASYNC_ANSWER)
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(
+            answered
+              ? REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT
+              : REQUEST_USER_INPUT_ASYNC_WAITING_TEXT
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.ok(
+        keepsRunning || serializedBody.includes(REQUEST_USER_INPUT_ASYNC_PROMPT),
+        'The real Codex request did not contain the async request-user-input prompt'
+      )
+      const tool = selectTool(body, 'request_user_input_async', {
+        questions: [
+          {
+            title: questionText,
+            options: [
+              'Minimal',
+              keepsRunning ? REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER : REQUEST_USER_INPUT_ASYNC_ANSWER,
+            ],
+          },
+        ],
+      })
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(callId, tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
       const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
@@ -3933,11 +4148,95 @@ class DesktopE2EServer {
       return
     }
 
-    if (HELD_WORKTREE_SCENARIOS.has(this.scenario)) {
+    if (this.scenario === 'late_bound_project_space') {
+      this.recordScenarioRequest('late_bound_project_space', modelRequest)
+      const requestNumber = this.scenarioRequests.get('late_bound_project_space').length
+      const requestText = JSON.stringify(body)
+      if (requestNumber === 1) {
+        assert.ok(
+          requestText.includes(LATE_BOUND_PROJECT_SPACE_PROMPT),
+          'The late-bound project-space prompt was lost'
+        )
+        const search = selectToolSearch(
+          body,
+          'wework_space get_current_context list_item_attachments'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents('late-bound-project-space-search', search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestNumber === 2) {
+        const tool = selectMcpTool(body, 'wework_space', 'get_current_context', {})
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            'late-bound-project-space-context',
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestNumber === 3) {
+        const currentContextOutput = toolOutputText(body, 'late-bound-project-space-context') ?? ''
+        assert.equal(
+          requestContainsToolOutput(body, 'late-bound-project-space-context'),
+          true,
+          'The late-bound Issue context did not return through the real MCP tool loop'
+        )
+        assert.ok(
+          currentContextOutput.includes('space_id') &&
+            !/"bound"\s*:\s*false/u.test(currentContextOutput),
+          `The late-bound MCP context was not scoped to the selected Issue: ${currentContextOutput}`
+        )
+        const tool = selectMcpTool(body, 'wework_space', 'list_item_attachments', {})
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            'late-bound-project-space-attachments',
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(requestNumber, 4, `Unexpected late-bound project-space request ${requestNumber}`)
+      assert.equal(
+        requestContainsToolOutput(body, 'late-bound-project-space-attachments'),
+        true,
+        'The bound Issue attachment list did not return through the real MCP tool loop'
+      )
+      const attachmentOutput = toolOutputText(body, 'late-bound-project-space-attachments') ?? ''
+      assert.ok(
+        !attachmentOutput.includes('is required') && !attachmentOutput.includes('"error"'),
+        `The bound Issue attachment list failed: ${attachmentOutput}`
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (HELD_RESPONSE_SCENARIOS.has(this.scenario)) {
       const scenario = this.scenario
       const held = this.heldScenarioResponses.get(scenario)
       assert.ok(held, `The ${scenario} response was not held before the task started`)
       this.recordScenarioRequest(scenario, modelRequest)
+      if (scenario === 'attachment_submit_cleanup') {
+        assert.ok(
+          JSON.stringify(body).includes(ATTACHMENT_ONLY_FILENAME),
+          'The attachment cleanup request did not contain the selected file'
+        )
+      }
       response.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',
@@ -3948,12 +4247,11 @@ class DesktopE2EServer {
       response.write(createSse([responseCreated(responseId)]))
       await held.promise
       if (!response.writableEnded && !response.destroyed) {
-        response.end(
-          createSse([
-            assistantMessage(`${scenario.toUpperCase()}_COMPLETE`),
-            responseCompleted(responseId),
-          ])
-        )
+        const completionText =
+          scenario === 'attachment_submit_cleanup'
+            ? `${ATTACHMENT_ONLY_COMPLETION_TEXT}_SUBMIT_CLEANUP`
+            : `${scenario.toUpperCase()}_COMPLETE`
+        response.end(createSse([assistantMessage(completionText), responseCompleted(responseId)]))
       }
       return
     }
@@ -4284,12 +4582,14 @@ class DesktopE2EServer {
       this.recordScenarioRequest('side_chat_guidance', modelRequest)
       const requestText = JSON.stringify(body)
       const requestCount = this.scenarioRequests.get('side_chat_guidance')?.length ?? 0
-      if (requestCount === 1) {
+      if (this.sideChatGuidanceStage === 'initial') {
+        assert.equal(requestCount, 1, 'The initial side-chat guidance turn was duplicated')
         assert.ok(
           requestText.includes(SIDE_CHAT_GUIDANCE_INITIAL),
           'The initial side-chat guidance request lost its prompt'
         )
         const tool = selectShellTool(body, this.workspacePath)
+        this.sideChatGuidanceStage = 'awaiting_tool_output'
         await this.sideChatGuidanceRelease
         this.writeSse(response, [
           responseCreated(responseId),
@@ -4298,8 +4598,47 @@ class DesktopE2EServer {
         ])
         return
       }
-      if (requestCount >= 3 && requestCount <= 5) {
-        const queueIndex = requestCount - 2
+      if (this.sideChatGuidanceStage === 'awaiting_tool_output') {
+        assert.equal(requestCount, 2, 'The side-chat tool output started an unexpected extra turn')
+        assert.equal(
+          requestContainsToolOutput(body, 'wework-e2e-side-chat-guidance-tool'),
+          true,
+          'The side-chat guidance turn did not return its tool output'
+        )
+        this.sideChatGuidanceStage = 'awaiting_guidance'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.sideChatGuidanceArrival
+        response.end()
+        return
+      }
+      if (this.sideChatGuidanceStage === 'awaiting_guidance') {
+        assert.equal(requestCount, 3, 'Side-chat guidance started an unexpected extra turn')
+        assert.ok(
+          requestText.includes(SIDE_CHAT_GUIDANCE_FOLLOW_UP),
+          'The side-chat follow-up was not delivered as guidance to the active turn'
+        )
+        this.sideChatGuidanceStage = 'draining_queue'
+        this.resolveSideChatGuidanceArrival()
+        await this.sideChatGuidanceCompletionRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(SIDE_CHAT_GUIDANCE_COMPLETION),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (
+        this.sideChatGuidanceStage === 'draining_queue' &&
+        requestCount >= 4 &&
+        requestCount <= 6
+      ) {
+        const queueIndex = requestCount - 3
         const expectedPrompt =
           queueIndex === 1
             ? SIDE_CHAT_QUEUE_FOLLOW_UP
@@ -4320,22 +4659,9 @@ class DesktopE2EServer {
         ])
         return
       }
-      assert.equal(requestCount, 2, 'Side-chat guidance started an unexpected extra turn')
-      assert.equal(
-        requestContainsToolOutput(body, 'wework-e2e-side-chat-guidance-tool'),
-        true,
-        'The side-chat guidance turn did not return its tool output'
+      assert.fail(
+        `Unexpected side-chat guidance stage ${this.sideChatGuidanceStage} at request ${requestCount}`
       )
-      assert.ok(
-        requestText.includes(SIDE_CHAT_GUIDANCE_FOLLOW_UP),
-        'The side-chat follow-up was not delivered as guidance to the active turn'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(SIDE_CHAT_GUIDANCE_COMPLETION),
-        responseCompleted(responseId),
-      ])
-      return
     }
 
     if (this.scenario === 'cancellation') {
@@ -5793,4 +6119,4 @@ class DesktopE2EServer {
   }
 }
 
-export { DesktopE2EServer }
+export { DesktopE2EServer, inputUserMessageTexts }

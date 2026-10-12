@@ -37,6 +37,20 @@ pub struct EntityResolvers<R: Redis = brz_redis::RedisService> {
     resolvers: BTreeMap<String, Arc<dyn EntityResolver<R>>>,
     active: Vec<(String, i64, Vec<String>)>,
 }
+
+/// Share the registered resolvers with an independently owned registry, the
+/// same clone `match_bindings` performs per resolution step. Applications
+/// clone the registry at startup so a long-lived dependency state resolves
+/// entity bindings through the application's registrations.
+impl<R: Redis> Clone for EntityResolvers<R> {
+    fn clone(&self) -> Self {
+        Self {
+            resolvers: self.resolvers.clone(),
+            active: self.active.clone(),
+        }
+    }
+}
+
 impl<R: Redis> EntityResolvers<R> {
     /// Public defaults include namespace membership backed by the shared database.
     pub fn public(mysql: brz_mysql::MysqlService) -> Self {

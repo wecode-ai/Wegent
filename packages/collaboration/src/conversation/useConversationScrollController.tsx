@@ -17,6 +17,10 @@ import {
   getDistanceFromTop,
   setDistanceFromBottom,
 } from './bottomOriginScroll'
+import {
+  CONVERSATION_SCROLL_WRITE_SOURCE,
+  recordConversationScrollWrite,
+} from './conversationScrollWrite'
 
 import {
   BOTTOM_THRESHOLD,
@@ -475,10 +479,17 @@ export function useConversationScrollController({
 
       if (bottomOrigin) {
         setDistanceFromBottom(element, 0, behavior, true)
-      } else if (typeof element.scrollTo === 'function') {
-        element.scrollTo({ top: element.scrollHeight, behavior })
       } else {
-        element.scrollTop = element.scrollHeight
+        const top = element.scrollHeight
+        recordConversationScrollWrite(
+          element,
+          CONVERSATION_SCROLL_WRITE_SOURCE.controllerBottom,
+          top,
+          () => {
+            if (typeof element.scrollTo === 'function') element.scrollTo({ top, behavior })
+            else element.scrollTop = top
+          }
+        )
       }
       lastScrollPositionRef.current = getDistanceFromTop(element, bottomOrigin)
       if (currentScrollKey !== null) {
@@ -588,8 +599,22 @@ export function useConversationScrollController({
         if (bottomOrigin) {
           setDistanceFromBottom(element, 0, 'auto', true)
         } else {
-          element.scrollTo?.({ top: topOriginTarget, behavior: 'auto' })
-          element.scrollTop = topOriginTarget
+          if (element.scrollTo) {
+            recordConversationScrollWrite(
+              element,
+              CONVERSATION_SCROLL_WRITE_SOURCE.streamingSettleScrollTo,
+              topOriginTarget,
+              () => element.scrollTo({ top: topOriginTarget, behavior: 'auto' })
+            )
+          }
+          recordConversationScrollWrite(
+            element,
+            CONVERSATION_SCROLL_WRITE_SOURCE.streamingSettleScrollTop,
+            topOriginTarget,
+            () => {
+              element.scrollTop = topOriginTarget
+            }
+          )
         }
         lastScrollPositionRef.current = getDistanceFromTop(element, bottomOrigin)
         isAtBottomRef.current = true
@@ -609,8 +634,22 @@ export function useConversationScrollController({
         setDistanceFromBottom(element, Math.max(0, lag - step.advancePx), 'auto', true)
       } else {
         const nextScrollTop = Math.min(topOriginTarget, element.scrollTop + step.advancePx)
-        element.scrollTo?.({ top: nextScrollTop, behavior: 'auto' })
-        element.scrollTop = nextScrollTop
+        if (element.scrollTo) {
+          recordConversationScrollWrite(
+            element,
+            CONVERSATION_SCROLL_WRITE_SOURCE.streamingStepScrollTo,
+            nextScrollTop,
+            () => element.scrollTo({ top: nextScrollTop, behavior: 'auto' })
+          )
+        }
+        recordConversationScrollWrite(
+          element,
+          CONVERSATION_SCROLL_WRITE_SOURCE.streamingStepScrollTop,
+          nextScrollTop,
+          () => {
+            element.scrollTop = nextScrollTop
+          }
+        )
       }
       lastScrollPositionRef.current = getDistanceFromTop(element, bottomOrigin)
       isAtBottomRef.current = true

@@ -3,6 +3,8 @@ import { createServer, type Server } from 'node:http'
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { WebContents } from 'electron'
+import { captureWebContentsDataUrl } from './web-contents-capture.js'
 
 const MAX_BODY_BYTES = 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 10_000
@@ -19,13 +21,10 @@ interface DesktopControlRequest {
   options?: Record<string, unknown>
 }
 
-interface DesktopContents {
-  capturePage: () => Promise<{ toDataURL: () => string }>
-  executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>
-  getTitle: () => string
-  getURL: () => string
-  isDestroyed: () => boolean
-}
+type DesktopContents = Pick<
+  WebContents,
+  'capturePage' | 'debugger' | 'executeJavaScript' | 'getTitle' | 'getURL' | 'isDestroyed'
+>
 
 interface DesktopWindow {
   focus: () => void
@@ -201,8 +200,7 @@ export class WeworkDesktopControlBridge {
       return { ok: true }
     }
     if (request.action === 'screenshot') {
-      const image = await this.requiredContents().capturePage()
-      return { ok: true, dataUrl: image.toDataURL() }
+      return { ok: true, dataUrl: await captureWebContentsDataUrl(this.requiredContents()) }
     }
     if (request.action === 'inspect') {
       return this.evaluate(

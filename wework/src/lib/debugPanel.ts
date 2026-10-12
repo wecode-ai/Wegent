@@ -14,8 +14,14 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
-import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import { getRuntimeTaskLifecycleKey } from '@/features/workbench/runtimeTaskLifecycle'
+import type {
+  RuntimeTaskLifecycleSnapshot,
+  RuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  getRuntimeTaskLifecycleKey,
+  summarizeRuntimeTaskExecution,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import type { RuntimeTaskReminderState } from '@/features/workbench/runtimeTaskReminders'
 
 type ConsoleDebug = (...args: unknown[]) => void
@@ -35,6 +41,12 @@ export interface WorkbenchDebugSnapshot {
     currentProject: WorkbenchState['currentProject']
     currentRuntimeTask: RuntimeTaskAddressDebug | null
     lifecycleCurrentTaskRunning: boolean
+    activeLifecycle?: {
+      execution: RuntimeTaskLifecycleSnapshot['execution']
+      turn: RuntimeTaskLifecycleSnapshot['turn']
+      goalStatus: RuntimeTaskLifecycleSnapshot['goalStatus']
+      task: ReturnType<typeof summarizeRuntimeTaskExecution>
+    } | null
     runningState: RuntimeTaskRunningDebugState
     activeTask: RuntimeTaskSummaryDebug | null
     activeWorkspace: RuntimeDeviceWorkspaceDebug | null
@@ -295,6 +307,14 @@ export function updateWorkbenchDebugSnapshot({
     currentProject: state.currentProject,
     currentRuntimeTask: sanitizeRuntimeTaskAddress(state.currentRuntimeTask),
     lifecycleCurrentTaskRunning,
+    activeLifecycle: activeLifecycle
+      ? {
+          execution: activeLifecycle.execution,
+          turn: activeLifecycle.turn,
+          goalStatus: activeLifecycle.goalStatus,
+          task: summarizeRuntimeTaskExecution(activeLifecycle.task),
+        }
+      : null,
     runningState: {
       hasCurrentRuntimeTask: Boolean(state.currentRuntimeTask),
       activeTaskKnown: activeLifecycle?.execution.known ?? false,

@@ -490,6 +490,15 @@ docker-compose up -d
 docker-compose exec backend python -m alembic upgrade head
 ```
 
+### 已废弃的环境变量（升级说明）
+
+`RAG_RUNTIME_MODE` 已废弃，升级后请从 `.env` 中删除。RAG 现在只有一条执行路径：索引、检索与删除都在
+`knowledge_runtime` 服务内执行。Backend 的知识库功能需要可访问的 Knowledge Runtime 服务。
+
+- Docker Compose 部署：`docker compose up -d` 会同时启动 Backend 与 knowledge_runtime，不再需要为它启用额外 profile。
+- start.sh 部署：不指定服务时启动全部服务，包含 Knowledge Runtime；显式指定服务时，启动、停止和重启只操作指定服务。`./start.sh --restart fe be` 只重启前后端，保留已有 Runtime；需要同时重启 Runtime 时使用 `./start.sh --restart fe be kr`。若 Runtime 尚未运行，可使用 `./start.sh kr` 启动，或通过 `KNOWLEDGE_RUNTIME_URL` 配置已有服务；没有可用 Runtime 时，知识库相关操作会失败。
+- 存量环境如果仍保留 `RAG_RUNTIME_MODE`，该变量会被忽略，不会导致 Backend 启动失败。
+
 ---
 
 ## 🗑️ 卸载

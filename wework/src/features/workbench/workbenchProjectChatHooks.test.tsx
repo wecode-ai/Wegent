@@ -4,7 +4,6 @@ import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
-import { notifyWorkbenchModelsChanged } from './workbenchCloudDataEvents'
 import type { Attachment, ModelSelectionConfig, UnifiedModel, UnifiedSkill } from '@/types/api'
 
 describe('workbench project chat hooks', () => {
@@ -456,18 +455,25 @@ describe('workbench project chat hooks', () => {
   test('reloads models after a background cloud model refresh', async () => {
     const localModel: UnifiedModel = { name: 'local-model', type: 'runtime' }
     const cloudModel: UnifiedModel = { name: 'cloud-model', type: 'public' }
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn<(onChange: () => void) => () => void>().mockReturnValue(unsubscribe)
     const api = {
+      subscribe,
       listModels: vi
         .fn()
         .mockResolvedValueOnce({ data: [localModel] })
         .mockResolvedValueOnce({ data: [localModel, cloudModel] }),
     }
-    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
+    const { result, unmount } = renderHook(() => useWorkbenchModels({ api, locked: false }))
 
     await waitFor(() => expect(result.current.models).toEqual([localModel]))
-    act(() => notifyWorkbenchModelsChanged())
+    await act(async () => {
+      await subscribe.mock.calls[0][0]()
+    })
 
     await waitFor(() => expect(result.current.models).toEqual([localModel, cloudModel]))
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 
   test('keeps an explicit background task model when that task becomes active', async () => {
@@ -793,6 +799,21 @@ describe('workbench project chat hooks', () => {
     expect(result.current.selectedModelOptions).toEqual({})
   })
 
+  test('keeps empty model options stable when another scope changes', () => {
+    const api = { listModels: vi.fn().mockResolvedValue({ data: [] }) }
+    const { result, rerender } = renderHook(() =>
+      useWorkbenchModels({ api, locked: false, enabled: false, scopeKey: 'current' })
+    )
+    const emptyOptions = result.current.selectedModelOptions
+
+    rerender()
+    expect(result.current.selectedModelOptions).toBe(emptyOptions)
+    expect(result.current.getSelectedModelOptions()).toBe(emptyOptions)
+
+    act(() => result.current.setSelectionForScope('other', null, { reasoning: 'high' }))
+    expect(result.current.selectedModelOptions).toBe(emptyOptions)
+  })
+
   test('does not replace an unavailable configured task model with the default model', async () => {
     const deepseekModel: UnifiedModel = {
       name: 'deepseek-v4-flash-responses(公网)',
@@ -922,6 +943,30 @@ describe('workbench project chat hooks', () => {
     expect(result.current.selectedSkills).toEqual([
       { name: 'project-summary', namespace: 'default', is_public: false },
     ])
+  })
+
+  test('keeps empty skills stable when disabled and another scope changes', () => {
+    const api = { listSkills: vi.fn().mockResolvedValue([]) }
+    const { result, rerender } = renderHook(() =>
+      useWorkbenchSkills({ api, locked: false, enabled: false, scopeKey: 'current' })
+    )
+    const emptySkills = result.current.skills
+    const emptySelection = result.current.selectedSkills
+    const emptyNames = result.current.selectedSkillNames
+
+    rerender()
+    expect(result.current.skills).toBe(emptySkills)
+    expect(result.current.selectedSkills).toBe(emptySelection)
+    expect(result.current.selectedSkillNames).toBe(emptyNames)
+
+    act(() =>
+      result.current.setSelectedSkillsForScope('other', [
+        { name: 'project-summary', namespace: 'default', is_public: false },
+      ])
+    )
+    expect(result.current.skills).toBe(emptySkills)
+    expect(result.current.selectedSkills).toBe(emptySelection)
+    expect(result.current.selectedSkillNames).toBe(emptyNames)
   })
 
   test('uploads, removes, and resets attachments', async () => {

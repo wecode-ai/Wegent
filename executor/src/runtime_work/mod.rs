@@ -8,6 +8,7 @@ mod codex_global_state;
 mod codex_notifications;
 mod codex_rollout;
 mod codex_transcript_page;
+mod codex_user_input;
 mod collaboration_projects;
 mod connectors;
 mod events;
@@ -23,13 +24,17 @@ mod runtime_handle_messages;
 mod store;
 mod task_create_contract;
 mod transcript;
+pub(crate) use transcript::codex_file_change_content;
 mod transcript_page;
+mod transcript_transport;
 mod util;
 mod worktrees;
 
+pub use codex_global_state::run_project_state_query;
 pub(crate) use collaboration_projects::sync_local_collaboration_projects;
 pub(crate) use events::CodexNotificationEventMapper;
 pub use handler::RuntimeWorkRpcHandler;
+pub(crate) use handler::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
 pub(crate) use notification_mapping::codex_stream_debug_enabled;
 pub(crate) use util::runtime_task_title;
 

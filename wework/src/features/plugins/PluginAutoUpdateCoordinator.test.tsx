@@ -166,6 +166,81 @@ describe('PluginAutoUpdateCoordinator', () => {
     await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2))
   })
 
+  test('drains a retryable device failure through the existing failure limit path', async () => {
+    mocks.autoUpdateInstalledPlugins
+      .mockResolvedValueOnce({
+        updated: [
+          {
+            installedPluginId: 1,
+            pluginId: 2,
+            fromReleaseId: 3,
+            toReleaseId: 4,
+            version: '2.0.0',
+          },
+        ],
+        updatedCount: 1,
+        remainingCount: 0,
+      })
+      .mockResolvedValue({ updated: [], updatedCount: 0, remainingCount: 0 })
+    mocks.listMarketplacePlugins.mockResolvedValueOnce({ items: [] }).mockResolvedValue({
+      items: [
+        {
+          installedPluginId: 1,
+          installed: true,
+          installedLocally: true,
+          updateAvailable: false,
+          currentDeviceInstallation: {
+            deviceId: 'device-1',
+            desiredReleaseId: 4,
+            actualReleaseId: 3,
+            state: 'failed',
+            errorCode: 'PLUGIN_DOWNLOAD_FAILED',
+            errorMessage: 'download failed',
+            attemptCount: 1,
+            lastSyncAt: null,
+            updatedAt: '2026-09-24T00:00:00Z',
+          },
+        },
+      ],
+    })
+    mocks.syncInstalledPluginToDevice.mockResolvedValueOnce({
+      deviceId: 'device-1',
+      pendingCount: 1,
+      sync: {
+        success: false,
+        device_id: 'device-1',
+        mode: 'merge',
+        skills: [],
+        plugins: [
+          {
+            id: 1,
+            name: 'plugin-1',
+            status: 'failed',
+            stage: 'download',
+            error_code: 'PLUGIN_DOWNLOAD_FAILED',
+            retryable: true,
+            error: 'download failed',
+          },
+        ],
+        mcps: [],
+        errors: [],
+        synced: 0,
+        failed: 1,
+        skipped: 0,
+        results: [],
+      },
+    })
+
+    render(<PluginAutoUpdateCoordinator />)
+
+    await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2))
+    expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce()
+    expect(mocks.syncInstalledPluginsToDevice).toHaveBeenCalledWith('device-1')
+    expect(mocks.track).toHaveBeenCalledWith('operation_failed', {
+      operation: 'plugin_auto_update',
+    })
+  })
+
   test('waits until the local executor has connected to the cloud backend', () => {
     mocks.runtimeConnected = false
     render(<PluginAutoUpdateCoordinator />)

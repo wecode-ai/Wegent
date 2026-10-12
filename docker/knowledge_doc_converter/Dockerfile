@@ -12,7 +12,7 @@ WORKDIR /app
 COPY shared /app/shared
 RUN uv pip install --system --no-cache /app/shared
 
-# Copy and install knowledge_engine module (provides conversion logic)
+# Copy and install knowledge_engine module (conversion needs no retrieval extra)
 COPY knowledge_engine /app/knowledge_engine
 RUN uv pip install --system --no-cache /app/knowledge_engine
 

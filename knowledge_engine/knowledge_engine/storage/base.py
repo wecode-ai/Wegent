@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 from llama_index.core.schema import BaseNode
 
-from shared.models import RetrievalScope
+from shared.knowledge_contracts import RetrievalScope
 
 if TYPE_CHECKING:
     from knowledge_engine.storage.chunk_metadata import ChunkMetadata

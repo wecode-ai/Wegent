@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
+import { createSharedSkillRuntime } from '../modules/shared-skill-runtime.mjs'
 import {
   responseCompleted,
   responseCreated,
@@ -69,10 +70,14 @@ function writeText(response, id, text) {
 }
 
 function writeBashToolCall(response, id, callId, command) {
-  const argumentsText = JSON.stringify({
+  writeToolCall(response, id, callId, 'Bash', {
     command,
     description: 'Create the Claude Code desktop E2E verification artifact',
   })
+}
+
+function writeToolCall(response, id, callId, name, input) {
+  const argumentsText = JSON.stringify(input)
   sse(response, [
     responseCreated(id),
     {
@@ -82,7 +87,7 @@ function writeBashToolCall(response, id, callId, command) {
         id: `${id}-item`,
         type: 'function_call',
         call_id: callId,
-        name: 'Bash',
+        name,
       },
     },
     {
@@ -98,7 +103,7 @@ function writeBashToolCall(response, id, callId, command) {
         id: `${id}-item`,
         type: 'function_call',
         call_id: callId,
-        name: 'Bash',
+        name,
         arguments: argumentsText,
       },
     },
@@ -362,6 +367,19 @@ export async function createDesktopScenario({
   await writeFile(join(remoteWorkspacePath, 'README.md'), '# Claude remote E2E\n', 'utf8')
 
   const requests = []
+  const sharedSkills = createSharedSkillRuntime({
+    resultDir,
+    workspacePath: remoteWorkspacePath,
+    writeBashToolCall,
+    writeToolCall,
+    writeText,
+  })
+  const codexSkills = createSharedSkillRuntime({
+    resultDir,
+    workspacePath: remoteWorkspacePath,
+    writeText,
+    runtime: 'codex',
+  })
   let active = false
   let cloudEnvironment = null
   let cancellationConnectionClosed = false
@@ -385,6 +403,8 @@ export async function createDesktopScenario({
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
       const body = await readJson(request)
+      if (sharedSkills.handleModel(body, response)) return true
+      if (codexSkills.handleModel(body, response)) return true
       const serialized = JSON.stringify(body)
       const prompt = [
         LOCAL_CANCELLATION_PROMPT,
@@ -610,6 +630,8 @@ export async function createDesktopScenario({
           `The real Claude Code CLI did not send ${prompt}`
         )
       }
+      await sharedSkills.verify(cloudEnvironment)
+      await codexSkills.verify(cloudEnvironment)
     },
 
     async cleanup() {

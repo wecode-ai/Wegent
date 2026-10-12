@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::metrics::{
+    TERMINAL_OUTPUT_BATCHES_TOTAL, TERMINAL_OUTPUT_BYTES_TOTAL, TERMINAL_REPLAYED_BATCHES_TOTAL,
+};
 use super::*;
+use std::sync::atomic::Ordering;
 
 const TERMINAL_DELIVERY_RETRY_BASE_MILLIS: u64 = 100;
 const TERMINAL_DELIVERY_RETRY_MAX_MILLIS: u64 = 5_000;

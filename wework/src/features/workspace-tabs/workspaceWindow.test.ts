@@ -13,6 +13,7 @@ const tab: WorkspaceTab = {
   kind: 'board',
   title: '产品规划',
   contentRoute: '/todo?projectId=project-1',
+  fixed: false,
 }
 
 describe('openWorkspaceTabWindow', () => {
@@ -53,5 +54,23 @@ describe('openWorkspaceTabWindow', () => {
 
     const label = (invokeDesktopHostMock.mock.calls[0]?.[1] as { label: string }).label
     expect(localStorage.getItem(`wework.workspaceTabs.v3:${label}`)).toBeNull()
+  })
+
+  test('reuses a stable label when restoring a fixed workspace window', async () => {
+    await openWorkspaceTabWindow(
+      { ...tab, fixed: true },
+      { label: 'workspace-fixed-board', transferState: false }
+    )
+
+    expect(invokeDesktopHostMock).toHaveBeenCalledWith(
+      'window.openWorkspace',
+      expect.objectContaining({ label: 'workspace-fixed-board' })
+    )
+    expect(
+      JSON.parse(localStorage.getItem('wework.workspaceTabs.v3:workspace-fixed-board') ?? 'null')
+    ).toEqual({
+      activeTabId: tab.id,
+      tabs: [{ ...tab, fixed: true }],
+    })
   })
 })

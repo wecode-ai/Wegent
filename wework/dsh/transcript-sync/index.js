@@ -26,7 +26,6 @@ const PREFERENCES_FIELDS = [
   'supervisorPrinciples',
   'supervisorModelSelection',
   'supervisorIntervalSeconds',
-  'taskCompletionNotificationsEnabled',
   'browserExternalLinkTarget',
   'browserLocalLinkTarget',
   'browserAskBeforeDownload',

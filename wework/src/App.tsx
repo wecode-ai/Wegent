@@ -9,6 +9,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  memo,
   useMemo,
   useRef,
   useState,
@@ -37,6 +38,7 @@ import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
+import { GlobalIconButtonTooltip } from '@/components/ui/GlobalIconButtonTooltip'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
 import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
@@ -308,7 +310,7 @@ interface WorkspaceTabSurfaceProps {
   user: User
 }
 
-export function WorkspaceTabSurface({
+export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   active,
   cloudWebUrl,
   lifecycleStore,
@@ -472,6 +474,7 @@ export function WorkspaceTabSurface({
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
+              composerAppsSourceActive={active && !iframe}
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
               loadTaskComposerCatalogs
@@ -520,7 +523,7 @@ export function WorkspaceTabSurface({
       </Activity>
     </WorkspaceTabPortalOwner>
   )
-}
+})
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const { pathname: path, search } = useCurrentLocation()
@@ -531,7 +534,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const experimentalFeatures = useExperimentalFeaturesState()
   const workspaceTabs = useOptionalWorkspaceTabs()
   const [mountedTabs, setMountedTabs] = useState(() => ({
-    activeTabId: workspaceTabs?.activeTabId ?? null,
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
     nativeWorkbenchKinds: new Map(
       workspaceTabs?.tabs.flatMap(tab =>
@@ -606,10 +608,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     if (smartAppRoute) return
     track('feature_opened', { feature: telemetryFeature })
   }, [path, smartAppRoute, telemetryFeature])
+  const openTabIds = new Set(workspaceTabs?.tabs.map(tab => tab.id) ?? [])
+  const nextMountedTabIds = new Set([...mountedTabs.ids].filter(id => openTabIds.has(id)))
+  const mountedTabIdsChanged = nextMountedTabIds.size !== mountedTabs.ids.size
   const nextNativeWorkbenchKinds = new Map(
-    [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
-      workspaceTabs?.tabs.some(tab => tab.id === id)
-    )
+    [...mountedTabs.nativeWorkbenchKinds].filter(([id]) => openTabIds.has(id))
   )
   for (const tab of workspaceTabs?.tabs ?? []) {
     if (tab.kind === 'task' || tab.kind === 'board') {
@@ -623,11 +626,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     )
   if (
     workspaceTabs &&
-    (mountedTabs.activeTabId !== workspaceTabs.activeTabId || nativeWorkbenchKindsChanged)
+    (!nextMountedTabIds.has(workspaceTabs.activeTabId) ||
+      mountedTabIdsChanged ||
+      nativeWorkbenchKindsChanged)
   ) {
     setMountedTabs({
-      activeTabId: workspaceTabs.activeTabId,
-      ids: new Set([...mountedTabs.ids, workspaceTabs.activeTabId]),
+      ids: new Set([...nextMountedTabIds, workspaceTabs.activeTabId]),
       nativeWorkbenchKinds: nextNativeWorkbenchKinds,
     })
   }
@@ -745,6 +749,7 @@ export default function App() {
     <>
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
+      <GlobalIconButtonTooltip />
       <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
       <div className="pointer-events-none fixed inset-0 z-system-popover">
@@ -856,8 +861,12 @@ function AppShell() {
   )
   const fixedWorkspaceTabs = useMemo(
     () =>
-      isMainWindow && appPreferences?.loaded
+      appPreferences?.loaded
         ? appPreferences.preferences.fixedWorkspaceTabs.flatMap(preference => {
+            const belongsToCurrentWindow = isMainWindow
+              ? !preference.windowLabel
+              : preference.windowLabel === currentWindowLabel
+            if (!belongsToCurrentWindow) return []
             if (preference.kind === 'smart_app') {
               if (
                 !appPreferences.preferences.experimentalFeaturesEnabled ||
@@ -877,12 +886,14 @@ function AppShell() {
             return [
               createWorkspaceTab(preference.kind, workspaceTabLabels, {
                 id: preference.id,
+                ...(preference.title ? { title: preference.title } : {}),
+                ...(preference.contentRoute ? { contentRoute: preference.contentRoute } : {}),
                 fixed: true,
               }),
             ]
           })
         : [],
-    [appPreferences, isMainWindow, t, workspaceTabLabels]
+    [appPreferences, currentWindowLabel, isMainWindow, t, workspaceTabLabels]
   )
   const startupWorkspaceTabId = useMemo(() => {
     if (!isMainWindow || !appPreferences?.loaded) return undefined

@@ -1,3 +1,4 @@
+import { initializeProviderModelConfiguration } from '@/features/model-settings/providerModelConfiguration'
 import './i18n'
 import { Profiler, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -119,6 +120,7 @@ const desktopStorageReady = (async () => {
   logRendererStartupStep('renderer-storage-initialize', 'started')
   try {
     await initializeDesktopLocalStoragePersistence()
+    await initializeProviderModelConfiguration()
     logRendererStartupStep('renderer-storage-initialize', 'completed')
     return null
   } catch (error) {

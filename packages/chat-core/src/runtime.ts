@@ -9,6 +9,8 @@ export interface RuntimeTaskAddress {
   workspaceKind?: "workspace" | "worktree" | "chat" | string | null;
   worktreeId?: string | null;
   runtimeHandle?: Record<string, unknown> | null;
+  /** Presentation context for an execution opened from an Issue. */
+  issueExecution?: { projectId: string; issueId: string };
   /** Read authority is resolved server-side from this Issue's durable binding. */
   projectSession?: { projectId: string; issueId: string };
 }
@@ -337,8 +339,15 @@ export interface RequestUserInputPayload {
   itemId?: string;
   interactionKind?: string;
   interaction_kind?: string;
+  mode?: "url" | "form";
+  url?: string;
+  elicitationId?: string;
+  serverName?: string;
+  message?: string;
   approvalKind?: string;
   approval_kind?: string;
+  /** `async` marks a Codex question answered by the next user message. */
+  delivery?: string;
   command?: string;
   cwd?: string;
   reason?: string;

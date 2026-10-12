@@ -15,6 +15,9 @@ pub struct AppState<M: Mysql, R: Redis> {
     )]
     pub config: Config,
     pub mysql: M,
+    /// Task and subtask row reads; the application supplies the deployment's
+    /// store before route construction.
+    pub task_store: Arc<dyn crate::task_store::TaskStore>,
     /// Retains the existing streaming/user-cache connection behavior. Missing
     /// clients degrade to cache misses when Redis was unavailable at startup.
     pub redis: Option<R>,
@@ -23,29 +26,21 @@ pub struct AppState<M: Mysql, R: Redis> {
         reason = "route authentication now runs through AppAuthenticator"
     )]
     pub users: super::users::Users,
-    /// `userReader.get_by_id` strategy; the application state's registered
-    /// reader is installed by `startup::runtime_check::build`.
-    pub user_reader: Arc<dyn crate::user_reader::UserByIdReader>,
-    /// Task id classification (`is_new_task_id` in the configured source
-    /// store): selects the SQL-level DELETE filter for legacy ids.
-    pub task_policy: crate::task_routing::TaskPolicy,
 }
 
 impl<M: Mysql, R: Redis> AppState<M, R> {
     pub fn new(
         config: Config,
         mysql: M,
+        task_store: Arc<dyn crate::task_store::TaskStore>,
         redis: Option<R>,
-        user_reader: Arc<dyn crate::user_reader::UserByIdReader>,
-        task_policy: crate::task_routing::TaskPolicy,
     ) -> Self {
         Self {
             config,
             mysql,
+            task_store,
             redis,
             users: super::users::Users,
-            user_reader,
-            task_policy,
         }
     }
 }

@@ -3,7 +3,12 @@ import { useEffect, useRef, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { navigateTo } from '@/lib/navigation'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
-import { useWorkspaceTabs } from './workspaceTabsContextValue'
+import {
+  useOptionalWorkspaceTabActivity,
+  useWorkspaceTabs,
+  type WorkspaceTabActivity,
+  type WorkspaceTabsContextValue,
+} from './workspaceTabsContextValue'
 import { WORKSPACE_TABS_CLOSED_EVENT, type WorkspaceTabsClosedEventDetail } from './workspaceTabs'
 
 const labels = {
@@ -34,6 +39,7 @@ function TabsState() {
       <div data-testid="active-tab-route">{activeTab.contentRoute}</div>
       <div data-testid="board-tab-title">{boardTab?.title}</div>
       <div data-testid="tab-ids">{tabs.map(tab => tab.id).join(',')}</div>
+      <div data-testid="fixed-tab-count">{tabs.filter(tab => tab.fixed).length}</div>
       <button type="button" onClick={() => openTab('board')}>
         新建项目空间标签
       </button>
@@ -101,18 +107,34 @@ function TabsState() {
   )
 }
 
+function ContextValueProbe({ onChange }: { onChange: (value: WorkspaceTabsContextValue) => void }) {
+  const value = useWorkspaceTabs()
+  useEffect(() => onChange(value), [onChange, value])
+  return null
+}
+
+function ActivityProbe({ onRead }: { onRead: (isActive: WorkspaceTabActivity | null) => void }) {
+  const isActive = useOptionalWorkspaceTabActivity()
+  useEffect(() => onRead(isActive), [isActive, onRead])
+  return null
+}
+
 function RoutingHarness({
   startupTabKind,
   startupTabId,
   fixedTabs,
   restoreSessionTabs,
   labels: routingLabels = labels,
+  onContextValue,
+  onActivity,
 }: {
   startupTabKind?: 'task' | 'board' | 'agent'
   startupTabId?: string
   fixedTabs?: Parameters<typeof WorkspaceTabsProvider>[0]['fixedTabs']
   restoreSessionTabs?: boolean
   labels?: Parameters<typeof WorkspaceTabsProvider>[0]['labels']
+  onContextValue?: (value: WorkspaceTabsContextValue) => void
+  onActivity?: (isActive: WorkspaceTabActivity | null) => void
 } = {}) {
   const [location, setLocation] = useState(() => ({
     pathname: window.location.pathname,
@@ -141,6 +163,8 @@ function RoutingHarness({
       restoreSessionTabs={restoreSessionTabs}
     >
       <TabsState />
+      {onContextValue && <ContextValueProbe onChange={onContextValue} />}
+      {onActivity && <ActivityProbe onRead={onActivity} />}
     </WorkspaceTabsProvider>
   )
 }
@@ -163,6 +187,75 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('auxiliary')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
+  })
+
+  test('does not broadcast a second tab state after selecting an already updated route', () => {
+    const onContextValue = vi.fn()
+    render(<RoutingHarness onContextValue={onContextValue} />)
+    const observationsBeforeSelection = onContextValue.mock.calls.length
+
+    act(() => screen.getByRole('button', { name: '打开项目任务' }).click())
+
+    expect(onContextValue).toHaveBeenCalledTimes(observationsBeforeSelection + 1)
+    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('Wegent V4')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
+      '/todo?projectId=project-1&itemId=WEG-1'
+    )
+  })
+
+  test('does not broadcast tab state when route metadata matches the active tab', () => {
+    const onContextValue = vi.fn()
+    render(<RoutingHarness onContextValue={onContextValue} />)
+    const taskTabId = screen.getByTestId('active-tab-id').textContent!
+    const observationsBeforeNavigation = onContextValue.mock.calls.length
+
+    act(() => navigateTo(`/?workspaceTab=${taskTabId}&workspaceTabTitle=任务`))
+
+    expect(onContextValue).toHaveBeenCalledTimes(observationsBeforeNavigation)
+  })
+
+  test('reads the current active tab through a stable activity accessor', () => {
+    let isActive: WorkspaceTabActivity | null = null
+    const onActivity = vi.fn((reader: WorkspaceTabActivity | null) => {
+      isActive = reader
+    })
+    render(<RoutingHarness onActivity={onActivity} />)
+    const taskTabId = screen.getByTestId('active-tab-id').textContent!
+    const boardTabId = screen
+      .getByTestId('tab-ids')
+      .textContent!.split(',')
+      .find(id => id.startsWith('board-'))!
+    const readActivity = isActive!
+
+    expect(readActivity(taskTabId)).toBe(true)
+    expect(readActivity(boardTabId)).toBe(false)
+
+    act(() => screen.getByRole('button', { name: '打开项目任务' }).click())
+
+    expect(readActivity(taskTabId)).toBe(false)
+    expect(readActivity(boardTabId)).toBe(true)
+    expect(onActivity).toHaveBeenCalledTimes(1)
+
+    act(() => navigateTo(`/?workspaceTab=${taskTabId}&workspaceTabTitle=任务`))
+
+    expect(readActivity(taskTabId)).toBe(true)
+    expect(readActivity(boardTabId)).toBe(false)
+    expect(onActivity).toHaveBeenCalledTimes(1)
+  })
+
+  test('applies tab title changes when a previous route is restored', () => {
+    render(<RoutingHarness />)
+    const taskTabId = screen.getByTestId('active-tab-id').textContent!
+
+    act(() => navigateTo(`/?workspaceTab=${taskTabId}&workspaceTabTitle=计划任务`))
+    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('计划任务')
+
+    act(() => {
+      window.history.replaceState({}, '', `/?workspaceTab=${taskTabId}&workspaceTabTitle=任务`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('任务')
+    expect(screen.getByTestId('active-tab-id')).toHaveTextContent(taskTabId)
   })
 
   test('preserves an auxiliary route before entering settings', () => {
@@ -371,6 +464,26 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
       '/runtime-tasks?deviceId=local-device&taskId=runtime-1'
     )
+  })
+
+  test('turns removed fixed tabs into ordinary tabs when the fixed list becomes empty', () => {
+    const fixedTabs = [
+      {
+        id: 'fixed-task',
+        kind: 'task' as const,
+        title: '任务',
+        contentRoute: '/',
+        fixed: true,
+      },
+    ]
+    const { rerender } = render(<RoutingHarness fixedTabs={fixedTabs} restoreSessionTabs={false} />)
+
+    expect(screen.getByTestId('fixed-tab-count')).toHaveTextContent('1')
+
+    rerender(<RoutingHarness fixedTabs={[]} restoreSessionTabs={false} />)
+
+    expect(screen.getByTestId('fixed-tab-count')).toHaveTextContent('0')
+    expect(screen.getByTestId('tab-ids')).toHaveTextContent('fixed-task')
   })
 
   test('renames the persisted default board tab without changing named project tabs', () => {

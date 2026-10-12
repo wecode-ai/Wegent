@@ -496,7 +496,8 @@ function projectTaskAssignedPayload(
   const projectName = stringField(payload, 'projectName')
   const itemId = stringField(payload, 'itemId')
   const itemTitle = stringField(payload, 'itemTitle')
-  const assignerName = stringField(payload, 'assignerName')
+  // The server names the acting member "actorName" for every notification kind.
+  const assignerName = stringField(payload, 'actorName')
   if (!projectId || !itemId || !itemTitle || !assignerName) return null
   return {
     projectId,

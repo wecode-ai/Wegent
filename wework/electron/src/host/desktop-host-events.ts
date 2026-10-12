@@ -14,24 +14,50 @@ export interface DesktopHostEventBatch {
 
 export class DesktopHostEventBroker {
   private readonly events: DesktopHostEvent[] = []
+  private readonly readWaiters: Array<{ sequence: number; resolve: () => void }> = []
+  private latestReadSequence = 0
   private sequence = 0
 
-  publish(type: string, payload: Record<string, unknown>): void {
+  publish(type: string, payload: Record<string, unknown>): number {
     this.events.push({
       sequence: ++this.sequence,
       type,
       payload,
     })
     if (this.events.length > MAX_EVENTS) this.events.shift()
+    return this.sequence
   }
 
   read(after: number): DesktopHostEventBatch {
     const earliest = this.events[0]?.sequence ?? this.sequence + 1
     const events = coalesceStateEvents(this.events.filter(event => event.sequence > after))
-    return {
+    const batch = {
       events,
       latestSequence: this.sequence,
       historyLost: after < earliest - 1,
+    }
+    this.markRead(batch.latestSequence)
+    return batch
+  }
+
+  latestSequence(): number {
+    return this.sequence
+  }
+
+  waitUntilRead(sequence: number): Promise<void> {
+    if (this.latestReadSequence >= sequence) return Promise.resolve()
+    return new Promise(resolve => {
+      this.readWaiters.push({ sequence, resolve })
+    })
+  }
+
+  private markRead(sequence: number): void {
+    this.latestReadSequence = Math.max(this.latestReadSequence, sequence)
+    for (let index = this.readWaiters.length - 1; index >= 0; index -= 1) {
+      const waiter = this.readWaiters[index]
+      if (waiter.sequence > this.latestReadSequence) continue
+      this.readWaiters.splice(index, 1)
+      waiter.resolve()
     }
   }
 }

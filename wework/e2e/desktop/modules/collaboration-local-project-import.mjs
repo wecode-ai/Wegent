@@ -3,11 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { runChecked } from './shared.mjs'
-import {
-  createLocalCollaborationProject,
-  inCollaborationSidebar,
-  selectCollaborationDomain,
-} from './workspace-flows.mjs'
+import { createLocalCollaborationProject, inCollaborationSidebar } from './workspace-flows.mjs'
 
 async function waitForLocalProject(control, projectId, timeoutMs) {
   const deadline = Date.now() + timeoutMs
@@ -102,62 +98,32 @@ export async function verifyCollaborationLocalProjectImport(
     const cloudProject = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-project-${cloudProjectId}"]`
     )
-    const localDomain = scoped('[data-testid="collaboration-domain-local"]')
-    const cloudDomain = scoped('[data-testid="collaboration-domain-cloud"]')
-    const contentSelector = scoped('').trim()
-    await control.command('waitFor', localDomain)
-    await control.command('waitFor', cloudDomain)
-    assert.match(await control.command('getText', localDomain), /本地协作/)
-    assert.match(await control.command('getText', cloudDomain), /云端协作/)
-
-    await selectCollaborationDomain(control, contentSelector, 'local')
     await control.command('waitFor', toggle)
+    await control.command('waitFor', cloudWorkspace)
+    await control.command('waitFor', cloudToggle)
     assert.equal(
-      await control.command(
-        'getAttribute',
-        inCollaborationSidebar(
-          '[data-testid="collaboration-workspace-location-wework-local-workspace"]'
-        ),
-        { value: 'data-location' }
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped(
+            '[data-testid="collaboration-domain-local"], [data-testid="collaboration-domain-cloud"]'
+          )
+        )
       ),
-      'local',
-      'The local Workspace must use the local device icon'
+      0,
+      'The unified board still exposed local/cloud mode selectors'
     )
     assert.ok(
       (await control.command('getText', localWorkspace)).trim(),
-      'The local Workspace name must remain visible in the local domain'
-    )
-    assert.equal(
-      Number(await control.command('getElementCount', cloudWorkspace)),
-      0,
-      'Cloud Workspaces must stay hidden in the local Collaboration domain'
+      'The local Workspace name must remain visible on the unified board'
     )
     if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true') {
       await control.command('click', toggle)
     }
 
-    await selectCollaborationDomain(control, contentSelector, 'cloud')
-    await control.command('waitFor', cloudWorkspace)
-    await control.command('waitFor', cloudToggle)
-    assert.equal(
-      await control.command(
-        'getAttribute',
-        inCollaborationSidebar(
-          `[data-testid="collaboration-workspace-location-${cloudWorkspaceId}"]`
-        ),
-        { value: 'data-location' }
-      ),
-      'cloud',
-      'The cloud Workspace must use the cloud icon'
-    )
     assert.ok(
       (await control.command('getText', cloudWorkspace)).trim(),
-      'The cloud Workspace name must remain visible in the cloud domain'
-    )
-    assert.equal(
-      Number(await control.command('getElementCount', localWorkspace)),
-      0,
-      'Local Workspaces must stay hidden in the cloud Collaboration domain'
+      'The cloud Workspace name must remain visible on the unified board'
     )
     if (
       (await control.command('getAttribute', cloudToggle, { value: 'aria-expanded' })) !== 'true'
@@ -176,9 +142,6 @@ export async function verifyCollaborationLocalProjectImport(
       sidebarMetrics.scrollWidth <= sidebarMetrics.clientWidth + 1,
       `The Collaboration sidebar overflowed horizontally: ${sidebarMetrics.scrollWidth}px > ${sidebarMetrics.clientWidth}px`
     )
-    await selectCollaborationDomain(control, contentSelector, 'local')
-    await control.command('waitFor', localWorkspace)
-    await control.command('waitFor', toggle)
     if (pass === 0) {
       assert.equal(
         Number(await control.command('getElementCount', row)),
@@ -260,17 +223,6 @@ export async function verifyCollaborationLocalProjectImport(
       0,
       'Opening the local Issue composer must not report a cloud member or Issue loading error'
     )
-    assert.equal(
-      Number(await control.command('getElementCount', cloudWorkspace)),
-      0,
-      'Opening a local Issue composer must keep cloud Workspaces out of local navigation'
-    )
-    assert.equal(
-      Number(await control.command('getElementCount', cloudProject)),
-      0,
-      'Opening a local Issue composer must keep cloud Projects out of local navigation'
-    )
-    await selectCollaborationDomain(control, contentSelector, 'cloud')
     await control.command('waitFor', cloudWorkspace)
     if (
       (await control.command('getAttribute', cloudToggle, { value: 'aria-expanded' })) !== 'true'

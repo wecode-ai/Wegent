@@ -796,6 +796,15 @@ class ModelAggregationService:
                 include_hidden=True,
             )
             if model_dict:
+                allowed_users = model_dict.get("allowedUsers") or []
+                if (
+                    model_dict.get("allowedUsersEnabled")
+                    and current_user.user_name not in allowed_users
+                ):
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Model '{name}' is restricted to whitelisted users",
+                    )
                 return UnifiedModel(
                     name=model_dict.get("name", ""),
                     model_type=ModelType.PUBLIC,

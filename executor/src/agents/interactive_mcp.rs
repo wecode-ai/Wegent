@@ -5,6 +5,8 @@
 use serde_json::{json, Map, Value};
 use std::{collections::BTreeMap, env, time::Duration};
 
+mod diagnostics;
+
 const INVALID_FORM_MESSAGE: &str = "模型给出的表单格式不对";
 const FORM_GENERATION_FAILED_MESSAGE: &str = "交互式表单生成失败";
 const TOOL_PROTOCOL_MCP_CALL: &str = "mcp_call";
@@ -214,8 +216,18 @@ pub async fn proxy_deferred_mcp_tool(
     deferred_tool_use: &DeferredToolUse,
     mcp_servers: &Value,
 ) -> Result<DeferredMcpProxyResult, String> {
-    let request = build_deferred_mcp_proxy_request(deferred_tool_use, mcp_servers)
-        .map_err(|error| format!("invalid deferred MCP proxy request: {error:?}"))?;
+    let request =
+        build_deferred_mcp_proxy_request(deferred_tool_use, mcp_servers).map_err(|error| {
+            crate::logging::log_executor_event(
+                "deferred mcp proxy configuration failed",
+                &[
+                    ("tool_use_id", deferred_tool_use.id.clone()),
+                    ("tool_name", deferred_tool_use.name.clone()),
+                    ("error_kind", format!("{error:?}")),
+                ],
+            );
+            format!("invalid deferred MCP proxy request: {error:?}")
+        })?;
     let raw_result = call_streamable_http_mcp(&request).await?;
     Ok(normalize_mcp_tool_result(&request, raw_result))
 }
@@ -470,7 +482,10 @@ async fn call_streamable_http_mcp(request: &DeferredMcpProxyRequest) -> Result<V
     let client = reqwest::Client::builder()
         .timeout(timeout)
         .build()
-        .map_err(|error| format!("failed to build MCP HTTP client: {error}"))?;
+        .map_err(|error| {
+            diagnostics::log_http_error(request, "initialize", "client", &error);
+            format!("failed to build MCP HTTP client: {error}")
+        })?;
     let initialize = json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -508,6 +523,10 @@ async fn send_mcp_json_rpc(
     payload: Value,
     session_id: Option<&str>,
 ) -> Result<(Value, Option<String>), String> {
+    let method = payload
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
     let mut builder = client
         .post(&request.server_url)
         .header("Accept", "application/json, text/event-stream")
@@ -518,29 +537,47 @@ async fn send_mcp_json_rpc(
     if let Some(session_id) = session_id {
         builder = builder.header("Mcp-Session-Id", session_id);
     }
-    let response = builder
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|error| format!("MCP HTTP request failed: {error}"))?;
+    let response = builder.json(&payload).send().await.map_err(|error| {
+        diagnostics::log_http_error(request, method, "send", &error);
+        format!("MCP HTTP request failed: {error}")
+    })?;
     let session_id = response
         .headers()
         .get("mcp-session-id")
         .and_then(|value| value.to_str().ok())
         .map(ToOwned::to_owned);
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|error| format!("failed to read MCP HTTP response: {error}"))?;
+    let body = response.text().await.map_err(|error| {
+        diagnostics::log_http_error(request, method, "read_response", &error);
+        format!("failed to read MCP HTTP response: {error}")
+    })?;
     if !status.is_success() {
+        diagnostics::log_failure(
+            request,
+            method,
+            "http_status",
+            json!({"status": status.as_u16()}),
+        );
         return Err(format!(
             "MCP HTTP request failed with HTTP {status}: {body}"
         ));
     }
-    let value = parse_mcp_response_body(&body)
-        .ok_or_else(|| "MCP response did not contain a JSON-RPC payload".to_owned())?;
+    let value = parse_mcp_response_body(&body).ok_or_else(|| {
+        diagnostics::log_failure(
+            request,
+            method,
+            "parse_response",
+            json!({"status": status.as_u16(), "body_bytes": body.len()}),
+        );
+        "MCP response did not contain a JSON-RPC payload".to_owned()
+    })?;
     if let Some(error) = value.get("error") {
+        diagnostics::log_failure(
+            request,
+            method,
+            "json_rpc",
+            json!({"code": error.get("code").and_then(Value::as_i64)}),
+        );
         return Err(format!("MCP JSON-RPC error: {error}"));
     }
     let result = value.get("result").cloned().unwrap_or(Value::Null);

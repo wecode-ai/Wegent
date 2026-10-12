@@ -92,6 +92,16 @@ impl OpaqueJson {
         Self(serde_json::value::to_raw_value(&value).expect("JSON value serializes"))
     }
 
+    /// Parse a JSON document from its text form, keeping the original bytes for
+    /// a later typed projection. The text counterpart of the column
+    /// deserializer, used when a value was decrypted or assembled as a string
+    /// rather than read from a `JSON` column.
+    pub(crate) fn from_json_text(text: &str) -> Option<Self> {
+        serde_json::value::RawValue::from_string(text.to_owned())
+            .ok()
+            .map(Self)
+    }
+
     pub(crate) fn is_null(&self) -> bool {
         self.0.get() == "null"
     }

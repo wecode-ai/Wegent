@@ -523,7 +523,8 @@
       "advanced": "Advanced",
       "standard": "Standard",
       "wework_available": "wework available",
-      "wework_unavailable": "wework unavailable"
+      "wework_unavailable": "wework unavailable",
+      "whitelisted": "Whitelisted"
     },
     "columns": {
       "id": "ID",
@@ -546,7 +547,12 @@
       "config_placeholder": "Enter model configuration as JSON",
       "is_visible": "Visible to users",
       "is_advanced": "Advanced Model",
-      "is_wework_available": "Available in wework"
+      "is_wework_available": "Available in wework",
+      "allowed_users": "User whitelist",
+      "allowed_users_placeholder": "Enter usernames, separated by commas",
+      "allowed_users_hint": "Separate multiple usernames with commas (full-width or half-width); only takes effect when the whitelist switch is on",
+      "allowed_users_enabled": "Whitelist only",
+      "allowed_users_enabled_hint": "When enabled, only whitelisted users can see and use this model; an empty list denies everyone"
     },
     "confirm": {
       "delete_title": "Delete Model",
@@ -1391,6 +1397,13 @@
       "follow_up_images_key": "Follow-up images parameter",
       "follow_up_status_key": "Send status field (optional; bind it in the template)",
       "mapping_help": "Bind the content field in both writing and completed states. Images are optional; the submit button must include the upload component's local variable to send images."
+    },
+    "notification_card": {
+      "title": "Notification card (optional)",
+      "enabled": "Send task notifications as cards",
+      "template_id": "Notification card template ID (optional)",
+      "template_placeholder": "A verified DingTalk card template ID",
+      "help": "Empty uses DingTalk's built-in markdown card (body plus buttons), so the bot needs no card of its own. A template of your own renders your fields; a card that cannot be delivered falls back to a text notification."
     },
     "title": "IM Channel Management",
     "description": "Manage IM platform integrations (DingTalk, Weibo, Telegram, Discord)",

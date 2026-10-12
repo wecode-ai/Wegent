@@ -146,6 +146,24 @@ describe('shared PC composer body', () => {
       expect(submit).toHaveBeenCalledWith('Test draft', undefined)
     }
   )
+  it('uses a non-form surface when embedded inside another form', async () => {
+    await mount({ embeddedInForm: true })
+
+    const surface = button('project-chat-composer-form')
+    expect(surface.tagName).toBe('DIV')
+    expect(surface.closest('form')).toBeNull()
+    await setValue('Generate responsibilities')
+    await click('send')
+    expect(submit).toHaveBeenCalledWith('Generate responsibilities', undefined)
+  })
+  it('keeps the toolbar visible in a compact host when a portal menu takes focus', async () => {
+    await mount({ alwaysShowComposerToolbar: true })
+
+    const surface = button('project-chat-composer-form')
+    expect(surface.dataset.shortCollapse).toBeUndefined()
+    await act(async () => document.body.click())
+    expect(surface.dataset.shortCollapse).toBeUndefined()
+  })
   it('restores text attachments into the live draft and focuses the exact editor', async () => {
     await mount({ buffered: true, attachments: [textAttachment] })
     await setValue('Unflushed text')

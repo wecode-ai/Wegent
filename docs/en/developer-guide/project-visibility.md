@@ -2,34 +2,25 @@
 sidebar_position: 35
 ---
 
-# Project visibility and workspace navigation
+# Project roles and issue visibility
 
-Visible projects are the union of the following sets, excluding archived projects:
+Cloud projects use one set of roles: Owner, Maintainer, Developer, and Viewer. Owners administer the project and members. Maintainers manage settings, members, assignments, and issue security. Developers create and edit visible issues. Viewers have read-only access. Creators retain Owner access. Workspace members inherit Viewer access through the existing project association; direct project grants can raise their role.
 
-- Public projects.
-- Projects configured as Related tasks only.
-- Projects with a direct membership for the current user.
-- Projects in active workspaces the current user actually belongs to.
+Private and public access are represented by grants in `resource_members`. A public project grants Viewer or Developer to all signed-in users; a private project has no such grant. Direct, inherited, and all-user grants combine using the strongest role. Pending, rejected, and invalid grants have no effect. Archived projects remain inaccessible.
 
-Creators retain Owner access. Workspace membership provides the baseline Reporter project role, without project administration. Stronger explicit project roles take precedence. Reporter actions follow the existing project permission rules. Pending, rejected, and invalid-role memberships do not grant access.
+Issue visibility is configured separately. Project settings define the default security level for new issues. Each issue can be `open` (visible to project members) or `related` (visible only to related people). Owners and Maintainers see all issues. Other roles see open issues and related issues they created, are assigned to, collaborate on, have an active task binding for, or that are assigned to a robot they created. Lists, details, deliveries, executions, and project conversations use the same check; unrelated issue reads return 404.
 
-Related tasks only is available only for the built-in task source. It lets every signed-in user discover and enter the project without exposing the full issue set to ordinary visitors. Owners and Maintainers can read every issue. Other users can read only issues they created, are assigned to, collaborate on, have an active task binding for, or that are assigned to a robot they created. Issue lists, details, deliveries, execution records, project conversations, and My Work reuse the same relevance check. Reading an unrelated issue returns not found so its existence is not disclosed.
+DingTalk AI Table records are served directly by DingTalk, so DingTalk controls record access. Wework project roles control entry and editing in the table view; Wework issue security levels do not apply to those records.
 
 ```mermaid
 flowchart LR
-    A[Public or Related tasks only projects] --> D[Merge project IDs and effective roles]
-    B[Project memberships] --> D
-    C[Workspace memberships] --> E[Workspace project grants]
-    E --> D
-    D --> F[Project listing and detail authorization]
-    D --> G[Batch minimal parent workspace metadata]
-    G --> H[Sidebar workspace groups]
+    A[Direct project grants] --> D[Effective project role]
+    B[Workspace inherited grants] --> D
+    C[All signed-in users grant] --> D
+    D --> E[Project access]
+    E --> F[Issue security and relevance check]
 ```
 
-Project listing and individual authorization share `cloud_project_visibility.py`. Nonempty project lists resolve permissions and parent contexts in two queries. Single-project authorization pushes the project ID into each grant branch. Nonempty workspace lists batch roles and aggregate counts in three queries.
+Project lists and detail checks share `cloud_project_visibility.py`. Lists batch authorization, the public role, and parent workspace context in three queries when nonempty. `workspace_context` contains only the parent's ID, public ID, and name. Displaying the parent does not grant access to workspace settings, members, or other private projects.
 
-The project response's `workspace_context` contains only the parent's ID, public ID, and name. Displaying a parent label through a project neither creates workspace membership nor grants access to workspace settings, members, or unrelated private projects. Empty workspaces the user belongs to remain visible.
-
-The sidebar merges workspace memberships with project parent contexts and builds a Map of projects by workspace in one pass. Opening a project reuses its parent context from the response.
-
-This implementation changes neither the database schema nor indexes and introduces no authorization cache. Access levels remain in JSON; the scan cost for Public and Related tasks only projects requires a MySQL execution-plan check. Lists retain the existing unpaginated response contract. A fixed query count does not imply a bounded response size.
+The data migration updates existing `resource_members` rows and issue metadata. It adds no table or column. Issues in existing public projects default to `related` so migration does not widen visibility.

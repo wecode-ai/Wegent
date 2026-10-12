@@ -30,6 +30,8 @@ describe('AI_VERIFY_ACTIONS', () => {
       'capture-workspace': 'captureWorkspaceWindow',
       snapshot: 'snapshot',
       debug: 'getWorkbenchDebugSnapshot',
+      'conversation-diagnostics': 'getConversationDiagnosticsSnapshot',
+      'conversation-frame-probe': 'setConversationFrameProbeEnabled',
       'active-element': 'getActiveElementTestId',
       'activate-task-notification': 'activateRuntimeTaskCompletionNotification',
       click: 'click',
@@ -275,10 +277,50 @@ describe('validateStartOptions', () => {
     )
   })
 
+  test('accepts rollout replay and rejects mixing it with first-run migration', () => {
+    expect(() => validateStartOptions({ rollout: '/tmp/history.jsonl' })).not.toThrow()
+    expect(() =>
+      validateStartOptions({ rollout: '/tmp/history.jsonl', 'codex-home-initialization': 'true' })
+    ).toThrow('--rollout cannot be combined')
+  })
+
   test('rejects an invalid packaged option', () => {
     expect(() => validateStartOptions({ packaged: 'yes' })).toThrow(
       '--packaged must be "true" or "false"'
     )
+  })
+
+  test('keeps rollout replay restricted to an isolated executor home', () => {
+    expect(() =>
+      validateStartOptions({
+        rollout: '/tmp/history.jsonl',
+        'executor-home': join(tmpdir(), 'wework-shared-home'),
+      })
+    ).toThrow('--rollout cannot be combined with --executor-home')
+  })
+
+  test('accepts an explicitly selected shared executor home', () => {
+    expect(() =>
+      validateStartOptions({
+        'executor-home': join(tmpdir(), 'wework-shared-home'),
+        'codex-home-initialization': 'false',
+      })
+    ).not.toThrow()
+  })
+
+  test.each(['', '   ', 'relative/executor-home'])('rejects invalid executor home %s', path => {
+    expect(() => validateStartOptions({ 'executor-home': path })).toThrow(
+      '--executor-home must be a nonempty absolute path'
+    )
+  })
+
+  test('keeps first-run Codex migration restricted to an isolated executor home', () => {
+    expect(() =>
+      validateStartOptions({
+        'executor-home': join(tmpdir(), 'wework-shared-home'),
+        'codex-home-initialization': 'true',
+      })
+    ).toThrow('--executor-home cannot be combined with --codex-home-initialization true')
   })
 })
 

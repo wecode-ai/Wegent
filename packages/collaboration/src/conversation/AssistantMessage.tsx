@@ -24,7 +24,12 @@ import { AssistantThinkingIndicator } from "./AssistantThinkingIndicator";
 import { ToolBlocksDisplay } from "./blocks/ToolBlocksDisplay";
 import { getFileEditDurationsBySourceBlock } from "./blocks/fileEditDurations";
 import { ProcessingDurationLabel } from "./ProcessingDurationLabel";
-import { usePersistentProcessingExpansion } from "./blocks/processingExpansionState";
+import {
+  collapsePersistentProcessingExpansions,
+  getProcessingDetailStateKey,
+  useAnyPersistentProcessingExpansion,
+  usePersistentProcessingExpansion,
+} from "./blocks/processingExpansionState";
 import { WebSearchSourcesChip } from "./blocks/WebSearchSources";
 import { getWebSearchSourceItems } from "./blocks/webSearchActivity";
 import { CodexMemoryCitations, CodexReferenceList } from "./CodexTurnArtifacts";
@@ -186,8 +191,16 @@ export function AssistantMessage({
         .slice(index + 1)
         .some((candidate) => candidate.kind === "processing"),
   );
+  const expandedToolDetailStateKeys = displayBlocks.map((block) =>
+    getProcessingDetailStateKey(processingStateKey, block.id),
+  );
+  const hasExpandedToolDetail = useAnyPersistentProcessingExpansion(
+    expandedToolDetailStateKeys,
+  );
   const usesFinalProcessingShell =
     hasBlocks &&
+    !isAssistantRunning &&
+    !isActiveTurn &&
     !hasPlanResponse &&
     !hasRunningBlocks &&
     !isCancelled &&
@@ -196,6 +209,16 @@ export function AssistantMessage({
       (hasVisibleContent &&
         !message.runtimeGuidanceSplitBefore &&
         !message.runtimeGuidanceContinuation));
+  const isFinalProcessingExpanded =
+    finalProcessingExpanded || hasExpandedToolDetail;
+  const toggleFinalProcessing = () => {
+    if (isFinalProcessingExpanded) {
+      setFinalProcessingExpanded(false);
+      collapsePersistentProcessingExpansions(expandedToolDetailStateKeys);
+      return;
+    }
+    setFinalProcessingExpanded(true);
+  };
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
     isStreaming,
     hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
@@ -266,6 +289,7 @@ export function AssistantMessage({
           thinkingContent={activeThinkingContent}
           showSummary={segment.kind === "tool"}
           stateKey={`${processingStateKey}:${index}`}
+          detailStateScopeKey={processingStateKey}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           onRequestUserInputSubmit={onRequestUserInputSubmit}
           onRequestUserInputIgnore={onRequestUserInputIgnore}
@@ -324,6 +348,7 @@ export function AssistantMessage({
                 thinkingContent={activeThinkingContent}
                 showSummary={processingSegment.kind === "tool"}
                 stateKey={`${processingStateKey}:ordered:${segmentIndex}:${processingIndex}`}
+                detailStateScopeKey={processingStateKey}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
@@ -341,17 +366,27 @@ export function AssistantMessage({
   const processingStartedAt = runtimeTurn
     ? runtimeTurn.startedAt
     : getProcessingSummaryStartMs(message, message.blocks ?? [], false);
+  const turnCompletedAt = runtimeTurn
+    ? getMessageTimestampMs(runtimeTurn.completedAt)
+    : undefined;
   const processingCompletedAt = runtimeTurn
-    ? undefined
+    ? isAssistantRunning
+      ? undefined
+      : turnCompletedAt
     : isAssistantRunning
       ? undefined
       : (getMessageTimestampMs(message.completedAt) ??
         lastProcessingBlock?.completedAt ??
         lastProcessingBlock?.createdAt);
+  const hasTurnDuration =
+    runtimeTurn?.durationMs !== undefined ||
+    (processingStartedAt !== undefined &&
+      turnCompletedAt !== undefined &&
+      turnCompletedAt >= processingStartedAt);
   const processingDurationLabel =
-    !isAssistantRunning &&
-    runtimeTurn &&
-    runtimeTurn.durationMs === undefined ? null : (
+    !isAssistantRunning && runtimeTurn && !hasTurnDuration ? (
+      <span>{t("processing_complete")}</span>
+    ) : (
       <ProcessingDurationLabel
         startedAt={processingStartedAt}
         completedAt={processingCompletedAt}
@@ -381,7 +416,8 @@ export function AssistantMessage({
                 : t("assistant_status.stopped")}
             </div>
           ) : null}
-          {hasProcessingActivity &&
+          {(hasProcessingActivity ||
+            (message.status === "failed" && hasTurnDuration)) &&
           !isCancelled &&
           !usesFinalProcessingShell ? (
             <div
@@ -399,18 +435,18 @@ export function AssistantMessage({
               <button
                 type="button"
                 data-testid="final-processing-toggle"
-                aria-expanded={finalProcessingExpanded}
+                aria-expanded={isFinalProcessingExpanded}
                 className="flex min-h-8 items-center gap-1 text-sm text-text-muted hover:text-text-secondary"
-                onClick={() => setFinalProcessingExpanded((value) => !value)}
+                onClick={toggleFinalProcessing}
               >
                 {processingDurationLabel}
                 <ChevronDown
-                  className={`h-4 w-4 transition-transform ${finalProcessingExpanded ? "" : "-rotate-90"}`}
+                  className={`h-4 w-4 transition-transform ${isFinalProcessingExpanded ? "" : "-rotate-90"}`}
                   strokeWidth={2}
                   aria-hidden="true"
                 />
               </button>
-              {finalProcessingExpanded ? (
+              {isFinalProcessingExpanded ? (
                 <div className="mt-1">{processingTimeline}</div>
               ) : null}
             </div>

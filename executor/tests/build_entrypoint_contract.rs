@@ -158,8 +158,7 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         .contains("test \"$installed_code_server_version\" = \"$CODE_SERVER_VERSION\""));
     assert!(device_dockerfile
         .contains("install -m 0755 /app/executor \"$WEGENT_EXECUTOR_HOME/bin/wegent-executor\""));
-    assert!(device_dockerfile
-        .contains("ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wecode/wegent-executor/workspace"));
+    assert!(device_dockerfile.contains("ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wegent/workspace"));
     assert!(device_dockerfile.contains("ENV WEGENT_WORKSPACE_ROOTS=/home/wegent"));
     assert!(device_dockerfile.contains("ENV DEVICE_CODE_SERVER_ENABLED=true"));
     assert!(device_dockerfile.contains("ENV DEVICE_TERMINAL_ENABLED=true"));
@@ -190,10 +189,10 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         assert!(device_dockerfile.contains(persistent_path));
     }
     assert!(device_dockerfile
-        .contains("EXPECTED_EXECUTOR_HOME=\"/home/wegent/.wecode/wegent-executor\""));
+        .contains("EXPECTED_EXECUTOR_HOME=\"/home/wegent/.wegent/workbench/executor\""));
     assert!(!device_dockerfile.contains("WEGENT_EXECUTOR_HOME_EXPECTED_PATH"));
     assert!(device_dockerfile
-        .contains("WEGENT_EXECUTOR_HOME=\"$(realpath -m -- \"$WEGENT_EXECUTOR_HOME\")\""));
+        .contains("WEGENT_EXECUTOR_HOME=\"$(realpath -ms -- \"$WEGENT_EXECUTOR_HOME\")\""));
     assert!(device_dockerfile
         .contains("LOCAL_WORKSPACE_ROOT=\"$(realpath -m -- \"$LOCAL_WORKSPACE_ROOT\")\""));
     assert!(device_dockerfile.contains("WEGENT_EXECUTOR_HOME_ID"));
@@ -224,11 +223,18 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(!e2e_workflow.contains("python -m executor.main"));
     assert!(!e2e_workflow.contains("Install executor dependencies"));
     assert!(!e2e_workflow.contains("source executor/.venv/bin/activate"));
+    assert!(e2e_workflow.contains("BIND_SHELL: claudecode"));
+    assert!(!e2e_workflow.contains("BIND_SHELL: codex"));
     assert!(e2e_workflow.contains(
         "docker cp \"$container_id:/app/executor\" executor/target/release/wegent-executor"
     ));
-    assert!(e2e_workflow.contains("test -x executor/target/release/wegent-executor"));
+    assert!(e2e_workflow.contains(".github/scripts/start-local-e2e-executor.sh"));
     assert!(!e2e_workflow.contains("cd executor\n            cargo build --release --locked"));
+
+    let local_e2e_start =
+        fs::read_to_string("../.github/scripts/start-local-e2e-executor.sh").unwrap();
+    assert!(local_e2e_start.contains("test -x \"$binary_path\""));
+    assert!(local_e2e_start.contains("test -x \"$CODEX_BINARY_PATH\""));
 
     let e2e_fixture =
         fs::read_to_string("../frontend/e2e/fixtures/claudecode-executor/Dockerfile").unwrap();

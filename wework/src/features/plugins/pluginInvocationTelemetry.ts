@@ -1,4 +1,5 @@
 import type { RuntimeEvent } from '@wegent/chat-core'
+import { isComposerVisiblePlugin } from '@wegent/chat-core/composer-plugin-metadata'
 import type { DeviceInfo, InstalledPlugin, RuntimeTaskSummary } from '@/types/api'
 import { trackPluginInvocationEvent } from '@/telemetry/businessEvents'
 import {
@@ -118,10 +119,7 @@ export function publishPluginInvocationCatalog(
   const pluginOwners = new Map<string, PluginOwner | null>()
   const pluginRootOwners = new Map<string, PluginOwner | null>()
   for (const plugin of [...localPlugins, ...cloudPlugins]) {
-    if (
-      !plugin.spec.enabled ||
-      !['installed', 'update_available'].includes(plugin.spec.installState)
-    ) {
+    if (!isComposerVisiblePlugin(plugin)) {
       continue
     }
     const payload = record(plugin.spec.sourcePayload)

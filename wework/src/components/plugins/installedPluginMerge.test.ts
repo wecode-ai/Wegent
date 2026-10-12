@@ -511,16 +511,55 @@ describe('resolveProgressiveLocalInstalledRaw', () => {
   })
 })
 
-test('Codex membership retains managed store ownership for cloud uninstall', () => {
+test.each([
+  '/executor/codex/plugins/marketplaces/wegent/.agents/plugins/marketplace.json',
+  'C:\\executor\\codex\\plugins\\marketplaces\\wegent\\.agents\\plugins\\marketplace.json',
+])('Codex membership retains routing and adds managed store ownership: %s', marketplacePath => {
   const local = localCodexPlugin({ id: 'github@wegent', name: 'github', marketplace: 'wegent' })
+  local.spec.sourcePayload = {
+    marketplaceName: 'wegent',
+    marketplacePath,
+    pluginName: 'github',
+    pluginId: 'github@wegent',
+    remotePluginId: 'github-remote-id',
+    localId: null,
+  }
   const store = structuredClone(local)
-  store.spec.sourcePayload = { managedByWegent: true, cloudInstalledPluginId: 4 }
+  store.spec.sourcePayload = {
+    marketplaceName: 'wegent',
+    marketplacePath: '/executor/capabilities/store/plugins',
+    pluginName: 'github',
+    pluginId: 'github@wegent',
+    remotePluginId: 'github@wegent',
+    localId: 'store-local-id',
+    managedByWegent: true,
+    cloudPluginId: 7,
+    cloudInstalledPluginId: 4,
+  }
+  const original = structuredClone(local)
   const enriched = mergeLocalInstalledWithStorePackages([local], [store])
   expect(enriched).toHaveLength(1)
-  expect(enriched[0].spec.sourcePayload).toMatchObject({
+  expect(enriched[0].spec.sourcePayload).toEqual({
+    ...original.spec.sourcePayload,
     managedByWegent: true,
+    cloudPluginId: 7,
     cloudInstalledPluginId: 4,
   })
+  expect(local).toEqual(original)
+  expect(mergeLocalInstalledWithStorePackages(enriched, [store])).toEqual(enriched)
+})
+
+test('account absence hides managed files awaiting cleanup but preserves offline and independent plugins', () => {
+  const managed = localCodexPlugin({ id: 'github@wegent', name: 'github', marketplace: 'wegent' })
+  managed.spec.sourcePayload = { managedByWegent: true, cloudInstalledPluginId: 4 }
+  const independent = localCodexPlugin({
+    id: 'github@openai-curated-remote',
+    name: 'github',
+    marketplace: 'openai-curated-remote',
+  })
+  expect(mergeInstalledPlugins([], [managed, independent], 'device', true)).toEqual([independent])
+  expect(mergeInstalledPlugins([], [managed], 'device')).toEqual([managed])
+  expect(mergeInstalledPlugins([cloudPlugin()], [managed], 'device', true)).toHaveLength(1)
 })
 
 test('personal copy links to the cloud catalog only through explicit identity', () => {

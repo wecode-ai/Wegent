@@ -12,7 +12,6 @@ Converter worker startup:
 """
 
 import logging
-import os
 import time
 
 from knowledge_doc_converter.celery_app import celery_app
@@ -28,8 +27,12 @@ from knowledge_doc_converter.core.metrics import (
 )
 from knowledge_doc_converter.services.callback_client import callback_client
 from knowledge_doc_converter.services.content_fetcher import content_fetcher
+from knowledge_doc_converter.services.conversion_engine import (
+    MinerUContentConversionAdapter,
+)
 from knowledge_doc_converter.services.error_mapper import map_conversion_failure
 from knowledge_doc_converter.services.lock_service import lock_service
+from shared.knowledge_module import ConversionRequest, convert_content
 
 logger = logging.getLogger(__name__)
 
@@ -198,46 +201,39 @@ def convert_document_task(
                 f"size={len(binary_data)}"
             )
 
-            # Step 3: Convert using knowledge_engine
-            from knowledge_engine.conversion import convert_document
-
-            mineru_config = _build_mineru_config()
-            s3_config = _build_s3_config()
-            filename_without_ext = os.path.splitext(original_filename)[0]
-            # Sanitize path components to prevent S3 path traversal
-            safe_kb_name = (
-                knowledge_base_name.replace("..", "").replace("\\", "/").strip("/")
-            )
-            safe_filename = (
-                filename_without_ext.replace("..", "").replace("\\", "/").strip("/")
-            )
-            s3_base_path = f"doc-converter/{safe_kb_name}/{document_id}/{safe_filename}"
-
-            result = convert_document(
-                binary_data=binary_data,
-                file_extension=file_extension,
-                mineru_config=mineru_config,
-                s3_config=s3_config,
-                s3_base_path=s3_base_path,
+            # Step 3: Convert through the shared module. The module owns the
+            # converted filename and object-key prefix; this adapter owns the
+            # MinerU/S3 credentials and the engine call.
+            converted = convert_content(
+                MinerUContentConversionAdapter(
+                    mineru_config=_build_mineru_config(),
+                    s3_config=_build_s3_config(),
+                ),
+                ConversionRequest(
+                    binary_data=binary_data,
+                    file_extension=file_extension,
+                    original_filename=original_filename,
+                    knowledge_base_name=knowledge_base_name,
+                    document_id=document_id,
+                ),
             )
 
             logger.info(
                 f"[Conversion] Done: document_id={document_id}, "
-                f"md_size={len(result.markdown_bytes)}, "
-                f"images={len(result.uploaded_images)}"
+                f"md_size={len(converted.markdown_bytes)}, "
+                f"images={len(converted.uploaded_images)}"
             )
 
             # Step 4: Notify conversion completed (backend handles
             # state transition, attachment overwrite, and index dispatch atomically)
-            md_filename = f"{filename_without_ext}.{file_extension}.md"
             resp = callback_client.notify_completed(
                 path=callback_completed_path,
                 document_id=document_id,
                 generation=index_generation,
-                converted_name=md_filename,
+                converted_name=converted.converted_name,
                 converted_extension="md",
-                file_size=len(result.markdown_bytes),
-                markdown_bytes=result.markdown_bytes,
+                file_size=len(converted.markdown_bytes),
+                markdown_bytes=converted.markdown_bytes,
                 index_dispatch_payload=index_dispatch_payload,
             )
 
@@ -261,7 +257,7 @@ def convert_document_task(
                 file_extension=file_extension,
                 duration_seconds=duration,
                 input_size=len(binary_data),
-                output_size=len(result.markdown_bytes),
+                output_size=len(converted.markdown_bytes),
             )
             logger.info(
                 f"[Conversion] Completed: document_id={document_id}, "

@@ -65,6 +65,15 @@ describe('AboutSettingsPage', () => {
     })
   })
 
+  test('shows the source commit used to build the app', () => {
+    renderPage()
+
+    expect(screen.getByTestId('about-commit-id')).toHaveTextContent(
+      `提交 ${__WEWORK_COMMIT_SHA__.slice(0, 12)}`
+    )
+    expect(screen.getByTestId('about-commit-id')).toHaveAttribute('title', __WEWORK_COMMIT_SHA__)
+  })
+
   test('lets the user opt into Beta and stable updates', () => {
     const value = renderPage()
 

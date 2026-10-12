@@ -96,6 +96,12 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 /// The current UTC `YYYYMMDD'T'HHMMSS'Z` timestamp (`x-amz-date`).
+///
+/// The value is deliberately read from the live clock, matching the source's
+/// minio-py SigV4 signing (`date = time.utcnow()`), so it differs on every
+/// request and is nondeterministic across recordings. Replay tolerates the
+/// drift through the `attachment-s3-signing-time-head` and
+/// `attachment-s3-signing-time-get` dependency rules.
 pub fn amz_timestamp_now() -> String {
     chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string()
 }

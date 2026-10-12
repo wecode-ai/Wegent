@@ -16,25 +16,28 @@
 //! 3. `last_used_at` UPDATE (literal timestamp) + COMMIT, then the ORM
 //!    reload by primary key (full labeled projection, literal id) that
 //!    SQLAlchemy's post-commit attribute access performs;
-//! 4. personal key: direct `userReader.get_by_id` lookup;
-//!    service key: `wegent-username` (or key-suffix) direct
-//!    `userReader.get_by_name` lookup;
+//! 4. personal key: `userReader.get_by_id`;
+//!    service key: `wegent-username` (or key-suffix) `userReader.get_by_name`;
 //! 5. JWT Bearer fallback for non-`wg-` tokens.
 //!
-//! The endpoint keeps a local implementation instead of reusing
-//! `responses::auth`: the recorded dependency exchanges for this API carry
-//! the full labeled literal queries (the responses API's recording was
-//! captured through a different auth flow), and the shared short
-//! projection would not match them.
-use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
+//! The `userReader` lookups go through `AppState::user_reader`
+//! (`crate::user_reader::UserByIdReader`): the public default is the direct
+//! SQL reader, and a deployment that replaces `userReader` installs its own
+//! reader before route construction, so the knowledge endpoints read the
+//! same deployment-specific path (including any `user:v2:data` cache) the
+//! source's module-level `userReader` does. The JWT and task-token fallbacks
+//! query `users` directly in the source (`db.query(User)`), so they keep the
+//! direct SQL reader.
+use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::ApiFailure;
-use crate::auth::SessionClaims;
+use crate::auth::{SessionClaims, UserRow};
 use crate::config::AuthConfig;
 use crate::headers::Headers as _;
 use crate::state::AppState;
+use crate::user_reader::{USER_BY_ID_QUERY, USER_BY_NAME_QUERY, UserRecord};
 
 /// API key prefix (`app.core.auth_utils.API_KEY_PREFIX`).
 const API_KEY_PREFIX: &str = "wg-";
@@ -47,7 +50,7 @@ const KEY_TYPE_SERVICE: &str = "service";
 
 /// The authenticated user of one request.
 pub struct CurrentUser {
-    pub id: i32,
+    pub id: i64,
     #[allow(dead_code)]
     pub user_name: String,
 }
@@ -237,103 +240,6 @@ struct ApiKeyReloadRow {
     key_type: String,
 }
 
-/// One `users.git_info` entry as stored in the JSON column. The source's
-/// `model_to_dict` echoes the stored list of dictionaries verbatim into
-/// `json.dumps`, so only the keys present in the stored payload appear, in
-/// the stored insertion order (`auth_type`, filled by some write paths, is
-/// absent from this recording's entries).
-#[derive(Debug, Clone, Default)]
-pub struct GitAccount {
-    pub id: Option<String>,
-    pub account_type: Option<String>,
-    pub git_id: Option<String>,
-    pub auth_type: Option<String>,
-    pub git_email: Option<String>,
-    pub git_login: Option<String>,
-    pub git_token: Option<String>,
-    pub user_name: Option<String>,
-    pub git_domain: Option<String>,
-    /// The stored keys in their insertion order; absent keys are omitted
-    /// from the re-serialized payload.
-    pub stored_keys: Vec<String>,
-}
-
-impl<'de> serde::Deserialize<'de> for GitAccount {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = GitAccount;
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a git_info object")
-            }
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut map: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut account = GitAccount::default();
-                while let Some(key) = map.next_key::<String>()? {
-                    account.stored_keys.push(key.clone());
-                    let value = map.next_value::<Option<String>>()?;
-                    match key.as_str() {
-                        "id" => account.id = value,
-                        "type" => account.account_type = value,
-                        "git_id" => account.git_id = value,
-                        "auth_type" => account.auth_type = value,
-                        "git_email" => account.git_email = value,
-                        "git_login" => account.git_login = value,
-                        "git_token" => account.git_token = value,
-                        "user_name" => account.user_name = value,
-                        "git_domain" => account.git_domain = value,
-                        _ => {}
-                    }
-                }
-                Ok(account)
-            }
-        }
-        deserializer.deserialize_map(Visitor)
-    }
-}
-
-// Migrated from the Python source; not yet wired into the gateway. The
-// unread columns come from the source's full labeled projection and are
-// decoded so the statement matches the recorded query.
-#[derive(Debug, FromMysqlRow)]
-struct UserRow {
-    #[mysql(rename = "users_id")]
-    id: i32,
-    #[mysql(rename = "users_user_name")]
-    user_name: String,
-    #[allow(dead_code)]
-    #[mysql(rename = "users_password_hash")]
-    users_password_hash: String,
-    #[allow(dead_code)]
-    #[mysql(rename = "users_email")]
-    users_email: Option<String>,
-    #[allow(dead_code)]
-    #[mysql(rename = "users_git_info")]
-    users_git_info: Json<Option<Vec<GitAccount>>>,
-    #[mysql(rename = "users_is_active")]
-    is_active: i8,
-    #[allow(dead_code)]
-    #[mysql(rename = "users_role")]
-    users_role: String,
-    #[allow(dead_code)]
-    #[mysql(rename = "users_auth_source")]
-    users_auth_source: String,
-    #[allow(dead_code)]
-    #[mysql(rename = "users_preferences")]
-    users_preferences: String,
-    #[allow(dead_code)]
-    #[mysql(rename = "users_created_at")]
-    users_created_at: Option<chrono::NaiveDateTime>,
-    #[allow(dead_code)]
-    #[mysql(rename = "users_updated_at")]
-    users_updated_at: Option<chrono::NaiveDateTime>,
-}
-
 /// Task-token JWT claims (`app.services.auth.task_token.verify_task_token`).
 #[derive(Debug, Deserialize)]
 struct TaskTokenClaims {
@@ -455,104 +361,53 @@ fn decode_with_keys<T: for<'de> Deserialize<'de>>(config: &AuthConfig, token: &s
         .map(|token| token.claims)
 }
 
-/// Public user reader: direct MySQL lookup by id.
-///
-/// The public reader performs a direct SQL lookup. The `redis` argument is
-/// retained because the authentication call site may also construct a cache
-/// client.
-async fn cached_user_by_id<R>(
-    _redis: Option<&R>,
-    mysql: &impl Mysql,
-    user_id: i64,
-) -> MysqlResult<Option<UserRow>> {
-    mysql
-        .fetch_optional(
-            &format!(
-                "SELECT users.id AS users_id, users.user_name AS users_user_name, \
-                 users.password_hash AS users_password_hash, users.email AS users_email, \
-                 users.git_info AS users_git_info, users.is_active AS users_is_active, \
-                 users.`role` AS users_role, users.auth_source AS users_auth_source, \
-                 users.preferences AS users_preferences, users.created_at AS users_created_at, \
-                 users.updated_at AS users_updated_at \nFROM users \nWHERE users.id = {user_id} \n LIMIT 1"
-            ),
-            (),
-        )
-        .await
+/// `UserReader.get_by_id` as a direct SQL lookup: the source's JWT and
+/// task-token fallbacks query `users` directly (`db.query(User)`) rather than
+/// through the deployment `userReader`, so they reuse the shared statement.
+async fn direct_user_by_id<M>(mysql: &M, user_id: i64) -> MysqlResult<Option<UserRecord>>
+where
+    M: Mysql,
+{
+    let row: Option<UserRow> = mysql.fetch_optional(USER_BY_ID_QUERY, (user_id,)).await?;
+    Ok(row.map(UserRecord::from))
 }
 
-/// Public user reader: direct MySQL lookup by username.
-async fn cached_user_by_name<R>(
-    _redis: Option<&R>,
-    mysql: &impl Mysql,
-    user_name: &str,
-) -> MysqlResult<Option<UserRow>> {
-    mysql
-        .fetch_optional(
-            &format!(
-                "SELECT users.id AS users_id, users.user_name AS users_user_name, \
-                 users.password_hash AS users_password_hash, users.email AS users_email, \
-                 users.git_info AS users_git_info, users.is_active AS users_is_active, \
-                 users.`role` AS users_role, users.auth_source AS users_auth_source, \
-                 users.preferences AS users_preferences, users.created_at AS users_created_at, \
-                 users.updated_at AS users_updated_at \nFROM users \nWHERE users.user_name = {escaped} \n LIMIT 1",
-                escaped = escape_literal(user_name)
-            ),
-            (),
-        )
-        .await
-}
-
-/// Quote a user name using MySQL's text-protocol escaping rules.
-fn escape_literal(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('\'');
-    for byte in value.bytes() {
-        match byte {
-            b'\'' => out.push_str("\\'"),
-            b'\\' => out.push_str("\\\\"),
-            b'\0' => out.push_str("\\0"),
-            b'\n' => out.push_str("\\n"),
-            b'\r' => out.push_str("\\r"),
-            0x1a => out.push_str("\\Z"),
-            other => out.push(other as char),
-        }
-    }
-    out.push('\'');
-    out
+/// `UserReader.get_by_name` as a direct SQL lookup; see
+/// [`direct_user_by_id`].
+async fn direct_user_by_name<M>(mysql: &M, user_name: &str) -> MysqlResult<Option<UserRecord>>
+where
+    M: Mysql,
+{
+    let row: Option<UserRow> = mysql
+        .fetch_optional(USER_BY_NAME_QUERY, (user_name,))
+        .await?;
+    Ok(row.map(UserRecord::from))
 }
 
 /// `verify_jwt_token_with_db`: decode a user-session JWT and load the user.
-async fn verify_jwt_token_with_db<R>(
+async fn verify_jwt_token_with_db(
     config: &AuthConfig,
     mysql: &impl Mysql,
-    redis: Option<&R>,
     token: &str,
-) -> Result<Option<UserRow>, ApiFailure>
-where
-    R: brz_redis::Redis,
-{
+) -> Result<Option<UserRecord>, ApiFailure> {
     let Some(claims) = decode_with_keys::<SessionClaims>(config, token) else {
         return Ok(None);
     };
     let Some(user_name) = claims.username() else {
         return Ok(None);
     };
-    let user = cached_user_by_name(redis, mysql, &user_name)
+    let user = direct_user_by_name(mysql, &user_name)
         .await
         .map_err(|error| ApiFailure::internal(error.to_string()))?;
-    Ok(user.filter(|user| user.is_active != 0))
+    Ok(user.filter(|user| user.is_active))
 }
 
 /// `verify_task_token` fallback: `type=task_token` JWT resolving a user id.
-async fn verify_task_token_user<R>(
+async fn verify_task_token_user(
     config: &AuthConfig,
     mysql: &impl Mysql,
-    redis: Option<&R>,
     token: &str,
-) -> Result<Option<UserRow>, ApiFailure>
-where
-    R: brz_redis::Redis,
-{
+) -> Result<Option<UserRecord>, ApiFailure> {
     let Some(claims) = decode_with_keys::<TaskTokenClaims>(config, token) else {
         return Ok(None);
     };
@@ -562,10 +417,10 @@ where
     let Some(user_id) = claims.user_id else {
         return Ok(None);
     };
-    let user = cached_user_by_id(redis, mysql, user_id)
+    let user = direct_user_by_id(mysql, user_id)
         .await
         .map_err(|error| ApiFailure::internal(error.to_string()))?;
-    Ok(user.filter(|user| user.is_active != 0))
+    Ok(user.filter(|user| user.is_active))
 }
 
 /// Authenticate one request and return the user
@@ -575,7 +430,6 @@ pub async fn get_auth_context(
     headers: &impl crate::headers::Headers,
 ) -> Result<CurrentUser, ApiFailure> {
     let mysql = &state.mysql;
-    let redis = state.redis.as_ref();
     let config = &state.auth;
 
     let wegent_username = headers
@@ -589,13 +443,13 @@ pub async fn get_auth_context(
     // Fallback: JWT Bearer token when no API key is present.
     let Some(api_key) = api_key else {
         if let Some(token) = bearer_token(headers).filter(|token| !is_api_key(token)) {
-            if let Some(user) = verify_jwt_token_with_db(config, mysql, redis, &token).await? {
+            if let Some(user) = verify_jwt_token_with_db(config, mysql, &token).await? {
                 return Ok(CurrentUser {
                     id: user.id,
                     user_name: user.user_name,
                 });
             }
-            if let Some(user) = verify_task_token_user(config, mysql, redis, &token).await? {
+            if let Some(user) = verify_task_token_user(config, mysql, &token).await? {
                 return Ok(CurrentUser {
                     id: user.id,
                     user_name: user.user_name,
@@ -676,13 +530,17 @@ pub async fn get_auth_context(
         .await
         .map_err(|error| ApiFailure::internal(error.to_string()))?;
 
-    // Personal key: return the key owner directly.
+    // Personal key: return the key owner directly (`userReader.get_by_id`
+    // through the deployment reader: the internal deployment serves the
+    // `user:v2:data:{user_id}` cache document without a SQL lookup).
     if record.key_type == KEY_TYPE_PERSONAL {
-        let user = cached_user_by_id(redis, mysql, i64::from(record.user_id))
+        let user = state
+            .user_reader
+            .get_by_id(i64::from(record.user_id))
             .await
             .map_err(|error| ApiFailure::internal(error.to_string()))?;
         return match user {
-            Some(user) if user.is_active != 0 => Ok(CurrentUser {
+            Some(user) if user.is_active => Ok(CurrentUser {
                 id: user.id,
                 user_name: user.user_name,
             }),
@@ -714,11 +572,15 @@ pub async fn get_auth_context(
                 "Username can only contain letters, numbers, underscores, and hyphens",
             ));
         }
-        let user = cached_user_by_name(redis, mysql, &target_username)
+        // `userReader.get_by_name` through the deployment reader (the
+        // internal deployment resolves `user:v2:idx:name:{user_name}` first).
+        let user = state
+            .user_reader
+            .get_by_name(&target_username)
             .await
             .map_err(|error| ApiFailure::internal(error.to_string()))?;
         if let Some(user) = user {
-            if user.is_active == 0 {
+            if !user.is_active {
                 return Err(ApiFailure::new(
                     brz_http_server::StatusCode::UNAUTHORIZED,
                     format!("User '{target_username}' is inactive"),

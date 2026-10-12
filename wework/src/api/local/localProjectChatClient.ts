@@ -108,6 +108,7 @@ export function createLocalProjectChatClient(
             !previous ||
             previous.status !== message.status ||
             previous.content !== message.content ||
+            JSON.stringify(previous.metadata) !== JSON.stringify(message.metadata) ||
             previous.updatedAt !== message.updatedAt
           ) {
             onMessage(message)

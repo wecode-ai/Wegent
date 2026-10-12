@@ -28,6 +28,7 @@ import {
   FolderOpen,
   FolderPlus,
   Pencil,
+  RefreshCw,
   RotateCcw,
   Trash2,
 } from 'lucide-react'
@@ -47,9 +48,13 @@ import { getProcessingErrorMessage } from '../utils/processing-error'
 import {
   getDocumentDisplayUpdatedAt,
   getSyncedWikiConnectorType,
+  isDingtalkCopyDocument,
+  isDocumentIndexInFlight,
   isSyncedWikiDocument,
   isWikiSourceMissing,
 } from '../utils/documentUtils'
+import { ExternalSourceStatusBadge } from './ExternalSourceStatusBadge'
+import { useDingtalkSyncLabel } from '../hooks/useDingtalkSyncLabel'
 import type { SortField, SortOrder } from './FolderTree'
 import type {
   KnowledgeResourceNode,
@@ -214,6 +219,7 @@ export function KnowledgeDocumentTreeGrid({
   allowDownload = true,
 }: KnowledgeDocumentTreeGridProps) {
   const { t } = useTranslation('knowledge')
+  const getDingtalkSyncLabel = useDingtalkSyncLabel()
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
   const downloadDocument = useKnowledgeDocumentDownload()
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
@@ -423,6 +429,13 @@ export function KnowledgeDocumentTreeGrid({
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
+                )}
+                {!wikiSourceMissing && (
+                  <ExternalSourceStatusBadge
+                    document={document}
+                    testId={`external-source-inaccessible-${document.id}`}
+                    className="flex-shrink-0"
+                  />
                 )}
                 {sourceUrl && (
                   <button
@@ -704,11 +717,7 @@ export function KnowledgeDocumentTreeGrid({
           const document = node.document
           const isPendingConversion = document.index_status === 'pending_conversion'
           const isConverting = document.index_status === 'converting'
-          const isIndexing =
-            document.index_status === 'queued' ||
-            document.index_status === 'indexing' ||
-            isConverting ||
-            isPendingConversion
+          const isIndexing = isDocumentIndexInFlight(document)
           // Indexing-in-progress takes precedence over is_active: a re-analyze/
           // re-index keeps the old index queryable (is_active stays true) but the
           // UI must surface the in-flight state. Mirrors DocumentItem compact mode.
@@ -820,18 +829,18 @@ export function KnowledgeDocumentTreeGrid({
           const isSyncedWiki = isSyncedWikiDocument(document)
           const isNotIndexed = document.index_status === 'not_indexed'
           const isIndexFailed = document.index_status === 'failed'
-          const isPendingConversion = document.index_status === 'pending_conversion'
-          const isConverting = document.index_status === 'converting'
           const showIndexingState =
             reindexingDocId === document.id ||
             isSyncing?.(document.id) ||
-            document.index_status === 'queued' ||
-            document.index_status === 'indexing' ||
-            isConverting ||
-            isPendingConversion
+            isDocumentIndexInFlight(document)
+          const canSyncDingtalkCopy = isDingtalkCopyDocument(document) && !!onSync
+          const dingtalkSyncLabel = getDingtalkSyncLabel(document, showIndexingState)
+          const canSyncWiki = isSyncedWiki && !!onSync && !showIndexingState
           // One retry control whose identity depends on the document: failed
-          // external documents fetch the provider's latest body through the
-          // import-retry entry, while regular documents reindex their content.
+          // external documents without a source-refresh entry fetch the
+          // provider's latest body through the import-retry entry, while
+          // regular documents reindex their content. A copy that can refresh
+          // itself retries through that entry instead of a second control.
           let retryAction: { testId: string; label: string } | null = null
           if (onReindex && !showIndexingState) {
             if (isSyncedWiki) {
@@ -842,7 +851,7 @@ export function KnowledgeDocumentTreeGrid({
                 }
               }
             } else if (isExternal) {
-              if (isIndexFailed) {
+              if (isIndexFailed && !canSyncDingtalkCopy) {
                 retryAction = {
                   testId: `retry-import-document-${document.id}`,
                   label: t('document.document.retryImport'),
@@ -916,7 +925,26 @@ export function KnowledgeDocumentTreeGrid({
                   />
                 </button>
               )}
-              {isSyncedWiki && onSync && !showIndexingState && (
+              {canSyncDingtalkCopy && (
+                <button
+                  className={`p-1.5 rounded-md transition-colors max-md:min-h-[44px] max-md:min-w-[44px] ${
+                    showIndexingState
+                      ? 'text-primary cursor-not-allowed'
+                      : 'text-text-muted hover:text-primary hover:bg-primary/10'
+                  }`}
+                  onClick={event => {
+                    event.stopPropagation()
+                    onSync?.(document)
+                  }}
+                  disabled={showIndexingState}
+                  title={dingtalkSyncLabel}
+                  aria-label={dingtalkSyncLabel}
+                  data-testid={`sync-dingtalk-document-${document.id}`}
+                >
+                  <RefreshCw className={`h-4 w-4 ${showIndexingState ? 'animate-spin' : ''}`} />
+                </button>
+              )}
+              {canSyncWiki && (
                 <button
                   className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
                   onClick={event => {
@@ -993,9 +1021,11 @@ export function KnowledgeDocumentTreeGrid({
       canSelectFolders,
       expandAllFolders,
       expandedKeys,
+      getDingtalkSyncLabel,
       handleDocumentDownload,
       hasSyncedWikiDocument,
       includedInFolderScope,
+      isSyncing,
       isAllSelected,
       isPartialSelected,
       multimodalFeatureEnabled,
@@ -1015,7 +1045,6 @@ export function KnowledgeDocumentTreeGrid({
       ragConfigured,
       refreshingDocId,
       reindexingDocId,
-      isSyncing,
       selectAllLabel,
       selectedDocumentIds,
       selectedFolderIds,

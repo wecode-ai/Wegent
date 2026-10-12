@@ -24,7 +24,11 @@ import {
   type WorkspaceTabKind,
   type WorkspaceTabLabels,
 } from './workspaceTabs'
-import { WorkspaceTabsContext, type WorkspaceTabsContextValue } from './workspaceTabsContextValue'
+import {
+  WorkspaceTabActivityContext,
+  WorkspaceTabsContext,
+  type WorkspaceTabsContextValue,
+} from './workspaceTabsContextValue'
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import { projectSpaceRouteRequestsDefaultProject } from '@/features/todo/projectSpaceRoute'
 import { writeSettingsReturnPath } from './settingsReturnPath'
@@ -38,6 +42,8 @@ interface WorkspaceTabsState extends PersistedWorkspaceTabs {
   closedTabs: WorkspaceTab[]
 }
 
+const EMPTY_FIXED_TABS: WorkspaceTab[] = []
+
 type WorkspaceTabsAction =
   | { type: 'routeChanged'; pathname: string; search: string; labels: WorkspaceTabLabels }
   | {
@@ -47,6 +53,7 @@ type WorkspaceTabsAction =
     }
   | { type: 'open'; tab: WorkspaceTab }
   | { type: 'close'; tabId: string; fallback: WorkspaceTab }
+  | { type: 'detach'; tabId: string; fallback: WorkspaceTab }
   | { type: 'closeOthers'; tabId: string }
   | { type: 'restoreClosed'; restored: WorkspaceTab }
   | { type: 'move'; sourceId: string; targetId: string }
@@ -170,10 +177,20 @@ function workspaceTabsReducer(
         : undefined
       const kind = inferWorkspaceTabKind(action.pathname)
       if (requested) {
+        const title =
+          location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels)
+        if (
+          state.activeTabId === requested.id &&
+          requested.kind === kind &&
+          requested.title === title &&
+          requested.contentRoute === location.contentRoute
+        ) {
+          return state
+        }
         const updated = {
           ...requested,
           kind,
-          title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels),
+          title,
           contentRoute: location.contentRoute,
         }
         return {
@@ -185,10 +202,18 @@ function workspaceTabsReducer(
       if (!location.tabId) {
         const activeTab = state.tabs.find(tab => tab.id === state.activeTabId)
         if (activeTab) {
+          const title = workspaceTabTitle(kind, location.contentRoute, action.labels)
+          if (
+            activeTab.kind === kind &&
+            activeTab.title === title &&
+            activeTab.contentRoute === location.contentRoute
+          ) {
+            return state
+          }
           const updated = {
             ...activeTab,
             kind,
-            title: workspaceTabTitle(kind, location.contentRoute, action.labels),
+            title,
             contentRoute: location.contentRoute,
           }
           return {
@@ -225,6 +250,13 @@ function workspaceTabsReducer(
       return {
         ...next,
         closedTabs: [closingTab, ...state.closedTabs].slice(0, 10),
+      }
+    }
+    case 'detach': {
+      const next = closeWorkspaceTab(state.tabs, state.activeTabId, action.tabId, action.fallback)
+      return {
+        ...next,
+        closedTabs: state.closedTabs,
       }
     }
     case 'closeOthers': {
@@ -319,7 +351,7 @@ export function WorkspaceTabsProvider({
   storageScope,
   labels,
   startupTabKind,
-  fixedTabs = [],
+  fixedTabs = EMPTY_FIXED_TABS,
   startupTabId,
   restoreSessionTabs = true,
   children,
@@ -338,8 +370,13 @@ export function WorkspaceTabsProvider({
     stateRef.current = state
   }, [state])
 
+  const isWorkspaceTabActive = useCallback(
+    (tabId: string) => stateRef.current.activeTabId === tabId,
+    []
+  )
+
   useEffect(() => {
-    if (fixedTabs.length > 0) dispatch({ type: 'syncFixed', tabs: fixedTabs })
+    dispatch({ type: 'syncFixed', tabs: fixedTabs })
   }, [fixedTabs])
 
   useLayoutEffect(() => {
@@ -441,6 +478,20 @@ export function WorkspaceTabsProvider({
     [labels]
   )
 
+  const detachTab = useCallback(
+    (tabId: string) => {
+      const currentState = stateRef.current
+      if (!currentState.tabs.some(tab => tab.id === tabId)) return
+      const fallback = createWorkspaceTab('task', labels)
+      const next = closeWorkspaceTab(currentState.tabs, currentState.activeTabId, tabId, fallback)
+      flushSync(() => dispatch({ type: 'detach', tabId, fallback }))
+      dispatchWorkspaceTabsClosed([tabId])
+      const nextActive = next.tabs.find(tab => tab.id === next.activeTabId) ?? next.tabs[0]
+      navigateTo(workspaceTabRoute(nextActive))
+    },
+    [labels]
+  )
+
   const closeOtherTabs = useCallback(
     (tabId: string) => {
       const tab = state.tabs.find(candidate => candidate.id === tabId)
@@ -491,6 +542,7 @@ export function WorkspaceTabsProvider({
       openTab,
       selectTab,
       closeTab,
+      detachTab,
       closeOtherTabs,
       restoreClosedTab,
       moveTab,
@@ -500,6 +552,7 @@ export function WorkspaceTabsProvider({
       activeTab,
       closeOtherTabs,
       closeTab,
+      detachTab,
       moveTab,
       openTab,
       restoreClosedTab,
@@ -509,5 +562,9 @@ export function WorkspaceTabsProvider({
     ]
   )
 
-  return <WorkspaceTabsContext.Provider value={value}>{children}</WorkspaceTabsContext.Provider>
+  return (
+    <WorkspaceTabActivityContext.Provider value={isWorkspaceTabActive}>
+      <WorkspaceTabsContext.Provider value={value}>{children}</WorkspaceTabsContext.Provider>
+    </WorkspaceTabActivityContext.Provider>
+  )
 }

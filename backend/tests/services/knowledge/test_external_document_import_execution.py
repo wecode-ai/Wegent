@@ -263,7 +263,8 @@ class TestRunExternalDocumentImport:
         assert document.file_extension == "docx"
         assert document.index_status == DocumentIndexStatus.PENDING_CONVERSION
         assert document.converted_attachment_id is None
-        assert document.name == "Run Doc"
+        # A DingTalk copy follows its source title when the body lands.
+        assert document.name == "External Word Document"
         assert convert.call_args.args == ("knowledge_doc_converter.convert_document",)
         assert convert.call_args.kwargs["kwargs"]["file_extension"] == "docx"
         assert convert.call_args.kwargs["kwargs"]["attachment_id"] == 4321
@@ -1073,3 +1074,203 @@ class TestExternalDocumentPreviewAndEnableGuards:
 
         assert updated is not None
         assert updated.status == DocumentStatus.ENABLED
+
+
+class TestDingTalkCopyNameSync:
+    """A DingTalk copy follows its source title whenever a body lands."""
+
+    def _create_copy(
+        self,
+        test_db: Session,
+        test_user: User,
+        *,
+        name: str = "Run Doc",
+        provider: str = "dingtalk",
+    ) -> KnowledgeDocument:
+        kb_id = _create_kb(test_db, test_user.id, "dingtalk-name-sync-kb")
+        document = KnowledgeDocument(
+            kind_id=kb_id,
+            attachment_id=0,
+            name=name,
+            file_extension="md",
+            file_size=0,
+            user_id=test_user.id,
+            source_type=DocumentSourceType.EXTERNAL.value,
+            source_config={"external": {"provider": provider}},
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider=provider,
+                external_resource_id="n" * 32,
+            ),
+            index_status=DocumentIndexStatus.QUEUED,
+        )
+        test_db.add(document)
+        test_db.commit()
+        test_db.refresh(document)
+        return document
+
+    @staticmethod
+    def _enable_indexing(
+        test_db: Session,
+        document: KnowledgeDocument,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        kb = test_db.get(Kind, document.kind_id)
+        kb.json = {
+            **kb.json,
+            "spec": {
+                **kb.json["spec"],
+                "retrievalConfig": {
+                    "retriever_name": "test-retriever",
+                    "embedding_config": {"model_name": "test-embedding"},
+                },
+            },
+        }
+        test_db.commit()
+        monkeypatch.setattr(
+            "app.tasks.knowledge_tasks.index_document_task.delay",
+            MagicMock(return_value=SimpleNamespace(id="index-task")),
+        )
+
+    def test_landed_body_renames_the_copy(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_copy(test_db, test_user, name="本地旧名称")
+        self._enable_indexing(test_db, document, monkeypatch)
+        patch_provider_fetch(
+            monkeypatch,
+            get_external_document_provider("dingtalk"),
+            AsyncMock(
+                return_value=ExternalDocumentContent(
+                    name="最新来源名称",
+                    file_extension="md",
+                    content=b"new body",
+                    metadata={"title": "最新来源名称"},
+                )
+            ),
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.name == "最新来源名称"
+        # The copy keeps its identity, folder and owner.
+        assert document.external_resource_id == "n" * 32
+        assert document.folder_id == 0
+        assert document.user_id == test_user.id
+
+    @pytest.mark.parametrize("blank_title", ["", "   "])
+    def test_blank_source_title_keeps_the_current_name(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        blank_title: str,
+    ) -> None:
+        document = self._create_copy(test_db, test_user, name="本地旧名称")
+        self._enable_indexing(test_db, document, monkeypatch)
+        patch_provider_fetch(
+            monkeypatch,
+            get_external_document_provider("dingtalk"),
+            AsyncMock(
+                return_value=ExternalDocumentContent(
+                    name=blank_title,
+                    file_extension="md",
+                    content=b"new body",
+                    metadata={"title": blank_title},
+                )
+            ),
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.name == "本地旧名称"
+
+    def test_long_source_title_is_truncated_to_the_column_limit(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        long_title = "长" * 300
+        document = self._create_copy(test_db, test_user)
+        self._enable_indexing(test_db, document, monkeypatch)
+        patch_provider_fetch(
+            monkeypatch,
+            get_external_document_provider("dingtalk"),
+            AsyncMock(
+                return_value=ExternalDocumentContent(
+                    name=long_title,
+                    file_extension="md",
+                    content=b"new body",
+                    metadata={"title": long_title},
+                )
+            ),
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.name == long_title[:255]
+        assert document.external_source_config["title"] == long_title
+
+    def test_failed_body_fetch_keeps_the_current_name(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_copy(test_db, test_user, name="本地旧名称")
+        patch_provider_fetch(
+            monkeypatch,
+            get_external_document_provider("dingtalk"),
+            AsyncMock(side_effect=ExternalDocumentFetchError("读取失败")),
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.name == "本地旧名称"
+        assert document.index_status == DocumentIndexStatus.FAILED
+
+    def test_other_providers_keep_the_user_document_name(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+        document = self._create_copy(
+            test_db, test_user, name="Local name", provider="weiboap"
+        )
+        self._enable_indexing(test_db, document, monkeypatch)
+        monkeypatch.setattr(
+            "app.services.context.context_service.upload_attachment",
+            MagicMock(return_value=(SimpleNamespace(id=4321), None)),
+        )
+
+        knowledge_orchestrator.attach_external_document_content(
+            test_db,
+            document,
+            test_user,
+            ExternalDocumentContent(
+                name="Remote title", file_extension="md", content=b"body"
+            ),
+            generation=document.index_generation,
+        )
+
+        test_db.refresh(document)
+        assert document.name == "Local name"

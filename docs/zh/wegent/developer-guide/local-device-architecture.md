@@ -92,6 +92,10 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 
 ### Executor 启动环境与 Codex Home 初始化
 
+共享插件包按内容哈希保存并保留旧包；Codex 原生缓存目录使用插件清单中的版本号。不能给该缓存版本追加哈希，否则 Codex 原生安装会清理该目录并使工作台保存的路径失效。插件认证 SDK 从 Executor 的 `capabilities/manifest-v2.json` 解析当前安装身份，不能读取迁移后残留的旧清单。
+
+续聊保留任务 ID，但每轮使用新的子任务 ID，以刷新 MCP 上下文并区分消息。会话读取和续聊使用首次执行所属的原生 Home；不同 Home 的 Codex 查询进程互相隔离，历史刷新只读且不恢复会话，以免占用下一轮执行所需的写锁；续轮保存用户及 Team 身份但不保存凭据。后端 Team 的原生 Home 位于工作台根目录的 `agents/<执行用户名>/<namespace>/<Team 名称>`。流水线中各 Bot 使用其下的 `bots/<Bot ID>`，分别保存配置、会话和执行锁；按任务调用技能时，只有持有执行锁且记录了该任务的 Home 才能消除多个阶段之间的歧义。Wework 直接运行的配置（`team_id = 0`）继续使用应用管理的原生 Home，负责人续轮时保留此标记；其选择的后端技能部署到任务工作区的 `.codex/skills`，原生插件技能仍由 Codex 管理。共享 Codex 进程因环境变化重启前，必须等待活跃回合和未完成的 RPC 全部结束。
+
 Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过运行当前用户的非交互登录 shell 读取登录环境，避免执行仅供终端交互使用的提示符、补全和插件初始化。需要传递给 Agent 的环境变量应配置在登录 shell 会读取的启动文件中。shell 优先使用系统用户数据库中的登录 shell，并依次回退到 `$SHELL`、`zsh`、`bash` 和 `sh`。采集过程有固定超时；失败时 executor 保留父进程环境，并继续补充 Homebrew、`/usr/local` 等标准开发目录。最终环境由 executor 统一传递给 Codex、Claude Code、插件、技能、Hooks、PTY 和设备命令，因此 Wework 本地 sidecar、独立本地设备以及 Linux 云端或远程设备使用同一套 PATH 解析逻辑。
 
 Windows 没有可采集的登录 shell，executor 改为在启动时合并注册表中的机器与当前用户 PATH。这样即使桌面应用早于 PATH 修改启动，设备命令仍能看到新开 pwsh 可解析的工具。Git diff 与代码托管 CLI 状态等设备命令直接原生调用 git、`gh` 或 `glab`，不再依赖 Windows PATH 上不保证存在的 `bash` 或 `python3`。
@@ -130,6 +134,8 @@ Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任�
 
 ephemeral 临时线程的连续续聊依赖其在共享 Codex app-server 中保持已加载状态。成功回合结束后，executor 不得对这类线程发送 `thread/unsubscribe`，否则后续直接调用 `turn/start` 可能停留在已经卸载的线程上。临时线程也不支持分页 transcript RPC，因此 transcript 查询必须读取 executor 的本地运行时缓存，不能调用 `thread/turns/list`。持久线程仍在每个终态回合后取消订阅，并继续使用 provider transcript 作为历史记录来源。
 
+任务创建期间可能已经分配 provider thread ID，但首个 turn 尚未物化。若 runtime handle 只有不带 turn ID 的本地用户消息 presentation，且没有完成消息、transcript 快照、`lastTurnId` 或 subtask turn ID，executor 必须把该任务视为未物化会话：transcript 返回本地 presentation，导航返回空列表，不调用 provider 的分页历史接口。项目看板只在对应 workspace tab 处于激活状态时预加载绑定任务的 transcript，并且同一挂载周期内每个任务地址最多尝试一次；失败不会因任务时间戳或状态刷新而自动重试，重新挂载后才允许再次加载。
+
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
 同一对话可在回合之间切换模型和 provider。Wework 为每次续聊传递所选模型及其 provider 配置，Codex app-server 在 `thread/resume` 时应用新的 `modelProvider`。executor 为每个经 Wework router 运行的 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。
@@ -156,13 +162,13 @@ Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 tran
 
 工具状态以 app-server 的生命周期事件为准：`item/started` 创建运行中的工具块，`item/completed` 必须将对应工具块收敛为 `done`（显式失败除外）。部分独立工具条目（如图片查看、等待和网页搜索）不携带 `status` 字段；executor 在实时事件映射和 transcript 恢复时都将这类终态条目规范化为 `done`，避免 Wework 在工具已经完成后继续显示运行状态或递增计时。
 
-手动上下文压缩以 Codex thread 中新的 `contextCompaction` 条目持久化为成功边界，而不是以 `thread/compact/start` 接受请求为成功。executor 在发起压缩前记录最新 turn，随后轮询近期 transcript；只有发现新 turn 中的压缩条目后，才向 Wework 返回 `turnId` 和 `compactionItemId`，超时或读取失败则返回明确错误。压缩期间 Wework 先显示单一的“正在自动压缩上下文”处理块，完成后将同一处理块收敛为“上下文已自动压缩”，失败时收敛为错误态。
+手动上下文压缩以 Codex thread 中新的 `contextCompaction` 条目持久化为成功边界，而不是以 `thread/compact/start` 接受请求为成功。executor 在发起压缩前按任务模型配置注册并绑定本地模型路由（与发起一轮对话使用同一套判断和注册逻辑），因此空闲会话、executor 重启后或路由空闲回收后点击压缩同样能触达模型，而不是在 Codex app-server 内以“no local model proxy route is bound to the Codex thread”失败。随后记录最新 turn 并轮询近期 transcript；只有最新 turn 出现压缩条目后，才向 Wework 返回 `turnId` 和 `compactionItemId`。轮询按 wall-clock 预算停止（读取 RPC 的耗时也计入该预算），App-IPC 对 `runtime.tasks.compact` 的超时高于 executor 自身预算；若压缩轮已经结束却没有产生压缩条目（例如 provider 拒绝该轮），立即返回带原因的失败，而不是等满预算后回报超时。压缩期间 Wework 先显示单一的“正在自动压缩上下文”处理块，完成后将同一处理块收敛为“上下文已自动压缩”，失败时收敛为错误态。
 
-压缩事件路由保留 `${taskId}-context-compact` 这一合成 subtask 身份，避免真实 Codex turn ID 把前端乐观处理块拆成另一条消息。executor 同时兼容 `item/completed` 和 `context/compaction` 两种通知形式：相同压缩项按 item ID 去重，不同压缩项必须分别发出。Wework 会按 subtask 对账乐观块和运行时块，避免同一次压缩显示两条指示器。桌面 E2E 通过受控的 mock 模型端点接收并阻塞 Wework 发出的压缩请求，验证确认、运行中、完成和后续消息四个阶段，并确认后续模型请求实际包含 mock 返回的压缩摘要，而不是只验证界面标记；Codex transcript 持久化完成边界由 executor 回归测试覆盖。
+压缩事件路由保留 `${taskId}-context-compact` 这一合成 subtask 身份，避免真实 Codex turn ID 把前端乐观处理块拆成另一条消息。executor 同时兼容 `item/completed` 和 `context/compaction` 两种通知形式：相同压缩项按 item ID 去重，不同压缩项必须分别发出。Wework 会按 subtask 对账乐观块和运行时块，避免同一次压缩显示两条指示器。桌面 E2E 通过受控的 mock 模型端点接收并阻塞 Wework 发出的压缩请求，验证确认、运行中、完成和后续消息四个阶段，并确认后续模型请求实际包含 mock 返回的压缩摘要，而不是只验证界面标记；同一 checkpoint 还会让 mock 端点拒绝一次压缩请求，断言失败在 App-IPC 截止之前自行暴露且不是超时文案。Codex transcript 持久化完成边界由 executor 回归测试覆盖，空闲线程的模型路由绑定由 executor 单测覆盖。
 
 Codex 同一回合可以交错产生推理、助手文本和工具调用。executor 必须按 provider item ID 跟踪每一段助手文本的流式偏移和完成快照：同一 item 的 `delta` 与 `completed` 是同一内容的增量和快照，应去重；不同 item 的完成文本即使位于同一回合，也必须作为后续文本继续发送，不能因为前一个 item 已产生 delta 而丢弃。Wework 在把当前助手文本移动到工具或处理块之前会清空该文本流的偏移状态，使工具后的下一段助手文本从 offset 0 开始，并保持 transcript 的事件顺序。
 
-助手文本在流式阶段始终先作为过程文本进入 Wework。`item/started` 携带的 phase 只是暂定状态：Codex 可能先把 item 标为 `final_answer`，再在继续调用工具后以 commentary 完成同一 item。executor 因此必须等待 item 完成和回合成功结束后才提交 final content，避免界面把已经可见的最终内容降级回过程块。已完成的明确 `final` 或 `final_answer` item 优先；若该回合没有明确 final item，则最后一段已完成的助手文本成为兜底最终结果。
+助手文本会按照流式开始事件的 phase 进入 Wework，但 `item/started` 携带的 phase 只是暂定状态：Codex 可能先把 item 标为 `final_answer`，再在继续调用工具前以 `commentary` 完成同一 item。完成事件中的明确 phase 是权威值；若它把当前流式 final 改判为过程文本，executor 会清除该活跃 final，并发送携带同一 provider item ID 和 `replacesItemId` 的过程块，让 Wework 原位替换暂定 final，而不是同时保留两份内容或提前结束回合。只有完成事件没有明确 phase 时，executor 才回退到流式阶段跟踪的 phase。已完成的明确 `final` 或 `final_answer` item 优先；若该回合没有明确 final item，则最后一段已完成的助手文本成为兜底最终结果。
 
 Codex 提供的推理摘要会作为 `thinking` processing block 进入 Wework。流式摘要以单行“正在思考 · 摘要”显示，只用于反馈当前正在生效的思考进度；回合完成、失败或取消后，Wework 会移除该思考块，不在消息历史中保留摘要占位或详情。executor 必须同时映射 reasoning delta 和只携带完整 summary 的 `item/completed`，否则模型长时间推理时界面会退化成没有进展内容的统一等待状态。未包含在 provider 摘要中的内部推理内容不会展示。
 
@@ -238,7 +244,7 @@ sequenceDiagram
 | `cloud`  | Wegent 云设备服务              | WebSocket | 云设备创建、重启、释放流程          |
 | `remote` | 用户自管 Docker 容器或远端主机 | WebSocket | Wework 连接设置中的远程 Docker 命令 |
 
-`remote` 设备复用本地 executor 的 WebSocket 注册、心跳、任务执行和 command RPC 通道，但由 `RemoteDeviceProvider` 独立列出和返回 `remoteConfig`。Backend 不保存生成命令中的 `WEGENT_AUTH_TOKEN`；Device CRD 只保存 provider、image、deviceId、deviceName、backendUrl、publicBaseUrl 和 createdAt 等非敏感元数据。
+`remote` 设备复用本地 executor 的 WebSocket 注册、心跳、任务执行和 command RPC 通道，但由 `RemoteDeviceProvider` 独立列出和返回 `remoteConfig`。Backend 不保存生成命令中的 `WEGENT_AUTH_TOKEN`；Device CRD 只保存 provider、image、deviceId、deviceName、backendUrl 和 createdAt 等非敏感元数据。
 
 远程 Docker 设备启动后会发送 `device:register`，payload 中的 `device_type=remote` 会更新同名 Device CRD。在线状态仍存储在 Redis 的设备在线键中，因此任务调度、slot 统计、terminal/code-server session RPC 与本地设备保持同一套协议。前端不会对 `remote` 设备展示云设备生命周期操作；停止、重启、删除容器由用户在 Docker 主机上完成。
 

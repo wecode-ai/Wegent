@@ -4,7 +4,10 @@
 
 //! `GET /api/projects` — the current user's project list with tasks
 //! (`app.api.endpoints.projects.list_projects` ->
-//! `app.services.project_service.list_projects`).
+//! `app.services.project_service.list_projects`), and
+//! `DELETE /api/projects/{project_id}` — the soft-delete endpoint
+//! (`app.api.endpoints.projects.delete_project_endpoint` ->
+//! `app.services.project_service.delete_project`).
 //!
 //! Source pipeline (recorded case `api-projects/deaea280`, JWT bearer
 //! session for a sample user, `include_tasks=true`):
@@ -28,16 +31,23 @@
 //!    `spec.execution.workspace.{source,path}`).
 //!
 //! The response is the `ProjectListResponse` (`total`, `items`).
+//!
+//! `delete_project_endpoint` (recorded case `api-projects-2500`) resolves the
+//! caller's active frontend project, detaches the project's owned tasks via
+//! `task_store.clear_project_for_owned_tasks` unless the origin is `wework`,
+//! then flushes the soft delete (`is_active = False`) and commits; it responds
+//! `204` with an empty body.
 use std::sync::Arc;
 
+use brz_http_server::{Response, StatusCode};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::http_compat::FastApiError;
+use crate::json_compat::python_json_value;
 use crate::state::AppState;
-use crate::task_routing::ByUserId;
 
 /// `projects` columns as rendered by `db.query(Project)` (labeled
 /// `projects_<column>`).
@@ -486,139 +496,20 @@ async fn query_projects<M: Mysql>(
         .await
 }
 
-/// The legacy per-project read over the **base** `tasks` table
-/// (`SqlAlchemyTaskStore.list_active_project_tasks`): `ORDER BY
-/// tasks.updated_at DESC`; the owner and origin filters mirror the recorded
-/// rendering (the project id and owner bind as integers, the origin binds as
-/// a string).
-///
-/// Legacy rows live in the base table, so the read passes the zero routing key
-/// — the explicit base-table contract already used by the migration-free
-/// repository — rather than the owner's routing key, which resolves to the
-/// owner's shard. Both task-store policies use this read: the migration-free
-/// store on its own, and the migration store as the legacy half of its merge,
-/// whose shard half is [`query_shard_project_tasks`].
-async fn query_base_project_tasks<M: Mysql>(
-    mysql: &M,
+/// `task_store.list_active_project_tasks`: the project's active tasks owned by
+/// `owner_user_id`, newest `updated_at` first. The store owns the table choice
+/// and, in a deployment that also reads migrated legacy rows, their merge.
+async fn query_project_tasks(
+    state: &AppState,
     project_id: i64,
     owner_user_id: i64,
-    client_origin: Option<&str>,
+    client_origin: &str,
 ) -> MysqlResult<Vec<ProjectTaskRow>> {
-    let mut sql = String::from(
-        "SELECT id, user_id, kind, name, namespace, json, is_active,
-                created_at, updated_at, project_id, client_origin, is_group_chat
-         FROM {{tasks}}
-         WHERE project_id = ? AND kind = 'Task' AND is_active = 1 AND user_id = ?",
-    );
-    if client_origin.is_some() {
-        sql.push_str(" AND client_origin = ?");
-    }
-    sql.push_str(" ORDER BY updated_at DESC");
-    let mysql = mysql.route(ByUserId(0));
-    let rows: Vec<MysqlRow> = match client_origin {
-        Some(origin) => {
-            mysql
-                .fetch_all(&sql, (project_id, owner_user_id, origin))
-                .await?
-        }
-        None => mysql.fetch_all(&sql, (project_id, owner_user_id)).await?,
-    };
-    rows.iter().map(decode_task_row).collect()
-}
-
-/// The owner's shard-table per-project query (`ShardedTaskStore`'s second
-/// half of `list_active_project_tasks`): same filters, no ORDER BY (the
-/// Python merge sorts in memory). Uses `{{tasks}}` routed by the owner's
-/// user id.
-async fn query_shard_project_tasks<M: Mysql>(
-    mysql: &M,
-    project_id: i64,
-    owner_user_id: i64,
-    client_origin: Option<&str>,
-) -> MysqlResult<Vec<ProjectTaskRow>> {
-    let mut sql = String::from(
-        "SELECT id, user_id, kind, name, namespace, json, is_active,
-                created_at, updated_at, project_id, client_origin, is_group_chat
-         FROM {{tasks}}
-         WHERE project_id = ? AND user_id = ? AND kind = 'Task' AND is_active = 1",
-    );
-    if client_origin.is_some() {
-        sql.push_str(" AND client_origin = ?");
-    }
-    let mysql = mysql.route(ByUserId(owner_user_id as u64));
-    let rows: Vec<MysqlRow> = match client_origin {
-        Some(origin) => {
-            mysql
-                .fetch_all(&sql, (project_id, owner_user_id, origin))
-                .await?
-        }
-        None => mysql.fetch_all(&sql, (project_id, owner_user_id)).await?,
-    };
-    rows.iter().map(decode_task_row).collect()
-}
-
-/// `ShardedTaskStore._exclude_migrated_legacy_index_rows`: drop legacy
-/// rows whose id is already migrated into the owner's shard table. Returns
-/// the input unchanged when the legacy result is empty (the source
-/// early-out, as in the recorded case). Probes `{{tasks}}` routed by the
-/// owner's user id, because the migrated ids are indexed in that shard.
-async fn exclude_migrated_legacy_rows<M: Mysql>(
-    mysql: &M,
-    owner_user_id: i64,
-    legacy: Vec<ProjectTaskRow>,
-) -> MysqlResult<Vec<ProjectTaskRow>> {
-    if legacy.is_empty() {
-        return Ok(legacy);
-    }
-    let ids: Vec<i64> = legacy.iter().map(|row| row.id).collect();
-    let mut sql = String::from("SELECT id FROM {{tasks}} WHERE id IN (");
-    sql.push_str(&vec!["?"; ids.len()].join(", "));
-    sql.push(')');
-    let rows: Vec<MysqlRow> = mysql
-        .route(ByUserId(owner_user_id as u64))
-        .fetch_all(&sql, ids)
+    let rows = state
+        .task_store
+        .list_active_project_tasks(project_id, owner_user_id, Some(client_origin))
         .await?;
-    let migrated: Vec<i64> = rows
-        .iter()
-        .map(|row| row.get_required::<i64>("id"))
-        .collect::<MysqlResult<_>>()?;
-    Ok(legacy
-        .into_iter()
-        .filter(|row| !migrated.contains(&row.id))
-        .collect())
-}
-
-/// `list_active_project_tasks`'s merge: shard rows first, first-wins
-/// dedup by id, then sorted `updated_at DESC`.
-fn merge_project_tasks(
-    shard: Vec<ProjectTaskRow>,
-    legacy: Vec<ProjectTaskRow>,
-) -> Vec<ProjectTaskRow> {
-    let mut merged: Vec<ProjectTaskRow> = Vec::with_capacity(shard.len() + legacy.len());
-    for row in shard.into_iter().chain(legacy) {
-        if !merged.iter().any(|existing| existing.id == row.id) {
-            merged.push(row);
-        }
-    }
-    merged.sort_by_key(|row| std::cmp::Reverse(row.updated_at));
-    merged
-}
-
-/// The migration task store's `list_active_project_tasks`
-/// (`ShardedTaskStore`): the legacy base-table read, then the migrated-index
-/// probe, then the owner's shard read, then the merge. The source performs
-/// exactly these calls in this order, and the probe only filters the legacy
-/// rows, so the merge itself is order-independent.
-async fn query_migrated_project_tasks<M: Mysql>(
-    mysql: &M,
-    project_id: i64,
-    owner_user_id: i64,
-    client_origin: Option<&str>,
-) -> MysqlResult<Vec<ProjectTaskRow>> {
-    let legacy = query_base_project_tasks(mysql, project_id, owner_user_id, client_origin).await?;
-    let legacy = exclude_migrated_legacy_rows(mysql, owner_user_id, legacy).await?;
-    let shard = query_shard_project_tasks(mysql, project_id, owner_user_id, client_origin).await?;
-    Ok(merge_project_tasks(shard, legacy))
+    rows.iter().map(decode_task_row).collect()
 }
 
 /// The `_get_project_tasks` projection for one task row.
@@ -712,25 +603,14 @@ async fn projects_list(
         // does not issue a task-count query in this branch, so the count
         // remains zero as in the recorded implementation.
         let (tasks, task_count) = if params.include_tasks {
-            let merged = if state.task_policy.resolve_migrated_legacy {
-                query_migrated_project_tasks(
-                    &state.mysql,
-                    project.projects_id,
-                    project.projects_user_id,
-                    Some(&params.client_origin),
-                )
-                .await
-                .map_err(dependency_error)?
-            } else {
-                query_base_project_tasks(
-                    &state.mysql,
-                    project.projects_id,
-                    project.projects_user_id,
-                    Some(&params.client_origin),
-                )
-                .await
-                .map_err(dependency_error)?
-            };
+            let merged = query_project_tasks(
+                state,
+                project.projects_id,
+                project.projects_user_id,
+                &params.client_origin,
+            )
+            .await
+            .map_err(dependency_error)?;
             let count = merged.len() as i64;
             let items = merged
                 .iter()
@@ -771,6 +651,218 @@ async fn projects_list(
 fn dependency_error(error: brz_mysql::MysqlError) -> FastApiError {
     tracing::error!(%error, "projects database dependency failure");
     FastApiError::internal()
+}
+
+/// `RemoveTaskFromProjectResponse` (`app.schemas.project`): the fixed message
+/// the source returns after a successful removal.
+#[derive(Debug, serde::Serialize)]
+struct RemoveTaskFromProjectResponse {
+    message: String,
+}
+
+/// `_get_active_project`: the active project of `user_id` and `client_origin`.
+///
+/// The source renders the full `projects` projection and raises
+/// `404 {"detail": "Project not found"}` when no row matches.
+async fn find_active_project(
+    state: &Arc<AppState>,
+    project_id: i64,
+    user_id: i64,
+    client_origin: &str,
+) -> Result<ProjectRow, FastApiError> {
+    let sql = format!(
+        "SELECT {PROJECT_COLUMNS} \nFROM projects \n\
+         WHERE projects.id = ? AND projects.user_id = ? \
+         AND projects.is_active = true AND projects.client_origin = ? \n LIMIT 1"
+    );
+    let project: Option<ProjectRow> = state
+        .mysql
+        .fetch_optional(sql, (project_id, user_id, client_origin))
+        .await
+        .map_err(dependency_error)?;
+    project.ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))
+}
+
+/// `db.query(Project).filter(...).first()`: the one active project owned by
+/// `user_id` and scoped to `client_origin`. The recorded SQLAlchemy rendering
+/// qualifies every column, filters `is_active = true`, binds the id and owner
+/// as integers, and appends `LIMIT 1`.
+async fn query_active_project<M: Mysql>(
+    mysql: &M,
+    project_id: i64,
+    user_id: i64,
+    client_origin: &str,
+) -> MysqlResult<Option<ProjectRow>> {
+    let sql = format!(
+        "SELECT {PROJECT_COLUMNS} \nFROM projects \n\
+         WHERE projects.id = ? AND projects.user_id = ? \
+         AND projects.is_active = true AND projects.client_origin = ? \n LIMIT 1"
+    );
+    mysql
+        .fetch_optional(sql.as_str(), (project_id, user_id, client_origin))
+        .await
+}
+
+/// `_with_task_project_label(task, None)`: drop `metadata.labels.projectId`
+/// from the task CRD while keeping every other key.
+///
+/// The source normalizes each level with `dict(... or {})`, so a missing
+/// `metadata` or `labels` is materialized as an empty object and the surviving
+/// key order is preserved.
+fn clear_project_label(task_json: &serde_json::Value) -> serde_json::Value {
+    let mut root = match task_json {
+        serde_json::Value::Object(map) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    let mut metadata = match root.get("metadata") {
+        Some(serde_json::Value::Object(map)) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    let mut labels = match metadata.get("labels") {
+        Some(serde_json::Value::Object(map)) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    labels.remove("projectId");
+    metadata.insert("labels".to_string(), serde_json::Value::Object(labels));
+    root.insert("metadata".to_string(), serde_json::Value::Object(metadata));
+    serde_json::Value::Object(root)
+}
+
+/// `remove_task_from_project`: verify the active project, load the task from
+/// the store, then clear its project link and rewrite its CRD JSON.
+async fn remove_project_task(
+    state: &Arc<AppState>,
+    user: &crate::auth::SessionUser,
+    project_id: i64,
+    task_id: i64,
+    client_origin: &str,
+) -> Result<RemoveTaskFromProjectResponse, FastApiError> {
+    let user_id = i64::from(user.id);
+    find_active_project(state, project_id, user_id, client_origin).await?;
+
+    let task = state
+        .task_store
+        .get_active_project_task(task_id, project_id, user_id, Some(client_origin))
+        .await
+        .map_err(dependency_error)?;
+    let Some(task) = task else {
+        return Err(FastApiError::detail(
+            StatusCode::NOT_FOUND,
+            "Task not found in project",
+        ));
+    };
+
+    // `update_fields(project_id=0)` then `update_json(...)`: one UPDATE that
+    // clears the project link and rewrites the JSON with the label removed.
+    let task_json = task
+        .get_required::<Json<serde_json::Value>>("json")
+        .map_err(dependency_error)?;
+    let payload = clear_project_label(&task_json.0);
+    let updated_at = chrono::Local::now().naive_local();
+    state
+        .task_store
+        .set_task_project_and_json(
+            task_id,
+            0,
+            user_id,
+            &python_json_value(&payload),
+            updated_at,
+        )
+        .await
+        .map_err(dependency_error)?;
+
+    Ok(RemoveTaskFromProjectResponse {
+        message: "Task removed from project successfully".to_string(),
+    })
+}
+
+/// `DELETE /api/projects/{project_id}/tasks/{task_id}`
+/// (`app.api.endpoints.projects.remove_task_from_project_endpoint`).
+///
+/// Removes a task from a project without deleting the task: it verifies the
+/// project belongs to the current user, then clears the task's project link.
+#[brz_http_server::delete("/api/projects/:project_id/tasks/:task_id")]
+async fn remove_task_from_project(
+    #[inject(state)] state: &Arc<AppState>,
+    #[auth] current_user: crate::auth::SessionUser,
+    project_id: i64,
+    task_id: i64,
+    client_origin: Option<String>,
+) -> Result<RemoveTaskFromProjectResponse, FastApiError> {
+    let client_origin = parse_client_origin(client_origin.as_deref())?;
+    remove_project_task(state, &current_user, project_id, task_id, &client_origin).await
+}
+
+/// DELETE /api/projects/{project_id}: the source `delete_project_endpoint`,
+/// injecting the process-lifetime application state.
+#[brz_http_server::delete("/api/projects/:project_id")]
+async fn delete_project(
+    #[inject(state)] state: &Arc<AppState>,
+    #[auth] current_user: crate::auth::SessionUser,
+    project_id: i64,
+    client_origin: Option<String>,
+) -> Result<Response, FastApiError> {
+    // FastAPI validates the query parameter before the endpoint body runs;
+    // an invalid origin surfaces as 422 without any dependency traffic.
+    let client_origin = parse_client_origin(client_origin.as_deref())?;
+    delete_project_inner(state, &current_user, project_id, &client_origin).await
+}
+
+/// Handler body for `DELETE /api/projects/{project_id}`.
+async fn delete_project_inner(
+    state: &Arc<AppState>,
+    user: &crate::auth::SessionUser,
+    project_id: i64,
+    client_origin: &str,
+) -> Result<Response, FastApiError> {
+    let user_id = i64::from(user.id);
+
+    let project = query_active_project(&state.mysql, project_id, user_id, client_origin)
+        .await
+        .map_err(delete_project_error)?;
+    if project.is_none() {
+        return Err(FastApiError::detail(
+            StatusCode::NOT_FOUND,
+            "Project not found",
+        ));
+    }
+
+    // Frontend deletion moves the project's tasks to history; Wework deletion
+    // preserves the project-task links for later restore.
+    if client_origin != "wework" {
+        state
+            .task_store
+            .clear_project_for_owned_tasks(project_id, user_id, Some(client_origin))
+            .await
+            .map_err(delete_project_error)?;
+    }
+
+    // The `project.is_active = False` flush, then `db.commit()`.
+    state
+        .mysql
+        .execute(
+            "UPDATE projects SET is_active=0, updated_at=now() WHERE projects.id = ?",
+            (project_id,),
+        )
+        .await
+        .map_err(delete_project_error)?;
+    state
+        .mysql
+        .execute("COMMIT", ())
+        .await
+        .map_err(delete_project_error)?;
+
+    Ok(Response::empty(StatusCode::NO_CONTENT).content_type("application/json"))
+}
+
+/// `delete_project_endpoint`'s dependency failure: the source wraps any
+/// exception as `500 {"detail": "Failed to delete project: <error>"}`.
+fn delete_project_error(error: brz_mysql::MysqlError) -> FastApiError {
+    tracing::error!(%error, "delete project dependency failure");
+    FastApiError::detail(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("Failed to delete project: {error}"),
+    )
 }
 
 #[cfg(test)]

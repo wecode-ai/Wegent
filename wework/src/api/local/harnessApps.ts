@@ -1,4 +1,5 @@
 import { observeOperation } from '@/telemetry/observeOperation'
+import { trackBusinessEvent } from '@/telemetry/businessEvents'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { UnlistenFn } from '@/desktop/disposeDesktopListener'
 
@@ -206,6 +207,8 @@ export const harnessAppsApi = {
     contextBaseUrl: string | null = null,
     contextToken: string | null = null
   ) {
+    const startupId = crypto.randomUUID()
+    trackBusinessEvent('smart_app_start_attempted', { startup_id: startupId })
     return observeOperation(
       'smart_app.start',
       () =>
@@ -215,7 +218,8 @@ export const harnessAppsApi = {
           contextBaseUrl,
           contextToken,
         }),
-      result => result.state === 'running'
+      result => result.state === 'running',
+      { properties: { startup_id: startupId } }
     )
   },
   stop(installationId: string) {

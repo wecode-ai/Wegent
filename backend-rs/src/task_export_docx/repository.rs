@@ -14,7 +14,6 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlRow};
 use chrono::NaiveDateTime;
 
 use crate::json_compat::OpaqueJson;
-use crate::task_routing::{ByTaskId, TaskPolicy};
 
 /// `db.query(User).filter(User.id == ..., User.is_active.is_(True))` —
 /// the download-token user load.
@@ -56,54 +55,11 @@ pub(crate) struct TaskRow {
     pub json: serde_json::Value,
 }
 
-fn decode_task_row(row: &MysqlRow) -> brz_mysql::MysqlResult<TaskRow> {
+pub(crate) fn decode_task_row(row: &MysqlRow) -> brz_mysql::MysqlResult<TaskRow> {
     Ok(TaskRow {
         user_id: row.get_required("user_id")?,
         json: row.get_required::<Json<serde_json::Value>>("json")?.0,
     })
-}
-
-/// `task_store.get_task_by_states` (new-format ids route to the shard table).
-pub(crate) async fn get_task_by_states<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
-    task_id: i64,
-) -> brz_mysql::MysqlResult<Option<TaskRow>>
-where
-    M: Mysql,
-{
-    let sql = "SELECT id, user_id, kind, name, namespace, json, is_active, \
-         created_at, updated_at, project_id, client_origin, is_group_chat \
-         FROM {{tasks}} \
-         WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) \
-         LIMIT 1";
-    let row: Option<MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(sql, (task_id,))
-        .await?;
-    let _ = task_policy;
-    row.as_ref().map(decode_task_row).transpose()
-}
-
-/// `_get_accessible_task`'s owner projection: the membership pre-check.
-pub(crate) async fn get_accessible_task_owner<M>(
-    mysql: &M,
-    task_id: i64,
-) -> brz_mysql::MysqlResult<Option<i64>>
-where
-    M: Mysql,
-{
-    let row: Option<MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(
-            "SELECT id, user_id \nFROM {{tasks}} \n\
-             WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) \n LIMIT 1",
-            (task_id,),
-        )
-        .await?;
-    Ok(row
-        .as_ref()
-        .and_then(|row| row.get_required::<i64>("user_id").ok()))
 }
 
 /// `is_member`'s approved member-row check (only reached when the requesting
@@ -147,7 +103,7 @@ pub(crate) struct SubtaskRow {
     pub updated_at: Option<NaiveDateTime>,
 }
 
-fn decode_subtask_row(row: &MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
+pub(crate) fn decode_subtask_row(row: &MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
     Ok(SubtaskRow {
         id: row.get_required("id")?,
         role: row.get_required("role")?,
@@ -157,53 +113,6 @@ fn decode_subtask_row(row: &MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
         sender_user_id: row.get("sender_user_id")?,
         updated_at: row.get("updated_at")?,
     })
-}
-
-/// `subtask_store.list_by_task_ordered` with `order_by="id"` and the optional
-/// `message_ids` filter. New-format ids route to the shard table directly.
-pub(crate) async fn list_subtasks_ordered<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
-    task_id: i64,
-    message_ids: Option<&[i64]>,
-) -> brz_mysql::MysqlResult<Vec<SubtaskRow>>
-where
-    M: Mysql,
-{
-    if message_ids.is_some_and(|ids| ids.is_empty()) {
-        return Ok(Vec::new());
-    }
-    let mut sql = String::from(
-        "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, \
-         executor_namespace, executor_name, executor_deleted_at, prompt, \
-         message_id, parent_id, status, progress, result, error_message, \
-         created_at, updated_at, completed_at, sender_type, sender_user_id, \
-         reply_to_subtask_id \
-         FROM {{subtasks}} \
-         WHERE task_id = ?",
-    );
-    let ids = message_ids.unwrap_or_default();
-    if !ids.is_empty() {
-        let list = ids
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        sql.push_str(&format!(" AND message_id IN ({list})"));
-    }
-    sql.push_str(" ORDER BY id ASC");
-    let rows: Vec<MysqlRow> = if (task_policy.is_scoped_id)(task_id as u64) {
-        mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_all(&sql, (task_id,))
-            .await?
-    } else {
-        // Legacy ids resolve the migrated shard through the base-table owner
-        // lookup (`_subtask_model_for_task_lookup`), which this endpoint has
-        // already loaded; the base-table fallback covers unmigrated tasks.
-        mysql.fetch_all(&sql, (task_id,)).await?
-    };
-    rows.iter().map(decode_subtask_row).collect()
 }
 
 /// One `subtask_contexts` row (`_attach_contexts`' batch load).

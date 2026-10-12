@@ -1,5 +1,55 @@
 import { describe, expect, test, vi } from 'vitest'
-import { createSingleFlight, presentWindow, type PresentableWindow } from './window-presentation.js'
+import { EventEmitter } from 'node:events'
+import {
+  createSingleFlight,
+  presentWindow,
+  registerApplicationActivation,
+  type PresentableWindow,
+} from './window-presentation.js'
+
+describe('application activation', () => {
+  function setup(keepInBackground = false) {
+    const application = Object.assign(new EventEmitter(), { hide: vi.fn() })
+    const actions = {
+      keepInBackground: () => keepInBackground,
+      openMainWindow: vi.fn(async () => undefined),
+      reportError: vi.fn(),
+    }
+    registerApplicationActivation(application, actions)
+    return { application, actions }
+  }
+
+  test('does not open the main window when focusing an auxiliary window activates the app', () => {
+    const { application, actions } = setup()
+    application.emit('did-become-active')
+    expect(actions.openMainWindow).not.toHaveBeenCalled()
+    expect(application.hide).not.toHaveBeenCalled()
+  })
+
+  test('still opens the main window for an explicit Dock activation', () => {
+    const { application, actions } = setup()
+    application.emit('activate')
+    application.emit('did-become-active')
+    expect(actions.openMainWindow).toHaveBeenCalledOnce()
+  })
+
+  test('preserves background verification until foreground activation is allowed', () => {
+    const { application, actions } = setup(true)
+    application.emit('activate')
+    application.emit('did-become-active')
+    expect(actions.openMainWindow).not.toHaveBeenCalled()
+    expect(application.hide).toHaveBeenCalledOnce()
+  })
+
+  test('reports a main-window activation failure', async () => {
+    const { application, actions } = setup()
+    const error = new Error('Window unavailable')
+    actions.openMainWindow.mockRejectedValueOnce(error)
+    application.emit('activate')
+    await Promise.resolve()
+    expect(actions.reportError).toHaveBeenCalledWith(error)
+  })
+})
 
 function createWindow(input: { destroyed?: boolean; minimized?: boolean } = {}) {
   const webContents = {

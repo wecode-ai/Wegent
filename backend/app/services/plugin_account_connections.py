@@ -312,9 +312,7 @@ class PluginAccountConnectionService:
         return row
 
     @staticmethod
-    def _plugin(
-        db: Session, user_id: int, plugin_id: int, slug: str
-    ) -> tuple[Kind, PluginAccountAuthDefinition]:
+    def _installed_plugin(db: Session, user_id: int, plugin_id: int) -> Kind:
         plugin = (
             db.query(Kind)
             .filter(
@@ -328,6 +326,13 @@ class PluginAccountConnectionService:
         )
         if plugin is None:
             raise PluginAccountAuthError("plugin_auth_plugin_not_found", 404)
+        return plugin
+
+    @classmethod
+    def _plugin(
+        cls, db: Session, user_id: int, plugin_id: int, slug: str
+    ) -> tuple[Kind, PluginAccountAuthDefinition]:
+        plugin = cls._installed_plugin(db, user_id, plugin_id)
         spec = plugin.json.get("spec", {})
         if spec.get("enabled") is False:
             raise PluginAccountAuthError("plugin_auth_plugin_disabled", 403)

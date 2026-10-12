@@ -153,11 +153,7 @@ fn prepare_local_harness_launch_at(
 }
 
 fn executor_home() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
+    crate::config::paths::executor_home()
 }
 
 fn safe_session_component(session_id: &str) -> Result<&str, String> {
@@ -427,15 +423,29 @@ async fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
         .kill_on_drop(true)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    let output = timeout(HARNESS_VERSION_TIMEOUT, command.output())
-        .await
-        .ok()?
-        .ok()?;
-    String::from_utf8_lossy(&output.stdout)
+    let output = match timeout(HARNESS_VERSION_TIMEOUT, command.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            eprintln!("failed to run local harness version command: {error}");
+            return None;
+        }
+        Err(error) => {
+            eprintln!("local harness version command timed out: {error}");
+            return None;
+        }
+    };
+    let version = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
-        .map(str::to_owned)
+        .map(str::to_owned);
+    if version.is_none() {
+        eprintln!(
+            "local harness version command returned no version: {}",
+            output.status
+        );
+    }
+    version
 }
 
 #[cfg(test)]

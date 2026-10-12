@@ -215,6 +215,7 @@ export function AddCloudDeviceDialog({
             data-testid="add-cloud-device-close"
             onClick={onClose}
             disabled={loading}
+            aria-label={t('common.close')}
             className="-mr-1 -mt-1 shrink-0 rounded-md p-1 text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             <X className="h-4 w-4" />

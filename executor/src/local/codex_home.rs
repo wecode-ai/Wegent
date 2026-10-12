@@ -12,7 +12,6 @@ use toml_edit::{table, value, DocumentMut};
 
 use crate::agents::replace_config;
 
-const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const E2E_NATIVE_CODEX_HOME_ENV: &str = "WEWORK_E2E_NATIVE_CODEX_HOME";
 const WEWORK_PERSONAL_MARKETPLACE_ID: &str = "wework-personal";
@@ -67,6 +66,7 @@ pub struct CodexLocalConfig {
     codex_home: String,
     config_path: String,
     remote_apps_enabled: bool,
+    enabled_plugin_keys: Vec<String>,
 }
 
 fn default_remote_apps_enabled() -> bool {
@@ -156,9 +156,7 @@ fn wework_codex_home_path() -> Result<PathBuf, String> {
     if let Some(path) = non_empty_path(CODEX_HOME_ENV) {
         return Ok(path);
     }
-    let executor_home = non_empty_path(EXECUTOR_HOME_ENV)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .ok_or_else(|| "Unable to resolve executor home".to_owned())?;
+    let executor_home = crate::config::paths::executor_home();
     Ok(executor_home.join("codex"))
 }
 
@@ -198,7 +196,34 @@ fn read_codex_local_config_from_path(codex_home: &Path) -> Result<CodexLocalConf
                 config_path.display()
             )
         })?,
+        enabled_plugin_keys: read_enabled_plugin_keys(&content).map_err(|error| {
+            format!(
+                "Failed to parse Codex config {}: {error}",
+                config_path.display()
+            )
+        })?,
     })
+}
+
+fn read_enabled_plugin_keys(content: &str) -> Result<Vec<String>, String> {
+    let config = content
+        .parse::<DocumentMut>()
+        .map_err(|error| error.to_string())?;
+    let mut keys = config
+        .get("plugins")
+        .and_then(|plugins| plugins.as_table_like())
+        .map(|plugins| {
+            plugins
+                .iter()
+                .filter(|(_, plugin)| {
+                    plugin.get("enabled").and_then(|enabled| enabled.as_bool()) == Some(true)
+                })
+                .map(|(key, _)| key.to_owned())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    keys.sort();
+    Ok(keys)
 }
 
 fn read_remote_apps_enabled(content: &str) -> Result<bool, String> {
@@ -515,12 +540,18 @@ mod tests {
         assert!(read_remote_apps_enabled("model = \"gpt-5\"\n").unwrap());
         fs::write(
             codex_home.join("config.toml"),
-            "model = \"gpt-5\"\n\n[features]\napps = true # enabled\n",
+            concat!(
+                "model = \"gpt-5\"\n\n",
+                "[features]\napps = true # enabled\n\n",
+                "[plugins.\"enabled@wework-personal\"]\nenabled = true\n\n",
+                "[plugins.\"disabled@wework-personal\"]\nenabled = false\n",
+            ),
         )
         .unwrap();
 
         let current = read_codex_local_config_from_path(&codex_home).unwrap();
         assert!(current.remote_apps_enabled);
+        assert_eq!(current.enabled_plugin_keys, vec!["enabled@wework-personal"]);
 
         write_remote_apps_enabled(&codex_home, false).unwrap();
 

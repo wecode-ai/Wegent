@@ -1,6 +1,10 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
+import {
+  getConversationDiagnosticContext,
+  resetConversationDiagnosticsForTest,
+} from '@wegent/collaboration/conversation/conversationDiagnostics'
 
 interface MockMessageListProps {
   conversationKey?: string | number | null
@@ -39,6 +43,7 @@ vi.mock('../../../../packages/collaboration/src/conversation/MessageList', () =>
 
 describe('ScrollableMessageArea virtual layout ownership', () => {
   beforeEach(() => {
+    resetConversationDiagnosticsForTest()
     vi.stubGlobal(
       'ResizeObserver',
       class ResizeObserverMock {
@@ -56,6 +61,20 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
     resizeObserverCallback = null
     virtualLayoutCallback = undefined
     vi.unstubAllGlobals()
+  })
+
+  test('correlates external desktop scrolling with nested message and Markdown diagnostics', () => {
+    const desktopScroller = document.createElement('div')
+    desktopScroller.innerHTML =
+      '<div data-scroll-origin="bottom"><div data-index="7"><p>Private message</p></div></div>'
+    const paragraph = desktopScroller.querySelector('p')!
+    const external = getConversationDiagnosticContext(desktopScroller)
+    const nested = getConversationDiagnosticContext(paragraph)
+    expect(nested).toEqual({ scrollerId: external.scrollerId, rowIndex: 7 })
+    expect(external.scrollerId).toBeGreaterThan(0)
+    const otherScroller = document.createElement('div')
+    otherScroller.dataset.scrollOrigin = 'top'
+    expect(getConversationDiagnosticContext(otherScroller).scrollerId).not.toBe(external.scrollerId)
   })
 
   test('releases the virtual end anchor after the user scrolls away from the bottom', () => {

@@ -11,6 +11,12 @@ export function humanizeMarketplacePluginError(
   operation: 'install' | 'uninstall' = 'install'
 ): string {
   const trimmed = stripExecutorPrefix(message.trim())
+  if (trimmed === 'PLUGIN_UNINSTALL_UNCONFIRMED') {
+    return t(
+      'workbench.plugins_uninstall_unconfirmed',
+      '暂时无法确认卸载结果，请检查网络并刷新插件列表后重试。'
+    )
+  }
   if (!trimmed) {
     return operation === 'uninstall'
       ? t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试')

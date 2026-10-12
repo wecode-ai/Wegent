@@ -5,7 +5,7 @@
 //! Subtask history for the remote-workspace status detail load.
 //!
 //! `task_fork_history_resolver.resolve_for_task` as `get_task_detail` calls
-//! it: the sharded `list_by_task_ordered` lookup plus `_attach_contexts`, then
+//! it: the store's `list_by_task_ordered` lookup plus its context load, then
 //! the fork-history window — sort by `(message_id, created_at, id)` and keep
 //! the last `limit` (100) items. The window bounds both the bot ids that
 //! `get_bots_for_subtasks` resolves and the `task_dict["subtasks"]` list the
@@ -13,20 +13,11 @@
 use brz_mysql::{Mysql, MysqlRow};
 
 use super::app_state::AppState;
-use super::task_detail::{TaskRoute, migrated_legacy_task_exists, task_lookup_route};
 use crate::json_compat::{JsonProjection, OpaqueJson};
-use crate::task_routing::{ByTaskId, ByUserId};
 
 /// `get_task_detail` passes `limit=100` to
 /// `task_fork_history_resolver.resolve_for_task`.
 pub const SUBTASK_HISTORY_LIMIT: usize = 100;
-
-const SUBTASKS_BY_TASK_SQL: &str = "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
-        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
-        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \
-    FROM {{subtasks}} \
-    WHERE task_id = ? \
-    ORDER BY message_id ASC, created_at ASC";
 
 /// One `subtasks_{:04}` row; the bot ids, executor binding, `result`
 /// document, and the fork-history sort keys are consumed.
@@ -63,126 +54,6 @@ fn decode_subtask_row(row: &MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
     })
 }
 
-/// `ShardedSubtaskStore._owner_matches_task_id` guard query: the task table
-/// for the task id, then a subtask-owner fallback when the task row is
-/// absent. Only reached for new-format task ids; `list_by_task_ordered`
-/// skips the guard entirely for legacy ids.
-async fn owner_matches_task_id(
-    state: &AppState<impl Mysql, impl brz_redis::Redis>,
-    task_id: i64,
-    owner_user_id: i64,
-) -> anyhow::Result<bool> {
-    // New-format ids route directly to their shard table; legacy ids use the
-    // migrated-owner lookup (`_migrated_legacy_task_model`).
-    let task_exists = if (state.task_policy.is_scoped_id)(task_id as u64)
-        || !state.task_policy.resolve_migrated_legacy
-    {
-        let row: Option<MysqlRow> = state
-            .mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_optional(
-                "SELECT id \nFROM {{tasks}} \nWHERE id = ? AND user_id = ? \n LIMIT 1",
-                (task_id, owner_user_id),
-            )
-            .await?;
-        row.is_some()
-    } else {
-        migrated_legacy_task_exists(state, task_id, Some(owner_user_id)).await?
-    };
-    if task_exists {
-        return Ok(true);
-    }
-    // `subtask_model_for_task_id` distinct-user fallback.
-    let route = task_lookup_route(state, task_id, Some(owner_user_id)).await?;
-    let users: Vec<MysqlRow> =
-        match route {
-            TaskRoute::ByTaskId => state
-                .mysql
-                .route(ByTaskId(task_id as u64))
-                .fetch_all(
-                    "SELECT DISTINCT user_id \nFROM {{subtasks}} \nWHERE task_id = ? \n LIMIT 2",
-                    (task_id,),
-                )
-                .await?,
-            TaskRoute::ByUserId(owner) => state
-                .mysql
-                .route(ByUserId(owner as u64))
-                .fetch_all(
-                    "SELECT DISTINCT user_id \nFROM {{subtasks}} \nWHERE task_id = ? \n LIMIT 2",
-                    (task_id,),
-                )
-                .await?,
-        };
-    if users.len() != 1 {
-        return Ok(false);
-    }
-    Ok(users[0]
-        .get_required::<i64>("user_id")
-        .map(|user_id| user_id == owner_user_id)
-        .unwrap_or(false))
-}
-
-/// `ShardedSubtaskStore.list_by_task_ordered` plus `_attach_contexts`.
-async fn list_subtasks_by_task(
-    state: &AppState<impl Mysql, impl brz_redis::Redis>,
-    task_id: i64,
-    owner_user_id: Option<i64>,
-) -> anyhow::Result<Vec<SubtaskRow>> {
-    let sql = SUBTASKS_BY_TASK_SQL;
-    let route = task_lookup_route(state, task_id, owner_user_id).await?;
-    let rows: Vec<MysqlRow> = match route {
-        TaskRoute::ByTaskId => {
-            state
-                .mysql
-                .route(ByTaskId(task_id as u64))
-                .fetch_all(sql, (task_id,))
-                .await?
-        }
-        TaskRoute::ByUserId(owner) => {
-            state
-                .mysql
-                .route(ByUserId(owner as u64))
-                .fetch_all(sql, (task_id,))
-                .await?
-        }
-    };
-    let subtasks = rows
-        .iter()
-        .map(decode_subtask_row)
-        .collect::<brz_mysql::MysqlResult<Vec<_>>>()?;
-    if !subtasks.is_empty() {
-        let ids = subtasks
-            .iter()
-            .map(|subtask| subtask.id.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let _contexts: Vec<MysqlRow> = Mysql::fetch_all(
-            &state.mysql,
-            &format!(
-                "SELECT subtask_contexts.id AS subtask_contexts_id, \
-                 subtask_contexts.subtask_id AS subtask_contexts_subtask_id, \
-                 subtask_contexts.user_id AS subtask_contexts_user_id, \
-                 subtask_contexts.context_type AS subtask_contexts_context_type, \
-                 subtask_contexts.name AS subtask_contexts_name, \
-                 subtask_contexts.status AS subtask_contexts_status, \
-                 subtask_contexts.error_message AS subtask_contexts_error_message, \
-                 subtask_contexts.binary_data AS subtask_contexts_binary_data, \
-                 subtask_contexts.image_base64 AS subtask_contexts_image_base64, \
-                 subtask_contexts.extracted_text AS subtask_contexts_extracted_text, \
-                 subtask_contexts.text_length AS subtask_contexts_text_length, \
-                 subtask_contexts.type_data AS subtask_contexts_type_data, \
-                 subtask_contexts.created_at AS subtask_contexts_created_at, \
-                 subtask_contexts.updated_at AS subtask_contexts_updated_at \n\
-                 FROM subtask_contexts \nWHERE subtask_contexts.subtask_id IN ({ids}) \
-                 ORDER BY subtask_contexts.id ASC"
-            ),
-            (),
-        )
-        .await?;
-    }
-    Ok(subtasks)
-}
-
 /// `resolve_for_task`'s window: order the lineage's items by
 /// `(message_id, created_at, id)` and keep the last [`SUBTASK_HISTORY_LIMIT`]
 /// of them.
@@ -204,24 +75,23 @@ pub async fn list_subtask_history(
     task_id: i64,
     owner_user_id: i64,
 ) -> anyhow::Result<Vec<SubtaskRow>> {
-    // `list_by_task_ordered` guards with `_owner_matches_task_id` only for
-    // new-format ids (`if is_new_task_id(task_id) and not ...`); legacy ids
-    // list subtasks directly through `_subtask_model_for_task_lookup`.
-    if state.task_policy.resolve_migrated_legacy
-        && (state.task_policy.is_scoped_id)(task_id as u64)
-        && !owner_matches_task_id(state, task_id, owner_user_id).await?
-    {
-        return Ok(Vec::new());
-    }
-    Ok(history_window(
-        list_subtasks_by_task(state, task_id, Some(owner_user_id)).await?,
-    ))
+    // `list_by_task_ordered` runs the new-format owner guard and the attached
+    // context load itself; only the rows feed the window.
+    let listing = state
+        .task_store
+        .list_subtasks_by_task_ordered(task_id, owner_user_id)
+        .await?;
+    let subtasks = listing
+        .rows
+        .iter()
+        .map(decode_subtask_row)
+        .collect::<brz_mysql::MysqlResult<Vec<_>>>()?;
+    Ok(history_window(subtasks))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sql_test_support::assert_routed_sql;
 
     fn subtask(message_id: i32, id: i64) -> SubtaskRow {
         SubtaskRow {
@@ -286,16 +156,5 @@ mod tests {
                 .collect::<Vec<i64>>(),
             vec![20, 10, 30]
         );
-    }
-
-    #[test]
-    fn subtask_projection_includes_every_labeled_column() {
-        let columns = SUBTASKS_BY_TASK_SQL;
-        assert!(columns.starts_with("SELECT id, user_id, task_id, team_id, title, bot_ids"));
-        assert!(columns.contains("`role`"));
-        assert!(columns.contains("executor_deleted_at"));
-        assert!(columns.contains("reply_to_subtask_id"));
-        assert!(columns.contains("ORDER BY message_id ASC, created_at ASC"));
-        assert_routed_sql(columns, 1);
     }
 }

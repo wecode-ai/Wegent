@@ -92,8 +92,14 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
   const detailSurface = scope('.issue-drawer-detail')
   const conversationSurface = scope('.issue-drawer-conversation')
   const activity = JSON.parse(await control.command('snapshot', detail))
-  const linkId = activity.testIds.find(id => id.startsWith('cloud-task-activity-open-task-'))
-  assert.ok(linkId, 'The Issue has no execution conversation link')
+  const executionBadge = scope(
+    '[data-testid^="cloud-task-activity-execution-badge-"][data-status="succeeded"]'
+  )
+  assert.ok(
+    activity.testIds.some(id => id.startsWith('cloud-task-activity-execution-badge-')),
+    'The Issue has no completed execution in its activity'
+  )
+  await control.command('waitFor', executionBadge, { timeoutMs })
   await control.command('waitFor', detail, { stableMs: 300, timeoutMs })
   const workspace = await getSingleElementMetrics(
     control,
@@ -122,7 +128,7 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
   await sampleDrawerMotion(
     control,
     scope,
-    () => control.command('click', scope(`[data-testid="${linkId}"]`)),
+    () => control.command('click', executionBadge),
     'open',
     timeoutMs
   )
@@ -185,7 +191,7 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
   assert.ok(Math.abs(restored.left - before.left) <= 1, 'Returning must restore the Issue position')
   assert.ok(Math.abs(restored.width - before.width) <= 1, 'Returning must restore the Issue width')
 
-  await control.command('click', scope(`[data-testid="${linkId}"]`))
+  await control.command('click', executionBadge)
   await control.command('waitFor', chat, { timeoutMs })
   await control.command('press', scope('[data-testid="ai-chat-modal-close"]'), { key: 'Escape' })
   await control.command('waitFor', chat, { visible: false, timeoutMs })

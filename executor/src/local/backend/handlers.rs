@@ -215,6 +215,12 @@ where
                         "Runtime work handler is not available",
                     ))
                 };
+                let logical_success = response
+                    .get("success")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let logical_error = response.get("error").cloned();
+                let response = encode_runtime_rpc_response(&method, response);
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc responded",
                     &[
@@ -225,19 +231,20 @@ where
                             response
                                 .get("success")
                                 .and_then(Value::as_bool)
-                                .unwrap_or(false)
+                                .unwrap_or(logical_success)
                                 .to_string(),
                         ),
                         (
                             "error",
                             response
                                 .get("error")
+                                .or(logical_error.as_ref())
                                 .map(|v| v.to_string())
                                 .unwrap_or_default(),
                         ),
                     ],
                 ));
-                Some(encode_runtime_rpc_response(&method, response))
+                Some(response)
             })
         })
     }

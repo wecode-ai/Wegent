@@ -115,6 +115,7 @@ chmodSync(output, 0o755)
           PATH: `${binDirectory}:${process.env.PATH}`,
           TEST_BUILD_LOG: buildLog,
           TEST_EXECUTOR_TEMPLATE: executorTemplate,
+          WEGENT_APP_LIFECYCLE_FD: '',
           WEGENT_EXECUTOR_SOURCE_DIR: executorDirectory,
         },
         stdio: ['pipe', 'pipe', 'pipe'],

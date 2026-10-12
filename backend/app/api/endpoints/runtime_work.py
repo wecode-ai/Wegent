@@ -831,6 +831,7 @@ async def create_runtime_task_endpoint(
     "/materialize",
     response_model=RuntimeTaskMaterializeResponse,
     response_model_by_alias=True,
+    response_model_exclude_none=True,
 )
 @trace_async("runtime_work.materialize", "runtime_work.api")
 async def materialize_runtime_task_endpoint(

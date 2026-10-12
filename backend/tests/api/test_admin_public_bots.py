@@ -5,6 +5,7 @@
 from app.api.endpoints.admin.public_bots import (
     _bot_to_response,
     _build_bot_json_from_form_data,
+    _get_model_category_type,
     _validate_bot_resource_references,
 )
 from app.models.kind import Kind
@@ -24,6 +25,25 @@ def _preload_skill_refs() -> dict:
 
 def _dump_refs(refs: dict) -> dict:
     return {name: ref.model_dump() for name, ref in refs.items()}
+
+
+def test_legacy_nested_model_category_is_not_read_as_an_llm() -> None:
+    """A Model that nests its category in modelConfig must not read as LLM."""
+    model = Kind(
+        user_id=0,
+        kind="Model",
+        name="legacy-embedding-model",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "legacy-embedding-model", "namespace": "default"},
+            "spec": {"modelConfig": {"modelType": "embedding", "env": {}}},
+        },
+        is_active=True,
+    )
+
+    assert _get_model_category_type(model) == "embedding"
 
 
 def test_public_bot_create_accepts_preload_skill_fields():

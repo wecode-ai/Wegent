@@ -787,6 +787,22 @@ impl LocalTaskStore {
         let timestamp = now();
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
+        let is_human_collaboration_assignment = transaction
+            .query_row(
+                "SELECT COALESCE(
+                            json_extract(
+                                metadata,
+                                '$.collaboration_assignment.assignee_type'
+                            ) = 'human',
+                            0
+                        )
+                 FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task' AND deleted_at IS NULL",
+                [item_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()?
+            .unwrap_or(false);
         let (source_binding_id, delivery_metadata): (Option<String>, String) = transaction
             .query_row(
                 "SELECT source_task_binding_id, metadata FROM loop_items
@@ -869,9 +885,23 @@ impl LocalTaskStore {
                 params![delivery_id, timestamp, item_id],
             )?;
         }
+        if is_human_collaboration_assignment {
+            transaction.execute(
+                "UPDATE loop_items
+                 SET status = 'completed', completed_at = ?1,
+                     metadata = json_set(metadata, '$.is_unread', json('true')),
+                     version = version + 1, updated_at = ?1
+                 WHERE id = ?2",
+                params![timestamp, item_id],
+            )?;
+        }
         transaction.commit()?;
         drop(connection);
-        self.get_delivery(item_id, delivery_id)
+        let delivery = self.get_delivery(item_id, delivery_id)?;
+        if is_human_collaboration_assignment {
+            self.resume_manager_for_human_delivery(item_id)?;
+        }
+        Ok(delivery)
     }
 
     pub fn discard_delivery(&self, delivery_id: &str) -> Result<(), TaskRuntimeError> {

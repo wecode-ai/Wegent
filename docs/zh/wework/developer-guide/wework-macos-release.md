@@ -19,6 +19,40 @@ macOS arm64 和 x64 发布都使用 Apple Silicon `macos-14` runner。x64 构建
 保留七天的桌面 E2E 诊断产物。必须先用这些日志定位根因，不能通过重跑或放宽
 E2E 断言隐藏失败。
 
+## macOS 应用图标
+
+macOS 包同时包含现有 `wework/resources/icons/icon.icns` 和
+构建时生成的 `Assets.car`，通过 `CFBundleIconName=Wework` 注册资产目录
+中的 App 图标。macOS 27 会给未注册的 ICNS 图标再加一层底板并缩小图案；注册资产
+目录可避免重复处理。目录中的所有尺寸直接取自现有 ICNS，保留 macOS 15 的圆角、
+留白和图案，不回退旧图标，也不使用 Icon Composer 重新生成旧系统的位图。
+
+Electron Packager 本地包、Electron Builder 安装包和在线更新包必须都将资产目录
+放在 `Contents/Resources/Assets.car`，并保留 `CFBundleIconFile` 指向的 ICNS。
+macOS 打包需要完整 Xcode。Packager 在打包前、Builder 在 `beforePack` 阶段自动
+从当前 ICNS 编译图标，安装包和在线更新包使用同一生成流程。编译失败会阻止打包。
+产物写入已忽略的 `wework/electron/resources/macos/`，不提交生成的二进制文件。
+
+```mermaid
+flowchart LR
+  ICNS[Existing ICNS artwork] --> Compiler[iconutil and actool]
+  Compiler --> Catalog[Generated Assets.car]
+  Catalog --> Packager[Local app bundle]
+  Catalog --> Builder[Installer and online update]
+```
+
+修改 ICNS 后，可在安装完整 Xcode 的 Mac 上单独检查编译和产物：
+
+```bash
+node wework/electron/scripts/compile-macos-app-icon.mjs
+pnpm --dir wework/electron test scripts/macos-app-icon.test.mjs
+```
+
+脚本从 ICNS 提取全部十个尺寸表示并编译标准 `.appiconset`，同时更新
+同一生成目录下 `app-icon.json` 的源文件和产物 SHA-256。编译产物以原子替换方式
+写入，避免并行安装包和在线更新构建读取不完整文件；回归测试实际编译目录并核对
+十种尺寸和哈希。
+
 ## 版本与产物
 
 发布版本同时写入 `wework/package.json` 和 `wework/electron/package.json`。正式
@@ -47,13 +81,9 @@ Electron 版本通过 `electron-updater` 检查 `wework-updater` Release 中的
 如果所选通道尚未发布 Electron 版本，对应 YAML 清单可以不存在；客户端将其视为
 “暂无可用更新”，而不是网络错误。其他检查失败仍需原样报告。
 
-macOS 和 Windows 的正式版本 Release 必须分别包含 ZIP 和 NSIS 安装器对应的
-`.blockmap`。macOS 客户端将完整下载或差分下载成功后的 ZIP、blockmap、版本、
-架构、URL 和 SHA-512 作为一组经过验证的差分基线原子保存；后续更新只使用这组本地
-基线，不根据新产物文件名猜测旧 blockmap 地址。首次更新、缓存基线不完整或校验
-失败时下载完整安装包并建立新基线。差分校验失败时只再执行一次完整下载。构建产物
-缺少任一 blockmap 时发布流程必须失败。差分计划、累计下载量和回退原因记录在应用
-日志目录的 `app-update.log` 中。
+Wework 禁用 `electron-updater` 的差分下载和旧 ZIP 缓存。macOS 与 Windows
+客户端只下载经过压缩的完整 Host 更新包，避免低复用率差分产生大量 Range 请求、
+重复流量和额外磁盘占用。组件更新仍按内容哈希复用未变化的组件。
 
 发布流程只生成 Electron YAML 更新清单和组件清单。macOS 和 Windows 使用
 Electron 自身的 ZIP/NSIS 更新链路；Linux 暂不提供应用内自动升级，继续使用
@@ -150,7 +180,9 @@ Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 El
 组件的精简宿主包；客户端会先暂存目标应用版本的完整组件集合，再安装宿主更新。
 不具备该能力的旧客户端会先收到一次包含托管组件的迁移宿主包，避免升级后缺少
 运行资源。组件清单和压缩包必须先于 Electron YAML 发布，防止客户端看到宿主更新
-时对应组件尚不可下载。完整安装包始终包含所有组件，以支持离线首次安装。
+时对应组件尚不可下载。`WeWorkHostUpdate` ZIP 必须使用正常压缩，不能使用仅封装
+原始字节的 `store` 模式；正式 Release E2E 会读取 ZIP 摘要并拒绝未压缩的宿主更新
+产物。完整安装包始终包含所有组件，以支持离线首次安装。
 
 客户端只接受与当前 Electron 应用版本、通道、平台和架构完全匹配的组件清单。
 清单中的 `downloadUrl` 可以指向版本 Release、共享依赖 Release 或独立对象存储，
@@ -163,8 +195,8 @@ Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 El
 应用更新由主进程中的单个任务管理。同一版本和通道的自动下载、手动下载与重复检查
 共享任务，检查操作不得清空正在进行的下载。缺失组件最多使用三个并发下载；全部
 完成大小、压缩包哈希和解包内容校验后才写入 `pending`。更新进度依次覆盖组件、
-宿主下载、校验和安装就绪阶段，并累计差分失败前已经传输的字节；Squirrel.Mac 对
-本地缓存 ZIP 的安装交接不计入网络下载量。
+宿主下载和安装就绪阶段；Squirrel.Mac 对已下载 ZIP 的本地安装交接不计入网络
+下载量。
 
 单个组件下载遇到明确的瞬时传输失败时，客户端最多尝试三次，并在失败后分别等待
 一秒、两秒再重试。可重试范围仅包括连接中断、DNS/连接/请求超时、HTTP 408、429

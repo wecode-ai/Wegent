@@ -1184,7 +1184,7 @@ def synchronize_external_document(
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ) -> KnowledgeDocumentResponse:
-    """Fetch and re-index the latest body of a synchronized external document."""
+    """Fetch and re-index the latest body of an imported external document."""
     try:
         result = external_document_import_service.request_source_refresh(
             db=db, user=current_user, document_id=document_id
@@ -1207,6 +1207,8 @@ def delete_document(
     db: Session = Depends(get_db),
 ):
     """Delete a document from the knowledge base."""
+    from app.services.rag.remote_gateway import RemoteRagGatewayError
+
     try:
         result = KnowledgeService.delete_document(
             db=db,
@@ -1243,6 +1245,13 @@ def delete_document(
             )
 
         return None
+    except RemoteRagGatewayError as e:
+        # The remote index removal failed, so the document was kept. Surface the
+        # runtime failure instead of reporting a successful delete.
+        raise HTTPException(
+            status_code=e.status_code or status.HTTP_502_BAD_GATEWAY,
+            detail=str(e),
+        ) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -3,6 +3,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { weworkIssueScheme } from './scheme'
 
 export function NotificationEventsBridge({ chatStream }: Pick<WorkbenchServices, 'chatStream'>) {
   const { t } = useTranslation('common')
@@ -19,6 +20,7 @@ export function NotificationEventsBridge({ chatStream }: Pick<WorkbenchServices,
               task: payload.itemTitle,
               project: payload.projectName,
             }),
+            url: weworkIssueScheme(payload.projectId, payload.itemId),
           })
         },
       }),

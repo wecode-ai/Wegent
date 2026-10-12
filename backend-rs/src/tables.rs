@@ -66,8 +66,8 @@ const DOCUMENT_COLUMNS: &str = "knowledge_documents.id AS knowledge_documents_id
 
 /// The stored `splitter_config` payload: either the normalized shape
 /// (`chunk_strategy` + strategy-specific config) or one of the legacy
-/// `type`-tagged shapes (`shared.models.splitter_config`). Only the keys
-/// the normalized response reads are modeled; serde ignores the rest.
+/// `type`-tagged shapes (`shared.knowledge_contracts.splitter_config`). Only
+/// the keys the normalized response reads are modeled; serde ignores the rest.
 #[derive(Debug, serde::Deserialize)]
 #[serde(untagged)]
 enum StoredSplitterConfig {
@@ -404,7 +404,8 @@ fn quote_literal(value: &str) -> String {
     out
 }
 
-/// `normalize_splitter_config` (`shared.models.splitter_config`): convert
+/// `normalize_splitter_config` (`shared.knowledge_contracts.splitter_config`):
+/// convert
 /// legacy and normalized payloads to the one stable response shape. The
 /// result is built with `json!` so the field order matches the pydantic
 /// model's serialization order.

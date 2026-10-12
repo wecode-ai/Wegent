@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -20,10 +20,22 @@ struct Intent {
     connector_slug: String,
 }
 
-#[derive(Default)]
 pub(super) struct Reconciler {
     retries: HashMap<(u64, String), Instant>,
     cursor: usize,
+    retry_signal: Option<PathBuf>,
+    retry_signal_value: Option<Vec<u8>>,
+}
+
+impl Default for Reconciler {
+    fn default() -> Self {
+        Self {
+            retries: HashMap::new(),
+            cursor: 0,
+            retry_signal: super::e2e_retry_signal(),
+            retry_signal_value: None,
+        }
+    }
 }
 
 impl Reconciler {
@@ -32,6 +44,7 @@ impl Reconciler {
         transport: T,
         home: &Path,
     ) -> Result<(), AuthError> {
+        self.consume_retry_signal();
         let ids = installed_ids(home)?;
         // Rotate batches so an unavailable source never starves a later plugin.
         let selected: Vec<_> = ids
@@ -91,11 +104,28 @@ impl Reconciler {
         self.retries
             .insert(key, Instant::now() + Duration::from_secs(60));
     }
+
+    fn consume_retry_signal(&mut self) {
+        let Some(path) = self.retry_signal.as_ref() else {
+            return;
+        };
+        let Ok(value) = fs::read(path) else {
+            return;
+        };
+        if self.retry_signal_value.as_ref() == Some(&value) {
+            return;
+        }
+        self.retry_signal_value = Some(value);
+        self.retries.clear();
+    }
 }
 
 fn installed_ids(home: &Path) -> Result<Vec<u64>, AuthError> {
-    let path = home.join("capabilities/manifest.json");
-    let metadata = match fs::symlink_metadata(&path) {
+    installed_ids_at(&super::migration::manifest_path_for_home(home))
+}
+
+fn installed_ids_at(path: &Path) -> Result<Vec<u64>, AuthError> {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(value) => value,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
         Err(_) => return Err(AuthError("plugin_auth_invalid_package")),
@@ -124,12 +154,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn discovery_reads_explicit_relocated_manifest_without_legacy_home() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp
+            .path()
+            .join("workbench/wework/test/capabilities/manifest.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            json!({"plugins": {
+                "mail": {"installed_plugin_id":42,"managed":true,"enabled":true}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(installed_ids_at(&path).unwrap(), vec![42]);
+        assert!(!temp.path().join("capabilities").exists());
+    }
+
+    #[test]
     fn discovery_only_reports_enabled_managed_installations() {
         let home = tempfile::tempdir().unwrap();
         assert!(installed_ids(home.path()).unwrap().is_empty());
         fs::create_dir(home.path().join("capabilities")).unwrap();
         fs::write(
-            home.path().join("capabilities/manifest.json"),
+            home.path().join("capabilities/manifest-v2.json"),
             json!({"plugins": {
                 "managed": {"installed_plugin_id": 12, "managed": true, "enabled": true},
                 "disabled": {"installed_plugin_id": 13, "managed": true, "enabled": false},
@@ -139,7 +188,42 @@ mod tests {
             .to_string(),
         )
         .unwrap();
+        fs::write(
+            home.path().join("capabilities/manifest.json"),
+            json!({"plugins": {
+                "stale": {"installed_plugin_id": 99, "managed": true, "enabled": true}
+            }})
+            .to_string(),
+        )
+        .unwrap();
         assert_eq!(installed_ids(home.path()).unwrap(), vec![12]);
+    }
+
+    #[test]
+    fn e2e_retry_signal_clears_cooldowns_only_when_it_changes() {
+        let home = tempfile::tempdir().unwrap();
+        let signal = home.path().join("retry.signal");
+        let key = (12, "mail".to_owned());
+        let mut reconciler = Reconciler {
+            retries: HashMap::from([(key.clone(), Instant::now() + Duration::from_secs(60))]),
+            cursor: 0,
+            retry_signal: Some(signal.clone()),
+            retry_signal_value: None,
+        };
+
+        fs::write(&signal, "1").unwrap();
+        reconciler.consume_retry_signal();
+        assert!(reconciler.retries.is_empty());
+
+        reconciler
+            .retries
+            .insert(key.clone(), Instant::now() + Duration::from_secs(60));
+        reconciler.consume_retry_signal();
+        assert!(reconciler.retries.contains_key(&key));
+
+        fs::write(signal, "2").unwrap();
+        reconciler.consume_retry_signal();
+        assert!(reconciler.retries.is_empty());
     }
 
     #[cfg(unix)]
@@ -150,7 +234,7 @@ mod tests {
         fs::write(home.path().join("untrusted.json"), r#"{"plugins":{}}"#).unwrap();
         std::os::unix::fs::symlink(
             home.path().join("untrusted.json"),
-            home.path().join("capabilities/manifest.json"),
+            home.path().join("capabilities/manifest-v2.json"),
         )
         .unwrap();
         assert_eq!(

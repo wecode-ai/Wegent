@@ -1,6 +1,12 @@
 import { FileText, Loader2, Paperclip, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, type Ref } from "react";
+import { ComposerAutocompleteInput } from "../composer/ComposerAutocompleteInput";
+import type { ComposerExternalMentionCandidate } from "../composer/composerAutocompleteInputTypes";
+import type { ComposerInputHandle } from "../composer/composerInputTypes";
+import type { CollaborationTranslate } from "../i18n";
 import { IssueInlineCommentComposer } from "./IssueInlineCommentComposer";
+import type { IssueMentionOption } from "./issueCommentMentions";
+import { issueCommentSubmission } from "./issueCommentMentions";
 
 export interface IssueReplyAttachment {
   id: string | number;
@@ -56,6 +62,9 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
   attachments,
   aiError,
   onSend,
+  mentionCandidates = [],
+  translate,
+  inputRef,
   testIds = issueReplyTestIds(rootId),
 }: {
   rootId: string;
@@ -63,19 +72,27 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
   labels: IssueReplyLabels;
   attachments?: IssueReplyAttachments<T>;
   aiError?: string | null;
-  onSend(text: string): Promise<{ ok: boolean; error?: string }>;
+  onSend(
+    text: string,
+    mentions: IssueMentionOption[],
+  ): Promise<{ ok: boolean; error?: string }>;
+  mentionCandidates?: ComposerExternalMentionCandidate[];
+  translate: CollaborationTranslate;
+  /** Lets a host (or a test) drive the editor the draft is written in. */
+  inputRef?: Ref<ComposerInputHandle>;
   testIds?: IssueReplyTestIds;
 }) {
-  const input = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<HTMLElement>(null);
   const submittingRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const attachmentReady = attachments?.isAttachmentReadyToSend ?? true;
 
-  async function submit() {
-    const text = draft.trim();
-    if (!text || disabled || submittingRef.current) return;
+  async function submit(nextDraft = draft) {
+    const { body, mentions } = issueCommentSubmission(nextDraft);
+    if (!body || disabled || submittingRef.current) return;
     if (!attachmentReady) {
       setError(labels.uploading);
       return;
@@ -84,7 +101,7 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
     setSubmitting(true);
     setError(null);
     try {
-      const result = await onSend(text);
+      const result = await onSend(body, mentions);
       if (result.ok) {
         setDraft("");
         attachments?.resetAttachments();
@@ -156,14 +173,14 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
               type="button"
               data-testid={testIds.attach}
               disabled={disabled || submitting}
-              onClick={() => input.current?.click()}
+              onClick={() => fileInput.current?.click()}
               aria-label={labels.attach}
               className="task-detail-reply-attach"
             >
               <Paperclip className="h-3.5 w-3.5" />
             </button>
             <input
-              ref={input}
+              ref={fileInput}
               type="file"
               multiple
               hidden
@@ -177,31 +194,28 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
             />
           </>
         ) : null}
-        <textarea
-          rows={1}
-          data-testid={testIds.input}
+        <ComposerAutocompleteInput
+          ref={inputRef}
           value={draft}
+          onChange={setDraft}
+          onSubmit={(nextValue) => void submit(nextValue ?? draft)}
+          canSend={
+            !disabled && !submitting && Boolean(draft.trim()) && attachmentReady
+          }
           disabled={disabled || submitting}
-          onChange={(event) => setDraft(event.target.value)}
-          onPaste={(event) => {
-            const files = Array.from(event.clipboardData.files);
-            if (attachments && files.length) {
-              event.preventDefault();
-              void attachments.handleFileSelect(files);
-            }
-          }}
-          onKeyDown={(event) => {
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
+          testId={testIds.input}
+          translate={translate}
+          className=""
+          rows={1}
+          textareaRef={editorRef}
+          mentionScope="external"
+          externalMentionCandidates={mentionCandidates}
+          onPasteFiles={
+            attachments
+              ? (files) => void attachments.handleFileSelect(files)
+              : undefined
+          }
           placeholder={labels.placeholder}
-          aria-label={labels.placeholder}
         />
       </IssueInlineCommentComposer>
       {attachments && attachments.errors.size > 0 ? (

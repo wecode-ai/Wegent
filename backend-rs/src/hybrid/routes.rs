@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::{BoxError, RouteRule, RouteTable, RoutesConfig};
+use crate::{BoxError, ExclusionRule, RouteRule, RouteTable, RoutesConfig};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,19 +22,29 @@ struct FileConfig {
     include: Vec<PathBuf>,
     #[serde(default)]
     routes: Vec<RouteRule>,
+    #[serde(default)]
+    exclude: Vec<ExclusionRule>,
 }
 
 pub(super) fn load(path: &Path) -> Result<RouteTable, BoxError> {
+    Ok(RouteTable::compile(load_routes_config(path)?)?)
+}
+
+/// Loads route selection and exclusion rules, including child files.
+///
+/// # Errors
+/// Returns an error for unreadable, invalid, cyclic or repeated route files.
+pub fn load_routes_config(path: &Path) -> Result<RoutesConfig, BoxError> {
     let mut seen = HashSet::new();
-    let mut rules = Vec::new();
-    load_rules(path, &mut seen, &mut rules)?;
-    Ok(RouteTable::compile(RoutesConfig { routes: rules })?)
+    let mut config = RoutesConfig::default();
+    load_rules(path, &mut seen, &mut config)?;
+    Ok(config)
 }
 
 fn load_rules(
     path: &Path,
     seen: &mut HashSet<PathBuf>,
-    rules: &mut Vec<RouteRule>,
+    rules: &mut RoutesConfig,
 ) -> Result<(), BoxError> {
     let canonical = path.canonicalize()?;
     if !seen.insert(canonical.clone()) {
@@ -49,7 +59,8 @@ fn load_rules(
             .join(include);
         load_rules(&child, seen, rules)?;
     }
-    rules.extend(config.routes);
+    rules.routes.extend(config.routes);
+    rules.exclude.extend(config.exclude);
     Ok(())
 }
 
@@ -58,6 +69,70 @@ mod tests {
     use super::*;
     use http::Method;
     use std::collections::BTreeSet;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Fixture(PathBuf);
+
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "wegent-route-exclusions-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn includes_preserve_exclusions_from_both_parent_and_child_files() {
+        let fixture = Fixture::new();
+        let root = fixture.0.join("routes.toml");
+        std::fs::write(
+            &root,
+            "include = [\"child.toml\"]\n[[routes]]\npath = \"/api/*path\"\n\
+             [[exclude]]\npath = \"/api/private\"",
+        )
+        .unwrap();
+        std::fs::write(
+            fixture.0.join("child.toml"),
+            "[[routes]]\npath = \"/health\"\n\
+             [[exclude]]\nmethods = [\"GET\"]\npath = \"/api/events\"",
+        )
+        .unwrap();
+        let config = load_routes_config(&root).unwrap();
+        assert_eq!(config.routes.len(), 2);
+        assert_eq!(config.exclude.len(), 2);
+        let table = load(&root).unwrap();
+        assert!(!table.matches(&Method::GET, "/api/events"));
+        assert!(table.matches(&Method::POST, "/api/events"));
+        assert!(!table.matches(&Method::POST, "/api/private"));
+        assert!(table.matches(&Method::GET, "/health"));
+        assert!(table.matches(&Method::GET, "/api/other"));
+    }
+
+    #[test]
+    fn invalid_exclusions_in_included_files_fail_loading() {
+        let fixture = Fixture::new();
+        let root = fixture.0.join("routes.toml");
+        std::fs::write(&root, "include = [\"child.toml\"]").unwrap();
+        for source in [
+            "[[exclude]]\nmethods = [\"BAD METHOD\"]\npath = \"/api/events\"",
+            "[[exclude]]\npath = \"/api/*path/child\"",
+            "[[exclude]]\npath = \"/api/events\"\nadmission = {}",
+        ] {
+            std::fs::write(fixture.0.join("child.toml"), source).unwrap();
+            assert!(load(&root).is_err());
+        }
+    }
 
     #[test]
     fn public_cutover_file_selects_only_reviewed_registered_apis() {

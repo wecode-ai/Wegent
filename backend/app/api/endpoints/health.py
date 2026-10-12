@@ -16,9 +16,29 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.config import settings
 from app.core.shutdown import shutdown_manager
 
 router = APIRouter()
+probe_router = APIRouter()
+
+
+@probe_router.get("/")
+async def root() -> dict[str, str]:
+    """Return API information without accessing external services."""
+    return {
+        "name": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "api_prefix": settings.API_PREFIX,
+        "docs_url": f"{settings.API_PREFIX}/docs",
+        "socketio_path": "/socket.io",
+    }
+
+
+@probe_router.get("/health")
+async def health() -> dict[str, str]:
+    """Report process liveness for container and load balancer probes."""
+    return {"status": "healthy"}
 
 
 @router.get("/health")

@@ -38,7 +38,7 @@ describe('TeamBindModeCards', () => {
     expect(screen.getByRole('checkbox', { name: /device/i })).not.toBeChecked()
     expect(screen.queryByRole('checkbox', { name: /video/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: /image/i })).not.toBeInTheDocument()
-    expect(screen.getByText('Use for conversation.')).toBeInTheDocument()
+    expect(screen.getByText('Chat')).toBeInTheDocument()
   })
 
   it('shows video and image modes after expanding more modes', () => {
@@ -48,8 +48,8 @@ describe('TeamBindModeCards', () => {
 
     expect(screen.getByRole('checkbox', { name: /video/i })).not.toBeChecked()
     expect(screen.getByRole('checkbox', { name: /image/i })).not.toBeChecked()
-    expect(screen.getByText('Use for video tasks.')).toBeInTheDocument()
-    expect(screen.getByText('Use for image tasks.')).toBeInTheDocument()
+    expect(screen.getByText('Video')).toBeInTheDocument()
+    expect(screen.getByText('Image')).toBeInTheDocument()
   })
 
   it('automatically expands when an advanced mode is selected', () => {

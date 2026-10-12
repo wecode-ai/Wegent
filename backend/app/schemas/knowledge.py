@@ -44,6 +44,7 @@ from app.schemas.knowledge_search import KnowledgeSearchRequest
 from app.schemas.rag import SplitterConfig
 from app.services.knowledge.retrieval_capabilities import derive_retrieval_capabilities
 from app.services.knowledge.splitter_config import normalize_splitter_config
+from shared.knowledge_module import VALID_RETRIEVAL_MODES
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +223,7 @@ class KnowledgeBaseRetrievalProfileUpdate(BaseModel):
             )
         if not config.embedding_config.model_name:
             raise ValueError("Retrieval profile requires an embedding model name")
-        if config.retrieval_mode not in {"vector", "keyword", "hybrid"}:
+        if config.retrieval_mode not in VALID_RETRIEVAL_MODES:
             raise ValueError("Retrieval profile has an unsupported retrieval mode")
         return self
 

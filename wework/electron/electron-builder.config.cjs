@@ -1,6 +1,7 @@
 const path = require('node:path')
 
 const { resolveBuildIdentity } = require('./scripts/build-identity.cjs')
+const macosAppIcon = require('./scripts/macos-app-icon.cjs')
 
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL ||
@@ -26,7 +27,8 @@ module.exports = {
   protocols: [{ name: 'Wework', schemes: ['wework'] }],
   productName: identity.productName,
   executableName: identity.executableName,
-  compression: onlineUpdateBuild ? 'store' : 'normal',
+  compression: 'normal',
+  beforePack: macosAppIcon.prepare,
   extraMetadata: {
     name: identity.packageName,
     weworkUpdateBaseUrl: updateBaseUrl,
@@ -66,10 +68,12 @@ module.exports = {
     entitlements: path.resolve(__dirname, 'entitlements.mac.plist'),
     entitlementsInherit: path.resolve(__dirname, 'entitlements.mac.plist'),
     extendInfo: {
+      ...macosAppIcon.extendInfo,
       NSMicrophoneUsageDescription: `${identity.productName} uses the microphone to record audio when you use voice features.`,
     },
     ...(useCustomMacosNotarization ? { notarize: false } : {}),
-    icon: path.resolve(__dirname, '../resources/icons/icon.icns'),
+    icon: macosAppIcon.icon,
+    extraFiles: [{ from: macosAppIcon.assetCatalog, to: 'Resources/Assets.car' }],
     signIgnore: process.env.APPLE_SIGNING_IDENTITY
       ? managedComponentResources.map(resource => '/Contents/Resources/' + resource.to + '/')
       : ['/Contents/Resources/wework-core-plugins/'],

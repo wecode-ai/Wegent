@@ -59,6 +59,34 @@ describe("workspace operations", () => {
     ).toBe("review");
   });
 
+  it("does not let an in-progress Issue override a terminal execution", () => {
+    expect(
+      workspaceIssueOperationState(
+        issue({ status: "in_progress", execution_state: "cancelled" }),
+      ),
+    ).toBe("pending");
+    expect(
+      workspaceIssueOperationState(
+        issue({ status: "in_progress", execution_state: "succeeded" }),
+      ),
+    ).toBe("pending");
+    expect(
+      workspaceIssueOperationState(
+        issue({ status: "in_progress", execution_state: "running" }),
+      ),
+    ).toBe("running");
+    expect(
+      workspaceIssueOperationState(
+        issue({ status: "in_progress", execution_state: "cancel_requested" }),
+      ),
+    ).toBe("pending");
+    expect(
+      workspaceIssueOperationState(
+        issue({ status: "in_progress", execution_state: "queued" }),
+      ),
+    ).toBe("pending");
+  });
+
   it("summarizes current operating state across projects", () => {
     const snapshot = createWorkspaceOperationsSnapshot({
       projects: [project],

@@ -1,6 +1,8 @@
 [
   {
     "id": "1712605396200092385",
+    "workspace_id": null,
+    "workspace_context": null,
     "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
     "project_key": "WEWORKBU0CEBB1",
     "name": "WeWork Bug Feedback",
@@ -73,6 +75,12 @@
       "nodes": []
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
     "created_by_user_id": 86,
     "current_user_id": 1,
@@ -86,6 +94,8 @@
   },
   {
     "id": "1712605396200092385",
+    "workspace_id": null,
+    "workspace_context": null,
     "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
     "project_key": "WEWORKBU0CEBB1",
     "name": "WeWork Bug Feedback",
@@ -158,6 +168,12 @@
       "nodes": []
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
     "created_by_user_id": 86,
     "current_user_id": 1,
@@ -171,6 +187,8 @@
   },
   {
     "id": "1712605396200092385",
+    "workspace_id": null,
+    "workspace_context": null,
     "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
     "project_key": "WEWORKBU0CEBB1",
     "name": "WeWork Bug Feedback",
@@ -243,6 +261,12 @@
       "nodes": []
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
     "created_by_user_id": 86,
     "current_user_id": 1,
@@ -256,6 +280,8 @@
   },
   {
     "id": "1712605396200092385",
+    "workspace_id": null,
+    "workspace_context": null,
     "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
     "project_key": "WEWORKBU0CEBB1",
     "name": "WeWork Bug Feedback",
@@ -329,6 +355,12 @@
       "nodes": []
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
     "created_by_user_id": 86,
     "current_user_id": 1,
@@ -344,6 +376,8 @@
   },
   {
     "id": "1712605396200092385",
+    "workspace_id": null,
+    "workspace_context": null,
     "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
     "project_key": "WEWORKBU0CEBB1",
     "name": "WeWork Bug Feedback",
@@ -395,6 +429,12 @@
       "nodes": []
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
     "created_by_user_id": 86,
     "current_user_id": 1,
@@ -408,6 +448,8 @@
   },
   {
     "id": "1712605396200092385",
+    "workspace_id": null,
+    "workspace_context": null,
     "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
     "project_key": "WEWORKBU0CEBB1",
     "name": "WeWork Bug Feedback",
@@ -484,6 +526,12 @@
       ]
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
     "created_by_user_id": 86,
     "current_user_id": 1,

@@ -58,7 +58,10 @@ export function PluginPickerMenu(props: {
         props.onInsertReference(reference)
         showTrialGuide?.(displayAppName(app), app)
         if (catalog.prefetchLocalAuth)
-          void prefetchLocalConnectorAuthForPluginNames([composerAppPluginKey(app)])
+          void prefetchLocalConnectorAuthForPluginNames([composerAppPluginKey(app)]).catch(() => {
+            // Selection keeps the draft; send preflight reports authoritative read failures.
+            console.warn('[Wework] Plugin authorization prefetch failed')
+          })
         const recent = [...readRecentPluginAppIds().keys()]
         window.localStorage.setItem(
           RECENT_PLUGIN_APPS_KEY,

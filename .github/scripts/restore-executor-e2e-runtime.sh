@@ -17,7 +17,9 @@ zstd -dc "$image_archive" | docker load
 docker image inspect "$image_tag" >/dev/null
 
 mkdir -p executor/target/release
-cp "$binary_archive" executor/target/release/wegent-executor
-chmod 0755 executor/target/release/wegent-executor
+if [[ ! -x executor/target/release/wegent-executor ]]; then
+  cp "$binary_archive" executor/target/release/wegent-executor
+  chmod 0755 executor/target/release/wegent-executor
+fi
 
 test -x executor/target/release/wegent-executor

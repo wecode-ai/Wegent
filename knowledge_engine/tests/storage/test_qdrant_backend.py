@@ -79,6 +79,34 @@ class TestDeleteDocument:
             wait=True,
         )
 
+    @patch("knowledge_engine.storage.qdrant_backend.QdrantVectorStore")
+    @patch("knowledge_engine.storage.qdrant_backend.QdrantClient")
+    def test_delete_document_is_idempotent_without_a_collection(
+        self, mock_client_class, mock_store_class
+    ):
+        from knowledge_engine.storage.qdrant_backend import QdrantBackend
+
+        mock_client = MagicMock()
+        mock_client.collection_exists.return_value = False
+        mock_client_class.return_value = mock_client
+
+        backend = QdrantBackend(
+            {
+                "url": "http://localhost:6333",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        result = backend.delete_document(knowledge_id="kb_1", doc_ref="doc_1")
+
+        assert result == {
+            "doc_ref": "doc_1",
+            "knowledge_id": "kb_1",
+            "deleted_chunks": 0,
+            "status": "deleted",
+        }
+        mock_store_class.assert_not_called()
+
 
 class TestDeleteKnowledge:
     @patch("knowledge_engine.storage.qdrant_backend.QdrantVectorStore")

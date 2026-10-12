@@ -7,4 +7,5 @@
 //! router prefix `/tasks` under the app prefix `/api`).
 
 pub mod handler;
+pub mod lite_projection;
 pub mod lite_repository;

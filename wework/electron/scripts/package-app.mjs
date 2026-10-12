@@ -8,6 +8,7 @@ import { electronToolchainLockPath } from '../../scripts/lib/electron-toolchain-
 import { prepareSharedElectronZip } from '../../scripts/lib/electron-zip-cache.mjs'
 import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
 import identityModule from './build-identity.cjs'
+import macosAppIcon from './macos-app-icon.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 
 // Electron-as-Node otherwise treats app.asar as a virtual directory during cleanup.
@@ -24,11 +25,12 @@ const identity = resolveBuildIdentity()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const icon =
   process.platform === 'darwin'
-    ? join(sharedResourcesRoot, 'icons', 'icon.icns')
+    ? macosAppIcon.icon
     : process.platform === 'win32'
       ? join(sharedResourcesRoot, 'icons', 'icon.ico')
       : undefined
 
+await macosAppIcon.prepare({ electronPlatformName: process.platform })
 await Promise.all([
   rm(output, { recursive: true, force: true }),
   rm(staging, { recursive: true, force: true }),
@@ -85,6 +87,7 @@ try {
     electronVersion: sourcePackage.devDependencies.electron,
     electronZipDir,
     appBundleId: identity.identifier,
+    ...(process.platform === 'darwin' ? { extendInfo: macosAppIcon.extendInfo } : {}),
     protocols: [{ name: 'Wework', schemes: ['wework'] }],
     appVersion: sourcePackage.version,
     buildVersion: sourcePackage.version,
@@ -95,6 +98,7 @@ try {
       unpack: '**/*.{node,dylib,so,dll}',
     },
     extraResource: [
+      ...(process.platform === 'darwin' ? [macosAppIcon.assetCatalog] : []),
       join(electronRoot, 'resources', 'harness-runtime'),
       join(electronRoot, 'resources', 'bin'),
       join(electronRoot, 'resources', 'codex'),

@@ -1,5 +1,5 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
+import { weworkTaskScheme } from '@/features/notifications/scheme'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { RuntimeTaskAddress } from '@/types/api'
 
@@ -7,6 +7,7 @@ export interface RuntimeTaskCompletionNotification {
   title: string
   body: string
   address?: RuntimeTaskAddress
+  url?: string
 }
 
 interface SystemNotificationTestState {
@@ -26,12 +27,13 @@ export async function sendSystemNotification({
   title,
   body,
   address,
+  url = address ? weworkTaskScheme(address) : undefined,
 }: RuntimeTaskCompletionNotification): Promise<void> {
   if (!isElectronRuntime()) return
 
   const testState = systemNotificationTestState()
   if (testState) {
-    testState.notifications.push({ title, body, address })
+    testState.notifications.push({ title, body, address, url })
     return
   }
 
@@ -39,7 +41,7 @@ export async function sendSystemNotification({
     await invokeDesktopHost<void>('notification.show', {
       title,
       body,
-      ...(address ? { taskAddressId: createTrayTaskMenuId(address) } : {}),
+      ...(url ? { url } : {}),
     })
   } catch (error) {
     console.error('[Wework] Failed to send system notification', error)

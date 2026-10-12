@@ -5,7 +5,7 @@
 //! Short-lived, local authorization used by the Connector MCP child process.
 
 use std::{
-    env, fs,
+    fs,
     io::Write,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -14,6 +14,8 @@ use std::{
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::agents::backend_url::backend_http_client;
 
 const CONFIG_DIR: &str = "connector-runtime";
 const CONFIG_FILE: &str = "authorization.json";
@@ -58,7 +60,8 @@ impl ConnectorGatewayConfig {
             self.api_base_url,
             path.trim_start_matches('/')
         );
-        let client = reqwest::Client::new();
+        let client = backend_http_client()
+            .map_err(|error| ConnectorGatewayError::new("connector_gateway_unavailable", error))?;
         let mut request = client
             .request(method, &url)
             .bearer_auth(&self.connector_token)
@@ -125,10 +128,7 @@ pub(crate) fn clear_connector_gateway_config() -> Result<(), String> {
 }
 
 fn connector_gateway_config_path() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(env::temp_dir)
+    crate::config::paths::executor_home()
         .join(CONFIG_DIR)
         .join(CONFIG_FILE)
 }

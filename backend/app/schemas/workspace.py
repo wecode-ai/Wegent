@@ -60,6 +60,7 @@ class ExecutionEnvironmentSetupStep(BaseModel):
 
 
 class ExecutionEnvironmentDefinition(BaseModel):
+    workspace_policy: Literal["git_worktree", "project"] = "git_worktree"
     repositories: list[ExecutionEnvironmentRepository] = Field(
         default_factory=list, max_length=20
     )

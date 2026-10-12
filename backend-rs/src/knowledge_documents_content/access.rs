@@ -20,8 +20,20 @@ use super::group_membership::effective_roles;
 use super::group_membership::{effective_role_in_group, is_restricted_analyst};
 use crate::crd::CrdDocument;
 use crate::json_compat::OpaqueJson;
+use crate::permissions::ResolutionPurpose;
 #[cfg(test)]
 use serde_json::Value;
+
+/// The resolution purpose for every entity-resolver call of this endpoint's
+/// ACL chain (`resolve_knowledge_base_permission`'s group and entity sources).
+///
+/// The source has exactly one membership path: `ErpEntityResolver`'s
+/// `_get_membership_with_cache`, which reads `erp:membership:{user_id}:{ssn}`
+/// and, on a cache miss or partial hit, calls
+/// `erp_client.batch_check_membership` and writes the rebuilt map back. The
+/// cache-only purpose would resolve nothing on a miss and skip that request
+/// and write, diverging from the recorded request-owned dependency traffic.
+pub(super) const ENTITY_RESOLUTION_PURPOSE: ResolutionPurpose = ResolutionPurpose::ResourceAccess;
 
 /// `namespace` columns as rendered by `db.query(Namespace)`.
 pub(super) const NAMESPACE_COLUMNS: &str = "namespace.id AS namespace_id, \
@@ -208,31 +220,32 @@ where
             }
             .to_string(),
         );
-    } else {
-        // Group source (`_append_group_source`) for non-default namespaces.
-        // The source re-checks `is_organization_namespace` here before
-        // resolving the group role, so the namespace lookup repeats.
-        let group_is_organization = is_organization_namespace(mysql, &kb.kinds_namespace)
+    }
+
+    // Group source (`_append_group_source`). The source always runs this after
+    // the organization source, and its guard is
+    // `kb.namespace == "default" or is_organization_namespace(...)`, so the
+    // namespace lookup repeats even for organization namespaces. The `or`
+    // short-circuits only for the personal namespace, which never queries.
+    if kb.kinds_namespace != "default"
+        && !is_organization_namespace(mysql, &kb.kinds_namespace)
             .await
-            .map_err(|error| ApiFailure::internal(error.to_string()))?;
-        if !group_is_organization
-            && kb.kinds_namespace != "default"
-            && let Some(group_role) =
-                effective_role_in_group(mysql, redis, resolvers, user_id, &kb.kinds_namespace)
-                    .await
-                    .map_err(|error| ApiFailure::internal(error.to_string()))?
-        {
-            if group_role == "RestrictedAnalyst" {
-                return Ok(false);
-            }
-            let base = match group_role.as_str() {
-                "Owner" => "Owner",
-                "Maintainer" => "Maintainer",
-                "Developer" => "Developer",
-                _ => "Reporter",
-            };
-            roles.push(base.to_string());
+            .map_err(|error| ApiFailure::internal(error.to_string()))?
+        && let Some(group_role) =
+            effective_role_in_group(mysql, redis, resolvers, user_id, &kb.kinds_namespace)
+                .await
+                .map_err(|error| ApiFailure::internal(error.to_string()))?
+    {
+        if group_role == "RestrictedAnalyst" {
+            return Ok(false);
         }
+        let base = match group_role.as_str() {
+            "Owner" => "Owner",
+            "Maintainer" => "Maintainer",
+            "Developer" => "Developer",
+            _ => "Reporter",
+        };
+        roles.push(base.to_string());
     }
 
     // Entity sources (`_append_entity_sources`).
@@ -476,7 +489,7 @@ where
                 user_id,
                 &entity_type,
                 &ids,
-                crate::permissions::ResolutionPurpose::CachedResourceAccess,
+                ENTITY_RESOLUTION_PURPOSE,
             )
             .await?;
         let matched_set: std::collections::HashSet<&str> =
@@ -553,6 +566,24 @@ pub(super) struct EntityRoleRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every entity-resolver call of this endpoint's ACL chain must request
+    /// the with-fallback membership path.
+    ///
+    /// The provider maps `ResolutionPurpose::CachedResourceAccess` to
+    /// `ErpProvider::cached_membership`, which returns no membership on a
+    /// cache miss and performs no cache write, while the source's single
+    /// membership path falls back to `batch_check_membership` and stores the
+    /// rebuilt map. The cache-only variant would silently drop
+    /// entity-derived roles and the request-owned ERP exchange the source
+    /// performs, so this test pins the purpose itself.
+    #[test]
+    fn entity_resolution_uses_the_with_fallback_membership_purpose() {
+        assert!(matches!(
+            ENTITY_RESOLUTION_PURPOSE,
+            ResolutionPurpose::ResourceAccess
+        ));
+    }
 
     #[test]
     fn role_hierarchy_and_permission() {

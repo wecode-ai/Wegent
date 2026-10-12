@@ -278,10 +278,11 @@ test.describe('External DingTalk document import', () => {
         timeout: 30_000,
       })
 
-      // Retry uses the dedicated import entry and reuses the same record even
-      // while the provider failure persists.
+      // A DingTalk copy retries through its source-sync entry, which re-fetches
+      // the body and reuses the same record even while the provider failure
+      // persists.
       const callsBefore = await countCompletedContentFetches(request, EXTERNAL_IMPORT_NODES.api)
-      await page.getByTestId(`retry-import-document-${failedDocument.id}`).click()
+      await page.getByTestId(`sync-dingtalk-document-${failedDocument.id}`).click()
       await expect
         .poll(async () => countCompletedContentFetches(request, EXTERNAL_IMPORT_NODES.api), {
           timeout: 45_000,
@@ -297,7 +298,7 @@ test.describe('External DingTalk document import', () => {
       )
       expect(stillFailed.id).toBe(failedDocument.id)
 
-      // Remove the provider failure and retry to completion.
+      // Remove the provider failure and sync to completion.
       await configureMockImport(request, {
         nodeFailures: {},
         documentContents: {
@@ -305,7 +306,7 @@ test.describe('External DingTalk document import', () => {
         },
       })
       await page.reload({ waitUntil: 'domcontentloaded' })
-      await page.getByTestId(`retry-import-document-${failedDocument.id}`).click()
+      await page.getByTestId(`sync-dingtalk-document-${failedDocument.id}`).click()
       const recovered = await waitForDocument(
         request,
         context.token,

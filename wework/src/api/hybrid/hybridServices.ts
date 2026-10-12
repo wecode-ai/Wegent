@@ -16,12 +16,12 @@ import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
 import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
+import { createCloudModelCatalog } from './cloudModelCatalog'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
   notifyWorkbenchCloudSearchResults,
   notifyWorkbenchAutomationsChanged,
-  notifyWorkbenchModelsChanged,
 } from '@/features/workbench/workbenchCloudDataEvents'
 import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
 import {
@@ -407,10 +407,14 @@ export function createHybridWorkbenchServices(
   let nextCloudDevicesRevision = 1
   let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
   const cloudDevicesRequestsBySignal = new WeakMap<AbortSignal, Promise<DeviceInfo[]>>()
-  let rememberedCloudModels: UnifiedModel[] = []
-  let cloudModelsLoaded = false
-  let cloudModelsRequest: Promise<void> | null = null
-  let cloudModelsRefreshRequested = false
+  const cloudModels = createCloudModelCatalog(async signal => {
+    const response = await cloudServices.modelApi.listModels({ signal })
+    console.info('[Wework] Cloud model catalog loaded', {
+      count: response.data.length,
+      models: response.data.map(modelIdentityForLog),
+    })
+    return cloudExecutableModels(response.data)
+  })
   const rememberedCloudSearch = new Map<string, RuntimeWorkSearchResponse>()
   const cloudSearchRequests = new Map<string, Promise<void>>()
   const rememberedCloudArchives = new Map<string, ArchivedConversationsListResponse>()
@@ -435,34 +439,6 @@ export function createHybridWorkbenchServices(
     rememberedCloudDevices = devices
     rememberedAppDeviceRegistrations = appDeviceRegistrations
     rememberedCloudDevicesRevision = revision
-  }
-  const loadCloudModelsInBackground = () => {
-    if (cloudModelsLoaded) return
-    if (cloudModelsRequest) {
-      cloudModelsRefreshRequested = true
-      return
-    }
-    cloudModelsRefreshRequested = false
-    cloudModelsRequest = Promise.resolve()
-      .then(() => cloudServices.modelApi.listModels())
-      .then(response => {
-        const modelCatalogLog = {
-          count: response.data.length,
-          models: response.data.map(modelIdentityForLog),
-        }
-        console.info('[Wework] Cloud model catalog loaded', modelCatalogLog)
-        rememberedCloudModels = cloudExecutableModels(response.data)
-        cloudModelsLoaded = true
-        notifyWorkbenchModelsChanged()
-      })
-      .catch(error => {
-        console.warn('[Wework] Failed to refresh cloud models in background', error)
-      })
-      .finally(() => {
-        cloudModelsRequest = null
-        // Preserve a refresh that arrived before the failed request settled.
-        if (!cloudModelsLoaded && cloudModelsRefreshRequested) loadCloudModelsInBackground()
-      })
   }
   const rememberLocalRuntimeWorkDevices = (work: RuntimeWorkListResponse) => {
     work.projects.forEach(project => {
@@ -1459,6 +1435,7 @@ export function createHybridWorkbenchServices(
     },
   }
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
+  const localProjectSpaceDetailServices = localProjectServices.projectSpaceDetailServices?.local
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
     async listPlugins(deviceId: string) {
       const cloudPlugins = (
@@ -1486,6 +1463,7 @@ export function createHybridWorkbenchServices(
       },
     },
     branchNameApi: localServices.branchNameApi,
+    textGenerationApi: localServices.textGenerationApi,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     localExecutionServices: localProjectServices,
@@ -1499,7 +1477,7 @@ export function createHybridWorkbenchServices(
       defaultLocation: 'cloud',
     },
     projectSpaceDetailServices: {
-      local: localProjectServices.projectSpaceDetailServices?.local,
+      local: localProjectSpaceDetailServices,
       cloud: cloudServices.projectSpaceDetailServices?.cloud
         ? {
             ...cloudServices.projectSpaceDetailServices.cloud,
@@ -1520,11 +1498,19 @@ export function createHybridWorkbenchServices(
       listProjects: localServices.projectApi.listProjects,
     },
     modelApi: {
+      subscribe: cloudModels.subscribe,
+      refresh: cloudModels.refresh,
       async listModels(): Promise<UnifiedModelListResponse> {
-        const localModels = await localServices.modelApi.listModels()
-        loadCloudModelsInBackground()
+        cloudModels.loadIfNeeded()
+        // Start the cloud catalog before awaiting the local one: the local
+        // catalog depends on the local executor and the desktop preferences,
+        // and a failure there must never keep the cloud models from loading.
+        const localModels = await localServices.modelApi.listModels().catch(error => {
+          console.warn('[Wework] Failed to list local models', error)
+          return { data: [] }
+        })
         return {
-          data: mergeModelCatalogs(annotateLocalModels(localModels.data), rememberedCloudModels),
+          data: mergeModelCatalogs(annotateLocalModels(localModels.data), cloudModels.getModels()),
         }
       },
     },

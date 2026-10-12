@@ -28,6 +28,10 @@ describe('Core DSH startup failure detection', () => {
     const script = detectionScript(['@wegent/ai-fleet-defense'])
 
     expect(script).toContain('Failed to load plugins')
+    expect(script).toContain('if (!root)')
+    expect(script).toContain('"#root"')
+    expect(script).toContain('childElementCount')
+    expect(script).toContain('complete(null)')
     expect(script).toContain("root.querySelectorAll('*')")
     expect(script).toContain('texts.has(name)')
     expect(script).toContain('@wegent/ai-fleet-defense')

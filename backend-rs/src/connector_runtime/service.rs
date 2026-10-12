@@ -55,20 +55,7 @@ async fn upstream_tools(
     app: &ConnectorApp,
     user: &UserRow,
 ) -> Result<Vec<UpstreamTool>, mcp::McpError> {
-    mcp::list_tools_with_headers(&app.mcp_url, &session_headers(user)).await
-}
-
-/// `_server_config` session headers for an authenticated caller.
-///
-/// The source starts from `_decrypt_json(app.provider_headers_encrypted)` and
-/// then always adds the user context headers. The recorded catalog stores no
-/// provider headers, so only the user context headers are produced here;
-/// apps that carry encrypted provider headers are not yet supported.
-fn session_headers(user: &UserRow) -> Vec<(&'static str, String)> {
-    vec![
-        ("x-wegent-username", user.users_user_name.clone()),
-        ("x-wegent-user-id", user.users_id.to_string()),
-    ]
+    mcp::list_tools_with_headers(&app.mcp_url, &apps::session_headers(user)).await
 }
 
 /// `_tool_from_upstream`: project one upstream tool into a `ConnectorTool`.
@@ -147,22 +134,6 @@ mod tests {
             kinds_is_active: true,
             kinds_created_at: chrono::NaiveDateTime::default(),
             kinds_updated_at: chrono::NaiveDateTime::default(),
-        }
-    }
-
-    fn user(name: &str, id: i64) -> UserRow {
-        UserRow {
-            users_id: id,
-            users_user_name: name.to_string(),
-            users_password_hash: "password".to_string(),
-            users_email: None,
-            users_git_info: brz_mysql::Json(Value::Null.into()),
-            users_is_active: true,
-            users_role: "user".to_string(),
-            users_auth_source: "dingtalk".to_string(),
-            users_preferences: String::new(),
-            users_created_at: chrono::NaiveDateTime::default(),
-            users_updated_at: chrono::NaiveDateTime::default(),
         }
     }
 
@@ -263,17 +234,5 @@ mod tests {
         let allowlist = &app.tool_allowlist;
         assert!(allowlist.contains(&"list_sites".to_string()));
         assert!(!allowlist.contains(&"create_site".to_string()));
-    }
-
-    #[test]
-    fn session_headers_carry_the_user_context() {
-        let headers = session_headers(&user("junshu", 83));
-        assert_eq!(
-            headers,
-            vec![
-                ("x-wegent-username", "junshu".to_string()),
-                ("x-wegent-user-id", "83".to_string()),
-            ]
-        );
     }
 }

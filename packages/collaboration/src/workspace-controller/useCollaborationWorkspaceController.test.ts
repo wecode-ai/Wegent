@@ -342,7 +342,7 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([comment]);
   });
 
-  it("persists read state on detail open and updates every board snapshot", async () => {
+  it("preserves the read cursor until visible activity advances it", async () => {
     const unread = { ...issue, is_unread: true, content_revision: 2 };
     const read = { ...unread, is_unread: false };
     const { api, commands } = createController();
@@ -359,14 +359,13 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.markRead).not.toHaveBeenCalled();
     await commands.loadSelectedIssue(issue.id);
 
+    expect(api.issues.markRead).not.toHaveBeenCalled();
+    expect(state.selectedIssue).toEqual(unread);
+    expect(state.issues).toEqual([unread]);
+    expect(state.projectItems[project.id]).toEqual([unread]);
+    await commands.markIssueRead(unread);
     expect(api.issues.markRead).toHaveBeenCalledExactlyOnceWith(issue.id);
     expect(state.selectedIssue).toEqual(read);
-    expect(state.issues).toEqual([read]);
-    expect(state.projectItems[project.id]).toEqual([read]);
-    commands.clearSelectedIssue();
-    expect(state.issues[0].is_unread).toBe(false);
-    await commands.markIssueRead(read);
-    expect(api.issues.markRead).toHaveBeenCalledTimes(1);
   });
 
   it("preserves unread state on failure and allows retry without reopening detail", async () => {
@@ -378,6 +377,8 @@ describe("collaboration workspace controller", () => {
     await commands.loadSelectedIssue(issue.id);
 
     expect(state.selectedIssue?.is_unread).toBe(true);
+    expect(state.error).toBeNull();
+    await commands.markIssueRead(unread);
     expect(state.error).toBe("save failed");
     expect(notify).toHaveBeenCalledWith("save failed", "error");
     await commands.markIssueRead(unread);

@@ -36,6 +36,10 @@ import {
   type FixedWorkspaceTabPreference,
   type WorkbenchMode,
 } from '@/desktop/appPreferences'
+import {
+  fixedWorkspaceTabsPatch,
+  saveFixedWorkspaceTabs as persistFixedWorkspaceTabs,
+} from '@/features/workspace-tabs/fixedWorkspaceTabs'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -292,13 +296,19 @@ export function GeneralSettingsPage() {
       description: t('workbench.general_settings_tray_running_description'),
       icon: Activity,
     },
-    {
-      preferenceKey: 'trayUsageEnabled',
-      testId: 'general-tray-usage-toggle',
-      label: t('workbench.general_settings_tray_usage'),
-      description: t('workbench.general_settings_tray_usage_description'),
-      icon: Gauge,
-    },
+    // The Codex quota is meaningless while the local Codex subscription is off:
+    // the tray has no rate limits to read, so the toggle is hidden entirely.
+    ...(preferences.localCodexSubscriptionEnabled
+      ? [
+          {
+            preferenceKey: 'trayUsageEnabled',
+            testId: 'general-tray-usage-toggle',
+            label: t('workbench.general_settings_tray_usage'),
+            description: t('workbench.general_settings_tray_usage_description'),
+            icon: Gauge,
+          } satisfies TrayDisplayOption,
+        ]
+      : []),
     {
       preferenceKey: 'trayWegentUsageEnabled',
       testId: 'general-tray-wegent-usage-toggle',
@@ -404,24 +414,16 @@ export function GeneralSettingsPage() {
     startupWorkspaceTabId = preferences.startupWorkspaceTabId ??
       defaultAppPreferences.startupWorkspaceTabId
   ) => {
-    const nextStartupId = fixedWorkspaceTabs.some(tab => tab.id === startupWorkspaceTabId)
-      ? startupWorkspaceTabId
-      : (fixedWorkspaceTabs[0]?.id ?? '')
+    const patch = fixedWorkspaceTabsPatch(fixedWorkspaceTabs, startupWorkspaceTabId)
     const previousPreferences = preferences
     setPreferences(current => ({
       ...current,
-      fixedWorkspaceTabs,
-      startupWorkspaceTabId: nextStartupId,
+      ...patch,
     }))
     setSaving(true)
     setError(null)
     try {
-      setPreferences(
-        await updateAppPreferences({
-          fixedWorkspaceTabs,
-          startupWorkspaceTabId: nextStartupId,
-        })
-      )
+      setPreferences(await persistFixedWorkspaceTabs(fixedWorkspaceTabs, startupWorkspaceTabId))
     } catch (saveError) {
       console.error('[Wework] Failed to update fixed workspace tabs', saveError)
       setPreferences(previousPreferences)
@@ -676,7 +678,10 @@ export function GeneralSettingsPage() {
                   const label =
                     tab.kind === 'smart_app'
                       ? (tab.title ?? t('workbench.smart_apps_title', '智能工作台'))
-                      : t(`workbench.general_settings_default_workspace_tab_${tab.kind}`)
+                      : tab.kind === 'auxiliary'
+                        ? (tab.title ?? t('workbench.workspace_tab_auxiliary', '工作区'))
+                        : (tab.title ??
+                          t(`workbench.general_settings_default_workspace_tab_${tab.kind}`))
                   return (
                     <div
                       key={tab.id}
@@ -688,6 +693,10 @@ export function GeneralSettingsPage() {
                         data-testid={`general-fixed-tab-startup-${tab.id}`}
                         disabled={loading || saving}
                         aria-pressed={startupWorkspaceTabId === tab.id}
+                        aria-label={t(
+                          'workbench.general_settings_startup_workspace_tab',
+                          '设为启动标签页'
+                        )}
                         onClick={() => void saveFixedWorkspaceTabs(fixedWorkspaceTabs, tab.id)}
                         className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted md:h-6 md:w-6"
                         title={t(
@@ -877,12 +886,6 @@ export function GeneralSettingsPage() {
             description: t(
               'workbench.general_settings_prevent_sleep_while_tasks_running_description'
             ),
-          })}
-          {renderSwitchRow({
-            preferenceKey: 'taskCompletionNotificationsEnabled',
-            testId: 'general-task-completion-notifications-toggle',
-            label: t('workbench.general_settings_task_completion_notifications'),
-            description: t('workbench.general_settings_task_completion_notifications_description'),
           })}
           <SettingsRow
             label={t('workbench.friendly_task_titles_title', '使用友好标题')}

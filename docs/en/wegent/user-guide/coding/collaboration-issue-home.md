@@ -16,16 +16,33 @@ Local projects from Tasks appear automatically under Local workspace. Reloading 
 
 The Executor stores local ownership; the backend stores cloud ownership. A collaboration group owner is a project group reference, not a resource-library Agent's Team ID. Assigning it does not automatically execute the group's workflow.
 
+## Change an existing Issue's owner
+
+After selecting or clearing an owner in Issue details, select **Save assignment** beside the owner. The header does not show a duplicate save action. Saving also submits other pending detail edits. If saving fails, the draft and save action remain available for correction and resubmission.
+
+The `collaboration-local-agent-dispatch` desktop regression checks that the owner state row contains exactly one save action, that it disappears after saving, and that the assigned agent actually starts work.
+
 ## Work on an Issue assigned to me
 
 When a native cloud project Issue is assigned directly to one member, they can open it from **Collaboration → My Work → Assigned to me** or the project board. Wework sends a desktop notification when another member assigns it. This workflow does not apply to external task sources or Issues owned by robots or collaboration groups.
 
-1. Select **Start work** to move the Issue to **In progress**. Add progress, comments, and attachments in its details. Select **Ask AI for help** to create a linked task when AI help is useful.
-2. When the work is ready, select **Submit for review** and enter a completion summary. The Issue moves to **Pending review**, and the summary is saved in the project conversation.
-3. The original assigner can find the Issue under **My Work → To review** and choose **Accept work** or **Request changes** with a reason. If the original assigner cannot review, a project Owner or Maintainer can do so.
-4. Acceptance moves the Issue to **Completed**. Requested changes return it to **In progress** so the assignee can revise and submit again.
+1. Select **Start work** to move the Issue to **In progress**. The only required input is **Work result**; comments and attachments remain optional.
+2. If useful, select **Ask AI for help** to create a linked task. AI produces a draft but never submits the Issue for you. Select **Use draft**, then check and edit the result.
+3. Select **Submit for review** and confirm. The Issue moves to **Pending review**, and the result is saved in the project conversation. You can also fill in the result directly without using AI.
+4. The original assigner can find the Issue under **My Work → To review** and choose **Accept work** or **Request changes**. A reason is needed only when requesting changes. If the original assigner cannot review, a project Owner or Maintainer can do so.
+5. Acceptance moves the Issue to **Completed**. Requested changes return it to **In progress** so the assignee can revise the existing result and submit again.
 
-These actions record status history and project activity and notify the relevant members. Reassignment clears the previous review result. Use these actions to advance the status of human-owned work.
+These actions record status history and project activity and notify the relevant members. Reassignment clears the previous review result. Use these actions to advance the status of human-owned work. **Human processing** in Project settings explains the workflow, reviewer, and AI draft behavior; it does not introduce another set of rules to fill in.
+
+## Archive completed Issues
+
+Project boards and tables can archive Issues whose status is **Completed**. Incomplete Issues do not expose the archive action and cannot be included in a batch archive.
+
+- Single archive: open a completed Issue's action menu and select **Archive**.
+- Batch archive: select **Archive completed issues** in the board's **Completed** column header.
+- Browse and restore: open the project's **Archived Issues** drawer to page through archived records and restore them individually. A restored Issue returns to the active list in its original project.
+
+Archiving a parent Issue also archives its child Issues so the active task tree cannot retain orphaned children. Restoring that parent from the archive restores the full subtree. Restoring a child that was archived independently restores only that Issue. Native cloud projects, local projects, and GitHub/GitLab-backed projects share the same interaction. For external projects, archive and restore close and reopen the external Issue respectively.
 
 ## Regression verification
 
@@ -38,3 +55,5 @@ These actions record status history and project activity and notify the relevant
 5. Seeding a local project through the real Tasks project API, reloading twice, and verifying one imported project with a working collaboration entry.
 
 Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only in the test Executor home. Failures retain runner logs; tests do not skip or retry to hide failures.
+
+`pnpm --filter wework e2e:desktop --segment collaboration-issue-archive` uses a real local project to verify that incomplete Issues cannot be archived, along with single archive and restore, batch archive, and archive-drawer updates.

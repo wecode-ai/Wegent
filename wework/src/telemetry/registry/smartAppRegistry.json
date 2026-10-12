@@ -2,6 +2,27 @@
   "schemaVersion": 1,
   "domain": "smart_app",
   "owner": "wework/harness-apps",
+  "events": [
+    {
+      "key": "smart_app.start_attempted",
+      "eventName": "smart_app_start_attempted",
+      "name": {
+        "zh-CN": "开始启动智能工作台运行时",
+        "en": "Begin starting Smart App runtime"
+      },
+      "description": {
+        "zh-CN": "智能工作台运行时启动尝试，用于关联成功、失败和超时卡住",
+        "en": "A Smart App runtime startup attempt used to correlate success, failure, and timeout"
+      },
+      "publicProperties": [
+        {
+          "name": "startup_id",
+          "type": "string",
+          "maxLength": 36
+        }
+      ]
+    }
+  ],
   "routes": [
     {
       "key": "smart_app.marketplace",
@@ -298,6 +319,11 @@
           "name": "domain",
           "type": "enum",
           "values": ["smart_app"]
+        },
+        {
+          "name": "startup_id",
+          "type": "string",
+          "maxLength": 36
         }
       ]
     },

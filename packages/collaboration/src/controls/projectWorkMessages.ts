@@ -20,7 +20,7 @@ export const projectWorkMessages: Record<'zh-CN' | 'en', Record<string, string>>
     'workbench.change_project': '更改项目',
     'workbench.select_workspace': '选择工作区',
     'workbench.project_chat_agent_start_failed': '机器人任务未能启动',
-    'workbench.task_activity_placeholder': '留下评论…',
+    'workbench.task_activity_placeholder': '发起新讨论…',
     'workbench.send_message': '发送消息',
     'workbench.task_activity_attachment_attach': '添加附件',
     'workbench.task_activity_execution_settings': '执行设置',
@@ -49,7 +49,8 @@ export const projectWorkMessages: Record<'zh-CN' | 'en', Record<string, string>>
     'workbench.change_project': 'Change project',
     'workbench.select_workspace': 'Select workspace',
     'workbench.project_chat_agent_start_failed': 'The robot task could not be started',
-    'workbench.task_activity_placeholder': 'Leave a comment…',
+    'workbench.task_activity_placeholder':
+      'Start a new discussion…',
     'workbench.send_message': 'Send message',
     'workbench.task_activity_attachment_attach': 'Attach files',
     'workbench.task_activity_execution_settings': 'Execution settings',

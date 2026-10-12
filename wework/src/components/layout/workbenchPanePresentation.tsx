@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { WorkbenchPaneIdentity } from './workbenchPaneIdentity'
+import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
 
 export interface WorkbenchPanePresentation {
   visible: boolean
@@ -57,6 +57,34 @@ export function useWorkbenchPaneHeaderActionsPortalId() {
 
 export function useWorkbenchPaneId() {
   return useContext(WorkbenchPanePresentationContext).paneId
+}
+
+export function SingleWorkbenchPane({
+  pane,
+  visible,
+  renderPane,
+}: {
+  pane: WorkbenchPaneIdentity
+  visible: boolean
+  renderPane: (pane: WorkbenchPaneIdentity) => ReactNode
+}) {
+  const paneKey = getWorkbenchPaneKey(pane)
+  return (
+    <div
+      data-testid={visible ? 'desktop-workbench-main' : undefined}
+      data-active-workbench-pane={visible ? 'true' : 'false'}
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+    >
+      <WorkbenchPanePresentationProvider
+        paneId={paneKey}
+        visible={visible}
+        focused={visible}
+        headerActionsPortalId={null}
+      >
+        <CachedWorkbenchPane key={paneKey} pane={pane} renderPane={renderPane} />
+      </WorkbenchPanePresentationProvider>
+    </div>
+  )
 }
 
 export function WorkbenchPaneHost({ host }: { host: HTMLDivElement }) {

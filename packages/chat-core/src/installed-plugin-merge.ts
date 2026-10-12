@@ -123,7 +123,10 @@ export function mergeLocalInstalledWithStorePackages(
         ...item.spec,
         sourcePayload: {
           ...(item.spec.sourcePayload ?? {}),
-          ...store.spec.sourcePayload,
+          // Store ownership must not replace Codex marketplace routing metadata.
+          managedByWegent: true,
+          cloudPluginId: store.spec.sourcePayload.cloudPluginId ?? null,
+          cloudInstalledPluginId: store.spec.sourcePayload.cloudInstalledPluginId ?? null,
         },
       },
     }
@@ -134,7 +137,8 @@ export function mergeLocalInstalledWithStorePackages(
 export function mergeInstalledPlugins(
   cloudItems: InstalledPlugin[],
   localItems: InstalledPlugin[],
-  currentDeviceId = ''
+  currentDeviceId = '',
+  cloudMembershipAuthoritative = false
 ): InstalledPlugin[] {
   const merged = new Map<string, InstalledPlugin>()
   const cloudPluginIdentities = new Set<string>()
@@ -219,6 +223,17 @@ export function mergeInstalledPlugins(
   }
 
   for (const item of localItems) {
+    // Account-managed files can outlive an acknowledged uninstall while device
+    // cleanup runs. Only a successful account read can establish their absence.
+    if (
+      cloudMembershipAuthoritative &&
+      isWegentManagedStorePlugin(item) &&
+      item.spec.origin !== 'created' &&
+      item.spec.source.type !== 'local' &&
+      !cloudItems.some(cloud => localMatchesCloudPlugin(item, cloud))
+    ) {
+      continue
+    }
     if (item.spec.origin === 'created' || item.spec.source.type === 'local') {
       const cloudPluginId = linkedCloudPluginId(item)
       const cloudInstalledPluginId =

@@ -188,8 +188,8 @@ test.describe('Collaboration agent execution', () => {
     testInfo: TestInfo
   ): Promise<void> {
     const runtimeCapabilityCommand = [
-      `cat .codex/skills/${SKILL_NAME}/SKILL.md`,
-      `plugin_skill="$(find "$WEGENT_EXECUTOR_HOME/capabilities/store/plugins" -type f -path '*/skills/${PLUGIN_NAME}/SKILL.md' -print -quit)"`,
+      `cat ".codex/skills/${SKILL_NAME}/SKILL.md"`,
+      `plugin_skill="$(find "$CODEX_HOME/plugins/cache/${plugin!.marketplaceId}/${PLUGIN_NAME}" -type f -path '*/skills/${PLUGIN_NAME}/SKILL.md' -print -quit)"`,
       'test -n "$plugin_skill"',
       'cat "$plugin_skill"',
     ].join('\n')
@@ -247,7 +247,7 @@ test.describe('Collaboration agent execution', () => {
     expect(execution.syncState).toBe('in_sync')
     expect(execution.teamId).toBeNull()
     expect(execution.backendTaskId).toBeNull()
-    expect(execution.executionEnvironment).toBe('cloud')
+    expect(execution.executionEnvironment).toBe('local')
     expect(execution.executionDeviceId).toBeTruthy()
     expect(execution.runtimeDeviceId).toBe(execution.executionDeviceId)
     expect(execution.runtimeTaskId).toMatch(/^codex-queue-\d+$/)

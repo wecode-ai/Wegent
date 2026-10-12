@@ -498,6 +498,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
           : 'max-h-[min(520px,var(--radix-popover-content-available-height))] w-[min(760px,calc(100vw-32px))]',
         className
       )}
+      // Keep wheel events inside the popover: when the cascade is opened from a
+      // modal Dialog, react-remove-scroll cancels wheel events at the document
+      // level for anything outside the dialog, which would block list scrolling.
+      onWheel={event => event.stopPropagation()}
     >
       <div className="border-b border-border p-3">
         <div className="relative">

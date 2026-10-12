@@ -23,6 +23,7 @@ use super::db::{
 use super::models::{
     DeviceInstallationItem, MarketplaceItem, MarketplaceListResponse, unset_id, unset_str,
 };
+use crate::device_identity::{coalesce_plugin_device_rows, plugin_device_id};
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
 
 /// Optional request filters, mirroring the endpoint's query parameters.
@@ -106,9 +107,12 @@ fn search_text(plugin: &PluginRow) -> String {
     .to_ascii_lowercase()
 }
 
-fn device_installation_item(row: &DeviceInstallationRow) -> DeviceInstallationItem {
+fn device_installation_item(
+    row: &DeviceInstallationRow,
+    display_device_id: &str,
+) -> DeviceInstallationItem {
     DeviceInstallationItem {
-        device_id: row.device_id.clone(),
+        device_id: display_device_id.to_owned(),
         desired_release_id: row.desired_release_id,
         actual_release_id: unset_id(row.actual_release_id),
         state: row.state.clone(),
@@ -254,6 +258,8 @@ struct MarketplaceItemInput<'a> {
     plugin: &'a PluginRow,
     release: &'a PluginReleaseRow,
     user_id: Option<i64>,
+    /// The request's device filter (non-empty), or `None` when unfiltered.
+    device_id: Option<&'a str>,
     device_row: Option<&'a DeviceInstallationRow>,
     installed: Option<&'a InstalledSelection>,
     owner: Option<&'a UserRow>,
@@ -266,18 +272,20 @@ fn marketplace_item(input: MarketplaceItemInput<'_>) -> MarketplaceItem {
         plugin,
         release,
         user_id,
+        device_id,
         device_row,
         installed,
         owner,
         grants,
         external_entity_types,
     } = input;
+    // Source `_to_marketplace_item`: an active device filter requires a
+    // materialized device release; without a device filter the install state
+    // alone decides.
     let installed_for_device = installed
         .map(|installed| {
             installed.is_active
-                && device_row
-                    .map(|row| row.actual_release_id != 0)
-                    .unwrap_or(true)
+                && (device_id.is_none() || device_row.is_some_and(|row| row.actual_release_id != 0))
         })
         .unwrap_or(false);
     let access_role = if user_id.is_some_and(|user_id| plugin.owner_user_id == user_id) {
@@ -347,7 +355,11 @@ fn marketplace_item(input: MarketplaceItemInput<'_>) -> MarketplaceItem {
         source_provider: source_provider(plugin).to_owned(),
         source_label: source_label(plugin).to_owned(),
         update_available,
-        current_device_installation: device_row.map(device_installation_item),
+        current_device_installation: device_row.map(|row| {
+            // Source `_to_marketplace_item` overrides the serialized deviceId
+            // with the request's device id (`device_id or device_row.device_id`).
+            device_installation_item(row, device_id.unwrap_or(&row.device_id))
+        }),
     }
 }
 
@@ -504,13 +516,28 @@ where
         .values()
         .map(|selection| selection.kind_id)
         .collect();
+    // Source `list_plugins`: `if device_id and installed_kind_ids and
+    // user_id is not None`. An empty request value is falsy.
+    let device_filter: Option<&str> = query
+        .device_id
+        .as_deref()
+        .filter(|device_id| !device_id.is_empty());
     let device_rows_by_kind_id: HashMap<i64, DeviceInstallationRow> =
-        match (query.device_id.as_deref(), installed_kind_ids.is_empty()) {
+        match (device_filter, installed_kind_ids.is_empty()) {
             (Some(device_id), false) => {
-                UserRepository::list_device_installations(mysql, &installed_kind_ids, device_id)
+                // Source `plugin_device_rows`: resolve the requested device to
+                // its canonical id, load every installation row for the user,
+                // coalesce legacy aliases, then keep rows on the canonical
+                // device.
+                let user_id = user_id.expect("installed kinds require an authenticated user");
+                let canonical_id = plugin_device_id(mysql, user_id, device_id).await?;
+                let rows =
+                    UserRepository::list_device_installations_by_user(mysql, user_id).await?;
+                coalesce_plugin_device_rows(mysql, rows)
                     .await?
                     .into_iter()
-                    .map(|row| (row.installed_kind_id, row))
+                    .filter(|((_, canonical), _)| *canonical == canonical_id)
+                    .map(|((installed_id, _), row)| (installed_id, row))
                     .collect()
             }
             _ => HashMap::new(),
@@ -548,6 +575,7 @@ where
             plugin,
             release,
             user_id,
+            device_id: device_filter,
             device_row,
             installed,
             owner: owners_by_id.get(&plugin.owner_user_id),
@@ -730,6 +758,7 @@ mod tests {
         let row = DeviceInstallationRow {
             id: 1,
             installed_kind_id: 2,
+            user_id: 5,
             device_id: "d".into(),
             desired_release_id: 3,
             actual_release_id: 0,
@@ -740,7 +769,7 @@ mod tests {
             last_sync_at: epoch,
             updated_at: epoch,
         };
-        let item = device_installation_item(&row);
+        let item = device_installation_item(&row, "d");
         assert!(item.actual_release_id.is_none());
         assert!(item.error_code.is_none());
         assert!(item.last_sync_at.is_none());

@@ -14,6 +14,7 @@ export function IssueActivityAvatar({
 }) {
   return (
     <span
+      title={author}
       className={cn(
         "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
         agent
@@ -39,6 +40,8 @@ export function IssueActivityMessage({
   agent = false,
   avatar,
   metadata,
+  trailing,
+  hideTime = false,
   children,
   ...attributes
 }: HTMLAttributes<HTMLElement> & {
@@ -47,18 +50,34 @@ export function IssueActivityMessage({
   agent?: boolean;
   avatar?: ReactNode;
   metadata?: ReactNode;
+  trailing?: ReactNode;
+  hideTime?: boolean;
 }) {
   return (
     <article {...attributes} className="task-detail-thread-message">
       <header className="task-detail-thread-message-header">
         {avatar ?? <IssueActivityAvatar author={author} agent={agent} />}
-        <span className="min-w-0 truncate font-medium text-text-primary">
-          {author}
+        <span className="task-detail-thread-message-identity">
+          <span className="task-detail-thread-message-author">{author}</span>
+          {metadata ? (
+            <span className="task-detail-thread-message-metadata">
+              {metadata}
+            </span>
+          ) : null}
         </span>
-        {metadata}
-        <time className="text-sm text-text-muted" dateTime={createdAt}>
-          {formatIssueTimestamp(createdAt)}
-        </time>
+        {trailing || !hideTime ? (
+          <span className="task-detail-thread-message-aside">
+            {trailing}
+            {hideTime ? null : (
+              <time
+                className="task-detail-thread-message-time"
+                dateTime={createdAt}
+              >
+                {formatIssueTimestamp(createdAt)}
+              </time>
+            )}
+          </span>
+        ) : null}
       </header>
       <div className="task-detail-thread-message-body">{children}</div>
     </article>

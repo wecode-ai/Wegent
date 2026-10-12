@@ -610,6 +610,7 @@ def build_wework_runtime_model_config(
         gateway_config["codex_catalog_model_id"] = resolved_catalog_model_id
     else:
         gateway_config.setdefault("codex_catalog_model_id", "wework-gpt-5.6-sol")
+    gateway_config["tool_profile"] = "custom"
     gateway_config["codex_responses_compat_proxy"] = True
     return gateway_config
 

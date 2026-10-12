@@ -57,6 +57,24 @@ LLM_PROXY_STREAM_HEADERS = {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
+RUNTIME_METADATA_HEADERS = {
+    "openai-beta",
+    "originator",
+    "session-id",
+    "thread-id",
+    "user-agent",
+    "x-client-request-id",
+    "x-codex-beta-features",
+    "x-codex-installation-id",
+    "x-codex-parent-thread-id",
+    "x-codex-turn-metadata",
+    "x-codex-turn-state",
+    "x-codex-window-id",
+    "x-openai-internal-codex-responses-lite",
+    "x-openai-memgen-request",
+    "x-openai-subagent",
+    "x-responsesapi-include-timing-metrics",
+}
 
 
 def resolve_llm_proxy_protocol(
@@ -212,6 +230,15 @@ def _extract_custom_upstream_headers(request: Request) -> dict[str, str]:
             )
         custom_headers[target_name] = value
     return custom_headers
+
+
+def _extract_runtime_metadata_headers(request: Request) -> dict[str, str]:
+    """Preserve non-secret Runtime request identity across the cloud gateway."""
+    return {
+        name: value
+        for name, value in request.headers.items()
+        if name.lower() in RUNTIME_METADATA_HEADERS
+    }
 
 
 def _merge_headers_case_insensitive(
@@ -397,9 +424,11 @@ async def proxy_llm_responses(
         else {}
     )
     custom_headers = _extract_custom_upstream_headers(request)
+    runtime_headers = _extract_runtime_metadata_headers(request)
     provider_headers = _merge_headers_case_insensitive(
         configured_headers,
         custom_headers,
+        runtime_headers,
     )
     protocol_headers: dict[str, str] = dict(auth_headers)
     content_type = request.headers.get("content-type")

@@ -869,9 +869,7 @@ class TestImportDocument:
             provider_id="dingtalk",
             external_resource_id=node.dingtalk_node_id,
         )
-        monkeypatch.setattr(
-            knowledge_service_module, "_get_delete_gateway", MagicMock()
-        )
+        monkeypatch.setattr(knowledge_service_module, "_get_rag_gateway", MagicMock())
         monkeypatch.setattr(
             "app.services.context.context_service.delete_context",
             MagicMock(return_value=True),

@@ -9,16 +9,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from knowledge_runtime.services.config_loader import RuntimeConfigLoader
-from knowledge_runtime.services.config_resolver import QueryConfig
-from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
-
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from knowledge_engine.query.executor import QueryExecutor as KnowledgeQueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+from knowledge_runtime.services.config_resolver import QueryConfig
+from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
+from shared.knowledge_module import QueryTarget, query_documents
 from shared.models import (
+    RemoteAuthorizedRetrievalResources,
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRecord,
     RemoteQueryRequest,
@@ -57,24 +58,89 @@ class QueryExecutor:
             Query response with ranked records.
         """
         plan = self._planner.plan(request.query, request.search_hints)
-        all_records: list[RemoteQueryRecord] = []
         retrieval_override_by_kb_id = self._build_retrieval_override_map(
             request.knowledge_base_ids,
             request.knowledge_base_retrieval_overrides,
         )
+        authorized_by_kb_id = self._build_authorized_resources_map(
+            request.knowledge_base_ids,
+            request.authorized_resources,
+        )
+        resolved_scope = request.scope
+        if resolved_scope is None and request.document_ids is not None:
+            resolved_scope = RetrievalScope(document_ids=request.document_ids)
         configs_by_kb_id = self._config_loader.resolve_query_configs(
             knowledge_base_ids=request.knowledge_base_ids,
             user_id=request.user_id,
+            authorized=authorized_by_kb_id,
+            scope=resolved_scope,
+            retrieval_overrides={
+                knowledge_base_id: override.retrieval_config.model_dump(
+                    exclude_unset=True
+                )
+                for knowledge_base_id, override in retrieval_override_by_kb_id.items()
+            },
+        )
+        search_hints = self._search_hints_dict(request.search_hints)
+        self._log_query_plan(plan, search_hints)
+
+        targets = [
+            self._build_query_target(
+                knowledge_base_id,
+                configs_by_kb_id[knowledge_base_id],
+                self._planner.plan(
+                    request.query,
+                    request.search_hints,
+                    qa_pair_count=configs_by_kb_id[knowledge_base_id].qa_pair_count,
+                ),
+            )
+            for knowledge_base_id in request.knowledge_base_ids
+            if configs_by_kb_id[knowledge_base_id].scoped_document_ids != []
+        ]
+        result = await query_documents(
+            targets,
+            query=plan.normalized_query,
+            metadata_condition=request.metadata_condition,
+            max_results=request.max_results,
+        )
+        records = [
+            RemoteQueryRecord(
+                content=record.get("content", ""),
+                title=record.get("title", ""),
+                score=record.get("score"),
+                metadata=record.get("metadata"),
+                knowledge_base_id=int(record["knowledge_id"]),
+                document_id=record["document_id"],
+            )
+            for record in result["records"]
+        ]
+        logger.info(
+            "Query result: query_mode=%s, total_records=%d, returned_records=%d",
+            plan.hint_source,
+            result["total"],
+            len(records),
+        )
+        return RemoteQueryResponse(
+            records=records,
+            total=result["total"],
+            total_estimated_tokens=result["total_estimated_tokens"],
         )
 
-        if request.search_hints is None:
-            search_hints: dict[str, Any] = {}
-        elif isinstance(request.search_hints, dict):
-            search_hints = dict(request.search_hints)
-        else:
-            search_hints = request.search_hints.model_dump(exclude_none=True)
+    @staticmethod
+    def _search_hints_dict(
+        search_hints: Any,
+    ) -> dict[str, Any]:
+        """Normalize optional search hints to a plain mapping."""
+        if search_hints is None:
+            return {}
+        if isinstance(search_hints, dict):
+            return dict(search_hints)
+        return search_hints.model_dump(exclude_none=True)
+
+    @staticmethod
+    def _log_query_plan(plan: QueryPlan, search_hints: dict[str, Any]) -> None:
         logger.info(
-            "Query request: hint_source=%s, normalized_query='%s...', "
+            "Query request hints: hint_source=%s, normalized_query='%s...', "
             "dense_query='%s...', sparse_query='%s...', hints_present=%s, "
             "semantic_query=%s, keywords=%s, phrases=%s",
             plan.hint_source,
@@ -87,105 +153,28 @@ class QueryExecutor:
             len(search_hints.get("phrases") or []),
         )
 
-        # Query each knowledge base after config loading has closed its DB session.
-        for knowledge_base_id in request.knowledge_base_ids:
-            records = await self._query_knowledge_base(
-                request=request,
-                knowledge_base_id=knowledge_base_id,
-                config=configs_by_kb_id[knowledge_base_id],
-                plan=plan,
-                retrieval_override=retrieval_override_by_kb_id.get(knowledge_base_id),
-            )
-            all_records.extend(records)
-
-        # Sort by score (descending) and limit to max_results
-        all_records.sort(key=lambda r: r.score or 0, reverse=True)
-        limited_records = all_records[: request.max_results]
-
-        # Calculate total estimated tokens (rough estimate)
-        total_tokens = sum(
-            self._estimate_tokens(record.content) for record in limited_records
-        )
-
-        logger.info(
-            "Query complete: hint_source=%s, normalized_query='%s...', "
-            "total_results=%d, returned=%d",
-            plan.hint_source,
-            plan.normalized_query[:50],
-            len(all_records),
-            len(limited_records),
-        )
-
-        return RemoteQueryResponse(
-            records=limited_records,
-            total=len(all_records),
-            total_estimated_tokens=total_tokens,
-        )
-
-    async def _query_knowledge_base(
-        self,
-        request: RemoteQueryRequest,
-        knowledge_base_id: int,
-        config: QueryConfig,
-        plan: QueryPlan,
-        retrieval_override: RemoteKnowledgeBaseRetrievalOverride | None = None,
-    ) -> list[RemoteQueryRecord]:
-        """Query a single knowledge base.
-
-        Args:
-            request: The original query request.
-            knowledge_base_id: ID of the knowledge base to query.
-
-        Returns:
-            List of records from this knowledge base.
-        """
-        if retrieval_override is not None:
-            config = config.__class__(
-                knowledge_base_id=config.knowledge_base_id,
-                index_owner_user_id=config.index_owner_user_id,
-                retriever_config=config.retriever_config,
-                embedding_model_config=config.embedding_model_config,
-                retrieval_config=retrieval_override.retrieval_config,
-                user_name=config.user_name,
-            )
-
-        # Create storage backend and embedding model
-        storage_backend = create_storage_backend_from_runtime_config(
-            config.retriever_config
-        )
-        embed_model = create_embedding_model_from_runtime_config(
+    @staticmethod
+    def _build_query_target(
+        knowledge_base_id: int, config: QueryConfig, plan: QueryPlan
+    ) -> QueryTarget:
+        """Supply execution dependencies after the config session has closed."""
+        storage = create_storage_backend_from_runtime_config(config.retriever_config)
+        embedding = create_embedding_model_from_runtime_config(
             config.embedding_model_config
         )
-        storage_type = config.retriever_config.storage_config.get("type", "unknown")
-
         logger.info(
-            "Query KB config: knowledge_base_id=%d, config_source=%s, "
-            "storage_type=%s, retrieval_mode=%s, top_k=%s, "
-            "score_threshold=%s, vector_weight=%s, keyword_weight=%s",
+            "Runtime query config: kb_id=%s top_k=%s score_threshold=%s retrieval_mode=%s",
             knowledge_base_id,
-            "request_override" if retrieval_override is not None else "database",
-            storage_type,
-            config.retrieval_config.retrieval_mode,
             config.retrieval_config.top_k,
             config.retrieval_config.score_threshold,
-            config.retrieval_config.vector_weight,
-            config.retrieval_config.keyword_weight,
+            config.retrieval_config.retrieval_mode,
         )
-
-        # Create query executor
-        executor = KnowledgeQueryExecutor(
-            storage_backend=storage_backend,
-            embed_model=embed_model,
-        )
-
-        # Execute query
-        knowledge_id = str(knowledge_base_id)
-        resolved_scope = request.scope
-        if resolved_scope is None and request.document_ids is not None:
-            resolved_scope = RetrievalScope(document_ids=request.document_ids)
-        result = await executor.execute(
-            knowledge_id=knowledge_id,
-            query=plan.normalized_query,
+        return QueryTarget(
+            KnowledgeQueryExecutor(storage_backend=storage, embed_model=embedding),
+            str(knowledge_base_id),
+            config.retrieval_config,
+            config.index_owner_user_id,
+            document_ids=config.scoped_document_ids,
             query_plan={
                 "dense_query": plan.dense_query,
                 "sparse_query": plan.sparse_query,
@@ -193,33 +182,7 @@ class QueryExecutor:
                 "phrases": plan.phrases,
                 "hint_source": plan.hint_source,
             },
-            retrieval_config=config.retrieval_config,
-            scope=resolved_scope,
-            metadata_condition=request.metadata_condition,
-            user_id=config.index_owner_user_id,
         )
-
-        # Convert to RemoteQueryRecord format
-        records: list[RemoteQueryRecord] = []
-        for record in result.get("records", []):
-            records.append(
-                RemoteQueryRecord(
-                    content=record.get("content", ""),
-                    title=record.get("title", ""),
-                    score=record.get("score"),
-                    metadata=record.get("metadata"),
-                    knowledge_base_id=knowledge_base_id,
-                    document_id=self._extract_document_id(record),
-                )
-            )
-
-        logger.info(
-            "Queried KB: knowledge_base_id=%d, records=%d",
-            knowledge_base_id,
-            len(records),
-        )
-
-        return records
 
     def _build_retrieval_override_map(
         self,
@@ -242,19 +205,28 @@ class QueryExecutor:
             overrides_by_kb_id[override.knowledge_base_id] = override
         return overrides_by_kb_id
 
-    def _extract_document_id(self, record: dict[str, Any]) -> int | None:
-        """Extract document ID from record metadata."""
-        metadata = record.get("metadata") or {}
-        doc_ref = metadata.get("doc_ref")
-        if doc_ref and isinstance(doc_ref, str):
-            try:
-                if doc_ref.startswith("doc_"):
-                    return int(doc_ref[4:])
-                return int(doc_ref)
-            except ValueError:
-                pass
-        return None
+    @staticmethod
+    def _build_authorized_resources_map(
+        knowledge_base_ids: list[int],
+        authorized_resources: list[RemoteAuthorizedRetrievalResources] | None,
+    ) -> dict[int, RemoteAuthorizedRetrievalResources]:
+        """Index the authorized retrieval resources by knowledge base ID."""
+        authorized_by_kb_id: dict[int, RemoteAuthorizedRetrievalResources] = {}
+        for entry in authorized_resources or []:
+            if entry.knowledge_base_id in authorized_by_kb_id:
+                raise ValueError(
+                    "authorized_resources contains duplicate knowledge_base_id entries"
+                )
+            authorized_by_kb_id[entry.knowledge_base_id] = entry
 
-    def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count (~4 characters per token)."""
-        return len(text) // 4
+        missing = [
+            knowledge_base_id
+            for knowledge_base_id in knowledge_base_ids
+            if knowledge_base_id not in authorized_by_kb_id
+        ]
+        if missing:
+            raise ValueError(
+                "query requires authorized retrieval resources for knowledge "
+                f"bases {missing}"
+            )
+        return authorized_by_kb_id

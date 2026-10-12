@@ -1,9 +1,9 @@
-import { useMemo } from 'react'
-import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
-import type { CollaborationTranslate } from '../i18n'
-import type { SharedIssueDetailTaskBinding } from './createSharedIssueDetailPort'
-import { IssueTaskConversationPanel } from './IssueTaskConversationPanel'
-import { BrowserTaskConversationContent } from './BrowserTaskConversationContent'
+import { useMemo } from "react";
+import type { SharedWorkspaceRuntimeApi } from "../ports/SharedWorkspaceApi";
+import type { CollaborationTranslate } from "../i18n";
+import type { SharedIssueDetailTaskBinding } from "./createSharedIssueDetailPort";
+import { IssueTaskConversationPanel } from "./IssueTaskConversationPanel";
+import { BrowserTaskConversationContent } from "./BrowserTaskConversationContent";
 
 export function IssueTaskConversation({
   binding,
@@ -13,26 +13,33 @@ export function IssueTaskConversation({
   translate,
   onClose,
 }: {
-  binding: SharedIssueDetailTaskBinding
-  issueId: string
-  projectStore?: 'local' | 'backend'
-  runtime: SharedWorkspaceRuntimeApi
-  translate: CollaborationTranslate
-  onClose(): void
+  binding: SharedIssueDetailTaskBinding;
+  issueId: string;
+  projectStore?: "local" | "backend";
+  runtime: SharedWorkspaceRuntimeApi;
+  translate: CollaborationTranslate;
+  onClose(): void;
 }) {
   const address = useMemo(
     () => ({
       deviceId: binding.device_id,
       taskId: binding.task_id,
-      ...(projectStore === 'backend'
+      ...(projectStore === "backend"
         ? { projectSession: { projectId: binding.cloud_project_id, issueId } }
         : {}),
     }),
-    [binding.device_id, binding.task_id, binding.cloud_project_id, issueId, projectStore]
-  )
+    [
+      binding.device_id,
+      binding.task_id,
+      binding.cloud_project_id,
+      issueId,
+      projectStore,
+    ],
+  );
   return (
     <IssueTaskConversationPanel
       issueId={issueId}
+      taskTitle={binding.task_title}
       existingTask
       translate={translate}
       onClose={onClose}
@@ -44,5 +51,5 @@ export function IssueTaskConversation({
         translate={translate}
       />
     </IssueTaskConversationPanel>
-  )
+  );
 }

@@ -12,6 +12,11 @@ describe('buildAiVerifyEnvironment', () => {
         PATH: '/usr/bin',
         WEGENT_EXECUTOR_BINARY: '/tmp/installed-executor',
         WEWORK_EXECUTOR_PATH: '/Applications/WeWork.app/Contents/Resources/bin/wegent-executor',
+        WEGENT_WORKBENCH_HOME: '/personal/workbench',
+        WEGENT_CAPABILITIES_HOME: '/personal/capabilities',
+        WEGENT_CLAUDE_HOME: '/personal/claude',
+        CLAUDE_CONFIG_DIR: '/personal/claude-config',
+        CODEX_SQLITE_HOME: '/personal/codex-state',
       })
     ).toEqual({ PATH: '/usr/bin' })
   })

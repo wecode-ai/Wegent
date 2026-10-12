@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { createCollaborationTranslator } from '@wegent/collaboration'
 import '@/i18n'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { TaskCommentComposer } from './TaskCommentComposer'
@@ -38,6 +39,7 @@ function setup(overrides: Partial<Parameters<typeof TaskCommentComposer>[0]> = {
     disabled: false,
     sending: false,
     error: null,
+    translate: createCollaborationTranslator('zh-CN'),
     controls,
     projectWork,
     ...overrides,
@@ -59,21 +61,11 @@ describe('TaskCommentComposer', () => {
     expect(screen.queryByTestId('project-chat-composer')).not.toBeInTheDocument()
   })
 
-  it('submits with Enter while preserving Shift+Enter and IME composition', () => {
-    const { props, input } = setup()
-    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
-    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
-    expect(props.onSubmit).not.toHaveBeenCalled()
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(props.onSubmit).toHaveBeenCalledOnce()
-  })
-
-  it('disables submission for empty drafts, pending sends and uploads', () => {
-    const { props, input, rerender } = setup({ value: ' ' })
+  it('disables the send button for empty drafts, pending sends and uploads', () => {
+    const { props, rerender } = setup({ value: ' ' })
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
     rerender(<TaskCommentComposer {...props} value="Review this" sending />)
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(props.onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
     props.controls.uploadingFiles.set('notes.txt', {
       file: new File(['notes'], 'notes.txt'),
       progress: 50,
@@ -82,13 +74,13 @@ describe('TaskCommentComposer', () => {
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })
 
-  it('uploads selected and pasted files through the existing attachment controls', () => {
+  it('uploads selected and pasted files through the existing attachment controls', async () => {
     const { props, input } = setup()
     const file = new File(['notes'], 'notes.txt', { type: 'text/plain' })
     fireEvent.change(screen.getByTestId('task-comment-file-input'), { target: { files: [file] } })
     expect(props.controls.handleFileSelect).toHaveBeenCalledWith([file])
     fireEvent.paste(input, { clipboardData: { files: [file] } })
-    expect(props.controls.handleFileSelect).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(props.controls.handleFileSelect).toHaveBeenCalledTimes(2))
   })
 
   it('retains the draft and displays a send failure', () => {

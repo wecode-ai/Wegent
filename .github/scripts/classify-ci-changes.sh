@@ -36,6 +36,7 @@ classify_path() {
       .github/actions/* | \
       .github/scripts/classify-ci-cache-warmup.sh | \
       .github/scripts/classify-ci-changes.sh | \
+      .github/scripts/download-actions-artifact.sh | \
       .github/scripts/lib/apt-packages.sh | \
       .github/scripts/lib/validate-ci-cache-policy.rb | \
       .github/scripts/test-ci-cache-policy.sh | \
@@ -60,6 +61,7 @@ classify_path() {
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
+      .github/scripts/restore-oci-runtime-binary.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh)
       changed[wework_e2e]=true
       ;;
@@ -73,6 +75,10 @@ classify_path() {
       changed[backend]=true
       changed[wegent_cli]=true
       changed[platform_e2e]=true
+      ;;
+    backend-rs/*)
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
       ;;
     executor/* | sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | sdk/plugin-build/* | sdk/plugin-creator/*)
       changed[executor]=true
@@ -93,6 +99,11 @@ classify_path() {
       ;;
     knowledge_engine/*)
       changed[knowledge_engine]=true
+      changed[platform_e2e]=true
+      ;;
+    knowledge_runtime/*)
+      changed[knowledge_engine]=true
+      changed[platform_e2e]=true
       ;;
     frontend/*)
       changed[frontend]=true

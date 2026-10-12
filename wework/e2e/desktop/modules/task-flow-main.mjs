@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
+import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -103,6 +104,7 @@ import {
   installOfficialPluginFixture,
   uninstallOfficialPlugin,
   verifyCloudWorkPage,
+  verifyComposerPluginNetworkIsolation,
   verifyCoreDshPluginManagement,
   verifyMarketplacePluginLifecycle,
   verifyPluginLifecycle,
@@ -189,6 +191,8 @@ import {
   LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
   LOCAL_MODEL_SWITCH_INITIAL_PROMPT,
   LOCAL_VISION_SIDECAR_CASE,
+  LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
+  LATE_BOUND_PROJECT_SPACE_PROMPT,
   MACOS_LAUNCH_SERVICES_REGISTER,
   MEMORY_ONLY,
   MESSAGE_EDIT_ONLY,
@@ -273,6 +277,7 @@ import {
 } from './shared.mjs'
 
 import {
+  verifyAsyncRequestUserInput,
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
   verifyForkProviderModelPreservation,
@@ -282,6 +287,7 @@ import {
 } from './task-state-flows.mjs'
 
 import {
+  verifyAttachmentComposerClearsOnSubmit,
   verifyAttachmentOnlySidebarLifecycle,
   verifyBackgroundTaskWindowLifecycle,
   verifyCrossProviderSwitchRetry,
@@ -314,13 +320,14 @@ const PROJECT_AI_INITIAL_INSTRUCTIONS =
   'WEWORK_DESKTOP_E2E_PROJECT_AI_INITIAL: preserve this instruction for the existing conversation.'
 const PROJECT_AI_UPDATED_INSTRUCTIONS =
   'WEWORK_DESKTOP_E2E_PROJECT_AI_UPDATED: apply this instruction only to new conversations.'
-const PROJECT_AI_MODEL_ID = 'wework-deepseek-v4-pro'
-const PROJECT_AI_MODEL_LABEL = 'wework-deepseek-v4-pro'
+const PROJECT_AI_MODEL_ID = 'local-model:desktop-e2e-vision-main'
+const PROJECT_AI_MODEL_LABEL = 'Desktop E2E DeepSeek Pro Vision Main'
 const PROJECT_AI_MODEL_VALUE = `runtime:${PROJECT_AI_MODEL_ID}`
 const PROJECT_AI_UPSTREAM_MODEL_ID = 'deepseek-v4-pro'
-const REMEMBERED_TASK_MODEL_ID = 'gpt-5.6-sol'
-const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
+const REMEMBERED_TASK_MODEL_ID = 'gpt-6.1-sol'
+const REMEMBERED_TASK_MODEL_LABEL = 'GPT-6.1 Sol'
 const REMEMBERED_TASK_REASONING = 'high'
+const GPT_6_1_SOL_MODEL_ID = 'gpt-6.1-sol'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
 const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
@@ -499,16 +506,15 @@ async function waitForProjectComposerPlugin(control) {
 async function selectRememberedTaskModel(control) {
   await selectE2EModel(control, REMEMBERED_TASK_MODEL_ID, REMEMBERED_TASK_MODEL_LABEL)
   await control.command('click', '[data-testid="model-selector-button"]')
-  await control.command('click', '[data-testid="model-control-menu-reasoning"]')
   await control.command('waitFor', '[data-testid="model-control-reasoning-high"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     visible: true,
   })
   await control.command('click', '[data-testid="model-control-reasoning-high"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
-    'The task composer did not select GPT 5.6 Sol with high reasoning'
+    'The task composer did not select GPT-6.1 Sol with high reasoning'
   )
   await control.command('press', 'body', { key: 'Escape' })
 }
@@ -562,7 +568,7 @@ async function verifyProjectAiSettings({
   await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
     'The follow-global project did not remember the selected model and reasoning effort'
   )
@@ -797,7 +803,7 @@ async function verifyProjectAiSettings({
   await waitForE2EModelLabel(control, [PROJECT_AI_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
     'The next task did not restore the project model and reasoning effort'
   )
@@ -841,6 +847,47 @@ async function verifyLocalModelRouting({
     selectedModelLabel,
     'The model selector did not expose its selected model before refresh'
   )
+
+  setPhase('model-catalog-chatgpt-picker')
+  await control.command('clickWhenEnabled', modelSelector, {
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="model-simple-header"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="model-simple-source"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  assert.ok(
+    (await control.command('getText', '[data-testid="model-simple-source"]')).trim(),
+    'The compact model picker did not identify the selected model source'
+  )
+  const compactPicker = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    compactPicker.testIds.includes('model-advanced-panel'),
+    'The ChatGPT-style compact model picker did not expose its model power slider'
+  )
+
+  const gpt61SolMenu = await ensureModelOptionVisible(control, GPT_6_1_SOL_MODEL_ID, modelSelector)
+  assert.ok(
+    gpt61SolMenu.testIds.includes(`model-option-${GPT_6_1_SOL_MODEL_ID}`),
+    'The Codex model selector did not expose GPT-6.1 Sol'
+  )
+  assert.ok(
+    gpt61SolMenu.testIds.includes('model-source-local-chatgpt'),
+    'The advanced model picker did not expose the local ChatGPT account source'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await control.command('waitFor', modelSelector, {
+    text: selectedModelLabel,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  setPhase('model-catalog-refresh')
   await control.command('dispatchLocalModelSettingsChangedThenMacrotask', 'body')
   const refreshSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
   assert.ok(
@@ -1050,7 +1097,14 @@ async function main() {
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
     mkdir(codexSqliteHome, { recursive: true }),
+    mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  // Exercise consent explicitly; the product default already marks it as asked.
+  await writeFile(
+    join(electronUserDataDirectory, 'app-preferences.json'),
+    `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
+    { flag: 'wx', mode: 0o600 }
+  )
   await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
   await Promise.all([
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
@@ -1179,7 +1233,8 @@ async function main() {
       await desktopScenario?.prepareCloud?.({
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
-        databasePath: cloudEnvironment.databasePath,
+        executeDatabase: (sql, params) => cloudEnvironment.executeDatabase(sql, params),
+        queryDatabase: (sql, params) => cloudEnvironment.queryDatabase(sql, params),
         publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
         setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
@@ -1214,7 +1269,9 @@ async function main() {
         }`,
         'openai-responses',
         desktopScenario?.modelProviderConfigToml,
-        desktopScenario?.modelProviderAuthToml
+        desktopScenario?.modelProviderAuthToml,
+        desktopScenario?.modelProviderId,
+        desktopScenario?.modelId
       )
       await writeFile(
         join(codexHome, 'auth.json'),
@@ -1311,6 +1368,10 @@ async function main() {
       'WEGENT_RUNTIME_AUTH_TOKEN',
       'WEGENT_TASK_ID',
       'WEGENT_TASK_WORKSPACE',
+      'WEGENT_WORKBENCH_HOME',
+      'WEGENT_CAPABILITIES_HOME',
+      'WEGENT_CLAUDE_HOME',
+      'CLAUDE_CONFIG_DIR',
       'WEWORK_CORE_DSH_COMMAND',
       'WEWORK_CORE_DSH_URL',
       'WEWORK_CORE_PLUGIN_ROOT',
@@ -1333,13 +1394,18 @@ async function main() {
       delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
     }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
+    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: desktopScenario?.electronLaunchArguments ?? [],
     })
+    const launchWorkingDirectory = desktopScenario?.launchWorkingDirectory ?? weworkDir
+    if (desktopScenario?.launchWorkingDirectory) {
+      await mkdir(launchWorkingDirectory, { recursive: true })
+    }
     let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
-        cwd: weworkDir,
+        cwd: launchWorkingDirectory,
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
@@ -1555,22 +1621,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'utf8'
       )
       console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
-      return
-    }
-
-    if (DESKTOP_SEGMENT === 'project-event-sources') {
-      phase = 'project-event-sources-scenario'
-      assert.ok(
-        desktopScenario,
-        'The project-event-sources checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
-      )
-      await desktopScenario.verify(control)
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
-      console.log(`Wework desktop project-event-sources checkpoint passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -1834,6 +1884,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyAttachmentComposerClearsOnSubmit({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
       await verifyAttachmentOnlySidebarLifecycle({
         app,
         appBundlePath,
@@ -1922,9 +1980,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyWorktreeCreationStatus({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorHome,
         workspacePath,
         restartDesktopApp,
       })
+      phase = 'pending-task-across-tabs'
+      await verifyPendingTaskAcrossTabs({ control, workspacePath })
       console.log(`Wework desktop worktree-status E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -1950,6 +2011,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
           restartDesktopApp,
           userDataDirectory: electronUserDataDirectory,
+        })
+      }
+      if (shouldRunPluginSegment('plugin-composer-network-isolation')) {
+        phase = 'plugin-composer-network-isolation'
+        await verifyComposerPluginNetworkIsolation({
+          blockingNetworkProxy,
+          codexHome,
+          control,
+          marketplacePath: marketplacePluginPath,
+          restartDesktopApp,
+          workspacePath,
         })
       }
       if (shouldRunPluginSegment('plugin-marketplace-lifecycle')) {
@@ -2141,7 +2213,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'workspace-issue-creation'
       await verifyWorkspaceIssueCreation(control)
       phase = 'workspace-tab-isolation'
-      await verifyWorkspaceTabIsolation(control)
+      await verifyWorkspaceTabIsolation(control, restartDesktopApp)
       if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
         console.log(`Wework desktop workspace-tabs checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -2151,6 +2223,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (shouldRunDesktopCheckpoint('priority-filter')) {
       phase = 'priority-filter'
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      phase = 'request-user-input-async'
+      await verifyAsyncRequestUserInput({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
       phase = 'runtime-task-order-unread'
       await verifyRuntimeTaskOrderAndUnreadVisibility({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
@@ -2192,7 +2270,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
-      if (!GUIDANCE_SCROLL_ONLY) {
+      if (!GUIDANCE_SCROLL_ONLY && !GUIDANCE_BACKGROUND_ONLY && !SIDE_CHAT_ONLY) {
         phase = 'workspace-document-tabs'
         await verifyWorkspaceDocumentTabs(control)
 
@@ -2269,9 +2347,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyWorktreeCreationStatus({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorHome,
         workspacePath,
         restartDesktopApp,
       })
+      phase = 'pending-task-across-tabs'
+      await verifyPendingTaskAcrossTabs({ control, workspacePath })
     }
 
     phase = 'secondary-project-create'
@@ -2744,6 +2825,19 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
           captureScreenshots: false,
         })
+        phase = 'late-bound-project-space-attachment-tools'
+        control.setScenario('late_bound_project_space')
+        const lateBoundRequestCount =
+          control.scenarioRequests.get('late_bound_project_space')?.length ?? 0
+        await sendPrompt(control, composerSelector, LATE_BOUND_PROJECT_SPACE_PROMPT)
+        await control.awaitScenarioRequestCount(
+          'late_bound_project_space',
+          lateBoundRequestCount + 4
+        )
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -2916,11 +3010,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         console.log(`Wework message restoration desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
-      await control.command('waitFor', '[data-testid="final-processing-toggle"]', {
+      await control.command('waitFor', '[data-testid="processing-duration-label"]')
+      await control.command('scrollIntoViewAsUser', '[data-testid="processing-duration-label"]')
+      await control.command('waitFor', '[data-testid="processing-duration-label"]', {
         visible: true,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
-      await control.command('click', '[data-testid="final-processing-toggle"]')
+      await control.command('expandProcessingSummaries', 'body')
       await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -2979,6 +3075,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )
 
       phase = 'file-changes-revert-confirmation'
+      await control.command('waitFor', '[data-testid="revert-file-changes-button"]')
+      await control.command('scrollIntoViewAsUser', '[data-testid="revert-file-changes-button"]')
       await control.command('clickWhenEnabled', '[data-testid="revert-file-changes-button"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -4258,6 +4356,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       })
 
       phase = 'attachment-only-sidebar'
+      await verifyAttachmentComposerClearsOnSubmit({
+        composerSelector,
+        control,
+      })
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
       await verifyAttachmentOnlySidebarLifecycle({
@@ -4375,6 +4477,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           matrixCase: control.matrixCase ? matrixCaseId(control.matrixCase) : null,
           matrixStage: control.matrixState?.stage ?? null,
           matrixRequestCount: control.matrixState?.requests.length ?? 0,
+          matrixExecutionDiagnostics: control.matrixState?.executionDiagnostics ?? null,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,
@@ -4612,6 +4715,17 @@ async function verifyMcpElicitationInFullAccess(control) {
     MCP_ELICITATION_PROMPT,
     'mcp_elicitation'
   )
+  await control.command('waitFor', '[data-testid="mcp-url-authorization-card"]', {
+    text: 'example.com',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await pathExists(evidencePath),
+    false,
+    'The URL elicitation was acknowledged without user consent'
+  )
+  await control.command('click', '[data-testid="mcp-url-authorization-cancel"]')
   await control.command('waitFor', '[data-testid="request-user-input-card"]', {
     text: '访问范围',
     visible: true,
@@ -4628,10 +4742,14 @@ async function verifyMcpElicitationInFullAccess(control) {
     false,
     'The MCP tool call displayed an execution approval card instead of the business form'
   )
-  assert.equal(
-    await pathExists(evidencePath),
-    false,
-    'Codex resolved the MCP elicitation before the user answered the visible form'
+  const urlRecords = (await readFile(evidencePath, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line))
+  assert.deepEqual(
+    urlRecords,
+    [{ event: 'url_elicitation_result', result: { action: 'cancel' } }],
+    'The real MCP server must receive only cancellation before the business form is answered'
   )
   await captureVerificationScreenshot(control, 'permission-07-mcp-elicitation-form.png')
 

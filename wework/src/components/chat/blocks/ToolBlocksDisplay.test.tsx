@@ -1288,12 +1288,13 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('编辑 env')
   })
 
-  test('only persists the top-level processing expansion state', () => {
+  test('persists file detail across summary keys and clears it when the summary closes', () => {
     const { unmount } = render(
       <ToolBlocksDisplay
         blocks={[completedFileChangesBlock]}
         isStreaming={false}
-        stateKey="file-changes-local-expansion"
+        stateKey="file-changes-live-summary"
+        detailStateScopeKey="file-changes-message"
       />
     )
 
@@ -1307,13 +1308,30 @@ describe('ToolBlocksDisplay', () => {
       <ToolBlocksDisplay
         blocks={[completedFileChangesBlock]}
         isStreaming={false}
-        stateKey="file-changes-local-expansion"
+        stateKey="file-changes-ordered-summary"
+        detailStateScopeKey="file-changes-message"
       />
     )
 
     expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute('aria-hidden', 'true')
     expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
     expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('编辑 env')
+    expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+
+    expect(screen.getByTestId('processing-summary-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+
+    expect(screen.getByRole('button', { name: /编辑 env/ })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
     expect(screen.queryByTestId('process-file-change-diff')).not.toBeInTheDocument()
   })
 
@@ -1651,6 +1669,38 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('processing-live-preview')).toHaveTextContent('正在运行 pwd')
     expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
     expect(screen.getByTestId('processing-summary-chevron')).not.toHaveClass('-rotate-90')
+  })
+
+  test('keeps an explicitly expanded tool detail open when streaming enters the final phase', () => {
+    const { rerender } = render(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock]}
+        isStreaming={true}
+        processingPhase="live"
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工具详情' }))
+    expect(screen.getByText('/workspace/project')).toBeInTheDocument()
+
+    rerender(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock]}
+        isStreaming={true}
+        processingPhase="final"
+      />
+    )
+
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '收起工具详情' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(screen.getByText('/workspace/project')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '收起工具详情' }))
+
+    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
   })
 
   test('keeps completed and running tools as flat preview rows', () => {

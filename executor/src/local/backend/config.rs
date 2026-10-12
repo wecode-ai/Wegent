@@ -18,6 +18,7 @@ use crate::{
 
 const DEFAULT_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_HEARTBEAT_TIMEOUT_SECONDS: u64 = 30;
+const DEFAULT_RUNTIME_WORK_POLL_INTERVAL_SECONDS: u64 = 2;
 const DEFAULT_RECONNECT_DELAY_SECONDS: u64 = 1;
 const DEFAULT_RECONNECT_MAX_DELAY_SECONDS: u64 = 30;
 
@@ -38,6 +39,7 @@ pub struct LocalBackendConfig {
     pub runtime_transfer_host: String,
     pub heartbeat_interval: Duration,
     pub heartbeat_timeout: Duration,
+    pub runtime_work_poll_interval: Duration,
     pub registration_timeout: Duration,
     pub reconnect_delay: Duration,
     pub reconnect_delay_max: Duration,
@@ -93,6 +95,10 @@ impl LocalBackendConfig {
             heartbeat_timeout: duration_from_env(
                 "LOCAL_HEARTBEAT_CALL_TIMEOUT",
                 DEFAULT_HEARTBEAT_TIMEOUT_SECONDS,
+            ),
+            runtime_work_poll_interval: duration_from_env(
+                "LOCAL_RUNTIME_WORK_POLL_INTERVAL",
+                DEFAULT_RUNTIME_WORK_POLL_INTERVAL_SECONDS,
             ),
             registration_timeout: Duration::from_secs(10),
             reconnect_delay: duration_from_env(

@@ -13,7 +13,11 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.dingtalk_card import DingTalkChatCardConfig, validate_chat_card_config
+from app.schemas.dingtalk_card import (
+    DingTalkChatCardConfig,
+    DingTalkNotificationCardConfig,
+    validate_card_config,
+)
 
 # Channel type literals
 ChannelType = Literal["dingtalk", "feishu", "wechat", "telegram", "discord", "weibo"]
@@ -62,7 +66,7 @@ class IMChannelCreate(BaseModel):
     @classmethod
     def validate_config(cls, v: Dict[str, Any], info) -> Dict[str, Any]:
         """Validate config has required fields based on channel type."""
-        return validate_chat_card_config(v)
+        return validate_card_config(v)
 
 
 class IMChannelUpdate(BaseModel):
@@ -83,7 +87,7 @@ class IMChannelUpdate(BaseModel):
     @field_validator("config")
     @classmethod
     def validate_config(cls, value):
-        return validate_chat_card_config(value) if value is not None else None
+        return validate_card_config(value) if value is not None else None
 
 
 class IMChannelResponse(BaseModel):
@@ -144,6 +148,10 @@ class DingTalkChannelConfig(BaseModel):
     """Configuration schema for DingTalk channel."""
 
     chat_card: Optional[DingTalkChatCardConfig] = None
+    notification_card: Optional[DingTalkNotificationCardConfig] = Field(
+        default=None,
+        description="Render task notifications as AI cards; omitted keeps markdown",
+    )
     client_id: str = Field(..., description="DingTalk application Client ID")
     client_secret: str = Field(..., description="DingTalk application Client secret")
     use_ai_card: bool = Field(

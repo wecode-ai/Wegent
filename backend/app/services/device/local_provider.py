@@ -106,6 +106,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         capabilities: Optional[List[str]] = None,
         client_ip: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_transfer_port: Optional[int] = None,
         runtime_instance_id: Optional[str] = None,
         app_device_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -123,6 +124,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             capabilities: Device capability tags
             client_ip: Device's client IP address
             runtime_transfer_host: Host peers should use for direct transfers
+            runtime_transfer_port: Executor session gateway port
 
         Returns:
             Dict with device 'id' and 'is_default'
@@ -138,6 +140,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
             capabilities=capabilities,
             client_ip=client_ip,
             runtime_transfer_host=runtime_transfer_host,
+            runtime_transfer_port=runtime_transfer_port,
+            update_runtime_transfer_port=True,
             runtime_instance_id=runtime_instance_id,
             app_device_id=app_device_id,
         )
@@ -153,6 +157,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 executor_version=executor_version,
                 client_ip=client_ip,
                 runtime_transfer_host=runtime_transfer_host,
+                runtime_transfer_port=runtime_transfer_port,
                 runtime_instance_id=runtime_instance_id,
             )
 
@@ -171,6 +176,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         executor_version: Optional[str] = None,
         client_ip: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_transfer_port: Optional[int] = None,
         runtime_instance_id: Optional[str] = None,
         runtime_features: Optional[Dict[str, Any]] = None,
     ) -> bool:
@@ -184,6 +190,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "executor_version": executor_version,
             "client_ip": client_ip,
             "runtime_transfer_host": runtime_transfer_host,
+            "runtime_transfer_port": runtime_transfer_port,
             "runtime_instance_id": runtime_instance_id,
             "runtime_features": runtime_features,
         }
@@ -270,6 +277,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
             "runtime_transfer_host": spec.get("runtimeTransferHost"),
+            "runtime_transfer_port": spec.get("runtimeTransferPort"),
             "runtime_instance_id": spec.get("runtimeInstanceId"),
             "app_device_id": spec.get("appDeviceId"),
             "runtime_features": (
@@ -419,6 +427,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
                     "runtime_transfer_host": spec.get("runtimeTransferHost"),
+                    "runtime_transfer_port": spec.get("runtimeTransferPort"),
                     "runtime_instance_id": spec.get("runtimeInstanceId"),
                     "app_device_id": spec.get("appDeviceId"),
                     "runtime_features": (
@@ -437,6 +446,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         running_task_ids: Optional[List[int]] = None,
         executor_version: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_transfer_port: Optional[int] = None,
         runtime_instance_id: Optional[str] = None,
         runtime_capacity: Optional[Dict[str, Any]] = None,
         runtime_features: Optional[Dict[str, Any]] = None,
@@ -452,6 +462,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 data["executor_version"] = executor_version
             if runtime_transfer_host is not None:
                 data["runtime_transfer_host"] = runtime_transfer_host
+            data["runtime_transfer_port"] = runtime_transfer_port
             # Every heartbeat replaces the capacity observation. A missing
             # snapshot must clear the previous value instead of extending a
             # stale capacity truth with the online TTL.

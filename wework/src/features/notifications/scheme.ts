@@ -1,7 +1,15 @@
 export type WeworkDestination =
   | { kind: 'boards' }
-  | { kind: 'board'; projectId: string; itemId?: string }
+  | { kind: 'board'; projectId: string; itemId?: string; commentId?: string }
   | { kind: 'task'; deviceId: string; taskId: string }
+
+export function weworkTaskScheme(address: { deviceId: string; taskId: string }): string {
+  return `wework://tasks/${encodeURIComponent(address.deviceId)}/${encodeURIComponent(address.taskId)}`
+}
+
+export function weworkIssueScheme(projectId: string, itemId: string): string {
+  return `wework://boards/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(itemId)}`
+}
 
 function segment(value: string): string | null {
   const decoded = decodeURIComponent(value)
@@ -34,12 +42,20 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
       return null
     if (url.hostname === 'boards' && ['', '/'].includes(url.pathname)) return { kind: 'boards' }
     const parts = url.pathname.split('/').slice(1)
-    if (url.hostname === 'boards' && (parts.length === 1 || parts.length === 3)) {
+    if (
+      url.hostname === 'boards' &&
+      (parts.length === 1 || parts.length === 3 || parts.length === 5)
+    ) {
       const projectId = segment(parts[0])
       if (!projectId || !/^[1-9]\d*$/.test(projectId)) return null
       if (parts.length === 1) return { kind: 'board', projectId }
       const itemId = segment(parts[2])
-      return parts[1] === 'issues' && itemId ? { kind: 'board', projectId, itemId } : null
+      if (parts[1] !== 'issues' || !itemId) return null
+      if (parts.length === 3) return { kind: 'board', projectId, itemId }
+      const commentId = segment(parts[4])
+      return parts[3] === 'comments' && commentId
+        ? { kind: 'board', projectId, itemId, commentId }
+        : null
     }
     if (url.hostname === 'tasks' && parts.length === 2) {
       const deviceId = segment(parts[0])
@@ -52,12 +68,19 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
   }
 }
 
-export function weworkDestinationRoute(destination: WeworkDestination): string {
+export function weworkDestinationRoute(
+  destination: WeworkDestination,
+  focusRequest?: string
+): string {
   if (destination.kind === 'boards') return '/todo'
   if (destination.kind === 'task') {
     return `/runtime-tasks?${new URLSearchParams({ deviceId: destination.deviceId, taskId: destination.taskId })}`
   }
   const params = new URLSearchParams({ projectStore: 'backend', projectId: destination.projectId })
   if (destination.itemId) params.set('itemId', destination.itemId)
+  if (destination.commentId) {
+    params.set('commentId', destination.commentId)
+    if (focusRequest) params.set('focusRequest', focusRequest)
+  }
   return `/todo?${params}`
 }

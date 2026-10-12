@@ -60,7 +60,7 @@ describe("collaboration permissions", () => {
     });
     expect(
       getCollaborationIssueActionPermissions(
-        { access_role: "Reporter", project_store: "backend" },
+        { access_role: "Developer", project_store: "backend" },
         readOnlyIssue,
       ),
     ).toEqual({
@@ -71,14 +71,14 @@ describe("collaboration permissions", () => {
     });
     expect(
       getCollaborationIssueActionPermissions(
-        { access_role: "RestrictedAnalyst", project_store: "backend" },
+        { access_role: "Viewer", project_store: "backend" },
         readOnlyIssue,
       ),
     ).toEqual({
       canEdit: false,
       canComment: false,
       canAssign: false,
-      canStartWork: true,
+      canStartWork: false,
     });
   });
 
@@ -98,16 +98,16 @@ describe("collaboration permissions", () => {
   });
 
   it("uses membership for comments and visibility for starting work", () => {
-    const reporter = {
-      access_role: "Reporter" as const,
+    const developer = {
+      access_role: "Developer" as const,
       project_store: "backend" as const,
     };
 
     expect(
-      canCommentCollaborationIssue(reporter, { can_view_detail: true }),
+      canCommentCollaborationIssue(developer, { can_view_detail: true }),
     ).toBe(true);
     expect(
-      canCommentCollaborationIssue(reporter, { can_view_detail: false }),
+      canCommentCollaborationIssue(developer, { can_view_detail: false }),
     ).toBe(false);
     expect(canStartWorkOnCollaborationIssue({ can_view_detail: true })).toBe(
       true,

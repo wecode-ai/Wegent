@@ -23,6 +23,8 @@ use super::util::string_field;
 use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
 
 mod diagnostics;
+mod github_cli;
+mod logout;
 mod tools;
 
 #[derive(Debug, Clone)]
@@ -54,6 +56,9 @@ static BROWSER_AUTH_SESSIONS: OnceLock<Mutex<HashMap<String, BrowserAuthSession>
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 45;
 
 pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
+    if github_cli::is_target(&payload) {
+        return github_cli::health().await;
+    }
     let (plugin_root, spec) = resolve_request(&payload)?;
     // A source that still owns its credential remains usable without the cloud.
     let local = async {
@@ -78,6 +83,9 @@ pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
 }
 
 pub async fn start(payload: Value) -> Result<Value, AppIpcError> {
+    if github_cli::is_target(&payload) {
+        return github_cli::start().await;
+    }
     let (plugin_root, spec) = resolve_request(&payload)?;
     if spec.kind == "browser_oauth" {
         return start_browser_auth(payload, plugin_root, spec).await;
@@ -99,6 +107,9 @@ pub async fn start(payload: Value) -> Result<Value, AppIpcError> {
 }
 
 pub async fn poll(payload: Value) -> Result<Value, AppIpcError> {
+    if github_cli::is_target(&payload) {
+        return poll_browser_auth(&payload).await;
+    }
     let (plugin_root, spec) = resolve_request(&payload)?;
     if spec.kind == "browser_oauth" {
         return poll_browser_auth(&payload).await;
@@ -123,15 +134,28 @@ pub async fn poll(payload: Value) -> Result<Value, AppIpcError> {
 }
 
 pub async fn logout(payload: Value) -> Result<Value, AppIpcError> {
+    if github_cli::is_target(&payload) {
+        cancel_connector_sessions("github", "wework-github-cli").await;
+        return github_cli::logout().await;
+    }
     let (plugin_root, spec) = resolve_request(&payload)?;
     let plugin_key = string_field(&payload, "pluginKey")
         .or_else(|| string_field(&payload, "plugin_key"))
         .unwrap_or_default();
+    cancel_connector_sessions(&plugin_key, &spec.connector_slug).await;
+    logout::complete(
+        account_lifecycle(&plugin_root, &spec, "logout"),
+        logout_local(&plugin_root, &spec),
+    )
+    .await
+}
+
+async fn cancel_connector_sessions(plugin_key: &str, connector_slug: &str) {
     let mut sessions = browser_auth_sessions().lock().await;
     let ids: Vec<_> = sessions
         .iter()
         .filter(|(_, session)| {
-            session.plugin_key == plugin_key && session.connector_slug == spec.connector_slug
+            session.plugin_key == plugin_key && session.connector_slug == connector_slug
         })
         .map(|(id, _)| id.clone())
         .collect();
@@ -147,19 +171,21 @@ pub async fn logout(payload: Value) -> Result<Value, AppIpcError> {
     for task in tasks {
         let _ = task.await;
     }
-    account_lifecycle(&plugin_root, &spec, "logout").await?;
+}
+
+async fn logout_local(plugin_root: &Path, spec: &LocalAuthSpec) -> Result<Value, AppIpcError> {
     if spec.logout.is_empty() {
         return Ok(json!({ "status": "ok", "deleted": false }));
     }
     let tool = resolve_auth_tool(spec.tool.as_ref(), false).await?;
     let result = run_plugin_command(
-        &plugin_root,
+        plugin_root,
         &spec.logout,
         tool.as_deref(),
         DEFAULT_COMMAND_TIMEOUT_SECONDS,
     )
     .await?;
-    Ok(normalize_status_response(&result, &spec, None))
+    Ok(normalize_status_response(&result, spec, None))
 }
 
 pub async fn cancel(payload: Value) -> Result<Value, AppIpcError> {
@@ -284,10 +310,7 @@ fn resolve_plugin_root_candidates(
         ));
     }
 
-    let executor_home = resolve_executor_home(
-        env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
-        dirs::home_dir(),
-    )?;
+    let executor_home = crate::config::paths::executor_home();
     let codex_homes = ["CODEX_HOME", "WEGENT_CODEX_HOME"]
         .into_iter()
         .filter_map(env::var_os)
@@ -340,12 +363,13 @@ fn installed_plugin_root_candidates(
     Ok(candidates)
 }
 
+#[cfg(test)]
 fn resolve_executor_home(
     configured_executor_home: Option<PathBuf>,
     platform_home: Option<PathBuf>,
 ) -> Result<PathBuf, AppIpcError> {
     configured_executor_home
-        .or_else(|| platform_home.map(|home| home.join(".wegent-executor")))
+        .or_else(|| platform_home.map(|home| home.join(".wegent/workbench/executor")))
         .ok_or_else(|| AppIpcError::new("internal_error", "Home directory is not available"))
 }
 

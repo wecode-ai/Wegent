@@ -35,10 +35,8 @@
 //! needs task/subtask evidence no current recording exercises).
 use std::sync::Arc;
 
-use brz_http_server::Binary;
-use brz_http_server::HttpResponse;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
-use serde_json::json;
+use serde::Serialize;
 
 use crate::http_compat::FastApiError;
 use crate::json_compat::OpaqueJson;
@@ -74,16 +72,15 @@ async fn list_artifacts(
     #[inject(state)] state: &Arc<AppState>,
     knowledge_base_id: i64,
     #[auth] user: crate::auth::SessionUser,
-) -> Result<HttpResponse<Binary>, FastApiError> {
-    let body = list_artifacts_value(
+) -> Result<ArtifactListResponse, FastApiError> {
+    list_artifacts_value(
         &state.mysql,
         state.redis.as_ref(),
         &state.entity_resolvers,
         knowledge_base_id,
         i64::from(user.id),
     )
-    .await?;
-    Ok(HttpResponse::new(Binary::new(body)))
+    .await
 }
 
 /// `_execute`'s 404 mapping for `ArtifactNotFoundError`.
@@ -99,7 +96,7 @@ async fn list_artifacts_value<M, R>(
     resolvers: &EntityResolvers<R>,
     knowledge_base_id: i64,
     user_id: i64,
-) -> Result<Vec<u8>, FastApiError>
+) -> Result<ArtifactListResponse, FastApiError>
 where
     M: Mysql,
     R: brz_redis::Redis,
@@ -140,18 +137,18 @@ where
         .map_err(internal)?;
 
     // `_reconcile_many` tail + `_set_user_capabilities`, then the
-    // `KnowledgeArtifactListResponse` field order.
+    // `KnowledgeArtifactListResponse` field order. Returning the typed model
+    // (rather than raw bytes) keeps FastAPI's `application/json` media type.
     let items = artifacts
         .iter()
         .map(|artifact| artifact_response(artifact, can_manage))
-        .collect::<Vec<_>>();
-    let response = json!({
-        "items": items,
-        "can_manage": can_manage,
-        "available_document_count": available_count,
-        "processing_document_count": processing_count,
-    });
-    Ok(serde_json::to_vec(&response).unwrap_or_default())
+        .collect();
+    Ok(ArtifactListResponse {
+        items,
+        can_manage,
+        available_document_count: available_count,
+        processing_document_count: processing_count,
+    })
 }
 
 /// `ArtifactStorageError` -> `_execute`'s 503 mapping.
@@ -440,7 +437,8 @@ where
         roles.push(role);
     }
 
-    // Organization source, else group source for non-default namespaces.
+    // Organization source (`_append_organization_source`): the organization
+    // role is appended for organization namespaces.
     let is_organization = access::is_organization_namespace(mysql, &kb.kinds_namespace).await?;
     if is_organization {
         roles.push(
@@ -451,26 +449,36 @@ where
             }
             .to_string(),
         );
-    } else if kb.kinds_namespace != "default"
-        && let Some(group_role) = group_membership::effective_role_in_group(
-            mysql,
-            redis,
-            resolvers,
-            user_id,
-            &kb.kinds_namespace,
-        )
-        .await?
-    {
-        if group_role == "RestrictedAnalyst" {
-            return Ok((false, None, is_creator));
+    }
+
+    // Group source (`_append_group_source`): the source short-circuits on the
+    // "default" namespace and otherwise re-checks `is_organization_namespace`,
+    // so a non-default namespace issues the lookup again (organization or
+    // group) before the group role resolves.
+    if kb.kinds_namespace != "default" {
+        let group_is_organization =
+            access::is_organization_namespace(mysql, &kb.kinds_namespace).await?;
+        if !group_is_organization
+            && let Some(group_role) = group_membership::effective_role_in_group(
+                mysql,
+                redis,
+                resolvers,
+                user_id,
+                &kb.kinds_namespace,
+            )
+            .await?
+        {
+            if group_role == "RestrictedAnalyst" {
+                return Ok((false, None, is_creator));
+            }
+            let base = match group_role.as_str() {
+                "Owner" => "Owner",
+                "Maintainer" => "Maintainer",
+                "Developer" => "Developer",
+                _ => "Reporter",
+            };
+            roles.push(base.to_string());
         }
-        let base = match group_role.as_str() {
-            "Owner" => "Owner",
-            "Maintainer" => "Maintainer",
-            "Developer" => "Developer",
-            _ => "Reporter",
-        };
-        roles.push(base.to_string());
     }
 
     // Entity sources (`_append_entity_sources`).
@@ -508,16 +516,73 @@ where
     let Some(row) = row else {
         return Ok((0, 0));
     };
-    let parse = |value: Option<String>| -> i64 {
-        value.and_then(|text| text.trim().parse().ok()).unwrap_or(0)
+    Ok((decimal_count(row.sum_1), decimal_count(row.sum_2)))
+}
+
+/// `int(value or 0)` over a SQLAlchemy `sum()` DECIMAL. The driver renders the
+/// decimal as text; a replayed response can carry a fractional form (`1.0`),
+/// so fall back to a numeric parse that truncates toward zero like Python's
+/// `int(Decimal)`.
+fn decimal_count(value: Option<String>) -> i64 {
+    let Some(text) = value else {
+        return 0;
     };
-    Ok((parse(row.sum_1), parse(row.sum_2)))
+    let text = text.trim();
+    text.parse::<i64>()
+        .or_else(|_| text.parse::<f64>().map(|number| number.trunc() as i64))
+        .unwrap_or(0)
+}
+
+/// `KnowledgeArtifactListResponse` (`app.schemas.knowledge_artifact`), in the
+/// pydantic model's field order. Returning the typed model (not raw bytes)
+/// gives the FastAPI `application/json` media type.
+#[derive(Debug, Serialize)]
+struct ArtifactListResponse {
+    items: Vec<ArtifactItem>,
+    can_manage: bool,
+    available_document_count: i64,
+    processing_document_count: i64,
+}
+
+/// `KnowledgeArtifact` (`app.schemas.knowledge_artifact`): one persisted
+/// record in the pydantic field order. `source_document_ids` and
+/// `generation_config` remain opaque pass-through JSON payloads.
+#[derive(Debug, Serialize)]
+struct ArtifactItem {
+    attempt: i64,
+    artifact_id: String,
+    knowledge_base_id: i64,
+    artifact_type: String,
+    title: String,
+    status: String,
+    task_id: Option<i64>,
+    assistant_subtask_id: Option<i64>,
+    content: Option<String>,
+    source_document_ids: OpaqueJson,
+    generation_config: OpaqueJson,
+    error_message: Option<String>,
+    execution_health: &'static str,
+    can_retry: bool,
+    can_delete: bool,
+    user_id: i64,
+    created_at: String,
+    updated_at: String,
+}
+
+/// The stored JSON column for a response field, defaulting to the pydantic
+/// default (`[]` for `source_document_ids`, `{}` for `generation_config`) when
+/// the column is absent.
+fn artifact_json(value: &Option<Json<OpaqueJson>>, default: &str) -> OpaqueJson {
+    value
+        .as_ref()
+        .map(|json| json.0.clone())
+        .unwrap_or_else(|| OpaqueJson::from_json_text(default).expect("the JSON default is valid"))
 }
 
 /// The `KnowledgeArtifact` response projection (`items` entries) in the
 /// pydantic model's field order, after `_apply_execution_health` and
 /// `_set_user_capabilities(can_manage)`.
-fn artifact_response(artifact: &ArtifactRow, can_manage: bool) -> serde_json::Value {
+fn artifact_response(artifact: &ArtifactRow, can_manage: bool) -> ArtifactItem {
     // `datetime.now(timezone.utc).replace(tzinfo=None)` — the health window
     // reference; with empty recorded items this value never renders.
     let now_utc_naive = chrono::Utc::now().naive_utc();
@@ -525,40 +590,32 @@ fn artifact_response(artifact: &ArtifactRow, can_manage: bool) -> serde_json::Va
     // `is_active`: an active status with non-STALLED health.
     let is_active =
         status_is_active(&artifact.knowledge_artifacts_status) && execution_health != "stalled";
-    json!({
-        "attempt": artifact.knowledge_artifacts_attempt,
-        "artifact_id": artifact.knowledge_artifacts_artifact_id,
-        "knowledge_base_id": artifact.knowledge_artifacts_knowledge_base_id,
-        "artifact_type": artifact.knowledge_artifacts_artifact_type,
-        "title": artifact.knowledge_artifacts_title,
-        "status": artifact.knowledge_artifacts_status,
-        "task_id": artifact.task_id(),
-        "assistant_subtask_id": artifact.assistant_subtask_id(),
-        "content": artifact.content(),
-        "source_document_ids": artifact
-            .knowledge_artifacts_source_document_ids
-            .as_ref()
-            .map(|ids| ids.0.to_value())
-            .unwrap_or_else(|| json!([])),
-        "generation_config": artifact
-            .knowledge_artifacts_generation_config
-            .as_ref()
-            .map(|config| config.0.to_value())
-            .unwrap_or_else(|| json!({})),
-        "error_message": artifact.error_message(),
-        "execution_health": execution_health,
-        "can_retry": can_manage && artifact.base_can_retry(now_utc_naive),
-        "can_delete": can_manage && !is_active,
-        "user_id": artifact.knowledge_artifacts_user_id,
-        "created_at": artifact
+    ArtifactItem {
+        attempt: artifact.knowledge_artifacts_attempt,
+        artifact_id: artifact.knowledge_artifacts_artifact_id.clone(),
+        knowledge_base_id: artifact.knowledge_artifacts_knowledge_base_id,
+        artifact_type: artifact.knowledge_artifacts_artifact_type.clone(),
+        title: artifact.knowledge_artifacts_title.clone(),
+        status: artifact.knowledge_artifacts_status.clone(),
+        task_id: artifact.task_id(),
+        assistant_subtask_id: artifact.assistant_subtask_id(),
+        content: artifact.content().map(str::to_owned),
+        source_document_ids: artifact_json(&artifact.knowledge_artifacts_source_document_ids, "[]"),
+        generation_config: artifact_json(&artifact.knowledge_artifacts_generation_config, "{}"),
+        error_message: artifact.error_message().map(str::to_owned),
+        execution_health,
+        can_retry: can_manage && artifact.base_can_retry(now_utc_naive),
+        can_delete: can_manage && !is_active,
+        user_id: artifact.knowledge_artifacts_user_id,
+        created_at: artifact
             .knowledge_artifacts_created_at
             .format("%Y-%m-%dT%H:%M:%S")
             .to_string(),
-        "updated_at": artifact
+        updated_at: artifact
             .knowledge_artifacts_updated_at
             .format("%Y-%m-%dT%H:%M:%S")
             .to_string(),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -602,9 +659,9 @@ mod tests {
         let artifact = row("running", now + chrono::Duration::hours(8));
         assert_eq!(artifact.execution_health(now), "healthy");
         let response = artifact_response(&artifact, true);
-        assert_eq!(response["execution_health"], "healthy");
-        assert_eq!(response["can_delete"], false);
-        assert_eq!(response["can_retry"], false);
+        assert_eq!(response.execution_health, "healthy");
+        assert!(!response.can_delete);
+        assert!(!response.can_retry);
     }
 
     #[test]
@@ -616,8 +673,8 @@ mod tests {
         let artifact = row("running", local);
         assert_eq!(artifact.execution_health(now), "stalled");
         let response = artifact_response(&artifact, true);
-        assert_eq!(response["can_delete"], true);
-        assert_eq!(response["can_retry"], true);
+        assert!(response.can_delete);
+        assert!(response.can_retry);
     }
 
     #[test]
@@ -625,11 +682,36 @@ mod tests {
         let now = chrono::Utc::now().naive_utc();
         let artifact = row("failed", now + chrono::Duration::hours(8));
         let managed = artifact_response(&artifact, true);
-        assert_eq!(managed["can_retry"], true);
-        assert_eq!(managed["can_delete"], true);
+        assert!(managed.can_retry);
+        assert!(managed.can_delete);
         let unmanaged = artifact_response(&artifact, false);
-        assert_eq!(unmanaged["can_retry"], false);
-        assert_eq!(unmanaged["can_delete"], false);
+        assert!(!unmanaged.can_retry);
+        assert!(!unmanaged.can_delete);
+    }
+
+    #[test]
+    fn decimal_count_truncates_a_replayed_fraction() {
+        // A live DECIMAL `sum()` renders `1`, but a replayed response can carry
+        // the fractional form `1.0`; `int(Decimal)` truncates both to 1.
+        assert_eq!(decimal_count(Some("1".to_string())), 1);
+        assert_eq!(decimal_count(Some("1.0".to_string())), 1);
+        assert_eq!(decimal_count(Some("0.0".to_string())), 0);
+        assert_eq!(decimal_count(Some(" 2 ".to_string())), 2);
+        assert_eq!(decimal_count(None), 0);
+    }
+
+    #[test]
+    fn absent_json_columns_render_the_pydantic_defaults() {
+        let artifact = row("queued", chrono::NaiveDateTime::default());
+        let response = artifact_response(&artifact, false);
+        assert_eq!(
+            serde_json::to_value(&response.source_document_ids).unwrap(),
+            serde_json::json!([])
+        );
+        assert_eq!(
+            serde_json::to_value(&response.generation_config).unwrap(),
+            serde_json::json!({})
+        );
     }
 
     #[test]

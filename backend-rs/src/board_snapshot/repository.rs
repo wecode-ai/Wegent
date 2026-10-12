@@ -13,6 +13,10 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 
+use crate::cloud_projects::{
+    LOOP_ITEMS_COLUMNS, ProjectAccessMode, project_access_statement, role_for_priority,
+};
+
 /// Whether a datetime equals the unset sentinel or is NULL
 /// (`loop_datetime_value_is_unset`).
 pub fn datetime_is_unset(value: Option<NaiveDateTime>) -> bool {
@@ -81,8 +85,9 @@ pub(crate) struct AgentMetadata {
 }
 
 /// `loop_items` project row (`CloudProject`, `resource_type='project'`).
-/// Reuses the cloud_projects list-row projection so the recorded
-/// `require_cloud_project_role` re-read matches the recorded exchange.
+/// The labeled projection is shared by the plain active-project read and by
+/// the `require_cloud_project_role` access row, so each recorded exchange
+/// matches its own statement.
 #[allow(dead_code)]
 #[derive(Debug, FromMysqlRow)]
 pub struct ProjectRow {
@@ -267,68 +272,80 @@ impl AgentRow {
     }
 }
 
-/// The full `loop_items` column projection (all mapped columns labeled
-/// `loop_items_<column>`), shared with the cloud-projects list handler so
-/// the recorded `require_cloud_project_role` re-read matches the recorded
-/// exchange for replay.
-pub(crate) const LOOP_ITEMS_COLUMNS: &str = "loop_items.id AS loop_items_id, \
-     loop_items.resource_type AS loop_items_resource_type, \
-     loop_items.project_space AS loop_items_project_space, \
-     loop_items.cloud_project_id AS loop_items_cloud_project_id, \
-     loop_items.parent_id AS loop_items_parent_id, \
-     loop_items.loop_item_id AS loop_items_loop_item_id, \
-     loop_items.delivery_id AS loop_items_delivery_id, \
-     loop_items.public_id AS loop_items_public_id, \
-     loop_items.project_key AS loop_items_project_key, \
-     loop_items.name AS loop_items_name, \
-     loop_items.title AS loop_items_title, \
-     loop_items.description AS loop_items_description, \
-     loop_items.storage_prefix AS loop_items_storage_prefix, \
-     loop_items.sequence_number AS loop_items_sequence_number, \
-     loop_items.next_item_number AS loop_items_next_item_number, \
-     loop_items.created_by_user_id AS loop_items_created_by_user_id, \
-     loop_items.updated_by_user_id AS loop_items_updated_by_user_id, \
-     loop_items.assignee_user_id AS loop_items_assignee_user_id, \
-     loop_items.user_id AS loop_items_user_id, \
-     loop_items.added_by_user_id AS loop_items_added_by_user_id, \
-     loop_items.source AS loop_items_source, \
-     loop_items.status AS loop_items_status, \
-     loop_items.priority AS loop_items_priority, \
-     loop_items.due_at AS loop_items_due_at, \
-     loop_items.sort_order AS loop_items_sort_order, \
-     loop_items.current_delivery_id AS loop_items_current_delivery_id, \
-     loop_items.local_project_id AS loop_items_local_project_id, \
-     loop_items.device_id AS loop_items_device_id, \
-     loop_items.is_default AS loop_items_is_default, \
-     loop_items.task_user_id AS loop_items_task_user_id, \
-     loop_items.assignee_agent_id AS loop_items_assignee_agent_id, \
-     loop_items.assignee_team_id AS loop_items_assignee_team_id, \
-     loop_items.task_id AS loop_items_task_id, \
-     loop_items.task_title AS loop_items_task_title, \
-     loop_items.backend_task_id AS loop_items_backend_task_id, \
-     loop_items.linked_by_user_id AS loop_items_linked_by_user_id, \
-     loop_items.linked_at AS loop_items_linked_at, \
-     loop_items.unlinked_at AS loop_items_unlinked_at, \
-     loop_items.path AS loop_items_path, \
-     loop_items.kind AS loop_items_kind, \
-     loop_items.display_name AS loop_items_display_name, \
-     loop_items.relative_path AS loop_items_relative_path, \
-     loop_items.object_key AS loop_items_object_key, \
-     loop_items.content_type AS loop_items_content_type, \
-     loop_items.size_bytes AS loop_items_size_bytes, \
-     loop_items.sha256 AS loop_items_sha256, \
-     loop_items.source_task_binding_id AS loop_items_source_task_binding_id, \
-     loop_items.source_task_snapshot AS loop_items_source_task_snapshot, \
-     loop_items.markdown_object_key AS loop_items_markdown_object_key, \
-     loop_items.chat_object_key AS loop_items_chat_object_key, \
-     loop_items.manifest_object_key AS loop_items_manifest_object_key, \
-     loop_items.metadata AS loop_items_metadata, \
-     loop_items.version AS loop_items_version, \
-     loop_items.created_at AS loop_items_created_at, \
-     loop_items.updated_at AS loop_items_updated_at, \
-     loop_items.completed_at AS loop_items_completed_at, \
-     loop_items.delivered_at AS loop_items_delivered_at, \
-     loop_items.deleted_at AS loop_items_deleted_at";
+/// `ROLE_HIERARCHY` (`app.schemas.base_role`) inverted into `ROLES_BY_PRIORITY`
+/// (`app.services.cloud_project_visibility`): the role a
+/// `project_access_query` priority stands for.
+fn role_by_priority(priority: i64) -> MysqlResult<String> {
+    // The aggregated `CASE` only emits the five mapped priorities; the source
+    // indexes `ROLES_BY_PRIORITY[priority]` and fails the request on any other
+    // value.
+    role_for_priority(priority)
+        .map(str::to_string)
+        .ok_or(brz_mysql::MysqlError::Decode {
+            column: "anon_1_priority".to_string(),
+            expected: "a ROLE_HIERARCHY priority",
+        })
+}
+
+/// Raw `project_access_query` row: the labeled `loop_items` projection plus
+/// the aggregated role priority. The projection is re-declared here because
+/// [`ProjectRow`] serves the plain project reads of the other board routes
+/// and its rows do not carry `anon_1_priority`.
+#[derive(Debug, FromMysqlRow)]
+struct ProjectAccessRecord {
+    #[mysql(rename = "loop_items_id")]
+    id: String,
+    #[mysql(rename = "loop_items_public_id")]
+    public_id: Option<String>,
+    #[mysql(rename = "loop_items_project_key")]
+    project_key: Option<String>,
+    #[mysql(rename = "loop_items_name")]
+    name: Option<String>,
+    #[mysql(rename = "loop_items_description")]
+    description: Option<String>,
+    #[mysql(rename = "loop_items_created_by_user_id")]
+    created_by_user_id: i32,
+    #[mysql(rename = "loop_items_status")]
+    status: String,
+    #[mysql(rename = "loop_items_version")]
+    version: i64,
+    #[mysql(rename = "loop_items_created_at")]
+    created_at: Option<NaiveDateTime>,
+    #[mysql(rename = "loop_items_updated_at")]
+    updated_at: Option<NaiveDateTime>,
+    #[mysql(rename = "loop_items_metadata")]
+    metadata: Option<Json<ProjectMetadata>>,
+    #[mysql(rename = "anon_1_priority")]
+    priority: i64,
+}
+
+/// The `require_cloud_project_role` result: the accessible active project row
+/// and the caller's effective role.
+pub struct ProjectAccess {
+    pub project: ProjectRow,
+    pub role: String,
+}
+
+impl ProjectAccessRecord {
+    fn into_access(self) -> MysqlResult<ProjectAccess> {
+        Ok(ProjectAccess {
+            project: ProjectRow {
+                id: self.id,
+                public_id: self.public_id,
+                project_key: self.project_key,
+                name: self.name,
+                description: self.description,
+                created_by_user_id: self.created_by_user_id,
+                status: self.status,
+                version: self.version,
+                created_at: self.created_at,
+                updated_at: self.updated_at,
+                metadata: self.metadata,
+            },
+            role: role_by_priority(self.priority)?,
+        })
+    }
+}
 
 /// Board-snapshot repositories for the read path.
 pub struct BoardSnapshotRepository<'a, M> {
@@ -340,9 +357,53 @@ impl<'a, M: Mysql> BoardSnapshotRepository<'a, M> {
         Self { mysql }
     }
 
-    /// `require_cloud_project_role` project lookup: the recorded COM_QUERY
-    /// inlines the snowflake id as an integer literal instead of a bound
-    /// parameter. Returns the active project row.
+    /// `require_cloud_project_role(db, project_id, user_id, required_role)`
+    /// (`app.services.cloud_projects.access`): resolve the caller's effective
+    /// role for one active project through the set-based
+    /// `project_access_query`. The project row and the caller's role come
+    /// from the single statement, so a caller that is not the creator and not
+    /// an approved member only reaches the project when the public-visibility
+    /// or workspace-inherited grant applies.
+    ///
+    /// Returns `None` when no permission source grants the caller access to
+    /// an active project with that id; the source raises
+    /// `404 "Cloud project not found"`. The caller compares the returned role
+    /// against its `required_role` with [`has_permission`] and raises
+    /// `403 "Insufficient permission"` when it falls short.
+    pub async fn require_cloud_project_role(
+        &self,
+        project_id: i64,
+        user_id: i32,
+    ) -> MysqlResult<Option<ProjectAccess>> {
+        let user_id_text = user_id.to_string();
+        let project_id_text = project_id.to_string();
+        let record: Option<ProjectAccessRecord> = self
+            .mysql
+            .fetch_optional(
+                project_access_statement(ProjectAccessMode::Point),
+                (
+                    user_id_text.clone(),
+                    project_id,
+                    user_id_text,
+                    project_id,
+                    project_id_text.as_str(),
+                    user_id,
+                    project_id_text.as_str(),
+                ),
+            )
+            .await?;
+        match record {
+            None => Ok(None),
+            Some(record) => record.into_access().map(Some),
+        }
+    }
+
+    /// The board-snapshot handler's plain active-project read: the recorded
+    /// COM_QUERY inlines the snowflake id as an integer literal instead of a
+    /// bound parameter. Returns the active project row.
+    ///
+    /// Authorization for a migrated read path comes from
+    /// [`Self::require_cloud_project_role`]; this read resolves no role.
     pub async fn get_project(&self, project_id: &str) -> MysqlResult<Option<ProjectRow>> {
         let sql = format!(
             "SELECT {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
@@ -352,9 +413,13 @@ impl<'a, M: Mysql> BoardSnapshotRepository<'a, M> {
         self.mysql.fetch_optional(sql, ()).await
     }
 
-    /// `require_cloud_project_role` membership lookup for a non-creator
-    /// user. The recorded COM_QUERY inlines `resource_id` (snowflake) and
+    /// The board-snapshot handler's membership lookup for a non-creator user.
+    /// The recorded COM_QUERY inlines `resource_id` (snowflake) and
     /// `entity_id` (user id) as literals.
+    ///
+    /// The source resolves the project row and the membership in one
+    /// `project_access_query` statement; see
+    /// [`Self::require_cloud_project_role`] for the migrated read path.
     pub async fn get_membership(
         &self,
         project_id: &str,
@@ -505,6 +570,73 @@ pub fn has_permission(user_role: &str, required_role: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Whitespace-insensitive SQL comparison: Replay matches the statement
+    /// structure, not the source's line breaks.
+    fn normalize(sql: &str) -> String {
+        sql.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// The source rendering of `project_access_query(db, 3060, 1712605396200092385)`:
+    /// `direct`, `inherited`, `public` and `owned` unioned in source order,
+    /// aggregated by `min(priority)`, and joined back to the active project
+    /// row. `?` stands where the source's driver inlines a bound value.
+    fn expected_project_access_sql() -> String {
+        normalize(&format!(
+            r#"SELECT {LOOP_ITEMS_COLUMNS}, anon_1.priority AS anon_1_priority
+FROM loop_items INNER JOIN (SELECT anon_2.project_id AS project_id, min(anon_2.priority) AS priority
+FROM (SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'RestrictedAnalyst' THEN 4 END AS priority
+FROM resource_members
+WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'user' AND resource_members.entity_id = ? AND resource_members.status = 'approved' AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter', 'RestrictedAnalyst') AND resource_members.resource_id = ?
+UNION ALL SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, 3 AS priority
+FROM resource_members INNER JOIN (SELECT resource_members.resource_id AS resource_id
+FROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id
+WHERE resource_members.resource_type = 'Workspace' AND resource_members.entity_type = 'user' AND resource_members.entity_id = ? AND resource_members.status = 'approved' AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter', 'RestrictedAnalyst') AND kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true AND resource_members.`role` != 'RestrictedAnalyst') AS anon_3 ON CAST(resource_members.entity_id AS SIGNED INTEGER) = anon_3.resource_id
+WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'workspace' AND resource_members.status = 'approved' AND resource_members.resource_id = ?
+UNION ALL SELECT loop_items.id AS project_id, 4 AS priority
+FROM loop_items
+WHERE loop_items.status = 'active' AND CASE JSON_EXTRACT(loop_items.metadata, '$.\"visibility\"') WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, '$.\"visibility\"')) END IN ('public_restricted', 'public') AND loop_items.id = ? AND loop_items.resource_type IN ('project')
+UNION ALL SELECT loop_items.id AS project_id, 0 AS priority
+FROM loop_items
+WHERE loop_items.created_by_user_id = ? AND loop_items.status = 'active' AND loop_items.id = ? AND loop_items.resource_type IN ('project')) AS anon_2 GROUP BY anon_2.project_id) AS anon_1 ON loop_items.id = anon_1.project_id
+WHERE loop_items.status = 'active' AND loop_items.resource_type IN ('project')
+ LIMIT 1"#
+        ))
+    }
+
+    /// `require_cloud_project_role` issues the source's single
+    /// `project_access_query` statement, with the seven source-inlined values
+    /// bound in textual order.
+    #[tokio::test]
+    async fn require_cloud_project_role_runs_the_source_access_query() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let repository = BoardSnapshotRepository::new(&mysql);
+        let access = repository
+            .require_cloud_project_role(1712605396200092385, 3060)
+            .await
+            .expect("access query is captured");
+        assert!(access.is_none());
+
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(normalize(&queries[0].sql), expected_project_access_sql());
+        assert_eq!(queries[0].args, 7);
+        // The first placeholder is `entity_id`, which the source passes as
+        // `str(user_id)`; an integer binding there would not match.
+        assert_eq!(queries[0].first_integer, None);
+    }
+
+    /// `require_cloud_project_role` maps the aggregated priority back to the
+    /// role hierarchy and rejects a value the query cannot produce.
+    #[test]
+    fn role_priorities_map_to_the_role_hierarchy() {
+        assert_eq!(role_by_priority(0).unwrap(), "Owner");
+        assert_eq!(role_by_priority(1).unwrap(), "Maintainer");
+        assert_eq!(role_by_priority(2).unwrap(), "Developer");
+        assert_eq!(role_by_priority(3).unwrap(), "Reporter");
+        assert_eq!(role_by_priority(4).unwrap(), "RestrictedAnalyst");
+        assert!(role_by_priority(5).is_err());
+    }
 
     fn to_agent_metadata(value: serde_json::Value) -> Option<Json<AgentMetadata>> {
         Some(Json(serde_json::from_value(value).unwrap_or(

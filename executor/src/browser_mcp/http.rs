@@ -100,17 +100,11 @@ pub(crate) fn browser_mcp_process_token() -> &'static str {
 
 pub(crate) async fn ensure_browser_mcp_http_endpoint() -> Result<BrowserMcpEndpoint, String> {
     if let Some(endpoint) = active_endpoint() {
-        if endpoint_is_reachable(&endpoint).await {
-            return Ok(endpoint);
-        }
-        discard_endpoint(&endpoint);
+        return Ok(endpoint);
     }
     let _guard = BROWSER_MCP_START_LOCK.lock().await;
     if let Some(endpoint) = active_endpoint() {
-        if endpoint_is_reachable(&endpoint).await {
-            return Ok(endpoint);
-        }
-        discard_endpoint(&endpoint);
+        return Ok(endpoint);
     }
 
     let listener = StdTcpListener::bind("127.0.0.1:0")
@@ -204,17 +198,7 @@ pub(crate) async fn ensure_browser_mcp_http_endpoint() -> Result<BrowserMcpEndpo
     Ok(endpoint)
 }
 
-async fn endpoint_is_reachable(endpoint: &BrowserMcpEndpoint) -> bool {
-    let health_url = endpoint.url.trim_end_matches("/mcp").to_owned() + "/health";
-    reqwest::Client::new()
-        .get(health_url)
-        .bearer_auth(&endpoint.token)
-        .timeout(Duration::from_secs(1))
-        .send()
-        .await
-        .is_ok_and(|response| response.status().is_success())
-}
-
+#[cfg(test)]
 fn discard_endpoint(endpoint: &BrowserMcpEndpoint) {
     let discarded = if let Ok(mut running) = running_endpoint().lock() {
         if running
@@ -392,7 +376,7 @@ mod tests {
         assert_eq!(endpoint.url, same_endpoint.url);
         assert_eq!(endpoint.token, same_endpoint.token);
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let unauthorized = client
             .post(&endpoint.url)
             .json(&json!({

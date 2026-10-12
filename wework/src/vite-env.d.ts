@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 declare const __WEWORK_APP_VERSION__: string
+declare const __WEWORK_COMMIT_SHA__: string
 
 interface ImportMetaEnv {
   readonly VITE_WEWORK_POSTHOG_HOST?: string

@@ -1,6 +1,7 @@
 import { useMarkdownServices } from "../../markdown/MarkdownServices";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useConversationTranslation } from "../ConversationTranslation";
+import { useToolInteractionServices } from "../ToolInteractionServices";
 import { terminalOutputToText } from "@wegent/chat-core/terminal-text";
 import type { ToolBlock } from "./types";
 import {
@@ -152,9 +153,19 @@ function stringifyToolValue(value: unknown): string {
 function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
   const { t } = useConversationTranslation();
   const source = getImageViewSource(block);
-  const resolvedSource = useResolvedImageViewSource(source);
+  const { url, loading, error } = useResolvedImageViewSource(source);
 
-  if (!resolvedSource) return null;
+  if (loading) {
+    return <p role="status">{t("tool_activity.image_loading")}</p>;
+  }
+  if (error) {
+    return (
+      <p role="alert">
+        {t("tool_activity.image_load_failed")}: {error}
+      </p>
+    );
+  }
+  if (!url) return null;
 
   return (
     <div
@@ -162,7 +173,7 @@ function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
       data-testid="image-view-block-detail"
     >
       <img
-        src={resolvedSource}
+        src={url}
         alt={t("tool_activity.image_preview_alt")}
         className="max-h-96 w-full object-contain"
         data-testid="image-view-preview"
@@ -171,40 +182,81 @@ function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
   );
 }
 
-function useResolvedImageViewSource(source?: string): string | null {
+function useResolvedImageViewSource(source?: string): {
+  url: string | null;
+  loading: boolean;
+  error: string | null;
+} {
   const { readLocalFile } = useMarkdownServices();
+  const { readImageFile } = useToolInteractionServices();
+  const readFile = readImageFile ?? readLocalFile;
   const localImagePath = useMemo(() => {
-    if (!source || !readLocalFile) return null;
-    return localMarkdownImagePath(source);
-  }, [source, readLocalFile]);
+    if (!source || !readFile) return null;
+    const localPath = localMarkdownImagePath(source);
+    if (localPath) return localPath;
+    return readImageFile && !/^(data:|blob:|https?:|asset:)/i.test(source)
+      ? source
+      : null;
+  }, [source, readFile, readImageFile]);
   const [localImage, setLocalImage] = useState<{
     path: string;
     url: string;
+    reader: typeof readFile;
+  } | null>(null);
+  const [error, setError] = useState<{
+    path: string;
+    message: string;
+    reader: typeof readFile;
   } | null>(null);
 
   useEffect(() => {
-    if (!localImagePath || !readLocalFile) return undefined;
+    if (!localImagePath || !readFile) return undefined;
 
     let active = true;
     let objectUrl: string | null = null;
-    void readLocalFile(localImagePath)
+    void readFile(localImagePath)
       .then((blob) => {
         objectUrl = URL.createObjectURL(blob);
-        if (active) setLocalImage({ path: localImagePath, url: objectUrl });
+        if (active)
+          setLocalImage({
+            path: localImagePath,
+            url: objectUrl,
+            reader: readFile,
+          });
         else URL.revokeObjectURL(objectUrl);
       })
-      .catch((error) => console.warn("Failed to read tool image", error));
+      .catch((reason: unknown) => {
+        if (active) {
+          setError({
+            path: localImagePath,
+            message: reason instanceof Error ? reason.message : String(reason),
+            reader: readFile,
+          });
+        }
+      });
 
     return () => {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [localImagePath, readLocalFile]);
+  }, [localImagePath, readFile]);
 
   if (localImagePath) {
-    return localImage?.path === localImagePath ? localImage.url : null;
+    const imageReady =
+      localImage?.path === localImagePath && localImage.reader === readFile;
+    const imageFailed =
+      error?.path === localImagePath && error.reader === readFile;
+    return {
+      url: imageReady ? localImage.url : null,
+      loading: !imageReady && !imageFailed,
+      error: imageFailed ? error.message : null,
+    };
   }
-  return source ? resolveDirectMarkdownImageSrc(source) : null;
+  return {
+    url: source ? resolveDirectMarkdownImageSrc(source) : null,
+    loading: false,
+    error: null,
+  };
 }
 
 function getImageViewSource(block: ToolBlock): string | undefined {

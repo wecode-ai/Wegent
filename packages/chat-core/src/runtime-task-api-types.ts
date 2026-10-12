@@ -155,6 +155,7 @@ export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
   clientUserMessageId?: string
+  queueIfBusy?: boolean
   retrySourceTurnId?: string
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
@@ -221,7 +222,7 @@ export interface RuntimeGoalCreateInput {
 }
 
 export type RuntimeTaskOrigin = {
-  type: 'board_comment' | 'board_task' | 'project_automation'
+  type: 'board_comment' | 'board_task' | 'issue_dispatch' | 'project_automation'
   cloudProjectId: string
   loopItemId: string
   rootCommentId?: string
@@ -238,6 +239,7 @@ export interface RuntimeTaskCancelResponse {
 /** Canonical creation fields shared by browser comments and the desktop workbench. */
 export interface RuntimeTaskCreateIntent {
   schemaVersion?: 1 | 2 | 3
+  wegentTeamId?: number
   runtime: RuntimeName
   message: string
   taskId?: string

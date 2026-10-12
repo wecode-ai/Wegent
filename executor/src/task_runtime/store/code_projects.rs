@@ -9,6 +9,24 @@ use std::{
 
 use super::*;
 
+pub(super) fn merge_execution_environment(previous: &Value, mut incoming: Value) -> Value {
+    let same_preparation = ["repositories", "setup_steps"]
+        .iter()
+        .all(|key| previous.get(*key) == incoming.get(*key));
+    if same_preparation {
+        if let Some(environment) = incoming.as_object_mut() {
+            for key in ["fingerprint", "devices"] {
+                if !environment.contains_key(key) {
+                    if let Some(value) = previous.get(key) {
+                        environment.insert(key.to_owned(), value.clone());
+                    }
+                }
+            }
+        }
+    }
+    incoming
+}
+
 impl LocalTaskStore {
     pub(crate) fn ensure_code_project(
         &self,
@@ -191,6 +209,38 @@ fn git_output(cwd: &str, args: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_changes_preserve_preparation_but_repository_changes_invalidate_it() {
+        let previous = json!({
+            "repositories": [{"url": "/repo", "ref": "main"}],
+            "setup_steps": [],
+            "workspace_policy": "git_worktree",
+            "fingerprint": "prepared",
+            "devices": {"device": {"status": "ready", "workspace_path": "/prepared"}}
+        });
+        let mut incoming = json!({
+            "repositories": previous["repositories"],
+            "setup_steps": [],
+            "workspace_policy": "project"
+        });
+        let merged = merge_execution_environment(&previous, incoming.clone());
+        assert_eq!(merged["workspace_policy"], "project");
+        assert_eq!(merged["fingerprint"], previous["fingerprint"]);
+        assert_eq!(merged["devices"], previous["devices"]);
+
+        incoming["repositories"][0]["ref"] = json!("develop");
+        let changed = merge_execution_environment(&previous, incoming.clone());
+        assert!(changed.get("devices").is_none());
+        assert!(changed.get("fingerprint").is_none());
+
+        incoming["repositories"] = previous["repositories"].clone();
+        incoming["devices"] = json!({"device": {"status": "error"}});
+        assert_eq!(
+            merge_execution_environment(&previous, incoming)["devices"]["device"]["status"],
+            "error"
+        );
+    }
 
     fn git(repository: &Path, args: &[&str]) {
         let mut command = Command::new("git");

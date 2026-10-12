@@ -247,10 +247,12 @@ def test_create_runtime_task_rejects_team_on_old_request_version(
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("new_session", [True, False])
 def test_materialize_runtime_task_returns_v2_executor_payload(
     test_client,
     test_token,
     monkeypatch,
+    new_session,
 ) -> None:
     from app.api.endpoints import runtime_work
 
@@ -267,7 +269,11 @@ def test_materialize_runtime_task_returns_v2_executor_payload(
                 "executionRequest": {
                     "task_id": "task-1",
                     "team_id": 42,
-                    "new_session": False,
+                    "new_session": new_session,
+                    "model_config": {
+                        "model_id": "deepseek-v4-pro",
+                        "protocol": "openai-responses",
+                    },
                 },
             },
         )
@@ -284,7 +290,7 @@ def test_materialize_runtime_task_returns_v2_executor_payload(
         json={
             "schemaVersion": 3,
             "wegentTeamId": 42,
-            "newSession": False,
+            "newSession": new_session,
             "deviceId": "local-device-1",
             "workspacePath": "/repo",
             "taskId": "task-1",
@@ -294,11 +300,18 @@ def test_materialize_runtime_task_returns_v2_executor_payload(
     )
 
     assert response.status_code == 200
-    assert response.json()["payload"]["schemaVersion"] == 2
+    payload = response.json()["payload"]
+    assert payload["schemaVersion"] == 2
+    assert "modelConfig" not in payload
+    assert payload["executionRequest"]["model_config"] == {
+        "model_id": "deepseek-v4-pro",
+        "protocol": "openai-responses",
+    }
+    assert payload["executionRequest"]["new_session"] is new_session
     assert response.json()["runtimeHandle"] == {"wegentTeam": {"id": 42}}
     request = service_mock.call_args.kwargs["request"]
     assert request.wegent_team_id == 42
-    assert request.new_session is False
+    assert request.new_session is new_session
 
 
 def test_upsert_device_workspace_endpoint_returns_mapping(

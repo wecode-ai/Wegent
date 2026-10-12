@@ -84,7 +84,6 @@ describe('RuntimeSettingsPage', () => {
         executionEnvironment: 'local',
         executionDeviceId: 'device-1',
         model: 'model-1',
-        workspacePolicy: 'project',
       })
     )
     expect(await screen.findByTestId('runtime-profile-runtime-1')).toHaveTextContent('My Runtime')

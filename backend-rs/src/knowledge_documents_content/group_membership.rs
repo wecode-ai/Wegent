@@ -12,10 +12,23 @@
 use brz_mysql::{Mysql, MysqlResult};
 
 use super::access::{
-    DeptBindingRow, EntityIdRow, EntityRoleRow, IdRow, MEMBER_COLUMNS, MemberRow,
-    NAMESPACE_COLUMNS, NamespaceRow, highest_role, namespaces_by_ids, quote_literal,
+    DeptBindingRow, ENTITY_RESOLUTION_PURPOSE, EntityIdRow, EntityRoleRow, IdRow, MEMBER_COLUMNS,
+    MemberRow, NAMESPACE_COLUMNS, NamespaceRow, highest_role, namespaces_by_ids, quote_literal,
     resolve_entity_roles,
 };
+
+/// `entity_ids = list(set(eid for _, eid in ns_with_entity))`
+/// (`app/services/share/namespace_entity_resolver.py`): the two-column
+/// binding scan is deduplicated, so a department bound to several
+/// namespaces reaches the membership check, and the ERP `department_ids`
+/// request body (which Replay compares as a multiset), once. The order is
+/// normalized for determinism; the source set order is `PYTHONHASHSEED`
+/// random and the dependency rule compares the array as a multiset.
+fn deduplicated_department_ids(mut department_ids: Vec<String>) -> Vec<String> {
+    department_ids.sort();
+    department_ids.dedup();
+    department_ids
+}
 
 /// `is_restricted_analyst(db, user_id, group_name)` ->
 /// `get_restricted_analyst_groups` ->
@@ -126,17 +139,19 @@ where
             )
             .await?;
         if !org_bindings.is_empty() {
-            let department_ids: Vec<String> = org_bindings
-                .iter()
-                .map(|row| row.resource_members_entity_id.clone())
-                .collect();
+            let department_ids = deduplicated_department_ids(
+                org_bindings
+                    .iter()
+                    .map(|row| row.resource_members_entity_id.clone())
+                    .collect(),
+            );
             let matched = resolvers
                 .match_bindings(
                     redis,
                     user_id,
                     entity_type,
                     &department_ids,
-                    crate::permissions::ResolutionPurpose::CachedResourceAccess,
+                    ENTITY_RESOLUTION_PURPOSE,
                 )
                 .await?;
             if !matched.is_empty() {
@@ -209,7 +224,7 @@ where
                     user_id,
                     entity_type,
                     &department_ids,
-                    crate::permissions::ResolutionPurpose::CachedResourceAccess,
+                    ENTITY_RESOLUTION_PURPOSE,
                 )
                 .await?;
             if !matched.is_empty() {
@@ -479,4 +494,29 @@ where
             (),
         )
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The two-column binding scan feeds the ERP `department_ids` array and
+    /// the membership cache map, which both collapse duplicates; passing the
+    /// raw rows instead would send a duplicated department to the ERP request
+    /// body, whose Replay comparison is a multiset and would then not match
+    /// the recorded request.
+    #[test]
+    fn department_bindings_are_deduplicated_like_the_source_set() {
+        assert_eq!(
+            deduplicated_department_ids(vec![
+                "Z02342".to_string(),
+                "100153".to_string(),
+                "Z02342".to_string(),
+                String::new(),
+                "100153".to_string(),
+            ]),
+            vec![String::new(), "100153".to_string(), "Z02342".to_string()]
+        );
+        assert!(deduplicated_department_ids(Vec::new()).is_empty());
+    }
 }

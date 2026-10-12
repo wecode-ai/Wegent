@@ -554,6 +554,15 @@ class WorkspaceCollaborationGroupService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Collaboration group stage assignee must be a group member",
             )
+        if any(
+            stage.assignee is not None
+            and (stage.assignee.kind, stage.assignee.id) == (leader.kind, leader.id)
+            for stage in stages
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Collaboration group leader cannot execute a stage",
+            )
         for member_kind, member_id in identities:
             available = (
                 self._agent_is_available(

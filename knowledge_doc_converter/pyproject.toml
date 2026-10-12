@@ -17,6 +17,8 @@ dependencies = [
     # opting into multimodal analysis has it installed.
     "langchain-google-genai>=4.0.0,<5.0.0",
     "langchain-core>=0.3.0",
+    # The converter only calls the kernel's conversion module (MinerU/S3/zip),
+    # which needs no retrieval dependency, so it installs the plain kernel.
     "wegent-knowledge-engine",
     "wegent-shared",
 ]

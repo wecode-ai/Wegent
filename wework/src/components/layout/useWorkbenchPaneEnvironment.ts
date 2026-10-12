@@ -22,10 +22,8 @@ import { isRemoteDevice } from '@/lib/device-capabilities'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
-  probeProjectWorktreeAvailability,
   resolveProjectWorktreeAvailability,
   worktreeWorkspaceDeviceId,
-  type ProjectWorktreeAvailability,
 } from '@/lib/worktree-availability'
 import {
   resolveProjectRuntimeWorkspaceTarget,
@@ -35,6 +33,7 @@ import {
   workspaceTargetKey,
 } from '@/lib/workspace-target'
 import type { WorkbenchPaneIdentity } from './workbenchPaneIdentity'
+import { useProjectWorktreeAvailabilityProbe } from './useProjectWorktreeAvailabilityProbe'
 
 export interface WorkbenchPaneEnvironment {
   workspaceProject: ProjectWithTasks | null
@@ -129,6 +128,20 @@ export function applySharedChangeRequestSnapshot(
   environmentInfo: EnvironmentInfo,
   snapshot: TaskChangeRequestSnapshot
 ): EnvironmentInfo {
+  const provider = snapshot.provider ?? snapshot.changeRequest?.provider
+  if (
+    provider &&
+    snapshot.lookupState &&
+    ['unavailable', 'unauthenticated', 'error'].includes(snapshot.lookupState)
+  ) {
+    return {
+      ...environmentInfo,
+      changeRequest: {
+        provider,
+        state: snapshot.lookupState,
+      },
+    }
+  }
   if (snapshot.error || snapshot.stale) return environmentInfo
   if (
     environmentInfo.changeRequest &&
@@ -136,17 +149,17 @@ export function applySharedChangeRequestSnapshot(
   ) {
     return environmentInfo
   }
-  const provider = snapshot.changeRequest?.provider ?? environmentInfo.changeRequest?.provider
-  if (!provider) return environmentInfo
+  const resolvedProvider = provider ?? environmentInfo.changeRequest?.provider
+  if (!resolvedProvider) return environmentInfo
   return {
     ...environmentInfo,
     changeRequest: snapshot.changeRequest
       ? {
-          provider,
+          provider: resolvedProvider,
           state: 'found',
           changeRequest: snapshot.changeRequest,
         }
-      : { provider, state: 'not_found' },
+      : { provider: resolvedProvider, state: 'not_found' },
   }
 }
 
@@ -250,6 +263,8 @@ export function useWorkbenchPaneEnvironment({
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
     environmentExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+  const changeRequestStatusFallbackEnabled =
+    changeRequestStatusEnabled && currentChangeRequestTarget === null
   const changeRequestMonitor = useMemo(
     () => (services?.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
     [services?.deviceApi]
@@ -269,66 +284,40 @@ export function useWorkbenchPaneEnvironment({
       }),
     [selectedProjectDeviceWorkspace, selectedWorkspaceProject, selectedWorktreeDevice]
   )
-  const worktreeProbeKey = [
-    selectedWorkspaceProject?.id ?? '',
-    selectedProjectDeviceWorkspace?.id ?? '',
-    selectedWorktreeDeviceId ?? '',
-    selectedProjectDeviceWorkspace?.workspacePath ?? '',
-    selectedProjectDeviceWorkspace?.repoRootFingerprint ?? '',
-    selectedWorktreeDevice?.status ?? '',
-    selectedWorktreeDevice?.runtime_features?.schemaVersion ?? '',
-    selectedWorktreeDevice?.runtime_features?.worktrees?.version ?? '',
-    selectedWorktreeDevice?.runtime_features?.worktrees?.persistentStorageVerified ?? '',
-    projectWork.worktreeBranch ?? '',
-  ].join(':')
-  const [worktreeProbe, setWorktreeProbe] = useState<{
-    key: string
-    availability: ProjectWorktreeAvailability
-  } | null>(null)
-  const worktreeProbeSequence = useRef(0)
-
-  useEffect(() => {
-    if (
-      !environmentExtensionsAvailable ||
-      conversationSummaryIsGitRepository !== true ||
-      currentRuntimeTask ||
-      !selectedWorkspaceProject ||
-      !selectedProjectDeviceWorkspace ||
-      !selectedWorktreeDevice ||
-      !runtimeWorkApi
-    ) {
-      return
-    }
-
-    const sequence = worktreeProbeSequence.current + 1
-    worktreeProbeSequence.current = sequence
-    let cancelled = false
-    void probeProjectWorktreeAvailability({
-      api: runtimeWorkApi,
-      project: selectedWorkspaceProject,
-      workspace: selectedProjectDeviceWorkspace,
-      device: selectedWorktreeDevice,
-      ref: projectWork.worktreeBranch,
-    }).then(availability => {
-      if (!cancelled && worktreeProbeSequence.current === sequence) {
-        setWorktreeProbe({ key: worktreeProbeKey, availability })
-      }
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    conversationSummaryIsGitRepository,
-    currentRuntimeTask,
-    environmentExtensionsAvailable,
-    projectWork.worktreeBranch,
-    selectedProjectDeviceWorkspace,
-    selectedWorkspaceProject,
-    selectedWorktreeDevice,
-    runtimeWorkApi,
-    worktreeProbeKey,
+  const worktreeProbeKey = JSON.stringify([
+    selectedWorkspaceProject?.id ?? null,
+    selectedWorkspaceProject?.config?.mode ?? null,
+    selectedProjectDeviceWorkspace?.id ?? null,
+    selectedProjectDeviceWorkspace?.projectId ?? null,
+    selectedProjectDeviceWorkspace?.deviceId ?? null,
+    selectedProjectDeviceWorkspace?.remoteHostId ?? null,
+    selectedProjectDeviceWorkspace?.workspaceSource ?? null,
+    selectedProjectDeviceWorkspace?.available ?? null,
+    selectedProjectDeviceWorkspace?.workspacePath ?? null,
+    selectedProjectDeviceWorkspace?.workspaceKind ?? null,
+    selectedProjectDeviceWorkspace?.worktreeId ?? null,
+    selectedProjectDeviceWorkspace?.repoRootFingerprint ?? null,
+    selectedWorktreeDeviceId,
+    selectedWorktreeDevice?.device_id ?? null,
+    selectedWorktreeDevice?.device_type ?? null,
+    selectedWorktreeDevice?.status ?? null,
+    selectedWorktreeDevice?.runtime_routes ?? null,
+    selectedWorktreeDevice?.runtime_features?.schemaVersion ?? null,
+    selectedWorktreeDevice?.runtime_features?.worktrees ?? null,
+    projectWork.worktreeBranch?.trim() ?? '',
   ])
+  const worktreeProbe = useProjectWorktreeAvailabilityProbe({
+    api: runtimeWorkApi,
+    device: selectedWorktreeDevice,
+    enabled:
+      environmentExtensionsAvailable &&
+      conversationSummaryIsGitRepository === true &&
+      !currentRuntimeTask,
+    key: worktreeProbeKey,
+    project: selectedWorkspaceProject,
+    ref: projectWork.worktreeBranch,
+    workspace: selectedProjectDeviceWorkspace,
+  })
   const worktreeAvailability =
     worktreeProbe?.key === worktreeProbeKey
       ? worktreeProbe.availability
@@ -406,6 +395,7 @@ export function useWorkbenchPaneEnvironment({
         currentRuntimeTask.workspacePath ?? ''
       }`
     : ''
+  const currentRuntimeTaskDeviceId = currentRuntimeTask?.deviceId
   const environmentContextRef = useRef({ workspaceProject, activeWorkspaceTarget })
   const hasEnvironmentProject = Boolean(workspaceProject)
   const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(activeWorkspaceTarget)
@@ -572,7 +562,7 @@ export function useWorkbenchPaneEnvironment({
             latestActiveWorkspaceTarget?.deviceId ?? info.deviceId
           )
           const executionDeviceId = resolveEnvironmentExecutionDeviceId(
-            currentRuntimeTask,
+            currentRuntimeTaskDeviceId ? { deviceId: currentRuntimeTaskDeviceId } : null,
             latestActiveWorkspaceTarget
           )
           const executionDevice = findWorkbenchDevice(devicesRef.current, executionDeviceId)
@@ -596,12 +586,6 @@ export function useWorkbenchPaneEnvironment({
               ...(preserveCurrentFields && !info.deletions && current.deletions
                 ? { deletions: current.deletions }
                 : {}),
-              ...(preserveCurrentFields &&
-              changeRequestStatusEnabled &&
-              !info.changeRequest &&
-              current.changeRequest
-                ? { changeRequest: current.changeRequest }
-                : {}),
               workspaceRoots,
               executionDeviceId,
               executionTarget: executionDevice
@@ -622,7 +606,7 @@ export function useWorkbenchPaneEnvironment({
           {
             ...(force ? { force: true } : {}),
             ...(shareInflight === false ? { shareInflight: false } : {}),
-            changeRequestStatusEnabled,
+            changeRequestStatusEnabled: changeRequestStatusFallbackEnabled,
             onPartialInfo: partialInfo => applyEnvironmentInfo(partialInfo, true),
           }
         )
@@ -644,8 +628,8 @@ export function useWorkbenchPaneEnvironment({
     [
       activeWorkspaceTarget?.deviceId,
       activeWorkspaceTarget?.path,
-      changeRequestStatusEnabled,
-      currentRuntimeTask,
+      changeRequestStatusFallbackEnabled,
+      currentRuntimeTaskDeviceId,
       environmentWorkspaceReady,
       loadEnvironmentInfo,
       workspaceRoots,
@@ -654,14 +638,20 @@ export function useWorkbenchPaneEnvironment({
     ]
   )
 
+  const refreshChangeRequestStatus = useCallback(
+    () =>
+      changeRequestStatusEnabled && changeRequestMonitor
+        ? changeRequestMonitor.refresh({ shareInflight: false })
+        : Promise.resolve(),
+    [changeRequestMonitor, changeRequestStatusEnabled]
+  )
+
   const refreshEnvironmentInfo = useCallback(async () => {
     await Promise.all([
       loadCurrentEnvironmentInfo({ force: true, showLoading: true, shareInflight: false }),
-      changeRequestStatusEnabled
-        ? changeRequestMonitor?.refresh({ shareInflight: false })
-        : undefined,
+      refreshChangeRequestStatus(),
     ])
-  }, [changeRequestMonitor, changeRequestStatusEnabled, loadCurrentEnvironmentInfo])
+  }, [loadCurrentEnvironmentInfo, refreshChangeRequestStatus])
 
   useEffect(() => {
     if (!activeConversationProjectKey && !currentRuntimeTaskKey) {
@@ -720,12 +710,16 @@ export function useWorkbenchPaneEnvironment({
       }
       await commitAndPushEnvironmentChanges(workspaceProject, message, activeWorkspaceTarget)
       setEnvironmentInfo(info => ({ ...info, additions: '', deletions: '' }))
-      await loadCurrentEnvironmentInfo({ force: true, showLoading: false })
+      await Promise.all([
+        loadCurrentEnvironmentInfo({ force: true, showLoading: false }),
+        refreshChangeRequestStatus(),
+      ])
     },
     [
       activeWorkspaceTarget,
       commitAndPushEnvironmentChanges,
       loadCurrentEnvironmentInfo,
+      refreshChangeRequestStatus,
       requireContributionActionsAvailable,
       workspaceProject,
       workspaceTargetError,
@@ -738,11 +732,15 @@ export function useWorkbenchPaneEnvironment({
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
     await pushEnvironmentChanges(workspaceProject, activeWorkspaceTarget)
-    await loadCurrentEnvironmentInfo({ force: true, showLoading: false })
+    await Promise.all([
+      loadCurrentEnvironmentInfo({ force: true, showLoading: false }),
+      refreshChangeRequestStatus(),
+    ])
   }, [
     activeWorkspaceTarget,
     loadCurrentEnvironmentInfo,
     pushEnvironmentChanges,
+    refreshChangeRequestStatus,
     requireContributionActionsAvailable,
     workspaceProject,
     workspaceTargetError,

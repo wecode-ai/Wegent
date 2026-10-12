@@ -6,14 +6,14 @@
 //! document content read
 //! (`app.api_endpoints.knowledge_open.get_document_content_open`).
 //!
-//! Source pipeline (recorded case
-//! `api-knowledge-documents-35918-content`, request
-//! `?limit=100000&offset=200000`, service API key with
-//! `wegent-username: hongbin9`):
+//! Source pipeline (baseline case set
+//! `api-knowledge-documents-wildcard-content`, request
+//! `/api/knowledge/documents/41418/content?limit=100000&offset=200000`,
+//! personal API key):
 //!
 //! 1. `security.get_auth_context` — API key by SHA-256 hash, `last_used_at`
-//!    UPDATE + COMMIT, ORM reload by primary key, then the cached user
-//!    reader (direct users table lookup);
+//!    UPDATE + COMMIT, ORM reload by primary key, then the deployment
+//!    `userReader` (`user:v2:data:{user_id}` on a cache hit, SQL on a miss);
 //! 2. `KnowledgeOrchestrator.read_document_content` —
 //!    `_get_document_with_access_or_raise` (document, `selectin` external
 //!    sources, knowledge-base Kind, then the full ACL chain of
@@ -31,7 +31,7 @@ pub mod reader;
 use std::sync::Arc;
 
 use brz_http_server::StatusCode;
-use brz_http_server::{Binary, EphemeralBytesArena, HttpResponse, IntoHttpError, Response};
+use brz_http_server::{EphemeralBytesArena, IntoHttpError, Response};
 use serde::Serialize;
 
 use crate::state::AppState;
@@ -197,7 +197,12 @@ fn parse_int(value: &str, field: &str) -> Result<i64, FastApiValidation> {
 }
 
 /// GET /api/knowledge/documents/{document_id}/content: the knowledge-documents
-/// free function, injecting the process-lifetime application state.
+/// free function, injecting the process-lifetime application state. The
+/// endpoint declares `response_model=DocumentContentReadResponse`, so FastAPI
+/// renders the model through its default `JSONResponse` and announces
+/// `application/json`; returning the typed value keeps that media type
+/// (a raw `HttpResponse<Binary>` body would announce
+/// `application/octet-stream`).
 #[allow(clippy::too_many_arguments)]
 #[brz_http_server::get("/api/knowledge/documents/:document_id/content")]
 async fn get_document_content(
@@ -206,7 +211,7 @@ async fn get_document_content(
     offset: Option<String>,
     limit: Option<String>,
     #[auth] user: auth::KnowledgeUser,
-) -> Result<HttpResponse<Binary>, KnowledgeError> {
+) -> Result<DocumentContentReadResponse, KnowledgeError> {
     document_content(
         state,
         document_id,
@@ -253,7 +258,7 @@ async fn document_content(
     offset_raw: Option<&str>,
     limit_raw: Option<&str>,
     user: &auth::KnowledgeUser,
-) -> Result<HttpResponse<Binary>, KnowledgeError> {
+) -> Result<DocumentContentReadResponse, KnowledgeError> {
     // FastAPI validates the path and query parameters before the endpoint
     // body runs; invalid values surface as 422 without dependency traffic.
     let Ok(document_id) = document_id.parse::<i64>() else {
@@ -267,11 +272,7 @@ async fn document_content(
     };
     let (offset, limit) = parse_paging(offset_raw, limit_raw)?;
 
-    let response =
-        read_document_content(state, i64::from(user.id), document_id, offset, limit).await?;
-    Ok(HttpResponse::new(Binary::new(
-        serde_json::to_vec(&response).unwrap_or_default(),
-    )))
+    Ok(read_document_content(state, user.id, document_id, offset, limit).await?)
 }
 
 /// `KnowledgeOrchestrator.read_document_content` after authentication:
@@ -454,6 +455,93 @@ mod tests {
         ));
         assert!(
             body.ends_with(r#""kb_id":210837,"index_status":"success","source_media_type":null}"#)
+        );
+    }
+
+    /// A dedicated test group (separate from the crate's real `http_apis`
+    /// group) so the probe's route does not collide with the real handler's
+    /// registration.
+    mod probe {
+        brz_http_server::registry!(group = knowledge_content_probe, dependencies());
+    }
+
+    /// Renders the endpoint's success value through its return shape over a
+    /// real socket. The source declares
+    /// `response_model=DocumentContentReadResponse`, so FastAPI announces
+    /// `application/json`; a raw `HttpResponse<Binary>` body would announce
+    /// `application/octet-stream` instead.
+    #[brz_http_server::get(
+        "/api/knowledge/documents/:document_id/content",
+        group = probe::knowledge_content_probe,
+        access = public
+    )]
+    async fn get_document_content_probe(
+        document_id: &str,
+    ) -> Result<DocumentContentReadResponse, KnowledgeError> {
+        let document_id = document_id.parse::<i64>().expect("numeric document id");
+        Ok(DocumentContentReadResponse {
+            document_id,
+            name: "n".to_string(),
+            content: "c".to_string(),
+            total_length: 3,
+            offset: 0,
+            returned_length: 1,
+            has_more: false,
+            kb_id: 210837,
+            index_status: "success".to_string(),
+            source_media_type: None,
+        })
+    }
+
+    /// Serves the probe route on a real socket so the status, headers, and
+    /// body are asserted exactly as the runtime renders them.
+    async fn serve_content(document_id: &str) -> String {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        use tokio::net::TcpStream;
+
+        let handler = brz_http_server::handlers!(; group = probe::knowledge_content_probe)
+            .expect("probe router");
+        let server = brz_http_server::Server::bind("127.0.0.1:0".parse().unwrap(), handler)
+            .await
+            .expect("bind test server");
+        let address = server.local_addr().expect("local address");
+        let serve = tokio::spawn(async move {
+            let _ = server.serve_until(std::future::pending::<()>()).await;
+        });
+        let mut client = TcpStream::connect(address).await.expect("connect");
+        client
+            .write_all(
+                format!(
+                    "GET /api/knowledge/documents/{document_id}/content HTTP/1.1\r\n\
+                     Host: localhost\r\nConnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("send request");
+        let mut raw = Vec::new();
+        client.read_to_end(&mut raw).await.expect("read response");
+        serve.abort();
+        String::from_utf8_lossy(&raw).into_owned()
+    }
+
+    #[tokio::test]
+    async fn success_response_announces_application_json() {
+        let raw = serve_content("41418").await;
+        assert!(raw.starts_with("HTTP/1.1 200"), "{raw}");
+        let content_type = raw
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("content-type:"))
+            .expect("content-type header");
+        assert_eq!(
+            content_type["content-type:".len()..].trim(),
+            "application/json",
+            "{raw}"
+        );
+        let body = raw.split_once("\r\n\r\n").map_or("", |(_, body)| body);
+        assert!(
+            body.starts_with(r#"{"document_id":41418,"name":"n","#),
+            "{body}"
         );
     }
 }

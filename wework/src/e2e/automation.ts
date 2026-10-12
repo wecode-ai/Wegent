@@ -27,7 +27,12 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import {
+  getConversationDiagnosticsSnapshot,
+  setConversationFrameProbeEnabled,
+} from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
 import {
   getRuntimeConversationCacheStats,
   getRuntimeConversationMessagesForLogicalAddress,
@@ -61,7 +66,7 @@ import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
-import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
+import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
   E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
@@ -589,6 +594,156 @@ function desktopControlContentScrollTop(element: HTMLElement): number {
 function desktopControlDomScrollTop(element: HTMLElement, contentScrollTop: number): number {
   if (element.dataset.scrollOrigin !== 'bottom') return contentScrollTop
   return contentScrollTop - Math.max(0, element.scrollHeight - element.clientHeight)
+}
+
+async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Promise<string> {
+  const scroller = findDesktopControlElements(command.selector)[0]
+  if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
+  const options = JSON.parse(command.value ?? '{}') as {
+    contentSelector?: string
+    framesPerRatio?: number
+    ratios?: number[]
+  }
+  const contentSelector = options.contentSelector?.trim()
+  if (!contentSelector) {
+    throw new Error('sampleRapidMarkdownWindowing requires contentSelector')
+  }
+  const ratios = options.ratios ?? []
+  if (
+    ratios.length === 0 ||
+    ratios.some(ratio => !Number.isFinite(ratio) || ratio < 0 || ratio > 1)
+  ) {
+    throw new Error('sampleRapidMarkdownWindowing requires ratios between 0 and 1')
+  }
+  const framesPerRatio = options.framesPerRatio ?? 4
+  if (!Number.isInteger(framesPerRatio) || framesPerRatio < 1 || framesPerRatio > 60) {
+    throw new Error('sampleRapidMarkdownWindowing requires framesPerRatio between 1 and 60')
+  }
+
+  const nextFrame = () =>
+    new Promise<number>(resolve => window.requestAnimationFrame(time => resolve(time)))
+  const previousLayouts = new WeakMap<HTMLElement, { height: number; visible: boolean }>()
+  let maxChunkHeightDelta = 0
+  let maxVisibleChunkHeightDelta = 0
+  let startedAt = 0
+  const capture = (time: number, ratio: number, frame: number) => {
+    const viewport = scroller.getBoundingClientRect()
+    const chunks = Array.from(scroller.querySelectorAll<HTMLElement>(contentSelector))
+    let chunkCount = 0
+    let placeholderChunkCount = 0
+    let visibleChunkCount = 0
+    let visiblePlaceholderCount = 0
+    let visibleRichChunkCount = 0
+    let hasVisibleText = false
+    let frameHeightDelta = 0
+    let frameVisibleHeightDelta = 0
+    for (const chunk of chunks) {
+      const bounds = chunk.getBoundingClientRect()
+      if (bounds.height <= 0 || bounds.width <= 0) {
+        previousLayouts.delete(chunk)
+        continue
+      }
+      chunkCount += 1
+      const visible =
+        bounds.bottom > viewport.top &&
+        bounds.top < viewport.bottom &&
+        bounds.right > viewport.left &&
+        bounds.left < viewport.right
+      const placeholder = Boolean(chunk.querySelector('[data-markdown-window-placeholder]'))
+      if (placeholder) placeholderChunkCount += 1
+      const previous = previousLayouts.get(chunk)
+      if (previous) {
+        const delta = Math.abs(bounds.height - previous.height)
+        frameHeightDelta = Math.max(frameHeightDelta, delta)
+        if (visible && previous.visible) {
+          frameVisibleHeightDelta = Math.max(frameVisibleHeightDelta, delta)
+        }
+      }
+      previousLayouts.set(chunk, { height: bounds.height, visible })
+      if (!visible) continue
+      visibleChunkCount += 1
+      if (placeholder) visiblePlaceholderCount += 1
+      else if (chunk.childElementCount > 0) visibleRichChunkCount += 1
+      if (hasVisibleText) continue
+      // A chunk's textContent can be nonempty while its visible portion is blank.
+      // Sample actual text rectangles without returning any transcript text.
+      const walker = document.createTreeWalker(chunk, NodeFilter.SHOW_TEXT)
+      const range = document.createRange()
+      let textNode = walker.nextNode()
+      while (textNode) {
+        if (
+          textNode.textContent?.trim() &&
+          textNode.parentElement &&
+          window.getComputedStyle(textNode.parentElement).visibility === 'visible'
+        ) {
+          range.selectNodeContents(textNode)
+          hasVisibleText = Array.from(range.getClientRects()).some(
+            rect =>
+              rect.bottom > Math.max(viewport.top, bounds.top) &&
+              rect.top < Math.min(viewport.bottom, bounds.bottom) &&
+              rect.right > Math.max(viewport.left, bounds.left) &&
+              rect.left < Math.min(viewport.right, bounds.right) &&
+              rect.height > 0 &&
+              rect.width > 0
+          )
+          if (hasVisibleText) break
+        }
+        textNode = walker.nextNode()
+      }
+    }
+    maxChunkHeightDelta = Math.max(maxChunkHeightDelta, frameHeightDelta)
+    maxVisibleChunkHeightDelta = Math.max(maxVisibleChunkHeightDelta, frameVisibleHeightDelta)
+    return {
+      ratio,
+      frame,
+      time: time - startedAt,
+      scrollTop: scroller.scrollTop,
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
+      viewportTop: viewport.top,
+      viewportHeight: viewport.height,
+      chunkCount,
+      placeholderChunkCount,
+      richChunkCount: chunkCount - placeholderChunkCount,
+      visibleChunkCount,
+      visiblePlaceholderCount,
+      visibleRichChunkCount,
+      hasVisibleText,
+      maxChunkHeightDelta: frameHeightDelta,
+      maxVisibleChunkHeightDelta: frameVisibleHeightDelta,
+    }
+  }
+
+  startedAt = await nextFrame()
+  const initial = capture(startedAt, 1, 0)
+  const samples: ReturnType<typeof capture>[] = []
+  for (const ratio of ratios) {
+    await nextFrame()
+    const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+    const nextScrollTop = maximum * ratio
+    const currentScrollTop = desktopControlContentScrollTop(scroller)
+    scroller.dispatchEvent(
+      new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        deltaY: nextScrollTop < currentScrollTop ? -120 : 120,
+      })
+    )
+    scroller.scrollTop = desktopControlDomScrollTop(scroller, nextScrollTop)
+    scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+    // Do not accept synchronous placeholder content in the turn that scrolls.
+    for (let frame = 1; frame <= framesPerRatio; frame += 1) {
+      samples.push(capture(await nextFrame(), ratio, frame))
+    }
+  }
+  return JSON.stringify({
+    initial,
+    samples,
+    frameCount: samples.length,
+    maxChunkHeightDelta,
+    maxVisibleChunkHeightDelta,
+  })
 }
 
 function desktopControlSnapshot(selector = 'body'): string {
@@ -1776,8 +1931,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'activateRuntimeTaskCompletionNotification': {
       const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
-      await invokeDesktopHost('e2e.activateRuntimeTaskNotification', {
-        taskAddressId: createTrayTaskMenuId(address),
+      await invokeDesktopHost('e2e.activateNotification', {
+        url: weworkTaskScheme(address),
       })
       return ''
     }
@@ -1793,6 +1948,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
                 title: string
                 body: string
                 address?: RuntimeTaskAddress
+                url?: string
               }>
             }
           }
@@ -1805,6 +1961,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             title: string
             body: string
             address?: RuntimeTaskAddress
+            url?: string
           }>
         }
       }
@@ -1932,8 +2089,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return ''
     }
-    case 'storeLocalProxyUrl':
-      return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
+    case 'storeLocalProxyUrl': {
+      const config = saveLocalProxyUrl(command.value?.trim() ?? '')
+      await flushDesktopLocalStoragePersistence()
+      return JSON.stringify(config)
+    }
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalStorageItem': {
@@ -1949,7 +2109,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return window.location.origin
     case 'restartCoreDsh':
       await flushDesktopLocalStoragePersistence()
-      await invokeDesktopHost('runtime.restartCoreDsh')
       return ''
     case 'setEmbeddedBrowserLocalStorageItem':
       return (await setEmbeddedBrowserLocalStorageItem(command)) ?? ''
@@ -2046,6 +2205,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
               ).length,
             }
           : null,
+        runtimeAssistantDisplayItemCount: runtimeMessages
+          .filter(message => message.role === 'assistant')
+          .reduce((count, message) => count + (message.runtimeDisplayItems?.length ?? 0), 0),
         runtimeConversationCache: getRuntimeConversationCacheStats(),
         processMemory,
         rendererHeap,
@@ -2053,6 +2215,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'focusMainWindow':
       await invokeDesktopHost('e2e.focusMainWindow')
+      return ''
+    case 'pressWindowKey':
+      await invokeDesktopHost('e2e.pressKey', {
+        windowLabel: getDesktopWindowLabel(),
+        key: command.key,
+        phase: 'press',
+      })
       return ''
     case 'setMainWindowSize': {
       const nextSize = JSON.parse(command.value ?? '{}') as {
@@ -2096,6 +2265,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'showPopoutWindow':
       await invokeDesktopHost('window.showPopout')
       return ''
+    case 'setPopoutWindowMode':
+      await invokeDesktopHost('window.setPopoutMode', { mode: command.value })
+      return getWindowFocusSnapshot()
     case 'drag':
       return dragDesktopControlElement(command)
     case 'dragBy':
@@ -2535,6 +2707,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return JSON.stringify(samples)
     }
+    case 'sampleRapidMarkdownWindowing':
+      return sampleRapidMarkdownWindowing(command)
     case 'click': {
       const elements = findDesktopControlElementsWithin(command.selector, command.target)
       const element = command.visible ? elements.find(desktopControlElementVisible) : elements[0]
@@ -2704,8 +2878,54 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getConversationDiagnosticsSnapshot':
+      return JSON.stringify(getConversationDiagnosticsSnapshot())
+    case 'setConversationFrameProbeEnabled': {
+      if (command.value !== 'true' && command.value !== 'false') {
+        throw new Error('Conversation frame probe value must be true or false')
+      }
+      const enabled = command.value === 'true'
+      setConversationFrameProbeEnabled(enabled)
+      return JSON.stringify({ enabled })
+    }
     case 'getComposerDiagnosticsSnapshot':
       return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getComposerPluginInventoryDiagnostics': {
+      const { getPluginInventoryDiagnostics } =
+        await import('@/features/plugins/pluginMarketplaceCache')
+      const { peekLocalCodexPluginsReadState } = await import('@/api/local/codexPlugins')
+      const installed =
+        peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
+        peekLocalCodexPluginsReadState()
+      return JSON.stringify({
+        sharedInventory: getPluginInventoryDiagnostics(),
+        composerApps: getComposerApps().map(app => ({
+          id: app.id,
+          isAccessible: app.isAccessible,
+          isEnabled: app.isEnabled,
+          name: app.name,
+          pluginKey: app.pluginKey ?? null,
+          source: app.source,
+        })),
+        installedPlugins: (installed?.installedPlugins ?? []).map(plugin => ({
+          enabled: plugin.spec.enabled,
+          installState: plugin.spec.installState,
+          marketplace: plugin.spec.source.marketplace,
+          name: plugin.metadata.name,
+          pluginKey: plugin.spec.source.pluginKey,
+          skillCount: plugin.spec.components.skills.length,
+        })),
+      })
+    }
+    case 'reconcileLocalPluginCatalog': {
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      const state = await createLocalCodexPluginApi().readState({
+        mergeAllMarketplaces: true,
+        marketplaceKinds: ['local'],
+        refresh: true,
+      })
+      return JSON.stringify(state.marketplaceItems.map(item => String(item.id)))
+    }
     case 'getComposerFocusSnapshot': {
       const activeElement = document.activeElement
       const inputs = findDesktopControlElements('[data-testid="chat-message-input"]').map(input => {
@@ -2916,6 +3136,12 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
           await invokeDesktopHost('e2e.hideMainWindow')
         } else if (command.action === 'requestMainWindowClose') {
           await invokeDesktopHost('e2e.closeMainWindow')
+        } else if (command.action === 'restartCoreDsh') {
+          // A Core DSH restart replaces this renderer, so acknowledge the
+          // command before starting it. The scenario verifies the replacement
+          // through the next control-client ready event.
+          await invokeDesktopHost('runtime.restartCoreDsh')
+          return
         } else if (command.action === 'reloadMainWindow') {
           window.location.reload()
           return
@@ -2943,6 +3169,7 @@ function installDesktopControlClient() {
   if (
     !url ||
     (windowLabel !== 'main' &&
+      windowLabel !== 'popout-window' &&
       !windowLabel.startsWith('workspace-') &&
       !windowLabel.startsWith('plugin-development-')) ||
     window.location.pathname.startsWith('/system-drag')

@@ -77,6 +77,38 @@ describe('PluginPickerMenu', () => {
     expect(store.get()).toEqual([superpowersApp])
   })
 
+  test('searches and selects an installed GitHub plugin pending authorization, not its inaccessible app', async () => {
+    const pending = {
+      ...githubApp,
+      id: 'plugin:github',
+      pluginKey: 'github',
+      source: 'installed-plugin',
+      isAccessible: false,
+      skillPath: 'plugin://github@openai-curated-remote',
+    }
+    const insert = vi.fn()
+    render(
+      <PluginPickerMenu
+        onInsertReference={insert}
+        onListLocalApps={async () => [
+          pending,
+          { ...githubApp, id: 'uninstalled-app', isAccessible: false },
+        ]}
+      />
+    )
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    await userEvent.type(screen.getByTestId('composer-plugin-picker-search'), 'github')
+    const option = await screen.findByTestId('composer-plugin-picker-item-plugin:github')
+    expect(option).toHaveTextContent('待授权')
+    expect(option).toBeEnabled()
+    expect(
+      screen.queryByTestId('composer-plugin-picker-item-uninstalled-app')
+    ).not.toBeInTheDocument()
+    await userEvent.click(option)
+    expect(insert).toHaveBeenCalledWith('[$GitHub](plugin://github@openai-curated-remote)')
+    expect(pending.isAccessible).toBe(false)
+  })
+
   test('lists installed plugins with capability descriptions and inserts a skill-only plugin', async () => {
     const onListLocalApps = vi
       .fn()
@@ -131,6 +163,47 @@ describe('PluginPickerMenu', () => {
       expect(inserted).toEqual(['[$superpowers](plugin://superpowers@openai-official)'])
     })
     expect(shownGuides).toEqual(['superpowers'])
+  })
+
+  test('renders all plugins in the height-limited list and searches without truncation', async () => {
+    const apps: LocalDeviceApp[] = Array.from({ length: 20 }, (_, index) => ({
+      ...superpowersApp,
+      id: `plugin:example-${index + 1}`,
+      name: `Example ${String(index + 1).padStart(2, '0')}`,
+      skillPath: `plugin://example-${index + 1}@test`,
+    }))
+    const onInsertReference = vi.fn()
+    render(
+      <PluginPickerMenu
+        onInsertReference={onInsertReference}
+        onListLocalApps={vi.fn().mockResolvedValue(apps)}
+      />
+    )
+
+    const trigger = screen.getByTestId('composer-plugin-picker-button')
+    await userEvent.click(trigger)
+    const picker = await screen.findByTestId('composer-plugin-picker')
+    await waitFor(() =>
+      expect(within(picker).getAllByTestId(/^composer-plugin-picker-item-/)).toHaveLength(20)
+    )
+    expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(3)
+    expect(trigger).toHaveTextContent('+17')
+    const lastItem = within(picker).getByTestId('composer-plugin-picker-item-plugin:example-20')
+    expect(lastItem.parentElement).toHaveClass('min-h-0', 'max-h-[280px]', 'overflow-y-auto')
+
+    const search = within(picker).getByTestId('composer-plugin-picker-search')
+    await userEvent.type(search, 'Example')
+    expect(within(picker).getAllByTestId(/^composer-plugin-picker-item-/)).toHaveLength(20)
+    await userEvent.type(search, ' 20')
+    expect(within(picker).getAllByTestId(/^composer-plugin-picker-item-/)).toHaveLength(1)
+    await userEvent.clear(search)
+    expect(within(picker).getAllByTestId(/^composer-plugin-picker-item-/)).toHaveLength(20)
+
+    await userEvent.click(
+      within(picker).getByTestId('composer-plugin-picker-item-plugin:example-20')
+    )
+    expect(onInsertReference).toHaveBeenCalledWith('[$Example 20](plugin://example-20@test)')
+    expect(screen.queryByTestId('composer-plugin-picker')).not.toBeInTheDocument()
   })
 
   test('renders a single icon trigger when iconOnly is set', async () => {

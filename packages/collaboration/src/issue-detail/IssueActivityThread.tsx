@@ -39,6 +39,7 @@ export function IssueActivityThread({
   message,
   replies,
   composer,
+  variant = "card",
   events,
   eventLabel,
   eventTestId,
@@ -48,6 +49,7 @@ export function IssueActivityThread({
   message: ReactNode;
   replies?: ReactNode;
   composer?: ReactNode;
+  variant?: "card" | "timeline";
   events?: ReactNode;
   eventLabel?: string;
   eventTestId?: string;
@@ -55,7 +57,13 @@ export function IssueActivityThread({
   cardAttributes?: HTMLAttributes<HTMLElement> & { "data-testid"?: string };
 }) {
   return (
-    <div className="task-detail-thread">
+    <div
+      className={
+        variant === "timeline"
+          ? "task-detail-thread is-timeline"
+          : "task-detail-thread"
+      }
+    >
       <IssueActivityCard {...cardAttributes}>
         {message}
         {replies ? (

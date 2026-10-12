@@ -53,7 +53,6 @@ const binding: LoopItemTaskBinding = {
   task_title: 'Task',
   backend_task_id: 9,
   modelSelection: { model: 'gpt-5' },
-  workflow_node_id: 'node-1',
   binding_type: 'user',
   linked_at: '2026-09-10T00:00:00Z',
 }
@@ -194,13 +193,11 @@ function createMockDeliveryApi() {
     findCloudContextForTask: vi.fn().mockResolvedValue({
       project,
       loop_item_id: issue.id,
-      workflow_node_id: 'node-1',
     }),
     bindTask: vi.fn().mockResolvedValue(undefined),
     unbindTask: vi.fn().mockResolvedValue(undefined),
     unbindCloudContext: vi.fn().mockResolvedValue(undefined),
     trackProjectTask: vi.fn().mockResolvedValue({ item: issue }),
-    updateTaskTrackingStatus: vi.fn().mockResolvedValue(issue),
     updateTaskTrackingTitle: vi.fn().mockResolvedValue(issue),
     getWorkflowPlan: vi.fn().mockResolvedValue(workflowPlan),
     approveWorkflowPlan: vi.fn().mockResolvedValue(workflowPlan),
@@ -273,6 +270,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       pullRequestAutomation: { enabled: true },
       workflowDefinition: { version: 1 },
       executionEnvironment: {
+        workspacePolicy: 'project',
         repositories: [
           {
             name: 'Wegent',
@@ -295,6 +293,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       pull_request_automation: { enabled: true },
       workflow_definition: { version: 1 },
       execution_environment: {
+        workspace_policy: 'project',
         repositories: [
           {
             name: 'Wegent',
@@ -337,7 +336,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
           taskTitle: 'Task',
           backendTaskId: 9,
           modelSelection: { model: 'gpt-5' },
-          workflowNodeId: 'node-1',
           bindingType: 'user',
           linkedAt: '2026-09-10T00:00:00Z',
         },
@@ -352,6 +350,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.issues.get('issue-1')
     await api.issues.create('project-1', {
       title: 'Issue',
+      startAt: '2026-09-10',
       dueAt: '2026-09-11',
       parentId: null,
       localProjectId: 3,
@@ -363,17 +362,18 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       'project-1',
       expect.objectContaining({
         title: 'Issue',
+        start_at: '2026-09-10',
         due_at: '2026-09-11',
         parent_id: null,
         local_project_id: 3,
         assignee_user_id: 8,
         notify_assignee: false,
-        automation_rule_id: 'automation-1',
       })
     )
     await api.issues.update('issue-1', {
       version: 3,
       assigneeUserId: 8,
+      startAt: null,
       dueAt: null,
       automationRuleId: null,
     })
@@ -382,8 +382,8 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       expect.objectContaining({
         version: 3,
         assignee_user_id: 8,
+        start_at: null,
         due_at: null,
-        automation_rule_id: null,
       })
     )
     await api.issues.assign('project-1', 'issue-1', {
@@ -428,12 +428,10 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.issues.create('project-1', {
       title: 'Child issue',
       parentId: null,
-      workflow: null,
     })
     expect(deliveryApi.createLoopItem).toHaveBeenLastCalledWith('project-1', {
       title: 'Child issue',
       parent_id: null,
-      workflow: null,
     })
 
     await api.issues.update('issue-1', {
@@ -538,24 +536,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.collaborators.remove('issue-1', 8)
     await api.taskBindings.list('issue-1')
 
-    await expect(api.workflowPlans.get('issue-1')).resolves.toMatchObject({
-      runId: 'run-1',
-      issueId: 'issue-1',
-      stageId: 'stage-1',
-      planVersion: 2,
-      managerRun: { id: 'manager-1' },
-    })
-    await api.workflowPlans.approve('issue-1')
-    await api.workflowPlans.approveReview('issue-1')
-    await api.workflowPlans.pause('issue-1')
-    await api.workflowPlans.resume('issue-1')
-    await api.workflowPlans.replan('issue-1')
-    await api.workflowPlans.decideNode('issue-1', 'node-1', 'reject', 'No')
-    await expect(api.workflowPlans.getStageContext('issue-1', 'node-1')).resolves.toEqual({
-      compiledTaskInstruction: 'Instruction',
-      source: 'delivery',
-    })
-
     await api.members.list('project-1')
     await api.members.searchUsers('user')
     await api.members.add('project-1', 8, 'Developer')
@@ -653,7 +633,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'update',
         'remove',
         'runNow',
-        'runWorkflowNode',
         'listRuns',
         'cancelRun',
         'retryRun',
@@ -704,6 +683,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       location: 'cloud' as const,
       namespace: 'default',
       execution_environment: {
+        workspace_policy: 'git_worktree',
         repositories: [],
         setup_steps: [],
         fingerprint: '',
@@ -794,7 +774,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
                 target_type: 'human',
                 target_id: '1',
                 target_name: 'User',
-                workflow_step: 'review',
                 body: '',
                 comment_id: 'comment-assignment-1',
                 created_by_user_id: 1,
@@ -866,7 +845,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
               target_type: 'agent',
               target_id: 'agent-1',
               target_name: 'My Agent',
-              workflow_step: 'implementation',
               body: '@My Agent implementation',
               comment_id: 'comment-assignment-2',
               created_by_user_id: 1,
@@ -921,7 +899,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       update: vi.fn(),
       delete: vi.fn(),
       runNow: vi.fn(),
-      runWorkflowNode: vi.fn(),
       listRuns: vi.fn(),
       cancelRun: vi.fn(),
       retryRun: vi.fn(),
@@ -975,7 +952,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'attachments',
         'collaborators',
         'taskBindings',
-        'workflowPlans',
         'members',
         'files',
         'deliveries',
@@ -1102,7 +1078,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         comment_id: 'comment-assignment-1',
         issue_id: 'issue/1',
         target_type: 'human',
-        workflow_step: 'review',
       },
     ])
     await expect(
@@ -1118,7 +1093,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         id: 'comment-assignment-2',
         comment_id: 'comment-assignment-2',
         target_type: 'agent',
-        workflow_step: 'implementation',
       },
       comment: null,
       issue,
@@ -1204,7 +1178,6 @@ describe('createWeworkWorkspaceRuntimePort', () => {
       updated_at: '2026-09-10T00:00:00Z',
     }
     const projectAutomationApi = {
-      claimNext: vi.fn().mockResolvedValue(execution),
       heartbeat: vi.fn().mockResolvedValue(execution),
       startRequested: vi.fn().mockResolvedValue(execution),
       dispatchUnknown: vi.fn().mockResolvedValue(execution),
@@ -1217,6 +1190,7 @@ describe('createWeworkWorkspaceRuntimePort', () => {
       taskId: 'task-1',
       backendTaskId: 9,
       modelSelection: { model: 'gpt-5' },
+      wegentTeamId: 1880,
     }
     const deliveryTask = {
       deviceId: 'device-1',
@@ -1224,6 +1198,7 @@ describe('createWeworkWorkspaceRuntimePort', () => {
       backendTaskId: 9,
       runtimeHandle: {
         modelSelection: { model: 'gpt-5' },
+        wegentTeam: { id: 1880 },
       },
     }
 
@@ -1231,18 +1206,22 @@ describe('createWeworkWorkspaceRuntimePort', () => {
     await expect(port.findCloudContextForTask(task)).resolves.toEqual({
       project,
       issueId: issue.id,
-      workflowNodeId: 'node-1',
     })
-    await port.bindTask(issue.id, task, 'Task', 'node-1')
+    await port.bindTask(issue.id, task, 'Task')
     await port.unbindTask(issue.id, task)
     await port.unbindCloudContext(task)
     await expect(port.trackProjectTask(project.id, task, 'Task', 'Description')).resolves.toEqual({
       issue,
     })
-    await expect(port.updateTrackedTaskStatus(task, 'running')).resolves.toEqual(issue)
     await expect(port.updateTrackedTaskTitle(task, 'Renamed')).resolves.toEqual(issue)
 
-    expect(deliveryApi.bindTask).toHaveBeenCalledWith(issue.id, deliveryTask, 'Task', 'node-1')
+    expect(deliveryApi.bindTask).toHaveBeenCalledWith(
+      issue.id,
+      deliveryTask,
+      'Task',
+      null,
+      undefined
+    )
     expect(deliveryApi.unbindTask).toHaveBeenCalledWith(issue.id, deliveryTask)
     expect(deliveryApi.unbindCloudContext).toHaveBeenCalledWith(deliveryTask)
     expect(deliveryApi.trackProjectTask).toHaveBeenCalledWith(
@@ -1251,14 +1230,6 @@ describe('createWeworkWorkspaceRuntimePort', () => {
       'Task',
       'Description'
     )
-
-    await expect(
-      port.claimNextExecution({ executionDeviceId: 'device-1', leaseSeconds: 300 })
-    ).resolves.toMatchObject({ id: 12, cloud_project_id: project.id })
-    expect(projectAutomationApi.claimNext).toHaveBeenCalledWith({
-      execution_device_id: 'device-1',
-      lease_seconds: 300,
-    })
 
     await port.reportExecutionLifecycle(project.id, 12, {
       type: 'heartbeat',

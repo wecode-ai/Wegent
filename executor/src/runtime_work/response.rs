@@ -816,6 +816,12 @@ pub(crate) fn local_task_json(link: RuntimeTaskLink) -> Value {
     if let Some(goal_status) = link.goal_status.clone() {
         task.insert("goalStatus".to_owned(), Value::String(goal_status));
     }
+    if let Some(goal_execution_status) = link.goal_execution_status.clone() {
+        task.insert(
+            "goalExecutionStatus".to_owned(),
+            Value::String(goal_execution_status),
+        );
+    }
     task.insert(
         "interactionStatus".to_owned(),
         link.interaction_status
@@ -990,6 +996,7 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
             | "cached_messages"
             | "completedTranscriptMessages"
             | "transcriptSnapshotMessages"
+            | "transcriptSnapshotPagination"
     )
 }
 
@@ -1184,6 +1191,7 @@ mod tests {
                         ],
                     }
                 ],
+                "transcriptSnapshotPagination": {"beforeCursor": "large-native-cursor"},
                 "userMessagePresentations": [{
                     "clientUserMessageId": "runtime-local-pane-1",
                     "references": [{
@@ -1201,6 +1209,7 @@ mod tests {
         assert_eq!(handle["threadId"], "thread-1");
         assert_eq!(handle["modelSelection"]["model"], "gpt-5.5");
         assert!(handle.get("messages").is_none());
+        assert!(handle.get("transcriptSnapshotPagination").is_none());
         assert!(handle.get("userMessagePresentations").is_none());
     }
 
@@ -1481,6 +1490,25 @@ mod tests {
         assert_eq!(payload["threadStatus"], "active");
         assert_eq!(payload["turnStatus"], "inProgress");
         assert_eq!(payload["goalStatus"], "active");
+    }
+
+    #[test]
+    fn goal_execution_state_survives_task_list_serialization_between_turns() {
+        for status in ["running", "recovering", "needsAttention"] {
+            let payload = local_task_json(RuntimeTaskLink {
+                running: false,
+                status: "done".to_owned(),
+                goal_status: Some("active".to_owned()),
+                goal_execution_status: Some(status.to_owned()),
+                ..RuntimeTaskLink::default()
+            });
+
+            assert_eq!(payload["goalExecutionStatus"], status);
+            assert_eq!(payload["running"], false);
+        }
+        assert!(local_task_json(RuntimeTaskLink::default())
+            .get("goalExecutionStatus")
+            .is_none());
     }
 
     #[test]

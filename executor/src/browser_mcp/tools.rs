@@ -256,6 +256,18 @@ pub(crate) fn tools() -> Vec<Value> {
             &["expression", "includeJson"],
             &["expression"],
         ),
+        tool(
+            "browser_upload_file",
+            "Upload a local file into a page file input (<input type=\"file\">). Provide the absolute local file path in `path`; target the input with a CSS selector, or omit the selector to use the first file input on the page.",
+            &["path", "selector", "timeoutMs", "includeJson"],
+            &["path"],
+        ),
+        tool(
+            "browser_clear_data",
+            "Clear embedded browser data. `kinds` accepts a subset of [\"cookies\", \"cache\", \"storage\", \"history\"]; omit it to clear cookies, cache, and storage but keep history. Clearing cookies signs the user out of websites, so only clear what the user asked for.",
+            &["kinds", "includeJson"],
+            &[],
+        ),
     ]
 }
 
@@ -340,6 +352,11 @@ fn property_schema(name: &str) -> Value {
             json!({ "type": "number" })
         }
         "condition" | "inspectOptions" => json!({ "type": "object" }),
+        "kinds" => json!({
+            "type": "array",
+            "items": { "type": "string", "enum": ["cookies", "cache", "storage", "history"] },
+            "description": "Data kinds to clear; omit to clear cookies, cache, and storage."
+        }),
         _ => json!({ "type": "string" }),
     }
 }

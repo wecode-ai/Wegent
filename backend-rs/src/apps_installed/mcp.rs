@@ -86,19 +86,14 @@ impl std::fmt::Display for McpError {
     }
 }
 
-/// List every tool from the streamable-HTTP MCP server at `url`.
+/// List every tool from the streamable-HTTP MCP server at `url`, sending
+/// `headers` on every JSON-RPC request of the session.
 ///
 /// A fresh Breeze client and endpoint are created per discovery pass,
 /// mirroring the source's per-discovery
 /// `async with streamablehttp_client(...)` session; the underlying reqwest
 /// pool partitions connections by origin, so no connection churn policy
 /// beyond the session scope is introduced.
-pub async fn list_tools(url: &str) -> Result<Vec<UpstreamTool>, McpError> {
-    list_tools_with_headers(url, &[]).await
-}
-
-/// List every tool from the streamable-HTTP MCP server at `url`, sending
-/// `headers` on every JSON-RPC request of the session.
 ///
 /// The source `ConnectorRuntimeService._server_config` builds the session
 /// headers (decrypted provider headers plus the caller's user context) once

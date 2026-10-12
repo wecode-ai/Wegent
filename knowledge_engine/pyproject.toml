@@ -12,14 +12,6 @@ dependencies = [
     "sqlalchemy>=2.0.25",
     "python-dotenv>=1.0.0",
     "tenacity>=8.2.3",
-    "llama-index-core>=0.12.0",
-    "llama-index-vector-stores-elasticsearch>=0.4.0",
-    "llama-index-vector-stores-qdrant>=0.9.0",
-    "llama-index-vector-stores-milvus>=0.4.0",
-    "pymilvus>=2.4.0,<2.6.4",
-    "llama-index-embeddings-openai>=0.3.0",
-    "llama-index-readers-file>=0.4.0",
-    "docx2txt>=0.8",
     "PyPDF2>=3.0.0",
     "python-docx>=1.1.0",
     "python-pptx>=0.6.23",
@@ -41,6 +33,23 @@ dependencies = [
     "boto3>=1.42.97",
 ]
 
+# The retrieval capability (indexing, querying, vector stores, embeddings and
+# RAG document readers) is optional so services that never execute retrieval do
+# not install it. Only consumers that build or search indexes opt in through
+# ``wegent-knowledge-engine[retrieval]``; callers of the conversion module stay
+# on the base install.
+[project.optional-dependencies]
+retrieval = [
+    "llama-index-core>=0.12.0",
+    "llama-index-vector-stores-elasticsearch>=0.4.0",
+    "llama-index-vector-stores-qdrant>=0.9.0",
+    "llama-index-vector-stores-milvus>=0.4.0",
+    "llama-index-embeddings-openai>=0.3.0",
+    "llama-index-readers-file>=0.4.0",
+    "pymilvus>=2.4.0,<2.6.4",
+    "docx2txt>=0.8",
+]
+
 [tool.uv.sources]
 wegent-shared = { path = "../shared", editable = true }
 
@@ -53,6 +62,9 @@ dev = [
     "black>=23.7.0",
     "isort>=5.12.0",
     "flake8>=6.0.0",
+    # The kernel's own tests exercise retrieval, so the dev environment
+    # installs the extra the same way knowledge_runtime does.
+    "wegent-knowledge-engine[retrieval]",
 ]
 
 [tool.black]

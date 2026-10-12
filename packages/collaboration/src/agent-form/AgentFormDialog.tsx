@@ -68,6 +68,7 @@ export function AgentFormDialog({
   loadingLabel,
   mcp,
   model,
+  modelControl,
   name,
   onClose,
   onSave,
@@ -95,7 +96,8 @@ export function AgentFormDialog({
   loading?: boolean;
   loadingLabel?: string;
   mcp?: AgentFormField;
-  model: AgentFormSelectField;
+  model?: AgentFormSelectField;
+  modelControl?: ReactNode;
   name?: AgentFormField;
   namespace?: string;
   onClose(): void;
@@ -203,7 +205,8 @@ export function AgentFormDialog({
               )}
             >
               {runtime ? <SelectInput busy={busy} field={runtime} /> : null}
-              <SelectInput busy={busy} field={model} />
+              {modelControl ??
+                (model ? <SelectInput busy={busy} field={model} /> : null)}
             </div>
             {promptEditor ?? <TextareaInput busy={busy} field={prompt} />}
           </section>

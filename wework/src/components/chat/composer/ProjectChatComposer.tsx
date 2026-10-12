@@ -98,7 +98,7 @@ interface ProjectChatComposerProps {
   onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
-  projectWork: ProjectWorkControls
+  projectWork?: ProjectWorkControls
   projectPhrases?: QuickPhrase[]
   showProjectWorkBar?: boolean
   projectWorkBar?: ReactNode
@@ -107,6 +107,7 @@ interface ProjectChatComposerProps {
   onPause?: () => void
   showWorkspaceMenu?: boolean
   collapseWhenIdle?: boolean
+  alwaysShowComposerToolbar?: boolean
   inputLeadingContext?: ReactNode
   /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
   onDismissInputLeadingContext?: () => void
@@ -189,6 +190,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onPause,
       showWorkspaceMenu,
       collapseWhenIdle = false,
+      alwaysShowComposerToolbar = false,
       inputLeadingContext,
       onDismissInputLeadingContext,
       toolbarLeadingContext,
@@ -222,8 +224,11 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     const getLiveValue = () => composerRef.current?.getValue() ?? value
     const [phraseError, setPhraseError] = useState<string | null>(null)
     const workspaceMenuProjects = useMemo(
-      () => mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork),
-      [projectWork.projects, projectWork.runtimeWork]
+      () =>
+        projectWork
+          ? mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork)
+          : [],
+      [projectWork]
     )
     const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
       if (!composerRef.current) return
@@ -279,6 +284,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           planModeActive={planModeActive}
           goalDraftActive={goalDraftActive}
           collapseWhenIdle={collapseWhenIdle}
+          alwaysShowComposerToolbar={alwaysShowComposerToolbar}
           isStreaming={isStreaming}
           sendKey={sendKey}
           followUpBehavior={followUpBehavior}
@@ -287,7 +293,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           transferServices={desktopComposerTransferServices}
           workBar={
             projectWorkBar ??
-            (showProjectWorkBar && (
+            (showProjectWorkBar && projectWork && (
               <ProjectWorkBar
                 projects={projectWork.projects}
                 devices={projectWork.devices}
@@ -310,7 +316,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 middleContext={projectWorkBarMiddleContext}
                 trailingContext={projectWorkBarTrailingContext}
                 endContext={projectWorkBarEndContext}
-                className="min-h-10 rounded-t-[26px] bg-surface px-4"
+                className="min-h-10 rounded-t-[26px] bg-background px-4"
                 buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
               />
             ))
@@ -399,7 +405,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               onPause={onPause}
               showWorkspaceMenu={showWorkspaceMenu}
               projectWorkMenuContext={
-                showWorkspaceMenu
+                showWorkspaceMenu && projectWork
                   ? {
                       currentProjectId: projectWork.currentProjectId,
                       extensionContext: projectWork,

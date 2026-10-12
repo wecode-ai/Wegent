@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The stored `splitter_config` payload and its response normalization
-//! (`shared.models.splitter_config`).
+//! (`shared.knowledge_contracts.splitter_config`).
 use serde_json::json;
 
 /// The stored `splitter_config` payload: either the normalized shape
 /// (`chunk_strategy` + strategy-specific config) or one of the legacy
-/// `type`-tagged shapes (`shared.models.splitter_config`).
+/// `type`-tagged shapes (`shared.knowledge_contracts.splitter_config`).
 #[derive(Debug, serde::Deserialize)]
 #[serde(untagged)]
 pub enum StoredSplitterConfig {
@@ -74,7 +74,8 @@ pub(super) struct MarkdownEnhancementConfig {
     enabled: bool,
 }
 
-/// `normalize_splitter_config` (`shared.models.splitter_config`): convert
+/// `normalize_splitter_config` (`shared.knowledge_contracts.splitter_config`):
+/// convert
 /// legacy and normalized payloads to the one stable response shape. The
 /// result is built with `json!` so the field order matches the pydantic
 /// model's serialization order.

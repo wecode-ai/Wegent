@@ -15,6 +15,7 @@
 //! current-time values the source also embeds (zip entry timestamps and
 //! `docProps/core.xml` `dcterms:created`).
 
+mod emoji;
 pub mod generator;
 mod markdown;
 mod package;

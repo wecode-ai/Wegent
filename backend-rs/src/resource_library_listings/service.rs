@@ -15,30 +15,28 @@ use brz_mysql::{Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 
 use crate::http_compat::FastApiError;
-use crate::skills::skills_unified::effective_role_in_group;
 use crate::teams::group_membership::ErpContext;
 
 use super::models::{
     ALL_KINDS, Capability, CursorPayload, DiscoveryList, DiscoveryParams, ExampleConversation,
     JsonScalar, KindPayload, Listing, Version, format_datetime, resource_type_for_kind,
+    scalar_to_int,
 };
 use super::repository::{
     CursorPosition, KindPayloadRow, KindRow, ListingRow, QueryParts, build_discovery_query,
-    fetch_active_skill, fetch_discovery_rows, fetch_namespaces, fetch_team_group_members,
-    fetch_user_default_bindings, fetch_user_name, has_resource_reference, has_team_member,
+    fetch_discovery_rows, fetch_namespaces, fetch_team_group_members, fetch_user_name,
 };
-use super::set_order::SetOrder;
+use super::skill_bindings::{is_personally_installed, user_default_skill_ids};
 
-/// `REFERENCE_KINDS` (`app.services.capability_reference_service`).
-const REFERENCE_KINDS: [&str; 3] = ["Model", "Shell", "Retriever"];
+mod detail;
 
 /// The rows a listing projection reads.
-struct Source<'a> {
-    id: i64,
-    user_id: i64,
-    kind: &'a str,
+pub(super) struct Source<'a> {
+    pub(super) id: i64,
+    pub(super) user_id: i64,
+    pub(super) kind: &'a str,
     name: &'a str,
-    namespace: &'a str,
+    pub(super) namespace: &'a str,
     payload: Option<&'a KindPayload>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
@@ -46,6 +44,22 @@ struct Source<'a> {
 
 impl<'a> From<&'a ListingRow> for Source<'a> {
     fn from(row: &'a ListingRow) -> Self {
+        Self {
+            id: row.kinds_id,
+            user_id: row.kinds_user_id,
+            kind: row.kinds_kind.as_str(),
+            name: row.kinds_name.as_str(),
+            namespace: row.kinds_namespace.as_str(),
+            payload: row.payload(),
+            created_at: row.kinds_created_at,
+            updated_at: row.kinds_updated_at,
+        }
+    }
+}
+
+/// The single-Kind lookup `_get_source` performs for the item endpoint.
+impl<'a> From<&'a KindRow> for Source<'a> {
+    fn from(row: &'a KindRow) -> Self {
         Self {
             id: row.kinds_id,
             user_id: row.kinds_user_id,
@@ -139,13 +153,16 @@ where
 
     let has_more = rows.len() as i64 > params.limit;
     let page: Vec<ListingRow> = rows.into_iter().take(params.limit as usize).collect();
+    // `uses_legacy_cursor = scan_position is not None and scan_position[0] is
+    // None`: only a cursor that carried no recommendation score omits the
+    // score from the next cursor; a fresh scan keeps it.
+    let uses_legacy_cursor = cursor
+        .as_ref()
+        .is_some_and(|position| position.recommendation_score.is_none());
     let next_cursor = if has_more {
         page.last().and_then(|row| {
             encode_cursor(&CursorPosition {
-                recommendation_score: cursor
-                    .as_ref()
-                    .and_then(|position| position.recommendation_score)
-                    .map(|_| row.recommendation_score),
+                recommendation_score: (!uses_legacy_cursor).then_some(row.recommendation_score),
                 updated_at: row.sort_time,
                 kind_id: row.kinds_id,
             })
@@ -272,12 +289,7 @@ where
 {
     let capability = effective_capability(source);
     let resource_type = resource_type_for_kind(source.kind).unwrap_or_default();
-    let version = capability
-        .version
-        .as_ref()
-        .filter(|value| !value.is_falsy())
-        .map(JsonScalar::text)
-        .unwrap_or_else(|| source_version(source));
+    let version = listing_version(source, &capability);
     let status = capability
         .publish_status
         .as_ref()
@@ -300,15 +312,10 @@ where
     } else {
         non_falsy_text(capability.display_name.clone()).unwrap_or_else(|| spec_display_name(source))
     };
-    let description = if system {
-        non_falsy_text(source_field(source, |spec| spec.description.clone()))
-            .or(first_text(capability.description.clone()))
-    } else {
-        non_falsy_text(capability.description.clone())
-            .or(first_text(source_field(source, |spec| {
-                spec.description.clone()
-            })))
-    };
+    // `description`: a Skill always reads `spec.description`; other kinds
+    // prefer the system spec value or the capability value depending on
+    // ownership.
+    let description = listing_description(source, &capability, system);
     let icon = if system {
         non_falsy_text(source_field(source, |spec| spec.icon.clone()))
             .or(first_text(capability.icon.clone()))
@@ -432,6 +439,44 @@ fn effective_capability(source: &Source<'_>) -> Capability {
     }
 }
 
+/// `to_listing`'s version selection:
+/// `_source_version(source) if source.kind == "Skill" else
+/// str(capability.get("version") or _source_version(source))`. A Skill's
+/// version always comes from `spec.version`, never the capability block.
+fn listing_version(source: &Source<'_>, capability: &Capability) -> String {
+    if source.kind == "Skill" {
+        return source_version(source);
+    }
+    capability
+        .version
+        .as_ref()
+        .filter(|value| !value.is_falsy())
+        .map(JsonScalar::text)
+        .unwrap_or_else(|| source_version(source))
+}
+
+/// `to_listing`'s description selection. A Skill always reads
+/// `spec.description`; other kinds prefer the system spec value or the
+/// capability value depending on ownership.
+fn listing_description(
+    source: &Source<'_>,
+    capability: &Capability,
+    system: bool,
+) -> Option<String> {
+    if source.kind == "Skill" {
+        return first_text(source_field(source, |spec| spec.description.clone()));
+    }
+    if system {
+        non_falsy_text(source_field(source, |spec| spec.description.clone()))
+            .or(first_text(capability.description.clone()))
+    } else {
+        non_falsy_text(capability.description.clone())
+            .or(first_text(source_field(source, |spec| {
+                spec.description.clone()
+            })))
+    }
+}
+
 /// `_source_version`: `str(spec.version or "1.0.0")`.
 fn source_version(source: &Source<'_>) -> String {
     non_falsy_text(source_field(source, |spec| spec.version.clone()))
@@ -484,134 +529,6 @@ fn non_falsy_text(value: Option<JsonScalar>) -> Option<String> {
 /// through.
 fn first_non_falsy(value: Option<JsonScalar>) -> Option<JsonScalar> {
     value.filter(|scalar| !scalar.is_falsy())
-}
-
-/// `_is_personally_installed`.
-async fn is_personally_installed<M>(
-    mysql: &M,
-    erp: &ErpContext<'_, impl brz_redis::Redis>,
-    source: &Source<'_>,
-    user_id: i64,
-) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
-    if source.kind == "Skill" {
-        let installed = user_default_skill_ids(mysql, erp, user_id).await?;
-        return Ok(installed.contains(&source.id));
-    }
-    if REFERENCE_KINDS.contains(&source.kind) {
-        if source.user_id == 0 {
-            return Ok(true);
-        }
-        return has_resource_reference(mysql, source.kind, source.id, user_id).await;
-    }
-    if source.user_id == 0 || (source.namespace == "default" && source.user_id == user_id) {
-        return Ok(true);
-    }
-    has_team_member(mysql, source.id, user_id).await
-}
-
-/// `skill_binding_service.list_user_default_skill_ids`.
-///
-/// The source returns `set[int]`, and `list_public` renders it straight into
-/// `Kind.id.notin_(...)`, so the statement's id list follows CPython's set
-/// slot order rather than the binding insertion order.
-async fn user_default_skill_ids<M>(
-    mysql: &M,
-    erp: &ErpContext<'_, impl brz_redis::Redis>,
-    user_id: i64,
-) -> MysqlResult<Vec<i64>>
-where
-    M: Mysql,
-{
-    let bindings = fetch_user_default_bindings(mysql, user_id).await?;
-    let target_id = format!("user:{user_id}");
-    let mut skill_ids = SetOrder::new();
-    for binding in &bindings {
-        let Some(payload) = binding.payload() else {
-            continue;
-        };
-        if !is_user_default_binding(payload, &target_id) {
-            continue;
-        }
-        let Some(skill_id) = extract_skill_id(payload) else {
-            continue;
-        };
-        let Some(skill) = fetch_active_skill(mysql, skill_id).await? else {
-            continue;
-        };
-        if !can_user_access_skill(mysql, erp, user_id, &skill).await? {
-            continue;
-        }
-        skill_ids.add(skill_id);
-    }
-    Ok(skill_ids.order())
-}
-
-/// `_is_user_default_binding`.
-fn is_user_default_binding(payload: &KindPayload, target_id: &str) -> bool {
-    let target_type = payload.spec.target_type.as_ref().map(JsonScalar::text);
-    let target = payload.spec.target_id.as_ref().map(JsonScalar::text);
-    target_type.as_deref() == Some("user") && target.as_deref() == Some(target_id)
-}
-
-/// `_extract_skill_id`: `spec.skillRef.skillId or spec.skillRef.skill_id`.
-fn extract_skill_id(payload: &KindPayload) -> Option<i64> {
-    let skill_ref = payload.spec.skill_ref.as_ref()?;
-    let raw = match skill_ref.skill_id.as_ref() {
-        Some(value) if !value.is_falsy() => Some(value),
-        _ => skill_ref.skill_id_snake.as_ref(),
-    }?;
-    scalar_to_int(raw)
-}
-
-/// `can_user_access_skill`.
-async fn can_user_access_skill<M>(
-    mysql: &M,
-    erp: &ErpContext<'_, impl brz_redis::Redis>,
-    user_id: i64,
-    skill: &KindRow,
-) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
-    // The lookup already restricted rows to `is_active = true`.
-    if skill.kinds_user_id == user_id || skill.kinds_user_id == 0 {
-        return Ok(true);
-    }
-    if skill.payload().is_some_and(is_published_public) {
-        return Ok(true);
-    }
-    if skill.kinds_namespace != "default" {
-        let role = effective_role_in_group(
-            mysql,
-            erp,
-            i32::try_from(user_id).unwrap_or(i32::MAX),
-            &skill.kinds_namespace,
-        )
-        .await?;
-        if role.as_deref().is_some_and(has_reporter_permission) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// `capability.visibility == "public" and capability.publishStatus ==
-/// "published"`.
-fn is_published_public(payload: &KindPayload) -> bool {
-    let Some(capability) = payload.spec.capability.as_ref() else {
-        return false;
-    };
-    let visibility = capability.visibility.as_ref().map(JsonScalar::text);
-    let status = capability.publish_status.as_ref().map(JsonScalar::text);
-    visibility.as_deref() == Some("public") && status.as_deref() == Some("published")
-}
-
-/// `has_permission(role, GroupRole.Reporter)`.
-fn has_reporter_permission(role: &str) -> bool {
-    matches!(role, "Owner" | "Maintainer" | "Developer" | "Reporter")
 }
 
 /// `_agent_group_names`.
@@ -695,15 +612,6 @@ fn publisher_id(value: &JsonScalar) -> Option<i64> {
 }
 
 /// Python `int(value)` for a JSON scalar.
-fn scalar_to_int(value: &JsonScalar) -> Option<i64> {
-    match value {
-        JsonScalar::Bool(value) => Some(i64::from(*value)),
-        JsonScalar::Int(value) => Some(*value),
-        JsonScalar::Float(value) => Some(*value as i64),
-        JsonScalar::Text(value) => value.trim().parse().ok(),
-    }
-}
-
 /// `_decode_discovery_cursor`: base64url JSON with `updated_at` and
 /// `kind_id`. Invalid cursors raise `HTTPException(400, "Invalid discovery
 /// cursor")`.
@@ -733,10 +641,13 @@ fn decode_cursor(value: &str) -> Result<CursorPosition, FastApiError> {
 }
 
 /// Parse one cursor `updated_at`, normalizing an offset timestamp to UTC
-/// naive time like the source.
+/// naive time like the source. `datetime.fromisoformat` accepts an optional
+/// fractional part, so both a plain and a fractional local time are parsed.
 fn parse_cursor_time(value: &str) -> Option<NaiveDateTime> {
-    if let Ok(parsed) = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f") {
-        return Some(parsed);
+    for format in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S"] {
+        if let Ok(parsed) = NaiveDateTime::parse_from_str(value, format) {
+            return Some(parsed);
+        }
     }
     chrono::DateTime::parse_from_rfc3339(value)
         .ok()
@@ -753,10 +664,8 @@ fn encode_cursor(position: &CursorPosition) -> Option<String> {
         #[serde(skip_serializing_if = "Option::is_none")]
         recommendation_score: Option<i64>,
     }
-    let updated_at = position
-        .updated_at
-        .format("%Y-%m-%dT%H:%M:%S%.6f")
-        .to_string();
+    // `updated_at.isoformat()`: microseconds are emitted only when nonzero.
+    let updated_at = format_datetime(position.updated_at);
     let payload = serde_json::to_vec(&CursorOut {
         updated_at: &updated_at,
         kind_id: position.kind_id,
@@ -957,18 +866,6 @@ mod tests {
     }
 
     #[test]
-    fn published_public_requires_public_and_published() {
-        let published = kind_payload(serde_json::json!({
-            "spec": {"capability": {"visibility": "public", "publishStatus": "published"}}
-        }));
-        assert!(is_published_public(&published));
-        let draft = kind_payload(serde_json::json!({
-            "spec": {"capability": {"visibility": "public", "publishStatus": "draft"}}
-        }));
-        assert!(!is_published_public(&draft));
-    }
-
-    #[test]
     fn publisher_id_ignores_booleans() {
         assert_eq!(publisher_id(&JsonScalar::Bool(true)), None);
         assert_eq!(publisher_id(&JsonScalar::Int(7)), Some(7));
@@ -987,16 +884,68 @@ mod tests {
     }
 
     #[test]
-    fn skill_ref_prefers_camel_case_member() {
-        let snake_case = kind_payload(serde_json::json!({
-            "spec": {"skillRef": {"skillId": 0, "skill_id": 12}}
+    fn skill_version_reads_spec_version_not_the_capability_block() {
+        let payload = kind_payload(serde_json::json!({
+            "spec": {"version": "1.3.2", "capability": {"version": "1.3.1"}}
         }));
-        assert_eq!(extract_skill_id(&snake_case), Some(12));
-        let camel_case = kind_payload(serde_json::json!({
-            "spec": {"skillRef": {"skillId": 9, "skill_id": 12}}
+        let skill = source(&payload, "Skill");
+        let capability = effective_capability(&skill);
+        assert_eq!(listing_version(&skill, &capability), "1.3.2");
+    }
+
+    #[test]
+    fn non_skill_version_prefers_the_capability_block() {
+        let payload = kind_payload(serde_json::json!({
+            "spec": {"version": "1.3.2", "capability": {"version": "1.3.1"}}
         }));
-        assert_eq!(extract_skill_id(&camel_case), Some(9));
-        let empty = kind_payload(serde_json::json!({"spec": {"skillRef": {}}}));
-        assert_eq!(extract_skill_id(&empty), None);
+        let team = source(&payload, "Team");
+        let capability = effective_capability(&team);
+        assert_eq!(listing_version(&team, &capability), "1.3.1");
+    }
+
+    #[test]
+    fn skill_description_reads_spec_description() {
+        let payload = kind_payload(serde_json::json!({
+            "spec": {"description": "spec desc", "capability": {"description": "cap desc"}}
+        }));
+        let skill = source(&payload, "Skill");
+        let capability = effective_capability(&skill);
+        assert_eq!(
+            listing_description(&skill, &capability, true).as_deref(),
+            Some("spec desc")
+        );
+        assert_eq!(
+            listing_description(&skill, &capability, false).as_deref(),
+            Some("spec desc")
+        );
+    }
+
+    #[test]
+    fn next_cursor_omits_zero_microseconds_and_keeps_the_score() {
+        use base64::Engine as _;
+        let encoded = encode_cursor(&CursorPosition {
+            recommendation_score: Some(0),
+            updated_at: naive(11),
+            kind_id: 127_444,
+        })
+        .unwrap();
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded.as_bytes())
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(decoded).unwrap(),
+            "{\"updated_at\":\"2026-07-02T11:57:54\",\"kind_id\":127444,\
+             \"recommendation_score\":0}"
+        );
+    }
+
+    #[test]
+    fn decodes_a_cursor_without_a_fractional_part() {
+        // base64url of
+        // {"updated_at":"2026-09-04T10:08:42","kind_id":127444,"recommendation_score":0}
+        let cursor = "eyJ1cGRhdGVkX2F0IjoiMjAyNi0wOS0wNFQxMDowODo0MiIsImtpbmRfaWQiOjEyNzQ0NCwicmVjb21tZW5kYXRpb25fc2NvcmUiOjB9";
+        let decoded = decode_cursor(cursor).unwrap();
+        assert_eq!(decoded.recommendation_score, Some(0));
+        assert_eq!(decoded.kind_id, 127_444);
     }
 }

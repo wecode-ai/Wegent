@@ -62,6 +62,7 @@ import {
 } from './shared.mjs'
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
+import { waitForWindowState } from './native-window-state.mjs'
 
 const MODEL_RESPONSE_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
@@ -176,10 +177,10 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
-  const modelSubmenuMetrics = await getSingleElementMetrics(
+  const modelPickerMetrics = await getSingleElementMetrics(
     control,
-    '[data-testid="model-selector-submenu"]',
-    'The narrow-pane model submenu'
+    '[data-testid="model-selector-menu"]',
+    'The narrow-pane model picker'
   )
   const viewportMetrics = await getSingleElementMetrics(
     control,
@@ -197,25 +198,22 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     'The embedded browser host'
   )
   assert.ok(
-    modelSubmenuMetrics.top >= 64 && modelSubmenuMetrics.bottom <= viewportMetrics.bottom - 16,
-    `The narrow-pane model submenu exceeded the desktop viewport: ${JSON.stringify({
-      modelSubmenuMetrics,
+    modelPickerMetrics.top >= 64 && modelPickerMetrics.bottom <= viewportMetrics.bottom - 16,
+    `The narrow-pane model picker exceeded the desktop viewport: ${JSON.stringify({
+      modelPickerMetrics,
       viewportMetrics,
     })}`
   )
   assert.ok(
-    modelSubmenuMetrics.width >= 280 &&
-      modelSubmenuMetrics.left >= 16 &&
-      modelSubmenuMetrics.right <= viewportMetrics.right - 16 &&
-      modelSubmenuMetrics.right > rightPanelMetrics.left &&
-      modelSubmenuMetrics.right > browserHostMetrics.left &&
-      modelSubmenuMetrics.left < browserHostMetrics.right &&
-      modelSubmenuMetrics.bottom > browserHostMetrics.top &&
-      modelSubmenuMetrics.top < browserHostMetrics.bottom,
-    `The narrow-pane model submenu was compressed instead of using the browser overlay: ${JSON.stringify(
+    modelPickerMetrics.width >= 240 &&
+      modelPickerMetrics.left >= 16 &&
+      modelPickerMetrics.right <= viewportMetrics.right - 16 &&
+      modelPickerMetrics.right <= rightPanelMetrics.left - 16 &&
+      modelPickerMetrics.right <= browserHostMetrics.left - 16,
+    `The narrow-pane model picker was compressed or overlapped the right workspace panel: ${JSON.stringify(
       {
         browserHostMetrics,
-        modelSubmenuMetrics,
+        modelPickerMetrics,
         rightPanelMetrics,
       }
     )}`
@@ -295,38 +293,76 @@ async function verifyRuntimeTaskNotificationNavigation({
   composerSelector,
   control,
   taskRowTestId,
+  taskAddress,
 }) {
-  const activeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    .workbench?.currentRuntimeTask
   assert.equal(
-    activeTask?.taskId,
+    taskAddress?.taskId,
     taskRowTestId.replace('runtime-local-task-row-', ''),
     'The notification navigation fixture did not expose the expected active task'
   )
-  assert.ok(activeTask?.deviceId, 'The notification navigation fixture did not expose a device ID')
+  assert.ok(taskAddress?.deviceId, 'The notification navigation fixture did not expose a device ID')
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
+  const tabsBefore = JSON.parse(await control.command('snapshot', 'body'))
+    .testIds.filter(testId => testId.startsWith('workspace-tab-select-'))
+    .sort()
+  assert.ok(tabsBefore.length > 0, 'The notification fixture has no workspace tabs')
+  await control.command('closeMainWindowToTray', 'body')
+  await waitForWindowState(
+    control,
+    state => !state.visible,
+    'The notification fixture did not hide the main window',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
   await control.command('activateRuntimeTaskCompletionNotification', 'body', {
     value: JSON.stringify({
-      deviceId: activeTask.deviceId,
-      taskId: activeTask.taskId,
+      deviceId: taskAddress.deviceId,
+      taskId: taskAddress.taskId,
     }),
   })
+  await waitForWindowState(
+    control,
+    state => state.visible && !state.minimized,
+    'Activating the task notification did not restore the main window',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
 
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     const currentTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       .workbench?.currentRuntimeTask
     if (
-      currentTask?.deviceId === activeTask.deviceId &&
-      currentTask?.taskId === activeTask.taskId
+      currentTask?.deviceId === taskAddress.deviceId &&
+      currentTask?.taskId === taskAddress.taskId
     ) {
+      const tabsAfter = JSON.parse(await control.command('snapshot', 'body'))
+        .testIds.filter(testId => testId.startsWith('workspace-tab-select-'))
+        .sort()
+      assert.deepEqual(tabsAfter, tabsBefore, 'The task notification created a duplicate tab')
       return
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   assert.fail('Activating the task completion notification did not open its runtime task')
+}
+
+async function waitForCurrentRuntimeTask(control, taskId) {
+  const startedAt = Date.now()
+  let currentRuntimeTask = null
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    currentRuntimeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      .workbench?.currentRuntimeTask
+    if (currentRuntimeTask?.taskId === taskId && currentRuntimeTask.deviceId) {
+      return currentRuntimeTask
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(
+    `The running task address did not settle before notification verification: ${JSON.stringify(
+      currentRuntimeTask
+    )}`
+  )
 }
 
 async function verifyBackgroundTaskWindowLifecycle({
@@ -394,6 +430,10 @@ async function verifyBackgroundTaskWindowLifecycle({
   const taskRowTestId = runningTaskTestId.replace(
     'runtime-local-task-running-',
     'runtime-local-task-row-'
+  )
+  const taskAddress = await waitForCurrentRuntimeTask(
+    control,
+    taskRowTestId.replace('runtime-local-task-row-', '')
   )
 
   await getSingleElementMetrics(control, ACTIVE_WORKBENCH_SELECTOR, 'The running conversation pane')
@@ -524,9 +564,12 @@ async function verifyBackgroundTaskWindowLifecycle({
     snapshot => snapshot.testIds.includes(unreadTaskTestId),
     'The settled background task did not become unread'
   )
-  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  setPhase('first-turn-task-notification-navigation')
+  await verifyRuntimeTaskNotificationNavigation({
+    composerSelector,
+    control,
+    taskRowTestId,
+    taskAddress,
   })
   await waitForSnapshot(
     control,
@@ -535,7 +578,7 @@ async function verifyBackgroundTaskWindowLifecycle({
       snapshot.text.includes(WINDOW_LIFECYCLE_COMPLETION_TEXT) &&
       !snapshot.testIds.includes(unreadTaskTestId) &&
       !snapshot.testIds.includes('thinking-indicator'),
-    'Switching to the completed background task did not show its latest read state',
+    'The first-turn notification did not open the completed task and mark it read',
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
@@ -552,12 +595,6 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     lifecycleScreenshotName('04-background-task-latest-state-after-switch.png')
   )
-  setPhase('task-notification-navigation')
-  await verifyRuntimeTaskNotificationNavigation({
-    composerSelector,
-    control,
-    taskRowTestId,
-  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -933,14 +970,94 @@ async function verifyBackgroundTaskWindowLifecycle({
 }
 
 async function verifyPopoutWindowLifecycle(control, composerSelector) {
+  await control.command('closeMainWindowToTray', 'body')
+  try {
+    await waitForWindowVisibility(control, { mainVisible: false })
+    await verifyPopoutWithMainHidden(control)
+  } finally {
+    control.activateWindow('main')
+    await control.command('restoreMainWindow', 'body')
+  }
+  await control.command('waitFor', composerSelector, {
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+}
+
+async function waitForWindowVisibility(control, expected) {
+  const startedAt = Date.now()
+  while (true) {
+    const snapshot = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
+    if (Object.entries(expected).every(([key, value]) => snapshot[key] === value)) return snapshot
+    assert.ok(
+      Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS,
+      `Window visibility did not settle: ${JSON.stringify({ expected, snapshot })}`
+    )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+}
+
+async function dismissPopoutWithEscape(control) {
+  await control.commandForWindow('popout-window', 'pressWindowKey', 'body', { key: 'Escape' })
+  await waitForWindowVisibility(control, { mainVisible: false, popoutVisible: false })
+}
+
+async function verifyPopoutWithMainHidden(control) {
+  const readyCountBeforePopout = control.readyCount
+  const popoutAlreadyRegistered = control.controlClientsByWindow.has('popout-window')
   await control.command('showPopoutWindow', 'body', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  if (!popoutAlreadyRegistered) {
+    const ready = await withTimeout(
+      control.awaitReadyAfter(readyCountBeforePopout),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The Popout Window did not register its WebView'
+    )
+    assert.equal(ready.windowLabel, 'popout-window')
+  }
+  control.activateWindow('main')
   const initialPopout = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
   assert.equal(initialPopout.popoutVisible, true, 'Popout Window did not become visible')
+  assert.equal(
+    initialPopout.mainVisible,
+    false,
+    'Opening the Popout Window revealed the main window'
+  )
+  assert.equal(
+    initialPopout.mainFocused,
+    false,
+    'Opening the Popout Window focused the main window'
+  )
   assert.ok(initialPopout.popoutWindowId, 'Popout Window identity was unavailable')
   assert.ok(initialPopout.popoutWebContentsId, 'Popout Window WebContents identity was unavailable')
+  assert.equal(initialPopout.popoutBounds.width, 470)
+  assert.equal(initialPopout.popoutBounds.height, 112)
   try {
+    const overlayPopout = JSON.parse(
+      await control.command('setPopoutWindowMode', 'body', { value: 'menu' })
+    )
+    assert.equal(overlayPopout.popoutBounds.width, initialPopout.popoutBounds.width)
+    assert.ok(overlayPopout.popoutBounds.height > initialPopout.popoutBounds.height)
+    const collapsedPopout = JSON.parse(
+      await control.command('setPopoutWindowMode', 'body', { value: 'composer' })
+    )
+    assert.equal(collapsedPopout.popoutBounds.height, initialPopout.popoutBounds.height)
+
+    const expandedPopout = JSON.parse(
+      await control.command('setPopoutWindowMode', 'body', { value: 'conversation' })
+    )
+    assert.ok(expandedPopout.popoutBounds.width > initialPopout.popoutBounds.width)
+    assert.ok(expandedPopout.popoutBounds.height > initialPopout.popoutBounds.height)
+    assert.equal(expandedPopout.popoutWindowId, initialPopout.popoutWindowId)
+    const restoredPopout = JSON.parse(
+      await control.command('setPopoutWindowMode', 'body', { value: 'composer' })
+    )
+    assert.deepEqual(
+      [restoredPopout.popoutBounds.width, restoredPopout.popoutBounds.height],
+      [initialPopout.popoutBounds.width, initialPopout.popoutBounds.height]
+    )
     if (process.platform === 'darwin') {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
       const dataUrl = await control.command('capturePopoutWindow', 'body', {
@@ -952,6 +1069,7 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
       assert.ok(png.length > 10_000, 'Popout Window capture did not contain rendered controls')
       await writeFile(join(resultDir, 'window-lifecycle-00-popout-window.png'), png)
     }
+    await dismissPopoutWithEscape(control)
   } finally {
     await control.command('dismissPopoutWindow', 'body')
   }
@@ -973,6 +1091,11 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
   const reopenedPopout = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
   try {
     assert.equal(reopenedPopout.popoutVisible, true, 'Reopened Popout Window was not visible')
+    assert.equal(
+      reopenedPopout.mainVisible,
+      false,
+      'Reopening the Popout Window revealed the main window'
+    )
     assert.equal(
       reopenedPopout.popoutWindowId,
       initialPopout.popoutWindowId,
@@ -996,14 +1119,87 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
       assert.ok(png.length > 10_000, 'Reopened Popout Window was not immediately rendered')
       await writeFile(join(resultDir, 'window-lifecycle-01-popout-window-reopened.png'), png)
     }
+    await verifyPopoutConversation(control)
   } finally {
     await control.command('dismissPopoutWindow', 'body')
   }
-  await control.command('waitFor', composerSelector, {
+}
+
+async function verifyPopoutConversation(control) {
+  const popoutControl = {
+    command: (...args) => control.commandForWindow('popout-window', ...args),
+  }
+  const composer = '[data-testid="chat-message-input"]'
+  await popoutControl.command('waitFor', composer, {
     visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  assert.equal(
+    Number(
+      await popoutControl.command('getElementCount', '[data-testid="workbench-split-layout"]')
+    ),
+    0,
+    'The Popout Window must not restore a separate split-layout session'
+  )
+  control.setScenario('fresh_chat')
+  await selectE2EModel(popoutControl)
+  await sendPrompt(popoutControl, composer, FRESH_CHAT_PROMPT)
+  await popoutControl.command('waitFor', '[data-testid="message-user"]', {
+    text: FRESH_CHAT_PROMPT,
+    visible: true,
+  })
+  await popoutControl.command(
+    'waitFor',
+    '[data-testid="popout-workbench-page"][data-popout-mode="conversation"]',
+    { visible: true }
+  )
+  const resizeStartedAt = Date.now()
+  while (true) {
+    const windowSnapshot = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
+    if (windowSnapshot.popoutBounds.height === 640) break
+    assert.ok(
+      Date.now() - resizeStartedAt < DEFAULT_STEP_TIMEOUT_MS,
+      'The Popout Window did not expand after sending a message'
+    )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  const message = await getSingleElementMetrics(
+    popoutControl,
+    '[data-testid="message-user"]',
+    'The sent Popout Window message'
+  )
+  const viewport = await getSingleElementMetrics(
+    popoutControl,
+    '[data-testid="desktop-workbench-content"]',
+    'The Popout Window conversation viewport'
+  )
+  assert.ok(
+    message.bottom > viewport.top && message.top < viewport.bottom && viewport.height > 112,
+    'The sent message was clipped inside the compact composer window'
+  )
+  await popoutControl.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    visible: true,
+    timeoutMs: MODEL_RESPONSE_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(popoutControl, 'window-lifecycle-02-popout-conversation.png')
+  await dismissPopoutWithEscape(control)
+  await control.command('showPopoutWindow', 'body')
+  await popoutControl.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    visible: true,
+  })
+  await popoutControl.command('click', '[data-testid="popout-window-new-chat-button"]')
+  await popoutControl.command(
+    'waitFor',
+    '[data-testid="popout-workbench-page"][data-popout-mode="composer"]',
+    { visible: true }
+  )
+  assert.equal(
+    Number(await popoutControl.command('getElementCount', '[data-testid="message-assistant"]')),
+    0,
+    'Starting a new Popout Window chat retained the previous conversation'
+  )
 }
 
 async function attachAndSendOnlyFile(control, composerSelector) {
@@ -1025,6 +1221,59 @@ async function attachAndSendOnlyFile(control, composerSelector) {
     { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+}
+
+async function verifyAttachmentComposerClearsOnSubmit({ composerSelector, control }) {
+  control.holdScenarioResponse('attachment_submit_cleanup')
+  control.setScenario('attachment_submit_cleanup')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('fill', composerSelector, {
+    value: 'WEWORK_DESKTOP_E2E_ATTACHMENT_SUBMIT_CLEANUP',
+  })
+  await control.command('dropFile', composerSelector, {
+    filename: ATTACHMENT_ONLY_FILENAME,
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('attachment-badge') &&
+      !snapshot.testIds.includes('uploading-attachment-badge'),
+    'The attachment cleanup fixture did not finish staging'
+  )
+
+  try {
+    await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.awaitScenarioRequestCount('attachment_submit_cleanup', 1)
+
+    assert.equal(
+      await control.command('getValue', composerSelector),
+      '',
+      'Submitting text with an image did not clear the composer text immediately'
+    )
+    const submittedSnapshot = JSON.parse(
+      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+    )
+    assert.equal(
+      submittedSnapshot.testIds.includes('attachment-badge'),
+      false,
+      'Submitting text with an image left the attachment in the composer'
+    )
+  } finally {
+    control.releaseScenarioResponse('attachment_submit_cleanup')
+  }
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_SUBMIT_CLEANUP`,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
@@ -1058,18 +1307,28 @@ async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
   throw new Error('The attachment-only tasks did not persist durable attachment previews')
 }
 
-async function waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, expectedCount) {
+async function waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, expectedCount) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const attachments = await findAttachmentFiles(runtimeAttachmentRoot)
+    const entries = await readdir(runtimeWorkspaceRoot, { withFileTypes: true })
+    const attachments = (
+      await Promise.all(
+        entries
+          .filter(entry => entry.isDirectory())
+          .map(entry => findAttachmentFiles(join(runtimeWorkspaceRoot, entry.name, 'attachments')))
+      )
+    ).flat()
     if (attachments.length >= expectedCount) return attachments
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error('The remote device did not persist attachments in its private runtime root')
+  throw new Error('The remote device did not persist attachments in its task workspace directories')
 }
 
 async function findAttachmentFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  const entries = await readdir(directory, { withFileTypes: true }).catch(error => {
+    if (error.code === 'ENOENT') return []
+    throw error
+  })
   const files = await Promise.all(
     entries.map(entry => {
       const path = join(directory, entry.name)
@@ -1092,7 +1351,7 @@ async function verifyAttachmentOnlySidebarLifecycle({
   composerSelector,
   control,
   executorHome,
-  runtimeAttachmentRoot,
+  runtimeWorkspaceRoot,
   workspacePath,
 }) {
   const gitStatusBefore = workspacePath ? readGitStatus(workspacePath) : null
@@ -1137,8 +1396,8 @@ async function verifyAttachmentOnlySidebarLifecycle({
   if (executorHome) {
     await waitForDurableAttachmentPreviews(executorHome, 2)
   }
-  if (runtimeAttachmentRoot) {
-    await waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, 2)
+  if (runtimeWorkspaceRoot) {
+    await waitForDeviceRuntimeAttachments(runtimeWorkspaceRoot, 2)
   }
   if (workspacePath) {
     assert.equal(
@@ -1245,5 +1504,6 @@ export {
   verifyBackgroundTaskWindowLifecycle,
   verifyPopoutWindowLifecycle,
   attachAndSendOnlyFile,
+  verifyAttachmentComposerClearsOnSubmit,
   verifyAttachmentOnlySidebarLifecycle,
 }

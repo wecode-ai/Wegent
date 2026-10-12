@@ -230,13 +230,15 @@
     },
     "quick_phrases": {
       "label": "Quick phrases",
-      "description": "Shown after a user clicks this QuickCard; selecting a phrase fills the message box.",
+      "description": "Shown above the chat input for quick insertion.",
       "placeholder": "Example: Help me create a product roadmap PPT",
       "add": "Add phrase"
     },
     "input_placeholder": {
       "label": "Input placeholder",
       "description": "Uses the current device and language first, then the generic value, and finally the system default.",
+      "default_summary": "Use the system default placeholder",
+      "custom_summary": "Custom placeholder configured",
       "generic": "Generic fallback",
       "desktop": "Desktop",
       "mobile": "Mobile",
@@ -246,17 +248,25 @@
       "en_placeholder": "English placeholder"
     },
     "simple": {
+      "description": "Set a name, use case, and capabilities to create a ready-to-use agent.",
+      "display_name_placeholder": "For example: Product analysis assistant",
+      "optional": "Optional",
+      "prompt_label": "System prompt",
+      "prompt_placeholder": "For example: You are a product analysis assistant who reviews requirements, identifies risks, and recommends next steps.",
+      "prompt_help": "Describe its role, tasks, constraints, and response style.",
       "advanced_title": "Advanced configuration",
-      "advanced_description": "Collaboration modes, multi-bot orchestration, and detailed role settings live here.",
-      "open_advanced": "Open advanced",
-      "advanced_toggle": "Advanced mode",
-      "advanced_toggle_description": "Switch to the full configuration UI for collaboration modes and multi-bot orchestration.",
+      "advanced_description": "Agent description, entry points, coding repository, and interaction copy",
+      "agent_description_label": "Agent description",
+      "agent_description_placeholder": "Briefly describe this agent",
+      "name_required": "Enter an agent name",
       "non_solo_notice": "This agent uses an advanced collaboration mode, so the full configuration is shown.",
       "sections": {
-        "basic": "Basic settings",
+        "basic": "Basic information",
+        "model": "Model",
         "prompt": "Prompt",
         "capability": "Capabilities",
-        "execution": "Mode settings"
+        "execution": "Mode settings",
+        "advanced": "More settings"
       },
       "core": {
         "model_description": "Uses the system default when unset; choose one only when needed.",
@@ -271,21 +281,23 @@
       },
       "capability": {
         "base_title": "Use shared base capabilities",
-        "base_description": "Reuse the system agent's general skills, tools, and plugins without changing this agent's identity or runtime. This may increase context and tool-call usage.",
+        "base_description": "Reuse the system agent's general skills, tools, and plugins. This increases context and tool-call usage.",
         "enabled": "Enabled",
-        "disabled": "Disabled"
+        "disabled": "Disabled",
+        "additional_title": "Additional capabilities",
+        "additional_summary": "{{count}} added · Skills, knowledge bases, MCP"
       },
       "execution": {
         "bind_mode_description": "Controls which entry points and task types can use this agent.",
-        "requires_workspace_description": "When enabled, code tasks must start with a repository.",
-        "executor_description": "Controls the runtime environment used to handle tasks."
+        "requires_workspace_title": "Bind coding repository",
+        "requires_workspace_description": "When enabled, a repository must be selected before using coding capabilities."
       },
       "bind_mode": {
-        "advanced_title": "Advanced settings",
-        "available_modules": "Available modules",
-        "automatic": "Automatic (based on how it runs)",
-        "selected": "Selected",
-        "automatic_hint": "Leave every module unselected to choose automatically from the runtime. Once selected, exactly those modules are saved.",
+        "advanced_title": "Available entry points",
+        "available_modules": "Entry points",
+        "automatic": "Default entry points",
+        "selected": "Custom entry points",
+        "automatic_hint": "By default, the agent appears in entry points suited to its use case. After a manual selection, it is available only in the selected entry points.",
         "summary_separator": ", ",
         "more_modes": "More modes",
         "collapse_more_modes": "Collapse more modes",
@@ -311,28 +323,29 @@
         }
       },
       "executor": {
-        "title": "How it runs",
-        "required": "Choose an available runtime",
-        "requires_coding_agent_hint": "Code and device modes require a coding engine.",
+        "title": "Use case",
+        "required": "Choose an agent use case",
+        "requires_coding_agent_hint": "Code and device modes require an execution engine.",
         "custom_shell_placeholder": "Choose a custom runtime",
         "no_custom_shells": "No custom runtimes available",
         "manage_custom_shells_hint": "Add custom runtimes in Resource Library - Executors.",
         "simple": {
-          "title": "Everyday chat",
-          "description": "Best for conversations, knowledge Q&A, and lightweight tasks."
+          "title": "Everyday questions",
+          "description": "Best for Q&A, writing, and knowledge lookup."
         },
         "complex": {
-          "title": "Complex tasks and coding",
-          "description": "For multi-step tasks, code changes, files, commands, and tools."
+          "title": "Coding and complex tasks",
+          "description": "Best for coding, file operations, and multi-step tasks."
         },
-        "coding_runtime_label": "Coding engine",
+        "coding_runtime_label": "Execution engine",
+        "coding_runtime_description": "Choose an execution engine that matches the model.",
         "codex": {
           "title": "Codex",
-          "description": "Best for agentic coding and tools with OpenAI models."
+          "description": "Best suited for OpenAI models."
         },
         "claude_code": {
           "title": "Claude Code",
-          "description": "Best for coding and tools with Anthropic models."
+          "description": "Best suited for Anthropic models."
         },
         "custom": {
           "title": "Advanced custom",

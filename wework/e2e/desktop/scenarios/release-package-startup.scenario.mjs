@@ -152,20 +152,28 @@ export function apply(ctx) {
 }
 
 async function assertReleasePackageResources() {
-  if (process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE !== '1') return
   const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
+  const resourcesRoot =
+    process.platform === 'darwin'
+      ? resolve(appBinary, '..', '..', 'Resources')
+      : resolve(appBinary, '..', 'resources')
+  const components = JSON.parse(await readFile(join(resourcesRoot, 'components.json'), 'utf8'))
+  assert.match(
+    components.sourceSha,
+    /^[0-9a-f]{40,64}$/i,
+    'The packaged component manifest must identify its source commit'
+  )
+
+  if (process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE !== '1') {
+    return components
+  }
   assert.match(
     appBinary,
     /release-installer/,
     `Release startup E2E was not given a formal release binary: ${appBinary}`
   )
   if (process.platform === 'darwin') await assertMacosMicrophoneSigning(appBinary)
-  const resourcesRoot =
-    process.platform === 'darwin'
-      ? resolve(appBinary, '..', '..', 'Resources')
-      : resolve(appBinary, '..', 'resources')
-  const [components] = await Promise.all([
-    readFile(join(resourcesRoot, 'components.json'), 'utf8').then(JSON.parse),
+  await Promise.all([
     readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json')),
     readFile(join(resourcesRoot, 'codex', 'WEGENT_CODEX_BINARY.json')),
     readFile(join(resourcesRoot, 'wework-core-plugins', 'wework-app', 'package.json')),
@@ -216,6 +224,7 @@ async function assertReleasePackageResources() {
       )
     ),
   ])
+  return components
 }
 
 async function assertMacosMicrophoneSigning(appBinary) {
@@ -250,13 +259,54 @@ async function assertMacosMicrophoneSigning(appBinary) {
   assert.ok(description.trim(), 'The release package must explain microphone access')
 }
 
+async function assertCompressedHostUpdatePackage(appVersion) {
+  if (process.env.WEWORK_E2E_REQUIRE_COMPRESSED_HOST_UPDATE !== 'true') return null
+  assert.equal(process.platform, 'darwin', 'Compressed Host update verification requires macOS')
+
+  const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
+  const appRoot = resolve(appBinary, '..', '..', '..')
+  const installerRoot = resolve(appRoot, '..', '..')
+  const onlineUpdateRoot = resolve(installerRoot, '..', 'release-online-update')
+  const archiveName = `WeWorkHostUpdate_${appVersion}_macos_${process.arch}.zip`
+  const archivePath = join(onlineUpdateRoot, archiveName)
+  const summary = execFileSync('zipinfo', ['-l', archivePath], { encoding: 'utf8' })
+  const match = /(\d+) files, (\d+) bytes uncompressed, (\d+) bytes compressed:\s*([\d.]+)%/.exec(
+    summary
+  )
+  assert.ok(match, `Could not read compression summary for ${archiveName}`)
+
+  const uncompressedBytes = Number(match[2])
+  const compressedBytes = Number(match[3])
+  assert.ok(uncompressedBytes > 0, `The Host update archive is empty: ${archiveName}`)
+  assert.ok(
+    compressedBytes < uncompressedBytes,
+    `The Host update archive is not compressed: ${compressedBytes} of ${uncompressedBytes} bytes`
+  )
+  return {
+    archiveName,
+    entries: Number(match[1]),
+    uncompressedBytes,
+    compressedBytes,
+    savingsPercent: Number(match[4]),
+  }
+}
+
 export async function createDesktopScenario({
   electronUserDataDirectory,
   resultDir,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
-  await assertReleasePackageResources()
+  const packagedComponents = await assertReleasePackageResources()
+  const hostUpdateCompression = await assertCompressedHostUpdatePackage(
+    packagedComponents.appVersion
+  )
+  if (hostUpdateCompression) {
+    await writeFile(
+      join(resultDir, 'host-update-compression.json'),
+      `${JSON.stringify(hostUpdateCompression, null, 2)}\n`
+    )
+  }
   await seedNativeDshProfile(electronUserDataDirectory)
   const profileManifest = join(
     electronUserDataDirectory,
@@ -273,6 +323,37 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      await control.command('navigate', 'body', { value: '/settings/about' })
+      await control.command('waitFor', '[data-testid="about-commit-id"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const displayedCommit = (
+        await control.command('getText', '[data-testid="about-commit-id"]')
+      ).trim()
+      const fullCommit = await control.command('getAttribute', '[data-testid="about-commit-id"]', {
+        value: 'title',
+      })
+      assert.ok(
+        displayedCommit.endsWith(packagedComponents.sourceSha.slice(0, 12)),
+        `About displayed ${displayedCommit} instead of packaged commit ${packagedComponents.sourceSha}`
+      )
+      assert.equal(
+        fullCommit,
+        packagedComponents.sourceSha.toLowerCase(),
+        'About did not expose the complete packaged source commit'
+      )
+      await writeFile(
+        join(resultDir, 'about-build-identity.json'),
+        `${JSON.stringify(
+          {
+            displayedCommit,
+            fullCommit,
+            packagedSourceSha: packagedComponents.sourceSha,
+          },
+          null,
+          2
+        )}\n`
+      )
       await verifyWindowsProfileDirectoryLinks(electronUserDataDirectory)
       await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {
@@ -313,6 +394,7 @@ export async function createDesktopScenario({
       return {
         nativeDshPluginCompatibility: true,
         seededNativeDshProfile: true,
+        hostUpdateCompression,
       }
     },
   }

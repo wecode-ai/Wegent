@@ -11,7 +11,6 @@ use brz_mysql::{Mysql, MysqlResult};
 
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
 
-use super::py_order::PySetOrder;
 use super::queries::{
     NamespaceActiveForm, direct_namespace_memberships, direct_namespace_resource_ids, group_member,
     kinds_by_filter_unordered, namespace_by_name_exact, namespace_entity_kb_members,
@@ -22,6 +21,7 @@ use super::{
     MEMBER_COLUMNS, MemberRow, RESOLVER_APPROVED_STATUS, RESOLVER_KB_RESOURCE_TYPE, has_permission,
     highest_role, quote_literal,
 };
+use crate::py_set_order::SetOrder;
 
 // ---------------------------------------------------------------------------
 // DIAGNOSTIC(all-grouped membership invocations) - temporary
@@ -220,7 +220,7 @@ const GROUP_ENTITY_PURPOSE: ResolutionPurpose = ResolutionPurpose::ResourceAcces
 /// row order mapped through the namespace query), then entity-derived
 /// memberships (`get_user_groups_with_roles` preserves this order for the
 /// `groups` section rendering).
-pub(super) async fn user_group_role_map<M, R: brz_redis::Redis>(
+pub(crate) async fn user_group_role_map<M, R: brz_redis::Redis>(
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
@@ -355,7 +355,7 @@ where
 
 /// `get_effective_roles_in_groups`: direct/entity roles plus parent-group
 /// inheritance for groups without their own roles.
-pub(super) fn effective_roles(
+pub(crate) fn effective_roles(
     role_map: &[(String, Vec<String>)],
     group_names: &[String],
 ) -> HashMap<String, String> {
@@ -392,7 +392,7 @@ pub(super) fn effective_roles(
 /// the list `get_effective_roles_in_groups` consumes for `context.group_roles`
 /// — so parent-group inheritance contributes the descendant groups the direct
 /// membership batch never reports.
-pub(super) fn user_groups(
+pub(crate) fn user_groups(
     role_map: &[(String, Vec<String>)],
     active_names: &[String],
 ) -> Vec<String> {
@@ -405,7 +405,7 @@ pub(super) fn user_groups(
 
 /// `get_effective_role_in_group` (used by `get_view_role_in_group`):
 /// direct role, entity-derived roles, then parent inheritance.
-pub(super) async fn effective_role_in_group<M, R: brz_redis::Redis>(
+pub(crate) async fn effective_role_in_group<M, R: brz_redis::Redis>(
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
@@ -909,7 +909,7 @@ where
     }
     // `kb_ids` is a Python set of ints; the IN list renders the CPython set
     // iteration order.
-    let mut set_order = PySetOrder::new();
+    let mut set_order = SetOrder::new();
     for id in kb_ids {
         set_order.add(*id);
     }
@@ -934,7 +934,7 @@ where
 /// `context.external_member_role_map`, so the `kinds.id IN` list renders the
 /// CPython `set[int]` iteration order.
 pub(super) fn external_editable_kb_ids(metadata: &EntityKbMetadata) -> Vec<i64> {
-    let mut set_order = PySetOrder::new();
+    let mut set_order = SetOrder::new();
     for (kb_id, roles) in &metadata.role_map {
         if roles.iter().any(|role| has_permission(role, "Developer")) {
             set_order.add(*kb_id);

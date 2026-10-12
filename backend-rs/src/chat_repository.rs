@@ -9,34 +9,21 @@
 //! and the per-user-subtask context load in
 //! `app/api/endpoints/internal/chat_storage.py:_build_user_message_content`.
 //!
+//! The task and subtask reads come from the injected `TaskStore`, which owns
+//! the physical table choice: a new-format id carries its own shard, a legacy
+//! id resolves its owner through the base `tasks` index before the read is
+//! routed, and the store runs the guard and context load the source attaches
+//! on that path. The `subtask_contexts` reads below carry no table choice and
+//! stay on this module's handle.
+//!
 //! The source SQLAlchemy session renders every one of these reads as one text
 //! `COM_QUERY` with the full mapped-column projection labeled
 //! `{table}_{column}` and scalar filters inlined as literals; the target
 //! reproduces those exact renderings so the recorded dependency stream matches.
-use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
+use brz_mysql::{Json, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use serde_json::Value;
-
-use crate::task_routing::ByTaskId;
-use crate::task_routing::TaskPolicy;
-
-const TASK_BY_ID_SQL: &str = "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
-        client_origin, is_group_chat \
-    FROM {{tasks}} \
-    WHERE id = ? \
-    LIMIT 1";
-const TASK_BY_OWNER_SQL: &str = "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
-        client_origin, is_group_chat \
-    FROM {{tasks}} \
-    WHERE id = ? AND user_id = ? \
-    LIMIT 1";
-const SUBTASKS_BY_TASK_SQL: &str = "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
-        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
-        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \
-    FROM {{subtasks}} \
-    WHERE task_id = ? \
-    ORDER BY message_id ASC, created_at ASC";
 
 /// `tasks_{:04}` row (`TaskResource`); the history flow consumes the owner and
 /// the JSON payload.
@@ -178,33 +165,6 @@ impl SubtaskContextRow {
     }
 }
 
-/// Every mapped `SubtaskContext` column in model order, labeled
-/// `subtask_contexts_{column}`.
-/// The `subtask_contexts` projection used by the attachment-text lookup and
-/// the history context loads.
-pub fn context_columns() -> String {
-    [
-        "id",
-        "subtask_id",
-        "user_id",
-        "context_type",
-        "name",
-        "status",
-        "error_message",
-        "binary_data",
-        "image_base64",
-        "extracted_text",
-        "text_length",
-        "type_data",
-        "created_at",
-        "updated_at",
-    ]
-    .iter()
-    .map(|column| format!("subtask_contexts.{column} AS subtask_contexts_{column}"))
-    .collect::<Vec<_>>()
-    .join(", ")
-}
-
 fn decode_task_row(row: &MysqlRow) -> MysqlResult<TaskRow> {
     Ok(TaskRow {
         id: row.get_required("id")?,
@@ -250,111 +210,80 @@ fn decode_context_row(row: &MysqlRow) -> MysqlResult<SubtaskContextRow> {
     })
 }
 
-/// Task-sharded MySQL repositories for the chat history read path.
-pub struct ChatHistoryRepository<'a, M> {
-    mysql: &'a M,
-    task_policy: TaskPolicy,
+/// Task-sharded MySQL readers for the chat history read path.
+///
+/// The task and subtask rows come from the injected `TaskStore`, which owns the
+/// table choice for every one of them; the `subtask_contexts` reads carry no
+/// table choice and stay on this handle.
+pub struct ChatHistoryRepository<'a> {
+    mysql: &'a brz_mysql::MysqlService,
+    task_store: &'a dyn crate::task_store::TaskStore,
 }
 
-impl<'a, M: Mysql> ChatHistoryRepository<'a, M> {
-    pub fn new(mysql: &'a M, task_policy: TaskPolicy) -> Self {
-        Self { mysql, task_policy }
+impl<'a> ChatHistoryRepository<'a> {
+    pub fn new(
+        mysql: &'a brz_mysql::MysqlService,
+        task_store: &'a dyn crate::task_store::TaskStore,
+    ) -> Self {
+        Self { mysql, task_store }
     }
 
     /// The underlying MySQL handle (shared with this API's readers).
-    pub fn mysql_ref(&self) -> &'a M {
+    pub fn mysql_ref(&self) -> &'a brz_mysql::MysqlService {
         self.mysql
     }
 
-    /// `task_store.get_by_id(db, task_id=task_id)` without an owner filter:
-    /// the full labeled projection with the id inlined.
+    /// `task_store.get_by_id(db, task_id=task_id)` without an owner filter.
     pub async fn get_task_by_id(&self, task_id: i64) -> MysqlResult<Option<TaskRow>> {
-        let sql = TASK_BY_ID_SQL;
-        let row: Option<MysqlRow> = self
-            .mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_optional(sql, (task_id,))
-            .await?;
+        let row = self.task_store.get_task(task_id).await?;
         row.as_ref().map(decode_task_row).transpose()
     }
 
     /// `task_store.get_by_id(db, task_id=task_id, owner_user_id=owner_user_id)`
-    /// (`TaskForkHistoryResolver._lineage_task` at depth 0): the full labeled
-    /// projection with the id and owner inlined.
+    /// (`TaskForkHistoryResolver._lineage_task` at depth 0).
     pub async fn get_task_by_id_with_owner(
         &self,
         task_id: i64,
-        owner_user_id: i32,
+        owner_user_id: i64,
     ) -> MysqlResult<Option<TaskRow>> {
-        let sql = TASK_BY_OWNER_SQL;
-        let row: Option<MysqlRow> = self
-            .mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_optional(sql, (task_id, owner_user_id))
+        let row = self
+            .task_store
+            .get_task_owned(task_id, owner_user_id)
             .await?;
         row.as_ref().map(decode_task_row).transpose()
     }
 
-    /// `ShardedSubtaskStore._owner_matches_task_id`: the owner-guard existence
-    /// check run before listing a new-format task's subtasks.
-    async fn owner_matches_task_id(&self, task_id: i64, owner_user_id: i32) -> MysqlResult<bool> {
-        let sql = "SELECT id \nFROM {{tasks}} \n\
-             WHERE id = ? AND user_id = ? \n LIMIT 1";
-        let row: Option<MysqlRow> = self
-            .mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_optional(sql, (task_id, owner_user_id))
-            .await?;
-        Ok(row.is_some())
+    /// `subtask_store.list_ids_by_task`: the task's subtask ids.
+    pub async fn list_subtask_ids_by_task(&self, task_id: i64) -> MysqlResult<Vec<i64>> {
+        let rows = self.task_store.list_subtask_ids_by_task(task_id).await?;
+        rows.iter().map(|row| row.get_required("id")).collect()
     }
 
-    /// `subtask_store.list_by_task_ordered` for a lineage task node: for
-    /// new-format task ids the sharded store first verifies ownership
-    /// (`_owner_matches_task_id`) and then lists the shard table filtered only
-    /// by `task_id`, ordered by `message_id ASC, created_at ASC`, attaching
-    /// contexts with one batched `IN (...)` load (`_attach_contexts`). The
-    /// history endpoint re-queries ready contexts per user subtask, so the
-    /// batched rows only need to preserve the recorded call topology.
+    /// `subtask_store.list_by_task_ordered` for a lineage task node: the task's
+    /// subtasks ordered `message_id ASC, created_at ASC`. The store also runs
+    /// the new-format owner guard and the batched context load the source
+    /// attaches on the path that reads a table the deployment resolved itself.
+    /// The history endpoint re-queries ready contexts per user subtask, so the
+    /// loaded rows only need to preserve the recorded call topology.
     pub async fn list_subtasks_by_task(
         &self,
         task_id: i64,
-        owner_user_id: i32,
+        owner_user_id: i64,
     ) -> MysqlResult<Vec<SubtaskRow>> {
-        let key = u64::try_from(task_id).unwrap_or(0);
-        let is_new = (self.task_policy.is_scoped_id)(key);
-        if is_new && !self.owner_matches_task_id(task_id, owner_user_id).await? {
-            return Ok(Vec::new());
-        }
-
-        let sql = SUBTASKS_BY_TASK_SQL;
-        let rows: Vec<MysqlRow> = self
-            .mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_all(sql, (task_id,))
+        // The listing's contexts are the store's load; this path discards them.
+        let listing = self
+            .task_store
+            .list_subtasks_by_task_ordered(task_id, owner_user_id)
             .await?;
-        let subtasks = rows
-            .iter()
-            .map(decode_subtask_row)
-            .collect::<MysqlResult<Vec<_>>>()?;
-        if is_new && !subtasks.is_empty() {
-            let ids = subtasks
-                .iter()
-                .map(|subtask| subtask.id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let sql = format!(
-                "SELECT {columns} \nFROM subtask_contexts \n\
-                 WHERE subtask_contexts.subtask_id IN ({ids}) \
-                 ORDER BY subtask_contexts.id ASC",
-                columns = context_columns()
-            );
-            let _contexts: Vec<MysqlRow> = self.mysql.fetch_all(sql, ()).await?;
-        }
-        Ok(subtasks)
+        listing.rows.iter().map(decode_subtask_row).collect()
     }
 
-    /// Ready user-facing contexts for one subtask
-    /// (`_build_user_message_content` context query), ordered by `created_at`.
+    // Note (replay/20261001-6): recording 20260928050001 contains a single wide
+    // batched `subtask_contexts` read (16,508 ids, ~206 KB of SQL, ~33 K tokens).
+    // Replay's optional-session classifier only proves a statement read-only
+    // within a bounded token budget, so that budget was raised in the traffic-e2e
+    // harness to keep the recorded read classifiable. Target behavior here is
+    // unchanged; this note records why the round re-verifies.
     pub async fn list_ready_contexts(
         &self,
         subtask_id: i64,
@@ -366,7 +295,7 @@ impl<'a, M: Mysql> ChatHistoryRepository<'a, M> {
              AND subtask_contexts.context_type IN \
              ('attachment', 'external_web_content', 'knowledge_base') \
              ORDER BY subtask_contexts.created_at",
-            columns = context_columns()
+            columns = crate::task_store::subtask_context_columns()
         );
         let rows: Vec<MysqlRow> = self.mysql.fetch_all(sql.as_str(), ()).await?;
         rows.iter().map(decode_context_row).collect()
@@ -396,62 +325,34 @@ impl TaskForkSpec {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::task_store::{
+        SUBTASKS_TABLE, TASKS_TABLE, subtasks_by_message_ordered_statement, task_by_id_statement,
+    };
 
+    /// The projections this module decodes must keep every column the
+    /// decoders read.
     #[test]
     fn task_projection_lists_every_mapped_column() {
-        let columns = TASK_BY_ID_SQL;
+        let columns = task_by_id_statement(TASKS_TABLE);
         assert!(columns.starts_with("SELECT id, user_id, kind, name, namespace, json"));
-        assert!(columns.contains("is_group_chat FROM"));
+        assert!(columns.contains("is_group_chat"));
     }
 
     #[test]
     fn subtask_projection_includes_the_role_column() {
-        let columns = SUBTASKS_BY_TASK_SQL;
+        let columns = subtasks_by_message_ordered_statement(SUBTASKS_TABLE);
         assert!(columns.contains("`role`"));
         assert!(columns.contains("result"));
+        assert!(columns.contains("sender_user_id"));
     }
 
     #[test]
     fn context_projection_covers_the_recorded_column_order() {
-        let columns = context_columns();
+        let columns = crate::task_store::subtask_context_columns();
         assert!(columns.starts_with(
             "subtask_contexts.id AS subtask_contexts_id, \
              subtask_contexts.subtask_id AS subtask_contexts_subtask_id"
         ));
         assert!(columns.ends_with("subtask_contexts.updated_at AS subtask_contexts_updated_at"));
-    }
-}
-
-#[cfg(test)]
-mod sql_tests {
-    use super::*;
-    use crate::sql_test_support::{QueryCapture, Route};
-
-    #[tokio::test]
-    async fn task_and_subtask_queries_preserve_routing_tokens() {
-        let mysql = QueryCapture::default();
-        let repository = ChatHistoryRepository::new(
-            &mysql,
-            TaskPolicy {
-                is_scoped_id: |_| false,
-                resolve_migrated_legacy: false,
-            },
-        );
-        repository.get_task_by_id(42).await.unwrap();
-        repository.get_task_by_id_with_owner(42, 7).await.unwrap();
-        repository.list_subtasks_by_task(42, 7).await.unwrap();
-        let queries = mysql.queries();
-        assert_eq!(queries.len(), 3);
-        assert!(queries.iter().all(|query| query.route == Route::Task(42)));
-        assert_eq!(
-            queries.iter().map(|q| q.args).collect::<Vec<_>>(),
-            [1, 2, 1]
-        );
-        assert!(
-            queries[2]
-                .sql
-                .ends_with("ORDER BY message_id ASC, created_at ASC")
-        );
     }
 }

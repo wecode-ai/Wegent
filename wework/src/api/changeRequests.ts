@@ -1,10 +1,12 @@
 import type { DeviceCommandResponse } from '@/types/api'
 import type {
   ChangeRequest,
+  ChangeRequestLookupState,
   ChangeRequestMergeQueueState,
   ChangeRequestProvider,
 } from '@/types/environment'
 import {
+  classifyChangeRequestCommandError,
   type DeviceCommandApi,
   outputAsArray,
   outputAsRecord,
@@ -24,6 +26,8 @@ export interface TaskChangeRequestSnapshot {
   target: TaskChangeRequestTarget
   changeRequest: ChangeRequest | null
   fetchedAt: string
+  provider?: ChangeRequestProvider
+  lookupState?: ChangeRequestLookupState
   stale?: boolean
   error?: string | null
 }
@@ -306,7 +310,19 @@ async function loadRepository(
     timeout_seconds: 20,
     max_output_bytes: 1024 * 1024,
   })
-  if (!response.success) throw new Error(commandError(response))
+  if (!response.success) {
+    const fetchedAt = new Date().toISOString()
+    const error = commandError(response)
+    const lookupState = classifyChangeRequestCommandError(response)
+    return group.targets.map(target => ({
+      target,
+      changeRequest: null,
+      fetchedAt,
+      provider: group.provider,
+      lookupState,
+      error,
+    }))
+  }
   let pullRequests =
     outputAsArray(response.stdout)
       ?.map(value => parseChangeRequest(group.provider, value))
@@ -328,6 +344,8 @@ async function loadRepository(
   const fetchedAt = new Date().toISOString()
   return group.targets.map(target => ({
     target,
+    provider: group.provider,
+    lookupState: byBranch.has(target.branch) ? 'found' : 'not_found',
     changeRequest:
       byBranch.get(target.branch)?.sort((left, right) => {
         if (left.state === 'open' && right.state !== 'open') return -1
@@ -351,6 +369,8 @@ export async function loadTaskChangeRequests(
           target,
           changeRequest: null,
           fetchedAt: new Date().toISOString(),
+          provider: groups[index].provider,
+          lookupState: 'error',
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         }))
   )

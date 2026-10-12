@@ -229,6 +229,45 @@ describe('createLocalProjectChatClient', () => {
     subscription.unsubscribe()
   })
 
+  it('delivers metadata-only activity updates even within the same timestamp', async () => {
+    vi.useFakeTimers()
+    const planning = commentRecord({
+      sender_type: 'agent',
+      sender_id: 'leader',
+      sender_name: '负责人',
+      status: 'streaming',
+      metadata: { dispatch_role: 'manager', dispatch_assignments: [] },
+    })
+    const assigned = {
+      ...planning,
+      metadata: {
+        dispatch_role: 'manager',
+        dispatch_assignments: [{ task_title: '采集证据', agent_name: '执行智能体' }],
+      },
+    }
+    request.mockResolvedValueOnce([planning]).mockResolvedValueOnce([assigned])
+
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+    const onMessage = vi.fn()
+    const subscription = await client.subscribe('p1', 't1', 0, onMessage)
+    onMessage.mockClear()
+
+    await vi.advanceTimersByTimeAsync(3000)
+
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          dispatch_assignments: [
+            expect.objectContaining({ task_title: '采集证据', agent_name: '执行智能体' }),
+          ],
+        }),
+      })
+    )
+    subscription.unsubscribe()
+  })
+
   it('maps runtime_address metadata onto agent messages', async () => {
     vi.useFakeTimers()
     request.mockResolvedValue([

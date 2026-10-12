@@ -1,4 +1,4 @@
-import { ClipboardList, Eye, Paperclip, Plus, Target } from 'lucide-react'
+import { ClipboardList, Eye, Paperclip, Plus, PencilLine, Target } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -12,6 +12,7 @@ export interface AddContextMenuProps {
   translate: CollaborationTranslate
   disabled: boolean
   onFileSelect: (files: File | File[]) => void
+  onDraw?: () => void
   onSetPlanMode?: () => void
   onSetGoal?: () => void
   onConfigureSupervisor?: () => void
@@ -23,6 +24,7 @@ export function AddContextMenu({
   translate: t,
   disabled,
   onFileSelect,
+  onDraw,
   onSetPlanMode,
   onSetGoal,
   onConfigureSupervisor,
@@ -183,6 +185,24 @@ export function AddContextMenu({
                         ? t('workbench.supervisor_configure')
                         : t('workbench.supervisor_enable')}
                   </span>
+                </span>
+              </button>
+            )}
+            {onDraw && (
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="draw-attachment-button"
+                onClick={() => {
+                  setOpen(false)
+                  onDraw()
+                }}
+                className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal text-text-primary hover:bg-muted"
+              >
+                <PencilLine className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
+                <span>{t('workbench.drawing.title', '绘图')}</span>
+                <span className="text-text-muted">
+                  {t('workbench.drawing.description', '绘制草图')}
                 </span>
               </button>
             )}

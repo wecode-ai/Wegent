@@ -20,6 +20,14 @@ use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeW
 #[path = "support/runtime_task_project_move.rs"]
 mod runtime_task_project_move;
 
+#[cfg(unix)]
+#[path = "support/runtime_model_query_activation.rs"]
+mod runtime_model_query_activation;
+
+#[cfg(unix)]
+#[path = "support/runtime_capability_startup.rs"]
+mod runtime_capability_startup;
+
 struct EnvLockGuard {
     _guard: OwnedMutexGuard<()>,
 }
@@ -1627,6 +1635,112 @@ async fn runtime_tasks_keep_subscription_between_turns_and_release_it_on_archive
 }
 
 #[tokio::test]
+async fn runtime_tasks_reload_a_generic_codex_thread_when_project_space_is_bound() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-project-space-upgrade-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-project-space-upgrade-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-project-space-upgrade-log", "jsonl");
+    let fake_codex = write_fake_codex_persistent_two_turns(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-project-space-upgrade",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": {
+                    "task_id": 5201,
+                    "subtask_id": 6201,
+                    "prompt": "first turn",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("generic task creation should be accepted");
+    wait_for_thread_mapping(
+        &handler,
+        "local-task-project-space-upgrade",
+        "thread-persistent",
+    )
+    .await;
+    wait_until_task_idle(&handler, "local-task-project-space-upgrade").await;
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "taskId": "local-task-project-space-upgrade",
+                "workspacePath": "/tmp/project",
+                "message": "read the bound Issue attachment",
+                "executionRequest": {
+                    "task_id": 5201,
+                    "subtask_id": 6202,
+                    "prompt": "read the bound Issue attachment",
+                    "project_workspace_path": "/tmp/project",
+                    "origin": {
+                        "type": "board_task",
+                        "projectStore": "local",
+                        "cloudProjectId": "space-1",
+                        "loopItemId": "issue-1"
+                    },
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("bound follow-up should be accepted");
+    assert_eq!(sent["accepted"], true);
+    wait_for_turn_count(&log_path, 2).await;
+    wait_until_task_idle(&handler, "local-task-project-space-upgrade").await;
+
+    let calls = read_json_lines(&log_path);
+    let unsubscribe_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/unsubscribe")
+        .expect("the retained generic-thread subscription should be released");
+    let resume_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/resume")
+        .expect("the bound task should resume its Codex thread");
+    assert!(
+        unsubscribe_index < resume_index,
+        "the thread must be unsubscribed before resume applies the project-space override"
+    );
+    let resume_call = &calls[resume_index];
+    assert_eq!(
+        resume_call["params"]["config"]["mcp_servers.wework_space.enabled"],
+        true
+    );
+    assert!(resume_call["params"]["developerInstructions"]
+        .as_str()
+        .is_some_and(|instructions| instructions.contains("Wework 项目空间 routing:")));
+}
+
+#[tokio::test]
 async fn runtime_tasks_share_one_codex_app_server_across_handlers() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2745,7 +2859,7 @@ async fn runtime_tasks_send_rejects_missing_execution_request() {
 }
 
 #[tokio::test]
-async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
+async fn runtime_tasks_send_queues_running_local_task_only_when_requested() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -2775,6 +2889,23 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
         .await
         .expect("create should be accepted");
     wait_until_task_running(&handler, "local-task-1").await;
+    let running_task = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {"runtime": "codex"}
+        }))
+        .await
+        .expect("running task should remain listed");
+    let running_execution_request = running_task["workspaces"]
+        .as_array()
+        .and_then(|workspaces| {
+            workspaces
+                .iter()
+                .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+                .find(|task| task["taskId"] == "local-task-1")
+        })
+        .map(|task| task["runtimeHandle"]["executionRequest"].clone())
+        .expect("running task should retain its execution request");
 
     let rejected = handler
         .handle_runtime_rpc(json!({
@@ -2794,6 +2925,48 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
             "error": "runtime task is already running",
             "code": "bad_request"
         })
+    );
+
+    let queued = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1",
+                "message": "queued turn",
+                "queueIfBusy": true,
+                "executionRequest": codex_execution_request(
+                    "queued turn",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("explicit queueing should be accepted");
+    assert_eq!(queued["accepted"], true);
+    assert_eq!(queued["status"], "queued");
+    assert_eq!(queued["queuePosition"], 1);
+    let queued_task = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {"runtime": "codex"}
+        }))
+        .await
+        .expect("queued task should remain listed");
+    let queued_execution_request = queued_task["workspaces"]
+        .as_array()
+        .and_then(|workspaces| {
+            workspaces
+                .iter()
+                .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+                .find(|task| task["taskId"] == "local-task-1")
+        })
+        .map(|task| task["runtimeHandle"]["executionRequest"].clone())
+        .expect("queued task should retain its active execution request");
+    assert_eq!(
+        queued_execution_request, running_execution_request,
+        "queueing a follow-up must not replace the active turn context before it starts"
     );
 
     let cancelled = handler
@@ -3027,6 +3200,8 @@ async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available(
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-queued-worktree-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let workspace_root = temp_path("runtime-queued-worktree-workspace", "dir");
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _device_type = EnvGuard::set("DEVICE_TYPE", "cloud");
     let _persistent_storage = EnvGuard::set("WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED", "true");
     let _codex_home = EnvGuard::set(
@@ -3106,8 +3281,8 @@ async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available(
     assert_eq!(queued["queuePosition"], 1);
     assert_eq!(
         planned_path,
-        executor_home
-            .join("workspace/worktrees/queued-worktree-task")
+        workspace_root
+            .join("worktrees/queued-worktree-task")
             .join(source.file_name().unwrap())
     );
     assert!(

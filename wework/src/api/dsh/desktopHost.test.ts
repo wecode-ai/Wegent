@@ -67,8 +67,19 @@ describe('desktop host events', () => {
     })
     expect(window.sessionStorage.getItem('wework.desktopHostEventCursor')).toBe('1')
 
+    const replayedHandler = vi.fn()
+    const unsubscribeReplayed = subscribeDesktopHostEvents(replayedHandler, {
+      replay: event => event.type === 'tray.action',
+    })
+    expect(replayedHandler).toHaveBeenCalledWith({
+      sequence: 1,
+      type: 'tray.action',
+      payload: { type: 'open-settings' },
+    })
+
     unsubscribeFirst()
     unsubscribeSecond()
+    unsubscribeReplayed()
   })
 
   test('keeps only the latest browser page state for each browser in a batch', async () => {

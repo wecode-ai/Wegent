@@ -6,6 +6,17 @@ sidebar_position: 4
 
 Git projects clone a remote repository into the Wework project list as a reusable project workspace. After creation, new conversations under the same project use the same local code directory, which is useful for continuous development, debugging, and validation around one repository.
 
+## Collaboration task workspace policy
+
+In a collaboration project's **Manage → Execution environments → Environment configuration**, select **Task workspace**:
+
+- **Isolated worktree (recommended)**: new Git tasks use separate worktrees. Preparation failures are reported, never silently downgraded to a shared directory. Repository-free environments use their prepared directory.
+- **Shared project directory**: new tasks use the project environment directory. Parallel edits may overwrite each other.
+
+The project owns this policy, not a robot or model runtime profile. Changes affect new tasks only, without moving existing tasks or reinitializing repositories. Follow-up messages retain their task's workspace. Explicit workflow workspace inheritance remains authoritative.
+
+**Settings → Worktrees** manages device storage and cleanup, not project isolation. **Archive and reclaim** requires confirmation: linked conversations are stopped and archived, a snapshot is saved, and the directory is reclaimed. Snapshots exclude Git-ignored dependencies and build outputs. **Restore worktree** restores the directory while its source repository is accessible; restoration does not resume execution.
+
 ## Prerequisites
 
 - A local or cloud execution device is online.
@@ -68,7 +79,7 @@ New worktrees are created under the execution device workspace root:
 ~/.wecode/wegent-executor/workspace/worktrees/<taskId>/<projectName>
 ```
 
-The worktree ID is the task ID. The task stores `git_worktree` as the execution workspace source and the absolute worktree path created for that task. Wework uses that path later for opening files, Terminal, IDE/code-server, and worktree management. The selected source branch is used only for this `git worktree add --detach <path> <branch>` call and is not duplicated as a task field. The worktree settings page lists created worktrees by scanning the `worktrees` directory on each execution device. When a worktree is deleted, Wegent removes the corresponding worktree directory and soft-deletes the task that uses it.
+The worktree ID is the task ID. The task stores `git_worktree` as the execution workspace source and the absolute worktree path created for that task. Wework uses that path later for opening files, Terminal, IDE/code-server, and worktree management. The selected source branch is used only for this `git worktree add --detach <path> <branch>` call and is not duplicated as a task field. The worktree settings page lists managed worktrees and restorable snapshots on each execution device. Archive and reclaim archives linked tasks and reclaims the directory; Restore worktree restores the directory without automatically running tasks.
 
 While the task is queued, its task record contains the deterministic planned path, and the corresponding directory may not exist yet. Force-starting the task, increasing the concurrency limit, completing an earlier task, or restoring the queue after an Executor restart all create the worktree before model execution starts. If creation fails, the task moves to a failed state and releases its concurrency slot so later queued tasks can continue.
 

@@ -73,8 +73,8 @@ async fn attachment_detail(
         return Err(attachment_not_found());
     }
     let has_access = match context_store::ensure_attachment_access(
+        &*state.task_store,
         &state.mysql,
-        state.task_policy,
         &context,
         user,
     )
@@ -119,7 +119,7 @@ async fn executor_download_attachment(
     #[inject(state)] state: &Arc<AppState>,
     attachment_id: i64,
     #[auth] user: crate::attachments_task_all::auth::AuthenticatedUser,
-) -> Result<HttpResponse<brz_http_server::Binary>, crate::http_compat::FastApiError> {
+) -> Result<super::external_media::AttachmentDownload, crate::http_compat::FastApiError> {
     super::executor_download::executor_download(state, attachment_id, &user).await
 }
 
@@ -128,9 +128,16 @@ async fn executor_download_attachment(
 async fn download(
     #[inject(state)] state: &Arc<AppState>,
     attachment_id: i64,
+    download_token: Option<String>,
     #[auth] user: Option<AttachmentUser>,
-) -> Result<HttpResponse<brz_http_server::Binary>, crate::http_compat::FastApiError> {
-    super::handler::download_attachment(state, attachment_id, user.as_deref()).await
+) -> Result<super::external_media::AttachmentDownload, crate::http_compat::FastApiError> {
+    super::handler::download_attachment(
+        state,
+        attachment_id,
+        download_token.as_deref(),
+        user.as_deref(),
+    )
+    .await
 }
 
 /// GET /api/attachments/download/shared: the public share-link download

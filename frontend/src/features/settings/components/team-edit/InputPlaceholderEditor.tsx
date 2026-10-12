@@ -70,18 +70,30 @@ export default function InputPlaceholderEditor({ value, onChange }: InputPlaceho
     { key: 'mobile' as const, icon: Smartphone },
   ]
   const activeValue = activeScope === 'generic' ? value : value[activeScope]
+  const hasCustomPlaceholder = Boolean(
+    value.zh?.trim() ||
+    value.en?.trim() ||
+    value.desktop?.zh?.trim() ||
+    value.desktop?.en?.trim() ||
+    value.mobile?.zh?.trim() ||
+    value.mobile?.en?.trim()
+  )
 
   return (
     <div className="space-y-3">
       <button
         type="button"
         onClick={() => setIsExpanded(current => !current)}
-        className="flex w-full items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2 text-left transition-colors hover:bg-accent"
+        className="flex h-10 w-full items-center justify-between gap-3 rounded-md border border-border bg-base px-3 text-left transition-colors hover:border-primary/40"
         aria-expanded={isExpanded}
         data-testid="team-input-placeholder-toggle"
       >
-        <span className="text-xs leading-5 text-text-muted">
-          {t('settings:team.input_placeholder.description')}
+        <span className="text-sm text-text-secondary">
+          {t(
+            hasCustomPlaceholder
+              ? 'settings:team.input_placeholder.custom_summary'
+              : 'settings:team.input_placeholder.default_summary'
+          )}
         </span>
         <ChevronDown
           className={cn(
@@ -90,6 +102,9 @@ export default function InputPlaceholderEditor({ value, onChange }: InputPlaceho
           )}
         />
       </button>
+      <p className="text-xs leading-5 text-text-muted">
+        {t('settings:team.input_placeholder.description')}
+      </p>
 
       {isExpanded && (
         <>

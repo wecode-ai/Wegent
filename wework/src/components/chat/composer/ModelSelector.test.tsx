@@ -34,6 +34,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 import { ModelSelector } from './ModelSelector'
+import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { getDesktopModelSelectorCollisionPadding } from '@wegent/collaboration/controls/model-selector-layout'
 
 const SHELL_LEFT = 800
@@ -100,9 +101,20 @@ const SECOND_FAMILY_MODEL: UnifiedModel = {
   modelId: 'claude-sonnet',
   displayName: 'Claude Sonnet',
   type: 'runtime',
-  provider: 'local',
+  provider: 'cloud',
   config: {
     ui: { family: 'claude' },
+  },
+}
+
+const CUSTOM_MODEL: UnifiedModel = {
+  name: 'custom-model',
+  modelId: 'custom-model',
+  displayName: 'Custom Model',
+  type: 'runtime',
+  provider: 'local',
+  config: {
+    ui: { family: 'custom' },
   },
 }
 
@@ -164,6 +176,22 @@ describe('ModelSelector desktop layout', () => {
     )
   })
 
+  test('asks the user to select a model instead of displaying a default model', () => {
+    render(
+      <ModelSelector
+        models={[SAMPLE_MODEL]}
+        selectedModel={null}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Select model')
+    expect(screen.getByTestId('model-selector-button')).not.toHaveTextContent('默认')
+  })
+
   test('positions the menu to the left of the right workspace panel shell', async () => {
     createShellElement()
 
@@ -215,7 +243,7 @@ describe('ModelSelector desktop layout', () => {
     expect(left).toBeGreaterThanOrEqual(SHELL_LEFT)
   })
 
-  test('expands model options directly when there is only one family', async () => {
+  test('shows the selected model source in the compact slider panel', async () => {
     createShellElement({ hidden: true })
 
     render(
@@ -230,7 +258,8 @@ describe('ModelSelector desktop layout', () => {
     )
 
     fireEvent.click(screen.getByTestId('model-selector-button'))
-    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+    expect(await screen.findByTestId('model-simple-source')).toHaveTextContent('本机 ChatGPT 账户')
+    fireEvent.click(await screen.findByTestId('model-advanced-toggle'))
 
     expect(await screen.findByTestId(`model-option-${SAMPLE_MODEL.name}`)).toHaveAttribute(
       'data-model-provider-id',
@@ -238,6 +267,28 @@ describe('ModelSelector desktop layout', () => {
     )
     expect(screen.queryByTestId('model-selector-family-submenu')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-family-codex-official')).not.toBeInTheDocument()
+  })
+
+  test('opens model options directly when the selected model has no configurable slider', async () => {
+    createShellElement({ hidden: true })
+
+    render(
+      <ModelSelector
+        models={[SECOND_FAMILY_MODEL]}
+        selectedModel={SECOND_FAMILY_MODEL}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(
+      await screen.findByTestId(`model-option-${SECOND_FAMILY_MODEL.name}`)
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('model-simple-header')).not.toBeInTheDocument()
   })
 
   test('opens setup destinations from the empty model menu', async () => {
@@ -274,7 +325,7 @@ describe('ModelSelector desktop layout', () => {
 
     render(
       <ModelSelector
-        models={[SAMPLE_MODEL, SECOND_FAMILY_MODEL]}
+        models={[SAMPLE_MODEL, SECOND_FAMILY_MODEL, CUSTOM_MODEL]}
         selectedModel={SAMPLE_MODEL}
         selectedModelOptions={{}}
         disabled={false}
@@ -284,13 +335,27 @@ describe('ModelSelector desktop layout', () => {
     )
 
     fireEvent.click(screen.getByTestId('model-selector-button'))
-    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+    fireEvent.click(await screen.findByTestId('model-advanced-toggle'))
 
-    const submenu = await screen.findByTestId('model-selector-submenu')
-    expect(submenu).toHaveTextContent('我的CodeX')
-    expect(submenu).toHaveTextContent('Claude')
+    const menu = await screen.findByTestId('model-selector-menu')
+    expect(menu).toHaveTextContent('本机 ChatGPT 账户')
+    expect(menu).toHaveTextContent('云端模型')
+    expect(menu).toHaveTextContent('自定义模型')
+    expect(menu).toHaveTextContent('Claude')
+    const localSource = screen.getByTestId('model-source-local-chatgpt')
+    const cloudSource = screen.getByTestId('model-source-cloud')
+    const customSource = screen.getByTestId('model-source-custom')
+    const cloudFamily = screen.getByTestId('model-group-claude')
+    const customFamily = screen.getByTestId('model-group-custom')
+    expect(localSource.parentElement).toBe(cloudSource.parentElement)
+    expect(cloudSource).toContainElement(cloudFamily)
+    expect(customSource).toContainElement(customFamily)
+    expect(localSource).not.toContainElement(cloudFamily)
+    expect(localSource.compareDocumentPosition(cloudSource)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(cloudSource.compareDocumentPosition(customSource)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(screen.getByTestId(`model-option-${SECOND_FAMILY_MODEL.name}`)).toBeInTheDocument()
     expect(screen.getByTestId(`model-option-${SAMPLE_MODEL.name}`)).toBeInTheDocument()
+    expect(screen.getByTestId(`model-option-${CUSTOM_MODEL.name}`)).toBeInTheDocument()
   })
 
   test('closes the picker when model selection is deferred to a confirmation dialog', async () => {
@@ -311,13 +376,59 @@ describe('ModelSelector desktop layout', () => {
     )
 
     fireEvent.click(screen.getByTestId('model-selector-button'))
-    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+    fireEvent.click(await screen.findByTestId('model-advanced-toggle'))
     fireEvent.click(await screen.findByTestId(`model-option-${SAMPLE_MODEL.name}`))
 
     expect(onSelectModel).toHaveBeenCalledWith(SAMPLE_MODEL)
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
     await waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false, 'selection'))
     expect(embeddedBrowserOcclusionMock).toHaveBeenLastCalledWith('model-selector-flyout', false)
+  })
+
+  test('refreshes on each opening and keeps the menu and selection after a failed refresh', async () => {
+    const addedModel = { ...SAMPLE_MODEL, name: 'new-cloud-model', displayName: 'New cloud model' }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [SAMPLE_MODEL] })
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValue({ data: [SAMPLE_MODEL, addedModel] }),
+    }
+    function ComposerModelMenu() {
+      const selection = useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: { modelName: SAMPLE_MODEL.name, modelType: SAMPLE_MODEL.type },
+      })
+      return (
+        <ModelSelector
+          models={selection.models}
+          selectedModel={selection.selectedModel}
+          selectedModelOptions={selection.selectedModelOptions}
+          disabled={false}
+          onSelectModel={selection.setSelectedModel}
+          onSelectModelOption={selection.setSelectedModelOption}
+          onOpenChange={open => {
+            if (open) selection.refreshModels()
+          }}
+        />
+      )
+    }
+    render(<ComposerModelMenu />)
+    await waitFor(() =>
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5')
+    )
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Select effort')
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    fireEvent.click(await screen.findByTestId('model-advanced-toggle'))
+    expect(await screen.findByTestId('model-option-new-cloud-model')).toBeInTheDocument()
+    expect(api.listModels).toHaveBeenCalledTimes(3)
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5')
   })
 
   test('uses the available viewport height for a long model list', async () => {
@@ -341,12 +452,11 @@ describe('ModelSelector desktop layout', () => {
     )
 
     fireEvent.click(screen.getByTestId('model-selector-button'))
-    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+    fireEvent.click(await screen.findByTestId('model-advanced-toggle'))
 
-    const submenu = await screen.findByTestId('model-selector-submenu')
-    expect(submenu.style.maxHeight).toBe(
-      'min(var(--radix-popover-content-available-height), calc(100vh - 16px))'
-    )
+    const menu = await screen.findByTestId('model-selector-menu')
+    expect(menu.style.maxHeight).toBe('820px')
+    expect(menu.querySelector('[data-model-picker-panel="advanced"]')).toHaveClass('max-h-[316px]')
   })
 
   test('uses the Codex flyout viewport contract in a narrow viewport', async () => {
@@ -374,39 +484,13 @@ describe('ModelSelector desktop layout', () => {
       if (testId === 'model-selector-menu') {
         return {
           top: 300,
-          left: 246,
+          left: 216,
           right: 470,
           bottom: 500,
-          width: 224,
+          width: 254,
           height: 200,
-          x: 246,
+          x: 216,
           y: 300,
-          toJSON: () => {},
-        } as DOMRect
-      }
-      if (testId === 'model-control-menu-model') {
-        return {
-          top: 308,
-          left: 254,
-          right: 462,
-          bottom: 340,
-          width: 208,
-          height: 32,
-          x: 254,
-          y: 308,
-          toJSON: () => {},
-        } as DOMRect
-      }
-      if (testId === 'model-selector-submenu') {
-        return {
-          top: 308,
-          left: 0,
-          right: 280,
-          bottom: 608,
-          width: 280,
-          height: 300,
-          x: 0,
-          y: 308,
           toJSON: () => {},
         } as DOMRect
       }
@@ -426,16 +510,12 @@ describe('ModelSelector desktop layout', () => {
       )
 
       fireEvent.click(screen.getByTestId('model-selector-button'))
-      fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+      fireEvent.click(await screen.findByTestId('model-advanced-toggle'))
 
-      const submenu = await screen.findByTestId('model-selector-submenu')
-      await waitFor(() => expect(submenu).toHaveAttribute('data-side', 'left'))
-      expect(submenu).toHaveAttribute('data-align', 'start')
-      expect(submenu.style.width).toBe('280px')
-      expect(submenu.style.maxWidth).toBe(
-        'min(var(--radix-popover-content-available-width), calc(100vw - 16px))'
-      )
-      expect(submenu.parentElement?.parentElement).toBe(document.body)
+      const menu = await screen.findByTestId('model-selector-menu')
+      await waitFor(() => expect(menu.parentElement).toHaveStyle({ left: '216px' }))
+      expect(menu.parentElement).toHaveClass('w-[254px]')
+      expect(menu.parentElement?.parentElement).toBe(document.body)
     } finally {
       HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
     }
@@ -463,11 +543,10 @@ describe('ModelSelector desktop layout', () => {
     )
 
     fireEvent.click(screen.getByTestId('model-selector-button'))
-    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+    fireEvent.click(await screen.findByTestId('model-advanced-toggle'))
 
-    const submenu = await screen.findByTestId('model-selector-submenu')
-    expect(submenu.style.width).toBe('280px')
-    expect(submenu).toHaveAttribute('data-embedded-browser-occlusion')
+    const menu = await screen.findByTestId('model-selector-menu')
+    expect(menu.parentElement).toHaveAttribute('data-embedded-browser-occlusion')
     expect(embeddedBrowserOcclusionMock).toHaveBeenLastCalledWith('model-selector-flyout', true)
 
     fireEvent.click(screen.getByTestId('model-selector-button'))

@@ -275,10 +275,7 @@ async fn resolve_managed_tool(
 }
 
 fn executor_home() -> Result<PathBuf, AppIpcError> {
-    super::resolve_executor_home(
-        env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
-        dirs::home_dir(),
-    )
+    Ok(crate::config::paths::executor_home())
 }
 
 fn current_tool_target() -> Result<String, AppIpcError> {

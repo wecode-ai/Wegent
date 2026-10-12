@@ -186,6 +186,7 @@ export function createDesktopScenario({
   electronUserDataDirectory,
   resultDir,
   uiTimeoutMs,
+  workbenchReadyTimeoutMs,
   workspacePath,
 }) {
   const port = process.env.WEWORK_E2E_MODEL_SERVER_PORT
@@ -551,6 +552,9 @@ export function createDesktopScenario({
         'dsh-core',
         'wework-transcript-sync-outbox.sqlite3'
       )
+      await control.command('waitFor', '[data-testid="settings-button"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await enableTranscriptSync({ verifyExperimentalGate: true })
       await createSingleRootLocalProject(control, workspacePath, 'transcript-sync')
       await writeFile(join(workspacePath, 'transcript-sync-restore-marker.txt'), 'snapshot\n')

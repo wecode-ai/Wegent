@@ -44,7 +44,9 @@ async function openCreateAgentDialog(page: Page) {
 
   const dialog = page.locator('[role="dialog"]')
   await expect(dialog).toBeVisible({ timeout: 10000 })
-  await expect(dialog.locator('input#teamName')).toBeVisible({ timeout: 10000 })
+  await expect(dialog.locator('[data-testid="team-display-name-input"]')).toBeVisible({
+    timeout: 10000,
+  })
   return dialog
 }
 
@@ -73,25 +75,43 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
     const dialog = await openCreateAgentDialog(page)
 
     await expect(dialog.locator('[data-testid="team-display-name-input"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-section-basic-content"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-executor-simple-card"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-executor-complex-card"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-executor-complex-radio"]')).toBeChecked()
+    await expect(dialog.locator('[data-testid="simple-coding-runtime-codex-card"]')).toBeVisible()
+    await expect(
+      dialog.locator('[data-testid="simple-coding-runtime-claude_code-card"]')
+    ).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-model-select"]')).toBeVisible()
-    await expect(dialog.locator('[data-testid="simple-section-basic-trigger"]')).toBeVisible()
-    await expect(dialog.locator('[data-testid="simple-section-execution-trigger"]')).toBeVisible()
-    await expect(dialog.locator('[data-testid="simple-section-prompt-trigger"]')).toBeVisible()
-    await expect(dialog.locator('[data-testid="simple-section-capability-trigger"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-prompt-textarea"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-section-capability-content"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-section-advanced-trigger"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="team-save-publish-section"]')).toBeVisible()
+
+    await dialog.locator('[data-testid="simple-executor-simple-card"]').click()
+    await expect(dialog.locator('[data-testid="simple-executor-simple-radio"]')).toBeChecked()
+    await expect(
+      dialog.locator('[data-testid="simple-coding-runtime-codex-card"]')
+    ).not.toBeVisible()
+
+    await dialog.locator('[data-testid="simple-executor-complex-card"]').click()
+    await expect(dialog.locator('[data-testid="simple-executor-complex-radio"]')).toBeChecked()
+    await expect(dialog.locator('[data-testid="simple-coding-runtime-codex-card"]')).toBeVisible()
   })
 
   test('should expose embedded bot configuration fields', async ({ page }) => {
     const dialog = await openCreateAgentDialog(page)
 
-    const bindModeSettingsToggle = dialog.locator(
-      '[data-testid="simple-bind-mode-settings-toggle"]'
-    )
-    await expect(bindModeSettingsToggle).toBeVisible()
-    await bindModeSettingsToggle.click()
+    await dialog.locator('[data-testid="simple-section-advanced-trigger"]').click()
+    await expect(dialog.locator('[data-testid="simple-section-advanced-content"]')).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-bind-mode-settings-content"]')).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-bind-mode-chat-card"]')).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-bind-mode-code-card"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-bind-mode-task-card"]')).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-prompt-textarea"]')).toBeVisible()
+
+    await dialog.locator('[data-testid="simple-additional-capabilities-toggle"]').click()
     await expect(dialog.locator('[data-testid="simple-manage-skills-button"]')).toBeVisible()
   })
 
@@ -102,8 +122,9 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
   }) => {
     const apiClient = createApiClient(request)
     await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
-    const agentName = TestData.uniqueName(`${testPrefix}-base-capabilities`)
+    const agentDisplayName = TestData.uniqueName(`${testPrefix}-base-capabilities`)
     let botName = ''
+    let teamName = ''
 
     try {
       const dialog = await openCreateAgentDialog(page)
@@ -117,6 +138,7 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
           /Reuse the system agent's general skills, tools, and plugins|沿用系统智能体的通用 Skill、工具和插件能力/
         )
       ).toBeVisible()
+      await dialog.locator('[data-testid="simple-additional-capabilities-toggle"]').click()
       await expect(dialog.locator('[data-testid="simple-manage-skills-button"]')).toBeVisible()
 
       await baseCapabilitiesSwitch.click()
@@ -124,7 +146,7 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
       await baseCapabilitiesSwitch.click()
       await expect(baseCapabilitiesSwitch).toBeChecked()
 
-      await dialog.locator('input#teamName').fill(agentName)
+      await dialog.locator('[data-testid="team-display-name-input"]').fill(agentDisplayName)
       const botResponsePromise = page.waitForResponse(
         response =>
           response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/bots'
@@ -155,6 +177,8 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
 
       const teamResponse = await teamResponsePromise
       expect(teamResponse.ok(), await teamResponse.text()).toBe(true)
+      const savedTeam = (await teamResponse.json()) as { name: string }
+      teamName = savedTeam.name
 
       const persistedBots = await apiClient.getBots('personal')
       expect(persistedBots.status).toBe(200)
@@ -173,7 +197,9 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
         capability_mode: 'manual',
       })
     } finally {
-      await apiClient.deleteTeam(agentName).catch(() => undefined)
+      if (teamName) {
+        await apiClient.deleteTeam(teamName).catch(() => undefined)
+      }
       if (botName) {
         await apiClient.deleteBot(botName).catch(() => undefined)
       }
@@ -182,15 +208,12 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
 
   test('should accept bot-backed agent form input', async ({ page, testPrefix }) => {
     const dialog = await openCreateAgentDialog(page)
-    const agentName = TestData.uniqueName(`${testPrefix}-agent`)
-    const displayName = `${agentName} Display`
+    const displayName = `${TestData.uniqueName(`${testPrefix}-agent`)} Display`
     const prompt = 'You are an assistant created by the bot-backed agent E2E test.'
 
-    await dialog.locator('input#teamName').fill(agentName)
     await dialog.locator('[data-testid="team-display-name-input"]').fill(displayName)
     await dialog.locator('[data-testid="simple-prompt-textarea"]').fill(prompt)
 
-    await expect(dialog.locator('input#teamName')).toHaveValue(agentName)
     await expect(dialog.locator('[data-testid="team-display-name-input"]')).toHaveValue(displayName)
     await expect(dialog.locator('[data-testid="simple-prompt-textarea"]')).toHaveValue(prompt)
   })

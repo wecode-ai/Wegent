@@ -17,35 +17,12 @@
 //!
 //! The source SQLAlchemy session renders every one of these reads as one
 //! text `COM_QUERY` with the full mapped-column projection labeled
-//! `{table}_{column}` and scalar filters inlined as literals; the target
-//! uses brz-mysql routed `{{tasks}}`/`{{subtasks}}` tokens with unqualified
-//! column names and `?` placeholders.
+//! `{table}_{column}` and scalar filters inlined as literals; the target uses
+//! unqualified column names and `?` placeholders. The statements themselves
+//! belong to [`crate::task_store`]; this module decodes their rows.
 use crate::json_compat::OpaqueJson;
-use crate::task_routing::{ByTaskId, ByUserId, TaskPolicy};
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
-
-const ACTIVE_TASK_SQL: &str = "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
-        client_origin, is_group_chat \
-    FROM {{tasks}} \
-    WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) \
-    LIMIT 1";
-const WORKSPACE_BY_REF_SQL: &str = "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
-        client_origin, is_group_chat \
-    FROM {{tasks}} \
-    WHERE user_id = ? AND kind = 'Workspace' AND name = ? AND namespace = ? AND is_active = 1 \
-    LIMIT 1";
-const SUBTASKS_BY_OWNER_SQL: &str = "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
-        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
-        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \
-    FROM {{subtasks}} \
-    WHERE task_id = ? AND user_id = ? \
-    ORDER BY message_id ASC";
-const ACTIVE_TASK_BY_OWNER_SQL: &str = "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
-        client_origin, is_group_chat \
-    FROM {{tasks}} \
-    WHERE id = ? AND kind = 'Task' AND is_active IN (1) AND user_id = ? \
-    LIMIT 1";
 
 /// One `tasks`/`tasks_{:04}` row projection used by the response flow.
 #[derive(Debug)]
@@ -130,14 +107,11 @@ fn kind_columns() -> String {
 
 /// `TaskStore.get_active_non_deleted_task`: state filter plus the
 /// application-side JSON `status.status != 'DELETE'` exclusion.
-pub async fn get_active_non_deleted_task<M>(mysql: &M, task_id: i64) -> MysqlResult<Option<TaskRow>>
-where
-    M: Mysql,
-{
-    let row: Option<MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(ACTIVE_TASK_SQL, (task_id,))
-        .await?;
+pub async fn get_active_non_deleted_task(
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store.get_active_task(task_id).await?;
     Ok(row
         .as_ref()
         .map(TaskRow::from_row)
@@ -147,14 +121,11 @@ where
 
 /// `TaskAccessStore.is_member` -> `_get_accessible_task`
 /// (`task_store.get_active_task`): the same active-state task lookup.
-pub async fn get_accessible_task<M>(mysql: &M, task_id: i64) -> MysqlResult<Option<TaskRow>>
-where
-    M: Mysql,
-{
-    let row: Option<MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(ACTIVE_TASK_SQL, (task_id,))
-        .await?;
+pub async fn get_accessible_task(
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store.get_active_task(task_id).await?;
     row.as_ref().map(TaskRow::from_row).transpose()
 }
 
@@ -181,11 +152,13 @@ where
 }
 
 /// `task_access_store.is_member` (the configured task repository).
-pub async fn is_member<M>(mysql: &M, task_id: i64, user_id: i32) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
-    let task = get_accessible_task(mysql, task_id).await?;
+pub async fn is_member(
+    task_store: &dyn crate::task_store::TaskStore,
+    mysql: &brz_mysql::MysqlService,
+    task_id: i64,
+    user_id: i32,
+) -> MysqlResult<bool> {
+    let task = get_accessible_task(task_store, task_id).await?;
     let Some(task) = task else {
         return Ok(false);
     };
@@ -198,32 +171,16 @@ where
 /// `task_store.get_workspace_by_ref` (`convert_to_task_dict`). The public
 /// policy uses the base table; the private migration policy additionally
 /// probes the owner's routed table before the base-table fallback.
-pub async fn get_workspace_by_ref<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
-    owner_user_id: i32,
+pub async fn get_workspace_by_ref(
+    task_store: &dyn crate::task_store::TaskStore,
+    owner_user_id: i64,
     name: &str,
     namespace: &str,
-) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
-    if task_policy.resolve_migrated_legacy {
-        let row: Option<MysqlRow> = mysql
-            .route(ByUserId(owner_user_id as u64))
-            .fetch_optional(WORKSPACE_BY_REF_SQL, (owner_user_id, name, namespace))
-            .await?;
-        if row.is_some() {
-            return Ok(true);
-        }
-    }
-    // The zero routing key selects the public/base table; the actual owner
-    // remains a separate SQL parameter in the WHERE clause.
-    let row: Option<MysqlRow> = mysql
-        .route(ByUserId(0))
-        .fetch_optional(WORKSPACE_BY_REF_SQL, (owner_user_id, name, namespace))
-        .await?;
-    Ok(row.is_some())
+) -> MysqlResult<bool> {
+    Ok(task_store
+        .get_workspace_by_ref(owner_user_id, name, namespace)
+        .await?
+        .is_some())
 }
 
 /// `resolve_task_ref_team`: when the CRD `spec.teamRef.user_id` is set, the
@@ -273,34 +230,24 @@ where
 
 /// `SubtaskStore.list_by_task_for_user_ordered`: the configured routed table
 /// filtered by `task_id` and `user_id`, ordered by `message_id`.
-pub async fn list_subtasks_for_user_ordered<M>(
-    mysql: &M,
+pub async fn list_subtasks_for_user_ordered(
+    task_store: &dyn crate::task_store::TaskStore,
     task_id: i64,
     user_id: i32,
-) -> MysqlResult<Vec<SubtaskRow>>
-where
-    M: Mysql,
-{
-    let rows: Vec<MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_all(SUBTASKS_BY_OWNER_SQL, (task_id, user_id))
-        .await?;
+) -> MysqlResult<Vec<SubtaskRow>> {
+    let rows = task_store.list_subtasks_for_user(task_id, user_id).await?;
     rows.iter().map(SubtaskRow::from_row).collect()
 }
 
 /// `task_store.get_task_by_states(states=[STATE_ACTIVE],
 /// owner_user_id=user_id)` for the model-string reconstruction.
-pub async fn get_task_by_states_active_owned<M>(
-    mysql: &M,
+pub async fn get_task_by_states_active_owned(
+    task_store: &dyn crate::task_store::TaskStore,
     task_id: i64,
     owner_user_id: i32,
-) -> MysqlResult<Option<TaskRow>>
-where
-    M: Mysql,
-{
-    let row: Option<MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(ACTIVE_TASK_BY_OWNER_SQL, (task_id, owner_user_id))
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store
+        .get_active_task_owned(task_id, owner_user_id)
         .await?;
     row.as_ref().map(TaskRow::from_row).transpose()
 }
@@ -396,26 +343,25 @@ mod tests {
 #[cfg(test)]
 mod sql_tests {
     use super::*;
-    use crate::sql_test_support::{QueryCapture, Route};
+    use crate::sql_test_support::KindQueryCapture;
 
     #[tokio::test]
-    async fn response_queries_preserve_routing_and_filters() {
-        let mysql = QueryCapture::default();
-        get_active_non_deleted_task(&mysql, 42).await.unwrap();
-        get_accessible_task(&mysql, 42).await.unwrap();
-        get_workspace_by_ref(&mysql, TaskPolicy::default(), 7, "workspace", "default")
+    async fn response_queries_keep_their_filters_and_statement_shapes() {
+        let mysql = KindQueryCapture::default();
+        let store = crate::task_store::DefaultTaskStore::new(mysql.clone());
+        get_active_non_deleted_task(&store, 42).await.unwrap();
+        get_accessible_task(&store, 42).await.unwrap();
+        get_workspace_by_ref(&store, 7, "workspace", "default")
             .await
             .unwrap();
-        list_subtasks_for_user_ordered(&mysql, 42, 7).await.unwrap();
-        get_task_by_states_active_owned(&mysql, 42, 7)
+        list_subtasks_for_user_ordered(&store, 42, 7).await.unwrap();
+        get_task_by_states_active_owned(&store, 42, 7)
             .await
             .unwrap();
         let queries = mysql.queries();
         assert_eq!(queries.len(), 5);
         assert_eq!(queries[0].sql, queries[1].sql);
-        assert_eq!(queries[2].route, Route::User(0));
         assert_eq!(queries[2].first_integer, Some(7));
-        assert_eq!(queries[3].route, Route::Task(42));
         assert!(queries[3].sql.ends_with("ORDER BY message_id ASC"));
         assert!(queries[4].sql.contains("is_active IN (1) AND user_id = ?"));
     }

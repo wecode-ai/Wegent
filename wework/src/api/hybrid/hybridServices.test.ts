@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { ApiError } from '@/api/http'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
@@ -71,6 +73,18 @@ const mocks = vi.hoisted(() => {
     startDeviceCodeServer: vi.fn(),
     createRemoteTerminalClient: vi.fn(),
   }
+  const localProjectChatClient = {
+    reconcileExecutionSnapshot: vi.fn().mockResolvedValue([]),
+  }
+  const localProjectSpaceDetailServices = {
+    deliveryApi: { source: 'local' },
+    projectChatClient: localProjectChatClient,
+    projectChatAgentApi: { source: 'local' },
+    loopItemExecutionApi: { source: 'local' },
+    deviceApi: { source: 'local' },
+    modelApi: { source: 'local' },
+    teamApi: { source: 'local' },
+  }
 
   const localServices = {
     composerCatalogApi: { readCatalog: vi.fn() },
@@ -123,6 +137,9 @@ const mocks = vi.hoisted(() => {
 
   const localOnlyServices = {
     ...localServices,
+    projectSpaceDetailServices: {
+      local: localProjectSpaceDetailServices,
+    },
     runtimeWorkApi: {
       ...localServices.runtimeWorkApi,
       createRuntimeTask: vi.fn().mockResolvedValue({ taskId: 'local-project-task' }),
@@ -233,6 +250,8 @@ const mocks = vi.hoisted(() => {
     localArchiveProjectConversations,
     cloudArchiveProjectConversations,
     cloudWorkspaceSessionApi,
+    localProjectChatClient,
+    localProjectSpaceDetailServices,
     localServices,
     localOnlyServices,
     cloudServices,
@@ -501,6 +520,21 @@ describe('execution status write-back on history reads', () => {
     await createServices().runtimeWorkApi!.getRuntimeTranscript(request)
     expect(mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith(request)
     expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
+  })
+
+  it('keeps local Issue execution context on the local runtime route', async () => {
+    const request = {
+      ...address,
+      issueExecution: { projectId: 'local-project', issueId: 'issue-1' },
+    }
+    mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue({
+      ...response,
+      origin: { projectStore: 'local' },
+    })
+    mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript.mockClear()
+    await createServices().runtimeWorkApi!.getRuntimeTranscript(request)
+    expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith(request)
+    expect(mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
   })
 
   it('reports a completed local turn to durable cloud storage after reading history', async () => {
@@ -841,7 +875,24 @@ describe('createHybridWorkbenchServices', () => {
     info.mockRestore()
   })
 
-  it('preserves a refresh requested while a failing cloud model request is still settling', async () => {
+  it('loads the cloud catalog even when the local catalog fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mocks.localListModels.mockRejectedValue(new Error('Local catalog unavailable'))
+    const services = createServices()
+
+    const initial = await services.modelApi.listModels()
+    expect(initial.data).toEqual([])
+
+    await vi.waitFor(async () => {
+      const refreshed = await services.modelApi.listModels()
+      expect(refreshed.data.map(model => model.name)).toEqual(['codex-gpt-5.5'])
+    })
+
+    expect(warning).toHaveBeenCalledWith('[Wework] Failed to list local models', expect.any(Error))
+    warning.mockRestore()
+  })
+
+  it('waits for an explicit refresh after a cloud model request fails', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     let rejectInitial!: (error: Error) => void
     mocks.cloudListModels.mockImplementationOnce(
@@ -855,6 +906,13 @@ describe('createHybridWorkbenchServices', () => {
     await services.modelApi.listModels()
     expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
     rejectInitial(new Error('Cloud temporarily unavailable'))
+    await vi.waitFor(() =>
+      expect(warning).toHaveBeenCalledWith(
+        '[Wework] Failed to refresh cloud models',
+        expect.any(Error)
+      )
+    )
+    services.modelApi.refresh?.()
     await vi.waitFor(() => expect(mocks.cloudListModels).toHaveBeenCalledTimes(2))
     warning.mockRestore()
   })
@@ -950,6 +1008,39 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
   })
 
+  it('refreshes the composer cloud catalog on demand without changing its selected model', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mocks.cloudListModels
+      .mockRejectedValueOnce(new Error('temporary network failure'))
+      .mockResolvedValue({ data: [responsesModel] })
+    const services = createServices()
+    const view = renderHook(() => useWorkbenchModels({ api: services.modelApi, locked: false }))
+    try {
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(view.result.current.models.map(model => model.name)).toEqual(['gpt-5.5'])
+      act(() => view.result.current.setSelectedModel(view.result.current.models[0]))
+      const selectedName = view.result.current.selectedModel?.name
+
+      await act(() => vi.advanceTimersByTimeAsync(600_000))
+      expect(mocks.cloudListModels).toHaveBeenCalledOnce()
+      act(() => view.result.current.refreshModels())
+      await act(() => vi.advanceTimersByTimeAsync(0))
+
+      expect(view.result.current.models.map(model => model.name)).toEqual([
+        'gpt-5.5',
+        'responses-model',
+      ])
+      expect(view.result.current.selectedModel?.name).toBe(selectedName)
+      expect(view.result.current.error).toBeNull()
+      expect(mocks.cloudListModels).toHaveBeenCalledTimes(2)
+    } finally {
+      view.unmount()
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('lists persisted Wegent teams only for explicit Wegent execution', async () => {
     const services = createServices()
 
@@ -1014,6 +1105,22 @@ describe('createHybridWorkbenchServices', () => {
 
     expect(devices?.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
     expect(mocks.cloudListDevices).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps local project activity on the Executor-owned project stream', () => {
+    const services = createServices()
+    const localDetailServices = services.projectSpaceDetailServices?.local
+
+    expect(localDetailServices?.projectChatClient).toBe(
+      mocks.localProjectSpaceDetailServices.projectChatClient
+    )
+    expect(localDetailServices?.deliveryApi).toBe(mocks.localProjectSpaceDetailServices.deliveryApi)
+    expect(localDetailServices?.projectChatAgentApi).toBe(
+      mocks.localProjectSpaceDetailServices.projectChatAgentApi
+    )
+    expect(localDetailServices?.loopItemExecutionApi).toBe(
+      mocks.localProjectSpaceDetailServices.loopItemExecutionApi
+    )
   })
 
   it('keeps local project execution available when cloud device discovery fails', async () => {

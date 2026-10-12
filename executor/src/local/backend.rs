@@ -290,9 +290,7 @@ where
             backend.task_controller.clone(),
             backend.client.config.update.clone(),
         )));
-        backend.extension_handler = Some(Arc::new(default_extension_handler(
-            backend.client.config.local_workspace_root.clone(),
-        )));
+        backend.extension_handler = Some(Arc::new(default_extension_handler()));
         backend
     }
 }
@@ -474,10 +472,7 @@ where
 
     pub async fn run_forever(mut self) -> Result<(), String> {
         self.connection_status.store(false, Ordering::Release);
-        let auth_home = std::env::var_os("WEGENT_EXECUTOR_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-            .ok_or("Executor home is unavailable")?;
+        let auth_home = crate::config::paths::executor_home();
         let _auth_broker = crate::plugin_account_auth::broker::start(
             self.client.transport.clone(),
             auth_home,
@@ -490,7 +485,7 @@ where
             self.start_runtime_event_forwarder(event_hub);
         }
         self.register_handlers();
-        let _session_gateway = if self.start_session_gateway {
+        let session_gateway = if self.start_session_gateway {
             match &self.session_handler {
                 Some(handler) => start_session_gateway(Arc::clone(handler)).await?,
                 None => None,
@@ -498,6 +493,12 @@ where
         } else {
             None
         };
+        self.client.set_runtime_transfer_port(
+            session_gateway
+                .as_ref()
+                .map(|gateway| gateway.local_addr.port()),
+        );
+        let _session_gateway = session_gateway;
         let mut retry_delay = self.client.config.reconnect_delay;
         write_executor_log_line(&local_backend_starting_log_line(
             &self.client.config.backend_url,
@@ -636,9 +637,19 @@ where
     }
 
     async fn heartbeat_until_reconnect(&self) -> bool {
+        enum RunnerTick {
+            ConnectionStatus,
+            Heartbeat,
+            RuntimeWork,
+        }
+
         let mut consecutive_failures = 0_u32;
         let mut observed_successful_heartbeat = false;
+        let mut next_connection_status_poll_at =
+            Instant::now() + RUNTIME_EVENT_CONNECTION_POLL_INTERVAL;
         let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
+        let mut next_runtime_work_poll_at =
+            Instant::now() + self.client.config.runtime_work_poll_interval;
         let terminal_event_notifier = self.session_handler.as_ref().map(|handler| {
             handler
                 .lock()
@@ -648,8 +659,10 @@ where
         let terminal_relay = self.relay_terminal_events_until_error(terminal_event_notifier);
         tokio::pin!(terminal_relay);
         loop {
-            tokio::select! {
-                _ = sleep_until(next_heartbeat_at) => {},
+            let tick = tokio::select! {
+                _ = sleep_until(next_connection_status_poll_at) => RunnerTick::ConnectionStatus,
+                _ = sleep_until(next_heartbeat_at) => RunnerTick::Heartbeat,
+                _ = sleep_until(next_runtime_work_poll_at) => RunnerTick::RuntimeWork,
                 result = &mut terminal_relay => {
                     let error = result.expect_err("terminal relay only stops on error");
                     write_executor_error_line(&format_executor_log(
@@ -659,6 +672,21 @@ where
                     let _ = self.client.disconnect().await;
                     return observed_successful_heartbeat;
                 }
+            };
+            if matches!(tick, RunnerTick::ConnectionStatus) {
+                if !self.connection_status.load(Ordering::Acquire) {
+                    let _ = self.client.disconnect().await;
+                    return observed_successful_heartbeat;
+                }
+                next_connection_status_poll_at =
+                    Instant::now() + RUNTIME_EVENT_CONNECTION_POLL_INTERVAL;
+                continue;
+            }
+            if matches!(tick, RunnerTick::RuntimeWork) {
+                self.trigger_runtime_work_poll();
+                next_runtime_work_poll_at =
+                    Instant::now() + self.client.config.runtime_work_poll_interval;
+                continue;
             }
             if let Some(handler) = &self.session_handler {
                 handler
@@ -672,6 +700,8 @@ where
                     observed_successful_heartbeat = true;
                     self.trigger_runtime_work_poll();
                     next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
+                    next_runtime_work_poll_at =
+                        Instant::now() + self.client.config.runtime_work_poll_interval;
                     continue;
                 }
                 Err(error) => error,
@@ -748,36 +778,50 @@ async fn drain_available_runtime_work<T>(
 ) where
     T: LocalBackendTransport,
 {
-    let capacity = handler
+    let capacity = match handler
         .handle_runtime_rpc(json!({
             "method": "runtime.capacity.get",
             "payload": {},
         }))
         .await
-        .ok();
-    client.set_runtime_capacity(capacity);
-    // Publish the freshly read snapshot for App-originated HTTP claims too.
-    // The registration heartbeat runs before this asynchronous capacity read.
-    if let Err(error) = client.emit_liveness_heartbeat().await {
-        write_executor_error_line(&format_executor_log(
-            "runtime capacity heartbeat failed",
-            &[("error", error)],
-        ));
-        return;
-    }
-
-    loop {
-        let work = match client
-            .pull_runtime_work(client.config.heartbeat_timeout)
-            .await
-        {
-            Ok(work) => work,
-            Err(error) => {
-                write_executor_error_line(&format_executor_log(
-                    "runtime task pull failed",
-                    &[("error", error)],
-                ));
-                return;
+    {
+        Ok(capacity) => capacity,
+        Err(error) => {
+            write_executor_error_line(&format_executor_log(
+                "runtime capacity read failed",
+                &[("error", error.message)],
+            ));
+            return;
+        }
+    };
+    let limit = capacity.get("limit").and_then(Value::as_u64).unwrap_or(0);
+    let active = capacity
+        .get("active")
+        .and_then(Value::as_u64)
+        .unwrap_or(limit);
+    let queued = capacity
+        .get("queued")
+        .and_then(Value::as_u64)
+        .unwrap_or(limit);
+    let available = limit.saturating_sub(active.saturating_add(queued));
+    for _ in 0..available {
+        let mut retried_failed_execution = false;
+        let work = loop {
+            match client
+                .pull_runtime_work(client.config.heartbeat_timeout)
+                .await
+            {
+                Ok(work) => break work,
+                Err(error) => {
+                    write_executor_error_line(&format_executor_log(
+                        "runtime task pull failed",
+                        &[("error", error)],
+                    ));
+                    if retried_failed_execution {
+                        return;
+                    }
+                    retried_failed_execution = true;
+                }
             }
         };
         for intent in work.workspace_cleanup_intents {
@@ -838,9 +882,15 @@ async fn drain_available_runtime_work<T>(
             write_executor_error_line("runtime task pull returned no payload");
             return;
         };
+        let method =
+            if payload.get("dispatchKind").and_then(Value::as_str) == Some("collaboration_group") {
+                "runtime.collaboration.dispatch"
+            } else {
+                "runtime.tasks.create"
+            };
         let response = match handler
             .handle_runtime_rpc(json!({
-                "method": "runtime.tasks.create",
+                "method": method,
                 "payload": payload,
             }))
             .await

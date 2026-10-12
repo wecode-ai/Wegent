@@ -9,11 +9,11 @@
 //! resolves them through `task_store.list_by_ids`: one routed read of the
 //! owner's `tasks` table, then the `Task` CRD fields the `DeviceInfo`
 //! `running_tasks` entries carry.
-use brz_mysql::{Mysql, MysqlResult};
+use brz_mysql::{FromMysqlRow, MysqlResult};
 
 use crate::crd::CrdDocument;
 use crate::json_compat::OpaqueJson;
-use crate::task_routing::ByUserId;
+use crate::task_store::TaskStore;
 
 /// One `running_tasks` entry of `DeviceInfo`
 /// (`CloudDeviceProvider.get_slot_usage` task projection).
@@ -26,13 +26,6 @@ pub(crate) struct RunningTask {
     created_at: Option<String>,
 }
 
-/// The `tasks`/`tasks_{:04}` column list of `task_store.list_by_ids`
-/// (`db.query(TaskResource).filter(TaskResource.id.in_(task_ids))`), resolved
-/// through the routed `tasks` token so the deployment's task policy selects
-/// the physical table.
-const RUNNING_TASKS_SELECT: &str = "SELECT id, user_id, kind, name, namespace, json, is_active, \
-     created_at, updated_at, project_id, client_origin, is_group_chat \nFROM {{tasks}}";
-
 /// The consumed columns of one running-task row.
 #[derive(Debug, brz_mysql::FromMysqlRow)]
 struct RunningTaskRow {
@@ -41,27 +34,19 @@ struct RunningTaskRow {
     json: brz_mysql::Json<OpaqueJson>,
 }
 
-/// `task_store.list_by_ids` for the reported running task ids: one routed
-/// read of the owner's task table, then the `Task` CRD projection
+/// `task_store.list_by_ids` for the reported running task ids: one read of
+/// the task table, then the `Task` CRD projection
 /// (`CloudDeviceProvider.get_slot_usage`).
-///
-/// The source sharded store groups the ids by their physical shard and issues
-/// one read per group; a device's running tasks are the tasks its owner
-/// started on it, so the owner's routing key resolves that group in one read.
-pub(crate) async fn list_running_tasks<M: Mysql>(
-    mysql: &M,
+pub(crate) async fn list_running_tasks(
+    task_store: &dyn TaskStore,
     user_id: i64,
     task_ids: Vec<i64>,
 ) -> MysqlResult<Vec<RunningTask>> {
-    if task_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let placeholders = vec!["?"; task_ids.len()].join(", ");
-    let sql = format!("{RUNNING_TASKS_SELECT} \nWHERE id IN ({placeholders})");
-    let rows: Vec<RunningTaskRow> = mysql
-        .route(ByUserId(user_id.unsigned_abs()))
-        .fetch_all(sql.as_str(), task_ids)
-        .await?;
+    let rows = task_store.list_running_tasks(user_id, &task_ids).await?;
+    let rows = rows
+        .into_iter()
+        .map(RunningTaskRow::from_mysql_row)
+        .collect::<MysqlResult<Vec<_>>>()?;
     Ok(project_running_tasks(&rows))
 }
 
@@ -247,28 +232,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn running_tasks_read_routes_to_the_owner_and_skips_empty_input() {
-        use crate::sql_test_support::{QueryCapture, Route};
+    async fn running_tasks_read_skips_empty_input_and_reads_the_task_table() {
+        use crate::sql_test_support::KindQueryCapture;
+        use crate::task_store::DefaultTaskStore;
 
-        let mysql = QueryCapture::default();
+        let mysql = KindQueryCapture::default();
+        let store = DefaultTaskStore::new(mysql.clone());
         assert!(
-            list_running_tasks(&mysql, 74, Vec::new())
+            list_running_tasks(&store, 74, Vec::new())
                 .await
                 .unwrap()
                 .is_empty()
         );
-        assert!(mysql.queries().is_empty());
+        assert!(
+            mysql.queries().is_empty(),
+            "an empty id list issues no statement"
+        );
 
         assert!(
-            list_running_tasks(&mysql, 74, vec![10170482710738])
+            list_running_tasks(&store, 74, vec![10170482710738])
                 .await
                 .unwrap()
                 .is_empty()
         );
         let queries = mysql.queries();
         assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].route, Route::User(74));
         assert_eq!(queries[0].args, 1);
-        assert!(queries[0].sql.ends_with("FROM {{tasks}} WHERE id IN (?)"));
+        assert!(
+            queries[0].sql.ends_with("FROM `tasks` WHERE id IN (?)"),
+            "{}",
+            queries[0].sql
+        );
     }
 }

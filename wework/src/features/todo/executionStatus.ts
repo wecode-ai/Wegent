@@ -4,5 +4,6 @@ export {
   isExecutionTerminal,
   isExecutionCancellable,
   isExecutionFailed,
+  reconcileExecutionStatus,
   type ExecutionDisplayStatus,
 } from '@wegent/collaboration'

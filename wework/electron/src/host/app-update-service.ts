@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
 import type {
   ComponentDownloadProgress,
-  HostDownloadPhase,
   WeworkUpdateDownloadProgress,
 } from './app-update-progress.js'
 export type { WeworkUpdateDownloadProgress } from './app-update-progress.js'
@@ -63,6 +62,7 @@ export class AppUpdateService {
     this.updateBaseUrl = options.updateBaseUrl.replace(/\/+$/, '')
     this.updater.autoDownload = false
     this.updater.autoInstallOnAppQuit = false
+    this.updater.disableDifferentialDownload = true
   }
 
   async check(channel: WeworkUpdateChannel): Promise<WeworkUpdateInfo | null> {
@@ -141,39 +141,23 @@ export class AppUpdateService {
     const pendingChannel = this.pendingChannel
     let componentStageId: string | undefined
     let componentBytes = 0
-    let completedAttempts = 0
-    let attemptBytes = 0
+    let hostBytes = 0
     let hostTotal: number | null = null
     const report = () => {
       this.progress = {
         ...this.progress,
-        downloadedBytes: componentBytes + completedAttempts + attemptBytes,
-        totalBytes: hostTotal === null ? null : componentBytes + completedAttempts + hostTotal,
+        downloadedBytes: componentBytes + hostBytes,
+        totalBytes: hostTotal === null ? null : componentBytes + hostTotal,
       }
     }
     const progress = (value: { transferred: number; total: number }) => {
-      attemptBytes = value.transferred
+      hostBytes = value.transferred
       hostTotal = value.total > 0 ? value.total : null
       report()
-    }
-    const phase = (value: HostDownloadPhase) => {
-      if (value.phase === 'verifying') {
-        this.progress = { ...this.progress, phase: 'verifying' }
-        return
-      }
-      if (this.progress.mode && this.progress.mode !== value.mode) {
-        completedAttempts += attemptBytes
-        attemptBytes = 0
-      }
-      hostTotal = value.totalBytes ?? null
-      this.progress = { ...this.progress, phase: 'host', mode: value.mode, reason: value.reason }
-      report()
-      this.log({ taskId, event: 'host-download-phase', ...value })
     }
     this.progress = { downloadedBytes: 0, totalBytes: null, phase: 'preparing' }
     this.downloadPromise = (async () => {
       this.updater.on('download-progress', progress)
-      this.updater.on('wework-download-phase', phase)
       this.log({
         taskId,
         event: 'update-started',
@@ -204,7 +188,6 @@ export class AppUpdateService {
         throw error
       } finally {
         this.updater.off('download-progress', progress)
-        this.updater.off('wework-download-phase', phase)
         this.downloadPromise = null
       }
     })()

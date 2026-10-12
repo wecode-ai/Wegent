@@ -20,9 +20,11 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import type { AutomationEventType } from "../automation/types";
 import type { CollaborationTranslate } from "../i18n";
 import type {
   SharedWorkspaceApi,
+  WorkspaceAutomationInput,
   WorkspaceAutomationRule,
   WorkspaceIncomingHook,
 } from "../ports/SharedWorkspaceApi";
@@ -95,7 +97,7 @@ interface AutomaticProcessingDraft {
   tag: string;
   cronExpression: string;
   hookId: string;
-  eventType: string;
+  eventType: AutomationEventType | "";
   targetKind: TargetKind;
   targetId: string;
   enabled: boolean;
@@ -159,10 +161,6 @@ function text(rule: Record<string, unknown>, camel: string, snake: string) {
   return typeof value === "string" ? value : "";
 }
 
-function bool(rule: WorkspaceAutomationRule, key: string, fallback: boolean) {
-  return typeof rule[key] === "boolean" ? Boolean(rule[key]) : fallback;
-}
-
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -177,7 +175,7 @@ function sourceType(hook: WorkspaceIncomingHook) {
   );
 }
 
-function eventTypesForHook(hook: WorkspaceIncomingHook): string[] {
+function eventTypesForHook(hook: WorkspaceIncomingHook): AutomationEventType[] {
   const source = sourceType(hook);
   if (source === "github") {
     return [
@@ -277,17 +275,14 @@ function scheduleLabel(cronExpression: string, locale: "zh-CN" | "en"): string {
 function draftFromRule(
   rule: WorkspaceAutomationRule,
 ): AutomaticProcessingDraft {
-  const values = rule as Record<string, unknown>;
-  const triggerType = text(values, "triggerType", "trigger_type");
-  const eventType = text(values, "eventType", "event_type");
-  const eventConfig = record(rule.eventConfig ?? rule.event_config);
+  const eventConfig = record(rule.eventConfig);
   const tags = Array.isArray(eventConfig.tags) ? eventConfig.tags : [];
   const trigger: TriggerKind =
-    triggerType === "schedule"
+    rule.triggerType === "schedule"
       ? "schedule"
-      : eventType === "task.tag_added"
+      : rule.eventType === "task.tag_added"
         ? "tag_added"
-        : eventType === "task.created"
+        : rule.eventType === "task.created"
           ? "created"
           : "external";
   return {
@@ -296,15 +291,14 @@ function draftFromRule(
     name: rule.name,
     trigger,
     tag: typeof tags[0] === "string" ? tags[0] : "",
-    cronExpression: text(values, "cronExpression", "cron_expression"),
+    cronExpression: rule.cronExpression ?? "",
     hookId: String(
       eventConfig.subscriptionId ?? eventConfig.subscription_id ?? "",
     ),
-    eventType: trigger === "external" ? eventType : "",
-    targetKind: (text(values, "targetKind", "target_kind") ||
-      "agent") as TargetKind,
-    targetId: text(values, "targetId", "target_id"),
-    enabled: bool(rule, "enabled", true),
+    eventType: trigger === "external" ? (rule.eventType ?? "") : "",
+    targetKind: rule.targetKind,
+    targetId: rule.targetId,
+    enabled: rule.enabled,
   };
 }
 
@@ -577,7 +571,9 @@ export function ProjectAutomaticProcessing({
     });
   }
 
-  function inputFromDraft(value: AutomaticProcessingDraft) {
+  function inputFromDraft(
+    value: AutomaticProcessingDraft,
+  ): WorkspaceAutomationInput {
     const isSchedule = value.trigger === "schedule";
     const eventType =
       value.trigger === "created"
@@ -585,7 +581,7 @@ export function ProjectAutomaticProcessing({
         : value.trigger === "tag_added"
           ? "task.tag_added"
           : value.trigger === "external"
-            ? value.eventType
+            ? value.eventType || null
             : null;
     const eventConfig =
       value.trigger === "tag_added"
@@ -621,19 +617,7 @@ export function ProjectAutomaticProcessing({
       timezone: "Asia/Shanghai",
       targetKind: value.targetKind,
       targetId: value.targetId,
-      assignmentMode: "manual",
-      managerType: null,
-      agentId: value.targetKind === "agent" ? value.targetId : null,
-      wegentTeamId: null,
-      model: null,
-      executionEnvironment: null,
       executionDeviceId: null,
-      roleSource: value.targetKind === "agent" ? "agent" : "generic",
-      runtimeSource:
-        value.targetKind === "agent" ? "agent_default" : "runtime_user",
-      runtimeProfileId: null,
-      runtimeUserId:
-        value.targetKind === "human" ? Number(value.targetId) : null,
       enabled: value.enabled,
     };
   }
@@ -723,20 +707,22 @@ export function ProjectAutomaticProcessing({
     <ProjectSettingsPage
       actions={
         canManage ? (
-          <button
-            type="button"
-            className="collaboration-primary-button inline-flex shrink-0 items-center gap-1.5"
-            data-testid="automatic-processing-create"
-            onClick={openCreate}
-          >
-            <Plus aria-hidden="true" className="h-4 w-4" />
-            {translate("todo.create_automatic_processing", "新建规则")}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="collaboration-primary-button inline-flex shrink-0 items-center gap-1.5"
+              data-testid="automatic-processing-create"
+              onClick={openCreate}
+            >
+              <Plus aria-hidden="true" className="h-4 w-4" />
+              {translate("todo.create_automatic_processing", "新建规则")}
+            </button>
+          </div>
         ) : undefined
       }
       description={translate(
         "todo.automatic_processing_description",
-        "当 Issue 满足指定条件时，自动交给项目成员、智能体或协作小组。",
+        "统一管理 Issue 自动处理和项目管理者的触发规则。",
       )}
       testId="collaboration-project-automatic-processing-page"
       title={translate("todo.automatic_processing", "自动处理")}
@@ -758,7 +744,7 @@ export function ProjectAutomaticProcessing({
             ) : null}
 
             {rules.length ? (
-              <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface/70">
+              <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-background">
                 {rules.map((rule) => {
                   const ruleDraft = draftFromRule(rule);
                   const triggerLabel =
@@ -769,16 +755,7 @@ export function ProjectAutomaticProcessing({
                         : ruleDraft.trigger === "schedule"
                           ? `${translate("todo.trigger_schedule", "按时间定期处理")} · ${scheduleLabel(ruleDraft.cronExpression, locale)}`
                           : eventLabel(ruleDraft.eventType, locale);
-                  const targetName =
-                    text(
-                      rule as Record<string, unknown>,
-                      "targetName",
-                      "target_name",
-                    ) ||
-                    targetOptions[ruleDraft.targetKind].find(
-                      (option) => option.id === ruleDraft.targetId,
-                    )?.name ||
-                    translate("todo.unavailable_target", "目标不可用");
+                  const targetName = rule.targetName;
                   return (
                     <article
                       className="flex min-h-14 items-center gap-4 px-4 py-3"
@@ -1217,7 +1194,10 @@ export function ProjectAutomaticProcessing({
                           disabled={hooksLoading}
                           value={draft.eventType}
                           onChange={(event) =>
-                            updateDraft({ eventType: event.target.value })
+                            updateDraft({
+                              eventType: event.target
+                                .value as AutomationEventType,
+                            })
                           }
                         >
                           <option value="">

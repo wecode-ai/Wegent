@@ -3,7 +3,12 @@
 
 use super::{AuthError, NativeAdapter, MAX_FRAME_BYTES};
 use serde_json::Value;
-use std::{path::Path, process::Stdio, time::Duration};
+use std::{
+    path::Path,
+    process::Stdio,
+    sync::atomic::{AtomicBool, AtomicU8, Ordering},
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -90,6 +95,8 @@ pub(super) async fn invoke(
         group_id: spawned.id(),
         child: spawned,
     };
+    let transport_stage = AtomicU8::new(0);
+    let stdout_finished = AtomicBool::new(false);
     tokio::time::timeout(deadline, async {
         let mut stdin = child
             .child
@@ -101,6 +108,7 @@ pub(super) async fn invoke(
             .await
             .map_err(|_| AuthError("plugin_auth_transport_unavailable"))?;
         drop(stdin);
+        transport_stage.store(1, Ordering::Relaxed);
         let stdout = child
             .child
             .stdout
@@ -116,10 +124,12 @@ pub(super) async fn invoke(
             if bytes.len() as u64 > MAX_STDOUT_BYTES {
                 return Err(AuthError("plugin_auth_output_too_large"));
             }
+            stdout_finished.store(true, Ordering::Relaxed);
             Ok(bytes)
         };
         let transfer = async {
             let mut stream = authenticate(&listener, &nonce).await?;
+            transport_stage.store(2, Ordering::Relaxed);
             if let Some(frame) = frame {
                 let bytes = serde_json::to_vec(&frame)
                     .map_err(|_| AuthError("plugin_auth_invalid_credential"))?;
@@ -139,6 +149,7 @@ pub(super) async fn invoke(
                     .await
                     .map_err(|_| AuthError("plugin_auth_transport_failed"))?;
                 if arguments.first().map(String::as_str) != Some("refresh") {
+                    transport_stage.store(3, Ordering::Relaxed);
                     return Ok(None);
                 }
             }
@@ -156,9 +167,10 @@ pub(super) async fn invoke(
                     .read_exact(&mut bytes)
                     .await
                     .map_err(|_| AuthError("plugin_auth_transport_failed"))?;
-                Ok(Some(serde_json::from_slice(&bytes).map_err(|_| {
-                    AuthError("plugin_auth_invalid_credential")
-                })?))
+                let response = serde_json::from_slice(&bytes)
+                    .map_err(|_| AuthError("plugin_auth_invalid_credential"))?;
+                transport_stage.store(3, Ordering::Relaxed);
+                Ok(Some(response))
             }
         };
         // Keep ownership of the child PID until transfer/output finish. A timed-out
@@ -183,7 +195,27 @@ pub(super) async fn invoke(
         Ok(AdapterResult { frame, stdout })
     })
     .await
-    .map_err(|_| AuthError("plugin_auth_timeout"))?
+    .map_err(|_| {
+        // Report only fixed stage names, never private frames or adapter output.
+        let stage = match transport_stage.load(Ordering::Relaxed) {
+            0 => "nonce_write",
+            1 => "authenticate",
+            2 => "frame_exchange",
+            _ => "process_exit",
+        };
+        crate::logging::log_executor_event(
+            "plugin_auth_timeout",
+            &[
+                ("transport_stage", stage.to_string()),
+                (
+                    "stdout_finished",
+                    stdout_finished.load(Ordering::Relaxed).to_string(),
+                ),
+                ("deadline_ms", deadline.as_millis().to_string()),
+            ],
+        );
+        AuthError("plugin_auth_timeout")
+    })?
 }
 
 async fn wait_for_failure(child: &Child) -> AuthError {

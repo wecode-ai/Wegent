@@ -12,6 +12,7 @@ interface PendingWorkbenchComposerFocus {
 }
 
 const WORKBENCH_COMPOSER_FOCUS_TTL_MS = 2_000
+const WORKBENCH_COMPOSER_FOCUS_RETRY_MS = 16
 let pendingWorkbenchComposerFocus: PendingWorkbenchComposerFocus | null = null
 
 export function focusComposerAtEnd(element: HTMLElement | null | undefined) {
@@ -52,14 +53,13 @@ export function requestNewChatComposerFocus() {
 }
 
 export function requestWorkbenchComposerFocus(scopeKey: string) {
-  pendingWorkbenchComposerFocus = {
+  const pending: PendingWorkbenchComposerFocus = {
     scopeKey,
-    consumers: new Set(),
-    expiresAt: null,
+    consumers: new Set<symbol>(),
+    expiresAt: Date.now() + WORKBENCH_COMPOSER_FOCUS_TTL_MS,
   }
-  window.requestAnimationFrame(() => {
-    dispatchPendingWorkbenchComposerFocusRequest()
-  })
+  pendingWorkbenchComposerFocus = pending
+  dispatchUntilWorkbenchComposerFocusConsumed(pending)
 }
 
 export function dispatchPendingWorkbenchComposerFocusRequest() {
@@ -77,9 +77,7 @@ export function consumeWorkbenchComposerFocusRequest(scopeKey: string, consumerI
   if (!pending || pending.scopeKey !== scopeKey) return false
   if (pending.consumers.has(consumerId)) return false
   pending.consumers.add(consumerId)
-  if (pending.consumers.size === 1) {
-    pending.expiresAt = Date.now() + WORKBENCH_COMPOSER_FOCUS_TTL_MS
-  } else {
+  if (pending.consumers.size > 1) {
     pendingWorkbenchComposerFocus = null
   }
   return true
@@ -99,4 +97,16 @@ function getPendingWorkbenchComposerFocus() {
     return null
   }
   return pending
+}
+
+function dispatchUntilWorkbenchComposerFocusConsumed(pending: PendingWorkbenchComposerFocus) {
+  if (typeof window === 'undefined') return
+  window.requestAnimationFrame(() => {
+    if (getPendingWorkbenchComposerFocus() !== pending || pending.consumers.size > 0) return
+    dispatchPendingWorkbenchComposerFocusRequest()
+    window.setTimeout(
+      () => dispatchUntilWorkbenchComposerFocusConsumed(pending),
+      WORKBENCH_COMPOSER_FOCUS_RETRY_MS
+    )
+  })
 }

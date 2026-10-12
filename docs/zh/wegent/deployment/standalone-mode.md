@@ -6,7 +6,9 @@ sidebar_position: 3
 
 ## 概述
 
-Standalone 模式是一种单机部署方案，将 Backend、主 Frontend、Wework Web、Chat Shell 和 Redis 打包在一个 Docker 镜像中运行，使用 SQLite 作为数据库。它适合快速体验和小规模可信环境，只需要 Docker 即可启动。macOS 交互式安装默认使用宿主机 executor，以便 Claude Code 或 Codex 能执行 macOS 系统命令；Linux 和非交互安装默认沿用容器内 executor。
+Standalone 模式是一种单机部署方案，将 Backend、主 Frontend、Wework Web、Chat Shell、Knowledge Runtime、MySQL 和 Redis 打包在一个 Docker 镜像中运行。它适合快速体验和小规模可信环境，只需要 Docker 即可启动。macOS 交互式安装默认使用宿主机 executor，以便 Claude Code 或 Codex 能执行 macOS 系统命令；Linux 和非交互安装默认沿用容器内 executor。
+
+Knowledge Runtime 在数据库迁移完成后自动启动，监听容器内部的 `127.0.0.1:8200`，健康检查通过后才启动 Backend。RAG 索引、检索和删除通过内部 HTTP 调用执行，无需额外部署 Runtime，也无需对外开放 8200 端口。
 
 Standalone 启动后会自动为 `admin` 用户创建 executor API key，并按所选 executor 模式注册设备：容器 executor 注册为内置云设备，宿主机 executor 注册为本地设备，Wework 创建编码任务时可以直接使用可用设备执行任务。默认容器 workspace 挂载在 `/workspace`，用于保存项目目录、独立聊天工作区和 Git worktree；宿主机 executor 使用 `~/.wegent-executor/workspace`。
 
@@ -27,7 +29,7 @@ Standalone 启动后会自动为 `admin` 用户创建 executor API key，并按�
 | 资源占用 | 高 | 中 |
 | 扩展性 | 好 | 有限 |
 | 任务隔离 | Sandbox/云设备 | 按 executor 模式在容器或宿主机执行 |
-| 数据库 | MySQL | SQLite |
+| 数据库 | MySQL | 内嵌 MySQL |
 | Redis | 外部依赖 | 内嵌 |
 | Wework | 独立桌面端或 Web | 内置 Wework Web |
 | 适用场景 | 生产环境 | 开发/测试/小规模 |
@@ -181,7 +183,7 @@ Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 
 | `WEGENT_BIN_DIR` | 安装 `wegent-standalone` 管理命令的目录 | `~/.local/bin` |
 | `WEGENT_STANDALONE_STATE_FILE` | `wegent-standalone` 读取的持久状态文件 | `~/.wegent/standalone/config.env` |
 | `STANDALONE_MODE` | 启用 standalone 模式 | `true` |
-| `DATABASE_URL` | 数据库连接地址 | `sqlite:////app/data/wegent.db` |
+| `DATABASE_URL` | 数据库连接地址 | `mysql+pymysql://root@127.0.0.1:3306/task_manager` |
 | `REDIS_URL` | Redis 连接地址 | `redis://localhost:6379/0` |
 | `ANTHROPIC_API_KEY` | Anthropic API 密钥 | - |
 | `OPENAI_API_KEY` | OpenAI API 密钥 | - |
@@ -190,7 +192,7 @@ Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 
 
 服务状态存储在 `/app/data`：
 
-- `wegent.db`：SQLite 数据库文件
+- `mysql/`：内嵌 MySQL 数据文件
 - `redis/`：Redis 持久化数据（AOF 和 RDB）
 - `standalone_executor_token`：standalone executor 注册用的 admin API key
 - `standalone-executor/`：容器 executor 本地状态
@@ -268,10 +270,11 @@ docker run -d \
 
 ## 注意事项
 
-### SQLite 限制
+### 数据库初始化与升级
 
-1. **并发写入**：SQLite 不适合高并发写入，建议用于单用户或小规模使用
-2. **数据备份**：定期备份 `/app/data/wegent.db` 和 `/workspace`
+- 首次启动时会创建 MySQL 数据库、应用 Alembic schema，并导入内置初始化数据。
+- 从旧版升级时不会把 `/app/data/wegent.db` 迁移到 MySQL；旧文件会保留但不再使用。升级后的数据库按当前版本重新初始化。
+- 定期备份 `/app/data/mysql/`、`/app/data/redis/` 和 `/workspace`。
 
 ### 内嵌 Redis
 
@@ -280,6 +283,11 @@ Standalone 镜像包含内嵌 Redis：
 - 数据持久化到 `/app/data/redis/`
 - 使用 AOF（Append Only File）保证数据持久性
 - 内存限制为 256MB，使用 LRU 淘汰策略
+
+### 知识库检索能力
+
+Standalone 模式不提供知识库功能：RAG 相关接口在该模式下不会注册，单容器镜像也不包含执行检索的
+Knowledge Runtime 服务与向量库。需要知识库时请使用标准模式部署。
 
 ### Standalone Executor 限制
 
@@ -291,7 +299,7 @@ Standalone 镜像包含内嵌 Redis：
 
 如果需要迁移到标准模式：
 
-1. 导出 SQLite 数据
+1. 从 standalone 的 MySQL 数据库导出需要的数据
 2. 备份 `/workspace` 中的项目和 worktree
 3. 导入数据到 MySQL
 4. 修改配置使用标准部署或独立云设备

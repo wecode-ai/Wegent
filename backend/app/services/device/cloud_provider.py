@@ -97,6 +97,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
             "runtime_transfer_host": spec.get("runtimeTransferHost"),
+            "runtime_transfer_port": spec.get("runtimeTransferPort"),
             "runtime_instance_id": spec.get("runtimeInstanceId"),
             "app_device_id": spec.get("appDeviceId"),
             "runtime_features": (
@@ -203,6 +204,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
                     "runtime_transfer_host": spec.get("runtimeTransferHost"),
+                    "runtime_transfer_port": spec.get("runtimeTransferPort"),
                     "runtime_instance_id": spec.get("runtimeInstanceId"),
                     "app_device_id": spec.get("appDeviceId"),
                     "runtime_features": (

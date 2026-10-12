@@ -4,6 +4,12 @@ sidebar_position: 1
 
 # Knowledge Runtime 独立化设计
 
+> **状态更新（2026-10）：local 模式已移除。** Backend 内的 local RAG 执行路径、`LocalRagGateway`、
+> 本地数据面、`RAG_RUNTIME_MODE` 开关，以及 remote 失败后回退到本地执行的判断都已删除。
+> 索引、检索与删除现在只在 `knowledge_runtime` 执行，`knowledge_runtime` 是 Backend 的必需依赖。
+> 原因：同一业务行为只保留一份实现，并消除"配置成 remote、实际在 Backend 本地执行"的隐藏路径。
+> 本文档以下内容保留为历史设计记录，其中 local / remote 切换的描述不再反映当前实现。
+
 ## 背景
 
 `docs/plans/2026-03-24-rag-service-split-plan.md` 给出了“Backend 保留控制面，RAG 数据面逐步拆出”的总体方向。

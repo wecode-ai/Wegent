@@ -24,7 +24,7 @@ export function TitlebarTooltip({
   children,
 }: TitlebarTooltipProps) {
   return (
-    <span className="group relative inline-flex shrink-0">
+    <span data-tooltip-trigger className="group relative inline-flex shrink-0">
       {children}
       <span
         role="tooltip"

@@ -73,6 +73,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
         transport.clone(),
         StaticCapabilityReporter,
     );
+    client.set_runtime_transfer_port(Some(17888));
 
     let registered = client
         .register_device(Duration::from_secs(2))
@@ -91,6 +92,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["client_ip"], "192.0.2.10");
     assert_eq!(calls[0].payload["runtime_transfer_host"], "192.0.2.10");
+    assert_eq!(calls[0].payload["runtime_transfer_port"], 17888);
     assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 4);
     assert_eq!(
         calls[0].payload["runtime_features"]["interactiveSessions"],
@@ -128,6 +130,24 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
 }
 
 #[tokio::test]
+async fn standalone_runner_reports_actual_dynamic_gateway_port() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
+    let transport = RecordingTransport::default();
+    let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
+
+    let runner_task = tokio::spawn(runner.run_forever());
+    let calls = transport.wait_for_calls(1).await;
+    runner_task.abort();
+    let _ = runner_task.await;
+
+    let reported_port = calls[0].payload["runtime_transfer_port"]
+        .as_u64()
+        .expect("dynamic gateway should report its actual bound port");
+    assert!((1..=u16::MAX as u64).contains(&reported_port));
+}
+
+#[tokio::test]
 async fn local_backend_accepts_socketio_wrapped_registration_ack() {
     let transport = RecordingTransport::with_responses(vec![json!([
         {"success": true, "device_id": "device-1"}
@@ -161,6 +181,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
         transport.clone(),
         StaticCapabilityReporter,
     );
+    client.set_runtime_transfer_port(Some(23456));
     client.set_running_task_ids(["10".to_owned(), "20".to_owned()]);
 
     let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
@@ -173,6 +194,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["device_id"], "device-1");
     assert_eq!(calls[0].payload["running_task_ids"], json!(["10", "20"]));
     assert_eq!(calls[0].payload["executor_version"], "test-version");
+    assert_eq!(calls[0].payload["runtime_transfer_port"], 23456);
     assert_eq!(calls[0].payload["capabilities"]["revision"], 0);
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
     assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 4);
@@ -754,7 +776,7 @@ async fn connected_executor_pulls_and_accepts_cloud_runtime_work() {
     let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
-        Arc::new(StaticRuntimeWorkHandler(json!({"success": true}))),
+        Arc::new(QueueRuntimeWorkHandler),
         event_rx,
     );
     drop(event_tx);
@@ -781,28 +803,27 @@ async fn connected_executor_pulls_and_accepts_cloud_runtime_work() {
 }
 
 #[tokio::test]
-async fn registration_publishes_capacity_without_waiting_for_periodic_heartbeat() {
+async fn registration_pulls_without_publishing_scheduler_capacity() {
     let transport = RecordingTransport::with_responses(vec![
         json!({"success": true}),
         json!({"success": true, "task": null}),
     ]);
-    let capacity = json!({"limit": 4, "active": 0, "active_task_ids": [], "queued": 0});
     let (_event_tx, event_rx) = broadcast::channel(8);
     let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
-        Arc::new(StaticRuntimeWorkHandler(capacity.clone())),
+        Arc::new(QueueRuntimeWorkHandler),
         event_rx,
     );
 
     runner.connect_and_register().await.unwrap();
 
-    // No periodic heartbeat loop is running: capacity must be published by
-    // the initial work poll even when the backend has no work to deliver.
-    let heartbeats = transport.wait_for_emit_count("device:heartbeat", 2).await;
-    assert!(heartbeats[0].payload["runtime_capacity"].is_null());
-    assert_eq!(heartbeats[1].payload["runtime_capacity"], capacity);
-    assert_eq!(heartbeats[1].payload["runtime_instance_id"], "runtime-1");
+    let calls = transport.wait_for_calls(2).await;
+    assert_eq!(calls[1].event, "runtime.tasks.pull");
+    assert_eq!(calls[1].payload, json!({}));
+    let heartbeats = transport.wait_for_emit_count("device:heartbeat", 1).await;
+    assert!(heartbeats[0].payload.get("runtime_capacity").is_none());
+    assert_eq!(heartbeats[0].payload["runtime_instance_id"], "runtime-1");
 }
 
 #[tokio::test]
@@ -1160,6 +1181,7 @@ fn local_backend_config() -> LocalBackendConfig {
         runtime_transfer_host: "192.0.2.10".to_owned(),
         heartbeat_interval: Duration::from_secs(30),
         heartbeat_timeout: Duration::from_secs(10),
+        runtime_work_poll_interval: Duration::from_secs(2),
         registration_timeout: Duration::from_secs(10),
         reconnect_delay: Duration::from_secs(1),
         reconnect_delay_max: Duration::from_secs(30),
@@ -1200,6 +1222,23 @@ impl RuntimeWorkHandler for StaticRuntimeWorkHandler {
         _data: Value,
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         Box::pin(async move { Ok(self.0.clone()) })
+    }
+}
+
+struct QueueRuntimeWorkHandler;
+
+impl RuntimeWorkHandler for QueueRuntimeWorkHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            if data.get("method").and_then(Value::as_str) == Some("runtime.capacity.get") {
+                Ok(json!({"limit": 2, "active": 0, "queued": 0}))
+            } else {
+                Ok(json!({"success": true}))
+            }
+        })
     }
 }
 

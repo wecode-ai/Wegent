@@ -54,8 +54,13 @@ export function activityExecutionDisplayStatus(
   turn: RuntimeConversationTurn | undefined,
   idle: boolean
 ) {
+  const recordedStatus = message?.status.toLowerCase()
   return (
     turn?.status ??
+    (recordedStatus &&
+    ['completed', 'failed', 'cancelled', 'canceled'].includes(recordedStatus)
+      ? recordedStatus
+      : undefined) ??
     (message?.runtimeAddress &&
     message.metadata.kind !== 'task_ai_subagent' &&
     !turns.length &&

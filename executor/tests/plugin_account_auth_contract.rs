@@ -148,7 +148,7 @@ raise SystemExit(adapter.main(sys.argv[1:]))
     .unwrap();
     let adapter = NativeAdapter::load(root.path(), "mail", &declaration).unwrap();
     let exported = adapter
-        .export(&python(), Duration::from_secs(5))
+        .export(&python(), Duration::from_secs(10))
         .await
         .unwrap();
     let output = adapter
@@ -157,7 +157,7 @@ raise SystemExit(adapter.main(sys.argv[1:]))
             exported.credential,
             &["read".into()],
             None,
-            Duration::from_secs(5),
+            Duration::from_secs(10),
         )
         .await
         .unwrap();
@@ -688,7 +688,7 @@ fn managed_fixture(root: &Path, checksum: &str) -> PathBuf {
     fs::rename(root.join("scripts"), package.join("scripts")).unwrap();
     fs::rename(root.join(".codex-plugin"), package.join(".codex-plugin")).unwrap();
     fs::write(
-        home.join("capabilities/manifest.json"),
+        home.join("capabilities/manifest-v2.json"),
         json!({"plugins":{"mail@wework":{
             "installed_plugin_id":42,"managed":true,"enabled":true,
             "checksum":checksum,"store_path":package

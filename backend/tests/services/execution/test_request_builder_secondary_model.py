@@ -130,3 +130,45 @@ def test_generation_chat_requires_llm_secondary_model() -> None:
             secondary_model={"modelType": "video", "model": "another-video-model"},
             use_secondary_model_for_chat=True,
         )
+
+
+def test_whitelist_restricted_secondary_model_is_skipped_as_not_found() -> None:
+    """A bot secondary model restricted for this user behaves like a missing one."""
+    from app.services.chat.config.model_resolver import PublicModelAccessDeniedError
+
+    builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+    builder.db = Mock()
+    bot = SimpleNamespace(
+        id=1,
+        name="test-video-bot",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": "test-video-bot", "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": "test-ghost", "namespace": "default"},
+                "shellRef": {"name": "Chat", "namespace": "default"},
+                "agent_config": {},
+                "secondaryModelRef": {
+                    "name": "restricted-planning-llm",
+                    "namespace": "default",
+                },
+            },
+        },
+    )
+
+    with patch(
+        "app.services.chat.config.model_resolver._find_model_with_namespace",
+        side_effect=PublicModelAccessDeniedError(
+            "Model 'restricted-planning-llm' is restricted to whitelisted users"
+        ),
+    ):
+        result = builder._get_secondary_model_config(
+            bot=bot,
+            user_id=7,
+            user_name="director",
+            task_id=11,
+            team_id=13,
+        )
+
+    assert result is None

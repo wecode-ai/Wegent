@@ -97,9 +97,20 @@ async fn task_projects_join_local_space_once_without_resurrecting_archived_proje
         .find(|project| project["id"] == first["id"])
         .unwrap()["version"]
         .clone();
-    server.dispatch("projects.update", json!({"project_id": first["id"], "project": {
-        "version": project_version, "collaboration_groups": [{"id":"squad-1", "name":"Delivery team"}]
-    }})).await.unwrap();
+    server
+        .dispatch(
+            "projects.update",
+            json!({"project_id": first["id"], "project": {
+                "version": project_version, "collaboration_groups": [{
+                    "id":"squad-1",
+                    "name":"Delivery team",
+                    "leader":{"kind":"human", "id":"7"},
+                    "members":[{"kind":"human", "id":"7"}]
+                }]
+            }}),
+        )
+        .await
+        .unwrap();
     let grouped = server
         .dispatch(
             "todos.update",
@@ -175,7 +186,12 @@ async fn task_projects_join_local_space_once_without_resurrecting_archived_proje
     assert!(restored["deleted_at"].is_null());
     assert_eq!(
         restored["metadata"]["collaboration_groups"],
-        json!([{"id":"squad-1", "name":"Delivery team"}])
+        json!([{
+            "id":"squad-1",
+            "name":"Delivery team",
+            "leader":{"kind":"human", "id":"7"},
+            "members":[{"kind":"human", "id":"7"}]
+        }])
     );
     server
         .dispatch(

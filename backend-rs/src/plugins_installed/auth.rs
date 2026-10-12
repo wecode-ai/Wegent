@@ -4,14 +4,17 @@
 
 //! User authentication for the plugins-installed API.
 //!
-//! Source: `app/core/security.py` `get_current_user` plus
-//! `app/core/jwt_compat.py` and `app/core/session_token.py`. A request must
-//! carry `Authorization: Bearer <jwt>`; the token is verified with the active
-//! signing key (then configured legacy decode-only keys), must be an
-//! interactive user session payload, and must resolve to an active user row.
+//! Source: the FastAPI `OAuth2PasswordBearer` dependency in
+//! `app/core/security.py` plus `get_current_user`, `app/core/jwt_compat.py`
+//! and `app/core/session_token.py`. The scheme rejects a request that carries
+//! no bearer credential with `401 {"detail":"Not authenticated"}` before any
+//! verification runs. A present `Authorization: Bearer <jwt>` is verified with
+//! the active signing key (then configured legacy decode-only keys), must be
+//! an interactive user session payload, and must resolve to an active user
+//! row; those checks report `401 "Could not validate credentials"` and
+//! `401 "User not activated"`.
 use std::sync::Arc;
 
-use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
@@ -20,8 +23,12 @@ use serde::Deserialize;
 /// `token_use` of either absent or `wework_access`.
 const WEWORK_ACCESS_TOKEN_USE: &str = "wework_access";
 
-/// Source `security.py` `get_current_user` failure response.
-pub const UNAUTHORIZED_BODY: &str = "{\"detail\":\"Could not validate credentials\"}";
+/// Source `OAuth2PasswordBearer.make_not_authenticated_error`.
+const NOT_AUTHENTICATED_DETAIL: &str = "Not authenticated";
+/// Source `security.py` `verify_token` / `get_current_user` failure detail.
+const UNAUTHORIZED_DETAIL: &str = "Could not validate credentials";
+/// Source `security.py` `get_current_user` inactive-user detail.
+const USER_NOT_ACTIVATED_DETAIL: &str = "User not activated";
 
 #[derive(Debug, Deserialize)]
 struct Claims {
@@ -48,6 +55,12 @@ pub struct UserRow {
 
 pub struct InstalledPluginsUser(pub UserRow);
 
+/// `AuthFailure` carries only a challenge string, so the two distinct
+/// `InvalidCredentials` outcomes and the `MissingCredentials` outcome are
+/// tagged here and recovered by the authenticator's `reject` implementation.
+const NOT_AUTHENTICATED: &str = "Wegent-Plugins-Installed-Not-Authenticated";
+const USER_NOT_ACTIVATED: &str = "Wegent-Plugins-Installed-User-Not-Activated";
+
 impl std::ops::Deref for InstalledPluginsUser {
     type Target = UserRow;
 
@@ -73,12 +86,17 @@ impl brz_http_server::Authenticator<InstalledPluginsUser> for crate::auth::AppAu
         )
         .await
         .map(InstalledPluginsUser)
-        .map_err(|(status, _)| {
-            if status == brz_http_server::StatusCode::INTERNAL_SERVER_ERROR {
-                brz_http_server::AuthFailure::Internal
-            } else {
+        .map_err(|error| match error {
+            AuthError::NotAuthenticated => {
+                brz_http_server::AuthFailure::missing_credentials(NOT_AUTHENTICATED)
+            }
+            AuthError::InvalidCredentials => {
                 brz_http_server::AuthFailure::invalid_credentials("Bearer")
             }
+            AuthError::UserNotActivated => {
+                brz_http_server::AuthFailure::invalid_credentials(USER_NOT_ACTIVATED)
+            }
+            AuthError::Dependency => brz_http_server::AuthFailure::Internal,
         })
     }
 
@@ -97,10 +115,16 @@ impl brz_http_server::Authenticator<InstalledPluginsUser> for crate::auth::AppAu
     ) -> brz_http_server::Response {
         use brz_http_server::IntoHttpError as _;
         match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: NOT_AUTHENTICATED,
+            } => crate::http_compat::FastApiError::unauthorized(NOT_AUTHENTICATED_DETAIL),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: USER_NOT_ACTIVATED,
+            } => crate::http_compat::FastApiError::unauthorized(USER_NOT_ACTIVATED_DETAIL),
             brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
                 crate::http_compat::FastApiError::internal()
             }
-            _ => crate::http_compat::FastApiError::unauthorized("Could not validate credentials"),
+            _ => crate::http_compat::FastApiError::unauthorized(UNAUTHORIZED_DETAIL),
         }
         .into_http_error(arena)
     }
@@ -154,41 +178,64 @@ fn is_user_session_payload(claims: &Claims) -> bool {
         )
 }
 
-/// Extract the bearer credential like `extract_authorization_token`.
+/// Extract the bearer credential like the source `OAuth2PasswordBearer`
+/// dependency, whose `get_authorization_scheme_param` splits the header on the
+/// first space and defaults both halves to the empty string.
+///
+/// `None` means the request supplied no bearer credential at all: no
+/// `Authorization` header, an empty header, or a scheme other than `Bearer`.
+/// FastAPI rejects that before `get_current_user` runs, so it must stay
+/// distinct from a credential that verification rejects. A `Bearer` header with
+/// an empty credential still reaches verification and reports the
+/// invalid-credential detail.
 fn bearer_token(headers: &impl crate::headers::Headers) -> Option<&str> {
     let value = headers.header("authorization")?;
-    let (scheme, token) = value.split_once(' ')?;
-    if scheme.eq_ignore_ascii_case("bearer") && !token.is_empty() {
-        Some(token)
-    } else {
-        None
-    }
+    let (scheme, token) = value.split_once(' ').unwrap_or((value, ""));
+    scheme.eq_ignore_ascii_case("bearer").then_some(token)
 }
 
-/// Authenticate the request. Returns `Err((status, body))` on failure.
+/// The source authentication chain's distinct failure outcomes.
+///
+/// The response detail depends on which check failed, so the target keeps them
+/// apart instead of collapsing them into one 401.
+#[derive(Debug)]
+pub enum AuthError {
+    /// `401 "Not authenticated"`: no bearer credential was supplied.
+    NotAuthenticated,
+    /// `401 "Could not validate credentials"`: verification failed, the token
+    /// carried no usable `sub`, or no user row matched.
+    InvalidCredentials,
+    /// `401 "User not activated"`: the resolved row is inactive.
+    UserNotActivated,
+    /// The user lookup failed; the source maps unexpected failures to its 500
+    /// handler outside this endpoint's control.
+    Dependency,
+}
+
+/// Authenticate the request with the exact failure classification of the
+/// source scheme plus `get_current_user`.
 pub async fn authenticate<M>(
     mysql: &M,
     headers: &impl crate::headers::Headers,
     keys: &[Arc<str>],
     algorithm: &str,
-) -> Result<UserRow, (StatusCode, &'static str)>
+) -> Result<UserRow, AuthError>
 where
     M: Mysql,
 {
     let Some(token) = bearer_token(headers) else {
-        return Err((StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY));
+        return Err(AuthError::NotAuthenticated);
     };
     let Some(username) = verify_token(token, keys, algorithm) else {
-        return Err((StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY));
+        return Err(AuthError::InvalidCredentials);
     };
     match find_user_by_name(mysql, &username).await {
         Ok(Some(user)) if user.is_active => Ok(user),
-        Ok(_) => Err((StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY)),
-        // Preserve the dependency error category; the source maps unexpected
-        // failures to a 500 handler outside this endpoint's control.
+        Ok(Some(_)) => Err(AuthError::UserNotActivated),
+        Ok(None) => Err(AuthError::InvalidCredentials),
         Err(error) => {
             tracing::error!(%error, %username, "authentication user lookup failed");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
+            Err(AuthError::Dependency)
         }
     }
 }
@@ -231,9 +278,67 @@ mod tests {
             bearer_token(&headers_with("bearer abc")).map(str::to_string),
             Some("abc".to_string())
         );
+        // A non-bearer scheme, a bare scheme, and an empty credential all keep
+        // the source split: only the scheme selects the authentication branch.
         assert_eq!(bearer_token(&headers_with("abc")), None);
-        assert_eq!(bearer_token(&headers_with("Bearer ")), None);
+        assert_eq!(bearer_token(&headers_with("Basic abc")), None);
+        assert_eq!(
+            bearer_token(&headers_with("Bearer ")).map(str::to_string),
+            Some(String::new())
+        );
+        assert_eq!(
+            bearer_token(&headers_with("Bearer")).map(str::to_string),
+            Some(String::new())
+        );
+        assert_eq!(bearer_token(&headers_with("")), None);
         assert_eq!(bearer_token(&crate::headers::HeaderSlice::new(&[])), None);
+    }
+
+    /// The representative recorded case sends no `Authorization` header. The
+    /// source FastAPI dependency rejects it with `401 "Not authenticated"`
+    /// before `get_current_user` runs, so the target must not report the
+    /// invalid-credential detail for it.
+    #[tokio::test]
+    async fn missing_bearer_credential_is_not_authenticated() {
+        let keys = test_keys();
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let no_header = crate::headers::HeaderSlice::new(&[]);
+        for (headers, header) in [
+            (no_header, "no header"),
+            (headers_with("Basic abc"), "non-bearer scheme"),
+            (headers_with(""), "empty header"),
+        ] {
+            let error = authenticate(&mysql, &headers, &keys, "HS256")
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{header} must be rejected"));
+            assert!(
+                matches!(error, AuthError::NotAuthenticated),
+                "{header} reports the wrong failure"
+            );
+        }
+        assert!(
+            mysql.queries().is_empty(),
+            "the scheme rejects before the user lookup"
+        );
+    }
+
+    /// A `Bearer` header with an empty credential reaches verification, which
+    /// the source reports as `401 "Could not validate credentials"`.
+    #[tokio::test]
+    async fn empty_bearer_credential_is_invalid_credentials() {
+        let keys = test_keys();
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        for value in ["Bearer ", "Bearer"] {
+            let error = authenticate(&mysql, &headers_with(value), &keys, "HS256")
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{value:?} must be rejected"));
+            assert!(
+                matches!(error, AuthError::InvalidCredentials),
+                "{value:?} reports the wrong failure"
+            );
+        }
     }
 
     #[test]

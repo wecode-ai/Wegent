@@ -23,11 +23,11 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_notification_requires_user_input, codex_runtime_approval_policy,
-        select_wework_codex_user_instructions, AgentCommandPlanner, AgentProcessEngine,
-        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
-        CodexAppServerTurnOptions, CodexAuthMutationError, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        bind_codex_thread_model_route, codex_notification_requires_user_input,
+        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
+        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexAuthMutationError,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
@@ -54,6 +54,7 @@ const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
 const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const INTERACTION_WAITING_FOR_USER_INPUT: &str = "waitingForUserInput";
+const COLLABORATION_MANAGER_CONTEXT_KEY: &str = "collaborationManagerContext";
 
 enum RestoreStartupState {
     Waiting {
@@ -148,8 +149,9 @@ use super::{
     codex_notifications::{codex_notification, is_root_codex_turn_event},
     codex_rollout::rollout_context_usage,
     codex_transcript_page::{
-        load_codex_transcript, load_codex_transcript_navigation, CodexTranscriptDirection,
-        CodexTranscriptNavigation, CodexTranscriptPage, CodexTranscriptRequest,
+        load_codex_transcript, load_codex_transcript_navigation, read_codex_thread_metadata,
+        CodexTranscriptDirection, CodexTranscriptNavigation, CodexTranscriptPage,
+        CodexTranscriptRequest,
     },
     connectors::ConnectorRuntime,
     events::{
@@ -169,8 +171,9 @@ use super::{
         bind_runtime_handle_user_message_presentation_to_turn, cached_messages,
         clear_completed_transcript_messages, clear_runtime_handle_messages,
         clear_transcript_snapshot_messages, completed_transcript_messages,
-        set_runtime_handle_messages, set_transcript_snapshot_messages,
-        transcript_snapshot_messages, user_message_presentations,
+        merge_assistant_transcript_message, set_runtime_handle_messages,
+        set_transcript_snapshot_messages, transcript_snapshot_messages,
+        transcript_snapshot_pagination, user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
@@ -200,8 +203,19 @@ const CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL: Duration = Duration::from_secs(30);
 const CODEX_TRANSCRIPT_NAVIGATION_CACHE_MAX_ENTRIES: usize = 64;
 const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
-const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
 const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
+/// How long a context-compaction action waits for the Codex app-server to finish
+/// the compaction turn.
+const CONTEXT_COMPACTION_WAIT_BUDGET: Duration = Duration::from_secs(120);
+/// Margin covering the Codex app-server round trips around the wait loop and the
+/// App-IPC response for the action.
+const CONTEXT_COMPACTION_ACTION_MARGIN: Duration = Duration::from_secs(60);
+/// Wall-clock budget a single context-compaction action may consume: the wait
+/// loop below plus the round trips around it. The App-IPC deadline for
+/// `runtime.tasks.compact` must stay above this budget, otherwise the frontend
+/// reports a timeout for an action that is still running.
+pub(crate) const CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS: u64 =
+    CONTEXT_COMPACTION_WAIT_BUDGET.as_secs() + CONTEXT_COMPACTION_ACTION_MARGIN.as_secs();
 const PROVIDER_TURN_INTERRUPT_WAIT_MS: u64 = 100;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
@@ -258,6 +272,8 @@ struct SpawnTurnRequest {
     #[serde(default = "default_turn_runtime")]
     runtime: String,
     request: ExecutionRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    send_payload: Option<Value>,
     direct_thread_id: Option<String>,
     fork_thread_id: Option<String>,
     fork_thread_path: Option<String>,
@@ -288,7 +304,10 @@ impl RuntimeTurnScheduler {
     }
 
     fn enqueue(&mut self, turn: SpawnTurnRequest) -> Option<SpawnTurnRequest> {
-        if self.active_tasks >= self.max_concurrent_tasks || !self.queued_turns.is_empty() {
+        if self.active_tasks >= self.max_concurrent_tasks
+            || self.active_task_ids.contains(&turn.local_task_id)
+            || !self.queued_turns.is_empty()
+        {
             self.queued_turns.push_back(turn);
             return None;
         }
@@ -301,6 +320,10 @@ impl RuntimeTurnScheduler {
         self.active_tasks += 1;
         self.active_task_ids.insert(turn.local_task_id.clone());
         turn
+    }
+
+    fn enqueue_queued(&mut self, turn: SpawnTurnRequest) {
+        self.queued_turns.push_back(turn);
     }
 
     fn queued_position(&self, local_task_id: &str) -> Option<usize> {
@@ -349,11 +372,21 @@ impl RuntimeTurnScheduler {
 
     fn take_available(&mut self) -> Vec<SpawnTurnRequest> {
         let available = self.max_concurrent_tasks.saturating_sub(self.active_tasks);
-        let turns = (0..available)
-            .filter_map(|_| self.queued_turns.pop_front())
-            .collect::<Vec<_>>();
-        self.active_task_ids
-            .extend(turns.iter().map(|turn| turn.local_task_id.clone()));
+        let mut turns = Vec::with_capacity(available);
+        while turns.len() < available {
+            let Some(position) = self
+                .queued_turns
+                .iter()
+                .position(|turn| !self.active_task_ids.contains(&turn.local_task_id))
+            else {
+                break;
+            };
+            let Some(turn) = self.queued_turns.remove(position) else {
+                break;
+            };
+            self.active_task_ids.insert(turn.local_task_id.clone());
+            turns.push(turn);
+        }
         self.active_tasks += turns.len();
         turns
     }
@@ -575,8 +608,11 @@ pub struct RuntimeWorkRpcHandler {
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    local_issue_scheduler_started: Arc<AtomicBool>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     automation_store: AutomationStore,
     task_store_path: Arc<PathBuf>,
@@ -843,8 +879,11 @@ impl RuntimeWorkRpcHandler {
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             notification_router: Arc::new(Mutex::new(None)),
+            local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
             task_store_path: Arc::new(LocalTaskStore::default_path()),
@@ -913,6 +952,7 @@ impl RuntimeWorkRpcHandler {
             .startup_recovery_deferred
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
+        handler.start_local_issue_scheduler();
         handler
     }
 
@@ -921,6 +961,8 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        self.register_cloud_collaboration_dispatcher();
+        self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
         self
     }
@@ -996,6 +1038,36 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    fn retain_runtime_model_config(&self, local_task_id: &str, model_config: &Value) {
+        let mut configs = self
+            .runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned");
+        if model_config
+            .as_object()
+            .is_some_and(|value| !value.is_empty())
+        {
+            configs.insert(local_task_id.to_owned(), model_config.clone());
+        } else {
+            configs.remove(local_task_id);
+        }
+    }
+
+    fn runtime_model_config(&self, local_task_id: &str) -> Option<Value> {
+        self.runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned")
+            .get(local_task_id)
+            .cloned()
+    }
+
+    fn forget_runtime_model_config(&self, local_task_id: &str) {
+        self.runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned")
+            .remove(local_task_id);
+    }
+
     /// Rewrite a loopback cloud-model gateway to the backend this device reaches.
     ///
     /// The connection snapshot is unavailable before the device finishes
@@ -1037,6 +1109,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.transcript.restore" => self.restore_transcript_segments(payload).await,
             "runtime.tasks.transcript.acknowledge" => self.acknowledge_transcript_turn(payload),
             "runtime.tasks.create" => self.create_task(payload).await,
+            "runtime.collaboration.dispatch" => self.create_collaboration_dispatch(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
@@ -1218,6 +1291,7 @@ fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
 
 include!("handler/helpers.rs");
 
+mod collaboration;
 mod composer_catalog;
 mod runtime_rpc;
 

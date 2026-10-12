@@ -1,3 +1,4 @@
+import { ProviderSettingsSection } from './ProviderSettingsSection'
 import {
   AlertCircle,
   ChevronDown,
@@ -78,8 +79,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
 import { openExternalUrl } from '@/lib/external-links'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
-import { defaultAppPreferences, updateAppPreferences } from '@/desktop/appPreferences'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { updateAppPreferences } from '@/desktop/appPreferences'
+import { useLocalCodexSubscriptionEnabled } from '@/features/app-preferences/useLocalCodexSubscriptionEnabled'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { track } from '@/telemetry/client'
@@ -1120,7 +1121,9 @@ function LocalModelSettingsSection({
   onOpenCloudSettings?: () => void
 }) {
   const { t } = useTranslation('common')
-  const [models, setModels] = useState<LocalModelConfig[]>(() => listLocalModelConfigs())
+  const [models, setModels] = useState<LocalModelConfig[]>(() =>
+    listLocalModelConfigs().filter(model => !model.providerConnectionId)
+  )
   const [editingId, setEditingId] = useState<string | null>(null)
   const [formVisible, setFormVisible] = useState(false)
   const [form, setForm] = useState<LocalModelFormState>(EMPTY_LOCAL_MODEL_FORM)
@@ -1139,7 +1142,7 @@ function LocalModelSettingsSection({
   const [restartingCatalog, setRestartingCatalog] = useState(false)
 
   const refreshModels = useCallback(() => {
-    setModels(listLocalModelConfigs())
+    setModels(listLocalModelConfigs().filter(model => !model.providerConnectionId))
   }, [])
 
   useEffect(() => {
@@ -2823,10 +2826,13 @@ function ModelInterfaceSettingsSection({
   onOpenCloudSettings?: () => void
 }) {
   return (
-    <LocalModelSettingsSection
-      cloudConnection={cloudConnection}
-      onOpenCloudSettings={onOpenCloudSettings}
-    />
+    <div className="space-y-6">
+      <ProviderSettingsSection />
+      <LocalModelSettingsSection
+        cloudConnection={cloudConnection}
+        onOpenCloudSettings={onOpenCloudSettings}
+      />
+    </div>
   )
 }
 
@@ -2871,9 +2877,11 @@ function LocalCodexSubscriptionToggle({
 function CodexAuthSettingsSection({
   children,
   isConnected,
+  showCloudStatus,
 }: {
   children: React.ReactNode
   isConnected: boolean
+  showCloudStatus: boolean
 }) {
   const { t } = useTranslation('common')
 
@@ -2885,7 +2893,7 @@ function CodexAuthSettingsSection({
             <h2 className="text-base font-semibold text-text-primary">
               {t('workbench.codex_settings_title', 'Codex 设置')}
             </h2>
-            {isConnected ? (
+            {!showCloudStatus ? null : isConnected ? (
               <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
                 {t('workbench.cloud_connection_status_connected', '已连接云端')}
               </span>
@@ -2952,16 +2960,8 @@ export function ModelSettingsPage({
   const [codexOfficialLoading, setCodexOfficialLoading] = useState(true)
   const [codexOfficialError, setCodexOfficialError] = useState<string | null>(null)
 
-  const appPreferences = useAppPreferencesState()
-  // When the preferences provider is absent (e.g. legacy tests that render this
-  // page without AppPreferencesProvider) default to enabled so the Codex surface
-  // behaves as before. Once loaded, honor the persisted preference.
-  const subscriptionEnabled = !appPreferences
-    ? true
-    : appPreferences.loaded
-      ? appPreferences.preferences.localCodexSubscriptionEnabled
-      : defaultAppPreferences.localCodexSubscriptionEnabled
-  const subscriptionLoaded = !appPreferences ? true : appPreferences.loaded
+  const { enabled: subscriptionEnabled, loaded: subscriptionLoaded } =
+    useLocalCodexSubscriptionEnabled()
   const [restartDialogOpen, setRestartDialogOpen] = useState(false)
   const [restartPending, setRestartPending] = useState(false)
   const pendingSubscriptionEnabledRef = useRef<boolean | null>(null)
@@ -3352,7 +3352,7 @@ export function ModelSettingsPage({
           />
         </div>
         <div className="mt-8">
-          <CodexAuthSettingsSection isConnected={false}>
+          <CodexAuthSettingsSection isConnected={false} showCloudStatus={subscriptionEnabled}>
             <LocalCodexSubscriptionToggle
               enabled={subscriptionEnabled}
               loaded={subscriptionLoaded}
@@ -3416,7 +3416,7 @@ export function ModelSettingsPage({
         />
       </div>
       <div className="mt-8">
-        <CodexAuthSettingsSection isConnected>
+        <CodexAuthSettingsSection isConnected showCloudStatus={subscriptionEnabled}>
           <LocalCodexSubscriptionToggle
             enabled={subscriptionEnabled}
             loaded={subscriptionLoaded}

@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -30,29 +30,23 @@ from app.services.knowledge.protected_mediation import (
 from app.services.knowledge.retrieval_persistence import (
     retrieval_persistence_service,
 )
-from app.services.rag.gateway_factory import get_query_gateway
-from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag import direct_injection
 from app.services.rag.remote_gateway import (
     RemoteRagGateway,
     RemoteRagGatewayError,
-    should_fallback_to_local,
 )
-from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from app.services.rag.runtime_specs import QueryRuntimeSpec
 from app.services.rag.sources import (
     RetrievalContext,
     RetrievalSourceSummary,
     retrieval_source_registry,
 )
 from shared.models import (
-    RemoteDropKnowledgeIndexRequest,
-    RemoteListChunkRecord,
-    RemoteListChunksRequest,
-    RemoteListChunksResponse,
-    RemotePurgeKnowledgeIndexRequest,
     RetrievalScope,
     SearchHints,
 )
+from shared.telemetry.decorators import trace_async
 
 # Constants for document reading pagination
 DEFAULT_READ_DOC_LIMIT = 50_000  # Default characters to return
@@ -102,19 +96,12 @@ class DirectInjectionRuntimeContext(BaseModel):
 class RetrievePersistenceContext(BaseModel):
     """Persistence context for Backend-side SubtaskContext updates."""
 
+    model_config = ConfigDict(extra="forbid")
+
     user_subtask_id: int = Field(
         ...,
         ge=1,
         description="User subtask ID whose knowledge base context should be updated",
-    )
-    user_id: int = Field(
-        ...,
-        ge=0,
-        description="User ID used when auto-creating the knowledge base context",
-    )
-    restricted_mode: bool = Field(
-        default=False,
-        description="Whether the retrieval ran in restricted search-only mode",
     )
 
 
@@ -153,10 +140,11 @@ class InternalRetrieveRequest(BaseModel):
         default=None,
         description="Optional retrieval hints for dense rewrite and sparse planning",
     )
-    user_id: Optional[int] = Field(
-        default=None,
-        ge=0,
-        description="Top-level retrieval identity for external sources",
+    user_id: int = Field(
+        ...,
+        gt=0,
+        strict=True,
+        description="Query user identity for retrieval, mediation, and persistence",
     )
     knowledge_base_id: Optional[int] = Field(
         default=None, description="Single knowledge base ID"
@@ -197,6 +185,13 @@ class InternalRetrieveRequest(BaseModel):
     persistence_context: Optional[RetrievePersistenceContext] = Field(
         default=None,
         description="Optional SubtaskContext persistence metadata handled entirely in Backend",
+    )
+    restricted_mode: bool = Field(
+        default=False,
+        description=(
+            "Whether the retrieval runs in restricted search-only mode. "
+            "Independent of the optional persistence metadata."
+        ),
     )
 
     @field_validator("document_ids")
@@ -371,9 +366,7 @@ def _ignored_external_summary(
 
 
 def _external_retrieval_context(request: InternalRetrieveRequest) -> RetrievalContext:
-    """Build provider context, failing fast when caller lacks identity."""
-    if not request.user_id:
-        raise ValueError("user_id is required for external knowledge retrieval")
+    """Build provider context from the validated query identity."""
     return RetrievalContext(user_id=request.user_id, user_name=request.user_name)
 
 
@@ -494,7 +487,6 @@ async def _execute_scoped_retrieve(
     resolved_document_ids: list[int],
     runtime_context: DirectInjectionRuntimeContext | None,
     restricted_mode: bool,
-    persistence_context: RetrievePersistenceContext | None,
 ) -> dict:
     """Execute retrieve grouped by per-KB scopes."""
     if resolved_document_ids:
@@ -531,6 +523,7 @@ async def _execute_scoped_retrieve(
     all_records: list[dict] = []
     modes: set[str] = set()
     total_estimated_tokens = 0
+    read_user_id, task_id = _resolve_read_identity(db, request)
     for kb_ids, group_document_ids in retrieve_groups:
         retrieval_scope = (
             RetrievalScope(document_ids=group_document_ids)
@@ -538,15 +531,15 @@ async def _execute_scoped_retrieve(
             else None
         )
         runtime_spec = runtime_resolver.build_query_runtime_spec(
-            db=db,
             knowledge_base_ids=kb_ids,
             query=request.query,
             search_hints=request.search_hints,
             max_results=request.max_results,
             scope=retrieval_scope,
             route_mode=request.route_mode,
-            user_id=persistence_context.user_id if persistence_context else None,
+            user_id=request.user_id,
             user_name=request.user_name,
+            task_id=task_id,
             context_window=runtime_context.context_window if runtime_context else None,
             used_context_tokens=(
                 runtime_context.used_context_tokens if runtime_context else 0
@@ -563,7 +556,7 @@ async def _execute_scoped_retrieve(
             restricted_mode=restricted_mode,
         )
         runtime_spec = _finalize_query_runtime_spec(runtime_spec, db, runtime_context)
-        result = await _execute_query_with_remote_fallback(runtime_spec, db)
+        result = await _execute_query(runtime_spec, db, task_id=task_id)
         modes.add(result.get("mode", "rag_retrieval"))
         total_estimated_tokens += result.get("total_estimated_tokens", 0)
         all_records.extend(result.get("records", []))
@@ -579,11 +572,67 @@ async def _execute_scoped_retrieve(
     }
 
 
-def _resolve_query_gateway(runtime_spec):
-    route_mode = getattr(runtime_spec, "route_mode", "auto")
-    if route_mode == "rag_retrieval":
-        return get_query_gateway()
-    return LocalRagGateway()
+async def _retrieve_remotely(
+    runtime_spec: QueryRuntimeSpec, db: Session, *, task_id: int | None = None
+) -> dict:
+    """Execute retrieval in knowledge_runtime by reference.
+
+    The request carries the knowledge base IDs, not the resolved execution
+    config: knowledge_runtime resolves the config for each knowledge base itself.
+    """
+    authorized = runtime_spec.authorized_resources or (
+        runtime_resolver.build_query_authorized_resources(
+            db=db,
+            knowledge_base_ids=runtime_spec.knowledge_base_ids,
+            read_user_id=runtime_spec.user_id,
+            task_id=task_id,
+        )
+    )
+    retrieval_spec = runtime_spec.model_copy(
+        update={"route_mode": "rag_retrieval", "authorized_resources": authorized}
+    )
+    return await RemoteRagGateway().query(retrieval_spec, db=db)
+
+
+async def _run_direct_injection(
+    runtime_spec: QueryRuntimeSpec, db: Session, *, task_id: int | None = None
+) -> dict:
+    """Run Backend-side direct injection, else retrieve remotely.
+
+    Direct injection only reads the original documents from MySQL. A rejected
+    injection is executed by knowledge_runtime, never in the Backend process.
+    """
+    injection_result = await direct_injection.try_direct_injection_with_budget(
+        knowledge_base_ids=runtime_spec.knowledge_base_ids,
+        scope=runtime_spec.scope,
+        db=db,
+        route_mode=runtime_spec.route_mode,
+        budget=runtime_spec.direct_injection_budget,
+        metadata_condition=runtime_spec.metadata_condition,
+    )
+    if injection_result is not None:
+        return injection_result
+    return await _retrieve_remotely(runtime_spec, db, task_id=task_id)
+
+
+def _resolve_read_identity(
+    db: Session,
+    request: InternalRetrieveRequest,
+) -> tuple[int | None, int | None]:
+    """Return the caller identity and the task scope it reads within.
+
+    The task is derived from the user subtask the caller already reports, so
+    task-bound knowledge bases keep their delegated read semantics.
+    """
+    from app.services.knowledge.knowledge_service import KnowledgeService
+
+    persistence_context = request.persistence_context
+    read_user_id = request.user_id
+    task_id = KnowledgeService.resolve_task_id_for_user_subtask(
+        db,
+        persistence_context.user_subtask_id if persistence_context else None,
+    )
+    return read_user_id, task_id
 
 
 def _finalize_query_runtime_spec(
@@ -603,9 +652,8 @@ def _finalize_query_runtime_spec(
     if not all(hasattr(runtime_spec, attr) for attr in required_attributes):
         return runtime_spec
 
-    retrieval_service = RetrievalService()
     budget = runtime_context or getattr(runtime_spec, "direct_injection_budget", None)
-    resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
+    resolved_route_mode = direct_injection.decide_route_mode_for_chat_shell(
         query=runtime_spec.query,
         knowledge_base_ids=runtime_spec.knowledge_base_ids,
         db=db,
@@ -621,34 +669,17 @@ def _finalize_query_runtime_spec(
     return runtime_spec.model_copy(update={"route_mode": resolved_route_mode})
 
 
-async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
-    rag_gateway = _resolve_query_gateway(runtime_spec)
-    if (
-        isinstance(rag_gateway, RemoteRagGateway)
-        and getattr(runtime_spec, "route_mode", None) == "rag_retrieval"
-        and not getattr(runtime_spec, "knowledge_base_configs", None)
-    ):
-        runtime_spec = runtime_spec.model_copy(
-            update={
-                "knowledge_base_configs": runtime_resolver.build_query_knowledge_base_configs(
-                    db=db,
-                    knowledge_base_ids=runtime_spec.knowledge_base_ids,
-                    current_user_id=runtime_spec.user_id,
-                    user_name=runtime_spec.user_name,
-                )
-            }
-        )
-    try:
-        return await rag_gateway.query(runtime_spec, db=db)
-    except RemoteRagGatewayError as exc:
-        if not should_fallback_to_local(exc):
-            raise
-        logger.warning(
-            "[internal_rag] Remote query failed for KBs %s, falling back to local gateway: %s",
-            getattr(runtime_spec, "knowledge_base_ids", []),
-            exc,
-        )
-        return await LocalRagGateway().query(runtime_spec, db=db)
+@trace_async(
+    span_name="internal_rag.execute_query", tracer_name="app.api.endpoints.internal.rag"
+)
+async def _execute_query(
+    runtime_spec: QueryRuntimeSpec, db: Session, *, task_id: int | None = None
+) -> dict:
+    """Resolve direct injection in the Backend, otherwise retrieve remotely."""
+    if getattr(runtime_spec, "route_mode", None) == "direct_injection":
+        return await _run_direct_injection(runtime_spec, db, task_id=task_id)
+
+    return await _retrieve_remotely(runtime_spec, db, task_id=task_id)
 
 
 @router.post(
@@ -718,9 +749,7 @@ async def internal_retrieve(
 
         runtime_context = request.runtime_context
         persistence_context = request.persistence_context
-        restricted_mode = bool(
-            persistence_context and persistence_context.restricted_mode
-        )
+        restricted_mode = request.restricted_mode
 
         if not knowledge_base_ids:
             result = {
@@ -737,11 +766,10 @@ async def internal_retrieve(
                 resolved_document_ids=resolved_document_ids,
                 runtime_context=runtime_context,
                 restricted_mode=restricted_mode,
-                persistence_context=persistence_context,
             )
         else:
+            read_user_id, task_id = _resolve_read_identity(db, request)
             runtime_spec = runtime_resolver.build_query_runtime_spec(
-                db=db,
                 knowledge_base_ids=knowledge_base_ids,
                 query=request.query,
                 search_hints=request.search_hints,
@@ -752,8 +780,9 @@ async def internal_retrieve(
                     else None
                 ),
                 route_mode=request.route_mode,
-                user_id=persistence_context.user_id if persistence_context else None,
+                user_id=request.user_id,
                 user_name=request.user_name,
+                task_id=task_id,
                 context_window=(
                     runtime_context.context_window if runtime_context else None
                 ),
@@ -776,7 +805,7 @@ async def internal_retrieve(
                 db,
                 runtime_context,
             )
-            result = await _execute_query_with_remote_fallback(runtime_spec, db)
+            result = await _execute_query(runtime_spec, db, task_id=task_id)
 
         records = result.get("records", [])
         response_records = list(records)
@@ -793,12 +822,12 @@ async def internal_retrieve(
         ) + sum(len(record.content) for record in external_records)
         total_content_kb = total_content_chars / 1024
         available_for_kb = (
-            RetrievalService._calculate_ratio_based_direct_injection_budget(
+            direct_injection.calculate_ratio_based_direct_injection_budget(
                 runtime_context.context_window if runtime_context else None
             )
         )
         available_injection_tokens = (
-            RetrievalService._calculate_available_injection_tokens(
+            direct_injection.calculate_available_injection_tokens(
                 context_window=(
                     runtime_context.context_window if runtime_context else None
                 ),
@@ -848,7 +877,7 @@ async def internal_retrieve(
             retrieval_persistence_service.persist_retrieval_result(
                 db=db,
                 user_subtask_id=persistence_context.user_subtask_id,
-                user_id=persistence_context.user_id,
+                user_id=request.user_id,
                 query=request.query,
                 mode=internal_mode,
                 records=records,
@@ -868,7 +897,7 @@ async def internal_retrieve(
                 ),
                 knowledge_base_ids=knowledge_base_ids,
                 total_estimated_tokens=total_estimated_tokens,
-                user_id=persistence_context.user_id if persistence_context else None,
+                user_id=request.user_id,
                 user_name=request.user_name or "system",
             )
             if external_records or source_summaries:
@@ -1083,125 +1112,6 @@ async def get_knowledge_base_info(
     )
 
 
-@router.post("/all-chunks", response_model=RemoteListChunksResponse)
-async def get_all_chunks(
-    request: RemoteListChunksRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Legacy internal endpoint for fetching all chunks for direct injection.
-
-    This endpoint retrieves all chunks stored in a knowledge base,
-    used when the total content fits within the model's context window.
-
-    Args:
-        request: Request with knowledge base ID and max chunks
-        db: Database session
-
-    Returns:
-        All chunks from the knowledge base
-    """
-    try:
-        runtime_spec = runtime_resolver.build_public_list_chunks_runtime_spec(
-            db=db,
-            knowledge_base_id=request.knowledge_base_id,
-            user_id=request.user_id,
-            user_name=None,
-            max_chunks=request.max_chunks,
-            query=request.query,
-            metadata_condition=request.metadata_condition,
-        )
-        result = await LocalRagGateway().list_chunks(
-            runtime_spec,
-            db=db,
-        )
-        chunks = result.get("chunks", [])
-
-        # Calculate total content size for logging
-        total_content_chars = sum(len(c.get("content", "")) for c in chunks)
-        total_content_kb = total_content_chars / 1024
-
-        logger.info(
-            "[internal_rag] Retrieved all %d chunks from KB %d, total_size=%.2fKB",
-            len(chunks),
-            request.knowledge_base_id,
-            total_content_kb,
-        )
-
-        return RemoteListChunksResponse(
-            chunks=[
-                RemoteListChunkRecord(
-                    content=c.get("content", ""),
-                    title=c.get("title", "Unknown"),
-                    chunk_id=c.get("chunk_id"),
-                    doc_ref=c.get("doc_ref"),
-                    metadata=c.get("metadata"),
-                )
-                for c in chunks
-            ],
-            total=result.get("total", len(chunks)),
-        )
-
-    except ValueError as e:
-        logger.warning("[internal_rag] All chunks error: %s", e)
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error("[internal_rag] All chunks failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/purge-knowledge-index")
-async def purge_knowledge_index(
-    request: RemotePurgeKnowledgeIndexRequest,
-    db: Session = Depends(get_db),
-):
-    """Delete all indexed chunks for one knowledge base from the local runtime."""
-    try:
-        runtime_spec = runtime_resolver.build_public_purge_index_runtime_spec(
-            db=db,
-            knowledge_base_id=request.knowledge_base_id,
-            user_id=request.user_id,
-            user_name=None,
-        )
-        return await LocalRagGateway().purge_knowledge_index(runtime_spec, db=db)
-    except ValueError as e:
-        logger.warning("[internal_rag] Purge knowledge index error: %s", e)
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(
-            "[internal_rag] Purge knowledge index failed: %s",
-            e,
-            exc_info=True,
-        )
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/drop-knowledge-index")
-async def drop_knowledge_index(
-    request: RemoteDropKnowledgeIndexRequest,
-    db: Session = Depends(get_db),
-):
-    """Physically drop the dedicated index/collection for one knowledge base."""
-    try:
-        runtime_spec = runtime_resolver.build_public_drop_index_runtime_spec(
-            db=db,
-            knowledge_base_id=request.knowledge_base_id,
-            user_id=request.user_id,
-            user_name=None,
-        )
-        return await LocalRagGateway().drop_knowledge_index(runtime_spec, db=db)
-    except ValueError as e:
-        logger.warning("[internal_rag] Drop knowledge index error: %s", e)
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(
-            "[internal_rag] Drop knowledge index failed: %s",
-            e,
-            exc_info=True,
-        )
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 # ============== Document Listing API (kb_ls) ==============
 
 
@@ -1383,6 +1293,7 @@ class ReadDocRequest(BaseModel):
 class ReadDocsRequest(BaseModel):
     """Batch request for reading document content."""
 
+    user_id: int = Field(..., gt=0, strict=True, description="Document reader identity")
     document_ids: list[int] = Field(..., description="Document IDs")
     offset: int = Field(default=0, ge=0, description="Start position in characters")
     limit: int = Field(
@@ -1550,7 +1461,7 @@ async def read_documents(
             user_subtask_id=(
                 persistence_context.user_subtask_id if persistence_context else None
             ),
-            user_id=persistence_context.user_id if persistence_context else None,
+            user_id=request.user_id,
         )
 
         logger.info(

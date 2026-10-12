@@ -9,15 +9,17 @@
 //! parameters before the service runs, and returns the
 //! `ResourceLibraryDiscoveryList` body.
 
-use brz_http_server::{Binary, HttpResponse};
+use brz_http_server::HttpResponse;
 use serde::Serialize;
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::teams::group_membership::ErpContext;
 
-use super::models::{DiscoveryParams, DiscoveryQuery, parse_tags, resource_type_entry};
-use super::service::{internal_error_body, list_public};
+use super::models::{
+    DiscoveryList, DiscoveryParams, DiscoveryQuery, parse_tags, resource_type_entry,
+};
+use super::service::list_public;
 
 /// `^(agent|skill|model|shell|retriever)$`.
 const RESOURCE_TYPE_PATTERN: &str = "^(agent|skill|model|shell|retriever)$";
@@ -36,12 +38,17 @@ const LIMIT_DEFAULT: i64 = 20;
 
 /// GET /api/resource-library/listings: the listings free function, injecting
 /// the process-lifetime application state.
+///
+/// The source declares `response_model=ResourceLibraryDiscoveryList`, so
+/// FastAPI renders the model as `application/json`; returning the serializable
+/// view keeps that content type instead of the raw-bytes
+/// `application/octet-stream` default.
 #[brz_http_server::get("/api/resource-library/listings")]
 async fn list_resource_library_listings(
     #[inject(state)] state: &AppState,
     #[auth] user: crate::auth::SessionUser,
     query: brz_http_server::Query<DiscoveryQuery>,
-) -> Result<HttpResponse<Binary>, FastApiError> {
+) -> Result<HttpResponse<DiscoveryList>, FastApiError> {
     let params = parse_params(&query)?;
     let mysql = &state.mysql;
     let erp = ErpContext {
@@ -49,14 +56,7 @@ async fn list_resource_library_listings(
         redis: state.redis.as_ref(),
     };
     let body = list_public(mysql, &erp, i64::from(user.id), &params).await?;
-    let bytes = match serde_json::to_vec(&body) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            tracing::error!(%error, "failed to serialize resource-library listings");
-            return Err(internal_error_body());
-        }
-    };
-    Ok(HttpResponse::new(Binary::new(bytes)))
+    Ok(HttpResponse::new(body))
 }
 
 /// FastAPI query validation for `list_resource_library`.
@@ -360,5 +360,77 @@ mod tests {
         let detail = parse_params(&raw).unwrap_err().validation_detail();
         assert!(detail.contains("\"int_parsing\""));
         assert!(detail.contains("\"bool_parsing\""));
+    }
+
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpStream;
+
+    // A dedicated test group (separate from the crate's real `http_apis`
+    // group) so the probe's `/api/resource-library/listings` route does not
+    // collide with the real handler's registration.
+    mod probe {
+        brz_http_server::registry!(group = listings_probe, dependencies());
+    }
+
+    /// Renders the discovery-list success value through the route macro over a
+    /// real socket. The source declares
+    /// `response_model=ResourceLibraryDiscoveryList`, so the response must
+    /// answer `application/json`; returning raw `Binary` bytes would answer
+    /// `application/octet-stream`.
+    #[brz_http_server::get(
+        "/api/resource-library/listings",
+        group = probe::listings_probe,
+        access = public
+    )]
+    async fn listings_probe() -> Result<HttpResponse<DiscoveryList>, FastApiError> {
+        Ok(HttpResponse::new(DiscoveryList {
+            items: Vec::new(),
+            has_more: false,
+            next_cursor: None,
+            limit: 20,
+        }))
+    }
+
+    async fn serve_listings() -> String {
+        let handler =
+            brz_http_server::handlers!(; group = probe::listings_probe).expect("probe router");
+        let server = brz_http_server::Server::bind("127.0.0.1:0".parse().unwrap(), handler)
+            .await
+            .expect("bind test server");
+        let address = server.local_addr().expect("local address");
+        let serve = tokio::spawn(async move {
+            let _ = server.serve_until(std::future::pending::<()>()).await;
+        });
+        let mut client = TcpStream::connect(address).await.expect("connect");
+        client
+            .write_all(
+                b"GET /api/resource-library/listings HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            )
+            .await
+            .expect("send request");
+        let mut raw = Vec::new();
+        client.read_to_end(&mut raw).await.expect("read response");
+        serve.abort();
+        String::from_utf8_lossy(&raw).into_owned()
+    }
+
+    #[tokio::test]
+    async fn listings_answers_application_json() {
+        let raw = serve_listings().await;
+        assert!(raw.starts_with("HTTP/1.1 200"), "{raw}");
+        let content_type = raw
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("content-type:"))
+            .expect("content-type header");
+        assert_eq!(
+            content_type["content-type:".len()..].trim(),
+            "application/json",
+            "{raw}"
+        );
+        let body = raw.split_once("\r\n\r\n").map_or("", |(_, body)| body);
+        assert_eq!(
+            body, "{\"items\":[],\"has_more\":false,\"next_cursor\":null,\"limit\":20}",
+            "{raw}"
+        );
     }
 }

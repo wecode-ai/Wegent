@@ -1,20 +1,6 @@
 import assert from 'node:assert/strict'
 import { verifyTrayPositionPersistence } from './tray-position.mjs'
-
-async function readWindowState(control) {
-  return JSON.parse(await control.command('getNativeWindowState', 'body'))
-}
-
-async function waitForWindowState(control, predicate, message, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let latest = null
-  while (Date.now() < deadline) {
-    latest = await readWindowState(control)
-    if (predicate(latest)) return latest
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`${message}: ${JSON.stringify(latest)}`)
-}
+import { waitForWindowState } from '../modules/native-window-state.mjs'
 
 async function waitForRoute(control, expected, timeoutMs) {
   const deadline = Date.now() + timeoutMs

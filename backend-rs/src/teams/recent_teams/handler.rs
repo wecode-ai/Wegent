@@ -103,8 +103,14 @@ async fn recent_accessible_teams(
     // `_get_recent_team_refs`: recent owner-only tasks, filtered by taskType
     // label against `is_code`, extracting `(name, namespace, user_id)` team
     // refs in first-seen order.
-    let recent_tasks = repo::list_recent_owner_only_tasks(&state.mysql, user_id, SCAN_LIMIT)
+    let recent_tasks = state
+        .task_store
+        .list_recent_owner_only_tasks(user_id, SCAN_LIMIT)
         .await
+        .map_err(internal)?
+        .iter()
+        .map(repo::decode_recent_task_json)
+        .collect::<brz_mysql::MysqlResult<Vec<_>>>()
         .map_err(internal)?;
     let mut refs: Vec<repo::TeamRef> = Vec::new();
     let mut seen_refs: HashSet<repo::TeamRef> = HashSet::new();

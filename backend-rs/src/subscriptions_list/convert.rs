@@ -64,6 +64,8 @@ struct SubscriptionSpecJson {
     knowledge_base_refs: Option<Value>,
     #[serde(rename = "skillRefs")]
     skill_refs: Option<Value>,
+    #[serde(rename = "codeWikiRef")]
+    code_wiki_ref: Option<Value>,
 }
 
 /// A `{name, namespace}` reference (`spec.modelRef`, `spec.workspaceRef`).
@@ -84,15 +86,15 @@ struct WorkspaceRefJson {
 
 /// The response model: `SubscriptionListResponse`.
 #[derive(Debug, Serialize)]
-pub(super) struct SubscriptionListResponse {
-    pub(super) total: usize,
-    pub(super) items: Vec<SubscriptionItem>,
-    pub(super) invalid_schedule_count: usize,
+pub(crate) struct SubscriptionListResponse {
+    pub(crate) total: usize,
+    pub(crate) items: Vec<SubscriptionItem>,
+    pub(crate) invalid_schedule_count: usize,
 }
 
 /// One `SubscriptionInDB` item in pydantic field declaration order.
 #[derive(Debug, Serialize)]
-pub(super) struct SubscriptionItem {
+pub(crate) struct SubscriptionItem {
     name: Option<String>,
     display_name: String,
     description: Option<String>,
@@ -115,17 +117,19 @@ pub(super) struct SubscriptionItem {
     execution_target: Value,
     preserve_history: bool,
     history_message_count: i64,
-    notification_webhooks: Value,
     knowledge_base_refs: Option<Value>,
+    notification_webhooks: Value,
     skill_refs: Option<Value>,
-    market_whitelist_user_ids: Option<Value>,
+    market_whitelist_user_ids: Vec<i64>,
     id: i32,
+    code_wiki_id: Option<i64>,
     user_id: i32,
     namespace: String,
-    pub(super) webhook_url: Option<String>,
+    pub(crate) webhook_url: Option<String>,
     webhook_secret: Option<String>,
     last_execution_time: Option<String>,
     last_execution_status: Option<String>,
+    last_execution_message: Option<String>,
     next_execution_time: Option<String>,
     execution_count: i64,
     success_count: i64,
@@ -140,7 +144,7 @@ pub(super) struct SubscriptionItem {
     source_subscription_display_name: Option<String>,
     source_owner_username: Option<String>,
     rental_count: i64,
-    pub(super) trigger_config_valid: bool,
+    pub(crate) trigger_config_valid: bool,
     trigger_config_error: Option<String>,
     expires_at: Option<String>,
     is_expired: bool,
@@ -157,7 +161,7 @@ struct NameNamespace {
 
 /// `_convert_to_subscription_in_db`: build one item in pydantic field
 /// declaration order.
-pub(super) fn convert_to_subscription_in_db(
+pub(crate) fn convert_to_subscription_in_db(
     row: &KindRow,
     cache: &HashMap<i64, RepoFields>,
 ) -> SubscriptionItem {
@@ -185,9 +189,11 @@ pub(super) fn convert_to_subscription_in_db(
         RepoFields::default()
     };
 
-    let webhook_token = internal_string(&internal, "webhook_token");
-    let webhook_url = webhook_token
-        .as_ref()
+    // Source checks `if internal.get("webhook_token")`, so a stored empty token
+    // (the update path resets it to `""` when leaving the event trigger) must
+    // render `null` instead of a `/api/subscriptions/webhook/` URL.
+    let webhook_url = internal_string(&internal, "webhook_token")
+        .filter(|token| !token.is_empty())
         .map(|token| format!("/api/subscriptions/webhook/{token}"));
 
     let model_ref = spec.model_ref.as_ref().map(|r| NameNamespace {
@@ -209,8 +215,7 @@ pub(super) fn convert_to_subscription_in_db(
         .clone()
         .unwrap_or_else(|| json!({"type": "managed", "device_id": null}));
 
-    let market_whitelist_user_ids =
-        normalize_market_whitelist_user_ids(internal.get("market_whitelist_user_ids"));
+    let market_whitelist_user_ids = market_whitelist_list(&internal);
 
     let enabled = internal_flag(&internal, "enabled", true);
 
@@ -247,20 +252,26 @@ pub(super) fn convert_to_subscription_in_db(
         execution_target,
         preserve_history: spec.preserve_history.unwrap_or(false),
         history_message_count: spec.history_message_count.unwrap_or(10),
+        knowledge_base_refs: spec.knowledge_base_refs.clone(),
         notification_webhooks: spec
             .notification_webhooks
             .clone()
             .unwrap_or_else(|| Value::Null),
-        knowledge_base_refs: spec.knowledge_base_refs.clone(),
         skill_refs: spec.skill_refs.clone(),
         market_whitelist_user_ids,
         id: row.id,
+        code_wiki_id: spec
+            .code_wiki_ref
+            .as_ref()
+            .and_then(|value| value.get("id"))
+            .and_then(Value::as_i64),
         user_id: row.user_id,
         namespace: row.namespace.clone(),
         webhook_url,
         webhook_secret: internal_string(&internal, "webhook_secret"),
         last_execution_time,
         last_execution_status: internal_string(&internal, "last_execution_status"),
+        last_execution_message: internal_string(&internal, "last_execution_message"),
         next_execution_time,
         execution_count: internal_i64(&internal, "execution_count").unwrap_or(0),
         success_count: internal_i64(&internal, "success_count").unwrap_or(0),
@@ -288,7 +299,7 @@ pub(super) fn convert_to_subscription_in_db(
 }
 
 /// The `_internal` object of a subscription document (empty when absent).
-pub(super) fn internal_object(json: &Value) -> Value {
+pub(crate) fn internal_object(json: &Value) -> Value {
     json.get("_internal").cloned().unwrap_or_else(|| json!({}))
 }
 
@@ -299,7 +310,7 @@ pub(super) fn internal_object(json: &Value) -> Value {
 ///
 /// Returns `(trigger_config, valid, error)`. An invalid interval/cron
 /// frequency marks the item invalid with the fixed config still displayed.
-pub(super) fn validated_trigger_config(trigger: &Option<Value>) -> (Value, bool, Option<String>) {
+pub(crate) fn validated_trigger_config(trigger: &Option<Value>) -> (Value, bool, Option<String>) {
     let Some(trigger) = trigger else {
         return (json!({}), true, None);
     };
@@ -391,10 +402,19 @@ pub(super) fn validated_trigger_config(trigger: &Option<Value>) -> (Value, bool,
     }
 }
 
+/// `get_market_whitelist_user_ids_from_internal`: the response field is always a
+/// list (`List[int]`, default `[]`), never `null`, even when the key is absent.
+pub(crate) fn market_whitelist_list(internal: &Value) -> Vec<i64> {
+    match normalize_market_whitelist_user_ids(internal.get("market_whitelist_user_ids")) {
+        Some(Value::Array(entries)) => entries.iter().filter_map(Value::as_i64).collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// `normalize_market_whitelist_user_ids`: keep positive integers, drop
 /// duplicates, preserve order; `None` stays `None`, other values normalize
 /// to a list.
-pub(super) fn normalize_market_whitelist_user_ids(value: Option<&Value>) -> Option<Value> {
+pub(crate) fn normalize_market_whitelist_user_ids(value: Option<&Value>) -> Option<Value> {
     match value {
         None => None,
         Some(Value::Array(entries)) => {
@@ -415,7 +435,7 @@ pub(super) fn normalize_market_whitelist_user_ids(value: Option<&Value>) -> Opti
 }
 
 /// Read a boolean from `_internal` with its source default.
-pub(super) fn internal_flag(internal: &Value, key: &str, default: bool) -> bool {
+pub(crate) fn internal_flag(internal: &Value, key: &str, default: bool) -> bool {
     match internal.get(key) {
         Some(Value::Bool(value)) => *value,
         _ => default,
@@ -423,7 +443,7 @@ pub(super) fn internal_flag(internal: &Value, key: &str, default: bool) -> bool 
 }
 
 /// Set a boolean in `_internal` (auto-disable path).
-pub(super) fn set_internal_flag(json: &mut Value, key: &str, value: bool) {
+pub(crate) fn set_internal_flag(json: &mut Value, key: &str, value: bool) {
     if let Some(internal) = json.get_mut("_internal") {
         if !internal.is_object() {
             *internal = json!({});
@@ -435,7 +455,7 @@ pub(super) fn set_internal_flag(json: &mut Value, key: &str, value: bool) {
 }
 
 /// Read a string from `_internal`.
-pub(super) fn internal_string(internal: &Value, key: &str) -> Option<String> {
+pub(crate) fn internal_string(internal: &Value, key: &str) -> Option<String> {
     internal
         .get(key)
         .and_then(Value::as_str)
@@ -443,14 +463,14 @@ pub(super) fn internal_string(internal: &Value, key: &str) -> Option<String> {
 }
 
 /// Read an integer from `_internal`.
-pub(super) fn internal_i64(internal: &Value, key: &str) -> Option<i64> {
+pub(crate) fn internal_i64(internal: &Value, key: &str) -> Option<i64> {
     internal.get(key).and_then(Value::as_i64)
 }
 
 /// Parse an ISO-8601 datetime from `_internal` (`datetime.fromisoformat`
 /// accepts `YYYY-MM-DDTHH:MM:SS` and optional microseconds/fractional
 /// offsets; the stored values are naive).
-pub(super) fn internal_datetime(internal: &Value, key: &str) -> Option<chrono::NaiveDateTime> {
+pub(crate) fn internal_datetime(internal: &Value, key: &str) -> Option<chrono::NaiveDateTime> {
     let raw = internal.get(key)?.as_str()?;
     chrono::DateTime::parse_from_rfc3339(raw)
         .ok()
@@ -462,7 +482,7 @@ pub(super) fn internal_datetime(internal: &Value, key: &str) -> Option<chrono::N
 
 /// pydantic naive-datetime serialization: `YYYY-MM-DDTHH:MM:SS` plus
 /// fractional seconds when nonzero.
-pub(super) fn pydantic_datetime(value: NaiveDateTime) -> String {
+pub(crate) fn pydantic_datetime(value: NaiveDateTime) -> String {
     let base = value.format("%Y-%m-%dT%H:%M:%S").to_string();
     if value.and_utc().timestamp_subsec_nanos() == 0 {
         base

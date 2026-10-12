@@ -18,7 +18,7 @@ The suite must prove that:
 4. After an Issue is assigned to a Wegent Chat agent, its Skill and MCP are loaded, invoked, and produce a verifiable result.
 5. After an Issue is assigned to a Wegent ClaudeCode agent, its Skill and MCP are loaded, invoked, and produce a verifiable result.
 6. After an Issue is assigned to a Codex agent, its Skill, MCP, and Plugin are loaded, invoked, and produce a verifiable result.
-7. After an Issue is assigned to a person, Wework receives a notification, the user creates a Task from the Issue, a real runtime executes it, an artifact is delivered, and the Issue status advances.
+7. After an Issue is assigned to a person, Wework receives a notification, the user creates a private local Task from the Issue, a real runtime executes it, and shared Issue changes happen only through explicit actions.
 8. Execution failures, Executor outages, page refreshes, process restarts, and duplicate events neither fabricate success nor break eventual consistency.
 9. Every critical step has structured assertions, backend evidence, and screenshot evidence.
 
@@ -74,13 +74,13 @@ Assignment to a person does not immediately start an AI runtime:
 Issue assignment
   -> Wework notification
     -> User opens Issue
-      -> User creates Task
-        -> Wework Runtime executes Task
-          -> Artifact / delivery
-            -> Issue status projection
+      -> User creates private local Task
+        -> Local Wework Runtime starts
+          -> Issue moves to in progress
+            -> Runtime completes without advancing Issue again
 ```
 
-Assignment to a person first creates a notification and collaboration context. The user may enter the Issue from that notification, or proactively enter an unassigned Issue and create a Task.
+Assignment to a person first creates a notification and collaboration context. The user may enter the Issue from that notification, or proactively enter an unassigned Issue and create a Task. Private Task conversation and terminal state are not automatically written to the shared Issue. Comments, deliveries, and subsequent status changes require a manual user action or an explicit instruction for AI to use project-space tools.
 
 ## Test Boundary and Authenticity Rules
 
@@ -143,6 +143,29 @@ Each runtime uses distinct probe values so a result from one runtime cannot acci
 | Codex      | `CODEX_SKILL_<run-id>`  | `CODEX_MCP_<run-id>`  | `CODEX_PLUGIN_<run-id>` |
 
 The final artifact must contain the correct probe values and be proven through a file, backend activity, MCP call record, or delivery API.
+
+## Agent Model and Session Regressions
+
+Cover the agent execution flow in the `project-automation`,
+`collaboration-local-agent-dispatch`, and `collaboration-remote-agent-dispatch`
+checkpoints. Report local and remote-process evidence separately; passing an
+isolated remote Executor does not verify the user's cloud device.
+
+| Scenario                       | Required result                                                                                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Automatic tag assignment       | Adding `auto` in the UI creates one execution; the actual model request uses the assigned agent's model, and completion moves the Issue to review |
+| Team model inheritance         | Without a model override, submit `wegentTeamId` instead of the workbench default model; the compiled Team determines the execution Shell          |
+| V2 request boundary            | The materialize response omits top-level `modelConfig: null`; materialized configuration exists only in the compiled execution request            |
+| Replies after manual execution | TaskBinding persists the Team ID; a reply continues the original task with `newSession=false` and uses the same actual model                      |
+| Manual execution capabilities  | The executor role reads its bound Issue through a real Code Mode tool call without exposing assignment or management tools                        |
+| Complete result persistence    | A final event saves full content after an outcome-only history snapshot; a previous turn's final event cannot complete a newer continuation       |
+| App device event projection    | The owned device's `app-record-*` and installation ID match the same activity; completion and failure both update its terminal state              |
+| Failure authorization          | Only the initiating user can fail a manually started response without a trigger message; unrelated users and senders cannot bypass authorization  |
+
+Assert the agent message content and terminal state; a user's prompt containing
+the probe text is not proof of model execution. Retain Electron screenshots,
+task IDs, model routing logs, and backend terminal states without logging
+authentication tokens or model secrets.
 
 ## Complete Scenario Matrix
 
@@ -323,7 +346,9 @@ Required proof:
 
 ### E2E-07: Assign an Issue to a person and execute it in Wework
 
-Goal: prove that human assignment creates a notification, execution, artifact, and status loop rather than merely writing an owner field.
+Goal: prove that an assignee can create a private local Task from a shared Issue
+and use AI as a personal tool while preserving the boundary between private
+execution and shared collaboration state.
 
 Steps:
 
@@ -332,28 +357,50 @@ Steps:
 3. Verify that Wework shows a system notification and in-app unread indicator.
 4. Click the notification and deep-link to the correct Workspace, Project, and Issue.
 5. Click Create Task in the Issue.
-6. Verify that the new Task retains Workspace, Project, and Issue context.
-7. Submit execution instructions.
-8. Execute the Task through a real local or cloud Wework Runtime.
-9. Generate `human-result.txt` or an equivalent delivery.
-10. Synchronize the artifact back to the Issue.
-11. Complete the Task.
-12. Move the Issue to in review or completed.
+6. Verify that the new Task is visible only to the current user and retains
+   Workspace, Project, and Issue context.
+7. Verify that the composer shows the current Issue as a native chip rather than
+   plain text or an incorrect status label.
+8. Submit execution instructions. When the local Runtime starts, move an inbox
+   or pending Issue to in progress.
+9. Verify that the Runtime can use `wework_space` to read the current Issue and
+   changes the Issue, adds comments, or submits deliveries only when explicitly requested.
+10. Generate `human-result.txt` or an equivalent local artifact and complete the Task.
+11. Verify that Task completion, failure, stop, or delivery does not automatically
+    move the Issue to in review or completed.
+12. Change Issue status manually, or explicitly instruct AI to change it through
+    `wework_space`.
 
 Required proof:
 
 - Notification recipient, assignment event, and Issue ID are correct.
 - Duplicate assignment events do not create duplicate notifications.
 - Clicking the notification opens the exact Issue, not just the Collaboration home page.
-- The new Task is bound to the correct Workspace, Project, Issue, and user.
-- A real Runtime completes the execution.
-- The artifact exists and can be read from Issue activity or the delivery area.
-- Task terminal state and Issue status projection agree.
+- The new Task is bound to the correct Workspace, Project, Issue, user, and local device.
+- The sent Issue reference remains a native chip and is not polluted by text such
+  as `[blocked]`.
+- A real local Runtime completes the execution and has project-space tools.
+- Runtime start automatically marks an eligible Issue in progress.
+- Runtime terminal state, stop, and delivery do not further change Issue status
+  or assignee.
+- Ordinary private-task conversation is not automatically published as a shared
+  Issue comment.
+- When the user explicitly asks AI to update the Issue, the tool call uses the
+  explicit current project and Issue IDs.
 
 Additional scenario:
 
 - A user who is not assigned may still proactively enter an Issue and create a Task.
 - Proactive participation must not fabricate an “assigned to me” notification or assignment event.
+- Starting a private Task for an Issue already in review or completed must not
+  move the Issue back to in progress.
+- Start work in the human-processing panel is a separate explicit action:
+  reassigning an in-review or completed Issue preserves its status and clears
+  the previous human submission. Only the new assignee's Start work action
+  moves it to in progress. The former assignee cannot start, and a submitted or
+  accepted result under the current assignment cannot be started again.
+  `project-assignment-notification` covers reassignment after acceptance and
+  explicit start without making an AI request.
 
 ### E2E-08: Cross-host consistency
 
@@ -440,7 +487,7 @@ Identity fields must come from backend APIs, execution records, or Runtime logs,
 
 ### 2. Backend and runtime terminal states
 
-Assert at least:
+For scenarios where an agent directly owns the Issue, assert at least:
 
 ```text
 Task status == COMPLETED
@@ -450,6 +497,11 @@ Project message metadata.run_status == completed
 Issue ai_state.status == completed
 Issue status == in_review | completed
 ```
+
+For a human assignee's private local Task, assert separately that the Task and
+Runtime are complete while the Issue remains `in_progress` after runtime start,
+until the user changes it manually or explicitly instructs AI to use
+project-space tools.
 
 If a runtime does not have one of these fields, document the mapping and assert that runtime's authoritative terminal field.
 
@@ -524,8 +576,8 @@ Screenshots are saved under test-result directories or CI artifacts and are neve
 25. `25-human-issue-opened.png`: correct Issue opened after clicking the notification.
 26. `26-human-task-created.png`: Task created and bound from the Issue.
 27. `27-human-task-running.png`: real Runtime executing the Task.
-28. `28-human-artifact.png`: artifact generated and synchronized.
-29. `29-human-issue-completed.png`: final Task and Issue states.
+28. `28-human-artifact.png`: local artifact generated.
+29. `29-human-task-completed.png`: Task completed while the Issue remains in progress.
 
 ### Recovery and cross-host state
 
@@ -752,9 +804,13 @@ The complete collaboration execution E2E suite passes only when all criteria bel
 
 - Wework receives a real assignment notification for the target user.
 - Clicking the notification opens the correct Issue.
-- A Task created from the Issue preserves complete collaboration context.
-- A real Runtime completes the Task and generates an artifact.
-- The artifact is synchronized to the Issue and Task and Issue states agree.
+- The private Task created from the Issue preserves complete collaboration context
+  and a native Issue chip.
+- A real local Runtime has `wework_space` tools and completes the Task.
+- Runtime start moves the Issue to in progress; Task terminal state does not
+  automatically advance the Issue.
+- Issue comments, deliveries, and subsequent status changes are triggered only
+  by manual user actions or explicit instructions.
 
 ### Evidence
 

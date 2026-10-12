@@ -6,34 +6,26 @@
 //! mirroring the source SQLAlchemy renderings token for token: the full
 //! labeled projections and the configured logical task table.
 use crate::json_compat::OpaqueJson;
-use crate::task_routing::ByTaskId;
-use brz_mysql::{Mysql, MysqlResult};
+use crate::task_store::TaskStore;
+use brz_mysql::{MysqlResult, MysqlRow};
 
-/// A `tasks_{:04}` row: `user_id` and the opaque CRD `json` document.
+/// A `tasks` row: `user_id` and the opaque CRD `json` document.
 #[derive(Debug)]
 pub struct TaskRow {
     pub user_id: i64,
     pub json: OpaqueJson,
 }
 
-/// `task_store.get_active_task` on the sharded table (new-format ids route
-/// by their embedded uid; the deployment runs 1024 shards).
-pub async fn get_active_task<M>(mysql: &M, task_id: i64) -> MysqlResult<Option<TaskRow>>
-where
-    M: Mysql,
-{
-    let sql = "SELECT id, user_id, kind, name, namespace, json, is_active, \
-         created_at, updated_at, project_id, client_origin, is_group_chat \
-         \nFROM {{tasks}} \nWHERE id = ? \
-         AND kind = 'Task' AND is_active IN (1, 2) \n LIMIT 1";
-    let row: Option<brz_mysql::MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(sql, (task_id,))
-        .await?;
+/// `task_store.get_active_task`: the active `Task` row for `task_id`.
+pub async fn get_active_task(
+    task_store: &dyn TaskStore,
+    task_id: i64,
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store.get_active_task(task_id).await?;
     row.as_ref().map(decode_task_row).transpose()
 }
 
-fn decode_task_row(row: &brz_mysql::MysqlRow) -> MysqlResult<TaskRow> {
+fn decode_task_row(row: &MysqlRow) -> MysqlResult<TaskRow> {
     Ok(TaskRow {
         user_id: row.get_required("user_id")?,
         json: row.get_required::<brz_mysql::Json<OpaqueJson>>("json")?.0,

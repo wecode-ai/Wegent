@@ -1,13 +1,18 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SidebarTaskTitle } from './SidebarTaskTitle'
-import { WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT } from './workbenchPaneDrag'
+import {
+  WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT,
+  WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT,
+} from './workbenchPaneDrag'
 
 let width = 200
 let textWidth = 300
 let hovered = false
 let keyboardFocus = false
 let reducedMotion = false
+let boundsReads = 0
+let scrollWidthReads = 0
 const resizes = new Set<() => void>()
 let media: EventTarget
 
@@ -39,9 +44,8 @@ function advance(milliseconds: number) {
 }
 
 function offset() {
-  return Math.abs(
-    Number(screen.getByTestId('text').style.transform.match(/translateX\(([-\d.]+)px\)/)?.[1])
-  )
+  const translation = screen.getByTestId('text').style.transform.match(/translateX\(([-\d.]+)px\)/)
+  return translation ? Math.abs(Number(translation[1])) : 0
 }
 
 beforeEach(() => {
@@ -59,6 +63,8 @@ beforeEach(() => {
   hovered = false
   keyboardFocus = false
   reducedMotion = false
+  boundsReads = 0
+  scrollWidthReads = 0
   resizes.clear()
   media = new EventTarget()
   Object.defineProperty(media, 'matches', { get: () => reducedMotion })
@@ -85,9 +91,11 @@ beforeEach(() => {
     return nativeMatches.call(this, selector)
   })
   vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function () {
+    scrollWidthReads++
     return this.dataset.testid === 'text' ? textWidth : 0
   })
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    boundsReads++
     const actions = this.dataset.testid === 'actions'
     const left = actions ? 170 : 0
     const measuredWidth = actions ? 72 : width
@@ -113,13 +121,34 @@ afterEach(() => {
 })
 
 describe('SidebarTaskTitle', () => {
+  it('does not measure or observe idle titles on mount', () => {
+    const addGlobalListener = vi.spyOn(window, 'addEventListener')
+    render(
+      <>
+        {fixture('First title')}
+        {fixture('Second title')}
+      </>
+    )
+
+    expect(boundsReads).toBe(0)
+    expect(scrollWidthReads).toBe(0)
+    expect(resizes.size).toBe(0)
+    expect(addGlobalListener.mock.calls.filter(([name]) => name === 'pointerup')).toHaveLength(0)
+    expect(
+      addGlobalListener.mock.calls.filter(
+        ([name]) => name === WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT
+      )
+    ).toHaveLength(1)
+  })
+
   it('fades overflow, delays scrolling, stops at the end and returns only on exit', () => {
     render(fixture())
     const title = screen.getByTestId('title')
     const viewport = screen.getByTestId('text').parentElement!
+    expect(title).not.toHaveAttribute('data-overflow')
+    enter()
     expect(title).toHaveAttribute('data-overflow', 'true')
     expect(viewport.style.getPropertyValue('--sidebar-title-fade-end')).toBe('12px')
-    enter()
     advance(599)
     expect(offset()).toBe(0)
     advance(1000)
@@ -140,6 +169,7 @@ describe('SidebarTaskTitle', () => {
     act(() => vi.advanceTimersToNextFrame())
     expect(offset()).toBe(0)
     expect(title).toHaveAttribute('data-scroll-state', 'idle')
+    expect(resizes.size).toBe(0)
   })
 
   it('does not fade or animate a fitting title', () => {
@@ -178,7 +208,7 @@ describe('SidebarTaskTitle', () => {
     expect(offset()).toBe(134)
     leave()
     advance(160)
-    expect(screen.getByTestId('text').parentElement!.style.width).toBe('200px')
+    expect(screen.getByTestId('text').parentElement!.style.width).toBe('')
   })
 
   it('remeasures resizing and title changes and stops during a drag', () => {
@@ -216,6 +246,17 @@ describe('SidebarTaskTitle', () => {
     fireEvent.focusOut(screen.getByTestId('row'))
     advance(160)
     expect(offset()).toBe(0)
+  })
+
+  it('keeps an idle title still when a pane drag starts before hover', () => {
+    render(fixture())
+    act(() => window.dispatchEvent(new Event(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT)))
+    enter()
+    advance(6000)
+    expect(offset()).toBe(0)
+    act(() => window.dispatchEvent(new Event(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT)))
+    advance(1200)
+    expect(offset()).toBeGreaterThan(0)
   })
 
   it('cleans up pending motion on unmount', () => {

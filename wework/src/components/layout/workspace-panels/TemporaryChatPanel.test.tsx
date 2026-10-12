@@ -17,6 +17,8 @@ import type {
   LocalDeviceApp,
 } from '@/types/api'
 import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRetry'
+import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
+import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
 import {
   useComposerCatalogBinding,
@@ -308,8 +310,9 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       models: [],
       selectedModel: null,
       selectedModelOptions: undefined,
-      resolveRuntimeTaskModelSelection: () => {
-        const selection = mocks.activeModelSelection
+      resolveRuntimeTaskModelSelection: (taskAddress: RuntimeTaskAddress) => {
+        const selection =
+          mocks.activeModelSelection ?? modelSelectionFromRuntimeHandle(taskAddress.runtimeHandle)
         const model = selection
           ? {
               name: selection.modelName,
@@ -901,6 +904,48 @@ describe('TemporaryChatPanel', () => {
           weworkCloudModelNamespace: 'default',
           weworkCloudModelResourceUserId: '0',
         },
+      }),
+      expect.any(Object)
+    )
+  })
+
+  it('uses the bound remote agent model for the composer and follow-up request before task-list hydration', async () => {
+    const selection: ModelSelectionConfig = {
+      modelName: 'deepseek-v4-pro-responses(公网)',
+      modelType: 'public',
+      options: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+      },
+    }
+    const boundAddress = runtimeTaskBindingAddress({
+      device_id: 'remote-device',
+      task_id: 'codex-queue-85',
+      modelSelection: selection,
+    })
+
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={boundAddress}
+        instanceId="bound-remote-task"
+        initialAddress={boundAddress}
+      />
+    )
+
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+      'data-selected-model',
+      selection.modelName
+    )
+    await userEvent.click(screen.getByTestId('mock-send'))
+
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: boundAddress,
+        modelId: selection.modelName,
+        modelType: selection.modelType,
+        modelOptions: selection.options,
       }),
       expect.any(Object)
     )

@@ -6,6 +6,7 @@ import {
 } from '@wegent/chat-core/activity-execution-turn'
 import { useRuntimeConversationScope } from '../conversation/runtimeConversationScopeContext'
 import type { RuntimeConversationSnapshot } from '@wegent/chat-core/runtime-conversation-session'
+import { reconcileExecutionStatus } from './executionStatus'
 
 const subscribeEmpty = () => () => {}
 const getEmpty = () => undefined
@@ -14,7 +15,8 @@ const getEmpty = () => undefined
 export function useIssueActivityExecutionStatus(
   message: ProjectChatMessage | undefined,
   singleExecution = false,
-  viewerSnapshot?: RuntimeConversationSnapshot
+  viewerSnapshot?: RuntimeConversationSnapshot,
+  persistedStatus?: string | null,
 ) {
   const scope = useRuntimeConversationScope()
   const session = message?.runtimeAddress ? scope?.get(message.runtimeAddress) : undefined
@@ -55,8 +57,14 @@ export function useIssueActivityExecutionStatus(
       scope?.identifyActivityTurn(key, turn.id)
     }
   }, [scope, key, turn?.id])
+  const observedStatus = activityExecutionDisplayStatus(
+    message,
+    turns,
+    turn,
+    snapshot?.running === false,
+  )
   return {
     turn,
-    status: activityExecutionDisplayStatus(message, turns, turn, snapshot?.running === false),
+    status: reconcileExecutionStatus(persistedStatus, observedStatus),
   }
 }

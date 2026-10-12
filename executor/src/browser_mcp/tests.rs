@@ -3,8 +3,8 @@ use std::time::Instant;
 use serde_json::{json, Value};
 
 use super::payload::{
-    action_target_payload, combined_inspect_payload, evaluate_action_violation, inspect_payload,
-    wait_options, wait_payload, WaitConditionOptions,
+    action_target_payload, clear_data_payload, combined_inspect_payload, evaluate_action_violation,
+    inspect_payload, upload_file_payload, wait_options, wait_payload, WaitConditionOptions,
 };
 use super::result_text::{
     action_text_result, combined_text_result, inspect_text_result, inspect_text_result_with_options,
@@ -48,10 +48,12 @@ async fn exposes_expected_browser_tools() {
     assert!(names.contains(&"browser_scroll_into_view"));
     assert!(names.contains(&"browser_select_option"));
     assert!(names.contains(&"browser_set_checked"));
+    assert!(names.contains(&"browser_upload_file"));
+    assert!(names.contains(&"browser_clear_data"));
     assert!(!names.contains(&"browser_fill_form"));
     assert!(!names.contains(&"browser_drag"));
     assert!(!names.iter().any(|name| name.starts_with("browser_tab_")));
-    assert_eq!(names.len(), 28);
+    assert_eq!(names.len(), 30);
 }
 
 #[tokio::test]
@@ -222,6 +224,40 @@ fn combined_text_result_repeats_action_guidance_after_inspect() {
     assert!(text.contains("Metadata:"));
     assert!(!text.contains("large body text"));
     assert!(!text.contains("\"nodes\""));
+}
+
+#[test]
+fn inspect_text_result_flags_login_wall_urls() {
+    let text = inspect_text_result(&json!({
+        "kind": "browser.inspect",
+        "inspectText": "Page: Sign in\nURL: https://passport.example.com/sso/signin\n[0] button \"Sign in\""
+    }))
+    .unwrap();
+    assert!(text.contains("Auth warning:"));
+    assert!(text.contains("wait for their confirmation"));
+
+    let public_page = inspect_text_result(&json!({
+        "kind": "browser.inspect",
+        "inspectText": "Page: Example\nURL: https://example.com/docs\n[0] link \"Docs\""
+    }))
+    .unwrap();
+    assert!(!public_page.contains("Auth warning:"));
+}
+
+#[test]
+fn combined_text_result_flags_login_wall_urls() {
+    let text = combined_text_result(&json!({
+        "kind": "browser.combined",
+        "ok": true,
+        "tool": "open_and_inspect",
+        "wait": { "ok": true, "reason": "load_finished" },
+        "inspect": {
+            "kind": "browser.inspect",
+            "inspectText": "Page: Feed\nURL: https://feed.example.com/newlogin?tabtype=\n[0] button \"Sign in\""
+        }
+    }))
+    .unwrap();
+    assert!(text.contains("Auth warning:"));
 }
 
 #[test]
@@ -487,6 +523,34 @@ fn open_and_inspect_waits_for_page_stability_across_redirects() {
         }),
     );
     assert_eq!(explicit["url"], "/dashboard");
+}
+
+#[test]
+fn upload_file_payload_carries_path_and_target() {
+    let payload = upload_file_payload(&json!({
+        "path": "/tmp/banner.png",
+        "selector": "css=input[type=file]",
+    }));
+    assert_eq!(payload["action"], "uploadFile");
+    assert_eq!(payload["path"], "/tmp/banner.png");
+    assert_eq!(payload["selector"], "input[type=file]");
+
+    let minimal = upload_file_payload(&json!({
+        "path": "/tmp/banner.png",
+    }));
+    assert!(minimal.get("selector").is_none());
+    assert!(minimal.get("ref").is_none());
+    assert!(minimal.get("index").is_none());
+}
+
+#[test]
+fn clear_data_payload_passes_kinds_through_options() {
+    let payload = clear_data_payload(&json!({}));
+    assert_eq!(payload["action"], "clearData");
+    assert!(payload["options"].get("kinds").is_none());
+
+    let with_kinds = clear_data_payload(&json!({ "kinds": ["cache"] }));
+    assert_eq!(with_kinds["options"]["kinds"], json!(["cache"]));
 }
 
 #[test]

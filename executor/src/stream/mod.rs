@@ -6,6 +6,9 @@ use std::{borrow::Cow, collections::HashSet};
 
 use serde_json::Value;
 
+mod partial_messages;
+pub(crate) use partial_messages::ClaudePartialMessages;
+
 use crate::{
     agents::interactive_mcp::{
         is_deferred_user_input_result, is_interactive_form_tool, DeferredToolUse,
@@ -322,6 +325,7 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
     let mut saw_claude_message = false;
     let mut saw_result_message = false;
     let mut async_tasks = ClaudeAsyncTaskTracker::default();
+    let mut partial_messages = ClaudePartialMessages::default();
     for (index, line) in output.lines().enumerate() {
         let line_number = index + 1;
         let Some(value) = (match json_buffer.push_line(line, line_number) {
@@ -346,13 +350,27 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
         if value.get("type").and_then(Value::as_str).is_some() {
             saw_claude_message = true;
         }
-        async_tasks.observe(&value);
         if let Some(value) = value.get("session_id").and_then(Value::as_str) {
             let value = value.trim();
             if !value.is_empty() {
                 session_id = Some(value.to_owned());
             }
         }
+        async_tasks.observe(&value);
+        let value = match partial_messages.normalize(value) {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
+            Err(message) => {
+                return ClaudeStreamSummary {
+                    outcome: ExecutionOutcome::Failed { message },
+                    session_id,
+                    deferred_tool_use,
+                    stop_reason,
+                    usage,
+                    retryable_api_error,
+                };
+            }
+        };
         if value.get("type").and_then(Value::as_str) != Some("result")
             && is_deferred_user_input_result(&value)
         {

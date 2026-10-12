@@ -111,6 +111,9 @@ pub async fn get_object(
     let host = config.host();
     let uri = format!("/{}/{}", config.bucket, encode_object_path(key));
     let url = format!("{}://{host}{uri}", config.scheme());
+    // The `x-amz-date` below comes from the live signing clock, matching the
+    // source's minio-py signing; Replay tolerance for its drift is provided by
+    // the `attachment-s3-signing-time-get` dependency rule.
     let amz_date = s3_signing::amz_timestamp_now();
     let signed = s3_signing::sign(
         &config.access_key,

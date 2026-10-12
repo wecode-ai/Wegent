@@ -265,6 +265,17 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
             f"[Callback] Summary: event_type={event_type}, task_id={task_id}, "
             f"subtask_id={subtask_id}, keys={sorted(event_data.keys())}"
         )
+        if event_type == "error":
+            error_data = event_data.get("data")
+            if isinstance(error_data, dict):
+                logger.warning(
+                    "[Callback] Executor error: task_id=%s, subtask_id=%s, "
+                    "code=%s, message=%s",
+                    task_id,
+                    subtask_id,
+                    _to_log_preview(str(error_data.get("code", ""))),
+                    _to_log_preview(str(error_data.get("message", ""))),
+                )
 
         # Set task context for tracing
         set_task_context(task_id=task_id, subtask_id=subtask_id)

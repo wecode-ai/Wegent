@@ -26,7 +26,6 @@ from llama_index.core.vector_stores.types import (
     VectorStoreQuery,
     VectorStoreQueryMode,
 )
-from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models
 
@@ -36,8 +35,12 @@ from knowledge_engine.retrieval.filters import (
 )
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
+from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from shared.models import RetrievalScope
+from knowledge_engine.storage.qdrant_vector_store import (
+    ReadyQdrantVectorStore as QdrantVectorStore,
+)
+from shared.knowledge_contracts import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +65,9 @@ class QdrantBackend(BaseStorageBackend):
     """
 
     # Qdrant only supports vector search
-    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector"]
+    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = list(
+        STORAGE_BACKEND_SPECS["qdrant"].retrieval_methods
+    )
     supports_retrieval_scope: ClassVar[bool] = True
 
     # Override INDEX_PREFIX for Qdrant collections
@@ -341,6 +346,18 @@ class QdrantBackend(BaseStorageBackend):
             Deletion result dict
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
+
+        # A knowledge base that was never written has no collection yet, and a
+        # repeated delete finds nothing left. Both mean "no chunks to remove",
+        # so report the idempotent result instead of a missing-collection error.
+        if not self.client.collection_exists(collection_name):
+            return {
+                "doc_ref": doc_ref,
+                "knowledge_id": knowledge_id,
+                "deleted_chunks": 0,
+                "status": "deleted",
+            }
+
         vector_store = self.create_vector_store(collection_name)
 
         # Build filters to match the document

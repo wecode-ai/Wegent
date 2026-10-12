@@ -444,16 +444,24 @@ class TestExternalSourceUnavailable:
         test_db.refresh(document)
         return document
 
+    @pytest.mark.parametrize(
+        "error_code", ["external_source_unavailable", "external_source_missing"]
+    )
     def test_unavailable_initial_import_is_retryable_and_marked_inaccessible(
         self,
         test_db: Session,
         test_user: User,
         monkeypatch: pytest.MonkeyPatch,
+        error_code: str,
     ) -> None:
         document = self._create_external_document(test_db, test_user)
         document_id = document.id
         provider = provider_with_fetch(
-            AsyncMock(side_effect=ExternalSourceUnavailableError("node not found"))
+            AsyncMock(
+                side_effect=ExternalSourceUnavailableError(
+                    "node not found", error_code=error_code
+                )
+            )
         )
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import"
@@ -471,13 +479,11 @@ class TestExternalSourceUnavailable:
         assert document.is_active is False
         external = document.source_config["external"]
         assert external["status"] == "inaccessible"
-        assert external["last_error"] == (
-            "The external source is no longer accessible. Restore access "
-            "and retry the import."
-        )
+        # The provider's own message is what the user sees, verbatim.
+        assert external["last_error"] == "node not found"
         error = document.processing_error_payload
         assert error is not None
-        assert error["code"] == "external_source_unavailable"
+        assert error["code"] == error_code
 
     def test_transient_fetch_failure_does_not_mark_inaccessible(
         self,
@@ -531,6 +537,238 @@ class TestExternalSourceUnavailable:
         assert document is not None
         # The stale attempt must not overwrite the newer attempt's outcome.
         assert document.index_status == DocumentIndexStatus.INDEXING
+        assert document.source_config["external"].get("status") is None
+
+
+class TestExternalRefreshFailure:
+    """A failed refresh must not drop content the copy already serves."""
+
+    def _create_served_copy(
+        self,
+        test_db: Session,
+        test_user: User,
+        *,
+        attachment_id: int = 777,
+        indexed_attachment_id: int | None = 777,
+    ) -> KnowledgeDocument:
+        """Build the state a queued refresh of a serving copy left behind."""
+        kb_id = _create_kb(test_db, test_user.id, "served-copy-kb")
+        external = {
+            "provider": "dingtalk",
+            "title": "Served",
+            "last_success_at": "2026-08-01T00:00:00+00:00",
+        }
+        if indexed_attachment_id is not None:
+            external["last_success_attachment_id"] = indexed_attachment_id
+        document = KnowledgeDocument(
+            kind_id=kb_id,
+            attachment_id=attachment_id,
+            name="Served Copy",
+            file_extension="md",
+            file_size=100,
+            user_id=test_user.id,
+            source_type=DocumentSourceType.EXTERNAL.value,
+            source_config={"external": external},
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider="dingtalk",
+                external_resource_id="s" * 32,
+            ),
+            index_status=DocumentIndexStatus.QUEUED,
+            index_generation=1,
+            is_active=False,
+            status="enabled",
+        )
+        test_db.add(document)
+        test_db.commit()
+        test_db.refresh(document)
+        return document
+
+    @pytest.mark.parametrize(
+        "error_code", ["external_source_unavailable", "external_source_missing"]
+    )
+    def test_unavailable_source_keeps_the_served_body(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        error_code: str,
+    ) -> None:
+        document = self._create_served_copy(test_db, test_user)
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(
+                side_effect=ExternalSourceUnavailableError(
+                    "node not found", error_code=error_code
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=1)
+
+        test_db.refresh(document)
+        # The copy keeps serving the body and index it already had.
+        assert document.index_status == DocumentIndexStatus.SUCCESS
+        assert document.is_active is True
+        assert document.attachment_id == 777
+        # The source itself is still marked exactly as before.
+        external = document.source_config["external"]
+        assert external["status"] == "inaccessible"
+        assert external["last_error"] == "node not found"
+        assert external["last_success_at"] == "2026-08-01T00:00:00+00:00"
+        assert external["last_success_attachment_id"] == 777
+        error = document.processing_error_payload
+        assert error is not None
+        assert error["code"] == error_code
+        assert error["retryable"] is True
+
+    def test_transient_fetch_failure_marks_sync_failed_and_keeps_serving(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        dispatch_calls: list[dict],
+    ) -> None:
+        # Refresh preparation records the served body of a legacy success.
+        document = self._create_served_copy(
+            test_db, test_user, indexed_attachment_id=None
+        )
+        document.index_status = DocumentIndexStatus.SUCCESS
+        document.is_active = True
+        test_db.commit()
+        refresh = external_document_import_service.refresh_existing_document(
+            test_db, document
+        )
+        assert refresh.started
+        assert len(dispatch_calls) == 1
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.index_status == DocumentIndexStatus.SUCCESS
+        assert document.is_active is True
+        assert document.attachment_id == 777
+        external = document.source_config["external"]
+        assert external["status"] == "sync_error"
+        assert external["last_success_at"] == "2026-08-01T00:00:00+00:00"
+        assert external["last_success_attachment_id"] == 777
+        error = document.processing_error_payload
+        assert error is not None
+        assert error["code"] == "external_import_failed"
+        assert error["retryable"] is True
+
+    def test_failed_body_replacement_is_not_served_again(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The copy already replaced its indexed body with one that never made
+        # it into the index, so only that body is linked now.
+        document = self._create_served_copy(
+            test_db,
+            test_user,
+            attachment_id=999,
+            indexed_attachment_id=777,
+        )
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=1)
+
+        test_db.refresh(document)
+        assert document.index_status == DocumentIndexStatus.FAILED
+        assert document.is_active is False
+        assert document.attachment_id == 999
+        assert document.processing_error_payload["code"] == "external_import_failed"
+
+    def test_legacy_refresh_does_not_serve_an_unindexed_replacement(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        dispatch_calls: list[dict],
+    ) -> None:
+        document = self._create_served_copy(
+            test_db, test_user, indexed_attachment_id=None
+        )
+        document.index_status = DocumentIndexStatus.SUCCESS
+        document.is_active = True
+        test_db.commit()
+
+        refresh = external_document_import_service.refresh_existing_document(
+            test_db, document
+        )
+        assert refresh.started
+        assert len(dispatch_calls) == 1
+
+        # The new body landed, but never completed indexing.
+        document.attachment_id = 999
+        test_db.commit()
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.index_status == DocumentIndexStatus.FAILED
+        assert document.is_active is False
+        assert document.attachment_id == 999
+
+    def test_stale_generation_leaves_the_newer_attempt_untouched(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_served_copy(test_db, test_user)
+        # A newer attempt already superseded this run's generation.
+        document.index_generation = 2
+        document.index_status = DocumentIndexStatus.INDEXING
+        test_db.commit()
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=1)
+
+        test_db.refresh(document)
+        assert document.index_status == DocumentIndexStatus.INDEXING
+        assert document.is_active is False
+        assert document.processing_error_payload is None
         assert document.source_config["external"].get("status") is None
 
 

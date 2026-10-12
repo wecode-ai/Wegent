@@ -10,6 +10,28 @@ interface ErrorTranslation {
 
 const ERROR_TRANSLATIONS: ErrorTranslation[] = [
   {
+    pattern: /^Smart app default save location is unavailable$/i,
+    key: 'workbench.smart_apps_default_location_unavailable',
+    fallback: '无法在系统“文档”中创建工作台，请选择其他保存位置。',
+  },
+  {
+    pattern:
+      /^(?:Smart app save location is not writable|.*(?:EACCES|EPERM|EROFS|permission denied|operation not permitted).*)$/i,
+    key: 'workbench.smart_apps_location_not_writable',
+    fallback: '无法在该位置创建工作台，请选择有写入权限的目录。',
+  },
+  {
+    pattern: /^Smart app destination already exists$/i,
+    key: 'workbench.smart_apps_destination_exists',
+    fallback: '目标目录已存在，请修改目录标识或选择其他保存位置。',
+  },
+  {
+    pattern:
+      /^(?:Failed to resolve Smart app parent directory:.*|Smart app parent path must be a directory)$/i,
+    key: 'workbench.smart_apps_location_invalid',
+    fallback: '保存位置不存在或不是文件夹，请重新选择目录。',
+  },
+  {
     pattern: /^(?:Smart app package is too large|Smart app ZIP exceeds 50 MB)$/i,
     key: 'workbench.smart_apps_error_package_too_large',
     fallback: '发布包超过 50 MB，请使用项目打包命令生成发布产物，不要直接上传源码压缩包。',
@@ -99,6 +121,26 @@ const ERROR_TRANSLATIONS: ErrorTranslation[] = [
     fallback: '发布信息校验失败，请检查发布包、图片、标签和分享范围。',
   },
 ]
+
+const SAVE_LOCATION_ERROR =
+  /^(?:Smart app default save location is unavailable|Smart app save location is not writable|Smart app destination already exists|Failed to resolve Smart app parent directory:.*|Smart app parent path must be a directory|.*(?:EACCES|EPERM|EROFS|permission denied|operation not permitted).*)$/i
+
+export function isSmartAppSaveLocationError(error: unknown): boolean {
+  return SAVE_LOCATION_ERROR.test(getErrorMessage(error, ''))
+}
+
+export function isOutdatedSmartAppCreationHost(
+  error: unknown,
+  input: { parentPath: string; description: string }
+): boolean {
+  if (!error || typeof error !== 'object') return false
+  const hostError = error as { code?: unknown; message?: unknown }
+  if (hostError.code !== 'invalid_params') return false
+  return (
+    (!input.parentPath.trim() && hostError.message === 'parentPath is required') ||
+    (!input.description.trim() && hostError.message === 'description is required')
+  )
+}
 
 const FIELD_TRANSLATIONS: Record<string, Omit<ErrorTranslation, 'pattern'>> = {
   sizeBytes: {

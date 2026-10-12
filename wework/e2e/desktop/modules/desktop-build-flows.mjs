@@ -90,6 +90,8 @@ import {
   writeFile,
 } from './shared.mjs'
 
+const BUILTIN_CODEX_PROVIDER_IDS = new Set(['openai', 'amazon-bedrock', 'ollama', 'lmstudio'])
+
 import { waitForTaskRowByText } from './task-state-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import {
@@ -342,14 +344,19 @@ async function writeCodexConfig(
   scenarioConfigToml = '',
   upstreamApiFormat = 'openai-responses',
   providerConfigToml = '',
-  providerAuthToml = 'env_key = "WEWORK_E2E_MODEL_API_KEY"'
+  providerAuthToml = 'env_key = "WEWORK_E2E_MODEL_API_KEY"',
+  modelProviderId = MODEL_PROVIDER_ID,
+  modelId = DEFAULT_MODEL_ID
 ) {
   await mkdir(codexHome, { recursive: true })
   const configPath = join(codexHome, 'config.toml')
   const temporaryConfigPath = join(codexHome, `config.toml.${randomUUID()}.tmp`)
+  const customProviderConfig = BUILTIN_CODEX_PROVIDER_IDS.has(modelProviderId)
+    ? ''
+    : `\n[model_providers.${modelProviderId}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\n${providerAuthToml}\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n${providerConfigToml}`
   await writeFile(
     temporaryConfigPath,
-    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\n${providerAuthToml}\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n${providerConfigToml}`,
+    `model_provider = "${modelProviderId}"\nmodel = "${modelId}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}${customProviderConfig}`,
     'utf8'
   )
   await rename(temporaryConfigPath, configPath)
@@ -1571,6 +1578,7 @@ async function verifyModelProtocolMatrix({
   composerSelector,
   control,
   newConversationSelector,
+  readRuntimeTask,
   screenshotPrefix,
   setCodexUpstreamProtocol,
   startIndex = 0,
@@ -1637,7 +1645,38 @@ async function verifyModelProtocolMatrix({
       control.matrixState.requests.length >= 3,
       `${matrixCaseId(model)} did not send the text/tool/tool-output request sequence`
     )
-    await prepareCompletedTurnScreenshot(control)
+    try {
+      await prepareCompletedTurnScreenshot(control)
+    } catch (error) {
+      try {
+        const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
+        const task = taskId && readRuntimeTask ? await readRuntimeTask(taskId) : null
+        const execution = task
+          ? Object.fromEntries(
+              [
+                'taskId',
+                'status',
+                'running',
+                'threadStatus',
+                'turnStatus',
+                'completedAt',
+                'updatedAt',
+              ].map(key => [key, task[key] ?? null])
+            )
+          : null
+        control.matrixState.executionDiagnostics = execution
+        console.error('Model protocol matrix terminal state mismatch', {
+          caseId: matrixCaseId(model),
+          taskId,
+          execution,
+          lifecycle: snapshot.workbench?.activeLifecycle ?? null,
+        })
+      } catch {
+        console.error('Model protocol matrix terminal state diagnostics could not be collected')
+      }
+      throw error
+    }
     await captureVerificationScreenshot(
       control,
       `${screenshotPrefix}-${String(matrixIndex + 1).padStart(2, '0')}-${matrixCaseId(model)}.png`

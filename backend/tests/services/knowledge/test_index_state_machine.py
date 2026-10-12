@@ -4,11 +4,11 @@
 
 """Tests for knowledge indexing state machine helpers."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -21,7 +21,6 @@ from app.models.knowledge import (
 from app.models.user import User
 from app.schemas.knowledge import DocumentProcessingStage
 from app.services.knowledge.index_state_machine import (
-    _utcnow,
     begin_external_import_attempt,
     mark_document_index_failed,
     mark_document_index_started,
@@ -29,6 +28,7 @@ from app.services.knowledge.index_state_machine import (
     prepare_document_index_enqueue,
     prepare_external_refresh_enqueue,
 )
+from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.processing_errors import build_processing_error
 
 
@@ -87,7 +87,9 @@ def test_prepare_document_index_enqueue_schedules_new_generation(
 ):
     knowledge_base = _create_knowledge_base(test_db, test_user)
     document = _create_document(test_db, test_user, knowledge_base)
-    previous_updated_at = _utcnow() - timedelta(seconds=5)
+    previous_updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        seconds=5
+    )
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {KnowledgeDocument.updated_at: previous_updated_at},
         synchronize_session=False,
@@ -137,7 +139,9 @@ def test_prepare_document_index_enqueue_recovers_stale_queued_generation(
     )
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {
-            KnowledgeDocument.updated_at: _utcnow()
+            KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
             - timedelta(seconds=settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS + 5)
         },
         synchronize_session=False,
@@ -169,7 +173,9 @@ def test_prepare_document_index_enqueue_recovers_stale_indexing_generation(
     )
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {
-            KnowledgeDocument.updated_at: _utcnow()
+            KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
             - timedelta(seconds=settings.KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS + 5)
         },
         synchronize_session=False,
@@ -219,7 +225,9 @@ def test_prepare_document_index_enqueue_can_replace_active_generation(
         index_status=DocumentIndexStatus.INDEXING,
         index_generation=4,
     )
-    previous_updated_at = _utcnow() - timedelta(seconds=5)
+    previous_updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        seconds=5
+    )
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {KnowledgeDocument.updated_at: previous_updated_at},
         synchronize_session=False,
@@ -322,7 +330,9 @@ def test_mark_document_index_started_updates_timestamp_on_success(
         index_status=DocumentIndexStatus.QUEUED,
         index_generation=2,
     )
-    previous_updated_at = _utcnow() - timedelta(seconds=5)
+    previous_updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        seconds=5
+    )
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {KnowledgeDocument.updated_at: previous_updated_at},
         synchronize_session=False,
@@ -366,6 +376,75 @@ def test_mark_document_index_succeeded_only_updates_active_generation(
     assert finalized is False
     assert document.index_status == DocumentIndexStatus.QUEUED
     assert document.index_generation == 2
+
+
+def test_mark_document_index_succeeded_refuses_a_deleted_document(
+    test_db: Session, test_user: User
+):
+    """A write that finishes after the delete cannot finalize.
+
+    This is the end state of the deletion race: the delete holds the document
+    row until it commits, so an in-flight index completion arrives after the row
+    is gone. The guarded update then matches nothing, which is what routes the
+    task into the late-index compensation instead of a successful write, and the
+    removed reference stays unqueryable.
+    """
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=3,
+    )
+    document_id = document.id
+    test_db.delete(document)
+    test_db.commit()
+
+    finalized = mark_document_index_succeeded(
+        test_db,
+        document_id=document_id,
+        generation=3,
+        chunks={"total_count": 4},
+        chunk_storage_enabled=True,
+    )
+
+    assert finalized is False
+
+
+def test_lock_document_row_refreshes_the_row_before_deletion(
+    test_db: Session, test_user: User
+):
+    """The delete re-reads the row under a lock instead of trusting cached state.
+
+    This is the read half of the deletion race: a row another writer advanced
+    must reach the removal with its stored values, not the values an
+    already-loaded instance still holds, and the same locking query is what
+    blocks a concurrent indexing update until the delete commits.
+    """
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.SUCCESS,
+        index_generation=3,
+    )
+    document_id = document.id
+
+    # Another writer advances the row while this Session keeps the old value.
+    test_db.execute(
+        update(KnowledgeDocument)
+        .where(KnowledgeDocument.id == document_id)
+        .values(index_generation=7)
+        .execution_options(synchronize_session=False)
+    )
+    assert document.index_generation == 3
+
+    locked = KnowledgeService._lock_document_row(test_db, document_id)
+
+    assert locked is document
+    assert locked.index_generation == 7
 
 
 def test_mark_document_index_failed_persists_error_and_preserves_source_config(
@@ -675,6 +754,10 @@ def test_mark_document_index_succeeded_promotes_synced_external_version(
         external_resource_id="v1:conn-primary:42",
     )
     test_db.commit()
+    document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        seconds=5
+    )
+    test_db.commit()
     previous_updated_at = document.updated_at
 
     finalized = mark_document_index_succeeded(test_db, document.id, 2)
@@ -892,7 +975,9 @@ def test_external_refresh_enqueue_recovers_abandoned_snapshot_before_retry(
     test_db.commit()
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {
-            KnowledgeDocument.updated_at: _utcnow()
+            KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
             - timedelta(seconds=settings.KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS + 5)
         },
         synchronize_session=False,
@@ -918,3 +1003,144 @@ def test_external_refresh_enqueue_recovers_abandoned_snapshot_before_retry(
         222,
         retry_orphan_cleanup=True,
     )
+
+
+@pytest.mark.parametrize("chunk_storage_enabled", [False, True])
+def test_index_success_persists_qa_metadata_without_requiring_chunk_storage(
+    test_db: Session, test_user: User, chunk_storage_enabled: bool
+) -> None:
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=1,
+    )
+    chunks = {
+        "items": [{"content": "Q: question\nA: private answer"}],
+        "total_count": 1,
+        "splitter_type": "qa",
+        "splitter_subtype": "qa_pair",
+        "qa_pair_count": 1,
+    }
+
+    assert mark_document_index_succeeded(
+        test_db,
+        document.id,
+        1,
+        chunks=chunks,
+        chunk_storage_enabled=chunk_storage_enabled,
+    )
+
+    test_db.refresh(document)
+    assert document.chunks == (
+        chunks
+        if chunk_storage_enabled
+        else {
+            "splitter_subtype": "qa_pair",
+            "qa_pair_count": 1,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "chunks", [None, {"splitter_subtype": None, "qa_pair_count": 0}]
+)
+def test_successful_reindex_replaces_old_qa_metadata_without_chunk_storage(
+    test_db: Session, test_user: User, chunks: dict | None
+) -> None:
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=2,
+    )
+    document.chunks = {
+        "items": [{"content": "old chunk body"}],
+        "splitter_subtype": "qa_pair",
+        "qa_pair_count": 1,
+    }
+    test_db.commit()
+
+    assert mark_document_index_succeeded(test_db, document.id, 2, chunks=chunks)
+
+    test_db.refresh(document)
+    assert document.chunks == chunks
+
+
+def test_scanner_recovers_first_inactive_queued_attempt(
+    test_db, test_user, monkeypatch
+):
+    from contextlib import nullcontext
+
+    from app.services.knowledge import index_state_machine
+    from app.tasks.knowledge_tasks import scan_stale_index_tasks
+
+    kb = _create_knowledge_base(test_db, test_user)
+    doc = _create_document(
+        test_db,
+        test_user,
+        kb,
+        index_status=DocumentIndexStatus.QUEUED,
+        index_generation=1,
+    )
+    expired_now = doc.updated_at + timedelta(
+        seconds=settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS + 1
+    )
+    monkeypatch.setattr(
+        index_state_machine, "database_datetime_now", lambda: expired_now
+    )
+    monkeypatch.setattr(
+        "app.tasks.knowledge_tasks.SessionLocal", lambda: nullcontext(test_db)
+    )
+
+    scan_stale_index_tasks.run()
+
+    test_db.refresh(doc)
+    assert doc.index_status == DocumentIndexStatus.FAILED
+    assert doc.is_active is False
+    assert doc.index_generation == 1
+
+
+def test_scanner_does_not_fail_worker_that_started_after_snapshot(
+    test_db, test_user, monkeypatch
+):
+    from contextlib import nullcontext
+
+    from app.services.knowledge import index_state_machine
+    from app.tasks.knowledge_tasks import scan_stale_index_tasks
+
+    kb = _create_knowledge_base(test_db, test_user)
+    doc = _create_document(
+        test_db,
+        test_user,
+        kb,
+        is_active=True,
+        index_status=DocumentIndexStatus.QUEUED,
+        index_generation=1,
+    )
+    expired_now = doc.updated_at + timedelta(
+        seconds=settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS + 1
+    )
+    moved = False
+
+    def clock():
+        nonlocal moved
+        if not moved:
+            moved = True
+            assert mark_document_index_started(test_db, doc.id, 1).should_execute
+        return expired_now
+
+    monkeypatch.setattr(index_state_machine, "database_datetime_now", clock)
+    monkeypatch.setattr(
+        "app.tasks.knowledge_tasks.SessionLocal", lambda: nullcontext(test_db)
+    )
+
+    scan_stale_index_tasks.run()
+
+    test_db.refresh(doc)
+    assert doc.index_status == DocumentIndexStatus.INDEXING
+    assert doc.index_generation == 1

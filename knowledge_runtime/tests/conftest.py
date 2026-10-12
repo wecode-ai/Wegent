@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.orm import Session
 
+from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from knowledge_runtime.services.config_resolver import ConfigResolver
 from shared.models.db import Kind, User
 from shared.testing import capability_reference_database
@@ -71,6 +72,7 @@ _SHARED_RETRIEVER_SPEC = {
     }
 }
 _SHARED_EMBEDDING_SPEC = {
+    "modelType": "embedding",
     "protocol": "openai",
     "modelConfig": {
         "env": {
@@ -79,6 +81,21 @@ _SHARED_EMBEDDING_SPEC = {
         }
     },
     "embeddingConfig": {"dimensions": 1024},
+}
+_REFERENCED_RETRIEVER_SPEC = {
+    "storageConfig": {
+        "type": "elasticsearch",
+        "url": "http://shared-retriever:9200",
+        "indexStrategy": {"mode": "per_user"},
+    }
+}
+_REFERENCED_KB_RETRIEVAL_CONFIG = {
+    "retriever_name": "shared-retriever",
+    "retriever_namespace": "default",
+    "embedding_config": {
+        "model_name": "public-embedding",
+        "model_namespace": "default",
+    },
 }
 
 
@@ -134,7 +151,9 @@ def _shared_model_kinds() -> list[Kind]:
 @pytest.fixture
 def shared_model_db() -> Iterator[Session]:
     """Create a KB whose embedding Model is referenced into its group."""
-    with capability_reference_database(additional_tables=(User.__table__,)) as database:
+    with capability_reference_database(
+        additional_tables=(User.__table__, KnowledgeDocument.__table__)
+    ) as database:
         database.session.add(User(id=42, user_name="kb-owner", password_hash="unused"))
         database.session.add_all(_shared_model_kinds())
         database.session.execute(
@@ -151,6 +170,57 @@ def shared_model_db() -> Iterator[Session]:
                 resource_id=3,
                 entity_type="namespace",
                 entity_id="7",
+                status="approved",
+            )
+        )
+        database.session.commit()
+        yield database.session
+
+
+def _referenced_retriever_kinds() -> list[Kind]:
+    return [
+        _persisted_kind(
+            kind_id=1,
+            user_id=42,
+            kind="KnowledgeBase",
+            name="referenced-kb",
+            namespace="default",
+            spec={"retrievalConfig": _REFERENCED_KB_RETRIEVAL_CONFIG},
+        ),
+        _persisted_kind(
+            kind_id=2,
+            user_id=0,
+            kind="Model",
+            name="public-embedding",
+            namespace="default",
+            spec=_SHARED_EMBEDDING_SPEC,
+        ),
+        _persisted_kind(
+            kind_id=3,
+            user_id=77,
+            kind="Retriever",
+            name="shared-retriever",
+            namespace="default",
+            spec=_REFERENCED_RETRIEVER_SPEC,
+        ),
+    ]
+
+
+@pytest.fixture
+def referenced_retriever_db() -> Iterator[Session]:
+    """Create a KB whose owner holds an approved reference to a Retriever."""
+    with capability_reference_database(
+        additional_tables=(User.__table__, KnowledgeDocument.__table__)
+    ) as database:
+        database.session.add(User(id=42, user_name="kb-owner", password_hash="unused"))
+        database.session.add_all(_referenced_retriever_kinds())
+        database.session.execute(
+            database.resource_members.insert().values(
+                id=1,
+                resource_type="Retriever",
+                resource_id=3,
+                entity_type="user",
+                entity_id="42",
                 status="approved",
             )
         )
@@ -224,6 +294,7 @@ def _make_model_kind(
     """Create a mock Model Kind record."""
     if spec is None:
         spec = {
+            "modelType": "embedding",
             "protocol": "openai",
             "modelConfig": {
                 "env": {

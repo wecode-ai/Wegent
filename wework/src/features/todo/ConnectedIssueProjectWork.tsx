@@ -2,11 +2,13 @@ import { useMemo, type ReactNode } from 'react'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import { useWorkbenchPaneEnvironment } from '@/components/layout/useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from '@/components/layout/useWorkbenchProjectWorkControls'
+import { requestProjectCreateMode } from '@/components/layout/workbenchShellEvents'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { ProjectExecutionMode, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 
 interface ConnectedIssueProjectWorkProps {
+  projects: ProjectWithTasks[]
   project: ProjectWithTasks | null
   selectedDeviceWorkspaceId: number | null
   executionMode?: ProjectExecutionMode
@@ -22,6 +24,7 @@ interface ConnectedIssueProjectWorkProps {
 }
 
 export function ConnectedIssueProjectWork({
+  projects,
   project,
   selectedDeviceWorkspaceId,
   executionMode,
@@ -73,44 +76,60 @@ export function ConnectedIssueProjectWork({
     pane,
     enableShellProjectActions: true,
   })
-  const { projectWork } = useWorkbenchPaneEnvironment({
-    pane,
-    projectWork: baseProjectWork,
-  })
-  const connectedProjectWork = useMemo<ProjectWorkControls>(
+  const controlledProjectWork = useMemo<ProjectWorkControls>(
     () => ({
-      ...projectWork,
+      ...baseProjectWork,
+      projects,
       currentProject: resolvedProject,
       currentProjectId: resolvedProject?.id,
       selectedDeviceWorkspaceId,
       pendingProjectWorkspaceProjectId: null,
-      executionMode: executionMode ?? projectWork.executionMode,
+      executionMode: executionMode ?? baseProjectWork.executionMode,
       executionModeLocked,
-      worktreeBranch: worktreeBranch ?? projectWork.worktreeBranch,
-      showProjectClearButton: false,
-      showProjectSelector,
+      worktreeBranch:
+        worktreeBranch === undefined ? baseProjectWork.worktreeBranch : worktreeBranch,
       onSelectProject,
       onSelectProjectWorkspace,
       onBindProjectWorkspace: projectId => {
         onSelectProject(projectId)
-        projectWork.onBindProjectWorkspace?.(projectId)
+        baseProjectWork.onBindProjectWorkspace?.(projectId)
       },
-      onExecutionModeChange: onExecutionModeChange ?? projectWork.onExecutionModeChange,
-      onWorktreeBranchChange: onWorktreeBranchChange ?? projectWork.onWorktreeBranchChange,
+      onCreateProjectMode: mode => {
+        requestProjectCreateMode(mode, {
+          preserveCurrentSurface: true,
+          onCreated: createdProject => {
+            onSelectProject(createdProject.id)
+          },
+        })
+      },
+      onExecutionModeChange: onExecutionModeChange ?? baseProjectWork.onExecutionModeChange,
+      onWorktreeBranchChange: onWorktreeBranchChange ?? baseProjectWork.onWorktreeBranchChange,
     }),
     [
+      baseProjectWork,
       executionMode,
       executionModeLocked,
+      onExecutionModeChange,
       onSelectProject,
       onSelectProjectWorkspace,
-      onExecutionModeChange,
       onWorktreeBranchChange,
-      projectWork,
+      projects,
       resolvedProject,
       selectedDeviceWorkspaceId,
-      showProjectSelector,
       worktreeBranch,
     ]
+  )
+  const { projectWork } = useWorkbenchPaneEnvironment({
+    pane,
+    projectWork: controlledProjectWork,
+  })
+  const connectedProjectWork = useMemo<ProjectWorkControls>(
+    () => ({
+      ...projectWork,
+      showProjectClearButton: false,
+      showProjectSelector,
+    }),
+    [projectWork, showProjectSelector]
   )
 
   return children(connectedProjectWork)

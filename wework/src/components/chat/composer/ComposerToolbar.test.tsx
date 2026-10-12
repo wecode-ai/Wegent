@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getPlatform } from '@wegent/collaboration/controls/platform'
@@ -18,6 +18,31 @@ vi.mock('./ModelSelector', () => ({
   ModelSelector: () => <span data-testid="model-selector-button">model</span>,
 }))
 
+vi.mock('./DrawingAttachmentDialog', () => ({
+  DrawingAttachmentDialog: ({
+    onAttach,
+    onClose,
+  }: {
+    onAttach: (file: File) => void
+    onClose: () => void
+  }) => (
+    <div data-testid="drawing-attachment-dialog">
+      <button
+        data-testid="drawing-confirm-button"
+        onClick={() => {
+          onAttach(new File(['png'], 'drawing.png', { type: 'image/png' }))
+          onClose()
+        }}
+      >
+        Attach
+      </button>
+      <button data-testid="drawing-cancel-button" onClick={onClose}>
+        Cancel
+      </button>
+    </div>
+  ),
+}))
+
 class ResizeObserverMock {
   constructor(callback: ResizeObserverCallback) {
     resizeCallback = callback
@@ -33,6 +58,34 @@ describe('ComposerToolbar', () => {
     resizeCallback = null
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('opens a drawing from the add menu and sends the PNG to the existing attachment handler', async () => {
+    const onFileSelect = vi.fn()
+    render(
+      <ComposerToolbar
+        canSend={false}
+        models={[]}
+        selectedModel={null}
+        selectedModelOptions={{}}
+        isModelSelectionReady
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+        onFileSelect={onFileSelect}
+        onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByTestId('add-context-button'))
+    fireEvent.click(screen.getByTestId('draw-attachment-button'))
+    expect(screen.queryByTestId('add-context-menu')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('drawing-confirm-button'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('drawing-attachment-dialog')).not.toBeInTheDocument()
+    )
+    expect(onFileSelect).toHaveBeenCalledExactlyOnceWith([expect.any(File)])
+    expect(onFileSelect.mock.calls[0][0][0].type).toBe('image/png')
   })
 
   it('collapses low-priority labels based on the composer width', () => {

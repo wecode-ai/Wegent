@@ -8,6 +8,7 @@ import shlex
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from app.services.device.git_credential_paths import managed_git_cli_command
 from app.services.device.git_credentials_command import (
     SYNC_GIT_CREDENTIALS_COMMAND,
 )
@@ -198,17 +199,6 @@ print(
     )
 )
 """.strip()
-
-
-def managed_git_cli_command(command: str) -> str:
-    """Load Wegent-managed CLI config before executing a fixed command."""
-
-    argv = shlex.split(command)
-    shell = (
-        'if [ -f "$HOME/.wecode/git-auth/env.sh" ]; then '
-        '. "$HOME/.wecode/git-auth/env.sh"; fi; exec "$@"'
-    )
-    return " ".join(shlex.quote(part) for part in ["sh", "-c", shell, "--", *argv])
 
 
 def git_hosting_cli_status_command(tool: str) -> str:

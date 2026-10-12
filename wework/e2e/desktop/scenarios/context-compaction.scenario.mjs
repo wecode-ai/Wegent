@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createInterruptedCompactionScenario } from './interrupted-context-compaction.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -8,6 +9,7 @@ const INITIAL_COMPLETION = 'WEWORK_DESKTOP_E2E_CONTEXT_COMPACTION_READY'
 const COMPACTION_SUMMARY = 'WEWORK_DESKTOP_E2E_CONTEXT_COMPACTION_SUMMARY'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_CONTEXT_COMPACTION_FOLLOW_UP'
 const FOLLOW_UP_COMPLETION = 'WEWORK_DESKTOP_E2E_CONTEXT_COMPACTION_VERIFIED'
+const REJECTED_COMPACTION_TIMEOUT_MS = 60_000
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -159,8 +161,11 @@ export function createDesktopScenario({
   workbenchReadyTimeoutMs,
   workspacePath,
 }) {
+  const interrupted = createInterruptedCompactionScenario({ uiTimeoutMs, modelResponseTimeoutMs })
   let active = false
   let compactionRequests = 0
+  let rejectedCompactionRequests = 0
+  let rejectCompaction = false
   let followUpSawCompactedContext = false
   let initialRequest
   let followUpRequest
@@ -175,6 +180,7 @@ export function createDesktopScenario({
 
   return {
     async handleHttp(request, response, url) {
+      if (await interrupted.handleHttp(request, response, url)) return true
       if (
         !active ||
         request.method !== 'POST' ||
@@ -196,6 +202,12 @@ export function createDesktopScenario({
 
       if (kind === 'compaction') {
         compactionRequests += 1
+        if (rejectCompaction) {
+          rejectedCompactionRequests += 1
+          response.writeHead(400, { 'Content-Type': 'application/json' })
+          response.end(JSON.stringify({ detail: 'WEWORK_DESKTOP_E2E_CONTEXT_COMPACTION_REJECTED' }))
+          return true
+        }
         resolveCompactionStarted()
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
@@ -246,6 +258,14 @@ export function createDesktopScenario({
       await createLocalProject(control, workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs)
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', COMPOSER_SELECTOR, { value: INITIAL_PROMPT })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        {
+          enabled: true,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: INITIAL_COMPLETION,
@@ -316,10 +336,53 @@ export function createDesktopScenario({
       assert.equal(followUpSession.conversation_id, initialSession.conversation_id)
       assert.notEqual(followUpSession.response_id, initialSession.response_id)
       await captureScreenshot(control, 'context-compaction-05-follow-up-verified.png', 'body')
+      await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
+      // Run the interrupted-compaction coverage first: it asserts on the
+      // compaction indicators of the whole transcript, so every phase before
+      // it must leave the transcript in the state that checkpoint already
+      // established.
+      await interrupted.verify(control)
+
+      // A compaction turn the provider rejects must surface its own failure
+      // instead of staying silent until the app-IPC deadline reports a timeout.
+      rejectCompaction = true
+      const rejectedStartedAt = Date.now()
+      await control.command('click', '[data-testid="context-usage-button"]')
+      await control.command('waitFor', '[data-testid="confirm-compact-context-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="confirm-compact-context-button"]')
+      const rejectedErrorTitleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-title"]`
+      await control.command('waitFor', rejectedErrorTitleSelector, {
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const rejectedCompactionElapsedMs = Date.now() - rejectedStartedAt
+      assert.ok(
+        rejectedCompactionRequests >= 1,
+        'The rejected compaction never reached the model service'
+      )
+      assert.ok(
+        rejectedCompactionElapsedMs < REJECTED_COMPACTION_TIMEOUT_MS,
+        `The rejected compaction reported after ${rejectedCompactionElapsedMs}ms`
+      )
+      const rejectedErrorTitle = await control.command('getText', rejectedErrorTitleSelector)
+      assert.doesNotMatch(
+        rejectedErrorTitle,
+        /超时|timed out/u,
+        'The rejected compaction was reported as a transport timeout'
+      )
+      await captureScreenshot(control, 'context-compaction-06-rejected.png', 'body')
+      rejectCompaction = false
     },
 
     diagnostics() {
-      return { active, compactionRequests, followUpSawCompactedContext }
+      return {
+        active,
+        compactionRequests,
+        rejectedCompactionRequests,
+        followUpSawCompactedContext,
+        interrupted: interrupted.diagnostics(),
+      }
     },
   }
 }

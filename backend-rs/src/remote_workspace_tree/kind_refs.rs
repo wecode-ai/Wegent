@@ -9,6 +9,7 @@
 //! `task_detail_helpers.get_bots_for_subtasks`'s per-bot tail).
 use super::error::ApiError;
 use super::kinds::KindStore;
+use super::user_cache;
 use crate::crd::{CrdDocument, reference_parts};
 
 /// `team_kinds_service._convert_to_team_dict`: per member, resolve the bot
@@ -108,9 +109,20 @@ where
             .await?;
     }
     if let Some((name, namespace)) = spec.and_then(|spec| reference_parts(&spec.model_ref)) {
-        let _model = kinds
+        let model = kinds
             .get_by_name_and_namespace(user_id, "Model", &namespace, &name)
             .await?;
+        // `is_public_model_allowed_for_user_id`
+        // (`app.services.adapters/public_model.py`): a public row (owner user
+        // 0) consults the model's `spec.allowedUsersEnabled` /
+        // `spec.allowedUsers` whitelist, which the source resolves by reading
+        // the user row directly (`db.query(User)`, no `user:v2:data` read). A
+        // restricted model is dropped from the summary as if unselected; the
+        // summary is discarded by both remote-workspace flows, so the direct
+        // lookup is the gate's observable effect.
+        if model.as_ref().is_some_and(|model| model.user_id == 0) {
+            let _user_name = user_cache::user_name_by_id(kinds.mysql, user_id).await?;
+        }
     }
     Ok(())
 }

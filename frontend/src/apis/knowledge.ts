@@ -351,6 +351,12 @@ export async function retryExternalDocumentImport(documentId: number): Promise<K
   )
 }
 
+/**
+ * Queue a manual refresh of one imported external document.
+ *
+ * The backend fetches the source's latest body and re-indexes it on the same
+ * record; the document keeps its folder and identity.
+ */
 export async function synchronizeExternalDocument(documentId: number): Promise<KnowledgeDocument> {
   return apiClient.post<KnowledgeDocument>(`/knowledge-documents/${documentId}/external-sync`)
 }

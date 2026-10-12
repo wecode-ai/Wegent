@@ -84,6 +84,7 @@ class LoopNode(Base):
     source = Column(String(20), nullable=True)
     status = Column(String(32), nullable=True, index=True)
     priority = Column(String(20), nullable=True)
+    start_at = Column(DateTime, nullable=True)
     due_at = Column(DateTime, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     current_delivery_id = Column(String(64), nullable=True)
@@ -156,16 +157,6 @@ class LoopNode(Base):
 
 class CloudProject(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "project"}
-
-    @property
-    def visibility(self) -> str:
-        metadata = self.metadata_json
-        if not isinstance(metadata, dict):
-            return "private"
-        visibility = metadata.get("visibility")
-        if visibility in {"private", "public_restricted", "public"}:
-            return str(visibility)
-        return "private"
 
     @property
     def tags(self) -> list[str]:
@@ -264,13 +255,13 @@ class ProjectAutomationRun(LoopNode):
 
 
 class ProjectWorkflowRun(LoopNode):
-    """One durable AI planning attempt for an Issue."""
+    """Persisted legacy workflow run rows retained for polymorphic loading."""
 
     __mapper_args__ = {"polymorphic_identity": "workflow_run"}
 
 
 class ProjectWorkflowPlanItem(LoopNode):
-    """One proposed concrete child task in a workflow plan version."""
+    """Persisted legacy workflow plan rows retained for polymorphic loading."""
 
     __mapper_args__ = {"polymorphic_identity": "workflow_plan_item"}
 
@@ -307,12 +298,43 @@ class LoopItemTaskBinding(LoopNode):
         return value if isinstance(value, dict) else None
 
     @property
+    def execution_context(self) -> dict[str, object] | None:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get("execution_context")
+        return value if isinstance(value, dict) else None
+
+    @property
     def workflow_node_id(self) -> str | None:
         metadata = self.metadata_json
         if not isinstance(metadata, dict):
             return None
         value = metadata.get("workflow_node_id")
         return value if isinstance(value, str) and value else None
+
+    def _metadata_text(self, key: str) -> str | None:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get(key)
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def human_assignment_id(self) -> str | None:
+        return self._metadata_text("human_assignment_id")
+
+    @property
+    def dispatch_id(self) -> str | None:
+        return self._metadata_text("dispatch_id")
+
+    @property
+    def dispatch_round_id(self) -> str | None:
+        return self._metadata_text("dispatch_round_id")
+
+    @property
+    def assignment_id(self) -> str | None:
+        return self._metadata_text("assignment_id")
 
     @property
     def change_requests(self) -> list[dict[str, object]]:
@@ -388,6 +410,7 @@ _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "source": "",
     "status": "",
     "priority": "",
+    "start_at": _MYSQL_UNSET_DATETIME,
     "due_at": _MYSQL_UNSET_DATETIME,
     "current_delivery_id": "",
     "local_project_id": 0,

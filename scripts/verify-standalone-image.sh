@@ -122,4 +122,8 @@ wait_for_url "Frontend" "http://localhost:${STANDALONE_PORT}/"
 wait_for_url "Wework" "http://localhost:${STANDALONE_PORT}/wework/"
 wait_for_api_proxy
 
+echo "Checking Knowledge Runtime inside the standalone container"
+docker exec "$CONTAINER_NAME" curl -fsS --connect-timeout 2 --max-time 5 \
+    http://127.0.0.1:8200/internal/rag/health
+
 echo "Standalone image verification succeeded for ${IMAGE}"

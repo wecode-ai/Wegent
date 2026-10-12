@@ -94,48 +94,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(host.renderAgentEditor).toBeTypeOf('function')
   })
 
-  it('creates the default local Agent from the current device model', async () => {
-    const defaultAgent = {
-      id: 'local-agent-default',
-      name: 'current-device-agent',
-      displayName: '当前设备智能体',
-    }
-    const ensureDefault = vi.fn(async () => defaultAgent)
-    const localAgentApi = {
-      list: vi.fn(async () => []),
-      ensureDefault,
-      create: vi.fn(),
-    }
-    const localModelApi = {
-      listModels: vi.fn(async () => ({
-        data: [
-          {
-            name: 'gpt-5',
-            displayName: 'GPT-5',
-            type: 'public',
-            namespace: 'default',
-          },
-        ],
-      })),
-    }
-    const host = createWeworkProjectAgentConfigurationHost(
-      undefined,
-      localAgentApi as never,
-      localModelApi as never
-    )
-
-    await expect(host.createDefaultLocalAgent?.()).resolves.toBe(defaultAgent.id)
-    expect(ensureDefault).toHaveBeenCalledWith(
-      DEFAULT_WORK_ITEM_PROJECT_ID,
-      expect.objectContaining({
-        name: 'current-device-agent',
-        displayName: '当前设备智能体',
-        model: 'gpt-5',
-        capabilityMode: 'follow_device',
-      })
-    )
-  })
-
   it('uses the real unified resource creator contract and returns the created Team reference', async () => {
     const onCreated = vi.fn(async () => undefined)
     const createAgent = vi.fn(async () => ({
@@ -588,7 +546,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
           executionMode: 'auto',
           executionEnvironment: 'local',
           executionDeviceId: null,
-          workspacePolicy: 'git_worktree',
           capabilityMode: 'manual',
           additionalSkills: [
             {
@@ -651,10 +608,86 @@ describe('weworkProjectAgentConfigurationHost', () => {
         expect.objectContaining({
           version: 3,
           executionMode: 'auto',
-          workspacePolicy: 'git_worktree',
         })
       )
     )
     expect(onSaved).toHaveBeenCalledOnce()
+  })
+
+  it('configures an allowed model range for the current device agent', async () => {
+    const agent = {
+      id: 'device-agent',
+      name: 'current-device-agent',
+      displayName: '当前设备智能体',
+      runtime: 'codex',
+      model: null,
+      modelType: null,
+      modelNamespace: 'default',
+      allowedModels: [
+        {
+          name: 'retired-model',
+          type: 'runtime',
+          namespace: 'default',
+        },
+      ],
+      capabilityDescription: '使用当前设备的模型、技能和工具。',
+      capabilityMode: 'follow_device',
+      systemPrompt: '',
+      additionalSkills: [],
+      mcpServers: {},
+      plugins: [],
+      executionMode: 'auto',
+      maxConcurrentExecutions: 1,
+      visibility: 'creator_admin',
+      version: 4,
+    }
+    const update = vi.fn(async () => agent)
+    const host = createWeworkProjectAgentConfigurationHost(
+      { listSkills: vi.fn(async () => []) } as never,
+      { list: vi.fn(async () => [agent]), create: vi.fn(), update, archive: vi.fn() } as never,
+      {
+        listModels: vi.fn(async () => ({
+          data: [
+            { name: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol', type: 'runtime' },
+            { name: 'gpt-5.6-luna', displayName: 'GPT-5.6 Luna', type: 'runtime' },
+          ],
+        })),
+      } as never
+    )
+    render(
+      host.renderLocalAgentEditor!({
+        resourceId: agent.id,
+        onClose: vi.fn(),
+        onSaved: vi.fn(async () => undefined),
+      })
+    )
+
+    await waitFor(() => expect(screen.getByTestId('cloud-project-chat-agent-models')).toBeVisible())
+    expect(screen.queryByTestId('cloud-project-chat-agent-model')).not.toBeInTheDocument()
+    expect(screen.queryByText('默认')).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('cloud-project-chat-agent-model-unavailable-retired-model')
+    ).toHaveTextContent('retired-model（当前不可用）')
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-model-remove-retired-model'))
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-model-gpt-5.6-sol'))
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-model-gpt-5.6-luna'))
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(
+        DEFAULT_WORK_ITEM_PROJECT_ID,
+        agent.id,
+        expect.objectContaining({
+          version: 4,
+          model: 'gpt-5.6-sol',
+          modelType: 'runtime',
+          modelNamespace: 'default',
+          allowedModels: [
+            { name: 'gpt-5.6-sol', type: 'runtime', namespace: 'default' },
+            { name: 'gpt-5.6-luna', type: 'runtime', namespace: 'default' },
+          ],
+        })
+      )
+    )
   })
 })

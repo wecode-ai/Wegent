@@ -80,56 +80,10 @@ fn quote_literal(value: &str) -> String {
     out
 }
 
-/// `task_store.list_recent_owner_only_tasks`: the owner's routed task table
-/// with the approved-member exclusion, ordered
-/// `updated_at DESC, id DESC`, limited to `limit`.
-///
-/// The recorded COM_QUERY renders SQLAlchemy's fully labeled projection
-/// (`tasks_0480.id AS tasks_0480_id, ...`) with table-qualified predicates.
-/// The replay engine's projection adapter only handles single-FROM selects,
-/// and a statement with an EXISTS subquery can match solely through
-/// cross-protocol token materialization, which requires the prepared
-/// statement to materialize to the recorded token sequence. The target
-/// therefore keeps the labeled, qualified shape: `{{tasks}}` tokens still
-/// resolve the configured task table through the routing policy (a backticked
-/// identifier tokenizes identically to the recorded unquoted label), and the
-/// user id and limit bind as `?` parameters that materialize to the recorded
-/// literals.
-pub async fn list_recent_owner_only_tasks<M>(
-    mysql: &M,
-    user_id: i64,
-    limit: i64,
-) -> MysqlResult<Vec<OpaqueJson>>
-where
-    M: Mysql,
-{
-    use crate::task_routing::ByUserId;
-    let sql = "SELECT {{tasks}}.id AS {{tasks}}_id, {{tasks}}.user_id AS {{tasks}}_user_id, \
-         {{tasks}}.kind AS {{tasks}}_kind, {{tasks}}.name AS {{tasks}}_name, \
-         {{tasks}}.namespace AS {{tasks}}_namespace, {{tasks}}.json AS {{tasks}}_json, \
-         {{tasks}}.is_active AS {{tasks}}_is_active, \
-         {{tasks}}.created_at AS {{tasks}}_created_at, \
-         {{tasks}}.updated_at AS {{tasks}}_updated_at, \
-         {{tasks}}.project_id AS {{tasks}}_project_id, \
-         {{tasks}}.client_origin AS {{tasks}}_client_origin, \
-         {{tasks}}.is_group_chat AS {{tasks}}_is_group_chat \nFROM {{tasks}} \n\
-         WHERE {{tasks}}.user_id = ? AND {{tasks}}.kind = 'Task' \
-         AND {{tasks}}.is_active = 1 AND {{tasks}}.is_group_chat IS false \
-         AND NOT (EXISTS (SELECT * \nFROM resource_members \n\
-         WHERE resource_members.resource_type = 'Task' \
-         AND resource_members.resource_id = {{tasks}}.id \
-         AND resource_members.status = 'approved')) \
-         ORDER BY {{tasks}}.updated_at DESC, {{tasks}}.id DESC \n LIMIT ?";
-    let rows: Vec<MysqlRow> = mysql
-        .route(ByUserId(user_id as u64))
-        .fetch_all(sql, (user_id, limit))
-        .await?;
-    rows.iter()
-        .map(|row| {
-            // `json` is the sixth column of the fixed labeled projection.
-            row.get_at::<Json<OpaqueJson>>(5).map(|json| json.0)
-        })
-        .collect()
+/// The consumed column of one recent-task row: the opaque CRD `json`
+/// document, which is the sixth column of the fixed labeled projection.
+pub(crate) fn decode_recent_task_json(row: &MysqlRow) -> MysqlResult<OpaqueJson> {
+    row.get_at::<Json<OpaqueJson>>(5).map(|json| json.0)
 }
 
 /// `_query_recent_team_kinds`: active Teams matching the extracted refs.

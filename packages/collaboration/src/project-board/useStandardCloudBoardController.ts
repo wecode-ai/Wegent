@@ -71,7 +71,7 @@ const standardPriorities = ["none", "low", "medium", "high", "urgent"];
 function itemAssignee(
   item: StandardCloudBoardItem,
 ): StandardCloudBoardAssignee | null {
-  if (item.assignee_user_id) {
+  if (item.assignee_user_id != null) {
     return {
       id: String(item.assignee_user_id),
       name: item.assignee_name || String(item.assignee_user_id),

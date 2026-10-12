@@ -45,6 +45,8 @@ export interface RuntimeTaskRoute {
   deviceId: string
   taskId: string
   workspacePath?: string | null
+  issueExecution?: { projectId: string; issueId: string }
+  projectSession?: { projectId: string; issueId: string }
 }
 
 export type RuntimeTaskRouteInput = RuntimeTaskRoute
@@ -70,13 +72,29 @@ export function parseRuntimeTaskRoute(path: string, search = ''): RuntimeTaskRou
   const taskIdParam = getRequiredSearchParam(searchParams, 'taskId', 'task_id')
   if (!deviceId || !taskIdParam) return null
 
-  return { deviceId, taskId: taskIdParam }
+  const issueProjectId = getRequiredSearchParam(searchParams, 'issueProjectId')
+  const issueId = getRequiredSearchParam(searchParams, 'issueId')
+  const issueExecution =
+    issueProjectId && issueId ? { projectId: issueProjectId, issueId } : undefined
+  return {
+    deviceId,
+    taskId: taskIdParam,
+    ...(issueExecution ? { issueExecution } : {}),
+    ...(issueExecution && searchParams.get('projectSession') === '1'
+      ? { projectSession: issueExecution }
+      : {}),
+  }
 }
 
 export function buildRuntimeTaskRoute(address: RuntimeTaskRouteInput): string {
   const searchParams = new URLSearchParams()
   searchParams.set('deviceId', address.deviceId)
   searchParams.set('taskId', String(address.taskId))
+  if (address.issueExecution) {
+    searchParams.set('issueProjectId', address.issueExecution.projectId)
+    searchParams.set('issueId', address.issueExecution.issueId)
+    if (address.projectSession) searchParams.set('projectSession', '1')
+  }
   return `/runtime-tasks?${searchParams.toString()}`
 }
 

@@ -61,9 +61,11 @@ export interface ProjectComposerBodyProps {
   planModeActive?: boolean
   goalDraftActive?: boolean
   collapseWhenIdle?: boolean
+  alwaysShowComposerToolbar?: boolean
   isStreaming?: boolean
   sendKey?: 'enter' | 'cmd_enter'
   followUpBehavior?: ComposerFollowUpBehavior
+  embeddedInForm?: boolean
   onFileSelect(files: File | File[]): void | Promise<void>
   onRemoveAttachment(id: number): void
   transferServices?: ComposerTransferServices
@@ -109,9 +111,11 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       planModeActive,
       goalDraftActive,
       collapseWhenIdle,
+      alwaysShowComposerToolbar = false,
       isStreaming = false,
       sendKey = 'enter',
       followUpBehavior = 'queue',
+      embeddedInForm = false,
       onFileSelect,
       onRemoveAttachment,
       transferServices = browserComposerTransferServices,
@@ -202,9 +206,10 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
             onSubmit: submit,
           })}
           presentation={presentation}
+          embeddedInForm={embeddedInForm}
           workBar={workBar}
-          canCollapseInShortPane={canCollapse}
-          collapseWhenIdle={collapseWhenIdle}
+          canCollapseInShortPane={canCollapse && !alwaysShowComposerToolbar}
+          collapseWhenIdle={collapseWhenIdle && !alwaysShowComposerToolbar}
           isDraggingFiles={isDraggingFiles}
           formProps={{
             onDragEnter: handleDragOver,

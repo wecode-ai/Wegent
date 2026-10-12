@@ -40,6 +40,9 @@ class TaskTokenData(BaseModel):
     subtask_id: int
     user_id: int
     user_name: str
+    dispatch_id: Optional[str] = None
+    dispatch_role: Optional[str] = None
+    manager_agent_id: Optional[str] = None
     exp: Optional[int] = None  # Expiration timestamp
 
 
@@ -51,6 +54,9 @@ class TaskTokenInfo:
     subtask_id: int
     user_id: int
     user_name: str
+    dispatch_id: Optional[str] = None
+    dispatch_role: Optional[str] = None
+    manager_agent_id: Optional[str] = None
     expire_at: Optional[int] = None
 
 
@@ -59,6 +65,9 @@ def create_task_token(
     subtask_id: int,
     user_id: int,
     user_name: str,
+    dispatch_id: Optional[str] = None,
+    dispatch_role: Optional[str] = None,
+    manager_agent_id: Optional[str] = None,
     expires_delta_minutes: int = 1440,  # 24 hours
 ) -> str:
     """Create a task token for executor and MCP Server authentication.
@@ -83,6 +92,9 @@ def create_task_token(
         "subtask_id": subtask_id,
         "user_id": user_id,
         "user_name": user_name,
+        "dispatch_id": dispatch_id,
+        "dispatch_role": dispatch_role,
+        "manager_agent_id": manager_agent_id,
         "exp": expire,
         "type": "task_token",
     }
@@ -114,6 +126,9 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
             subtask_id=payload["subtask_id"],
             user_id=payload["user_id"],
             user_name=payload["user_name"],
+            dispatch_id=payload.get("dispatch_id"),
+            dispatch_role=payload.get("dispatch_role"),
+            manager_agent_id=payload.get("manager_agent_id"),
             expire_at=payload.get("exp"),
         )
     except jwt.ExpiredSignatureError:

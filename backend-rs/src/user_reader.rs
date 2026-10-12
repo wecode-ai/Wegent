@@ -12,8 +12,7 @@
 //! `SERVICE_EXTENSION`) registers its implementation through
 //! `AppState::user_reader` before route construction. The lite task
 //! projection does not consume the returned row, so only the call topology
-//! and side effects are observable through that endpoint; the runtime-check
-//! task assembly consumes the returned record; the responses API
+//! and side effects are observable through that endpoint; the responses API
 //! authentication consumes the auth fields of both lookups.
 use async_trait::async_trait;
 

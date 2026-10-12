@@ -11,12 +11,16 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from shared.models.runtime_config import (
+from shared.knowledge_contracts.retrieval_scope import RetrievalScope
+from shared.knowledge_contracts.runtime_config import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
-from shared.models.search_hints import MAX_SEARCH_QUERY_LENGTH, SearchHints
+from shared.knowledge_contracts.search_hints import (
+    MAX_SEARCH_QUERY_LENGTH,
+    SearchHints,
+)
 
 
 class KnowledgeRuntimeProtocolModel(BaseModel):
@@ -73,16 +77,6 @@ class RemoteRagError(KnowledgeRuntimeProtocolModel):
     details: dict[str, Any] | None = None
 
 
-class RemoteKnowledgeBaseQueryConfig(KnowledgeRuntimeProtocolModel):
-    """Resolved execution config for one queryable knowledge base."""
-
-    knowledge_base_id: int
-    index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
-    embedding_model_config: RuntimeEmbeddingModelConfig
-    retrieval_config: RuntimeRetrievalConfig
-
-
 class RemoteKnowledgeBaseRetrievalOverride(KnowledgeRuntimeProtocolModel):
     """Per-request retrieval-only override for one knowledge base."""
 
@@ -90,31 +84,58 @@ class RemoteKnowledgeBaseRetrievalOverride(KnowledgeRuntimeProtocolModel):
     retrieval_config: RuntimeRetrievalConfig
 
 
-class RetrievalScope(KnowledgeRuntimeProtocolModel):
-    """Domain-level retrieval scope.
+class RemoteRetrievalResourceRef(KnowledgeRuntimeProtocolModel):
+    """A retrieval resource reference authorized by Backend for this call."""
 
-    This is intentionally minimal for now. Document IDs are business document
-    IDs and must be compiled by storage backends into their native doc_ref
-    filters instead of being represented as generic metadata conditions.
+    kind: Literal["Retriever", "Model"]
+    name: str
+    namespace: str = "default"
+
+
+class RemoteAuthorizedRetrievalResources(KnowledgeRuntimeProtocolModel):
+    """Per-knowledge-base resources Backend authorized for one remote operation.
+
+    Backend verifies the caller may read the knowledge base and that the
+    knowledge base owner may use these retriever and embedding model records,
+    then sends only the references. The runtime loads just these records instead
+    of widening the lookup with a bare Kind query.
+
+    ``explicit_selection`` marks the entry as the resources the caller
+    explicitly selected for a public query, so they supersede the stored
+    configuration. Without it the stored configuration must name these same
+    resources, keeping the previous "edited outside the authorized set" failure.
+    Index requests never set it: indexing always executes the stored
+    configuration, restricted to the authorized records.
+
+    MVP trust boundary: the shared internal service token only proves the caller
+    holds it. It cannot prove Backend generated these references, and it is not
+    an authorization credential, so other services must not treat it as one.
     """
 
-    document_ids: list[int] | None = None
+    knowledge_base_id: int
+    index_owner_user_id: int
+    operation: Literal["index", "query"]
+    retriever: RemoteRetrievalResourceRef
+    embedding_model: RemoteRetrievalResourceRef
+    explicit_selection: bool = False
 
-    @field_validator("document_ids")
-    @classmethod
-    def validate_document_ids(cls, value: list[int] | None) -> list[int] | None:
-        """Validate and deduplicate document scope IDs."""
-        if value is None:
-            return None
-        if not value:
-            raise ValueError("document_ids must not be empty")
-        if any(document_id < 1 for document_id in value):
-            raise ValueError("document_ids must contain positive integers")
-        return list(dict.fromkeys(value))
+
+class RemoteAuthorizedIndexResources(KnowledgeRuntimeProtocolModel):
+    """Operation-bound storage reference; no embedding or query parameters."""
+
+    knowledge_base_id: int
+    index_owner_user_id: int
+    operation: Literal["delete", "purge", "drop", "list_chunks"]
+    retriever: RemoteRetrievalResourceRef
 
 
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
-    """Index request - reference mode. KR resolves configs from DB."""
+    """Index request - reference mode. KR resolves configs from DB.
+
+    ``authorized_resources`` carries the retrieval resources Backend authorized
+    for this knowledge base owner. The runtime loads only those records and
+    resolves the index configuration through the shared module.
+    """
 
     knowledge_base_id: int
     user_id: int
@@ -122,6 +143,7 @@ class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     source_file: str | None = None
     file_extension: str | None = None
     content_ref: ContentRef
+    authorized_resources: RemoteAuthorizedRetrievalResources | None = None
     trace_context: dict[str, Any] | None = None
     extensions: dict[str, Any] | None = None
 
@@ -131,6 +153,7 @@ class RemoteDeleteDocumentIndexRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_id: int
     user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     document_ref: str
     extensions: dict[str, Any] | None = None
 
@@ -140,6 +163,7 @@ class RemotePurgeKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_id: int
     user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     extensions: dict[str, Any] | None = None
 
 
@@ -148,6 +172,7 @@ class RemoteDropKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_id: int
     user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     extensions: dict[str, Any] | None = None
 
 
@@ -156,6 +181,7 @@ class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_id: int
     user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     max_chunks: int = Field(default=10000, gt=0, le=10000)
     query: str | None = None
     metadata_condition: dict[str, Any] | None = None
@@ -166,10 +192,11 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     """Query request - reference mode. KR resolves configs from DB."""
 
     knowledge_base_ids: list[int]
-    user_id: int
+    user_id: int = Field(..., gt=0, strict=True)
     query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)
+    authorized_resources: list[RemoteAuthorizedRetrievalResources] | None = None
     knowledge_base_retrieval_overrides: (
         list[RemoteKnowledgeBaseRetrievalOverride] | None
     ) = None
@@ -235,3 +262,28 @@ class RemoteListChunksResponse(KnowledgeRuntimeProtocolModel):
 
     chunks: list[RemoteListChunkRecord]
     total: int
+
+
+class RemoteTestConnectionRequest(KnowledgeRuntimeProtocolModel):
+    """Test-connection request for one storage backend configuration.
+
+    Fields mirror ``create_storage_backend_from_config`` so the runtime can
+    build the backend without re-deriving the caller's configuration.
+    """
+
+    storage_type: str
+    url: str
+    username: str | None = None
+    password: str | None = None
+    api_key: str | None = None
+    index_strategy: dict[str, Any] = Field(
+        default_factory=lambda: {"mode": "per_dataset"}
+    )
+    ext: dict[str, Any] = Field(default_factory=dict)
+
+
+class RemoteTestConnectionResponse(KnowledgeRuntimeProtocolModel):
+    """Connection verdict returned by knowledge_runtime."""
+
+    success: bool
+    message: str

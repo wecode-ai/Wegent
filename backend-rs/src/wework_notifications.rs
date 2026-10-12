@@ -6,10 +6,10 @@
 //!
 //! Mirrors `app.api.endpoints.wework_notifications.list_notifications`
 //! (router prefix `/v1/wework-notifications`, mounted under the app prefix
-//! `/api`): authenticate the bearer token, load the user's notification rows
-//! ordered by `created_at DESC, id DESC` with `LIMIT offset, limit + 1`, count
-//! the unread rows, and render `InboxView` (`items`, `unread_count`,
-//! `next_offset`).
+//! `/api`): authenticate the bearer token, apply the optional `category` kind
+//! filter, load the user's notification rows ordered by `created_at DESC, id
+//! DESC` with `LIMIT offset, limit + 1`, count the unread rows, and render
+//! `InboxView` (`items`, `unread_count`, `next_offset`).
 //!
 //! Source authentication is `Depends(get_current_user)` — the same OAuth2
 //! Bearer JWT path used by the other user-scoped endpoints.
@@ -26,13 +26,54 @@ const DEFAULT_LIMIT: i64 = 50;
 /// FastAPI `Query(default=0, ge=0)` default for `offset`.
 const DEFAULT_OFFSET: i64 = 0;
 
+/// The source `category: Literal["collaboration", "general"] | None` query
+/// filter. `None` applies no kind predicate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Category {
+    Collaboration,
+    General,
+}
+
+impl Category {
+    /// FastAPI `Literal` coercion: an absent value stays `None`, a value inside
+    /// the literal set maps to its variant, and anything else is a 422
+    /// `literal_error`.
+    fn parse(value: Option<&str>) -> Result<Option<Self>, FastApiError> {
+        match value {
+            None => Ok(None),
+            Some("collaboration") => Ok(Some(Self::Collaboration)),
+            Some("general") => Ok(Some(Self::General)),
+            Some(other) => Err(FastApiError::validation(json!([
+                {
+                    "type": "literal_error",
+                    "loc": ["query", "category"],
+                    "msg": "Input should be 'collaboration' or 'general'",
+                    "input": other,
+                    "ctx": {"expected": "'collaboration' or 'general'"},
+                }
+            ]))),
+        }
+    }
+
+    /// SQL kind predicate appended after the `user_id` predicate, mirroring the
+    /// source `WeworkNotification.kind.in_(COLLABORATION_NOTIFICATION_KINDS)`
+    /// and `.notin_(...)` rendering for `("assignment", "human_work")`.
+    fn kind_predicate(self) -> &'static str {
+        match self {
+            Self::Collaboration => " AND wework_notifications.kind IN ('assignment', 'human_work')",
+            Self::General => " AND (wework_notifications.kind NOT IN ('assignment', 'human_work'))",
+        }
+    }
+}
+
 /// Query parameters (`offset >= 0` default 0, `limit >= 1` and `<= 100`
-/// default 50). FastAPI renders validation failures as 422 before the handler
-/// body runs.
+/// default 50, `category` one of `collaboration`/`general` or absent). FastAPI
+/// renders validation failures as 422 before the handler body runs.
 #[derive(Debug, Default, Deserialize)]
 pub struct InboxQuery {
     pub offset: Option<i64>,
     pub limit: Option<i64>,
+    pub category: Option<String>,
 }
 
 /// FastAPI-style 422 validation error body (`Query(...)` constraints).
@@ -48,10 +89,19 @@ fn validation_error(field: &str, kind: &str, message: &str) -> FastApiError {
     FastApiError::validation(detail)
 }
 
+/// The effective query contract after FastAPI-compatible validation.
+#[derive(Debug, PartialEq, Eq)]
+struct InboxParams {
+    offset: i64,
+    limit: i64,
+    category: Option<Category>,
+}
+
 impl InboxQuery {
     /// Validate the FastAPI query contract: `offset >= 0`,
-    /// `1 <= limit <= 100`. Returns the effective `(offset, limit)`.
-    fn validated(&self) -> Result<(i64, i64), FastApiError> {
+    /// `1 <= limit <= 100`, and `category` inside its literal set. Returns the
+    /// effective [`InboxParams`].
+    fn validated(&self) -> Result<InboxParams, FastApiError> {
         let offset = match self.offset {
             None => DEFAULT_OFFSET,
             Some(offset) if offset >= 0 => offset,
@@ -81,7 +131,12 @@ impl InboxQuery {
                 ));
             }
         };
-        Ok((offset, limit))
+        let category = Category::parse(self.category.as_deref())?;
+        Ok(InboxParams {
+            offset,
+            limit,
+            category,
+        })
     }
 }
 
@@ -203,6 +258,37 @@ fn inbox_view(
     }
 }
 
+/// The list query rendered by the source
+/// `db.query(WeworkNotification).filter(user_id == user.id)` chain plus the
+/// optional `category` kind filter, ordered by `created_at DESC, id DESC` and
+/// limited to `limit + 1`.
+///
+/// SQLAlchemy renders the labeled projection with inline literals for
+/// offset/limit. Replay matches the text form; the user id, offset, and limit
+/// are authenticated integers, so inlining is injection-safe.
+fn list_sql(user_id: i64, offset: i64, limit_plus_one: i64, category: Option<Category>) -> String {
+    let kind = category.map(Category::kind_predicate).unwrap_or_default();
+    format!(
+        "SELECT {NOTIFICATION_COLUMNS} \nFROM wework_notifications \n\
+         WHERE wework_notifications.user_id = {user_id}{kind} \
+         ORDER BY wework_notifications.created_at DESC, \
+         wework_notifications.id DESC \n LIMIT {offset}, {limit_plus_one}",
+    )
+}
+
+/// The unread-count query rendered by the source
+/// `query.filter(is_read.is_(False)).count()`: a subquery over the same
+/// (category-filtered) projection wrapped in `SELECT count(*) ... AS anon_1`.
+fn unread_count_sql(user_id: i64, category: Option<Category>) -> String {
+    let kind = category.map(Category::kind_predicate).unwrap_or_default();
+    format!(
+        "SELECT count(*) AS count_1 \nFROM (SELECT {NOTIFICATION_COLUMNS} \n\
+         FROM wework_notifications \n\
+         WHERE wework_notifications.user_id = {user_id}{kind} \
+         AND wework_notifications.is_read IS false) AS anon_1",
+    )
+}
+
 /// GET /api/v1/wework-notifications: the wework-inbox free function, injecting
 /// the process-lifetime application state.
 #[brz_http_server::get("/api/v1/wework-notifications")]
@@ -220,26 +306,18 @@ async fn inbox(
     user: &crate::auth::SessionUser,
     query: &InboxQuery,
 ) -> Result<InboxView, FastApiError> {
-    let (offset, limit) = query.validated()?;
+    let params = query.validated()?;
+    let InboxParams {
+        offset,
+        limit,
+        category,
+    } = params;
     let user_id = i64::from(user.id);
     let limit_plus_one = limit + 1;
 
-    // Source: db.query(WeworkNotification).filter(user_id == user.id)
-    //   .order_by(created_at DESC, id DESC).offset(offset).limit(limit + 1)
-    // SQLAlchemy renders the labeled projection with inline literals for
-    // offset/limit. Replay matches the text form; the user id, offset, and
-    // limit are authenticated integers, so inlining is injection-safe.
     let rows: Vec<NotificationRow> = match state
         .mysql
-        .fetch_all(
-            &format!(
-                "SELECT {NOTIFICATION_COLUMNS} \nFROM wework_notifications \n\
-                 WHERE wework_notifications.user_id = {user_id} \
-                 ORDER BY wework_notifications.created_at DESC, \
-                 wework_notifications.id DESC \n LIMIT {offset}, {limit_plus_one}",
-            ),
-            (),
-        )
+        .fetch_all(&list_sql(user_id, offset, limit_plus_one, category), ())
         .await
     {
         Ok(rows) => rows,
@@ -256,20 +334,9 @@ async fn inbox(
         .map(notification_view)
         .collect();
 
-    // Source: query.filter(is_read.is_(False)).count() renders a subquery
-    // `SELECT count(*) AS count_1 FROM (SELECT ... WHERE user_id = ? AND
-    // is_read IS false) AS anon_1`.
     let unread_row: Option<UnreadCountRow> = state
         .mysql
-        .fetch_optional(
-            &format!(
-                "SELECT count(*) AS count_1 \nFROM (SELECT {NOTIFICATION_COLUMNS} \n\
-                 FROM wework_notifications \n\
-                 WHERE wework_notifications.user_id = {user_id} \
-                 AND wework_notifications.is_read IS false) AS anon_1",
-            ),
-            (),
-        )
+        .fetch_optional(&unread_count_sql(user_id, category), ())
         .await
         .map_err(|error| {
             tracing::error!(%error, "wework_notifications unread-count database failure");
@@ -287,13 +354,27 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
 
+    /// The exact labeled column list captured in the source recordings, copied
+    /// literally so an accidental change to `NOTIFICATION_COLUMNS` fails these
+    /// tests.
+    const RECORDED_COLUMNS: &str = "wework_notifications.id AS wework_notifications_id, wework_notifications.user_id AS wework_notifications_user_id, wework_notifications.actor_user_id AS wework_notifications_actor_user_id, wework_notifications.kind AS wework_notifications_kind, wework_notifications.title AS wework_notifications_title, wework_notifications.body AS wework_notifications_body, wework_notifications.url AS wework_notifications_url, wework_notifications.payload AS wework_notifications_payload, wework_notifications.created_at AS wework_notifications_created_at, wework_notifications.is_read AS wework_notifications_is_read, wework_notifications.read_status_changed_at AS wework_notifications_read_status_changed_at";
+
+    #[test]
+    fn notification_columns_match_recorded_text() {
+        assert_eq!(NOTIFICATION_COLUMNS, RECORDED_COLUMNS);
+    }
+
     #[test]
     fn inbox_query_defaults_when_absent() {
-        let query = InboxQuery {
-            offset: None,
-            limit: None,
-        };
-        assert_eq!(query.validated().unwrap(), (0, 50));
+        let query = InboxQuery::default();
+        assert_eq!(
+            query.validated().unwrap(),
+            InboxParams {
+                offset: 0,
+                limit: 50,
+                category: None,
+            }
+        );
     }
 
     #[test]
@@ -301,8 +382,26 @@ mod tests {
         let query = InboxQuery {
             offset: Some(10),
             limit: Some(25),
+            category: Some("collaboration".to_string()),
         };
-        assert_eq!(query.validated().unwrap(), (10, 25));
+        assert_eq!(
+            query.validated().unwrap(),
+            InboxParams {
+                offset: 10,
+                limit: 25,
+                category: Some(Category::Collaboration),
+            }
+        );
+    }
+
+    #[test]
+    fn inbox_query_accepts_general_category() {
+        let query = InboxQuery {
+            offset: None,
+            limit: None,
+            category: Some("general".to_string()),
+        };
+        assert_eq!(query.validated().unwrap().category, Some(Category::General));
     }
 
     #[test]
@@ -310,6 +409,7 @@ mod tests {
         let query = InboxQuery {
             offset: Some(-1),
             limit: None,
+            category: None,
         };
         assert!(query.validated().is_err());
     }
@@ -319,6 +419,7 @@ mod tests {
         let query = InboxQuery {
             offset: None,
             limit: Some(0),
+            category: None,
         };
         assert!(query.validated().is_err());
     }
@@ -328,8 +429,65 @@ mod tests {
         let query = InboxQuery {
             offset: None,
             limit: Some(101),
+            category: None,
         };
         assert!(query.validated().is_err());
+    }
+
+    #[test]
+    fn inbox_query_rejects_unknown_category() {
+        let query = InboxQuery {
+            offset: None,
+            limit: None,
+            category: Some("other".to_string()),
+        };
+        assert!(query.validated().is_err());
+    }
+
+    #[test]
+    fn list_sql_without_category_matches_recorded() {
+        let expected = format!(
+            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
+        );
+        assert_eq!(list_sql(151, 0, 51, None), expected);
+    }
+
+    #[test]
+    fn list_sql_collaboration_matches_recorded() {
+        let expected = format!(
+            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'human_work') ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
+        );
+        assert_eq!(
+            list_sql(151, 0, 51, Some(Category::Collaboration)),
+            expected
+        );
+    }
+
+    #[test]
+    fn list_sql_general_matches_recorded() {
+        let expected = format!(
+            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND (wework_notifications.kind NOT IN ('assignment', 'human_work')) ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
+        );
+        assert_eq!(list_sql(151, 0, 51, Some(Category::General)), expected);
+    }
+
+    #[test]
+    fn unread_count_sql_without_category_matches_recorded() {
+        let expected = format!(
+            "SELECT count(*) AS count_1 \nFROM (SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.is_read IS false) AS anon_1"
+        );
+        assert_eq!(unread_count_sql(151, None), expected);
+    }
+
+    #[test]
+    fn unread_count_sql_collaboration_matches_recorded() {
+        let expected = format!(
+            "SELECT count(*) AS count_1 \nFROM (SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'human_work') AND wework_notifications.is_read IS false) AS anon_1"
+        );
+        assert_eq!(
+            unread_count_sql(151, Some(Category::Collaboration)),
+            expected
+        );
     }
 
     #[test]

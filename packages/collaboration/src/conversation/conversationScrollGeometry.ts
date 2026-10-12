@@ -59,6 +59,7 @@ export function createUserViewportAnchor(
 
   return {
     messageId,
+    element: visibleAnchor,
     anchorIndex,
     offsetFromScrollerTop:
       (textPosition?.rect.top ?? visibleAnchor.getBoundingClientRect().top) - scrollerRect.top,
@@ -71,14 +72,12 @@ export function findUserViewportAnchor(
   content: HTMLElement,
   anchor: UserViewportAnchor
 ): HTMLElement | null {
-  const message = Array.from(content.querySelectorAll<HTMLElement>('[data-message-id]')).find(
-    candidate => candidate.dataset.messageId === anchor.messageId
-  )
-  if (!message) return null
-  return (
-    Array.from(message.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR))[anchor.anchorIndex] ??
-    null
-  )
+  // Windowed Markdown inserts and removes preceding semantic anchors as chunks render. An ordinal
+  // can then identify another paragraph even though the reader's original node is still mounted.
+  const element = anchor.element
+  if (!content.contains(element) || !element.matches(SCROLL_ANCHOR_SELECTOR)) return null
+  const message = element.closest<HTMLElement>('[data-message-id]')
+  return message?.dataset.messageId === anchor.messageId ? element : null
 }
 
 export function getViewportTextPosition(

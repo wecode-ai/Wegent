@@ -3,17 +3,20 @@ import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
 import { IssueThreadReplyComposer } from './IssueThreadReplyComposer'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
 import { useBrowserIssueReplies } from './browserIssueRepliesContext'
+import type { ComposerExternalMentionCandidate } from '../composer/composerAutocompleteInputTypes'
 
 export function BrowserIssueReplyComposer({
   rootId,
   disabled,
   canAttach,
   translate: t,
+  mentionCandidates = [],
 }: {
   rootId: string
   disabled: boolean
   canAttach: boolean
   translate: CollaborationTranslate
+  mentionCandidates?: ComposerExternalMentionCandidate[]
 }) {
   const reply = useBrowserIssueReplies()
   const draft = useBrowserTaskDraft(`issue-reply:${rootId}`)
@@ -46,7 +49,11 @@ export function BrowserIssueReplyComposer({
         disabled={disabled}
         attachments={canAttach ? draft.attachments : undefined}
         aiError={reply.queue.error(rootId)}
-        onSend={async text => reply.queue.enqueue(rootId, text, draft.attachments.attachments)}
+        mentionCandidates={mentionCandidates}
+        translate={t}
+        onSend={async (text, mentions) =>
+          reply.queue.enqueue(rootId, text, draft.attachments.attachments, mentions)
+        }
         labels={{
           placeholder: t('workbench.task_activity_inline_placeholder'),
           send: t('workbench.send_message'),

@@ -34,7 +34,7 @@ use serde::Serialize;
 use serde_json::value::RawValue;
 
 use crate::auth::SessionUser;
-use crate::cloud_projects::{PROJECT_COLUMNS, ProjectListRow};
+use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -218,7 +218,7 @@ async fn list_rule_rows<M: Mysql>(
              ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
          AND loop_items.resource_type IN ('automation_rule') \
          ORDER BY loop_items.updated_at DESC",
-        crate::cloud_projects::PROJECT_COLUMNS
+        crate::cloud_projects::LOOP_ITEMS_COLUMNS
     );
     mysql.fetch_all(sql, ()).await
 }
@@ -248,7 +248,7 @@ async fn automations(
         .mysql
         .fetch_optional(
             &format!(
-                "SELECT {PROJECT_COLUMNS} \nFROM loop_items \n\
+                "SELECT {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
                  WHERE loop_items.id = '{project_id}' AND loop_items.status = 'active' \
                  AND loop_items.resource_type IN ('project') \n LIMIT 1"
             ),

@@ -356,14 +356,6 @@ export function createWeworkPlatformApi(
       async runNow(projectId, automationId) {
         return (await projectAutomations(projectId)).runNow(projectId, automationId)
       },
-      async runWorkflowNode(projectId, issueId, workflowNodeId, automationId) {
-        return (await projectAutomations(projectId)).runWorkflowNode(
-          projectId,
-          issueId,
-          workflowNodeId,
-          automationId
-        )
-      },
       async listRuns(projectId, automationId) {
         return (await projectAutomations(projectId)).listRuns(projectId, automationId)
       },
@@ -423,15 +415,25 @@ export function createWeworkPlatformApi(
           ? localApi.issues.archive(issueId)
           : cloudApi.issues.archive(issueId)
       },
+      async listArchived(projectId, input) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.listArchived(projectId, input)
+          : cloudApi.issues.listArchived(projectId, input)
+      },
+      async restore(issueId) {
+        return (await issueLocation(issueId)) === 'local'
+          ? localApi.issues.restore(issueId)
+          : cloudApi.issues.restore(issueId)
+      },
       async reorder(projectId, input) {
         return (await projectLocation(projectId)) === 'local'
           ? localApi.issues.reorder(projectId, input)
           : cloudApi.issues.reorder(projectId, input)
       },
-      async markRead(issueId) {
+      async markRead(issueId, activitySequence) {
         return (await issueLocation(issueId)) === 'local'
-          ? localApi.issues.markRead(issueId)
-          : cloudApi.issues.markRead(issueId)
+          ? localApi.issues.markRead(issueId, activitySequence)
+          : cloudApi.issues.markRead(issueId, activitySequence)
       },
     },
     resources: {

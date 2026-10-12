@@ -237,17 +237,19 @@ The response behavior depends on the Team's Shell type:
 
 | Shell Type | Streaming Support | Response Mode |
 |------------|-------------------|---------------|
-| Chat Shell | Yes | Synchronous or SSE streaming |
-| Others (ClaudeCode, Agno, Dify) | No | Queued (poll for completion) |
+| Chat Shell | Yes | Synchronous or SSE streaming; non-streaming device requests are queued |
+| Others (ClaudeCode, Codex, Agno, Dify) | Yes | Non-streaming requests are queued; streaming requests return SSE |
 
 **Chat Shell (stream=false):**
-- Blocks until LLM completes
-- Returns completed response directly
+- Without a bound device, blocks until the LLM completes and returns the completed response
+- With a bound device, returns immediately with status `queued`
 
-**Chat Shell (stream=true):**
+**stream=true (Chat and non-Chat Shells):**
 - Returns SSE stream with OpenAI v1/responses compatible events
+- Single and batch device or executor callbacks deliver text and terminal events
+- Video models reject streaming requests with HTTP 400
 
-**Non-Chat Shell:**
+**Non-Chat Shell (stream=false):**
 - Returns immediately with status `queued`
 - Use `GET /api/v1/responses/{response_id}` to poll for completion
 
@@ -382,7 +384,7 @@ curl -X DELETE "https://your-domain/api/v1/responses/resp_123" \
 
 ## Streaming Events
 
-When `stream=true` is set (Chat Shell type only), the API returns Server-Sent Events (SSE) in OpenAI v1/responses format.
+When `stream=true` is set, Chat and non-Chat Shells can return Server-Sent Events (SSE) in OpenAI v1/responses format. Video models do not support streaming requests.
 
 ### Event Types
 
@@ -497,6 +499,8 @@ To continue a conversation, use `previous_response_id`:
 ```
 
 This appends to the same task, maintaining conversation context.
+
+If the task is bound to a device, follow-up requests continue on that device. An offline device returns HTTP 503.
 
 ---
 

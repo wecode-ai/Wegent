@@ -1,4 +1,4 @@
-from shared.models.splitter_config import (  # noqa: F401
+from shared.knowledge_contracts.splitter_config import (  # noqa: F401
     FlatChunkConfig,
     HierarchicalChunkConfig,
     MarkdownEnhancementConfig,

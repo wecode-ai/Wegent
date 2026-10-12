@@ -68,6 +68,15 @@ export function findWorkbenchDevice(devices: DeviceInfo[], deviceId: string | nu
   return devices.find(device => device.device_id === resolvedId) ?? null
 }
 
+export function resolveWorkbenchDeviceId(
+  devices: DeviceInfo[],
+  deviceId: string | null | undefined
+): string | null {
+  const normalized = deviceId?.trim()
+  if (!normalized) return null
+  return findWorkbenchDevice(devices, normalized)?.device_id ?? normalized
+}
+
 export function isWorkbenchDeviceOnline(device: DeviceInfo | null) {
   return Boolean(device && (device.status === 'online' || device.status === 'busy'))
 }

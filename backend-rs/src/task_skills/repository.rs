@@ -7,7 +7,7 @@
 //! `{table}_{column}` projections and the direct public tables selected by
 //! the open-source readers.
 use crate::json_compat::OpaqueJson;
-use crate::task_routing::ByTaskId;
+use crate::task_store::TaskStore;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 
@@ -56,20 +56,22 @@ pub struct BackgroundExecutionRow {
     pub background_executions_subscription_id: i64,
 }
 
-/// `task_store.get_active_task` on the sharded table (new-format ids route
-/// by their embedded uid; the deployment runs 1024 shards).
-pub async fn get_active_task<M>(mysql: &M, task_id: i64) -> MysqlResult<Option<TaskRow>>
-where
-    M: Mysql,
-{
-    let sql = "SELECT id, user_id, kind, name, namespace, json, is_active, \
-         created_at, updated_at, project_id, client_origin, is_group_chat \
-         \nFROM {{tasks}} \nWHERE id = ? \
-         AND kind = 'Task' AND is_active IN (1, 2) \n LIMIT 1";
-    let row: Option<brz_mysql::MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(sql, (task_id,))
-        .await?;
+/// `task_store.get_active_task`: the active `Task` row for `task_id`.
+pub async fn get_active_task(
+    task_store: &dyn TaskStore,
+    task_id: i64,
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store.get_active_task(task_id).await?;
+    row.as_ref().map(decode_task_row).transpose()
+}
+
+/// `task_access_store._get_accessible_task`: the active `Task` row the access
+/// store authorizes the viewer against.
+pub async fn get_accessible_task(
+    task_store: &dyn TaskStore,
+    task_id: i64,
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store.get_accessible_task(task_id).await?;
     row.as_ref().map(decode_task_row).transpose()
 }
 
@@ -101,66 +103,6 @@ where
                 escaped = escape_sql_string(name)
             ),
             (user_id,),
-        )
-        .await
-}
-
-/// `KindReader.get_personal` for the Team kind (cached personal index
-/// fallback): the user's own active Team with the name.
-pub async fn team_personal<M>(
-    mysql: &M,
-    user_id: i64,
-    namespace: &str,
-    name: &str,
-) -> MysqlResult<Option<KindRow>>
-where
-    M: Mysql,
-{
-    mysql
-        .fetch_optional(
-            &format!(
-                "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = ? \
-             AND kinds.kind = 'Team' AND kinds.namespace = '{namespace}' \
-             AND kinds.name = '{escaped}' AND kinds.is_active = true \n LIMIT 1",
-                escaped = escape_sql_string(name)
-            ),
-            (user_id,),
-        )
-        .await
-}
-
-/// `KindReader.get_public` for the Team kind.
-pub async fn team_public<M>(mysql: &M, namespace: &str, name: &str) -> MysqlResult<Option<KindRow>>
-where
-    M: Mysql,
-{
-    mysql
-        .fetch_optional(
-            &format!(
-                "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = 0 \
-             AND kinds.kind = 'Team' AND kinds.namespace = '{namespace}' \
-             AND kinds.name = '{escaped}' AND kinds.is_active = true \n LIMIT 1",
-                escaped = escape_sql_string(name)
-            ),
-            (),
-        )
-        .await
-}
-
-/// `KindReader.get_group` for the Team kind (non-default namespaces).
-pub async fn team_group<M>(mysql: &M, namespace: &str, name: &str) -> MysqlResult<Option<KindRow>>
-where
-    M: Mysql,
-{
-    mysql
-        .fetch_optional(
-            &format!(
-                "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'Team' \
-             AND kinds.namespace = '{namespace}' \
-             AND kinds.name = '{escaped}' AND kinds.is_active = true \n LIMIT 1",
-                escaped = escape_sql_string(name)
-            ),
-            (),
         )
         .await
 }
@@ -350,16 +292,13 @@ where
 }
 
 /// `TeamShareService._get_active_team`: the active Team row by id
-/// (`is_active IS true` rendering); only the namespace is consumed.
-pub async fn team_share_active_team<M>(mysql: &M, team_id: i64) -> MysqlResult<Option<String>>
+/// (`is_active IS true` rendering). `_get_resource` reads it before the share
+/// checks, and `check_permission`'s group pass reuses its namespace.
+pub async fn team_share_active_team<M>(mysql: &M, team_id: i64) -> MysqlResult<Option<KindRow>>
 where
     M: Mysql,
 {
-    #[derive(FromMysqlRow)]
-    struct NamespaceRow {
-        kinds_namespace: String,
-    }
-    let row: Option<NamespaceRow> = mysql
+    mysql
         .fetch_optional(
             &format!(
                 "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.id = ? \
@@ -367,8 +306,7 @@ where
             ),
             (team_id,),
         )
-        .await?;
-    Ok(row.map(|row| row.kinds_namespace))
+        .await
 }
 
 /// `skill_binding_service.list_user_default_bindings`: the user's active
@@ -714,5 +652,36 @@ mod tests {
         assert_eq!(escape_sql_string(name), name);
         assert_eq!(escape_sql_string("WB-9898示例数据"), "WB-9898示例数据");
         assert_eq!(escape_sql_string("emoji \u{1f600}"), "emoji \u{1f600}");
+    }
+
+    /// `TeamShareService._get_active_team` renders the recorded
+    /// `kinds.is_active IS true` projection (recorded group-team case
+    /// `2b56b8bb-16be-4c3e-b370-342ef489d80c`), whose row also carries the
+    /// `user_id` that `_get_resource` compares against the requester.
+    #[tokio::test]
+    async fn active_team_read_renders_the_recorded_statement() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        assert!(
+            team_share_active_team(&mysql, 254_636)
+                .await
+                .expect("the capture answers")
+                .is_none()
+        );
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1, "{queries:?}");
+        assert_eq!(queries[0].args, 1, "{queries:?}");
+        assert!(
+            queries[0].sql.contains(
+                "FROM kinds WHERE kinds.id = ? AND kinds.kind = 'Team' \
+                 AND kinds.is_active IS true LIMIT 1"
+            ),
+            "{}",
+            queries[0].sql
+        );
+        assert!(
+            queries[0].sql.contains("kinds.user_id AS kinds_user_id"),
+            "{}",
+            queries[0].sql
+        );
     }
 }

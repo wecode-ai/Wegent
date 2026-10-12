@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GET /api/subscriptions` — the current user's Subscription list.
+//! `GET` and `POST /api/subscriptions` — the current user's Subscription
+//! collection.
 //!
-//! Mirrors `app.api.endpoints.adapter.subscriptions.list_subscriptions`
+//! `GET` mirrors `app.api.endpoints.adapter.subscriptions.list_subscriptions`
 //! (route `""`, router prefix `/subscriptions`, under `/api`) and
 //! `SubscriptionService.list_subscriptions`
-//! (`app.services.subscription.service`).
+//! (`app.services.subscription.service`); `POST` mirrors `create_subscription`
+//! and `SubscriptionService.create_subscription` (see [`create`]).
 //!
 //! Source pipeline:
 //! 1. FastAPI validates the query (`page >= 1`, `1 <= limit <= 100`,
@@ -56,7 +58,8 @@ use serde_json::{Value, json};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
-mod convert;
+pub(crate) mod convert;
+mod create;
 pub mod workspaces;
 
 use convert::{
@@ -180,26 +183,34 @@ fn validation_error(field: &str, kind: &str, message: &str, input: &str) -> Fast
 
 /// A `kinds` Subscription row, selected with the full labeled source column
 /// list (SQLAlchemy labels every column `kinds_<name>`).
-#[derive(Debug, FromMysqlRow)]
-pub(super) struct KindRow {
-    pub(super) id: i32,
-    pub(super) user_id: i32,
+#[derive(Debug, Clone, FromMysqlRow)]
+pub(crate) struct KindRow {
+    #[mysql(rename = "kinds_id")]
+    pub(crate) id: i32,
+    #[mysql(rename = "kinds_user_id")]
+    pub(crate) user_id: i32,
     #[allow(dead_code)]
+    #[mysql(rename = "kinds_kind")]
     kind: String,
-    pub(super) name: String,
+    #[mysql(rename = "kinds_name")]
+    pub(crate) name: String,
     #[allow(dead_code)]
-    pub(super) namespace: String,
-    pub(super) json: Json<Value>,
+    #[mysql(rename = "kinds_namespace")]
+    pub(crate) namespace: String,
+    #[mysql(rename = "kinds_json")]
+    pub(crate) json: Json<Value>,
     #[allow(dead_code)]
+    #[mysql(rename = "kinds_is_active")]
     is_active: i8,
-    #[allow(dead_code)]
-    created_at: NaiveDateTime,
-    pub(super) updated_at: NaiveDateTime,
+    #[mysql(rename = "kinds_created_at")]
+    pub(crate) created_at: NaiveDateTime,
+    #[mysql(rename = "kinds_updated_at")]
+    pub(crate) updated_at: NaiveDateTime,
 }
 
 impl KindRow {
     /// Aliased column projection rendered by `db.query(Kind)`.
-    const COLUMNS: &'static str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+    pub(crate) const COLUMNS: &'static str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
          kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
          kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
          kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
@@ -213,6 +224,17 @@ async fn list_subscriptions(
     query: brz_http_server::Query<ListQuery>,
 ) -> Result<SubscriptionListResponse, FastApiError> {
     subscriptions_list(state, &current_user, &query).await
+}
+
+/// `POST /api/subscriptions` — create a Subscription (201 with the new row).
+#[brz_http_server::post("/api/subscriptions")]
+async fn create_subscription_handler(
+    #[inject(state)] state: &AppState,
+    #[auth] user: crate::auth::SessionUser,
+    body: Value,
+) -> Result<brz_http_server::Response, FastApiError> {
+    let create = create::Create::from_value(body)?;
+    create::create_subscription(state, i64::from(user.0.id), &create).await
 }
 
 /// Handler body for `GET /api/subscriptions`.
@@ -434,17 +456,19 @@ mod tests {
                 "execution_target",
                 "preserve_history",
                 "history_message_count",
-                "notification_webhooks",
                 "knowledge_base_refs",
+                "notification_webhooks",
                 "skill_refs",
                 "market_whitelist_user_ids",
                 "id",
+                "code_wiki_id",
                 "user_id",
                 "namespace",
                 "webhook_url",
                 "webhook_secret",
                 "last_execution_time",
                 "last_execution_status",
+                "last_execution_message",
                 "next_execution_time",
                 "execution_count",
                 "success_count",
@@ -573,6 +597,20 @@ mod tests {
             item.webhook_url.as_deref(),
             Some("/api/subscriptions/webhook/tok123")
         );
+    }
+
+    #[test]
+    fn webhook_url_null_for_empty_token() {
+        let mut json = subscription_json();
+        json["_internal"]["webhook_token"] = json!("");
+        let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
+        assert_eq!(item.webhook_url, None);
+    }
+
+    #[test]
+    fn webhook_url_null_without_token() {
+        let item = convert_to_subscription_in_db(&kind_row(subscription_json()), &HashMap::new());
+        assert_eq!(item.webhook_url, None);
     }
 
     #[test]

@@ -163,6 +163,41 @@ async function runWith(
 }
 
 describe('startTaskAiRun model resolution', () => {
+  it('materializes the assigned Team instead of dropping its model and shell defaults', async () => {
+    const { runtime } = await run({
+      agent: { ...agent(null), runtime: 'wegent', wegentTeamId: 1880 },
+      models: [],
+      selectedModel: null,
+      selectedModelOptions: {},
+    })
+
+    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        wegentTeamId: 1880,
+        modelSelection: null,
+        origin: expect.objectContaining({ dispatchRole: 'executor' }),
+      })
+    )
+    expect(runtime.createProjectRuntimeTask.mock.calls[0]?.[1]).not.toHaveProperty('executionModel')
+  })
+
+  it('preserves an explicit per-run model override while materializing the assigned Team', async () => {
+    const { runtime } = await run({
+      agent: { ...agent(null), runtime: 'wegent', wegentTeamId: 1880 },
+      models: [kimiModel],
+      selectedModel: kimiModel,
+      selectedModelOptions: {},
+    })
+
+    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        wegentTeamId: 1880,
+        modelSelection: expect.objectContaining({ modelName: kimiModel.name }),
+      })
+    )
+  })
   it.each([false, true])(
     'seeds the user comment before execution (continuation=%s)',
     async continuation => {
@@ -309,6 +344,7 @@ describe('startTaskAiRun model resolution', () => {
         cloudProjectId: '11',
         origin: {
           type: 'board_comment',
+          dispatchRole: 'executor',
           cloudProjectId: '11',
           loopItemId: 'WEG-1',
         },

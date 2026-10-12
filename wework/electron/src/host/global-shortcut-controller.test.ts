@@ -33,6 +33,44 @@ describe('GlobalShortcutController', () => {
     expect(action).toHaveBeenCalledOnce()
   })
 
+  test('runs consecutive presses in order so the second can hide a newly shown window', async () => {
+    const callbacks = new Map<string, () => void>()
+    let finishFirstAction: (() => void) | undefined
+    const firstAction = new Promise<void>(resolve => {
+      finishFirstAction = resolve
+    })
+    let visible = false
+    const action = vi.fn(async () => {
+      if (visible) {
+        visible = false
+        return
+      }
+      await firstAction
+      visible = true
+    })
+    const controller = new GlobalShortcutController(
+      {
+        register: (accelerator, callback) => {
+          callbacks.set(accelerator, callback)
+          return true
+        },
+        unregister: vi.fn(),
+      },
+      action,
+      vi.fn()
+    )
+
+    controller.configure('Alt+Shift+Space')
+    callbacks.get('Alt+Shift+Space')?.()
+    callbacks.get('Alt+Shift+Space')?.()
+    await Promise.resolve()
+
+    expect(action).toHaveBeenCalledOnce()
+    finishFirstAction?.()
+    await vi.waitFor(() => expect(action).toHaveBeenCalledTimes(2))
+    expect(visible).toBe(false)
+  })
+
   test('replaces the old shortcut only after the new one registers', () => {
     const { controller, registry } = createController()
 
@@ -83,10 +121,7 @@ describe('GlobalShortcutController', () => {
 
     failingController.configure('Alt+Shift+Z')
     callbacks.get('Alt+Shift+Z')?.()
-    await Promise.resolve()
-    await Promise.resolve()
-
-    expect(reportError).toHaveBeenCalledWith(error)
+    await vi.waitFor(() => expect(reportError).toHaveBeenCalledWith(error))
     controller.dispose()
   })
 })

@@ -28,7 +28,13 @@ TARGETS = (
 )
 
 
-def assemble(plugin: Path, output: Path, source_archive: Path | None) -> None:
+def assemble(
+    plugin: Path,
+    output: Path,
+    source_archive: Path | None,
+    targets: tuple[str, ...] = TARGETS,
+    test_host: bool = True,
+) -> None:
     with tempfile.TemporaryDirectory(prefix="wegent-dws-package-") as temporary:
         staged = Path(temporary) / "dingtalk"
         shutil.copytree(
@@ -65,7 +71,7 @@ def assemble(plugin: Path, output: Path, source_archive: Path | None) -> None:
             raise ValueError("DingTalk launcher differs from the reviewed build input")
         ensure_go(Path(temporary))
         source_archive = prepare_source_archive(Path(temporary), source_archive)
-        for target in TARGETS:
+        for target in targets:
             operating_system, architecture = target.split("/")
             destination = (
                 staged
@@ -88,7 +94,7 @@ def assemble(plugin: Path, output: Path, source_archive: Path | None) -> None:
                 "aarch64": "arm64",
                 "arm64": "arm64",
             }.get(platform.machine())
-            if target == f"{host_os}/{host_arch}":
+            if test_host and target == f"{host_os}/{host_arch}":
                 command.append("--test")
             command.extend(["--source-archive", str(source_archive)])
             environment = {
@@ -98,7 +104,7 @@ def assemble(plugin: Path, output: Path, source_archive: Path | None) -> None:
                 "CGO_ENABLED": "0",
             }
             subprocess.run(command, env=environment, check=True)
-        verify_artifacts(staged, TARGETS)
+        verify_artifacts(staged, targets)
         verify_native_entry(staged)
         output.parent.mkdir(parents=True, exist_ok=True)
         candidate = Path(temporary) / "dingtalk.zip"
@@ -129,7 +135,7 @@ def assemble(plugin: Path, output: Path, source_archive: Path | None) -> None:
             json.dumps(
                 {
                     "plugin": str(output.resolve()),
-                    "targets": TARGETS,
+                    "targets": targets,
                     "bytes": output.stat().st_size,
                     "sha256": checksum,
                 }

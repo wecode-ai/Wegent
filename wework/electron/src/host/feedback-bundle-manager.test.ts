@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { FeedbackBundleManager } from './feedback-bundle-manager.js'
+import { FeedbackBundleManager, type FeedbackExportRequest } from './feedback-bundle-manager.js'
 
 const temporaryRoots: string[] = []
 
@@ -37,6 +37,12 @@ describe('FeedbackBundleManager', () => {
       taskContext: { task: { id: 7 }, accessToken: 'task-secret' },
       screenshotDataUrl: 'data:image/png;base64,cG5n',
       composerDiagnostics: { authorization: 'Bearer composer-secret' },
+      conversationDiagnostics: {
+        schemaVersion: 1,
+        events: [{ name: 'anchor-lost', details: { scrollerId: 1, rowIndex: 4 } }],
+        accessToken: 'conversation-secret',
+        detail: 'password=conversation-password',
+      },
       attachments: [
         {
           name: '../notes.txt',
@@ -52,6 +58,7 @@ describe('FeedbackBundleManager', () => {
       expect.arrayContaining([
         'logs/executor/executor.log',
         'logs/executor/executor.log.1',
+        'logs/webview/conversation-diagnostics.json',
         'context/task.json',
         'environment.json',
         'screenshot.png',
@@ -59,6 +66,8 @@ describe('FeedbackBundleManager', () => {
       ])
     )
     expect(JSON.stringify(preview.entries)).not.toContain('task-secret')
+    expect(JSON.stringify(preview.entries)).not.toContain('conversation-secret')
+    expect(JSON.stringify(preview.entries)).not.toContain('conversation-password')
     const exported = await manager.confirm(preview.stagingId)
     expect(downloadsDirectory).toHaveBeenCalledOnce()
     await expect(stat(exported.path)).resolves.toMatchObject({ size: expect.any(Number) })
@@ -69,6 +78,15 @@ describe('FeedbackBundleManager', () => {
     expect(log).toContain('Authorization: Bearer [REDACTED]')
     expect(log).toContain('password=[REDACTED]')
     expect(log).not.toContain('top-secret')
+    const conversationDiagnostics = JSON.parse(
+      await readFile(join(extracted, 'logs', 'webview', 'conversation-diagnostics.json'), 'utf8')
+    )
+    expect(conversationDiagnostics).toEqual({
+      schemaVersion: 1,
+      events: [{ name: 'anchor-lost', details: { scrollerId: 1, rowIndex: 4 } }],
+      accessToken: '[REDACTED]',
+      detail: 'password=[REDACTED]',
+    })
     const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8')) as {
       reportId: string
       included: string[]
@@ -99,7 +117,91 @@ describe('FeedbackBundleManager', () => {
       'The prepared feedback bundle expired'
     )
   })
+
+  test('does not include supplied conversation diagnostics when runtime logs are unselected', async () => {
+    const root = await temporaryDirectory('wework-feedback-no-conversation-')
+    const manager = createManager(root, join(root, 'missing-logs'))
+    const preview = await manager.preview(
+      createRequest({
+        includeRuntimeLogs: false,
+        conversationDiagnostics: { events: [{ name: 'anchor-lost' }] },
+      })
+    )
+
+    expect(preview.entries.some(entry => entry.archivePath.startsWith('logs/'))).toBe(false)
+    expect(preview.warnings).toEqual([])
+    const exported = await manager.confirm(preview.stagingId)
+    const extracted = join(root, 'extracted')
+    await extract(exported.path, { dir: extracted })
+    await expect(
+      stat(join(extracted, 'logs', 'webview', 'conversation-diagnostics.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  test.each([0, 1])(
+    'caps conversation diagnostics at 256 KB (overflow: %i byte)',
+    async overflow => {
+      const root = await temporaryDirectory('wework-feedback-conversation-cap-')
+      const logs = join(root, 'logs')
+      await mkdir(logs)
+      const manager = createManager(root, logs)
+      const limit = 256 * 1024
+      const overhead = Buffer.byteLength(JSON.stringify({ padding: '' }, null, 2))
+      const preview = await manager.preview(
+        createRequest({
+          conversationDiagnostics: { padding: 'x'.repeat(limit - overhead + overflow) },
+        })
+      )
+      const entry = preview.entries.find(
+        item => item.archivePath === 'logs/webview/conversation-diagnostics.json'
+      )
+
+      if (overflow === 0) {
+        expect(entry).toMatchObject({ category: 'logs', sizeBytes: limit, truncated: true })
+        expect(preview.skipped).not.toContain('runtimeLogs')
+        expect(preview.warnings).toEqual([])
+      } else {
+        expect(entry).toBeUndefined()
+        expect(preview.skipped).toContain('runtimeLogs')
+        expect(preview.warnings).toEqual([
+          'Conversation diagnostics exceeded 256 KB and were skipped',
+        ])
+      }
+    }
+  )
+
+  test('measures conversation diagnostic limits in UTF-8 bytes', async () => {
+    const root = await temporaryDirectory('wework-feedback-conversation-utf8-')
+    const logs = join(root, 'logs')
+    await mkdir(logs)
+    const manager = createManager(root, logs)
+    const preview = await manager.preview(
+      createRequest({ conversationDiagnostics: { padding: '界'.repeat(90_000) } })
+    )
+
+    expect(
+      preview.entries.find(
+        item => item.archivePath === 'logs/webview/conversation-diagnostics.json'
+      )
+    ).toBeUndefined()
+    expect(preview.warnings).toEqual(['Conversation diagnostics exceeded 256 KB and were skipped'])
+  })
 })
+
+function createRequest(overrides: Partial<FeedbackExportRequest>): FeedbackExportRequest {
+  return {
+    includeRuntimeLogs: true,
+    includeTaskInfo: false,
+    includeScreenshot: false,
+    includeSystemInfo: false,
+    note: '',
+    taskContext: null,
+    screenshotDataUrl: null,
+    composerDiagnostics: null,
+    attachments: [],
+    ...overrides,
+  }
+}
 
 function createManager(
   root: string,

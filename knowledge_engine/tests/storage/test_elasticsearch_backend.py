@@ -677,6 +677,36 @@ class TestDeleteDocument:
             refresh=True,
         )
 
+    @patch("knowledge_engine.storage.elasticsearch_backend.ElasticsearchStore")
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_delete_document_is_idempotent_without_an_index(
+        self, mock_es_class, mock_store_class
+    ):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_client.indices.exists.return_value = False
+        mock_es_class.return_value = mock_client
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        result = backend.delete_document(knowledge_id="kb_1", doc_ref="doc_1")
+
+        assert result == {
+            "doc_ref": "doc_1",
+            "knowledge_id": "kb_1",
+            "index_name": "test_kb_kb_1",
+            "deleted_chunks": 0,
+            "deleted_parent_nodes": 0,
+            "status": "deleted",
+        }
+        mock_store_class.assert_not_called()
+
 
 class TestDeleteKnowledge:
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")

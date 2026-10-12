@@ -31,10 +31,6 @@ DEFAULT_REMOTE_DEVICE_CONTAINER_NAME = "wegent-remote-device"
 class CreateDockerRemoteDeviceRequest(BaseModel):
     """Request for generating a Docker remote device command."""
 
-    client_origin: Optional[str] = Field(
-        default=None,
-        description="Current browser origin used to derive the device access URL.",
-    )
     container_name: str = Field(
         default=DEFAULT_REMOTE_DEVICE_CONTAINER_NAME,
         min_length=1,
@@ -83,17 +79,13 @@ async def create_docker_start_command(
         current_user.user_name,
     )
 
+    host_header = request.headers.get("host")
     result = get_remote_device_command_provider().build(
         RemoteDeviceCommandContext(
             container_name=body.container_name,
-            client_origin=body.client_origin,
             request_scheme=request.url.scheme,
             request_netloc=request.url.netloc,
-            request_headers={
-                name: value
-                for name in ("host", "origin", "referer")
-                if (value := request.headers.get(name)) is not None
-            },
+            request_headers={"host": host_header} if host_header else {},
             device_id=device_id,
             device_name=device_name,
             auth_token=auth_token,

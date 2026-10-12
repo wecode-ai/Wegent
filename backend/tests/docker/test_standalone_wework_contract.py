@@ -5,6 +5,8 @@
 """Static contract tests for the standalone Wework launch path."""
 
 import json
+import re
+import shlex
 from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[3]
@@ -33,6 +35,13 @@ def test_standalone_image_includes_wework_executor_and_workspace_volume() -> Non
     assert "ttyd" not in dockerfile
     assert "ENV WEWORK_PORT=3001" not in dockerfile
     assert "ENV WEGENT_WORKSPACE_ROOT=/workspace" in dockerfile
+    assert "mysql-server" in dockerfile
+    assert (
+        "ENV DATABASE_URL=mysql+pymysql://root@127.0.0.1:3306/task_manager"
+        in dockerfile
+    )
+    assert "wegent-backend-rs" in dockerfile
+    assert "ENV WEGENT_PYTHON_UPSTREAM_PORT=8004" in dockerfile
     assert "DEVICE_SESSION_GATEWAY_PORT" not in dockerfile
     assert "EXPOSE 3000" in dockerfile
     assert "EXPOSE 3000 3001 8000" not in dockerfile
@@ -68,7 +77,7 @@ def test_standalone_image_installs_codex_runtime_dependencies() -> None:
     """Container executor needs both the Codex CLI and Python SDK in Linux."""
     dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "@openai/codex@0.142.5" in dockerfile
+    assert "@openai/codex@0.155.1" in dockerfile
     assert (
         "uv pip install --system --no-cache --no-deps openai-codex==0.1.0b3"
         in dockerfile
@@ -117,11 +126,21 @@ def test_standalone_start_can_skip_container_executor() -> None:
     assert 'if [ "$STANDALONE_EXECUTOR_ENABLED" != "false" ]; then' in start_script
     assert 'echo "[4/8] Skipping Standalone Executor' in start_script
     assert "${EXECUTOR_PID:-}" in start_script
-    assert (
-        'WAIT_PIDS=("$REDIS_PID" "$BACKEND_PID" "$FRONTEND_PID" "$NGINX_PID")'
-        in start_script
-    )
+    wait_pids_match = re.search(r"^WAIT_PIDS=\((.*?)\)$", start_script, re.MULTILINE)
+    assert wait_pids_match is not None
+    required_pids = set(shlex.split(wait_pids_match.group(1)))
+    assert {
+        "$REDIS_PID",
+        "$MYSQL_PID",
+        "$KNOWLEDGE_RUNTIME_PID",
+        "$PYTHON_BACKEND_PID",
+        "$BACKEND_PID",
+        "$FRONTEND_PID",
+        "$NGINX_PID",
+    } <= required_pids
+    assert "$EXECUTOR_PID" not in required_pids
     assert 'if [ -n "${EXECUTOR_PID:-}" ]; then' in start_script
+    assert 'WAIT_PIDS+=("$EXECUTOR_PID")' in start_script
 
 
 def test_standalone_start_ensures_token_before_optional_executor() -> None:
@@ -187,12 +206,28 @@ def test_standalone_start_serves_wework_without_public_ttyd() -> None:
 
 
 def test_standalone_start_uses_hardened_readiness_and_exit_status() -> None:
-    """Startup should fail readiness on HTTP errors and preserve service exit code."""
+    """Startup should provision the runtime database and preserve service exit status."""
+    dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
     start_script = STANDALONE_START.read_text(encoding="utf-8")
 
     assert 'curl -fsS --connect-timeout 2 --max-time 5 "$url"' in start_script
     assert 'shutdown "$EXIT_CODE"' in start_script
     assert 'exit "$exit_code"' in start_script
+    assert "mysql+pymysql://root@127.0.0.1:${MYSQL_PORT}/task_manager" in start_script
+    assert "mysqld --initialize-insecure --user=mysql" in start_script
+    assert "CREATE DATABASE IF NOT EXISTS task_manager" in start_script
+    assert "alembic upgrade head" in start_script
+    assert "exec /app/wegent-backend-rs" in start_script
+    assert (
+        'WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:${PYTHON_UPSTREAM_PORT}"'
+        in start_script
+    )
+    assert "--reload" not in start_script
+    assert (
+        "INIT_DATA_ENABLED=true" in start_script
+        or "ENV INIT_DATA_ENABLED=true" in dockerfile
+    )
+    assert "sqlite:////app/data/wegent.db" not in dockerfile + start_script
 
 
 def test_standalone_start_writes_wework_runtime_config() -> None:

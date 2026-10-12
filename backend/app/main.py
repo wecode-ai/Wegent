@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
+from app.api.endpoints.health import probe_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
 from app.core.cache import cache_manager
 from app.core.config import settings
@@ -392,11 +393,11 @@ async def _application_lifespan(app: FastAPI):
     # Initialize Socket.IO WebSocket emitter
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
     logger.info("Initializing Socket.IO...")
-    from app.core.socketio import get_sio
+    from app.core.socketio import initialize_socketio_server
     from app.services.chat.webpage_ws_chat_emitter import init_ws_emitter
     from app.services.loop_item_executions.wake import bind_socketio_loop
 
-    sio = get_sio()
+    sio = initialize_socketio_server()
     try:
         bind_socketio_loop(asyncio.get_running_loop())
     except RuntimeError:
@@ -434,11 +435,6 @@ async def _application_lifespan(app: FastAPI):
     )
 
     register_project_automation_task_completion_handler(event_bus)
-    from app.services.board_team_completion import (
-        register_board_team_completion_handler,
-    )
-
-    register_board_team_completion_handler(event_bus)
     logger.info("✓ Project automation task completion handler registered")
 
     # Register code wiki run completion handler. A version's outcome is normally
@@ -650,6 +646,11 @@ def create_app():
         redoc_url=redoc_url,
         lifespan=lifespan,
     )
+
+    # Keep frequent probes ahead of business routes. With an empty API prefix,
+    # the existing database-aware /health route must retain precedence.
+    if settings.API_PREFIX:
+        app.include_router(probe_router)
 
     logger = _logger
 
@@ -914,6 +915,8 @@ def create_app():
     # Include API routes
     app.include_router(oauth_metadata_router)
     app.include_router(api_router, prefix=settings.API_PREFIX)
+    if not settings.API_PREFIX:
+        app.include_router(probe_router)
 
     # Mount MCP Server endpoints
     # These provide system-level tools (silent_exit) and knowledge base tools
@@ -985,29 +988,3 @@ def create_socketio_asgi_app():
 
 # Combined ASGI app (Socket.IO + FastAPI)
 app = create_socketio_asgi_app()
-
-
-# MIGRATION-CANDIDATE(api="GET /"): remove after final confirmation.
-# Root path (registered on FastAPI app)
-# @_fastapi_app.get("/")
-# async def root():
-#     """
-#     Root path, returns API information
-#     """
-#     return {
-#         "name": settings.PROJECT_NAME,
-#         "version": settings.VERSION,
-#         "api_prefix": settings.API_PREFIX,
-#         "docs_url": f"{settings.API_PREFIX}/docs",
-#         "socketio_path": "/socket.io",
-#     }
-
-
-# Health check endpoint (registered on FastAPI app)
-@_fastapi_app.get("/health")
-async def health():
-    """
-    Health check endpoint for container orchestration and load balancers.
-    Returns a simple status indicating the service is running.
-    """
-    return {"status": "healthy"}

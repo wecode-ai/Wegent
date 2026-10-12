@@ -29,11 +29,13 @@ use base64::Engine as _;
 use brz_http_server::StatusCode;
 use chrono::NaiveDateTime;
 use serde::Deserialize;
-use serde_json::Value;
 
 use crate::crd::CrdDocument;
 use serde_json::json;
 
+use super::lite_projection::{
+    GroupChatRule, LiteTask, device_display_names, opaque_string, project_lite_tasks,
+};
 use super::lite_repository::{
     TaskCandidateRow, batch_query_teams, batch_query_workspaces, filter_personal_tasks,
     list_personal_task_candidates_after,
@@ -61,33 +63,6 @@ enum PersonalTasksResponse {
         total: i64,
         items: Vec<LiteTask>,
     },
-}
-#[derive(serde::Serialize)]
-struct LiteTask {
-    id: i64,
-    title: String,
-    status: String,
-    task_type: String,
-    #[serde(rename = "type")]
-    kind: String,
-    source: Option<String>,
-    created_at: String,
-    updated_at: String,
-    completed_at: Option<String>,
-    team_id: Option<i64>,
-    team_name: String,
-    team_namespace: String,
-    team_display_name: Option<String>,
-    team_icon: Option<String>,
-    project_id: i64,
-    client_origin: String,
-    device_id: Option<String>,
-    device_name: Option<String>,
-    execution_workspace_source: Option<String>,
-    execution_workspace_path: Option<String>,
-    git_repo: String,
-    is_group_chat: bool,
-    knowledge_base_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,7 +182,9 @@ fn decode_cursor(
             "Invalid task cursor",
         )
     };
-    let padding = "=".repeat(cursor.len() % 4);
+    // Source `padding = "=" * (-len(cursor) % 4)` pads the unpadded cursor up
+    // to the next multiple of four; `URL_SAFE` rejects any other count.
+    let padding = "=".repeat((4 - cursor.len() % 4) % 4);
     let decoded = base64::engine::general_purpose::URL_SAFE
         .decode(format!("{cursor}{padding}"))
         .map_err(|_| invalid())?;
@@ -215,12 +192,6 @@ fn decode_cursor(
     let created_at = NaiveDateTime::parse_from_str(&payload.created_at, "%Y-%m-%dT%H:%M:%S%.f")
         .map_err(|_| invalid())?;
     Ok(Some((created_at, payload.id)))
-}
-
-/// Render a naive datetime exactly like pydantic's default serialization:
-/// `YYYY-MM-DDTHH:MM:SS.ffffff` with microsecond precision.
-fn format_python_datetime(value: &NaiveDateTime) -> String {
-    value.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
 /// GET /api/tasks/lite/personal: the personal tasks-lite free function,
@@ -302,7 +273,7 @@ async fn personal_tasks_cursor(
 
     loop {
         let candidates = list_personal_task_candidates_after(
-            &state.mysql,
+            &*state.task_store,
             i64::from(user_id),
             size,
             cursor_created_at.zip(cursor_id),
@@ -361,7 +332,7 @@ async fn personal_tasks_paged(
     // Offset pagination reads `skip + query_limit` candidates and slices in
     // the application, mirroring `list_personal_task_ids`.
     let candidates = list_personal_task_candidates_after(
-        &state.mysql,
+        &*state.task_store,
         i64::from(user_id),
         skip + query_limit,
         None,
@@ -423,223 +394,21 @@ async fn build_lite_task_list(
     let team_refs = super::lite_repository::TeamRefs::from_page(tasks);
 
     let workspace_data =
-        batch_query_workspaces(&state.mysql, i64::from(user_id), &workspace_refs).await?;
+        batch_query_workspaces(&*state.task_store, i64::from(user_id), &workspace_refs).await?;
     let team_data = batch_query_teams(&state.mysql, &team_refs, i64::from(user_id)).await?;
     // `userReader.get_by_id` result only feeds `user_name`, which the lite
     // projection does not return; the registered reader (public direct SQL,
     // or a deployment's cached reader) keeps the source dependency topology.
     let _ = state.user_reader.get_by_id(i64::from(user_id)).await;
-    let device_data = device_display_names(state, user_id, &device_ids).await;
+    let device_data = device_display_names(&state.mysql, i64::from(user_id), &device_ids).await;
 
     Ok(project_lite_tasks(
         tasks,
         &team_data,
         &workspace_data,
         &device_data,
+        GroupChatRule::SpecOnly,
     ))
-}
-
-fn project_lite_tasks(
-    tasks: &[TaskCandidateRow],
-    team_data: &super::lite_repository::TeamData,
-    workspace_data: &std::collections::HashMap<(String, String), String>,
-    device_data: &std::collections::HashMap<String, String>,
-) -> Vec<LiteTask> {
-    let mut items = Vec::with_capacity(tasks.len());
-    for task in tasks {
-        let crd = CrdDocument::project(&task.json);
-        let spec = crd.spec.as_ref();
-        let labels = crd
-            .metadata
-            .as_ref()
-            .and_then(|metadata| metadata.labels.as_ref());
-        let task_type = labels
-            .and_then(|labels| labels.task_type.clone())
-            .unwrap_or_else(|| "chat".to_owned());
-        let type_value = labels
-            .and_then(|labels| labels.legacy_type.clone())
-            .unwrap_or_else(|| "online".to_owned());
-        let source = labels
-            .and_then(|labels| labels.source.clone())
-            .filter(|value| !value.is_empty());
-
-        let task_status = crd.status.as_ref();
-        let status = task_status
-            .and_then(|status| status.status.clone())
-            .unwrap_or_else(|| "PENDING".to_owned());
-        let datetime = |value: Option<String>, fallback: NaiveDateTime| {
-            value
-                .and_then(|value| {
-                    NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f").ok()
-                })
-                .unwrap_or(fallback)
-        };
-        let created_at = datetime(
-            task_status.and_then(|status| opaque_string(&status.created_at)),
-            task.created_at,
-        );
-        let updated_at = datetime(
-            task_status.and_then(|status| opaque_string(&status.updated_at)),
-            task.updated_at,
-        );
-
-        let team_ref = crd.spec.as_ref().and_then(|spec| spec.team_ref.as_ref());
-        let team_name_ref = team_ref
-            .map(|reference| reference.name())
-            .unwrap_or("")
-            .to_owned();
-        let team_namespace_ref = team_ref
-            .map(|reference| reference.namespace())
-            .unwrap_or("default")
-            .to_owned();
-        let team_user_id = team_ref
-            .and_then(|reference| reference.user_id.as_ref())
-            .and_then(|id| id.json_integer());
-        let team = team_data.resolve(&team_name_ref, &team_namespace_ref, team_user_id);
-
-        let workspace_ref = crd
-            .spec
-            .as_ref()
-            .and_then(|spec| spec.workspace_ref.as_ref());
-        let workspace_name = workspace_ref
-            .map(|reference| reference.name())
-            .unwrap_or("")
-            .to_owned();
-        let workspace_namespace = workspace_ref
-            .map(|reference| reference.namespace())
-            .unwrap_or("default")
-            .to_owned();
-        let git_repo = workspace_data
-            .get(&(workspace_name, workspace_namespace))
-            .cloned()
-            .unwrap_or_default();
-
-        let device_id = spec
-            .and_then(|spec| opaque_string(&spec.device_id))
-            .filter(|value| !value.is_empty());
-        let device_name = device_id
-            .as_ref()
-            .and_then(|id| device_data.get(id).cloned())
-            .unwrap_or_default();
-
-        let is_group_chat = spec.and_then(|spec| spec.is_group_chat).unwrap_or(false);
-
-        let knowledge_base_id = if task_type == "knowledge" {
-            spec.and_then(|spec| spec.knowledge_base_refs.as_ref())
-                .and_then(|refs| refs.first())
-                .and_then(|first| first.as_ref())
-                .and_then(|reference| reference.id)
-        } else {
-            None
-        };
-
-        items.push(LiteTask {
-            id: task.id,
-            title: spec
-                .and_then(|spec| opaque_string(&spec.title))
-                .unwrap_or_default(),
-            status,
-            task_type,
-            kind: type_value,
-            source,
-            created_at: format_python_datetime(&created_at),
-            updated_at: format_python_datetime(&updated_at),
-            completed_at: task_status.and_then(|status| opaque_string(&status.completed_at)),
-            team_id: team.id,
-            team_name: team.name,
-            team_namespace: team.namespace,
-            team_display_name: team.display_name,
-            team_icon: team.icon,
-            project_id: 0,
-            client_origin: task
-                .client_origin
-                .clone()
-                .unwrap_or_else(|| "frontend".to_string()),
-            device_id,
-            device_name: (!device_name.is_empty()).then_some(device_name),
-            execution_workspace_source: execution_workspace_field(spec, true),
-            execution_workspace_path: execution_workspace_field(spec, false),
-            git_repo,
-            is_group_chat,
-            knowledge_base_id,
-        });
-    }
-    items
-}
-
-/// `get_task_execution_workspace_source` / `get_task_execution_workspace_path`
-/// (`spec.execution.workspace.{source,path}`, trimmed non-empty strings).
-fn opaque_string(field: &Option<crate::json_compat::OpaqueJson>) -> Option<String> {
-    field.as_ref()?.project::<String>()
-}
-
-fn execution_workspace_field(spec: Option<&crate::crd::CrdSpec>, source: bool) -> Option<String> {
-    let workspace = spec?.execution.as_ref()?.workspace.as_ref()?;
-    let value = if source {
-        &workspace.source
-    } else {
-        &workspace.path
-    };
-    value
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-}
-
-/// `_batch_query_devices`: display names for the page's device references.
-async fn device_display_names(
-    state: &Arc<AppState>,
-    user_id: i32,
-    device_ids: &[String],
-) -> std::collections::HashMap<String, String> {
-    let mut result = std::collections::HashMap::new();
-    if device_ids.is_empty() {
-        return result;
-    }
-    let placeholders = vec!["?"; device_ids.len()].join(", ");
-    let sql = format!(
-        "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
-         kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
-         kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
-         kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
-         kinds.updated_at AS kinds_updated_at \nFROM kinds \n\
-         WHERE kinds.user_id = ? AND kinds.kind = 'Device' \
-         AND kinds.namespace = 'default' AND kinds.name IN ({placeholders}) \
-         AND kinds.is_active IS true"
-    );
-    // Bind with recorded literal kinds: `user_id` int, device names strings
-    // (`serde_json::Value` would serialize every parameter as a string).
-    let mut args: Vec<super::lite_repository::UnionArg> =
-        vec![super::lite_repository::UnionArg::Int(i64::from(user_id))];
-    args.extend(
-        device_ids
-            .iter()
-            .map(|id| super::lite_repository::UnionArg::Str(id.clone())),
-    );
-    let rows: Result<Vec<super::lite_repository::TeamKindRow>, _> =
-        state.mysql.fetch_all(sql.as_str(), args).await;
-    if let Ok(rows) = rows {
-        for row in rows {
-            let display_name = row
-                .json
-                .as_ref()
-                .and_then(|json| {
-                    json.get("spec")
-                        .and_then(|spec| spec.get("displayName"))
-                        .and_then(Value::as_str)
-                        .or_else(|| {
-                            json.get("metadata")
-                                .and_then(|metadata| metadata.get("displayName"))
-                                .and_then(Value::as_str)
-                        })
-                })
-                .map(str::to_string)
-                .unwrap_or_else(|| row.name.clone());
-            result.insert(row.name, display_name);
-        }
-    }
-    result
 }
 
 fn internal_error(error: brz_mysql::MysqlError) -> crate::http_compat::FastApiError {
@@ -674,6 +443,28 @@ mod tests {
     }
 
     #[test]
+    fn unpadded_cursor_gains_its_source_padding() {
+        // Source `"=" * (-len(cursor) % 4)`: a cursor whose length is 3 mod 4
+        // must gain exactly one `=`, and one without fractional seconds must
+        // parse. Both payloads below are unpadded base64url.
+        let no_fraction = "eyJjcmVhdGVkX2F0IjoiMjAyNi0wMS0wMlQwMzowNDowNSIsImlkIjo0Mn0";
+        assert_eq!(no_fraction.len() % 4, 3);
+        let decoded = decode_cursor(no_fraction).unwrap().unwrap();
+        assert_eq!(decoded.1, 42);
+        assert_eq!(
+            decoded.0,
+            NaiveDateTime::parse_from_str("2026-01-02T03:04:05", "%Y-%m-%dT%H:%M:%S").unwrap()
+        );
+
+        let wide_id = "eyJjcmVhdGVkX2F0IjoiMjAyNi0wMS0wMlQwMzowNDowNSIsImlkIjo0MjAwMDAwMDAwMDAwMX0";
+        assert_eq!(wide_id.len() % 4, 3);
+        assert_eq!(
+            decode_cursor(wide_id).unwrap().unwrap().1,
+            42_000_000_000_001
+        );
+    }
+
+    #[test]
     fn batch_size_matches_source() {
         assert_eq!(batch_size(50), 100);
         assert_eq!(batch_size(99), 100);
@@ -686,7 +477,7 @@ mod tests {
             NaiveDateTime::parse_from_str("2026-09-01T15:18:26.901656", "%Y-%m-%dT%H:%M:%S%.f")
                 .unwrap();
         assert_eq!(
-            format_python_datetime(&parsed),
+            super::super::lite_projection::format_python_datetime(&parsed),
             "2026-09-01T15:18:26.901656"
         );
     }
@@ -700,14 +491,15 @@ mod response_contract_tests {
         let now = chrono::DateTime::from_timestamp(0, 123_456_000)
             .unwrap()
             .naive_utc();
-        let tasks: Vec<_> = [json!({}), Value::Null, json!({"metadata":{"labels":{"taskType":"knowledge","type":"","source":null}},"spec":{"title":null,"teamRef":{"name":"team"},"execution":{"workspace":{"source":"  git_worktree  ","path":""}},"knowledgeBaseRefs":[{"id":7}]}}),
+        let tasks: Vec<_> = [json!({}), serde_json::Value::Null, json!({"metadata":{"labels":{"taskType":"knowledge","type":"","source":null}},"spec":{"title":null,"teamRef":{"name":"team"},"execution":{"workspace":{"source":"  git_worktree  ","path":""}},"knowledgeBaseRefs":[{"id":7}]}}),
             json!({"spec":{"device_id":"device","is_group_chat":true},"status":{"status":"COMPLETED","createdAt":"invalid","completedAt":""}})
-        ].into_iter().map(|json| TaskCandidateRow { id:1, user_id:1, json, created_at:now, updated_at:now, client_origin:None, is_group_chat:false }).collect();
+        ].into_iter().map(|json| TaskCandidateRow { id:1, user_id:1, json, created_at:now, updated_at:now, project_id:None, client_origin:None, is_group_chat:false }).collect();
         let output = project_lite_tasks(
             &tasks,
             &super::super::lite_repository::TeamData::default(),
             &Default::default(),
             &Default::default(),
+            GroupChatRule::SpecOnly,
         );
         crate::json_contract_tests::assert_fixture("personal_tasks", output);
     }

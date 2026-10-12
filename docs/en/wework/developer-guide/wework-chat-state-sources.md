@@ -137,6 +137,22 @@ WebView or executor rebuild. A thread ID change must clear both the completed
 message cache and transcript snapshot so messages cannot cross thread
 boundaries.
 
+History snapshots must retain the Provider's before and after cursors. Default
+reads during execution may reuse a snapshot, but explicit pagination must use
+native history. A tail snapshot is not complete history. Merge live assistant
+blocks and runtime items by item ID so new items cannot replace loaded history.
+Adding live items must not upgrade a summary turn's `itemsView` to full.
+
+Automatic Goal continuation owns a new turn. It must neither carry the previous
+turn's client user message association nor rewrite its subtask-to-turn mapping.
+The starting-next-turn label ends when that turn produces visible text or tools;
+history reconciliation remains active until continuation settles.
+
+The capability publication lock covers session preparation and runtime
+initialization only. Codex and Claude Code release the read lease before model
+execution. Capability synchronization publishes under the write lease, so a
+long model run cannot block other tasks from starting.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
@@ -223,6 +239,14 @@ that is still running into a completed or action-required group.
 These rules apply only to local Codex projects. Remote and cloud tasks retain
 their existing single-workspace selection semantics; local multi-root support
 must not implicitly broaden a remote execution scope.
+
+### Context Compaction Results
+
+The executor live-item cache must retain compaction start/completion status. Persisting an interrupted turn must preserve the incomplete result of an unfinished compaction.
+
+Only a compaction completion event can mark `context_compaction` successful. When a turn ends or the user stops it, an unfinished compaction displays “Context compaction did not complete”; ordinary block settlement must not mark it `done`. A completed compaction stays successful even if its containing turn is subsequently stopped.
+
+Interrupted compaction has not reduced the context, so the next turn may compact again. History refresh must not turn an interrupted attempt into a success; Codex history may omit unfinished attempts. The desktop `context-compaction` checkpoint covers successful compaction, interruption, history refresh, and subsequent compaction recovery.
 
 ### Web Search Tool Blocks
 

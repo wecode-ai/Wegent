@@ -167,7 +167,6 @@ describe("ProjectRuntimeSettings", () => {
       model: "model-1",
       modelType: "group",
       modelOptions: profile.modelOptions,
-      workspacePolicy: "git_worktree",
     });
     expect(container.textContent).toContain("Could not save binding");
     await click("save");

@@ -756,6 +756,8 @@ def delete_document_open(
     db: Session = Depends(get_db),
 ) -> None:
     """Delete a document, its RAG index, and associated attachment."""
+    from app.services.rag.remote_gateway import RemoteRagGatewayError
+
     current_user = auth_context.user
     try:
         result = KnowledgeService.delete_document(
@@ -763,6 +765,13 @@ def delete_document_open(
             document_id=document_id,
             user_id=current_user.id,
         )
+    except RemoteRagGatewayError as exc:
+        # The remote index removal failed, so the document was kept. Surface the
+        # runtime failure instead of reporting a successful delete.
+        raise HTTPException(
+            status_code=exc.status_code or status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

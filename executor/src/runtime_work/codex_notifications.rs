@@ -164,6 +164,19 @@ mod tests {
         let message = json!({
             "type": "response_item",
             "payload": {
+                "type": "custom_tool_call",
+                "call_id": "call-2",
+                "name": "exec",
+                "input": "tools.collaboration__spawn_agent({})"
+            }
+        });
+        let notification = codex_notification(&message);
+        assert_eq!(notification.method, "item/started");
+        assert_eq!(notification.params["type"], "custom_tool_call");
+
+        let message = json!({
+            "type": "response_item",
+            "payload": {
                 "type": "function_call_output",
                 "call_id": "call-1"
             }

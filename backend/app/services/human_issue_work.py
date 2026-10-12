@@ -14,7 +14,7 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
-from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.base_role import BaseRole
 from app.schemas.human_issue_work import (
     HumanWorkReview,
     HumanWorkStart,
@@ -80,7 +80,7 @@ class HumanIssueWorkService:
             )
         except HTTPException:
             return None
-        return assigner_id if not access.is_public_visitor else None
+        return assigner_id
 
     def _fallback_reviewer_ids(self, db: Session, item: LoopItem) -> set[int]:
         project = db.get(CloudProject, item.cloud_project_id)
@@ -126,18 +126,55 @@ class HumanIssueWorkService:
         )
         return {
             "assignment_id": assignment.id,
+            "ai_task_binding": (
+                self._ai_task_binding(item, assignment) if is_assignee else None
+            ),
             "assignee_user_id": item.assignee_user_id,
             "reviewer_user_id": reviewer_id,
             "submission_message_id": work.get("submission_message_id"),
             "submitted_by_user_id": work.get("submitted_by_user_id"),
+            "result": work.get("result", ""),
+            "return_reason": work.get("return_reason", ""),
+            "ai_draft_delivery_id": work.get("ai_draft_delivery_id"),
             "state": (
                 work.get("state", "none")
                 if work.get("assignment_id") == assignment.id
                 else "none"
             ),
-            "can_start": is_assignee and item.status in {"inbox", "pending"},
+            "can_start": is_assignee and self._can_start(item, assignment),
             "can_submit": is_assignee and item.status == "in_progress",
             "can_review": can_review,
+        }
+
+    @staticmethod
+    def _can_start(item: LoopItem, assignment: AssignmentEvent) -> bool:
+        if item.status in {"inbox", "pending"}:
+            return True
+        if item.status not in {"in_review", "completed"}:
+            return False
+        # Reassignment preserves Issue status until the new assignee starts work.
+        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        stored = metadata.get(HUMAN_WORK_KEY)
+        work = stored if isinstance(stored, dict) else {}
+        return (
+            work.get("assignment_id") != assignment.id
+            or work.get("state", "none") == "none"
+        )
+
+    @staticmethod
+    def _ai_task_binding(item: LoopItem, assignment: AssignmentEvent) -> dict:
+        from app.services.collaboration_human_assignments import (
+            DIRECT_HUMAN_ROUND_ID,
+            direct_human_assignment_id,
+        )
+
+        return {
+            "humanAssignmentId": direct_human_assignment_id(
+                issue_id=item.id, assignment_id=assignment.id
+            ),
+            "dispatchId": f"direct-human:{assignment.id}",
+            "dispatchRoundId": DIRECT_HUMAN_ROUND_ID,
+            "assignmentId": assignment.id,
         }
 
     def _item(self, db: Session, item_id: str, user_id: int) -> LoopItem:
@@ -279,11 +316,11 @@ class HumanIssueWorkService:
         self, db: Session, item_id: str, user_id: int, values: HumanWorkStart
     ) -> LoopItem:
         item = self._item(db, item_id, user_id)
-        self._require_assignment(db, item)
+        assignment = self._require_assignment(db, item)
         self._check_version(item, values.version)
         if item.assignee_user_id != user_id:
             raise HTTPException(403, "Only the assignee can start work")
-        if item.status not in {"inbox", "pending"}:
+        if not self._can_start(item, assignment):
             raise HTTPException(409, "Issue cannot start from its current status")
         self._transition(
             db, item, to_status="in_progress", user_id=user_id, trigger="human_started"
@@ -337,6 +374,8 @@ class HumanIssueWorkService:
             "submitted_by_user_id": user_id,
             "reviewer_user_id": reviewer_id,
             "state": "submitted",
+            "result": values.summary.strip(),
+            "return_reason": "",
         }
         item.metadata_json = metadata
         recipients = (
@@ -401,6 +440,7 @@ class HumanIssueWorkService:
         metadata[HUMAN_WORK_KEY] = {
             **metadata[HUMAN_WORK_KEY],
             "state": "accepted" if accepted else "changes_requested",
+            "return_reason": "" if accepted else reason,
             "reviewed_by_user_id": user_id,
             "review_message_id": message.message_id,
         }

@@ -80,7 +80,6 @@ function fixture({ identified = false, hasMoreBefore = false } = {}) {
   const cancelRuntimeTask = vi.fn().mockResolvedValue({ accepted: true })
   const getLoopItem = vi.fn()
   const onTaskUpdated = vi.fn()
-  const onWorkflowManagerFinished = vi.fn()
   const services = {
     teamApi: { listTeams: vi.fn().mockResolvedValue([]) },
     modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
@@ -148,9 +147,7 @@ function fixture({ identified = false, hasMoreBefore = false } = {}) {
           client={client}
           project={{ id: '11', name: 'P' } as CloudProject}
           task={{ id: 'WEG-1', title: 'Original task', status: 'in_progress' } as CloudLoopItem}
-          workflowManagerRunId="automation-1"
           onTaskUpdated={onTaskUpdated}
-          onWorkflowManagerFinished={onWorkflowManagerFinished}
           linear
         />
       </WorkbenchProvider>
@@ -163,7 +160,6 @@ function fixture({ identified = false, hasMoreBefore = false } = {}) {
     getRuntimeTranscript,
     getLoopItem,
     onTaskUpdated,
-    onWorkflowManagerFinished,
   }
 }
 
@@ -202,7 +198,6 @@ describe('opening an activity execution with the real pane session', () => {
       expect(result.original.metadata.run_status).toBe('running')
       expect(result.getLoopItem).not.toHaveBeenCalled()
       expect(result.onTaskUpdated).not.toHaveBeenCalled()
-      expect(result.onWorkflowManagerFinished).not.toHaveBeenCalled()
       expect(result.getRuntimeTranscript).toHaveBeenCalledTimes(1)
       await userEvent.click(screen.getByTestId('runtime-execution-detail-close'))
       expect(badge).toHaveAttribute('data-status', 'succeeded')

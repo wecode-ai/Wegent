@@ -24,7 +24,6 @@ def test_shared_models_exports_knowledge_runtime_protocol_types() -> None:
         "RuntimeEmbeddingModelConfig",
         "RuntimeRetrievalConfig",
         "RuntimeRetrieverConfig",
-        "RemoteKnowledgeBaseQueryConfig",
         "RemoteKnowledgeBaseRetrievalOverride",
         "RetrievalScope",
         "RemoteDeleteDocumentIndexRequest",
@@ -201,6 +200,26 @@ def test_remote_query_request_accepts_reference_mode() -> None:
             {"key": "lang", "operator": "==", "value": "zh"},
         ],
     }
+
+
+def test_remote_query_request_carries_no_execution_config() -> None:
+    """The query request is reference mode: it never carries execution configs."""
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    assert "knowledge_base_configs" not in remote_query_request.model_fields
+
+    with pytest.raises(
+        ValidationError,
+        match="knowledge_base_configs",
+    ):
+        remote_query_request.model_validate(
+            {
+                "knowledge_base_ids": [1001],
+                "user_id": 42,
+                "query": "release checklist",
+                "knowledge_base_configs": [{"knowledge_base_id": 1001}],
+            }
+        )
 
 
 def test_remote_query_request_accepts_retrieval_scope_and_compatible_document_ids() -> (

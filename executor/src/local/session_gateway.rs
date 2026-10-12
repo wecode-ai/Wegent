@@ -42,7 +42,6 @@ use crate::{
 
 const DEFAULT_GATEWAY_HOST: &str = "0.0.0.0";
 const DEFAULT_GATEWAY_PORT: u16 = 17888;
-const PUBLIC_BASE_URL_ENV: &str = "DEVICE_PUBLIC_BASE_URL";
 const MAX_PROXY_BODY_BYTES: usize = 64 * 1024 * 1024;
 const SESSION_PROBE_QUERY_KEY: &str = "__wegent_probe";
 
@@ -91,16 +90,15 @@ pub async fn start_session_gateway(
                 .and_then(|url| url.port())
         })
         .unwrap_or(DEFAULT_GATEWAY_PORT);
-    let uses_dynamic_public_url = port == 0 && !has_explicit_public_base_url();
     let listener = TcpListener::bind((host.as_str(), port))
         .await
         .map_err(|error| format!("Failed to bind session gateway on {host}:{port}: {error}"))?;
     let local_addr = listener
         .local_addr()
         .map_err(|error| format!("Failed to read session gateway address: {error}"))?;
-    if uses_dynamic_public_url {
-        update_dynamic_public_base_url(&session_handler, local_addr.port())?;
-    }
+    // The reported port must be the one that is actually listening, so the
+    // backend never has to guess what an overriding environment requested.
+    update_public_base_url_port(&session_handler, local_addr.port())?;
     let client = reqwest::Client::builder()
         .redirect(Policy::none())
         .build()
@@ -128,13 +126,7 @@ pub async fn start_session_gateway(
     Ok(Some(SessionGatewayHandle { local_addr, task }))
 }
 
-fn has_explicit_public_base_url() -> bool {
-    env::var(PUBLIC_BASE_URL_ENV)
-        .ok()
-        .is_some_and(|value| !value.trim().is_empty())
-}
-
-fn update_dynamic_public_base_url(
+fn update_public_base_url_port(
     session_handler: &Arc<Mutex<LocalSessionHandler>>,
     port: u16,
 ) -> Result<(), String> {

@@ -72,10 +72,14 @@ fn combined_text_result_with_options(data: &Value, include_json: bool) -> Option
         .and_then(Value::as_str)
         .filter(|text| !text.trim().is_empty())
     {
-        sections.push(format!(
-            "Inspect:\n{inspect_text}\n\n{}",
-            action_guidance_text()
-        ));
+        let mut section = format!("Inspect:\n{inspect_text}");
+        if let Some(hint) = login_wall_hint(inspect_text) {
+            section.push_str("\n\n");
+            section.push_str(hint);
+        }
+        section.push_str("\n\n");
+        section.push_str(action_guidance_text());
+        sections.push(section);
     }
     if include_json {
         sections.push(format!(
@@ -130,10 +134,13 @@ pub(crate) fn inspect_text_result_with_options(data: &Value, include_json: bool)
             .unwrap_or_default()
         )
     };
-    Some(format!(
-        "{inspect_text}\n\n{}\n\n{suffix}",
-        action_guidance_text()
-    ))
+    let mut sections = vec![inspect_text.to_owned()];
+    if let Some(hint) = login_wall_hint(inspect_text) {
+        sections.push(hint.to_owned());
+    }
+    sections.push(action_guidance_text().to_owned());
+    sections.push(suffix);
+    Some(sections.join("\n\n"))
 }
 
 #[cfg(test)]
@@ -182,4 +189,31 @@ fn action_text_result_with_options(data: &Value, include_json: bool) -> Option<S
 
 fn action_guidance_text() -> &'static str {
     "Action guidance: Continue the user's requested actions, reuse known targets, and avoid redundant inspections. Inspect again only after a page change, an unknown/stale target, or when a final-page summary is needed."
+}
+
+const LOGIN_WALL_URL_MARKERS: &[&str] = &["login", "signin", "sign-in", "passport.", "/sso/"];
+
+fn inspect_page_url(inspect_text: &str) -> Option<&str> {
+    inspect_text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("URL: "))
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+}
+
+fn login_wall_hint(inspect_text: &str) -> Option<&'static str> {
+    let url = inspect_page_url(inspect_text)?.to_ascii_lowercase();
+    if LOGIN_WALL_URL_MARKERS
+        .iter()
+        .any(|marker| url.contains(marker))
+    {
+        return Some(
+            "Auth warning: the current page looks like a login or sign-in page. If the user's \
+             task needs authenticated content, stop further browser actions, tell the user the \
+             page requires login in the Wework built-in browser panel, and wait for their \
+             confirmation. After the user confirms login, reopen the target page, retry the \
+             failed step, and continue the remaining steps.",
+        );
+    }
+    None
 }

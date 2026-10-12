@@ -118,6 +118,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   planModeActive = false,
   onSetPlanMode,
   onSetGoal,
+  onDraw,
   onSelectModel,
   onBlockedModelSelect,
   isModelSelectionReady = true,
@@ -370,6 +371,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
             filteredCloudProjectCandidates,
             canSetGoal: Boolean(onSetGoal),
             canSetPlanMode: Boolean(onSetPlanMode),
+            canDraw: Boolean(onDraw),
             planModeActive,
             workspaceMatches: workspaceSearch.matches,
           }),
@@ -387,6 +389,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       filteredSkillCandidates,
       onSetGoal,
       onSetPlanMode,
+      onDraw,
       planModeActive,
       showSkillMenu,
       workspaceSearch.matches,
@@ -712,6 +715,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       closeAutocompleteMenu()
       if (row.kind === 'goal-action') onSetGoal?.()
       if (row.kind === 'plan-action') onSetPlanMode?.()
+      if (row.kind === 'draw-action') onDraw?.()
       if (row.kind === 'files-action' && onPickWorkspacePaths) {
         setActionError(null)
         void onPickWorkspacePaths(workspaceTarget?.path)
@@ -756,6 +760,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       onSelectExternalMention,
       onSetGoal,
       onSetPlanMode,
+      onDraw,
       selectMentionCandidate,
       workspaceTarget?.path,
       onPickWorkspacePaths,

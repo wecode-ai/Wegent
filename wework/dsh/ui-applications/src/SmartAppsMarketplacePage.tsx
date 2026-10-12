@@ -904,48 +904,46 @@ export function SmartAppsMarketplacePage({
       onDragOver={mode === 'owned' ? event => event.preventDefault() : undefined}
       onDrop={mode === 'owned' ? event => void dropCreatedPackage(event) : undefined}
     >
-      {mode === 'owned' ? (
-        <header className="mb-3 flex justify-end md:absolute md:right-8 md:top-4 md:mb-0">
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              data-testid="smart-apps-created-create"
-              onClick={() => setDevelopmentDialog('create')}
-            >
-              <CirclePlus className="h-4 w-4" />
-              {creating
-                ? t('workbench.smart_apps_preparing', '正在准备…')
-                : t('workbench.smart_apps_create', '创建工作台')}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              data-testid="smart-apps-link-directory"
-              disabled={importing}
-              onClick={() => void linkSmartAppDirectory()}
-            >
-              <FolderOpen className="h-4 w-4" />
-              {t('workbench.smart_apps_link_directory', '关联文件夹')}
-            </Button>
-            <Button
-              size="sm"
-              data-testid="smart-apps-import-button"
-              disabled={importing}
-              onClick={() => void chooseCreatedPackage()}
-            >
-              {importing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              {importing
-                ? t('workbench.smart_apps_importing', '导入中…')
-                : t('workbench.smart_apps_import_app', '导入发布包')}
-            </Button>
-          </div>
-        </header>
-      ) : null}
+      <header className="mb-3 flex justify-end md:absolute md:right-8 md:top-4 md:mb-0">
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="smart-apps-created-create"
+            onClick={() => setDevelopmentDialog('create')}
+          >
+            <CirclePlus className="h-4 w-4" />
+            {creating
+              ? t('workbench.smart_apps_preparing', '正在准备…')
+              : t('workbench.smart_apps_create', '创建工作台')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="smart-apps-link-directory"
+            disabled={importing}
+            onClick={() => void linkSmartAppDirectory()}
+          >
+            <FolderOpen className="h-4 w-4" />
+            {t('workbench.smart_apps_link_directory', '关联文件夹')}
+          </Button>
+          <Button
+            size="sm"
+            data-testid="smart-apps-import-button"
+            disabled={importing}
+            onClick={() => void chooseCreatedPackage()}
+          >
+            {importing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            {importing
+              ? t('workbench.smart_apps_importing', '导入中…')
+              : t('workbench.smart_apps_import_app', '导入发布包')}
+          </Button>
+        </div>
+      </header>
 
       <ApplicationContextToolbar
         leading={

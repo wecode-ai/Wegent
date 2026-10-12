@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from llama_index.core.schema import TextNode
+from milvus_contract_stubs import patch_collection
 
 from knowledge_engine.retrieval.filters import parse_metadata_filters
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
@@ -267,7 +268,8 @@ class TestRetrieve:
         assert result["records"][0]["content"] == "Q: question\n\nA: full answer"
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_vector_mode(self, mock_milvus_vs):
+    @patch_collection()
+    def test_retrieve_vector_mode(self, mock_client_cls, mock_milvus_vs):
         """Test retrieval in vector mode."""
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -304,9 +306,14 @@ class TestRetrieve:
         assert len(result["records"]) == 1
         assert result["records"][0]["content"] == "test content"
         assert result["records"][0]["score"] == 0.9
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.similarity_top_k == 10
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_vector_mode_adds_native_document_scope_expr(self, mock_milvus_vs):
+    @patch_collection()
+    def test_retrieve_vector_mode_adds_native_document_scope_expr(
+        self, mock_client_cls, mock_milvus_vs
+    ):
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
         mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
@@ -340,8 +347,9 @@ class TestRetrieve:
         assert vs_query.filters is None
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch_collection()
     def test_retrieve_preserves_metadata_filter_expr_with_document_scope(
-        self, mock_milvus_vs
+        self, mock_client_cls, mock_milvus_vs
     ):
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -417,8 +425,9 @@ class TestRetrieve:
         )
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch_collection()
     def test_retrieve_rejects_doc_ref_in_metadata_condition_with_scope(
-        self, mock_milvus_vs
+        self, mock_client_cls, mock_milvus_vs
     ):
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -454,7 +463,8 @@ class TestRetrieve:
         mock_store.query.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_keyword_mode(self, mock_milvus_vs):
+    @patch_collection()
+    def test_retrieve_keyword_mode(self, mock_client_cls, mock_milvus_vs):
         """Test retrieval in keyword mode."""
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -488,9 +498,12 @@ class TestRetrieve:
 
         assert "records" in result
         mock_embed_model.get_query_embedding.assert_not_called()
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.similarity_top_k == 10
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_hybrid_mode(self, mock_milvus_vs):
+    @patch_collection()
+    def test_retrieve_hybrid_mode(self, mock_client_cls, mock_milvus_vs):
         """Test retrieval in hybrid mode."""
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -536,7 +549,10 @@ class TestRetrieve:
         assert vs_query.query_str == "test query test"
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_hybrid_mode_threads_ranker_weights(self, mock_milvus_vs):
+    @patch_collection()
+    def test_retrieve_hybrid_mode_threads_ranker_weights(
+        self, mock_client_cls, mock_milvus_vs
+    ):
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
 
@@ -575,7 +591,140 @@ class TestRetrieve:
         }
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_keyword_mode_uses_sparse_hints(self, mock_milvus_vs):
+    @patch_collection()
+    def test_retrieve_hybrid_widens_candidate_pool_within_bounds(
+        self, mock_client_cls, mock_milvus_vs
+    ):
+        """
+        Hybrid asks the store for top_k * 4 candidates, floored at 50 and capped
+        at 1000, so the store always sees a pool wider than the returned top_k.
+        """
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+            },
+        )
+        small_top_k_query = mock_store.query.call_args.args[0]
+        assert small_top_k_query.similarity_top_k == 50
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 300,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+            },
+        )
+        large_top_k_query = mock_store.query.call_args.args[0]
+        assert large_top_k_query.similarity_top_k == 1000
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch_collection()
+    def test_retrieve_hybrid_candidate_pool_never_undercuts_top_k(
+        self, mock_client_cls, mock_milvus_vs
+    ):
+        """
+        Beyond the ceiling the pool must not shrink below the requested top_k,
+        otherwise the caller silently gets fewer records than asked for.
+        """
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 1001,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+            },
+        )
+
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.similarity_top_k == 1001
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch_collection()
+    def test_retrieve_hybrid_returns_at_most_top_k_fused_records(
+        self, mock_client_cls, mock_milvus_vs
+    ):
+        """Fused candidates beyond top_k are truncated in order."""
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+
+        nodes = []
+        for rank in range(8):
+            node = MagicMock()
+            node.text = f"fused candidate {rank}"
+            node.metadata = {"source_file": "fused.txt", "knowledge_id": "kb_1"}
+            nodes.append(node)
+        mock_store.query.return_value = MagicMock(
+            nodes=nodes, similarities=[0.9 - rank * 0.05 for rank in range(8)]
+        )
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        result = backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+            },
+        )
+
+        assert [record["content"] for record in result["records"]] == [
+            f"fused candidate {rank}" for rank in range(5)
+        ]
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch_collection()
+    def test_retrieve_keyword_mode_uses_sparse_hints(
+        self, mock_client_cls, mock_milvus_vs
+    ):
         """Test keyword retrieval uses sparse hints when provided."""
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -630,7 +779,8 @@ class TestRetrieve:
             )
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_score_threshold_filtering(self, mock_milvus_vs):
+    @patch_collection()
+    def test_retrieve_score_threshold_filtering(self, mock_client_cls, mock_milvus_vs):
         """Test that results below score threshold are filtered out."""
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -704,7 +854,37 @@ class TestDeleteDocument:
             collection_name="test_kb_kb_1__parents",
             filter='knowledge_id == "kb_1" and doc_ref == "doc_123"',
         )
-        mock_client.close.assert_called_once()
+        # Every client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_delete_document_without_collection_reports_nothing_deleted(
+        self,
+        mock_client_class,
+        mock_milvus_vs,
+    ):
+        """Test deleting a document whose collection was never created."""
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_client.has_collection.return_value = False
+
+        config = {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+        }
+        backend = MilvusBackend(config)
+
+        result = backend.delete_document(knowledge_id="kb_1", doc_ref="doc_123")
+
+        assert result == {
+            "doc_ref": "doc_123",
+            "knowledge_id": "kb_1",
+            "deleted_chunks": 0,
+            "status": "deleted",
+        }
+        mock_milvus_vs.assert_not_called()
+        mock_client.create_collection.assert_not_called()
 
 
 class TestDeleteKnowledge:
@@ -743,7 +923,8 @@ class TestDeleteKnowledge:
             collection_name="test_kb_kb_1__parents",
             filter='knowledge_id == "kb_1"',
         )
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
 
 class TestDropKnowledgeIndex:
@@ -785,7 +966,8 @@ class TestDropKnowledgeIndex:
         mock_client.drop_collection.assert_any_call(
             collection_name="test_kb_kb_1__parents"
         )
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
 
 class TestSaveParentNodes:
@@ -828,15 +1010,18 @@ class TestSaveParentNodes:
             collection_name="test_kb_kb_1__parents",
             filter='knowledge_id == "kb_1" and doc_ref == "doc_123"',
         )
-        assert mock_client.close.call_count == 2
+        # Every client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
 
 class TestGetDocument:
     """Tests for get_document method."""
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_get_document(self, mock_milvus_vs):
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_get_document(self, mock_client_class, mock_milvus_vs):
         """Test getting document details."""
+        mock_client_class.return_value.has_collection.return_value = True
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
 
@@ -864,8 +1049,10 @@ class TestGetDocument:
         assert result["chunks"][1]["chunk_index"] == 1
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_get_document_not_found(self, mock_milvus_vs):
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_get_document_not_found(self, mock_client_class, mock_milvus_vs):
         """Test getting a document that doesn't exist."""
+        mock_client_class.return_value.has_collection.return_value = True
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
         mock_store.get_nodes.return_value = []
@@ -878,6 +1065,27 @@ class TestGetDocument:
 
         with pytest.raises(ValueError, match="not found"):
             backend.get_document(knowledge_id="kb_1", doc_ref="doc_nonexistent")
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_get_document_without_collection_raises_not_found(
+        self,
+        mock_client_class,
+        mock_milvus_vs,
+    ):
+        """Test reading a document whose collection was never created."""
+        mock_client_class.return_value.has_collection.return_value = False
+
+        config = {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+        }
+        backend = MilvusBackend(config)
+
+        with pytest.raises(ValueError, match="not found"):
+            backend.get_document(knowledge_id="kb_1", doc_ref="doc_123")
+
+        mock_milvus_vs.assert_not_called()
 
 
 class TestListDocuments:
@@ -924,7 +1132,8 @@ class TestListDocuments:
         assert result["documents"][0]["chunk_count"] == 1
         assert result["documents"][1]["doc_ref"] == "doc_1"
         assert result["documents"][1]["chunk_count"] == 2
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_list_documents_empty_collection(self, mock_client_class):
@@ -943,7 +1152,32 @@ class TestListDocuments:
 
         assert result["total"] == 0
         assert result["documents"] == []
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_list_documents_returns_empty_page_when_connection_fails(
+        self, mock_client_class
+    ):
+        """A connection failure is reported as an empty page, not an exception."""
+        mock_client_class.side_effect = Exception("Connection refused")
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        result = backend.list_documents(knowledge_id="kb_1", page=1, page_size=10)
+
+        assert result == {
+            "documents": [],
+            "total": 0,
+            "page": 1,
+            "page_size": 10,
+            "knowledge_id": "kb_1",
+        }
 
 
 class TestTestConnection:
@@ -963,7 +1197,8 @@ class TestTestConnection:
         backend = MilvusBackend(config)
 
         assert backend.test_connection() is True
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_connection_failure(self, mock_client_class):
@@ -979,7 +1214,8 @@ class TestTestConnection:
         backend = MilvusBackend(config)
 
         assert backend.test_connection() is False
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
 
 class TestGetAllChunks:
@@ -1018,7 +1254,8 @@ class TestGetAllChunks:
         assert len(result) == 2
         assert result[0]["chunk_id"] == 0
         assert result[1]["chunk_id"] == 1
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_get_all_chunks_collection_not_exists(self, mock_client_class):
@@ -1036,7 +1273,24 @@ class TestGetAllChunks:
         result = backend.get_all_chunks(knowledge_id="kb_1", max_chunks=100)
 
         assert result == []
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_get_all_chunks_returns_empty_list_when_connection_fails(
+        self, mock_client_class
+    ):
+        """A connection failure is reported as no chunks, not an exception."""
+        mock_client_class.side_effect = Exception("Connection refused")
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        assert backend.get_all_chunks(knowledge_id="kb_1", max_chunks=100) == []
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_get_all_chunks_applies_metadata_condition(self, mock_client_class):
@@ -1076,7 +1330,8 @@ class TestGetAllChunks:
         )
 
         assert [chunk["doc_ref"] for chunk in result] == ["doc_1"]
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
 
 class TestIndexWithMetadata:
@@ -1090,7 +1345,14 @@ class TestIndexWithMetadata:
     @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
     @patch("knowledge_engine.storage.milvus_backend.StorageContext")
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_index_with_metadata(self, mock_milvus_vs, mock_storage_ctx, mock_vs_index):
+    @patch_collection(dimension=None)
+    def test_index_with_metadata(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
         """Test indexing nodes with metadata."""
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -1116,6 +1378,10 @@ class TestIndexWithMetadata:
         }
 
         mock_embed_model = MagicMock()
+        mock_embed_model.model_name = "stub-embedding-model"
+        mock_embed_model.embed_batch_size = 10
+        mock_embed_model._configured_dimension = 1024
+        mock_embed_model.get_text_embedding_batch.return_value = [[0.1] * 1024] * 2
 
         config = {
             "url": "http://localhost:19530/default",

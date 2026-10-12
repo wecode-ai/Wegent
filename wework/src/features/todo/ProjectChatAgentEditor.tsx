@@ -15,8 +15,10 @@ import type { createAgentResourceApi } from '@/api/agentResources'
 import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import type {
   LocalProjectChatAgent,
+  LocalProjectChatAgentModel,
   createLocalProjectChatAgentApi,
 } from '@/api/local/localDelivery'
+import { isDefaultLocalAgentName } from '@/features/collaboration/defaultLocalAgent'
 import { parseAgentMcpServers } from '@/features/collaboration/agentFormModel'
 import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
 import type {
@@ -44,6 +46,10 @@ function storedSkillKeys(skills: unknown[] | undefined): string[] {
       typeof record.namespace === 'string' && record.namespace ? record.namespace : 'default'
     return [`${namespace}:${record.name}`]
   })
+}
+
+function modelKey(model: LocalProjectChatAgentModel): string {
+  return `${model.type ?? ''}:${model.namespace ?? 'default'}:${model.name}`
 }
 
 export function ProjectChatAgentEditor({
@@ -76,6 +82,7 @@ export function ProjectChatAgentEditor({
   const [model, setModel] = useState('')
   const [modelType, setModelType] = useState<ModelType | undefined>()
   const [modelNamespace, setModelNamespace] = useState('default')
+  const [allowedModels, setAllowedModels] = useState<LocalProjectChatAgentModel[]>([])
   const [runtime, setRuntime] = useState<LocalProjectChatAgent['runtime']>('codex')
   const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
   const [mcpConfig, setMcpConfig] = useState('{}')
@@ -179,6 +186,18 @@ export function ProjectChatAgentEditor({
           setModel(agent.model ?? '')
           setModelType(agent.modelType ?? undefined)
           setModelNamespace(agent.modelNamespace || 'default')
+          setAllowedModels(
+            agent.allowedModels ??
+              (agent.model
+                ? [
+                    {
+                      name: agent.model,
+                      type: agent.modelType,
+                      namespace: agent.modelNamespace,
+                    },
+                  ]
+                : [])
+          )
           setRuntime(agent.runtime)
           setCapabilityMode(agent.capabilityMode)
           setMcpConfig(JSON.stringify(agent.mcpServers ?? {}, null, 2))
@@ -229,10 +248,32 @@ export function ProjectChatAgentEditor({
     () => new Set([...selectedSkillSet, ...promptCapabilities.skillKeys]),
     [promptCapabilities.skillKeys, selectedSkillSet]
   )
+  const defaultDeviceAgent = isDefaultLocalAgentName(name)
+  const selectedAllowedModelKeys = useMemo(
+    () => new Set(allowedModels.map(modelKey)),
+    [allowedModels]
+  )
+  const availableModelKeys = useMemo(
+    () =>
+      new Set(
+        models.map(candidate =>
+          modelKey({
+            name: candidate.name,
+            type: candidate.type,
+            namespace: candidate.namespace || 'default',
+          })
+        )
+      ),
+    [models]
+  )
+  const unavailableAllowedModels = useMemo(
+    () => allowedModels.filter(candidate => !availableModelKeys.has(modelKey(candidate))),
+    [allowedModels, availableModelKeys]
+  )
 
   const save = async () => {
     if (busy || loadingAgent) return
-    if (!model) {
+    if (defaultDeviceAgent ? allowedModels.length === 0 : !model) {
       setError(t('workbench.agent_creator_model_required', '请选择模型'))
       return
     }
@@ -248,6 +289,7 @@ export function ProjectChatAgentEditor({
     setBusy(true)
     setError(null)
     try {
+      const primaryModel = defaultDeviceAgent ? allowedModels[0] : null
       const definition: UnifiedAgentDefinition = {
         name,
         displayName: displayName.trim(),
@@ -255,9 +297,9 @@ export function ProjectChatAgentEditor({
         capabilityMode,
         runtime: runtime === 'claude_code' ? 'ClaudeCode' : 'Codex',
         model: {
-          name: model,
-          type: modelType,
-          namespace: modelNamespace,
+          name: primaryModel?.name ?? model,
+          type: primaryModel?.type ?? modelType,
+          namespace: primaryModel?.namespace ?? modelNamespace,
         },
         systemPrompt,
         skills:
@@ -287,6 +329,7 @@ export function ProjectChatAgentEditor({
         model: definition.model.name,
         modelType: definition.model.type,
         modelNamespace: definition.model.namespace,
+        allowedModels: defaultDeviceAgent ? allowedModels : [definition.model],
         capabilityDescription: legacyConfig.capabilityDescription,
         capabilityMode: definition.capabilityMode,
         systemPrompt: definition.systemPrompt,
@@ -297,7 +340,6 @@ export function ProjectChatAgentEditor({
         executionMode: 'auto' as const,
         executionDeviceId: null,
         maxConcurrentExecutions: legacyConfig.maxConcurrentExecutions,
-        workspacePolicy: 'git_worktree' as const,
         plugins: definition.plugins,
       }
       if (editingAgentId) {
@@ -455,11 +497,11 @@ export function ProjectChatAgentEditor({
         capabilityMode === 'follow_device'
           ? t(
               'workbench.agent_creator_follow_device_footer',
-              '默认使用 Codex，并从任务运行设备获取能力。'
+              '使用 Codex，并从任务运行设备获取能力。'
             )
           : t(
               'workbench.agent_creator_manual_footer',
-              '默认使用 Codex；所选能力会随智能体同步到执行设备。'
+              '使用 Codex；所选能力会随智能体同步到执行设备。'
             )
       }
       labels={{
@@ -486,28 +528,110 @@ export function ProjectChatAgentEditor({
             }
           : undefined
       }
-      model={{
-        disabled: loadingAgent,
-        label: t('workbench.agent_creator_model', '模型'),
-        onChange: value => {
-          const selected = models.find(candidate => candidate.name === value)
-          setModel(value)
-          setModelType(selected?.type)
-          setModelNamespace(selected?.namespace || 'default')
-        },
-        options: [
-          ...(model && !models.some(candidate => candidate.name === model)
-            ? [{ value: model, label: model }]
-            : []),
-          ...models.map(item => ({
-            value: item.name,
-            label: item.displayName || item.name,
-          })),
-        ],
-        placeholder: t('workbench.agent_creator_model_placeholder', '请选择模型'),
-        testId: 'cloud-project-chat-agent-model',
-        value: model,
-      }}
+      model={
+        defaultDeviceAgent
+          ? undefined
+          : {
+              disabled: loadingAgent,
+              label: t('workbench.agent_creator_model', '模型'),
+              onChange: value => {
+                const selected = models.find(candidate => candidate.name === value)
+                setModel(value)
+                setModelType(selected?.type)
+                setModelNamespace(selected?.namespace || 'default')
+              },
+              options: [
+                ...(model && !models.some(candidate => candidate.name === model)
+                  ? [{ value: model, label: model }]
+                  : []),
+                ...models.map(item => ({
+                  value: item.name,
+                  label: item.displayName || item.name,
+                })),
+              ],
+              placeholder: t('workbench.agent_creator_model_placeholder', '请选择模型'),
+              testId: 'cloud-project-chat-agent-model',
+              value: model,
+            }
+      }
+      modelControl={
+        defaultDeviceAgent ? (
+          <fieldset
+            className="space-y-2 rounded-lg border border-border p-3"
+            data-testid="cloud-project-chat-agent-models"
+            disabled={busy || loadingAgent}
+          >
+            <legend className="px-1 text-sm text-text-secondary">
+              {t('workbench.project_chat_agent_allowed_models', '可用模型')}
+            </legend>
+            <p className="text-xs text-text-muted">
+              {t(
+                'workbench.project_chat_agent_allowed_models_description',
+                '负责人 AI 会根据任务，从这里预先配置的模型中选择。'
+              )}
+            </p>
+            <div className="max-h-48 space-y-1 overflow-y-auto">
+              {models.map(candidate => {
+                const value = {
+                  name: candidate.name,
+                  type: candidate.type,
+                  namespace: candidate.namespace || 'default',
+                }
+                const key = modelKey(value)
+                return (
+                  <label
+                    className="flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-text-primary hover:bg-muted"
+                    key={key}
+                  >
+                    <input
+                      checked={selectedAllowedModelKeys.has(key)}
+                      data-testid={`cloud-project-chat-agent-model-${candidate.name}`}
+                      onChange={event =>
+                        setAllowedModels(current =>
+                          event.target.checked
+                            ? [...current, value]
+                            : current.filter(item => modelKey(item) !== key)
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    <span>{candidate.displayName || candidate.name}</span>
+                  </label>
+                )
+              })}
+              {unavailableAllowedModels.map(candidate => {
+                const key = modelKey(candidate)
+                return (
+                  <div
+                    className="flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-sm text-text-muted"
+                    data-testid={`cloud-project-chat-agent-model-unavailable-${candidate.name}`}
+                    key={key}
+                  >
+                    <span>
+                      {candidate.name}
+                      {t('workbench.project_chat_agent_model_unavailable', '（当前不可用）')}
+                    </span>
+                    <button
+                      aria-label={`${t(
+                        'workbench.project_chat_agent_remove_model',
+                        '移除模型'
+                      )} ${candidate.name}`}
+                      className="rounded px-2 py-1 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+                      data-testid={`cloud-project-chat-agent-model-remove-${candidate.name}`}
+                      onClick={() =>
+                        setAllowedModels(current => current.filter(item => modelKey(item) !== key))
+                      }
+                      type="button"
+                    >
+                      {t('workbench.agent_creator_remove', '移除')}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </fieldset>
+        ) : undefined
+      }
       namespace={namespace}
       onClose={onClose}
       onSave={() => void save()}
@@ -551,7 +675,7 @@ export function ProjectChatAgentEditor({
           }
         />
       }
-      saveDisabled={loadingAgent || !model}
+      saveDisabled={loadingAgent || (defaultDeviceAgent ? allowedModels.length === 0 : !model)}
       saveLabel={
         editing
           ? t('workbench.agent_editor_save', '保存')

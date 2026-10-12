@@ -74,24 +74,70 @@ pub struct MemberRow {
 
 #[derive(Debug, FromMysqlRow)]
 #[allow(dead_code)]
-pub struct ResourceIdRow {
-    pub resource_id: i64,
-}
-
-#[derive(Debug, FromMysqlRow)]
-#[allow(dead_code)]
 pub struct EntityIdRow {
     pub entity_id: String,
+}
+
+/// `namespace.id`/`namespace.name` projection used by the referenced
+/// capability target lookup (`db.query(Namespace.id, Namespace.name)`).
+#[derive(Debug, FromMysqlRow)]
+#[allow(dead_code)]
+pub struct NamespaceRefRow {
+    pub id: i32,
+    pub name: String,
+}
+
+/// One row of the referenced-capability join: the `resource_members` entity
+/// that grants visibility plus the referenced `kinds` row.
+///
+/// The column labels are the source's SQLAlchemy aliases: Replay delivers this
+/// statement's original resultset, so the labels are the recorded ones.
+#[derive(Debug, FromMysqlRow)]
+#[allow(dead_code)]
+pub struct ReferencedKindRow {
+    #[mysql(rename = "resource_members_entity_type")]
+    pub entity_type: String,
+    #[mysql(rename = "resource_members_entity_id")]
+    pub entity_id: String,
+    #[mysql(rename = "kinds_id")]
+    pub id: i32,
+    #[mysql(rename = "kinds_user_id")]
+    pub user_id: i32,
+    #[mysql(rename = "kinds_kind")]
+    pub kind: String,
+    #[mysql(rename = "kinds_name")]
+    pub name: String,
+    #[mysql(rename = "kinds_namespace")]
+    pub namespace: String,
+    #[mysql(rename = "kinds_json")]
+    pub json: brz_mysql::Json<serde_json::Value>,
+    #[mysql(rename = "kinds_is_active")]
+    pub is_active: bool,
+    #[mysql(rename = "kinds_created_at")]
+    pub created_at: NaiveDateTime,
+    #[mysql(rename = "kinds_updated_at")]
+    pub updated_at: NaiveDateTime,
+}
+
+impl ReferencedKindRow {
+    /// Keep only the referenced `kinds` row.
+    pub fn into_kind_row(self) -> KindRow {
+        KindRow {
+            id: self.id,
+            user_id: self.user_id,
+            kind: self.kind,
+            name: self.name,
+            namespace: self.namespace,
+            json: self.json,
+            is_active: self.is_active,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
 }
 
 #[derive(Debug, FromMysqlRow)]
 #[allow(dead_code)]
 pub struct NameRow {
     pub name: String,
-}
-
-#[derive(Debug, FromMysqlRow)]
-#[allow(dead_code)]
-pub struct IdRow {
-    pub id: i32,
 }

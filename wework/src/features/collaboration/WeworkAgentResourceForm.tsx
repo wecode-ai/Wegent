@@ -473,11 +473,11 @@ export function WeworkAgentResourceForm({
         capabilityMode === 'follow_device'
           ? t(
               'workbench.agent_creator_follow_device_footer',
-              '默认使用 Codex，并从任务运行设备获取能力。'
+              '使用 Codex，并从任务运行设备获取能力。'
             )
           : t(
               'workbench.agent_creator_manual_footer',
-              '默认使用 Codex；所选能力会随智能体同步到执行设备。'
+              '使用 Codex；所选能力会随智能体同步到执行设备。'
             )
       }
       labels={{

@@ -22,6 +22,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { getConversationDiagnosticsSnapshot } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
 type FeedbackCategory =
@@ -256,6 +257,9 @@ function TaskFeedbackDialogContent({
           taskContext,
           screenshotDataUrl,
           composerDiagnostics: selection.runtimeLogs ? getComposerDiagnosticsSnapshot() : null,
+          conversationDiagnostics: selection.runtimeLogs
+            ? getConversationDiagnosticsSnapshot()
+            : null,
           attachments: await Promise.all(
             attachments.map(async attachment => {
               try {

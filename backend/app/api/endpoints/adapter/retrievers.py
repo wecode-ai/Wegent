@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 import logging
 from typing import Optional
 
@@ -15,12 +14,14 @@ from app.core.config import settings
 from app.models.user import User
 from app.schemas.kind import Retriever
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from knowledge_engine.storage.factory import (
-    create_storage_backend_from_config,
+from app.services.rag.gateway_factory import get_rag_gateway
+from app.services.rag.remote_gateway import RemoteRagGatewayError
+from knowledge_engine.storage.capabilities import (
     get_all_storage_retrieval_methods,
     get_supported_retrieval_methods,
     get_supported_storage_types,
 )
+from shared.models import RemoteTestConnectionRequest
 
 # RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
 
@@ -222,7 +223,11 @@ async def test_retriever_connection(
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Test retriever storage connection using storage backend.
+    Test retriever storage connection through knowledge_runtime.
+
+    The Backend does not carry the vector store SDKs, so it forwards the
+    configuration to knowledge_runtime, which performs the real connection
+    test and returns the verdict.
 
     Request body:
     {
@@ -244,9 +249,6 @@ async def test_retriever_connection(
 
     storage_type = test_data.get("storage_type")
     url = test_data.get("url")
-    username = test_data.get("username")
-    password = test_data.get("password")
-    api_key = test_data.get("api_key")
 
     if not storage_type or not url:
         return {
@@ -255,22 +257,17 @@ async def test_retriever_connection(
         }
 
     try:
-        storage_backend = create_storage_backend_from_config(
+        request = RemoteTestConnectionRequest(
             storage_type=storage_type,
             url=url,
-            username=username,
-            password=password,
-            api_key=api_key,
-            index_strategy={"mode": "per_dataset"},
-            ext={},
+            username=test_data.get("username"),
+            password=test_data.get("password"),
+            api_key=test_data.get("api_key"),
         )
-        success = await asyncio.to_thread(storage_backend.test_connection)
-        return {
-            "success": success,
-            "message": "Connection successful" if success else "Connection failed",
-        }
-    except ValueError as e:
+        return await get_rag_gateway().test_connection(request)
+    except RemoteRagGatewayError as e:
+        logger.error("Retriever connection test failed: %s", e)
         return {"success": False, "message": str(e)}
-    except Exception as e:
-        logger.error(f"Retriever connection test failed: {str(e)}")
-        return {"success": False, "message": f"Connection failed: {str(e)}"}
+    except ValueError as e:
+        # A malformed payload must still come back as a verdict, not a 500.
+        return {"success": False, "message": str(e)}

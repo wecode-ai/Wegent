@@ -24,14 +24,8 @@ class CloudProjectAccess:
     role: BaseRole
 
     @property
-    def is_public_visitor(self) -> bool:
-        return self.role == BaseRole.RestrictedAnalyst
-
-    @property
-    def restricts_unrelated_issues(self) -> bool:
-        return self.project.visibility == "public_restricted" and not has_permission(
-            self.role, BaseRole.Maintainer
-        )
+    def is_viewer(self) -> bool:
+        return self.role == BaseRole.Viewer
 
 
 class IssueAction(str, Enum):
@@ -62,19 +56,11 @@ def issue_permissions(
 ) -> IssuePermissions:
     """Resolve action-specific permissions without a generic edit shortcut."""
 
-    if access.is_public_visitor:
-        owns_issue = issue_creator_user_id == user_id
-        return IssuePermissions(
-            edit_content=owns_issue,
-            comment=owns_issue,
-            assign=False,
-            execute=owns_issue,
-        )
     return IssuePermissions(
         edit_content=has_permission(access.role, BaseRole.Developer),
-        comment=has_permission(access.role, BaseRole.Reporter),
+        comment=has_permission(access.role, BaseRole.Developer),
         assign=has_permission(access.role, BaseRole.Maintainer),
-        execute=has_permission(access.role, BaseRole.Reporter),
+        execute=has_permission(access.role, BaseRole.Developer),
     )
 
 
@@ -98,7 +84,7 @@ def require_cloud_project_role(
     db: Session,
     cloud_project_id: int,
     user_id: int,
-    required_role: BaseRole = BaseRole.Reporter,
+    required_role: BaseRole = BaseRole.Viewer,
 ) -> CloudProjectAccess:
     result = project_access_query(db, user_id, cloud_project_id).first()
     if result is None:

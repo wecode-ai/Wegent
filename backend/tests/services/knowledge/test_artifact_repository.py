@@ -133,6 +133,14 @@ def test_model_uses_minimal_production_indexes():
     assert index_names == {"idx_knowledge_artifacts_kb_created"}
     assert isinstance(KnowledgeArtifactRecord.__table__.c.content.type, Text)
     assert KnowledgeArtifactRecord.__table__.c.content.server_default is None
+    assert (
+        str(KnowledgeArtifactRecord.__table__.c.created_at.server_default.arg)
+        == "CURRENT_TIMESTAMP"
+    )
+    assert (
+        str(KnowledgeArtifactRecord.__table__.c.updated_at.server_default.arg)
+        == "CURRENT_TIMESTAMP"
+    )
 
 
 def test_execution_update_preserves_concurrent_rename(db: Session):

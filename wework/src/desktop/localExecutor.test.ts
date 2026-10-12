@@ -73,6 +73,18 @@ describe('localExecutor', () => {
     mockStartup()
   })
 
+  test('negotiates bounded transcript transport while accepting an older executor response', async () => {
+    const transcript = { messages: [], turns: [], fullContent: false }
+    requestDshExecutorMock.mockResolvedValue(transcript)
+    expect(await requestLocalExecutor('runtime.tasks.transcript', { taskId: 'task-1' })).toBe(
+      transcript
+    )
+    expect(requestDshExecutorMock).toHaveBeenCalledExactlyOnceWith('runtime.tasks.transcript', {
+      taskId: 'task-1',
+      transcriptProtocolVersion: 2,
+    })
+  })
+
   test('reports executor availability without starting Codex or copying plugins', async () => {
     await expect(ensureLocalExecutorAvailable()).resolves.toEqual({
       running: true,

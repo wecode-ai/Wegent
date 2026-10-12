@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import type { WorkbenchPaneIdentity } from './workbenchPaneIdentity'
@@ -35,7 +36,12 @@ export function useWorkbenchProjectWorkControls({
       currentRuntimeTask: pane.currentRuntimeTask,
       selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
       pendingProjectWorkspaceProjectId: state.pendingProjectWorkspaceProjectId,
-      executionMode: projectExecutionMode,
+      executionMode: pane.currentRuntimeTask
+        ? (findRuntimeTask(state.runtimeWork, pane.currentRuntimeTask)?.workspaceKind ??
+            pane.currentRuntimeTask.workspaceKind) === 'worktree'
+          ? 'git_worktree'
+          : 'current_workspace'
+        : projectExecutionMode,
       executionModeLocked: Boolean(pane.currentRuntimeTask),
       onSelectProject: selectProject,
       onSelectStandaloneDevice: selectStandaloneDevice,

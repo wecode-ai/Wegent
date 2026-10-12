@@ -22,7 +22,7 @@ static NEXT_REQUEST_ID: OnceLock<AtomicU32> = OnceLock::new();
 
 /// Reuses the incoming request ID or generates one for every non-root Rust API.
 #[derive(Clone)]
-pub(crate) struct RequestIdFilter<S> {
+pub struct RequestIdFilter<S> {
     inner: S,
 }
 

@@ -667,7 +667,7 @@ mod tests {
         // Case ba098165: the user's default bindings arrive in
         // `created_at DESC` order, and the source's `set[int]` renders the
         // recorded `NOT IN` list in CPython slot order.
-        let mut ids = super::super::set_order::SetOrder::new();
+        let mut ids = crate::py_set_order::SetOrder::new();
         for id in [
             283_712, 200_318, 269_285, 127_443, 237_510, 214_204, 187_623, 188_646, 187_624,
             110_603, 133_755, 133_269, 127_449, 273_990, 266_010, 127_444, 256_262,

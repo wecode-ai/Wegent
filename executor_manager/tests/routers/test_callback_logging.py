@@ -78,6 +78,41 @@ async def test_callback_handler_logs_callback_summary_without_body(mocker):
 
 
 @pytest.mark.asyncio
+async def test_callback_handler_logs_executor_error_details(mocker):
+    event_data = {
+        "event_type": "error",
+        "task_id": 42,
+        "subtask_id": 7,
+        "data": {
+            "type": "error",
+            "code": "runtime_error",
+            "message": "interactive form proxy failed",
+        },
+    }
+    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    mocked_warning = mocker.patch.object(routers.logger, "warning")
+    mocker.patch.object(
+        routers, "traced_async_client", return_value=_FakeClientContext()
+    )
+    mocker.patch.object(routers, "set_task_context")
+    tracker = mocker.Mock()
+    mocker.patch(
+        "executor_manager.services.task_heartbeat_manager.get_running_task_tracker",
+        return_value=tracker,
+    )
+
+    await routers.callback_handler(event_data, http_request)
+
+    mocked_warning.assert_any_call(
+        "[Callback] Executor error: task_id=%s, subtask_id=%s, " "code=%s, message=%s",
+        42,
+        7,
+        "runtime_error",
+        "interactive form proxy failed",
+    )
+
+
+@pytest.mark.asyncio
 async def test_callback_handler_updates_validation_without_local_registry(mocker):
     event_data = {
         "event_type": "response.completed",

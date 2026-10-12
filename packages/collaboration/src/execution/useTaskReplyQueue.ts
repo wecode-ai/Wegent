@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import type { RuntimePaneQueuedMessage } from '@wegent/chat-core/conversation-queue'
+import type { ProjectChatMention } from '@wegent/chat-core'
 import { persistAttachmentReferences } from '../composer/attachmentFiles'
 import type { TaskReplyCard, TaskCardDispatchResult } from './taskCardReply'
 import type { TaskReplyQueueStore } from './taskReplyQueue'
@@ -51,7 +52,11 @@ export function useTaskReplyQueue({
             ? current.filter(message => message.id !== candidate.reply.id)
             : current.map(message =>
                 message.id === candidate.reply.id
-                  ? { ...message, status: 'failed', error: result.error ?? sendFailedText }
+                  ? {
+                      ...message,
+                      status: 'failed',
+                      error: result.error ?? sendFailedText,
+                    }
                   : message
               )
         )
@@ -68,13 +73,19 @@ export function useTaskReplyQueue({
         current.filter(message => message.id !== id || message.status === 'sending')
       )
     },
-    enqueue(rootId: string, content: string, attachments: Attachment[]) {
+    enqueue(
+      rootId: string,
+      content: string,
+      attachments: Attachment[],
+      mentions?: ProjectChatMention[]
+    ) {
       store.update(cardScope(rootId), current => [
         ...current,
         {
           id: `queued-task-card-${crypto.randomUUID()}`,
           content,
           attachments: persistAttachmentReferences(attachments),
+          mentions,
           status: 'queued',
           createdAt: new Date().toISOString(),
         },

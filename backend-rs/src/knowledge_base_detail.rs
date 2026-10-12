@@ -186,6 +186,7 @@ pub struct KnowledgeBaseResponse {
     is_active: bool,
     retrieval_config: Option<RetrievalConfigResponse>,
     retrieval_capabilities: RetrievalCapabilities,
+    dingtalk_auto_sync_enabled: bool,
     summary_enabled: bool,
     summary_model_ref: Option<ModelRef>,
     execution_model_ref: Option<ModelRef>,
@@ -290,6 +291,8 @@ struct KbSpec {
     allow_document_download: Option<bool>,
     #[serde(rename = "retrievalConfig")]
     retrieval_config: Option<StoredRetrievalConfig>,
+    #[serde(rename = "dingtalkAutoSyncEnabled")]
+    dingtalk_auto_sync_enabled: Option<bool>,
     #[serde(rename = "summaryEnabled")]
     summary_enabled: Option<bool>,
     #[serde(rename = "summaryModelRef")]
@@ -418,6 +421,7 @@ fn build_response(kb: &KnowledgeBase, spec: &KbSpec, document_count: i64) -> Kno
         is_active: true,
         retrieval_config,
         retrieval_capabilities: capabilities,
+        dingtalk_auto_sync_enabled: spec.dingtalk_auto_sync_enabled.unwrap_or(false),
         summary_enabled: spec.summary_enabled.unwrap_or(false),
         summary_model_ref: spec.summary_model_ref.clone(),
         execution_model_ref: spec.execution_model_ref.clone(),
@@ -640,6 +644,7 @@ mod tests {
         assert_eq!(body["retrieval_capabilities"]["semantic_query"], true);
         assert_eq!(body["retrieval_capabilities"]["keywords"], true);
         assert_eq!(body["retrieval_capabilities"]["phrases"], true);
+        assert_eq!(body["dingtalk_auto_sync_enabled"], false);
         assert_eq!(body["summary_model_ref"]["type"], "public");
     }
 

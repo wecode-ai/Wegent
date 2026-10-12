@@ -9,7 +9,7 @@ Retrievers are configurations for RAG (Retrieval-Augmented Generation) functiona
 ## Prerequisites
 
 - Wegent platform installed and running
-- Elasticsearch service enabled (optional, only needed for RAG features)
+- The bundled Elasticsearch service is needed only when a retriever uses Elasticsearch storage (optional):
   ```bash
   docker compose --profile rag up -d
   ```
@@ -149,6 +149,11 @@ Combines vector similarity with BM25 keyword matching:
 - **Conceptual queries** (0.8/0.2): Understanding, explanations
 - **Balanced** (0.7/0.3): General purpose (default)
 - **Precise matching** (0.3/0.7): Code search, API names, exact terms
+
+`top_k` is always the **number of returned results**. The fusion candidate pool
+is widened internally to `top_k * 4` (floor 50, ceiling 1000, never below
+`top_k`), because a chunk recalled by only one branch scores 0 in the other one
+and a pool that is too narrow drops the right chunk before fusion.
 
 ---
 

@@ -176,6 +176,17 @@ jobs:
       - name: Test Wegent release policy
         run: scripts/test-publish-image-release-policy.sh
 
+      - name: Set up Python for standalone regression checks
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Test standalone Runtime lifecycle and image verification
+        # Command substitutes only; this does not build or run a container.
+        run: |
+          uv run --no-project python scripts/test-standalone-runtime.py
+          bash scripts/test-verify-standalone-image.sh
+
       - name: Test repository policy workflow
         run: scripts/test-repository-policy-workflow.sh
 

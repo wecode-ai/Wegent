@@ -136,18 +136,53 @@ pnpm --filter wework dev:mac
 
 ## 仓库结构
 
-| 目录                       | 职责                                    |
-| -------------------------- | --------------------------------------- |
-| `wework/`                  | Wegent Desktop（Electron、Vite、React） |
-| `executor/`                | 本地与远程的智能体任务执行环境          |
-| `frontend/`                | Wegent 平台 Web 管理界面                |
-| `backend/`                 | REST API 和核心业务逻辑                 |
-| `backend-rs/`              | Rust API 渐进迁移网关与已迁移处理器     |
-| `executor_manager/`        | 执行器调度与编排                        |
-| `chat_shell/`              | 对话运行时                              |
-| `knowledge_runtime/`       | 知识检索服务                            |
-| `knowledge_doc_converter/` | 文档解析与转换                          |
-| `shared/`                  | 跨服务共享模块                          |
+### 产品与服务
+
+| 目录                       | 职责                                         |
+| -------------------------- | -------------------------------------------- |
+| `wework/`                  | Wegent Desktop（Electron、Vite、React）      |
+| `wework-mobile/`           | 独立的 Expo iOS/Android 客户端               |
+| `frontend/`                | Wegent Web（Next.js、React）                 |
+| `backend/`                 | 默认公共 API、业务逻辑和数据模型             |
+| `backend-rs/`              | Rust 混合网关和已完成迁移的 API              |
+| `executor/`                | Rust 任务执行器、本地设备运行时和 Codex 集成 |
+| `executor_manager/`        | 服务端执行器调度、沙箱和任务编排             |
+| `chat_shell/`              | 轻量对话与智能体运行时                       |
+| `knowledge_runtime/`       | 知识索引和检索 API                           |
+| `knowledge_doc_converter/` | 文档解析与异步转换服务                       |
+
+### 共享代码与开发工具
+
+| 目录                | 职责                                               |
+| ------------------- | -------------------------------------------------- |
+| `knowledge_engine/` | 知识解析、索引、向量存储和检索的可复用 Python 内核 |
+| `shared/`           | 后端服务共享的 Python 模型、协议、工具和遥测能力   |
+| `packages/`         | Web 与桌面端共享的 TypeScript 聊天和协作组件       |
+| `sdk/`              | 插件认证、构建、创建和钉钉工作空间认证 SDK         |
+| `wegent-cli/`       | 管理 Wegent CRD 资源的 Python 命令行工具           |
+
+### 基础设施、测试与文档
+
+| 目录        | 职责                                                      |
+| ----------- | --------------------------------------------------------- |
+| `docker/`   | 各服务镜像、独立部署资源和 `docker/telemetry/` 可观测性栈 |
+| `scripts/`  | 安装、发布、验收、仓库策略和开发辅助脚本                  |
+| `tests/`    | 跨服务 Playwright 集成测试和安装脚本测试                  |
+| `docs/`     | 中英文用户文档、开发文档、架构方案和历史设计记录          |
+| `patches/`  | pnpm `patchedDependencies` 使用的第三方依赖补丁           |
+| `LICENSES/` | 仓库分发所需的第三方许可证文本                            |
+| `.github/`  | CI、发布工作流、复合 Action 和仓库自动化                  |
+
+### 根目录入口文件
+
+| 文件                                   | 职责                               |
+| -------------------------------------- | ---------------------------------- |
+| `start.sh`、`install.sh`               | 本地启动和自托管安装入口           |
+| `build_image.sh`、`build_image_mac.sh` | 多架构与本机 Docker 镜像构建入口   |
+| `docker-compose*.yml`                  | 默认、构建和 E2E Compose 编排      |
+| `package.json`、`pnpm-workspace.yaml`  | JavaScript/TypeScript 工作区定义   |
+| `pyproject.toml`、`uv.lock`            | 仓库级 Python 工具配置和锁定元数据 |
+| `AGENTS.md`、`CLAUDE.md`               | 贡献规则及其兼容符号链接           |
 
 ## 文档
 
@@ -251,13 +286,6 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/parabala">
-                    <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
-                    <br />
-                    <sub><b>Parabala</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/sunnights">
                     <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
                     <br />
@@ -265,17 +293,10 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/joyway1978">
-                    <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
+                <a href="https://github.com/parabala">
+                    <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
                     <br />
-                    <sub><b>Joyway78</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/yixiangxx">
-                    <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
-                    <br />
-                    <sub><b>Yi Xiang</b></sub>
+                    <sub><b>Parabala</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -286,19 +307,33 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/cocowh">
-                    <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
+                <a href="https://github.com/joyway1978">
+                    <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
                     <br />
-                    <sub><b>Birch</b></sub>
+                    <sub><b>Joyway78</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/hustfisher">
                     <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
                     <br />
                     <sub><b>fishermen</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/yixiangxx">
+                    <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+                    <br />
+                    <sub><b>Yi Xiang</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/cocowh">
+                    <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
+                    <br />
+                    <sub><b>Birch</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -330,13 +365,6 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/earthAlone2026">
-                    <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
-                    <br />
-                    <sub><b>xiaoqiang</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/DavidLeeUX">
                     <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
                     <br />
@@ -344,14 +372,28 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/earthAlone2026">
+                    <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
+                    <br />
+                    <sub><b>xiaoqiang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/Twelveeee">
+                    <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
+                    <br />
+                    <sub><b>Twelveeee</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
                 <a href="https://github.com/maquan0927">
                     <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
                     <br />
                     <sub><b>Just Quan</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/kerwin612">
                     <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
@@ -374,17 +416,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/Twelveeee">
-                    <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
-                    <br />
-                    <sub><b>Twelveeee</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/junbaor">
                     <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
                     <br />
                     <sub><b>Junbaor</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/sleetdrop">
+                    <img src="https://avatars.githubusercontent.com/u/88603?v=4" width="80;" alt="sleetdrop"/>
+                    <br />
+                    <sub><b>sleetdrop</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -401,6 +443,8 @@ pnpm --filter wework dev:mac
                     <sub><b>李枨煊</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/friendfei">
                     <img src="https://avatars.githubusercontent.com/u/5112004?v=4" width="80;" alt="friendfei"/>
@@ -408,8 +452,6 @@ pnpm --filter wework dev:mac
                     <sub><b>friendfei</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/jolestar">
                     <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
@@ -459,6 +501,8 @@ pnpm --filter wework dev:mac
                     <sub><b>RichardoMu</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/Ged0">
                     <img src="https://avatars.githubusercontent.com/u/4569451?v=4" width="80;" alt="Ged0"/>
@@ -466,8 +510,6 @@ pnpm --filter wework dev:mac
                     <sub><b>_</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/andrewzq777">
                     <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
@@ -517,6 +559,8 @@ pnpm --filter wework dev:mac
                     <sub><b>Salt-hai</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/wxcfox">
                     <img src="https://avatars.githubusercontent.com/u/33141411?v=4" width="80;" alt="wxcfox"/>

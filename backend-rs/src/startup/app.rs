@@ -62,10 +62,11 @@ pub async fn build() -> Result<AppState> {
         user_profile: Arc::new(crate::user_profile::DefaultUserViewExtension),
         user_git_info: Arc::new(crate::user_profile::StoredGitInfo),
         media_policy: Arc::new(crate::media_policy::DefaultMediaPolicy),
+        external_media: Arc::new(crate::attachments::external_media::NoExternalMediaRelay),
         document_download_policy: Arc::new(
             crate::knowledge_download_policy::DefaultDocumentDownloadPolicy,
         ),
-        task_policy: crate::task_routing::TaskPolicy::default(),
+        task_store: Arc::new(crate::task_store::DefaultTaskStore::new(mysql.clone())),
         workspace_repository: Arc::new(
             crate::subscriptions_list::workspaces::BaseWorkspaceRepository,
         ),
@@ -84,6 +85,11 @@ pub async fn build() -> Result<AppState> {
         erp: Arc::new(NoopErpProvider),
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
         cloud_runtime_features: Arc::new(crate::devices::NoCloudRuntimeFeatures),
+        skill_market: crate::skill_market::SkillMarketRegistry::default(),
         executor_version,
+        executor_manager: crate::executor_manager::ExecutorManager::from_env()
+            .context("failed to build the executor-manager client")?,
+        sites: crate::sites::SitesClient::from_env()
+            .context("failed to build the Sites HTTP client")?,
     })
 }

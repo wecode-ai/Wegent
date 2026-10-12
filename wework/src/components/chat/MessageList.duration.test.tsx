@@ -14,6 +14,92 @@ import '@/i18n'
 afterEach(() => vi.useRealTimers())
 
 describe('MessageList processing duration', () => {
+  test('keeps a failed turn duration after native history removes transient processing blocks', () => {
+    vi.useFakeTimers()
+    const start = Date.parse('2026-09-17T00:00:00Z')
+    vi.setSystemTime(start + 5000)
+    const turn: RuntimeConversationTurn = {
+      id: 'failed-without-items',
+      status: 'failed',
+      startedAt: start,
+      completedAt: start + 5000,
+      durationMs: 5000,
+      error: 'upstream unavailable',
+      items: [],
+    }
+    const { rerender } = render(
+      <MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />
+    )
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
+    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
+    act(() => vi.advanceTimersByTime(10000))
+    rerender(<MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />)
+    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
+  })
+
+  test('shows turn elapsed time when a completed turn has timestamps but no duration', () => {
+    const startedAt = Date.parse('2026-09-17T00:00:00Z')
+    const turn: RuntimeConversationTurn = {
+      id: 'timestamped-turn',
+      status: 'done',
+      startedAt,
+      completedAt: startedAt + 12 * 60_000 + 23_000,
+      items: [
+        {
+          id: 'tool',
+          type: 'block',
+          block: {
+            id: 'tool',
+            type: 'tool',
+            toolName: 'exec_command',
+            status: 'done',
+            createdAt: startedAt + 1000,
+          },
+        },
+        {
+          id: 'answer',
+          type: 'assistant_text',
+          content: 'Done',
+          createdAt: new Date(startedAt + 12 * 60_000).toISOString(),
+        },
+      ],
+    }
+
+    render(<MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />)
+
+    expect(screen.getByTestId('final-processing-toggle')).toHaveTextContent('用时 12分钟 23秒')
+  })
+
+  test('labels the processing toggle when a completed turn has no timing data', () => {
+    const turn: RuntimeConversationTurn = {
+      id: 'untimed-turn',
+      status: 'done',
+      items: [
+        {
+          id: 'tool',
+          type: 'block',
+          block: {
+            id: 'tool',
+            type: 'tool',
+            toolName: 'exec_command',
+            status: 'done',
+            createdAt: Date.parse('2026-09-17T00:00:00Z'),
+          },
+        },
+        {
+          id: 'answer',
+          type: 'assistant_text',
+          content: 'Done',
+          createdAt: '2026-09-17T00:00:01Z',
+        },
+      ],
+    }
+
+    render(<MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />)
+
+    expect(screen.getByTestId('final-processing-toggle')).toHaveTextContent('已处理')
+  })
+
   test('uses the completion timestamp of a hidden thinking block', () => {
     vi.useFakeTimers()
     const start = Date.parse('2026-09-17T00:00:00Z')

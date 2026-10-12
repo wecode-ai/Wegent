@@ -1,3 +1,4 @@
+import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
 import {
   app,
   BrowserWindow,
@@ -56,6 +57,10 @@ import { RotatingLog } from '../runtime/rotating-log.js'
 import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
 import { readMacosMicrophoneChecks } from './macos-microphone-diagnostics.js'
 import type { WeworkSyncRequest } from './wework-sync-request.js'
+import {
+  showRetainedNotification,
+  type ElectronNotificationHandle,
+} from './notification-lifecycle.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -106,6 +111,7 @@ export function coreGrantedCapabilities(
 }
 
 export interface ElectronDesktopServices {
+  executorHome: string
   appUpdates?: AppUpdateService
   browserAnnotations?: BrowserAnnotationController
   events: DesktopHostEventBroker
@@ -124,34 +130,49 @@ export interface ElectronDesktopServices {
   weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
-interface ElectronNotificationHandle {
-  once(event: 'click', listener: () => void): void
-  show(): void
-}
-
 interface ElectronNotificationInput {
   title: string
   body: string
+  url?: string
   taskAddressId?: string
+}
+
+export function activateElectronNotification(
+  input: ElectronNotificationInput,
+  navigation: Pick<ElectronDesktopServices, 'openScheme' | 'openRuntimeTask'>
+): void {
+  if (input.url) {
+    console.info('[notification] opening notification destination')
+    navigation.openScheme(input.url)
+  } else if (input.taskAddressId) {
+    navigation.openRuntimeTask(input.taskAddressId)
+  }
 }
 
 export function showElectronNotification(
   input: ElectronNotificationInput,
-  openRuntimeTask: (taskAddressId: string) => void,
+  navigation: Pick<ElectronDesktopServices, 'openScheme' | 'openRuntimeTask'>,
   createNotification: (options: {
     title: string
     body: string
   }) => ElectronNotificationHandle = options => new Notification(options)
 ): void {
+  if (input.url && !input.url.startsWith('wework://')) {
+    throw new HostCapabilityError(
+      'invalid_notification_url',
+      'Notification links must use wework://'
+    )
+  }
   const notification = createNotification({
     title: input.title,
     body: input.body,
   })
-  const taskAddressId = input.taskAddressId
-  if (taskAddressId) {
-    notification.once('click', () => openRuntimeTask(taskAddressId))
-  }
-  notification.show()
+  showRetainedNotification(
+    notification,
+    input.url || input.taskAddressId
+      ? () => activateElectronNotification(input, navigation)
+      : undefined
+  )
 }
 
 export interface CoreDshPluginService {
@@ -207,7 +228,9 @@ export interface ElectronE2EHost {
   traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
   scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
+  openPopoutTaskInMain: (taskAddressId: string) => void
   popoutWindowSnapshot: () => {
+    bounds: { width: number; height: number } | null
     exists: boolean
     focused: boolean
     visible: boolean
@@ -215,6 +238,7 @@ export interface ElectronE2EHost {
     webContentsId: number | null
   }
   setSystemDragContext: (context: { conversationTitle: string | null }) => void
+  setPopoutMode: (mode: 'composer' | 'menu' | 'conversation') => void
   setSystemSleepEnabled: (enabled: boolean) => void
   setSystemSleepTaskActive: (source: string, active: boolean) => void
   showPopout: () => Promise<void>
@@ -268,7 +292,9 @@ export function createElectronCapabilityRouter(
     traySnapshot: () => null,
     scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
+    openPopoutTaskInMain: () => undefined,
     popoutWindowSnapshot: () => ({
+      bounds: null,
       exists: false,
       focused: false,
       visible: false,
@@ -276,6 +302,7 @@ export function createElectronCapabilityRouter(
       webContentsId: null,
     }),
     setSystemDragContext: () => undefined,
+    setPopoutMode: () => undefined,
     setSystemSleepEnabled: () => undefined,
     setSystemSleepTaskActive: () => undefined,
     showPopout: () => Promise.reject(new Error('Popout Window is unavailable')),
@@ -286,14 +313,27 @@ export function createElectronCapabilityRouter(
   }
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
-  const attachments = new LocalAttachmentStore(localAttachmentRoot())
+  const attachments = new LocalAttachmentStore(
+    join(desktopServices.executorHome, 'workspace', 'attachments', 'draft')
+  )
   const filePreviewLog = new RotatingLog({
     path: join(app.getPath('logs'), 'file-preview.log'),
     maxBytes: 2 * 1024 * 1024,
     retainedFiles: 2,
   })
+  const modelLoadingLog = new RotatingLog({
+    path: join(app.getPath('logs'), 'model-loading.log'),
+    maxBytes: 2 * 1024 * 1024,
+    retainedFiles: 2,
+  })
   let activeIsolatedClipboardLease: string | null = null
   router.grant(WEWORK_APP_PRINCIPAL, coreGrantedCapabilities())
+  registerModelConfigurationCapabilities(
+    router,
+    window,
+    desktopServices.secureStorage,
+    desktopServices.events
+  )
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
   router.register('navigation.pendingSchemes', () => desktopServices.pendingSchemes.read())
@@ -320,6 +360,11 @@ export function createElectronCapabilityRouter(
   router.register('diagnostics.filePreview', params => {
     const event = recordParam(params, 'event')
     return filePreviewLog.write('supervisor', JSON.stringify(event))
+  })
+  router.register('diagnostics.modelLoading', params => {
+    const events = params.events
+    if (!Array.isArray(events) || events.length > 200) invalidParam('events')
+    return modelLoadingLog.write('supervisor', JSON.stringify({ events }))
   })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
@@ -583,8 +628,11 @@ export function createElectronCapabilityRouter(
     return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.closeMainWindow', () => requiredWindow(window).close())
-  router.register('e2e.activateRuntimeTaskNotification', params => {
-    desktopServices.openRuntimeTask(stringParam(params, 'taskAddressId'))
+  router.register('e2e.activateNotification', params => {
+    activateElectronNotification(
+      { title: '', body: '', url: stringParam(params, 'url') },
+      desktopServices
+    )
   })
   router.register('e2e.focusMainWindow', async () => {
     await e2eHost.focusMainWindow()
@@ -652,9 +700,11 @@ export function createElectronCapabilityRouter(
     const popout = e2eHost.popoutWindowSnapshot()
     return {
       mainFocused: target.isFocused(),
+      mainVisible: target.isVisible(),
       popoutExists: popout.exists,
       popoutFocused: popout.focused,
       popoutVisible: popout.visible,
+      popoutBounds: popout.bounds,
       popoutWindowId: popout.windowId,
       popoutWebContentsId: popout.webContentsId,
       workspaceWindows: e2eHost.workspaceWindowSnapshots(),
@@ -701,6 +751,16 @@ export function createElectronCapabilityRouter(
     })
   )
   router.register('window.dismissPopout', () => e2eHost.dismissPopout())
+  router.register('window.openPopoutTaskInMain', params =>
+    e2eHost.openPopoutTaskInMain(stringParam(params, 'taskAddressId'))
+  )
+  router.register('window.setPopoutMode', params => {
+    const mode = stringParam(params, 'mode')
+    if (mode !== 'composer' && mode !== 'menu' && mode !== 'conversation') {
+      invalidParam('mode')
+    }
+    e2eHost.setPopoutMode(mode)
+  })
   router.register('window.showPopout', () => e2eHost.showPopout())
   router.register('window.minimize', () => requiredWindow(window).minimize())
   router.register('window.toggleMaximize', () => {
@@ -753,9 +813,10 @@ export function createElectronCapabilityRouter(
       {
         title,
         body,
+        url: optionalStringParam(params, 'url')?.trim() || undefined,
         taskAddressId: optionalStringParam(params, 'taskAddressId')?.trim() || undefined,
       },
-      desktopServices.openRuntimeTask
+      desktopServices
     )
   })
   router.register('preferences.get', () => preferences.read())
@@ -809,8 +870,8 @@ export function createElectronCapabilityRouter(
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
   registerPluginDevelopmentCapabilities(router, desktopServices)
-  router.register('runtime.restartCoreDsh', () => {
-    e2eHost.scheduleCoreDshRestart()
+  router.register('runtime.restartCoreDsh', (_params, context) => {
+    context.deferUntilResponseSent(e2eHost.scheduleCoreDshRestart)
     return { scheduled: true }
   })
   router.register('shell.openExternal', async params => {
@@ -877,10 +938,10 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.list', () => requiredSmartApps(smartApps).list())
   router.register('smartApps.createDirectory', params =>
     requiredSmartApps(smartApps).createDirectory({
-      parentPath: stringParam(params, 'parentPath'),
+      parentPath: rawStringParam(params, 'parentPath'),
       name: stringParam(params, 'name'),
       displayName: stringParam(params, 'displayName'),
-      description: stringParam(params, 'description'),
+      description: rawStringParam(params, 'description'),
       template: stringParam(params, 'template'),
     })
   )
@@ -1262,6 +1323,7 @@ function feedbackRequestParam(params: Record<string, unknown>): FeedbackExportRe
     taskContext: request.taskContext ?? null,
     screenshotDataUrl: nullableStringValue(request.screenshotDataUrl, 'request.screenshotDataUrl'),
     composerDiagnostics: request.composerDiagnostics ?? null,
+    conversationDiagnostics: request.conversationDiagnostics ?? null,
     attachments: attachments.map((attachment, index) => {
       const record = objectValue(attachment, `request.attachments[${index}]`)
       return {
@@ -1319,16 +1381,6 @@ export function registerBrowserHistoryCapabilities(
   )
   router.register('browser.historyRemove', params =>
     browser.removeHistory(stringArrayParam(params, 'ids') ?? [])
-  )
-}
-
-function localAttachmentRoot(): string {
-  const executorHome = process.env.WEGENT_EXECUTOR_HOME?.trim()
-  return join(
-    executorHome || join(app.getPath('home'), '.wework'),
-    'workspace',
-    'attachments',
-    'draft'
   )
 }
 

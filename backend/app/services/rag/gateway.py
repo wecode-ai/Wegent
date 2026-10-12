@@ -3,7 +3,6 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from app.services.rag.runtime_specs import (
-    ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
     DropKnowledgeIndexRuntimeSpec,
     IndexRuntimeSpec,
@@ -11,9 +10,12 @@ from app.services.rag.runtime_specs import (
     PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
 )
+from shared.models import RemoteTestConnectionRequest
 
 
 class RagGateway(Protocol):
+    """RAG operations executed by the remote Runtime."""
+
     async def index_document(
         self,
         spec: IndexRuntimeSpec,
@@ -58,7 +60,5 @@ class RagGateway(Protocol):
 
     async def test_connection(
         self,
-        spec: ConnectionTestRuntimeSpec,
-        *,
-        db: Session | None = None,
+        request: RemoteTestConnectionRequest,
     ) -> dict: ...

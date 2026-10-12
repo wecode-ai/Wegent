@@ -4,7 +4,13 @@
 
 import type { ReactNode, Ref } from "react";
 
-export type CollaborationProjectView = "board" | "table" | "files" | "manage";
+export type CollaborationProjectView =
+  | "board"
+  | "calendar"
+  | "gantt"
+  | "table"
+  | "files"
+  | "manage";
 
 export interface CollaborationProjectViewOption<
   View extends CollaborationProjectView = CollaborationProjectView,

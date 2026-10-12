@@ -559,7 +559,7 @@ describe('ProjectWorkBar', () => {
       />
     )
 
-    expect(screen.getByTestId('execution-mode-button')).toBeDisabled()
+    expect(screen.getByTestId('execution-mode-button')).toHaveAttribute('role', 'status')
     await userEvent.click(screen.getByTestId('execution-mode-button'))
 
     expect(screen.queryByTestId('project-execution-mode-menu')).not.toBeInTheDocument()

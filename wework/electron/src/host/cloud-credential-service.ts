@@ -4,6 +4,8 @@ import { dirname, join } from 'node:path'
 
 import { cloudFetch } from './cloud-http.js'
 
+const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS = 30_000
+
 interface StoredCloudCredential {
   version: 2
   apiBaseUrl: string
@@ -42,7 +44,11 @@ export interface RefreshedAccessToken {
 
 export class CloudCredentialError extends Error {
   constructor(
-    readonly code: 'credentials_unavailable' | 'cloud_auth_expired' | 'request_failed',
+    readonly code:
+      | 'credentials_unavailable'
+      | 'cloud_auth_expired'
+      | 'request_failed'
+      | 'request_timeout',
     message: string,
     readonly status: number | null = null
   ) {
@@ -58,6 +64,28 @@ export class CloudCredentialService {
     private readonly dataDirectory: string,
     private readonly request: typeof fetch = cloudFetch
   ) {}
+
+  /**
+   * Cloud credential calls must never hang.
+   *
+   * The service serializes its operations, so one unanswered request keeps
+   * every later refresh queued behind it: the desktop connection then stays on
+   * an expired access token until the workbench is reloaded.
+   */
+  private async requestWithTimeout(endpoint: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.request(endpoint, {
+        ...init,
+        signal: AbortSignal.timeout(CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS),
+      })
+    } catch (error) {
+      if ((error as { name?: unknown })?.name === 'TimeoutError') {
+        // The host has no locale, so report a stable code the renderer can show.
+        throw new CloudCredentialError('request_timeout', 'Cloud credential request timed out')
+      }
+      throw error
+    }
+  }
 
   devicePublicKey(): Promise<DevicePublicKey> {
     return this.serial(async () => {
@@ -75,7 +103,7 @@ export class CloudCredentialService {
       const endpoint = `${apiBaseUrl}/auth/wework/sessions/${encodeURIComponent(
         input.sessionId
       )}/poll?poll_token=${encodeURIComponent(input.pollToken)}`
-      const response = await this.request(endpoint, { method: 'GET' })
+      const response = await this.requestWithTimeout(endpoint, { method: 'GET' })
       const payload = await responseJson(response)
       if (!response.ok) {
         throw requestError(response.status, payload)
@@ -143,7 +171,7 @@ export class CloudCredentialService {
         refreshToken,
         new URL(endpoint).pathname
       )
-      const response = await this.request(endpoint, {
+      const response = await this.requestWithTimeout(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

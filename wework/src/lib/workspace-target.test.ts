@@ -526,6 +526,38 @@ describe('resolveWorkspaceTarget', () => {
     ).toBeNull()
   })
 
+  test('uses the bound Issue execution Worktree path as a workspace target', () => {
+    expect(
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: {
+          deviceId: 'device-b',
+          workspacePath: '/workspace/worktrees/runtime-1/project-alpha',
+          workspaceKind: 'worktree',
+          worktreeId: 'runtime-1',
+          taskId: 'runtime-1',
+          issueExecution: {
+            projectId: 'project-1',
+            issueId: 'issue-1',
+          },
+        },
+        projects: [],
+        runtimeWork: {
+          projects: [],
+          chats: [],
+          totalTasks: 0,
+        },
+      })
+    ).toEqual({
+      project: null,
+      workspaceTarget: {
+        deviceId: 'device-b',
+        path: '/workspace/worktrees/runtime-1/project-alpha',
+        source: 'runtime',
+        taskId: 'runtime-1',
+      },
+    })
+  })
+
   test('keeps the remote host route for a merged historical task workspace', () => {
     const project: ProjectWithTasks = {
       id: 12,

@@ -35,8 +35,59 @@ describe('CloudCredentialService', () => {
     expect(claimed.status).toBe('pending')
     expect(electronMocks.netFetch).toHaveBeenCalledWith(
       'https://cloud.example.com/api/auth/wework/sessions/session-1/poll?poll_token=poll-1',
-      { method: 'GET' }
+      { method: 'GET', signal: expect.any(AbortSignal) }
     )
+  })
+
+  test('bounds every cloud credential request so a hung call cannot block the queue', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
+    roots.push(root)
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            status: 'success',
+            access_token: 'access-1',
+            refresh_token: 'refresh-secret',
+            token_type: 'bearer',
+            username: 'alice',
+          }),
+          { status: 200 }
+        )
+      )
+      .mockRejectedValueOnce(new DOMException('The operation was aborted', 'TimeoutError'))
+    const service = new CloudCredentialService(root, request)
+
+    await service.devicePublicKey()
+    await service.claimAuthorization({
+      apiBaseUrl: 'https://cloud.example.com/api/',
+      sessionId: 'session-1',
+      pollToken: 'poll-1',
+    })
+
+    await expect(service.refreshAccessToken('https://cloud.example.com/api')).rejects.toMatchObject(
+      {
+        code: 'request_timeout',
+        message: 'Cloud credential request timed out',
+      } satisfies Partial<CloudCredentialError>
+    )
+    expect(request.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal)
+    expect(request.mock.calls[1][1]?.signal).toBeInstanceOf(AbortSignal)
+    // The serial queue keeps working after the timed-out request.
+    request.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          access_token: 'access-2',
+          token_type: 'bearer',
+          expires_in: 3600,
+        }),
+        { status: 200 }
+      )
+    )
+    await expect(
+      service.refreshAccessToken('https://cloud.example.com/api')
+    ).resolves.toMatchObject({ accessToken: 'access-2' })
   })
 
   test('stores credentials in a private file and refreshes with a device proof', async () => {

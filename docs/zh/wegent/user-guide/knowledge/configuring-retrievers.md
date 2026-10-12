@@ -9,7 +9,7 @@ sidebar_position: 10
 ## 前置条件
 
 - 已安装并运行 Wegent 平台
-- 已启用 Elasticsearch 服务（可选，仅在使用 RAG 功能时需要）
+- 仅当检索器使用 Elasticsearch 存储时，才需要启用内置 Elasticsearch 服务（可选）：
   ```bash
   docker compose --profile rag up -d
   ```
@@ -149,6 +149,10 @@ Content-Type: application/json
 - **概念性查询** (0.8/0.2)：理解、解释
 - **平衡** (0.7/0.3)：通用目的（默认）
 - **精确匹配** (0.3/0.7)：代码搜索、API 名称、精确术语
+
+`top_k` 始终是**返回条数**。融合阶段使用的候选池由系统内部按 `top_k * 4` 放宽
+（下限 50、上限 1000，且不小于 `top_k`），因为只被某一路召回的片段在另一路记
+0 分，候选池过窄会让正确分段在被融合前就被丢弃。
 
 ---
 

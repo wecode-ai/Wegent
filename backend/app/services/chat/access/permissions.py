@@ -34,14 +34,14 @@ _ACTIVE_STREAMING_STATUS_VALUES = {
 }
 
 
-def _serialize_database_datetime(db: Session, value: datetime | None) -> str | None:
+def _serialize_database_datetime(value: datetime | None) -> str | None:
     """Serialize a database datetime with an explicit timezone offset."""
     if value is None:
         return None
     if value.tzinfo is not None:
         return value.isoformat()
 
-    return value.replace(tzinfo=database_datetime_timezone(db)).isoformat()
+    return value.replace(tzinfo=database_datetime_timezone()).isoformat()
 
 
 @with_session_in_executor
@@ -187,7 +187,7 @@ def _get_active_streaming_from_db(
         return {
             "subtask_id": subtask.id,
             "user_id": subtask.user_id,
-            "started_at": _serialize_database_datetime(db, subtask.created_at),
+            "started_at": _serialize_database_datetime(subtask.created_at),
         }
 
     logger.info(
