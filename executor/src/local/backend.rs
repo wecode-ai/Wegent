@@ -112,6 +112,8 @@ pub(super) type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
 pub type EventHandler =
     Arc<dyn Fn(Value) -> Pin<Box<dyn Future<Output = Option<Value>> + Send>> + Send + Sync>;
+/// A synchronous state notification that cannot await transport operations.
+pub type ConnectionClosedHandler = Arc<dyn Fn() + Send + Sync>;
 
 pub trait DeviceUpgradeHandler: Send + Sync + 'static {
     fn handle_upgrade<'a>(
@@ -131,6 +133,8 @@ pub trait LocalBackendTransport: Clone + Send + Sync + 'static {
     ) -> TransportFuture<'a, Value>;
     fn emit<'a>(&'a self, event: &'a str, payload: Value) -> TransportFuture<'a, ()>;
     fn on(&self, event: &str, handler: EventHandler);
+    /// Observe closure of the current connection without replacing RPC handlers.
+    fn on_close(&self, handler: ConnectionClosedHandler);
 }
 
 pub struct LocalBackendRunner<
@@ -547,6 +551,9 @@ where
     }
 
     pub fn register_handlers(&self) {
+        self.client
+            .transport
+            .on_close(self.connection_closed_handler());
         self.client
             .transport
             .on(TASK_EXECUTE_EVENT, self.task_handler());

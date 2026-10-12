@@ -44,6 +44,8 @@ Local Wework does not render cloud username/password forms and does not call `/a
 
 Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. Deployments with separate API and Web origins must configure the Web root URL explicitly. The Wework client only opens the complete `authorize_url` returned by Backend and does not infer the Web address itself.
 
+When the underlying Socket.IO connection closes, the local executor immediately clears its connected status and starts the existing reconnect flow. Account operations therefore do not treat the Backend as available while waiting for a heartbeat to detect the disconnect. A stale connection's close callback cannot invalidate a newer connection. Plugin account authentication processes disable Python bytecode writes so imports do not modify verified shared plugin packages; package integrity checks remain strict after restart.
+
 ## Interaction Entry
 
 The desktop sidebar provides two cloud entry points with distinct responsibilities:

@@ -23,6 +23,7 @@ struct RuntimeWorkPollTransport {
     claimed_cleanups: Arc<AtomicUsize>,
     accepted_cleanups: Arc<AtomicUsize>,
     disconnect_calls: Arc<AtomicUsize>,
+    close_handler: Arc<TestMutex<Option<ConnectionClosedHandler>>>,
 }
 
 impl LocalBackendTransport for RuntimeWorkPollTransport {
@@ -99,6 +100,10 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
     }
 
     fn on(&self, _event: &str, _handler: EventHandler) {}
+
+    fn on_close(&self, handler: ConnectionClosedHandler) {
+        *self.close_handler.lock().unwrap() = Some(handler);
+    }
 }
 
 struct BlockingCapacityRuntimeWorkHandler {
@@ -375,6 +380,32 @@ async fn heartbeat_reconnects_when_an_event_relay_marks_the_connection_unavailab
     .await
     .expect("connection status should trigger reconnect before the heartbeat interval");
 
+    assert!(!stable_connection);
+    assert_eq!(transport.disconnect_calls.load(AtomicOrdering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat() {
+    let transport = RuntimeWorkPollTransport::default();
+    let connection_status = Arc::new(AtomicBool::new(true));
+    let runner =
+        LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport.clone())
+            .with_connection_status(Arc::clone(&connection_status));
+    runner.register_handlers();
+    let on_close = transport
+        .close_handler
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the runner must observe transport closure");
+
+    on_close();
+
+    assert!(!connection_status.load(Ordering::Acquire));
+    let stable_connection =
+        tokio::time::timeout(Duration::from_secs(1), runner.heartbeat_until_reconnect())
+            .await
+            .expect("closed transport must reconnect before the heartbeat interval");
     assert!(!stable_connection);
     assert_eq!(transport.disconnect_calls.load(AtomicOrdering::Acquire), 1);
 }
