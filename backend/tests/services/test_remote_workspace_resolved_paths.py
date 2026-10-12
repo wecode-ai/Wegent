@@ -102,6 +102,10 @@ async def test_resolved_root_round_trips_tree_preview_and_download(
     file_requests = [r for r in requests if r.url.path.endswith("/file")]
     assert len(file_requests) == 2
     assert all(r.url.params["path"] == file_path for r in file_requests)
+    # Status, two trees, and two downloads each resolve their runtime only once.
+    assert service._get_task_detail.call_count == 5
+    assert service._get_sandbox_payload.call_count == 5
+    assert service._get_executor_payload.call_count == 5
 
 
 @pytest.mark.parametrize(

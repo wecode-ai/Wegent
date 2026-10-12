@@ -110,8 +110,8 @@ class RemoteWorkspaceService:
         user_id: int,
         path: Optional[str] = None,
     ) -> RemoteWorkspaceTreeResponse:
-        sandbox_payload, root_path, normalized_path = self._resolve_request_path(
-            db, task_id, user_id, path
+        sandbox_payload, executor_name, root_path, normalized_path = (
+            self._resolve_request_path(db, task_id, user_id, path)
         )
         logger.info(
             "[remote_workspace] list_tree start task_id=%s user_id=%s path=%s normalized_path=%s root_path=%s",
@@ -128,11 +128,6 @@ class RemoteWorkspaceService:
                 path=normalized_path,
             )
         else:
-            executor_name = self._ensure_sandbox_available(
-                db=db,
-                task_id=task_id,
-                user_id=user_id,
-            )
             entries_payload = self._list_directory(
                 task_id=task_id,
                 executor_name=executor_name,
@@ -172,8 +167,8 @@ class RemoteWorkspaceService:
         if disposition not in {"inline", "attachment"}:
             raise HTTPException(status_code=400, detail="Invalid disposition")
 
-        sandbox_payload, root_path, normalized_path = self._resolve_request_path(
-            db, task_id, user_id, path
+        sandbox_payload, executor_name, root_path, normalized_path = (
+            self._resolve_request_path(db, task_id, user_id, path)
         )
         logger.info(
             "[remote_workspace] stream_file start task_id=%s user_id=%s path=%s normalized_path=%s disposition=%s root_path=%s",
@@ -191,11 +186,6 @@ class RemoteWorkspaceService:
                 path=normalized_path,
             )
         else:
-            executor_name = self._ensure_sandbox_available(
-                db=db,
-                task_id=task_id,
-                user_id=user_id,
-            )
             content, content_type = self._download_file(
                 task_id=task_id,
                 executor_name=executor_name,
@@ -301,10 +291,8 @@ class RemoteWorkspaceService:
         self,
         task_id: int,
         task_detail: dict[str, Any],
-        sandbox_payload: Optional[dict[str, Any]] = None,
+        sandbox_payload: Optional[dict[str, Any]],
     ) -> Optional[str]:
-        if sandbox_payload is None:
-            sandbox_payload = self._get_sandbox_payload(task_id=task_id)
         if self._is_sandbox_available(sandbox_payload):
             sandbox_base_url = sandbox_payload.get("base_url")
             if isinstance(sandbox_base_url, str) and sandbox_base_url:
@@ -443,7 +431,7 @@ class RemoteWorkspaceService:
 
     def _resolve_request_path(
         self, db: Session, task_id: int, user_id: int, path: Optional[str]
-    ) -> tuple[Optional[dict[str, Any]], str, str]:
+    ) -> tuple[Optional[dict[str, Any]], Optional[str], str, str]:
         if path and ".." in path.split("/"):
             raise HTTPException(400, "Parent traversal is not allowed")
         task_detail = self._get_task_detail(db=db, task_id=task_id, user_id=user_id)
@@ -455,7 +443,8 @@ class RemoteWorkspaceService:
             raise HTTPException(409, "Remote workspace is unavailable")
         root_path = self._resolve_root_path(task_id, sandbox_payload, base_url)
         normalized_path = self.normalize_and_validate_workspace_path(path, root_path)
-        return sandbox_payload, root_path, normalized_path
+        executor_name = self._get_connected_executor_name(task_detail)
+        return sandbox_payload, executor_name, root_path, normalized_path
 
     def _get_executor_payload(
         self,
@@ -551,45 +540,6 @@ class RemoteWorkspaceService:
             )
             return False
         return True
-
-    def _ensure_sandbox_available(
-        self,
-        db: Session,
-        task_id: int,
-        user_id: int,
-    ) -> Optional[str]:
-        task_detail = self._get_task_detail(db=db, task_id=task_id, user_id=user_id)
-        executor_name = self._get_connected_executor_name(task_detail)
-        base_url = self._resolve_workspace_base_url(
-            task_id=task_id,
-            task_detail=task_detail,
-        )
-        if not base_url:
-            logger.info(
-                "[remote_workspace] unavailable task_id=%s user_id=%s reason=no_runtime_base_url",
-                task_id,
-                user_id,
-            )
-            raise HTTPException(
-                status_code=409, detail="Remote workspace is unavailable"
-            )
-
-        if executor_name:
-            logger.info(
-                "[remote_workspace] resolved executor binding task_id=%s user_id=%s executor_name=%s base_url=%s",
-                task_id,
-                user_id,
-                executor_name,
-                base_url,
-            )
-        else:
-            logger.info(
-                "[remote_workspace] resolved sandbox runtime without executor binding task_id=%s user_id=%s base_url=%s",
-                task_id,
-                user_id,
-                base_url,
-            )
-        return executor_name
 
     def _list_directory_via_sandbox(
         self,

@@ -297,7 +297,7 @@ export async function verifyNativeAgentMcp({ fixture, resultDir, explicitWorkben
       )
       assert.equal(treeResponse.status, 200)
       const tree = await treeResponse.json()
-      assert.ok(tree.some(entry => entry.path === `/workspace/${repositoryKey}/README.md`))
+      assert.ok(tree.some(entry => entry.path === join(workspace, 'README.md')))
       const branch = await promisify(execFile)('git', ['-C', workspace, 'symbolic-ref', 'HEAD'], {
         env,
         timeout: 10_000,

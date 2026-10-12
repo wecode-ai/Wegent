@@ -17,10 +17,7 @@ def test_stream_file_download_sets_attachment_disposition():
         patch.object(
             service,
             "_resolve_request_path",
-            return_value=(None, "/workspace", "/workspace/a.txt"),
-        ),
-        patch.object(
-            service, "_ensure_sandbox_available", return_value="http://sandbox"
+            return_value=(None, "runtime", "/workspace", "/workspace/a.txt"),
         ),
         patch.object(
             service,
@@ -46,10 +43,7 @@ def test_stream_file_zip_download_appends_zip_extension():
         patch.object(
             service,
             "_resolve_request_path",
-            return_value=(None, "/workspace", "/workspace/demo"),
-        ),
-        patch.object(
-            service, "_ensure_sandbox_available", return_value="http://sandbox"
+            return_value=(None, "runtime", "/workspace", "/workspace/demo"),
         ),
         patch.object(
             service,
@@ -76,10 +70,7 @@ def test_stream_file_inline_sets_inline_disposition():
         patch.object(
             service,
             "_resolve_request_path",
-            return_value=(None, "/workspace", "/workspace/a.txt"),
-        ),
-        patch.object(
-            service, "_ensure_sandbox_available", return_value="http://sandbox"
+            return_value=(None, "runtime", "/workspace", "/workspace/a.txt"),
         ),
         patch.object(
             service,
@@ -105,10 +96,7 @@ def test_stream_file_non_ascii_filename_uses_rfc5987_disposition():
         patch.object(
             service,
             "_resolve_request_path",
-            return_value=(None, "/home/user", "/home/user/出师表.txt"),
-        ),
-        patch.object(
-            service, "_ensure_sandbox_available", return_value="http://sandbox"
+            return_value=(None, "runtime", "/home/user", "/home/user/出师表.txt"),
         ),
         patch.object(
             service,
