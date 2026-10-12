@@ -26,6 +26,10 @@ from app.services.user_runtime_config import (
     user_runtime_config_service,
 )
 from app.services.video_generation_params import apply_video_generation_params
+from app.services.wework_model_config import (
+    merge_model_reasoning,
+    wework_model_config_options,
+)
 from shared.codex_model_catalog import (
     codex_catalog_model_id_for_upstream,
     codex_catalog_model_id_from_config,
@@ -419,6 +423,19 @@ def _build_codex_runtime_model_config(
                         )
                         if base_url:
                             resolved_config["responses_url"] = f"{base_url}/v1/messages"
+                try:
+                    resolved_config.update(
+                        wework_model_config_options(
+                            model_spec.get("modelConfig"),
+                            upstream_api_format=resolved_config.get(
+                                "upstream_api_format", "openai-responses"
+                            ),
+                        )
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except HTTPException:
+            raise
         except Exception:
             logger.warning(
                 "[build_execution_request] Failed while resolving or assembling "
@@ -557,6 +574,13 @@ def _build_cloud_gateway_model_config(
         user_name=creator.user_name or "",
     )
     upstream_api_format = resolve_llm_proxy_protocol(model_name, provider_config)
+    try:
+        model_options = wework_model_config_options(
+            (model_spec or {}).get("modelConfig"),
+            upstream_api_format=upstream_api_format,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     catalog_model_id = _catalog_model_id_from_model_spec(model_spec)
     config = {
         "model": "openai",
@@ -577,6 +601,7 @@ def _build_cloud_gateway_model_config(
     }
     if catalog_model_id:
         config["codex_catalog_model_id"] = catalog_model_id
+    config.update(model_options)
     return config
 
 
@@ -877,8 +902,9 @@ def prepare_execution_request(
 
         # Merge reasoning config from API/model selection into model_config.
         # Priority: explicit API reasoning_config > UI model_options > model think_config.
-        selected_reasoning_config = reasoning_config or _reasoning_from_model_options(
-            payload
+        selected_reasoning_config = merge_model_reasoning(
+            request.model_config,
+            reasoning_config or _reasoning_from_model_options(payload),
         )
         if selected_reasoning_config:
             request.model_config["reasoning"] = selected_reasoning_config

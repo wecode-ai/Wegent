@@ -357,7 +357,9 @@ mod tests {
         });
         let token = register(
             "image-budget-retry-compaction-test",
-            upstream_from_model_config(&json!({"base_url": format!("http://{address}")})).unwrap(),
+            upstream_from_model_config(&json!({"base_url": format!("http://{address}")}))
+                .unwrap()
+                .unwrap(),
         );
         let mut headers = HeaderMap::new();
         headers.insert(

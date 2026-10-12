@@ -42,6 +42,45 @@ provider `base_url` 可以是服务根地址、带版本前缀的 API base，或
 - `https://proxy.example.com/v1` 和 Anthropic Messages 仍解析为 `/v1/messages`，不会生成 `/v1/v1/messages`。
 - 已包含 `/responses`、`/chat/completions` 或 `/v1/messages` 的地址不会重复追加端点。
 
+#### Responses 思考配置与请求模式
+
+Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingConfig`）作为 Wework 的默认思考设置。模型目录只下发受支持的 `effort` 和 `summary`，不会下发完整 env 或 provider 凭证。选择器采用配置的默认强度；用户显式调整的字段覆盖默认值，同时保留其他默认字段，例如调整 effort 后仍保留 `summary: "detailed"`。
+
+`modelConfig.codex_request_mode` 控制完整的 Codex Responses 请求策略：
+
+| 值              | 行为                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto` 或未配置 | 保持现有按协议适配行为；Responses 的原生工具能力仍可用已有开关单独设置。                                                                                            |
+| `standard`      | 使用标准 function 工具格式，转换 `tool_search`、namespace 和 custom tools，并恢复返回给 Codex 的工具身份。适用于不支持 Codex 原生工具类型的 Kimi Responses 等服务。 |
+| `passthrough`   | 仅替换路由所需的模型 ID 和鉴权信息；其余请求业务字段原样保留，响应流也不做协议改写。仅适用于 OpenAI Responses 上游。                                                |
+
+透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
+
+例如，Kimi Responses 可配置为：
+
+```json
+{
+  "modelConfig": {
+    "codex_request_mode": "standard",
+    "env": {
+      "model": "openai",
+      "model_id": "moonshot-kimi-k3",
+      "thinking_config": {
+        "reasoning": { "summary": "detailed" }
+      }
+    }
+  }
+}
+```
+
+完整兼容 Codex 请求的 Responses 服务可将该字段改为 `"passthrough"`。模式配置优先于 `native_tool_search`、`native_namespace_tools` 等单项工具设置；不合法的模式或非 Responses 透传配置会在执行前报错。
+
+模型目录遇到不合法的 `codex_request_mode` 时会忽略该字段，保留模型的其他有效信息，避免一个错误配置导致整个模型列表不可用。目录读取不会修改存储的 Model CRD；实际调用仍校验原始配置，本机和云端执行都会在请求发送至模型服务前返回 HTTP 400。
+
+透传响应保留上游正常数据块的原始字节。若发生读取错误或流在 Responses 终态之前结束，仅追加 `response.failed`；已有 `response.completed`、`response.failed` 或 `response.incomplete` 后不会重复追加。独立的 `[DONE]` 不能代替 Responses 终态。
+
+`standard` 模式只向上游提供客户端可执行的 function tools，不提供 `web_search`、`image_generation` 等服务端内置工具。若请求通过 `tool_choice` 强制选择服务端工具，代理返回 HTTP 400；`auto` 和 `passthrough` 继续保留这些工具。
+
 #### Kimi K3 Chat Completions 兼容
 
 云端 Model CRD 配置为 OpenAI Chat Completions，且 provider 模型名称包含不区分大小写的 `kimi-k3`（例如 `moonshot-kimi-k3`）时，如果 Model CRD 未配置 `codex_catalog_model_id` 或 `codexCatalogModelId`，Wework 会自动选择上下文窗口为 1,048,576 tokens 的 `wework-kimi-k3` Codex 模型目录。显式配置的模型目录始终优先于 Kimi K3 自动选择。Codex 内部仍使用 Responses 协议，executor 在边界将请求转换为 Chat Completions，并为 Kimi K3 进行以下兼容处理：
