@@ -19,6 +19,7 @@ pub(crate) mod codex_model_catalog;
 mod codex_responses_proxy_transform;
 mod config;
 pub(crate) mod harness_context;
+pub(crate) mod local_decision_proxy;
 pub(crate) mod local_model_proxy;
 
 use axum::{
