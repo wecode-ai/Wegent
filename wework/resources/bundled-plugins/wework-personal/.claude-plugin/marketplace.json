@@ -16,7 +16,7 @@
       "name": "smart-app-builder",
       "description": "Builds, tests, packages, and installs DeepSeek Harness Smart apps for Wework.",
       "source": "./plugins/smart-app-builder",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
       "name": "wework-plugin-developer",

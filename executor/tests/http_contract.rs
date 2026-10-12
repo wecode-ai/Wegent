@@ -28,6 +28,9 @@ use wegent_executor::{
 #[path = "http_contract/skill_sync.rs"]
 mod skill_sync;
 
+#[path = "http_contract/workspace_paths.rs"]
+mod workspace_paths;
+
 fn env_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
@@ -262,7 +265,10 @@ async fn workspace_routes_list_and_download_task_files() {
     .unwrap();
     assert_eq!(entries[0]["name"], json!("src"));
     assert_eq!(entries[0]["is_directory"], json!(true));
-    assert_eq!(entries[0]["path"], json!("/workspace/123/src"));
+    assert_eq!(
+        entries[0]["path"],
+        json!(fs::canonicalize(workspace_root.join("123/src")).unwrap())
+    );
     assert_eq!(entries[1]["name"], json!("README.md"));
 
     let connect_response = app
@@ -426,11 +432,8 @@ async fn workspace_routes_list_and_download_task_files() {
     );
 }
 
-/// The file panel of a code task always asks for the logical `/workspace/<task_id>`
-/// path, but the workspace root is rarely `/workspace` itself: container
-/// deployments point `WORKSPACE_ROOT` at a mounted directory and the wecode
-/// layout keeps it under the executor home. Every filesystem route has to reach
-/// the same directory for that logical path, otherwise the panel lists nothing.
+/// Logical paths remain accepted as inputs; filesystem responses return the
+/// real paths so clients can navigate without reconstructing task aliases.
 #[tokio::test]
 async fn envd_filesystem_routes_resolve_logical_task_workspace_paths() {
     let _lock = env_lock().lock().await;
@@ -470,7 +473,7 @@ async fn envd_filesystem_routes_resolve_logical_task_workspace_paths() {
     assert_eq!(legacy_body[0]["name"], json!("lottery"));
     assert_eq!(
         legacy_body[0]["path"],
-        json!("/workspace/73392401305656/lottery")
+        json!(workspace_root.join("73392401305656/lottery"))
     );
 
     let connect_response = app
@@ -500,7 +503,7 @@ async fn envd_filesystem_routes_resolve_logical_task_workspace_paths() {
     assert_eq!(connect_body["entries"][0]["name"], json!("lottery"));
     assert_eq!(
         connect_body["entries"][0]["path"],
-        json!("/workspace/73392401305656/lottery")
+        json!(workspace_root.join("73392401305656/lottery"))
     );
 
     let nested_response = app

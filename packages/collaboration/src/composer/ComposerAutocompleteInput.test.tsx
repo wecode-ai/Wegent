@@ -7,6 +7,7 @@ import type { ComposerAutocompleteInputProps } from './composerAutocompleteInput
 import type { ComposerInputHandle } from './composerInputTypes'
 import { createCollaborationTranslator } from '../i18n'
 import { Package } from 'lucide-react'
+import { ComposerPredictionContext, ComposerPredictionPendingContext } from './ComposerPredictionContext'
 
 const translate = createCollaborationTranslator('zh-CN')
 const gmail = {
@@ -73,6 +74,51 @@ describe('shared autocomplete controller in a browser host', () => {
   async function mount(props: Partial<ComposerAutocompleteInputProps> = {}) {
     await act(async () => root.render(<Harness {...props} />))
   }
+
+  it('accepts a suggestion into the draft by clicking its visible keyboard hint', async () => {
+    const accepted = vi.fn()
+    const submitted = vi.fn()
+    await act(async () => root.render(
+      <ComposerPredictionContext.Provider value={{ text: '请继续', acceptLabel: '接受建议', onAccept: accepted }}>
+        <Harness onSubmit={submitted} />
+      </ComposerPredictionContext.Provider>
+    ))
+    expect(element('editor-prediction-accept').textContent).toContain('Tab')
+    act(() => element('editor-prediction-accept').click())
+    expect(accepted).toHaveBeenCalledTimes(1)
+    expect(submitted).not.toHaveBeenCalled()
+    expect(element('editor').textContent).toContain('请继续')
+    expect(container.querySelector('[data-testid="editor-prediction-accept"]')).toBeNull()
+  })
+
+  it('hides the pending status immediately while the parent draft is still debounced', async () => {
+    await act(async () => root.render(
+      <ComposerPredictionPendingContext.Provider value="正在生成建议…">
+        <Harness value="" onChange={vi.fn()} />
+      </ComposerPredictionPendingContext.Provider>
+    ))
+    expect(element('editor-prediction-pending')).not.toBeNull()
+    act(() => input.current?.setValue('自己的草稿'))
+    expect(container.querySelector('[data-testid="editor-prediction-pending"]')).toBeNull()
+  })
+
+  it('places prediction status in the toolbar without adding an editor row', async () => {
+    const toolbar = document.createElement('div')
+    document.body.append(toolbar)
+    try {
+      await act(async () => root.render(
+        <ComposerPredictionPendingContext.Provider value="正在生成建议…">
+          <Harness predictionStatusTarget={toolbar} />
+        </ComposerPredictionPendingContext.Provider>
+      ))
+      expect(container.querySelector('[data-testid="editor-prediction-pending"]')).toBeNull()
+      expect(toolbar.querySelector('[data-testid="editor-prediction-pending"]')).not.toBeNull()
+      act(() => input.current?.setValue('自己的草稿'))
+      expect(toolbar.childElementCount).toBe(0)
+    } finally {
+      toolbar.remove()
+    }
+  })
   async function type(value: string) {
     await act(async () => {
       input.current!.setValue(value)
@@ -260,6 +306,31 @@ describe('shared autocomplete controller in a browser host', () => {
     expect(button).toBeDefined()
     await act(async () => button.click())
     expect(onSelectModel).toHaveBeenCalledWith(model)
+    expect(input.current!.getValue()).toBe('')
+  })
+  it('hides suggestions and does not accept them while the slash model menu is open', async () => {
+    const accepted = vi.fn()
+    await act(async () => root.render(
+      <ComposerPredictionContext.Provider value={{ text: '请继续', acceptLabel: '接受建议', onAccept: accepted }}>
+        <Harness models={[{ name: 'model-a', displayName: 'Model A', type: 'user' }]} onSelectModel={vi.fn()} />
+      </ComposerPredictionContext.Provider>
+    ))
+    await type('/model')
+    await click('slash-command-option-model')
+    expect(container.querySelector('[data-testid="editor-prediction-accept"]')).toBeNull()
+    await act(async () => {
+      element('editor').dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    })
+    expect(accepted).not.toHaveBeenCalled()
+    expect(input.current!.getValue()).toBe('')
+  })
+  it('opens the host model selector without rendering a second model menu', async () => {
+    const onOpenModelSelector = vi.fn()
+    await mount({ onOpenModelSelector })
+    await type('/model')
+    await click('slash-command-option-model')
+    expect(onOpenModelSelector).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('[data-testid="slash-model-menu"]')).toBeNull()
     expect(input.current!.getValue()).toBe('')
   })
   it('does not delete the trigger when keyboard selection reaches an unavailable file picker', async () => {

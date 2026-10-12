@@ -72,6 +72,7 @@ import {
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
+import { projectReplyPrediction } from '@/features/reply-predictions/projectReplyPrediction'
 import { TaskCommentComposer } from './TaskCommentComposer'
 import { useIssueExecutionCancellation } from '@wegent/collaboration/issue-detail/useIssueExecutionCancellation'
 import { ChatMessage, type ExecutionTaskSummary } from './TaskActivityMessage'
@@ -1010,6 +1011,14 @@ export function TaskActivityView({
                 </div>
               ) : null}
               <TaskCommentComposer
+                predictionAddress={
+                  replyTarget ? boundCardSessionAddress(replyTarget, taskBindings) : null
+                }
+                predictionSource={projectReplyPrediction(
+                  `issue:${project.id}:${task.id}:${replyTarget?.root.messageId ?? 'main'}`,
+                  replyTarget ? [replyTarget.root, ...replyTarget.replies] : messages,
+                  sending
+                )}
                 key={task.id}
                 value={newCommentDraft}
                 onChange={setNewCommentDraft}
@@ -1031,6 +1040,11 @@ export function TaskActivityView({
             <>
               {linear || (projectLocation !== 'local' && client?.executeTaskComment) ? (
                 <TaskCommentComposer
+                  predictionSource={projectReplyPrediction(
+                    `issue:${project.id}:${task.id}:main`,
+                    messages,
+                    sending
+                  )}
                   key={task.id}
                   value={newCommentDraft}
                   onChange={setNewCommentDraft}
@@ -1049,6 +1063,11 @@ export function TaskActivityView({
               ) : (
                 <div className="task-detail-comment-chat-input">
                   <ChatInput
+                    predictionSource={projectReplyPrediction(
+                      `issue:${project.id}:${task.id}:main`,
+                      messages,
+                      sending
+                    )}
                     value={newCommentDraft}
                     disabled={!client}
                     onChange={setNewCommentDraft}
@@ -1179,6 +1198,12 @@ export function TaskActivityView({
                         />
                       ) : (
                         <CardCommentComposer
+                          predictionAddress={boundCardSessionAddress(card, taskBindings)}
+                          predictionSource={projectReplyPrediction(
+                            `issue:${project.id}:${task.id}:${rootId}`,
+                            [card.root, ...card.replies],
+                            cardSessionActive(card)
+                          )}
                           rootId={rootId}
                           projectId={project.id}
                           disabled={!client}

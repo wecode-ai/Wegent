@@ -55,7 +55,7 @@ pub(crate) use codex::{
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
     CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,
-    CodexAppServerTurn, CodexAppServerTurnOptions, CodexAuthMutationError, CodexCancellationState,
+    CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexIdleMutationError,
     CodexNotificationSender, CodexRequestUserInputReceiver, CodexResponseValueOrigin,
     CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_EXECUTOR_SHUTDOWN,
     CODEX_APP_SERVER_TURN_CANCELLED,

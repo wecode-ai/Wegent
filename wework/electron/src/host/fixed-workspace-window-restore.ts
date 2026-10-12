@@ -1,3 +1,5 @@
+import { resolveDshAppRoute } from './dsh-app-route.js'
+
 export interface FixedWorkspaceWindowDescriptor {
   label: string
   route: string
@@ -12,7 +14,7 @@ function defaultContentRoute(kind: string): string | null {
 }
 
 function workspaceTabRoute(contentRoute: string, id: string, title: string): string {
-  const target = new URL(contentRoute, 'https://wework.invalid')
+  const target = resolveDshAppRoute('https://wework.invalid', contentRoute)
   target.searchParams.set('workspaceTab', id)
   target.searchParams.set('workspaceTabTitle', title)
   return `${target.pathname}${target.search}${target.hash}`

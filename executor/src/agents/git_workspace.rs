@@ -1017,13 +1017,6 @@ mod tests {
             let logical_name = format!("/workspace/{}", identity.key(8));
             let logical = crate::workspace_paths::resolve_logical_path(&logical_name);
             assert_eq!(logical, expected);
-            assert_eq!(
-                crate::workspace_paths::display_workspace_path(
-                    &fs::canonicalize(&expected).unwrap()
-                )
-                .as_deref(),
-                Some(logical_name.as_str())
-            );
             fs::write(expected.join("uncommitted.txt"), "retain on next turn").unwrap();
             prepare_git_workspace(request.clone()).await.unwrap();
             assert_eq!(
