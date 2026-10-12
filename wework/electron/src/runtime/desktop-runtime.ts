@@ -42,6 +42,7 @@ export interface DesktopRuntimeOptions {
   }
   onExecutorEvent?: (event: string, payload: Record<string, unknown>) => void
   authenticateBrowserSession?: DshRuntimeOptions['authenticateBrowserSession']
+  onCoreDshRestarted?: () => Promise<void>
   createCoreDsh?: (options: DshRuntimeOptions) => CoreDshHandle
   createExecutor?: (options: ManagedExecutorRuntimeOptions) => ManagedExecutorHandle
   onStartupStep?: (
@@ -453,16 +454,22 @@ export class DesktopRuntime {
     launch: PreparedCoreDshLaunch,
     executor: ManagedExecutorHandle | null
   ): PreparedCoreDsh {
+    const runtime: CoreDshHandle = this.createCoreDsh({
+      ...launch.runtimeOptions,
+      onRestarted: async () => {
+        if (this.started && this.coreDsh === runtime) {
+          await this.options.onCoreDshRestarted?.()
+        }
+      },
+      env: {
+        ...launch.runtimeOptions.env,
+        ...executor?.environment(),
+      },
+    })
     return {
       plugins: launch.plugins,
       port: launch.port,
-      runtime: this.createCoreDsh({
-        ...launch.runtimeOptions,
-        env: {
-          ...launch.runtimeOptions.env,
-          ...executor?.environment(),
-        },
-      }),
+      runtime,
     }
   }
 

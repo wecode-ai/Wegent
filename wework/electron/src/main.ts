@@ -271,7 +271,7 @@ let startupSplashWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
 const dshWindowLabels = new Map<number, string>()
 let primaryDshLoaded = false
-let primaryDshSecurityInstalled = false
+const securedDshContents = new WeakMap<WebContents, { url: string; origin: string }>()
 let desktopRuntime: DesktopRuntime | null = null
 let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
@@ -506,7 +506,13 @@ rendererHealth.on('change', () => {
 })
 
 function secureDshContents(contents: WebContents, dshUrl: string): void {
-  const allowedOrigin = new URL(dshUrl).origin
+  const security = { url: dshUrl, origin: new URL(dshUrl).origin }
+  const previous = securedDshContents.get(contents)
+  if (previous) {
+    Object.assign(previous, security)
+    return
+  }
+  securedDshContents.set(contents, security)
   installContextMenu(contents, 'app')
   contents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('wework://')) {
@@ -514,7 +520,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       return { action: 'deny' }
     }
     const target = new URL(url)
-    if (target.origin === allowedOrigin) return { action: 'allow' }
+    if (target.origin === security.origin) return { action: 'allow' }
     void shell.openExternal(url)
     return { action: 'deny' }
   })
@@ -524,14 +530,14 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       queueScheme(url)
       return
     }
-    if (new URL(url).origin === allowedOrigin) return
+    if (new URL(url).origin === security.origin) return
     event.preventDefault()
     void shell.openExternal(url)
   })
   contents.on('will-attach-webview', (event, webPreferences, params) => {
     const isolatedSurface = isTrustedIsolatedSurfaceAttachment(
       params as Record<string, unknown>,
-      dshUrl,
+      security.url,
       isolatedSurfacePolicies
     )
     const route = embeddedBrowserRouteFromParams(params as Record<string, unknown>)
@@ -598,7 +604,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
         guestId: guestContents.id,
         ownerId: contents.id,
       })
-      secureDshContents(guestContents, dshUrl)
+      secureDshContents(guestContents, security.url)
       return
     }
     if (
@@ -715,11 +721,10 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   rendererHealth.loading()
   const dshUrl = desktopRuntime.coreDshUrl()
   const contents = mainWindow.webContents
-  if (!primaryDshSecurityInstalled) {
-    secureDshContents(contents, dshUrl)
+  if (!securedDshContents.has(contents)) {
     registerDshWindowLabel(contents, 'main')
-    primaryDshSecurityInstalled = true
   }
+  secureDshContents(contents, dshUrl)
   contents.once('did-finish-load', () => {
     primaryDshLoaded = true
     runtimeError = null
@@ -1221,7 +1226,6 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   })
   mainWindow.on('closed', () => {
     primaryDshLoaded = false
-    primaryDshSecurityInstalled = false
     mainWindow = null
   })
   logStartupStep('startup-splash-load', 'started')
@@ -1676,6 +1680,12 @@ async function configureDesktopRuntime(): Promise<void> {
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
     onStartupStep: logStartupStep,
+    onCoreDshRestarted: async () => {
+      disposeCoreDshViews()
+      await loadPrimaryDshView()
+      await restoreFixedWorkspaceWindows()
+      notifyRuntimeChanged()
+    },
     readWorkbenchMode: async () =>
       normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
     createWorkbenchHostPipe: tabId => {

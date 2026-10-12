@@ -52,6 +52,8 @@ the same editor.
 Core 进程使用 `--port 0` 直接绑定系统分配的端口，通过已认证的宿主管道传回实际地址，
 再完成认证并校验全部必需接口，避免预选端口在进程启动前被其他进程占用。
 管道中的会话地址不写入日志，也不等待非首屏插件完成全部启动。
+Core 崩溃自动重启后，工作台在必需接口重新就绪时切换到新地址，更新安全来源并
+恢复固定窗口；Executor 保持运行，旧 Smart app 的运行时选择和缓存保持有效。
 创建或升级 Core profile 时直接写入当前工作模式的插件组合，避免随后启动额外的
 DSH 校验进程来重复调整同一组插件；运行时启动仍校验实际生效的配置。
 Core profile 使用有界并发准备内置插件，代码保留独立副本以继续从 profile 解析依赖，
@@ -67,6 +69,9 @@ Core binds an OS-assigned port with `--port 0`. The host discovers its actual
 address through the authenticated host pipe before authentication and required
 endpoint checks, eliminating the gap between selecting a port and binding it.
 The session URL stays out of logs, and readiness does not wait for optional plugins.
+After an automatic Core restart, the workbench reloads the ready endpoint, updates
+its allowed origin, and restores fixed windows. The Executor keeps running, and
+existing Smart app runtime requirements and caches remain valid.
 Profile creation and upgrades write the selected workbench mode directly,
 avoiding a separate DSH validation process to adjust the same plugins afterwards.
 Runtime startup still validates the effective configuration. Core profile preparation uses

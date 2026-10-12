@@ -23,6 +23,7 @@ afterEach(async () => {
 describe('DSH runtime readiness', () => {
   test.each(['stdout', 'pipe'])('discovers the child-bound port through %s', async transport => {
     const authenticateBrowserSession = vi.fn(async () => {})
+    const onRestarted = vi.fn(async () => {})
     const hostPipe = new HostPipeServer(new HostCapabilityRouter())
     const runtime = new DshRuntime({
       url: 'http://127.0.0.1:0',
@@ -64,6 +65,7 @@ describe('DSH runtime readiness', () => {
       probeUrls: ['http://127.0.0.1:0/host', 'http://127.0.0.1:0/executor'],
       startTimeoutMs: 1000,
       authenticateBrowserSession,
+      onRestarted,
       hostPipe,
       env: { ...process.env, ...hostPipe.environment(), ENDPOINT_TRANSPORT: transport },
     })
@@ -81,6 +83,13 @@ describe('DSH runtime readiness', () => {
         })
         expect(response.ok).toBe(true)
       }
+      expect(onRestarted).not.toHaveBeenCalled()
+      const pid = runtime.pid()
+      if (!pid) throw new Error('The managed runtime has no process')
+      process.kill(pid, 'SIGKILL')
+      await vi.waitFor(() => expect(onRestarted).toHaveBeenCalledOnce(), { timeout: 2000 })
+      expect(runtime.pid()).not.toBe(pid)
+      expect(Number(new URL(runtime.url()).port)).toBeGreaterThan(0)
     } finally {
       await runtime.stop()
     }

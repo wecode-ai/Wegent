@@ -19,6 +19,7 @@ export interface DshRuntimeOptions {
   hostPipe?: HostPipeServer
   startTimeoutMs?: number
   authenticateBrowserSession?: (url: string, cookie: string) => Promise<void>
+  onRestarted?: () => Promise<void>
 }
 
 export class DshRuntime {
@@ -28,6 +29,7 @@ export class DshRuntime {
   private authenticationUrl: string | null = null
   private authentication: Promise<string> | null = null
   private runtimeUrl: string
+  private becameReady = false
   private readonly receiveRuntimeEndpoint = (
     child: ChildProcessWithoutNullStreams | null,
     url: string
@@ -60,6 +62,8 @@ export class DshRuntime {
             await waitForHttpEndpoints(runtimeProbeUrls(options, this.runtimeUrl), signal, () =>
               this.authenticate(signal)
             )
+            if (this.becameReady) await options.onRestarted?.()
+            this.becameReady = true
           },
         })
       : null
@@ -107,6 +111,7 @@ export class DshRuntime {
   }
 
   stop(): Promise<void> {
+    this.becameReady = false
     this.options.hostPipe?.off('runtimeEndpoint', this.receiveRuntimeEndpoint)
     if (this.child) this.options.hostPipe?.detachChild(this.child)
     return this.process?.stop() ?? Promise.resolve()

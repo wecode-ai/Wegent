@@ -3,6 +3,7 @@ import { mkdir, readFile, readlink, realpath, writeFile } from 'node:fs/promises
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { seedNativeDshProfile } from './release-package-startup.scenario.mjs'
 import { packagedResourcesRoot } from '../modules/runtime-assets.mjs'
+import { withTimeout } from '../modules/shared.mjs'
 import {
   waitForClosedStartupSplash,
   waitForStartupLogs,
@@ -230,6 +231,24 @@ export function createDesktopScenario({ resultDir, electronUserDataDirectory }) 
         legacyManifestBytes
       )
       const templates = await verifySmartAppTemplates(control, resultDir)
+      const diagnostics = await invoke(control, 'e2e.getRuntimeDiagnostics')
+      assert.ok(Number.isSafeInteger(diagnostics.coreDshPid) && diagnostics.coreDshPid > 0)
+      const readyCount = control.readyCount
+      process.kill(diagnostics.coreDshPid, 'SIGKILL')
+      await withTimeout(
+        control.awaitReadyAfter(readyCount),
+        10_000,
+        'Core crash recovery did not reconnect the workbench after binding its new port'
+      )
+      await control.command('waitFor', '[data-testid="desktop-workbench-main"]')
+      await control.command(
+        'waitFor',
+        'body[data-native-dsh-provider-active][data-native-dsh-consumer-active]'
+      )
+      const recovered = await invoke(control, 'e2e.getRuntimeDiagnostics')
+      assert.notEqual(recovered.coreDshPid, diagnostics.coreDshPid)
+      assert.equal(recovered.executorPid, diagnostics.executorPid)
+      await assertRuntime(control, LEGACY_ID, LEGACY_VERSION)
       await writeFile(
         join(resultDir, 'dsh-runtime-upgrade.json'),
         JSON.stringify({ durations, downloads: downloads.length, templates }, null, 2)

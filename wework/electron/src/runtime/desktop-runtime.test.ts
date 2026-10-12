@@ -169,6 +169,24 @@ describe('DesktopRuntime lifecycle generation', () => {
     prepareState.resolveLaunch = null
   })
 
+  test('reloads only the active Core after an automatic process restart', async () => {
+    const onCoreDshRestarted = vi.fn(async () => {})
+    const runtime = createRuntime(EXTERNAL_DSH, { onCoreDshRestarted })
+    await runtime.start()
+    const first = createdOptions[0].onRestarted
+    await first?.()
+    expect(onCoreDshRestarted).toHaveBeenCalledTimes(1)
+    await runtime.restartCoreDsh()
+    await first?.()
+    expect(onCoreDshRestarted).toHaveBeenCalledTimes(1)
+    const current = createdOptions[1].onRestarted
+    await current?.()
+    expect(onCoreDshRestarted).toHaveBeenCalledTimes(2)
+    await runtime.stop()
+    await current?.()
+    expect(onCoreDshRestarted).toHaveBeenCalledTimes(2)
+  })
+
   test('rejects an incompatible executor before constructing its managed Home writer', async () => {
     vi.mocked(resolveDesktopDeviceId).mockClear()
     const createExecutor = vi.fn()
