@@ -50,7 +50,7 @@ export function isRuntimeGoalContinuationTurn(
   })
 }
 
-export function projectRuntimeGoalContinuing({
+export function projectRuntimeGoalContinuationActive({
   goal,
   continuation,
   taskRunning,
@@ -63,9 +63,22 @@ export function projectRuntimeGoalContinuing({
   messages: WorkbenchMessage[]
   activeAssistantMessage: WorkbenchMessage | null
 }): boolean {
-  if (goal?.status !== 'active') return false
+  if (goal?.status !== 'active' || !taskRunning) return false
   if (continuation?.status === 'started') return true
   return taskRunning && isRuntimeGoalContinuationTurn(messages, activeAssistantMessage)
+}
+
+export function projectRuntimeGoalContinuing(
+  input: Parameters<typeof projectRuntimeGoalContinuationActive>[0]
+): boolean {
+  if (!projectRuntimeGoalContinuationActive(input)) return false
+  const assistant = input.activeAssistantMessage
+  const activeTurnId = assistant?.turnId?.trim() || assistant?.subtaskId?.trim()
+  const matchesContinuation =
+    input.continuation?.status === 'started'
+      ? activeTurnId === input.continuation.turnId
+      : isRuntimeGoalContinuationTurn(input.messages, assistant)
+  return !(assistant && matchesContinuation && hasVisibleAssistantProjection(assistant))
 }
 
 export function shouldReconcileActiveRuntimeGoalTranscript({
@@ -79,9 +92,12 @@ export function shouldReconcileActiveRuntimeGoalTranscript({
 }): boolean {
   if (!goalContinuing || !activeAssistantMessage) return false
 
+  const activeTurnId = activeAssistantMessage.turnId || activeAssistantMessage.subtaskId
+  if (!activeTurnId) return true
   return !messages.some(
     message =>
       message.id !== activeAssistantMessage.id &&
+      (message.turnId || message.subtaskId) === activeTurnId &&
       message.role === 'assistant' &&
       message.status !== 'streaming' &&
       hasVisibleAssistantProjection(message)

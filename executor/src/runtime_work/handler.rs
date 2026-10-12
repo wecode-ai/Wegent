@@ -171,8 +171,9 @@ use super::{
         bind_runtime_handle_user_message_presentation_to_turn, cached_messages,
         clear_completed_transcript_messages, clear_runtime_handle_messages,
         clear_transcript_snapshot_messages, completed_transcript_messages,
-        set_runtime_handle_messages, set_transcript_snapshot_messages,
-        transcript_snapshot_messages, user_message_presentations,
+        merge_assistant_transcript_message, set_runtime_handle_messages,
+        set_transcript_snapshot_messages, transcript_snapshot_messages,
+        transcript_snapshot_pagination, user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{

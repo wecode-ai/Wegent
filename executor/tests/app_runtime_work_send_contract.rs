@@ -24,6 +24,10 @@ mod runtime_task_project_move;
 #[path = "support/runtime_model_query_activation.rs"]
 mod runtime_model_query_activation;
 
+#[cfg(unix)]
+#[path = "support/runtime_capability_startup.rs"]
+mod runtime_capability_startup;
+
 struct EnvLockGuard {
     _guard: OwnedMutexGuard<()>,
 }

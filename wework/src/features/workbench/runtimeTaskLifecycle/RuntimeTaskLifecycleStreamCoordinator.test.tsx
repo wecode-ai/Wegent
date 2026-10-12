@@ -1052,6 +1052,41 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.derived.isBusy).toBe(true)
   })
 
+  test('reconciles a matching failed turn so its composer becomes idle', async () => {
+    const store = new RuntimeTaskLifecycleStore('failed-turn-reconciliation')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true))
+    store.turnStarted(address, 'turn-1')
+    let streamHandlers: ChatStreamHandlers = {}
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      ...runtimeTranscript(false),
+      turns: [{ id: 'turn-1', status: 'failed', completedAt: 1791779519416, items: [] }],
+    })
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: { listRuntimeWork: vi.fn(), getRuntimeTranscript },
+      },
+    } as unknown as WorkbenchServices
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onChatError?.({
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        subtaskId: 'turn-1',
+        error: 'context window exceeded',
+      } as never)
+    })
+    await waitFor(() => expect(store.getTask(address)?.derived.isBusy).toBe(false))
+    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+    expect(store.getTask(address)?.turn.outcome).toBe('failed')
+  })
+
   test('ignores a terminal event for another task', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
