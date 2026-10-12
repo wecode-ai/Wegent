@@ -1412,6 +1412,7 @@ class ExternalLoopItemProvider:
                     str(issue.get(self._body_key(project)) or "").strip()
                     or str(issue.get("title") or item_id)
                 ),
+                notification_target=self._notification_target(project, issue, item_id),
             )
         db.commit()
         return self._response(db, project, issue, access, user_id)

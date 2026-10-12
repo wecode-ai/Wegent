@@ -71,4 +71,4 @@ def item_display_key(item: LoopItem) -> str | None:
     if name:
         return name
     identifier = (item.id or "").strip()
-    return identifier if re.fullmatch(r"[A-Za-z][A-Za-z0-9]*-\d+", identifier) else None
+    return identifier if re.fullmatch(r"[A-Za-z0-9]+-\d+", identifier) else None
