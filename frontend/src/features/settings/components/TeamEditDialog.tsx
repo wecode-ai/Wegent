@@ -1005,12 +1005,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       return
     }
 
-    const selectedShell = resolveShellForExecutor(
-      shells,
-      simpleExecutorMode,
-      simpleCustomShellName,
-      simpleCodingRuntime
-    )
+    const selectedShell = selectedSimpleShell
     if (!selectedShell) {
       toast({
         variant: 'destructive',
@@ -1643,7 +1638,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             </Button>
             <Button
               onClick={() => void handleSave()}
-              disabled={saving || (useSimpleEditor && !!simpleModelName && simpleLoadingModels)}
+              disabled={
+                saving ||
+                (useSimpleEditor &&
+                  (!selectedSimpleShell || (!!simpleModelName && simpleLoadingModels)))
+              }
               variant="primary"
             >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

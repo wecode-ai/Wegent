@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 
 import { botApis } from '@/apis/bots'
@@ -346,6 +346,40 @@ function makeTeam(overrides: Partial<Team> = {}): Team {
 }
 
 describe('Simple TeamEditDialog', () => {
+  it('waits for the selected executor catalog before allowing a new agent to save', async () => {
+    let resolveShells!: (response: unknown) => void
+    mockedGetUnifiedShells.mockReturnValue(
+      new Promise(resolve => {
+        resolveShells = resolve
+      })
+    )
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+    fireEvent.change(screen.getByTestId('team-display-name-input'), {
+      target: { value: 'Catalog ready agent' },
+    })
+    const save = screen.getByRole('button', { name: 'Save' })
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(mockedCreateBot).not.toHaveBeenCalled()
+    await act(async () => {
+      resolveShells({ data: [{ name: 'ClaudeCode', type: 'public', shellType: 'ClaudeCode' }] })
+    })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+    await waitFor(() => expect(mockedCreateBot).toHaveBeenCalledTimes(1))
+  })
+
   beforeEach(() => {
     jest.clearAllMocks()
     mockInvalidateTeams.mockReturnValue(undefined)
