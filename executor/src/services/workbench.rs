@@ -166,8 +166,18 @@ pub fn verify_published_package(
     }
     let digest = digest.to_ascii_lowercase();
     let hash = format!("sha256:{digest}");
+    let _lock = lock_package(root, kind, &hash)?;
+    verify_published_package_locked(root, kind, &hash)
+}
+
+fn verify_published_package_locked(
+    root: &Path,
+    kind: PackageKind,
+    hash: &str,
+) -> Result<PublishedPackage, String> {
+    let digest = &hash[7..];
     let shared = root.join("shared");
-    let destination = shared.join(kind.directory()).join(&digest);
+    let destination = shared.join(kind.directory()).join(digest);
     let record_path = shared
         .join("metadata")
         .join(format!("{}-{digest}.json", kind.directory()));
@@ -179,7 +189,7 @@ pub fn verify_published_package(
         || match kind {
             PackageKind::Skill => !destination.join("SKILL.md").is_file(),
             PackageKind::Plugin => {
-                record.files_hash.as_deref() != Some(files_hash(&destination)?.as_str())
+                !verify_plugin_files(&destination, record.files_hash.as_deref())?
             }
         }
     {
@@ -187,8 +197,62 @@ pub fn verify_published_package(
     }
     Ok(PublishedPackage {
         path: destination,
-        archive_hash: hash,
+        archive_hash: hash.to_owned(),
     })
+}
+
+fn lock_package(root: &Path, kind: PackageKind, hash: &str) -> Result<fs::File, String> {
+    let lock_dir = root.join("shared/locks");
+    fs::create_dir_all(&lock_dir).map_err(io_error)?;
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_dir.join(format!("{}-{}.lock", kind.directory(), &hash[7..])))
+        .map_err(io_error)?;
+    lock.lock_exclusive().map_err(io_error)?;
+    Ok(lock)
+}
+
+/// Remove generated Python caches only when the recorded content no longer matches.
+fn verify_plugin_files(root: &Path, expected: Option<&str>) -> Result<bool, String> {
+    if expected == Some(files_hash(root)?.as_str()) {
+        return Ok(true);
+    }
+    if !remove_python_bytecode(root, false)? {
+        return Ok(false);
+    }
+    // Never update the record or ignore bytes that Python could execute.
+    Ok(expected == Some(files_hash(root)?.as_str()))
+}
+
+fn remove_python_bytecode(path: &Path, discard: bool) -> Result<bool, String> {
+    let metadata = fs::symlink_metadata(path).map_err(io_error)?;
+    if metadata.file_type().is_symlink() {
+        return Err("Published packages cannot contain symbolic links".into());
+    }
+    let discard = discard
+        || (metadata.is_dir() && path.file_name().is_some_and(|name| name == "__pycache__"))
+        || (metadata.is_file() && path.extension().is_some_and(|extension| extension == "pyc"));
+    if metadata.is_dir() {
+        let mut changed = false;
+        for entry in fs::read_dir(path).map_err(io_error)? {
+            changed |= remove_python_bytecode(&entry.map_err(io_error)?.path(), discard)?;
+        }
+        if discard {
+            fs::remove_dir(path).map_err(io_error)?;
+            changed = true;
+        }
+        Ok(changed)
+    } else if metadata.is_file() {
+        if discard {
+            fs::remove_file(path).map_err(io_error)?;
+        }
+        Ok(discard)
+    } else {
+        Err("Published package contains a special file".into())
+    }
 }
 
 pub fn publish_package(
@@ -203,21 +267,12 @@ pub fn publish_package(
     };
     let shared = root.join("shared");
     let destination = shared.join(kind.directory()).join(&hash[7..]);
-    let lock_dir = shared.join("locks");
-    fs::create_dir_all(&lock_dir).map_err(io_error)?;
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(lock_dir.join(format!("{}-{}.lock", kind.directory(), &hash[7..])))
-        .map_err(io_error)?;
-    lock.lock_exclusive().map_err(io_error)?;
+    let _lock = lock_package(root, kind, &hash)?;
     let metadata_dir = shared.join("metadata");
     fs::create_dir_all(&metadata_dir).map_err(io_error)?;
     let record_path = metadata_dir.join(format!("{}-{}.json", kind.directory(), &hash[7..]));
     if destination.exists() || destination.is_symlink() {
-        verify_published_package(root, kind, &hash)?;
+        verify_published_package_locked(root, kind, &hash)?;
     } else {
         let staging_dir = shared.join("staging");
         fs::create_dir_all(&staging_dir).map_err(io_error)?;

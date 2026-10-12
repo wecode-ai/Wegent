@@ -382,12 +382,6 @@ def _build_codex_runtime_model_config(
                     resolved_config["temperature"] = full_config["temperature"]
                 if full_config.get("think_config"):
                     resolved_config["think_config"] = dict(full_config["think_config"])
-                try:
-                    resolved_config.update(
-                        wework_model_config_options(model_spec.get("modelConfig"))
-                    )
-                except ValueError as exc:
-                    raise HTTPException(status_code=400, detail=str(exc)) from exc
                 if full_config.get("codex_catalog_model_id"):
                     resolved_config["codex_catalog_model_id"] = str(
                         full_config["codex_catalog_model_id"]
@@ -429,6 +423,17 @@ def _build_codex_runtime_model_config(
                         )
                         if base_url:
                             resolved_config["responses_url"] = f"{base_url}/v1/messages"
+                try:
+                    resolved_config.update(
+                        wework_model_config_options(
+                            model_spec.get("modelConfig"),
+                            upstream_api_format=resolved_config.get(
+                                "upstream_api_format", "openai-responses"
+                            ),
+                        )
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
         except HTTPException:
             raise
         except Exception:

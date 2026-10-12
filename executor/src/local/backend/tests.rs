@@ -24,6 +24,7 @@ struct RuntimeWorkPollTransport {
     accepted_cleanups: Arc<AtomicUsize>,
     disconnect_calls: Arc<AtomicUsize>,
     close_handler: Arc<TestMutex<Option<ConnectionClosedHandler>>>,
+    close_during_registration: Arc<AtomicBool>,
 }
 
 impl LocalBackendTransport for RuntimeWorkPollTransport {
@@ -46,6 +47,7 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
     ) -> TransportFuture<'a, Value> {
         Box::pin(async move {
             match event {
+                "device:register" => Ok(json!({"success": true})),
                 "runtime.tasks.pull" => {
                     let pull_index = self.pull_calls.fetch_add(1, AtomicOrdering::AcqRel);
                     if pull_index == 0 && self.fail_first_pull.swap(false, AtomicOrdering::AcqRel) {
@@ -95,8 +97,18 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
         })
     }
 
-    fn emit<'a>(&'a self, _event: &'a str, _payload: Value) -> TransportFuture<'a, ()> {
-        Box::pin(async { Ok(()) })
+    fn emit<'a>(&'a self, event: &'a str, _payload: Value) -> TransportFuture<'a, ()> {
+        Box::pin(async move {
+            if event == "device:heartbeat"
+                && self
+                    .close_during_registration
+                    .swap(false, AtomicOrdering::AcqRel)
+            {
+                let on_close = self.close_handler.lock().unwrap().clone().unwrap();
+                on_close();
+            }
+            Ok(())
+        })
     }
 
     fn on(&self, _event: &str, _handler: EventHandler) {}
@@ -408,6 +420,27 @@ async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat()
             .expect("closed transport must reconnect before the heartbeat interval");
     assert!(!stable_connection);
     assert_eq!(transport.disconnect_calls.load(AtomicOrdering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn socket_close_during_registration_cannot_publish_ready_status() {
+    let transport = RuntimeWorkPollTransport::default();
+    transport
+        .close_during_registration
+        .store(true, AtomicOrdering::Release);
+    let connection_status = Arc::new(AtomicBool::new(false));
+    let runner =
+        LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport.clone())
+            .with_connection_status(Arc::clone(&connection_status));
+    runner.register_handlers();
+
+    let result = runner.connect_and_register().await;
+
+    assert!(result.is_err(), "a closed registration cannot become ready");
+    assert!(!connection_status.load(Ordering::Acquire));
+
+    runner.connect_and_register().await.unwrap();
+    assert!(connection_status.load(Ordering::Acquire));
 }
 
 #[test]

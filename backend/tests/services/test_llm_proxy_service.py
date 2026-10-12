@@ -376,6 +376,65 @@ def test_build_codex_runtime_model_config_returns_provider_credentials(
 
 
 @pytest.mark.parametrize(
+    ("protocol", "api_format", "env_model"),
+    [
+        ("openai", None, None),
+        ("claude", None, None),
+        ("openai-responses", "chat/completions", None),
+        ("openai-responses", "messages", None),
+        (None, None, "openai"),
+        (None, None, "claude"),
+    ],
+)
+def test_direct_runtime_rejects_passthrough_for_other_protocols(
+    test_db: Session,
+    test_user: User,
+    protocol: str | None,
+    api_format: str | None,
+    env_model: str | None,
+) -> None:
+    """Reject incompatible explicit and inferred wire formats before dispatch."""
+    model = _model_kind(
+        test_user.id,
+        protocol=protocol,
+        api_format=api_format,
+        env_model=env_model,
+    )
+    model.json["spec"]["modelConfig"]["codex_request_mode"] = "passthrough"
+    test_db.add(model)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        _build_codex_runtime_model_config(model.name, db=test_db, user_id=test_user.id)
+
+    assert error.value.status_code == 400
+    assert "Responses" in error.value.detail
+
+
+@pytest.mark.parametrize(
+    ("protocol", "api_format"), [("openai-responses", None), (None, "responses")]
+)
+def test_direct_runtime_preserves_responses_passthrough(
+    test_db: Session,
+    test_user: User,
+    protocol: str | None,
+    api_format: str | None,
+) -> None:
+    """Keep valid direct Responses requests in passthrough mode."""
+    model = _model_kind(test_user.id, protocol=protocol, api_format=api_format)
+    model.json["spec"]["modelConfig"]["codex_request_mode"] = "passthrough"
+    test_db.add(model)
+    test_db.commit()
+
+    config = _build_codex_runtime_model_config(
+        model.name, db=test_db, user_id=test_user.id
+    )
+
+    assert config["codex_request_mode"] == "passthrough"
+    assert config["upstream_api_format"] == "openai-responses"
+
+
+@pytest.mark.parametrize(
     ("model_id", "expected_catalog_model_id"),
     [
         ("deepseek-v4-flash", "wework-deepseek-v4-flash"),

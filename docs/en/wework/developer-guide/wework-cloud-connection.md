@@ -44,7 +44,9 @@ Local Wework does not render cloud username/password forms and does not call `/a
 
 Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. Deployments with separate API and Web origins must configure the Web root URL explicitly. The Wework client only opens the complete `authorize_url` returned by Backend and does not infer the Web address itself.
 
-When the underlying Socket.IO connection closes, the local executor immediately clears its connected status and starts the existing reconnect flow. Account operations therefore do not treat the Backend as available while waiting for a heartbeat to detect the disconnect. A stale connection's close callback cannot invalidate a newer connection. Plugin account authentication processes disable Python bytecode writes so imports do not modify verified shared plugin packages; package integrity checks remain strict after restart.
+When the underlying Socket.IO connection closes, the local executor immediately clears its connected status and starts the existing reconnect flow. Account operations therefore do not treat the Backend as available while waiting for a heartbeat to detect the disconnect. Registration tracks the close epoch and uses the same lock to publish readiness and process close notifications, so registration cannot overwrite a recent disconnect. A stale connection's close callback cannot invalidate a newer connection.
+
+Plugin account authentication processes disable Python bytecode writes so imports do not modify verified shared plugin packages. If pre-upgrade `__pycache__` or `.pyc` artifacts cause verification to fail, verification removes them under the package publication lock and checks all remaining content against the original record. It never rewrites that record or ignores files that could still execute. Modified sources, special files, and symlinks inside caches remain rejected; bytecode already included in the verified original archive remains unchanged. Concurrent synchronization and publication share the same lock.
 
 ## Interaction Entry
 

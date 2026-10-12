@@ -11,8 +11,13 @@ where
 {
     pub(super) fn connection_closed_handler(&self) -> ConnectionClosedHandler {
         let connection_status = Arc::clone(&self.connection_status);
+        let connection_epoch = Arc::clone(&self.connection_epoch);
         Arc::new(move || {
-            connection_status.store(false, Ordering::Release);
+            {
+                let mut epoch = connection_epoch.lock().expect("connection epoch lock");
+                *epoch = epoch.wrapping_add(1);
+                connection_status.store(false, Ordering::Release);
+            }
             write_executor_log_line("local backend connection closed; reconnect requested");
         })
     }
