@@ -121,6 +121,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
 
         // Delete the local configuration through the actual settings UI and reopen the task.
         await control.command('navigate', 'body', { value: '/settings/personal/models' })
+        await control.command('waitFor', '[data-testid="local-model-delete-desktop-e2e-responses"]')
         await control.command('click', '[data-testid="local-model-delete-desktop-e2e-responses"]')
         await control.command('navigate', 'body', { value: '/' })
         await control.command('click', taskSelector)
