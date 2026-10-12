@@ -20,7 +20,7 @@ pub(crate) use protocol::{
     DecisionModel, DecisionProxyErrorBody, DecisionProxyErrorPayload, DecisionRequest,
     DecisionStatusResponse, DECISION_PROXY_PROTOCOL_VERSION,
 };
-pub(crate) use registry::{register, unregister, DecisionCredentialSource};
+pub(crate) use registry::{lookup as lookup_route, register, unregister, DecisionCredentialSource};
 
 use std::{
     collections::HashSet,

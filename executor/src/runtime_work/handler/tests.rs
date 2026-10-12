@@ -6635,3 +6635,190 @@ fn context_compaction_cache_preserves_started_and_completed_outcomes() {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+fn decision_proxy_handler(
+    config: crate::server::local_decision_proxy::DecisionProxyConfig,
+) -> RuntimeWorkRpcHandler {
+    let (event_tx, _) = broadcast::channel(1);
+    RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+        "device-1",
+        "/bin/false",
+        event_tx,
+    )
+    .with_decision_proxy_config(Arc::new(config))
+}
+
+fn decision_proxy_config(
+    credential: crate::server::local_decision_proxy::DecisionCredentialMode,
+) -> crate::server::local_decision_proxy::DecisionProxyConfig {
+    crate::server::local_decision_proxy::DecisionProxyConfig::Enabled(
+        crate::server::local_decision_proxy::DecisionProxySettings {
+            upstream_url: url::Url::parse("https://copilot.weibo.com/v1/decisions")
+                .expect("upstream url"),
+            default_model: "model-a".to_owned(),
+            models: vec![crate::server::local_decision_proxy::DecisionModel {
+                id: "model-a".to_owned(),
+                display_name: "Model A".to_owned(),
+            }],
+            credential,
+        },
+    )
+}
+
+#[tokio::test]
+async fn decision_proxy_register_requires_a_scope() {
+    let handler =
+        decision_proxy_handler(crate::server::local_decision_proxy::DecisionProxyConfig::Disabled);
+    for payload in [json!({}), json!({"scope": "   "}), json!({"scope": 7})] {
+        let error = handler
+            .dispatch("runtime.decision_proxy.register", payload.clone())
+            .await
+            .expect_err("scope must be required");
+        assert_eq!(error.code, "invalid_request", "payload={payload}");
+    }
+}
+
+#[tokio::test]
+async fn decision_proxy_register_reports_a_disabled_router() {
+    let handler =
+        decision_proxy_handler(crate::server::local_decision_proxy::DecisionProxyConfig::Disabled);
+    let error = handler
+        .register_decision_proxy_at(
+            json!({"scope": "smart-app:install-1:abc"}),
+            "http://127.0.0.1:4567",
+        )
+        .expect_err("disabled router must refuse registration");
+    assert_eq!(error.code, "decision_router_disabled");
+}
+
+#[tokio::test]
+async fn decision_proxy_register_rejects_client_supplied_configuration() {
+    let handler = decision_proxy_handler(decision_proxy_config(
+        crate::server::local_decision_proxy::DecisionCredentialMode::Static,
+    ));
+    for field in [
+        "upstream",
+        "upstreamUrl",
+        "apiKey",
+        "models",
+        "allowedModels",
+        "defaultModel",
+        "credential",
+    ] {
+        let mut payload = serde_json::Map::new();
+        payload.insert("scope".to_owned(), json!("smart-app:install-1:abc"));
+        payload.insert(field.to_owned(), json!("attacker value"));
+        let error = handler
+            .register_decision_proxy_at(Value::Object(payload), "http://127.0.0.1:4567")
+            .expect_err("client supplied configuration must be rejected");
+        assert_eq!(error.code, "invalid_request", "field={field}");
+    }
+}
+
+#[tokio::test]
+async fn decision_proxy_register_returns_a_loopback_launch() {
+    let handler = decision_proxy_handler(decision_proxy_config(
+        crate::server::local_decision_proxy::DecisionCredentialMode::Static,
+    ));
+    let launch = handler
+        .register_decision_proxy_at(
+            json!({"scope": "smart-app:install-2:launch"}),
+            "http://127.0.0.1:4567",
+        )
+        .expect("registration should succeed");
+    let token = launch["token"].as_str().expect("token").to_owned();
+    assert!(token.starts_with("decision-"));
+    assert_eq!(
+        launch["baseUrl"].as_str(),
+        Some(format!("http://127.0.0.1:4567/v1/decision-router/{token}").as_str())
+    );
+    assert_eq!(launch["protocolVersion"], 1);
+
+    let serialized = launch.to_string();
+    for leaked in ["copilot.weibo.com", "model-a", "apiKey", "upstream"] {
+        assert!(!serialized.contains(leaked), "launch leaked {leaked}");
+    }
+}
+
+#[tokio::test]
+async fn decision_proxy_register_needs_a_running_http_server() {
+    let handler = decision_proxy_handler(decision_proxy_config(
+        crate::server::local_decision_proxy::DecisionCredentialMode::Static,
+    ));
+    let error = handler
+        .dispatch(
+            "runtime.decision_proxy.register",
+            json!({"scope": "smart-app:install-3:no-server"}),
+        )
+        .await
+        .expect_err("registration needs a bound loopback address");
+    assert_eq!(error.code, "runtime_unavailable");
+}
+
+#[tokio::test]
+async fn login_registration_binds_the_shared_connection_snapshot() {
+    let handler = decision_proxy_handler(decision_proxy_config(
+        crate::server::local_decision_proxy::DecisionCredentialMode::Login,
+    ));
+    let launch = handler
+        .register_decision_proxy_at(
+            json!({"scope": "smart-app:install-4:login"}),
+            "http://127.0.0.1:4567",
+        )
+        .expect("registration should succeed");
+    let token = launch["token"].as_str().expect("token").to_owned();
+    let route =
+        crate::server::local_decision_proxy::lookup_route(&token).expect("registered route");
+    let snapshot = route.login_snapshot().expect("login snapshot");
+    assert!(
+        Arc::ptr_eq(&snapshot, &handler.backend_connection),
+        "login routes must share the handler connection snapshot"
+    );
+    crate::server::local_decision_proxy::unregister(&token);
+}
+
+#[tokio::test]
+async fn static_registration_holds_no_connection_snapshot() {
+    let handler = decision_proxy_handler(decision_proxy_config(
+        crate::server::local_decision_proxy::DecisionCredentialMode::Static,
+    ));
+    let launch = handler
+        .register_decision_proxy_at(
+            json!({"scope": "smart-app:install-5:static"}),
+            "http://127.0.0.1:4567",
+        )
+        .expect("registration should succeed");
+    let token = launch["token"].as_str().expect("token").to_owned();
+    let route =
+        crate::server::local_decision_proxy::lookup_route(&token).expect("registered route");
+    assert!(route.login_snapshot().is_none());
+    crate::server::local_decision_proxy::unregister(&token);
+}
+
+#[tokio::test]
+async fn decision_proxy_unregister_is_idempotent() {
+    let handler = decision_proxy_handler(decision_proxy_config(
+        crate::server::local_decision_proxy::DecisionCredentialMode::Static,
+    ));
+    let error = handler
+        .dispatch("runtime.decision_proxy.unregister", json!({}))
+        .await
+        .expect_err("token must be required");
+    assert_eq!(error.code, "invalid_request");
+
+    let launch = handler
+        .register_decision_proxy_at(
+            json!({"scope": "smart-app:install-6:stop"}),
+            "http://127.0.0.1:4567",
+        )
+        .expect("registration should succeed");
+    let token = launch["token"].as_str().expect("token").to_owned();
+    for _ in 0..2 {
+        let result = handler
+            .dispatch("runtime.decision_proxy.unregister", json!({"token": token}))
+            .await
+            .expect("unregister should be idempotent");
+        assert_eq!(result["unregistered"], true);
+    }
+    assert!(crate::server::local_decision_proxy::lookup_route(&token).is_none());
+}
