@@ -213,7 +213,8 @@ export const harnessAppsApi = {
     installationId: string,
     modelBaseUrl: string | null,
     contextBaseUrl: string | null = null,
-    contextToken: string | null = null
+    contextToken: string | null = null,
+    decision: { baseUrl: string; protocolVersion: number } | null = null
   ) {
     const startupId = crypto.randomUUID()
     trackBusinessEvent('smart_app_start_attempted', { startup_id: startupId })
@@ -225,6 +226,8 @@ export const harnessAppsApi = {
           modelBaseUrl,
           contextBaseUrl,
           contextToken,
+          decisionBaseUrl: decision?.baseUrl ?? null,
+          decisionProtocolVersion: decision?.protocolVersion ?? null,
         }),
       result => result.state === 'running',
       { properties: { startup_id: startupId } }

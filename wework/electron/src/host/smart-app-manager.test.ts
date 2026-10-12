@@ -522,6 +522,42 @@ describe('SmartAppManager', () => {
     expect(managed.grantedCapabilities).toEqual({ decisionModel: false })
   })
 
+  test('keeps decision route tokens separate from the generic routes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-token-'))
+    roots.push(root)
+    const manager = createManager(root)
+    manager.storeProxyToken('app-1', 'proxy-token')
+    manager.storeContextToken('app-1', 'context-token')
+    manager.storeDecisionToken('app-1', 'decision-token')
+
+    expect(manager.takeDecisionToken('app-1')).toBe('decision-token')
+    expect(manager.takeDecisionToken('app-1')).toBeNull()
+    // Taking the decision route must not consume the generic model routes.
+    expect(manager.takeProxyToken('app-1')).toBe('proxy-token')
+    expect(manager.takeContextToken('app-1')).toBe('context-token')
+  })
+
+  test('drops cached route tokens when an installation is deleted', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-token-cleanup-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const manager = createManager(root)
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+    })
+    manager.storeProxyToken(installation.id, 'proxy-token')
+    manager.storeContextToken(installation.id, 'context-token')
+    manager.storeDecisionToken(installation.id, 'decision-token')
+
+    await manager.delete(installation.id, false)
+
+    expect(manager.takeProxyToken(installation.id)).toBeNull()
+    expect(manager.takeContextToken(installation.id)).toBeNull()
+    expect(manager.takeDecisionToken(installation.id)).toBeNull()
+  })
+
   test('rejects unknown scaffold templates before creating a destination', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-template-'))
     roots.push(root)

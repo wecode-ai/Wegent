@@ -104,6 +104,7 @@ export interface SmartAppVerificationService {
 export class SmartAppManager {
   private readonly proxyTokens = new Map<string, string>()
   private readonly contextTokens = new Map<string, string>()
+  private readonly decisionTokens = new Map<string, string>()
   private readonly verificationService: SmartAppVerificationService
   private operation = Promise.resolve()
 
@@ -521,6 +522,7 @@ export class SmartAppManager {
       }
       this.proxyTokens.delete(installationId)
       this.contextTokens.delete(installationId)
+      this.decisionTokens.delete(installationId)
     })
   }
 
@@ -617,6 +619,16 @@ export class SmartAppManager {
 
   takeContextToken(installationId: string): string | null {
     return takeToken(this.contextTokens, installationId)
+  }
+
+  // The decision route is a distinct registration from the generic model proxy,
+  // so it must be stored separately or stop cannot unregister both.
+  storeDecisionToken(installationId: string, token: string): void {
+    this.decisionTokens.set(requiredText(installationId), requiredText(token))
+  }
+
+  takeDecisionToken(installationId: string): string | null {
+    return takeToken(this.decisionTokens, installationId)
   }
 
   private root(): string {

@@ -1770,6 +1770,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const browserStatesRef = useRef(browserStates)
   const smartAppDevelopmentPreviewRequestsRef = useRef(new Map<RightWorkspaceBrowserTab, number>())
   const localHarnessModelApiRef = useRef(services.localHarnessModelApi)
+  const localDecisionRouterApiRef = useRef(services.localDecisionRouterApi)
   const recentBrowserPopupRequestsRef = useRef(new Map<string, number>())
   useEffect(() => {
     browserStatesRef.current = browserStates
@@ -1777,6 +1778,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   useEffect(() => {
     localHarnessModelApiRef.current = services.localHarnessModelApi
   }, [services.localHarnessModelApi])
+  useEffect(() => {
+    localDecisionRouterApiRef.current = services.localDecisionRouterApi
+  }, [services.localDecisionRouterApi])
   const updateBrowserState = useCallback(
     (tab: RightWorkspaceBrowserTab, update: Partial<RightWorkspaceBrowserState>) => {
       setBrowserStates(current => {
@@ -3443,12 +3447,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               installation,
               modelOptions,
               services.localHarnessModelApi,
-              missingWebUrlMessage
+              missingWebUrlMessage,
+              services.localDecisionRouterApi
             )
           : await startHarnessAppDevelopmentRuntime({
               installation,
               modelOptions,
               localHarnessModelApi: services.localHarnessModelApi,
+              localDecisionRouterApi: services.localDecisionRouterApi,
               missingWebUrlMessage,
             })
         if (
@@ -3457,7 +3463,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ) {
           await stopHarnessAppDevelopmentRuntime(
             installationId,
-            services.localHarnessModelApi
+            services.localHarnessModelApi,
+            services.localDecisionRouterApi
           ).catch(error => {
             console.error('Failed to stop closed Smart app development preview:', error)
           })
@@ -3548,7 +3555,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })
       try {
         if (installation.state === 'running') {
-          await stopHarnessAppDevelopmentRuntime(installationId, services.localHarnessModelApi)
+          await stopHarnessAppDevelopmentRuntime(
+            installationId,
+            services.localHarnessModelApi,
+            services.localDecisionRouterApi
+          )
         }
         await harnessAppsApi.addPlugin(installationId, pluginSpec)
         await loadSmartAppDevelopmentPreview(tab, installationId, false)
@@ -3635,7 +3646,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       installationIds.forEach(installationId => {
         void stopHarnessAppDevelopmentRuntime(
           installationId,
-          localHarnessModelApiRef.current
+          localHarnessModelApiRef.current,
+          localDecisionRouterApiRef.current
         ).catch(error => {
           console.error('Failed to stop Smart app development runtime during disposal:', error)
         })
@@ -3692,7 +3704,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       installationIds.forEach(installationId => {
         void stopHarnessAppDevelopmentRuntime(
           installationId,
-          localHarnessModelApiRef.current
+          localHarnessModelApiRef.current,
+          localDecisionRouterApiRef.current
         ).catch(error => {
           console.error('Failed to stop Smart app runtime with its workspace tab:', error)
         })
@@ -3977,7 +3990,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       )
       void stopHarnessAppDevelopmentRuntime(
         browserState.developmentPreview.installationId,
-        services.localHarnessModelApi
+        services.localHarnessModelApi,
+        services.localDecisionRouterApi
       ).catch(error => {
         console.error('Failed to stop closed Smart app development preview:', error)
       })

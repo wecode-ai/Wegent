@@ -1062,6 +1062,15 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.takeContextToken', params =>
     requiredSmartApps(smartApps).takeContextToken(stringParam(params, 'installationId'))
   )
+  router.register('smartApps.storeDecisionToken', params =>
+    requiredSmartApps(smartApps).storeDecisionToken(
+      stringParam(params, 'installationId'),
+      stringParam(params, 'token')
+    )
+  )
+  router.register('smartApps.takeDecisionToken', params =>
+    requiredSmartApps(smartApps).takeDecisionToken(stringParam(params, 'installationId'))
+  )
   return router
 }
 
