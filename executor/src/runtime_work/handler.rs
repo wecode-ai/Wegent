@@ -26,7 +26,7 @@ use crate::{
         bind_codex_thread_model_route, codex_notification_requires_user_input,
         codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
         AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexAuthMutationError,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError,
         CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
@@ -1177,6 +1177,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
+            "runtime.codex.plugin.sync_bundled" => self.sync_bundled_plugin(payload).await,
             "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
             "runtime.codex.plugin.reconcile_bundled_marketplace" => {
                 self.reconcile_bundled_plugin_marketplace(payload).await

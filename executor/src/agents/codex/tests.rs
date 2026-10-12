@@ -209,13 +209,58 @@ async fn auth_mutation_is_rejected_while_a_turn_is_active() {
 
     assert_eq!(
         result,
-        Err(CodexAuthMutationError::Busy {
+        Err(CodexIdleMutationError::Busy {
             active_turn_count: 1,
             pending_request_count: 0,
         })
     );
     assert!(!mutation_called.load(std::sync::atomic::Ordering::SeqCst));
     client.mark_thread_idle("thread-1", false).await;
+}
+
+#[tokio::test]
+async fn plugin_mutation_waits_for_idle_and_unchanged_sync_preserves_thread_generations() {
+    let client = CodexAppServerClient::new("codex-plugin-mutation-active-test");
+    client.mark_thread_active("thread-1").await;
+    assert_eq!(
+        client
+            .mutate_configuration_if_idle(|| async { Ok((true, true)) })
+            .await,
+        Err(CodexIdleMutationError::Busy {
+            active_turn_count: 1,
+            pending_request_count: 0
+        })
+    );
+    client.mark_thread_idle("thread-1", false).await;
+    client
+        .state
+        .lock()
+        .await
+        .thread_generations
+        .insert("existing-thread".to_owned(), 42);
+
+    assert_eq!(
+        client
+            .mutate_configuration_if_idle(|| async { Ok((false, false)) })
+            .await,
+        Ok(false)
+    );
+    assert_eq!(
+        client
+            .state
+            .lock()
+            .await
+            .thread_generations
+            .get("existing-thread"),
+        Some(&42)
+    );
+    assert_eq!(
+        client
+            .mutate_configuration_if_idle(|| async { Ok((true, true)) })
+            .await,
+        Ok(true)
+    );
+    assert!(client.state.lock().await.thread_generations.is_empty());
 }
 
 #[tokio::test]
