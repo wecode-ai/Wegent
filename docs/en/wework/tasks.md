@@ -107,6 +107,8 @@ If the existing context contains encrypted reasoning or compaction state produce
 
 The sidebar keeps running tasks visible with their running indicators. Collapsing or expanding a project or its history list does not change execution state. When you continue a conversation, completion from an earlier turn does not end the new running turn; its indicator clears when the current turn ends.
 
+Context compaction is shown as complete only after its turn succeeds. Plugin synchronization and idle-only process restarts wait during compaction, and a failed or interrupted compaction is not shown as successful.
+
 | Action                  | Shortcut                       | Use it when                             |
 | ----------------------- | ------------------------------ | --------------------------------------- |
 | Send after the response | `Enter`                        | Queue the next instruction              |

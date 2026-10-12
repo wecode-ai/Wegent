@@ -1599,23 +1599,37 @@ impl RuntimeWorkRpcHandler {
             ));
         };
 
-        let thread_id = match self.resume_codex_thread_for_action(&link, &thread_id).await {
+        self.codex_app_server
+            .run_thread_action(
+                &thread_id,
+                self.compact_codex_task(&link, &local_task_id, &thread_id),
+            )
+            .await
+    }
+
+    async fn compact_codex_task(
+        &self,
+        link: &RuntimeTaskLink,
+        local_task_id: &str,
+        thread_id: &str,
+    ) -> Result<Value, AppIpcError> {
+        let thread_id = match self.resume_codex_thread_for_action(link, thread_id).await {
             Ok(resumed_thread_id) => resumed_thread_id,
-            Err(error) => return Ok(task_action_failure(&link, error)),
+            Err(error) => return Ok(task_action_failure(link, error)),
         };
-        let request = runtime_event_request_from_link(&link);
+        let request = runtime_event_request_from_link(link);
         // The compaction turn answers through the local model route, which only
         // exists while a turn that registered it is alive. Register it for the
         // duration of this action so compacting an idle thread still reaches a
         // model instead of failing inside the Codex app-server.
         let _model_route = match bind_codex_thread_model_route(&request, &thread_id) {
             Ok(route) => route,
-            Err(error) => return Ok(task_action_failure(&link, error)),
+            Err(error) => return Ok(task_action_failure(link, error)),
         };
         self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);
         let previous_turn_id = match self.read_codex_recent_turns(&thread_id).await {
             Ok(thread) => latest_codex_turn_id(&thread),
-            Err(error) => return Ok(task_action_failure(&link, error)),
+            Err(error) => return Ok(task_action_failure(link, error)),
         };
         match self
             .call_codex_thread_method(
@@ -1630,19 +1644,19 @@ impl RuntimeWorkRpcHandler {
                     .await
                 {
                     Ok(completion) => completion,
-                    Err(error) => return Ok(task_action_failure(&link, error)),
+                    Err(error) => return Ok(task_action_failure(link, error)),
                 };
-                self.store.update_task(&local_task_id, |stored| {
+                self.store.update_task(local_task_id, |stored| {
                     stored.updated_at = now_ms();
                 });
-                let mut response = task_action_success(&link);
+                let mut response = task_action_success(link);
                 if let Some(response) = response.as_object_mut() {
                     response.insert("turnId".to_owned(), Value::String(turn_id));
                     response.insert("compactionItemId".to_owned(), Value::String(item_id));
                 }
                 Ok(response)
             }
-            Err(error) => Ok(task_action_failure(&link, error)),
+            Err(error) => Ok(task_action_failure(link, error)),
         }
     }
 
@@ -2339,21 +2353,23 @@ fn context_compaction_outcome(
     if Some(turn_id.as_str()) == previous_turn_id {
         return None;
     }
-    if let Some(item) = turn
-        .get("items")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find(|item| is_codex_context_compaction_item_type(&item_type(item)))
-    {
-        return Some(Ok((turn_id, item_id(item, "context_compaction"))));
-    }
     let status = string_field(turn, "status")?;
     if matches!(
         status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
         "inprogress" | "running" | "active"
     ) {
         return None;
+    }
+    if let Some(item) = turn
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|item| {
+            status == "completed" && is_codex_context_compaction_item_type(&item_type(item))
+        })
+    {
+        return Some(Ok((turn_id, item_id(item, "context_compaction"))));
     }
     let detail = turn
         .get("error")
@@ -2446,6 +2462,42 @@ mod tests {
         assert_eq!(
             context_compaction_outcome(&thread, Some("turn-before")),
             None
+        );
+    }
+
+    #[test]
+    fn does_not_treat_a_started_compaction_item_as_completion() {
+        let thread = json!({
+            "turns": [{
+                "id": "turn-compact",
+                "status": "inProgress",
+                "items": [{"id": "compact-1", "type": "contextCompaction"}]
+            }]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            None
+        );
+    }
+
+    #[test]
+    fn reports_failure_after_a_compaction_item_started() {
+        let thread = json!({
+            "turns": [{
+                "id": "turn-compact",
+                "status": "failed",
+                "error": {"message": "provider rejected compaction"},
+                "items": [{"id": "compact-1", "type": "contextCompaction"}]
+            }]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            Some(Err(
+                "context compaction ended without compacting: provider rejected compaction"
+                    .to_owned()
+            ))
         );
     }
 

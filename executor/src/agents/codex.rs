@@ -149,6 +149,8 @@ mod home;
 mod overload_recovery;
 #[path = "codex/plugin_skills.rs"]
 mod plugin_skills;
+#[path = "codex/thread_action.rs"]
+mod thread_action;
 
 use debug_stdout::CodexStdout;
 use diagnostics::{json_scalar_field, json_string_field};
@@ -2059,29 +2061,9 @@ async fn run_codex_app_server_turn_on_shared_client(
 
     if let Some(thread_id) = subscribed_thread_id {
         let retain_subscription = result.is_ok() && !prepared.request.ephemeral;
-        if let Some((generation, overflow)) = client
-            .mark_thread_idle(&thread_id, retain_subscription)
-            .await
-        {
-            if retain_subscription {
-                client.unsubscribe_thread_in_background(
-                    thread_id,
-                    generation,
-                    IDLE_CODEX_THREAD_SUBSCRIPTION_TTL,
-                    "ttl",
-                    MAX_IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRIES,
-                );
-                for (overflow_thread_id, overflow_generation) in overflow {
-                    client.unsubscribe_thread_in_background(
-                        overflow_thread_id,
-                        overflow_generation,
-                        Duration::ZERO,
-                        "capacity",
-                        MAX_IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRIES,
-                    );
-                }
-            }
-        }
+        client
+            .finish_thread_activity(&thread_id, retain_subscription)
+            .await;
     }
 
     if let Err(error) = &result {
