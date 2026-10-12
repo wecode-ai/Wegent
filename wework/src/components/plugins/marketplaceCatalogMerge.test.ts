@@ -388,6 +388,30 @@ describe('mergeMarketplaceCatalog', () => {
     expect(shouldShowInstalledMarketplaceActions(merged[0], true)).toBe(true)
   })
 
+  test('preserves the cloud install id when native materialization has another id', () => {
+    const installed: InstalledPlugin = {
+      ...localInstalledPlugin(),
+      metadata: { name: 'dev-tools', namespace: 'default', labels: { id: '66' } },
+      spec: {
+        ...localInstalledPlugin().spec,
+        pluginId: 4,
+        sourcePayload: {
+          localId: 'dev-tools@wegent',
+          localPresent: true,
+          cloudInstalledPluginId: '66',
+        },
+      },
+    }
+    const merged = mergeMarketplaceCatalog(
+      [{ ...cloudPlugin(), installed: true, installedPluginId: 66 }],
+      [],
+      [installed]
+    )
+    expect(merged[0].installedPluginId).toBe(66)
+    const lagging = mergeMarketplaceCatalog([cloudPlugin()], [], [installed])
+    expect(lagging[0].installedPluginId).toBe('66')
+  })
+
   test('marks a pending cloud row installed locally when Codex already has the package', () => {
     const cloudPending: PluginMarketplaceItem = {
       ...cloudPlugin(),

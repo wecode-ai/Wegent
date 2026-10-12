@@ -2199,6 +2199,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
               ).length,
             }
           : null,
+        runtimeAssistantDisplayItemCount: runtimeMessages
+          .filter(message => message.role === 'assistant')
+          .reduce((count, message) => count + (message.runtimeDisplayItems?.length ?? 0), 0),
         runtimeConversationCache: getRuntimeConversationCacheStats(),
         processMemory,
         rendererHeap,

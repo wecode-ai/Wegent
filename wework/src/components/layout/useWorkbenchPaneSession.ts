@@ -52,6 +52,7 @@ import type { RequestUserInputPayload } from '@/components/chat/RequestUserInput
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
 import {
   projectRuntimeGoalContinuing,
+  projectRuntimeGoalContinuationActive,
   runtimeGoalCreateInput,
   shouldReconcileActiveRuntimeGoalTranscript,
   visibleRuntimeGoal,
@@ -3001,17 +3002,19 @@ export function useWorkbenchPaneSession({
   }, [clearRuntimeGoal, currentRuntimeTask, goal, lifecycleStore, refreshWorkLists])
 
   const cancelGuidanceMessage = useCallback(() => undefined, [])
-  const goalContinuing = projectRuntimeGoalContinuing({
+  const goalProjectionInput = {
     goal,
     continuation: goalContinuation,
     taskRunning: paneStatus.taskExecution.running,
     messages,
     activeAssistantMessage,
-  })
+  }
+  const goalContinuing = projectRuntimeGoalContinuing(goalProjectionInput)
+  const goalContinuationActive = projectRuntimeGoalContinuationActive(goalProjectionInput)
 
   useEffect(() => {
     const shouldReconcile = shouldReconcileActiveRuntimeGoalTranscript({
-      goalContinuing,
+      goalContinuing: goalContinuationActive,
       messages,
       activeAssistantMessage,
     })
@@ -3117,7 +3120,7 @@ export function useWorkbenchPaneSession({
   }, [
     activeAssistantMessage,
     dispatchMessages,
-    goalContinuing,
+    goalContinuationActive,
     lifecycleStore,
     messages,
     runtimeTaskLoadTarget,

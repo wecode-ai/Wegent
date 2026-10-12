@@ -129,6 +129,7 @@ import {
   GOAL_IDLE_FOLLOW_UP_PROMPT,
   GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_IDLE_INITIAL_TEXT,
+  GOAL_IDLE_CONTINUATION_TEXT,
   GOAL_IDLE_PROMPT,
   GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
   GOAL_SNAPSHOT_RECONCILIATION_TEXT,
@@ -3506,12 +3507,34 @@ class DesktopE2EServer {
       if (this.goalIdleStage === 'continuation') {
         const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
         this.goalIdleStage = 'awaiting_update_output'
+        const stream = streamingTextEvents(responseId, GOAL_IDLE_CONTINUATION_TEXT, 'commentary')
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(
+          createSse([
+            ...stream.start,
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: GOAL_IDLE_CONTINUATION_TEXT,
+              offset: 0,
+            },
+          ])
+        )
         await this.goalIdleContinuationRelease
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...functionCall('wework-e2e-goal-idle-complete', updateGoal.name, updateGoal.arguments),
-          responseCompleted(responseId),
-        ])
+        response.end(
+          createSse([
+            ...stream.finish.slice(0, -1),
+            ...functionCall('wework-e2e-goal-idle-complete', updateGoal.name, updateGoal.arguments),
+            responseCompleted(responseId),
+          ])
+        )
         return
       }
       if (this.goalIdleStage === 'awaiting_update_output') {

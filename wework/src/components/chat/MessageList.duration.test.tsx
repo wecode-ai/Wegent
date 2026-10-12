@@ -14,6 +14,29 @@ import '@/i18n'
 afterEach(() => vi.useRealTimers())
 
 describe('MessageList processing duration', () => {
+  test('keeps a failed turn duration after native history removes transient processing blocks', () => {
+    vi.useFakeTimers()
+    const start = Date.parse('2026-09-17T00:00:00Z')
+    vi.setSystemTime(start + 5000)
+    const turn: RuntimeConversationTurn = {
+      id: 'failed-without-items',
+      status: 'failed',
+      startedAt: start,
+      completedAt: start + 5000,
+      durationMs: 5000,
+      error: 'upstream unavailable',
+      items: [],
+    }
+    const { rerender } = render(
+      <MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />
+    )
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
+    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
+    act(() => vi.advanceTimersByTime(10000))
+    rerender(<MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />)
+    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
+  })
+
   test('shows turn elapsed time when a completed turn has timestamps but no duration', () => {
     const startedAt = Date.parse('2026-09-17T00:00:00Z')
     const turn: RuntimeConversationTurn = {

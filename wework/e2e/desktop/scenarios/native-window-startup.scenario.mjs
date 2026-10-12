@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
+import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
@@ -70,6 +71,7 @@ export async function createDesktopScenario({ resultDir }) {
     },
 
     async verify(control) {
+      await verifyStartupRecovery({ appBinary: process.env.WEWORK_E2E_APP_BIN, resultDir })
       const snapshot = await waitForClosedStartupSplash(control)
       assert.deepEqual(
         snapshot.events.map(event => event.name),

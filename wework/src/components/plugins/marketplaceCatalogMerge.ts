@@ -6,6 +6,7 @@ import { marketplaceItemMarketplaceId } from './pluginDistribution'
 import {
   hasLocalCodexMaterialization,
   linkedCloudPluginId,
+  linkedCloudInstalledPluginId,
   localMaterializedVersion,
   localPluginId,
 } from './installedPluginMerge'
@@ -126,7 +127,13 @@ export function mergeMarketplaceCatalog(
       ...(matchedInstall
         ? {
             installed: true,
-            installedPluginId: item.installedPluginId ?? localPluginId(matchedInstall),
+            installedPluginId:
+              item.installedPluginId ??
+              (cloudInstall
+                ? (linkedCloudInstalledPluginId(cloudInstall) ??
+                  localPluginId(cloudInstall) ??
+                  null)
+                : localPluginId(matchedInstall)),
             installedLocally:
               Boolean(localInstall) ||
               Boolean(item.installedLocally) ||
