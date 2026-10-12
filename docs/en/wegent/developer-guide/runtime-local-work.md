@@ -335,6 +335,7 @@ Runtime tasks can send notifications to IM sessions, but notification state is k
 - A single IM session can subscribe to one runtime task and receive only that task's updates.
 - The executor sends `runtime:event` over the device WebSocket. Backend delivers only `response.completed`, `response.failed`, `response.incomplete`, and `error` terminal updates according to active task bindings, task subscriptions, and global notification settings. Successful terminal events without reply content are not sent.
 - Notification identity uses `deviceId + localTaskId` and excludes `workspacePath`. IM-originated turns do not echo another notification to the same IM, while the legacy `runtime.tasks.updated` receiver remains only for older executors.
+- Backend stores Redis delivery receipts by user, device task, turn and terminal status, and recipient IM session. Successfully delivered notifications are suppressed when events replay after desktop restarts or device reconnects. Concurrent delivery uses a short-lived lock; successful receipts do not expire. Failures release the lock, and partial failures retry only recipients without a successful receipt. Legacy watcher updates use `updatedAt`; events without a turn ID or update timestamp cannot be reliably deduplicated because distinct turns may return identical content.
 
 ## URL
 

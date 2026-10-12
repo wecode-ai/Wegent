@@ -4683,13 +4683,17 @@ def _apply_runtime_cloud_model_options(
     config["native_tool_search"] = _boolean_model_option(
         model_options,
         CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
-        default=native_by_default,
+        default=config.get("native_tool_search", native_by_default),
     )
     config["native_namespace_tools"] = _boolean_model_option(
         model_options,
         CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
-        default=native_by_default,
+        default=config.get("native_namespace_tools", native_by_default),
     )
+    mode = config.get("codex_request_mode")
+    if mode in {"standard", "passthrough"}:
+        config["native_tool_search"] = mode == "passthrough"
+        config["native_namespace_tools"] = mode == "passthrough"
     context_window = _positive_int_model_option(
         model_options,
         CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
@@ -4746,8 +4750,11 @@ def _apply_runtime_model_options(
         _reasoning_from_model_options,
         _service_tier_from_model_options,
     )
+    from app.services.wework_model_config import merge_model_reasoning
 
-    reasoning_config = _reasoning_from_model_options(payload)
+    reasoning_config = merge_model_reasoning(
+        execution_request.model_config, _reasoning_from_model_options(payload)
+    )
     if reasoning_config:
         execution_request.model_config["reasoning"] = reasoning_config
     service_tier = _service_tier_from_model_options(payload)

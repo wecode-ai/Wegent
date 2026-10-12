@@ -19,6 +19,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.group_permission import get_user_groups
+from app.services.wework_model_config import wework_model_config_options
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +322,7 @@ def resolve_llm_proxy_model_config(
     namespace: str,
     resource_user_id: int,
 ) -> dict[str, Any]:
-    """Resolve one authorized Model CRD by its complete resource identity."""
+    """Resolve and validate an authorized Model CRD by its complete identity."""
     if model_type not in SUPPORTED_MODEL_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -351,11 +352,28 @@ def resolve_llm_proxy_model_config(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cloud model not found",
         )
-    return extract_and_process_model_config(
-        model_spec=kind.json.get("spec", {}),
+    model_spec = kind.json.get("spec", {})
+    config = extract_and_process_model_config(
+        model_spec=model_spec,
         user_id=current_user.id,
         user_name=current_user.user_name or "",
     )
+    model_config = model_spec.get("modelConfig")
+    upstream_api_format = None
+    if (
+        isinstance(model_config, dict)
+        and model_config.get("codex_request_mode") == "passthrough"
+    ):
+        upstream_api_format = resolve_llm_proxy_protocol(model_name, config)
+    try:
+        wework_model_config_options(
+            model_config, upstream_api_format=upstream_api_format
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return config
 
 
 def _parse_request_body(body_bytes: bytes) -> tuple[dict[str, Any], str]:
