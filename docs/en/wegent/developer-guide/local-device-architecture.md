@@ -451,6 +451,8 @@ Before launching a Claude Code child process, the executor prepares the task con
 
 The local executor converts Claude stdout NDJSON into Responses API events as soon as output arrives: visible text becomes `response.output_text.delta`, reasoning summaries become `response.reasoning_summary_text.delta`, and the process still sends a final `response.completed` or error event after exit. Backend and frontend code must not assume that `response.created` is followed immediately by a terminal event.
 
+For device callbacks, Backend holds the same per-subtask event lock across queue write-back, text storage, frontend broadcasting, and completed-result collection. Database awaits must not allow completion to overtake the final text delta, which would truncate the text blocks in the completed result.
+
 ---
 
 ## 🔄 Task Execution Flow

@@ -3,6 +3,8 @@ import { logModelLoading } from '@/lib/model-loading-diagnostics'
 
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
 const executorEventReconnectors = new Set<() => void>()
+const executorEventSubscribers = new Map<symbol, (event: DshExecutorEventEnvelope) => void>()
+let disconnectExecutorEventStream: (() => void) | null = null
 const INITIAL_RECONNECT_DELAY_MS = 500
 const MAX_RECONNECT_DELAY_MS = 10_000
 const modelDiagnosticsDeadline = performance.now() + 30_000
@@ -174,6 +176,37 @@ export async function requestDshExecutor<T>(
 }
 
 export function subscribeDshExecutorEvents(
+  listener: (event: DshExecutorEventEnvelope) => void
+): () => void {
+  const subscription = Symbol('executor-event-subscriber')
+  executorEventSubscribers.set(subscription, listener)
+  if (!disconnectExecutorEventStream) {
+    disconnectExecutorEventStream = connectDshExecutorEventStream(event => {
+      for (const [id, subscriber] of [...executorEventSubscribers]) {
+        if (!executorEventSubscribers.has(id)) continue
+        try {
+          subscriber(event)
+        } catch (error) {
+          console.error('[Wework] Executor event listener failed', {
+            event: event.event,
+            sequence: event.sequence,
+            error,
+          })
+        }
+      }
+    })
+  }
+  return () => {
+    executorEventSubscribers.delete(subscription)
+    if (executorEventSubscribers.size === 0) {
+      disconnectExecutorEventStream?.()
+      disconnectExecutorEventStream = null
+    }
+  }
+}
+
+// All subscribers in a renderer share one SSE connection, leaving HTTP slots for RPCs.
+function connectDshExecutorEventStream(
   listener: (event: DshExecutorEventEnvelope) => void
 ): () => void {
   let cursor = 0

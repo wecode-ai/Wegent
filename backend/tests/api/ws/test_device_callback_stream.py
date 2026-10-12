@@ -119,6 +119,55 @@ async def test_device_lifecycle_event_does_not_publish_callback(device_callback_
 
 
 @pytest.mark.asyncio
+async def test_device_terminal_waits_for_delta_runtime_writeback(
+    device_callback_stream, monkeypatch
+):
+    """A slow write-back must not let completion overtake the last text delta."""
+    stream = device_callback_stream
+    delta_started = asyncio.Event()
+    release_delta = asyncio.Event()
+    writebacks = []
+
+    async def writeback(function, *args):
+        if function is device_namespace._execution_runtime_event_sync:
+            event_type = args[3]
+            writebacks.append(event_type)
+            if event_type == "response.output_text.delta":
+                delta_started.set()
+                await release_delta.wait()
+
+    monkeypatch.setattr(device_namespace, "run_sync_in_executor", writeback)
+
+    async def deliver(event_type, data):
+        return await stream.namespace._handle_responses_api_event(
+            "sid-test",
+            event_type,
+            {"task_id": 1, "subtask_id": 2, "message_id": 3, "data": data},
+        )
+
+    delta = asyncio.create_task(
+        deliver("response.output_text.delta", {"delta": "tail"})
+    )
+    await asyncio.wait_for(delta_started.wait(), timeout=1)
+    terminal = asyncio.create_task(
+        deliver("response.completed", {"response": {"output": []}})
+    )
+    try:
+        await asyncio.sleep(0)
+        assert writebacks == ["response.output_text.delta"]
+        assert stream.messages.empty()
+    finally:
+        release_delta.set()
+        results = await asyncio.wait_for(asyncio.gather(delta, terminal), timeout=1)
+
+    assert results == [{"success": True}, {"success": True}]
+    events = [json.loads(stream.messages.get_nowait()["data"]) for _ in range(2)]
+    assert [event["type"] for event in events] == ["chunk", "done"]
+    assert events[0]["content"] == "tail"
+    assert 2 not in stream.namespace._subtask_locks
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("shell_type", ["Chat", "ClaudeCode"])
 async def test_device_follow_up_stream_returns_text_and_completes(
     device_callback_stream, monkeypatch, shell_type, caplog
