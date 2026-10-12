@@ -329,6 +329,7 @@ Wework 不再显示“未映射工作区”。executor 返回的线程必须能�
 - 单个 IM 会话订阅某个运行时任务后，只接收该任务的更新。
 - executor 通过设备 WebSocket 发送 `runtime:event`；Backend 只把 `response.completed`、`response.failed`、`response.incomplete` 和 `error` 终态按任务绑定、任务订阅和全局通知设置投递到 IM。成功终态没有回复正文时不发送。
 - 通知身份使用 `deviceId + localTaskId`，不包含 `workspacePath`；IM 发起的回合不会再向同一 IM 回声通知。旧 executor 的 `runtime.tasks.updated` 接收端仅作为兼容路径保留。
+- Backend 按用户、设备任务、回合与终态、收件 IM 会话保存 Redis 投递回执，已成功发送的通知在桌面重启或设备重连后不会因事件重放再次发送。并发投递使用短期锁，成功回执不设置过期时间；失败会释放锁，部分失败仅重试未成功的收件会话。旧 watcher 使用 `updatedAt` 识别更新；缺少回合 ID 和更新时间的事件无法可靠去重，不能以正文相同为由丢弃新通知。
 
 ## URL
 

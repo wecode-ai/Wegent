@@ -23,6 +23,21 @@ export function supportsResponsesApi(model: UnifiedModel): boolean {
   return getCloudModelUpstreamApiFormat(model) === 'openai-responses'
 }
 
+export function getCloudModelReasoning(model: UnifiedModel): {
+  effort?: string
+  summary?: string
+} {
+  const reasoning = recordValue(model.config?.reasoning)
+  const effort = normalizedString(reasoning?.effort)
+  const summary = normalizedString(reasoning?.summary)
+  return {
+    ...(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(effort)
+      ? { effort }
+      : {}),
+    ...(['auto', 'concise', 'detailed'].includes(summary) ? { summary } : {}),
+  }
+}
+
 /**
  * Resolve the upstream wire protocol a cloud model speaks.
  *

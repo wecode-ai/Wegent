@@ -15,6 +15,7 @@ mod connector_gateway;
 pub mod connector_mcp;
 pub mod emitter;
 pub mod envd;
+mod file_lease;
 pub mod heartbeat;
 pub mod hooks;
 pub mod image_preprocessor;

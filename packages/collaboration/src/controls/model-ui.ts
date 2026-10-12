@@ -2,7 +2,10 @@ import {
   builtinCodexCatalogModel,
   codexCatalogModelIdForUpstream,
 } from "@wegent/chat-core/codex-catalog";
-import { getCloudModelUpstreamApiFormat } from "@wegent/chat-core/model-execution";
+import {
+  getCloudModelReasoning,
+  getCloudModelUpstreamApiFormat,
+} from "@wegent/chat-core/model-execution";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 
 export interface ModelControlOption {
@@ -583,6 +586,8 @@ export function hasCatalogReasoningEfforts(model: UnifiedModel): boolean {
 
 export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
   const ui = getConfigUi(model);
+  const defaultReasoningEffort =
+    ui.defaultReasoningEffort ?? getCloudModelReasoning(model).effort;
   const reasoningEfforts = ui.reasoningEfforts ?? ui.supportedReasoningEfforts;
   const modelLabel =
     typeof ui.modelLabel === "string" && ui.modelLabel.trim()
@@ -604,8 +609,8 @@ export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
     reasoningEffortsDeclared: Array.isArray(reasoningEfforts),
     supportedReasoningEfforts: getSupportedReasoningEfforts(ui),
     defaultReasoningEffort:
-      typeof ui.defaultReasoningEffort === "string"
-        ? normalizeModelOptionValue("reasoning", ui.defaultReasoningEffort)
+      typeof defaultReasoningEffort === "string"
+        ? normalizeModelOptionValue("reasoning", defaultReasoningEffort)
         : undefined,
   };
 }
@@ -617,7 +622,8 @@ export function getControlsForModel(
   const metadata = getModelUiMetadata(model);
   const familyConfig = getFamilyConfig(metadata.family, metadata.familyLabel);
   const familyControls =
-    metadata.reasoningEffortsDeclared &&
+    (metadata.reasoningEffortsDeclared ||
+      metadata.defaultReasoningEffort !== undefined) &&
     !familyConfig.controls.some((control) => control.id === "reasoning")
       ? [OPENAI_RESPONSES_CONTROLS[0], ...familyConfig.controls]
       : familyConfig.controls;
@@ -695,16 +701,21 @@ export function getControlsForModel(
   );
   if (catalogOptions.length === 0) return controls;
   const catalogDefault =
-    catalogReasoning.defaultEffort &&
+    metadata.defaultReasoningEffort &&
     catalogOptions.some(
-      (option) => option.value === catalogReasoning.defaultEffort,
+      (option) => option.value === metadata.defaultReasoningEffort,
     )
-      ? catalogReasoning.defaultEffort
-      : catalogOptions.some(
-            (option) => option.value === reasoningControl.defaultValue,
+      ? metadata.defaultReasoningEffort
+      : catalogReasoning.defaultEffort &&
+          catalogOptions.some(
+            (option) => option.value === catalogReasoning.defaultEffort,
           )
-        ? reasoningControl.defaultValue
-        : catalogOptions[0].value;
+        ? catalogReasoning.defaultEffort
+        : catalogOptions.some(
+              (option) => option.value === reasoningControl.defaultValue,
+            )
+          ? reasoningControl.defaultValue
+          : catalogOptions[0].value;
   const catalogControl = {
     ...reasoningControl,
     defaultValue: catalogDefault,
