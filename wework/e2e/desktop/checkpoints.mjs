@@ -15,6 +15,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
   'collaboration-remote-group-coordinate',
+  'collaboration-remote-group-planning-details',
   'collaboration-human-round-resume',
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',

@@ -45,6 +45,9 @@ from app.services.loop_item_executions.profile import (
     WeworkExecutionProfileError,
     validate_wework_execution_target,
 )
+from app.services.loop_item_executions.runtime_identity import (
+    execution_conversation_task_id,
+)
 from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
 from app.services.workspaces.storage import workspace_id_for_project
 
@@ -556,7 +559,8 @@ def _agent_text_produced(db: Session, execution: LoopItemExecution) -> bool | No
     if execution.runtime_device_id and execution.runtime_task_id:
         identity = (
             ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
-            ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+            ProjectChatMessage.runtime_task_id
+            == execution_conversation_task_id(execution),
         )
     elif execution.agent_id:
         identity = (
@@ -1705,7 +1709,7 @@ class LoopItemExecutionService:
             item_id=item.id,
             values=LoopItemTaskBind(
                 deviceId=execution.runtime_device_id,
-                taskId=execution.runtime_task_id,
+                taskId=execution_conversation_task_id(execution),
                 taskTitle=item.title or "",
                 backendTaskId=execution.backend_task_id or None,
                 modelSelection=(
@@ -2016,6 +2020,7 @@ class LoopItemExecutionService:
         execution = current
         if not execution.runtime_device_id or not execution.runtime_task_id:
             return None
+        conversation_task_id = execution_conversation_task_id(execution)
         import uuid
 
         from app.services.project_chat.service import project_chat_service
@@ -2024,7 +2029,7 @@ class LoopItemExecutionService:
             db.query(ProjectChatMessage)
             .filter(
                 ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
-                ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+                ProjectChatMessage.runtime_task_id == conversation_task_id,
                 ProjectChatMessage.sender_type == "agent",
                 ProjectChatMessage.status.in_(["pending", "streaming"]),
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
@@ -2124,10 +2129,10 @@ class LoopItemExecutionService:
         row.message_type = "agent_chunk"
         row.metadata_json = metadata
         row.runtime_device_id = execution.runtime_device_id
-        row.runtime_task_id = execution.runtime_task_id
+        row.runtime_task_id = conversation_task_id
         row.runtime_activity_key = project_chat_service._runtime_activity_key(
             execution.runtime_device_id,
-            execution.runtime_task_id,
+            conversation_task_id,
             row.trigger_message_id or "",
         )
         row.status = activity_status
@@ -2768,7 +2773,8 @@ class LoopItemExecutionService:
                 db.query(ProjectChatMessage)
                 .filter(
                     ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
-                    ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+                    ProjectChatMessage.runtime_task_id
+                    == execution_conversation_task_id(execution),
                     ProjectChatMessage.sender_type == "agent",
                     ProjectChatMessage.status == "streaming",
                     loop_datetime_is_unset(ProjectChatMessage.deleted_at),
@@ -2908,7 +2914,8 @@ class LoopItemExecutionService:
                 db.query(ProjectChatMessage)
                 .filter(
                     ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
-                    ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+                    ProjectChatMessage.runtime_task_id
+                    == execution_conversation_task_id(execution),
                     ProjectChatMessage.sender_type == "agent",
                     loop_datetime_is_unset(ProjectChatMessage.deleted_at),
                 )
