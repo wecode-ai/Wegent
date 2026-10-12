@@ -48,6 +48,18 @@ original precision. Display and sorting use the same shared function. Stop the
 isolated Electron session after verification and retain runner logs and screenshots
 in the test-results directory without committing temporary artifacts.
 
+### Asynchronous save regressions found in the merge queue
+
+- `task-model-deletion` deletes a model through the real settings UI. When a native
+  notification supersedes the refresh after saving, save must wait for the final
+  snapshot before closing the editor. Select a replacement in the original task
+  and continue its existing conversation.
+- Web `settings-bot.spec.ts` must not submit creation before the real execution
+  engine catalog loads. Save shared base capabilities after loading, inspect Bot
+  and Team requests and persistence, and clean up the created resources.
+- Focused unit tests delay native refresh and execution engine responses to cover
+  these waits. Existing E2E assertions remain unchanged.
+
 ### Execution duration timezone regression
 
 `collaboration-shared-core` runs the real Backend and isolated Electron with

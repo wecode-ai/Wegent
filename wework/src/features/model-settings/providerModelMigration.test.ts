@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   getProviderConfigurationState,
   reloadProviderConfiguration,
+  saveProviderConfiguration,
   type ModelProvider,
 } from './providerModelConfiguration'
 import {
@@ -47,6 +48,50 @@ beforeEach(() => {
 })
 
 describe('Automatic legacy model migration', () => {
+  test('save waits for a superseding native refresh to publish the deleted model', async () => {
+    providers = [
+      {
+        id: 'relay',
+        name: 'Relay',
+        base_url: 'https://relay.example',
+        api_format: 'openai-responses',
+        models: [{ id: 'old', model_id: 'old' }],
+      },
+    ]
+    await reloadProviderConfiguration()
+    const original = invoke.getMockImplementation()!
+    let releaseSaveRefresh!: () => void
+    let releaseNativeRefresh!: () => void
+    const saveRefresh = new Promise<void>(resolve => {
+      releaseSaveRefresh = resolve
+    })
+    const nativeRefresh = new Promise<void>(resolve => {
+      releaseNativeRefresh = resolve
+    })
+    let reads = 0
+    invoke.mockImplementation(async (method, args) => {
+      if (method === 'modelConfiguration.read') {
+        reads += 1
+        await (reads === 1 ? saveRefresh : nativeRefresh)
+      }
+      return original(method, args)
+    })
+    let finished = false
+    const save = saveProviderConfiguration(revision, []).then(() => {
+      finished = true
+    })
+    await vi.waitFor(() => expect(reads).toBe(1))
+    const notification = reloadProviderConfiguration()
+    releaseSaveRefresh()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(finished).toBe(false)
+    expect(getProviderConfigurationState().snapshot?.providers).toHaveLength(1)
+    releaseNativeRefresh()
+    await Promise.all([save, notification])
+    expect(getProviderConfigurationState().snapshot?.providers).toEqual([])
+    expect(listLocalModelConfigs()).toEqual([])
+  })
+
   test('concurrent catalog refreshes share the migration write', async () => {
     saveLocalModelConfig({ id: 'old-a', modelId: 'a', baseUrl: 'https://relay.example/v1' })
     const original = invoke.getMockImplementation()!
