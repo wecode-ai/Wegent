@@ -68,6 +68,26 @@ export interface McpProviderServiceConfig {
   detail_url: string
   enabled: boolean
   url: string
+  auth_mode: 'url' | 'oauth'
+  oauth_supported: boolean
+  oauth_connected: boolean
+  oauth_expires_at: number | null
+  oauth_account: string | null
+}
+
+export interface McpProviderOAuthSession {
+  session_id: string
+  poll_token: string
+  authorize_url: string
+  expires_at: number
+  poll_interval_seconds: number
+}
+
+export interface McpProviderOAuthPoll {
+  status: 'pending' | 'success' | 'declined' | 'failed'
+  error?: string | null
+  account?: string | null
+  expires_at?: number | null
 }
 
 const TOKEN_KEY = 'auth_token'
@@ -310,11 +330,37 @@ export const userApis = {
   async updateMcpProviderService(
     providerId: string,
     serviceId: string,
-    data: Pick<McpProviderServiceConfig, 'enabled' | 'url'>
+    data: Pick<McpProviderServiceConfig, 'enabled' | 'url' | 'auth_mode'>
   ): Promise<McpProviderServiceConfig> {
     return apiClient.put(
       `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}`,
       data
+    )
+  },
+
+  async createMcpProviderOAuthSession(
+    providerId: string,
+    serviceId: string
+  ): Promise<McpProviderOAuthSession> {
+    return apiClient.post(
+      `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}/oauth/sessions`
+    )
+  },
+
+  async pollMcpProviderOAuthSession(
+    providerId: string,
+    serviceId: string,
+    session: Pick<McpProviderOAuthSession, 'session_id' | 'poll_token'>
+  ): Promise<McpProviderOAuthPoll> {
+    const params = new URLSearchParams({ poll_token: session.poll_token })
+    return apiClient.get(
+      `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}/oauth/sessions/${encodeURIComponent(session.session_id)}/poll?${params.toString()}`
+    )
+  },
+
+  async disconnectMcpProviderOAuth(providerId: string, serviceId: string): Promise<void> {
+    return apiClient.delete(
+      `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}/oauth/connection`
     )
   },
 
