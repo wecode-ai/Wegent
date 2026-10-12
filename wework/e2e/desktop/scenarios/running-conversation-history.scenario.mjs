@@ -262,12 +262,15 @@ async function waitForTaskAddress(control, taskId, timeoutMs) {
   while (Date.now() < deadline) {
     const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
     const address = state?.currentRuntimeTask
-    if (
-      address?.taskId === taskId &&
-      state.activeTask?.taskId === taskId &&
-      state.activeTask.threadId
-    ) {
-      return { ...address, threadId: state.activeTask.threadId }
+    if (address?.taskId === taskId) {
+      const result = await requestExecutor(control, 'runtime.tasks.get', { address }, timeoutMs)
+      if (result.task?.threadId) {
+        return {
+          ...address,
+          threadId: result.task.threadId,
+          workspacePath: result.task.workspacePath,
+        }
+      }
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
