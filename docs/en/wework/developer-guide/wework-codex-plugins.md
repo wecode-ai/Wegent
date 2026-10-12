@@ -41,6 +41,8 @@ After startup becomes ready, macOS and Windows asynchronously check `wework-spac
 
 Upgrades copy and validate a staging directory and retain the previous cache until configuration commits. Failure restores the previous cache, and existing disabled state is preserved. Plugin details display update status and offer retry after failure. Manual uninstall stops background synchronization in the current window and waits for admitted synchronization requests to finish; an explicit reinstall resumes synchronization.
 
+Plugin upgrade listeners and other Executor event subscribers in the same window share one event connection, leaving HTTP request slots available for popout loading and main-window restoration. The last unsubscribe closes the connection; reconnects preserve the event cursor and filter duplicate events.
+
 Local uninstall in the Wework personal marketplace uses plugin identity and does not require the original marketplace manifest path to exist. It removes only the matching configuration and cache, preserving chats, authentication, and other plugins. Smart App publishing and export still require passing formal verification. Linked local projects expose a Verify Smart App menu action and require re-verification after file changes.
 
 ### Inventory Consistency and Retries
