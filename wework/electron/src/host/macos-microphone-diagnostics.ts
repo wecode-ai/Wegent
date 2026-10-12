@@ -1,11 +1,13 @@
 import { systemPreferences } from 'electron'
 import { execFile } from 'node:child_process'
-import { basename, dirname, join } from 'node:path'
+import { posix } from 'node:path'
 import type {
   MicrophoneDiagnosticChecks,
   MicrophoneSignatureCheck,
 } from '../../../dsh/electron-host/device-diagnostics.js'
 import { unknownMicrophoneChecks } from './microphone-diagnostics.js'
+
+const { basename, dirname, join } = posix
 
 interface CommandResult {
   stdout: string

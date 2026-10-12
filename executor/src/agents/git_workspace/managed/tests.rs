@@ -209,8 +209,10 @@ fn historical_device_root_requires_explicit_selection_then_reuses_in_place() {
         let fixture = Fixture::new();
         let request = fixture.request("source");
         let old_root = PathBuf::from(env::var_os("WECODE_HOME").unwrap())
-            .join("wegent-executor/workspace/projects");
-        let path = old_root.join("42/demo");
+            .join("wegent-executor")
+            .join("workspace")
+            .join("projects");
+        let path = old_root.join("42").join("demo");
         clone_repo(&request, &request.git_url().unwrap(), &path)
             .await
             .unwrap();
@@ -343,7 +345,7 @@ fn clone_uses_requested_branch_but_new_tasks_and_followups_preserve_current_bran
                 .as_deref(),
             Some("refs/heads/active")
         );
-        fs::write(path.join(".git/HEAD"), "ref: refs/heads/unborn\n").unwrap();
+        fs::write(path.join(".git").join("HEAD"), "ref: refs/heads/unborn\n").unwrap();
         assert!(prepare_request(request).await.is_err());
         assert_eq!(
             fs::read_to_string(path.join("uncommitted")).unwrap(),
@@ -437,12 +439,12 @@ fn task_alias_and_archive_preserve_code_and_task_local_attachments() {
         );
         let task = workspace_root().join("42");
         fs::create_dir_all(task.join("attachments")).unwrap();
-        fs::write(task.join("attachments/input.txt"), "attachment").unwrap();
+        fs::write(task.join("attachments").join("input.txt"), "attachment").unwrap();
         fs::write(repository.join("uncommitted"), "retain").unwrap();
         fs::write(repository.join("README.md"), "tracked edit").unwrap();
         assert_eq!(
             task_repository::resolve_api_path("/workspace/42/attachments/input.txt").unwrap(),
-            task.join("attachments/input.txt")
+            task.join("attachments").join("input.txt")
         );
         let lease = acquire_execution_lease(&request).unwrap();
         assert!(acquire_archive_lease(repository).await.is_err());
@@ -481,7 +483,7 @@ fn task_alias_and_archive_preserve_code_and_task_local_attachments() {
             restored.join(&binding.key).to_str()
         );
         assert_eq!(task_repository::read("42").unwrap().unwrap(), binding);
-        assert!(!restored.join("42/demo").exists());
+        assert!(!restored.join("42").join("demo").exists());
         assert_eq!(
             fs::read_to_string(restored.join(&binding.key).join("uncommitted")).unwrap(),
             "retain"
@@ -491,7 +493,7 @@ fn task_alias_and_archive_preserve_code_and_task_local_attachments() {
             "tracked edit"
         );
         assert_eq!(
-            fs::read_to_string(restored.join("42/attachments/input.txt")).unwrap(),
+            fs::read_to_string(restored.join("42").join("attachments").join("input.txt")).unwrap(),
             "attachment"
         );
         assert!(repository.join("uncommitted").exists());
@@ -550,7 +552,10 @@ fn tag_checkout_can_be_reused_and_invalid_task_binding_is_rejected() {
                 .project_workspace_path,
             first.project_workspace_path
         );
-        let marker = workspace_root().join(".wegent/tasks/42.json");
+        let marker = workspace_root()
+            .join(".wegent")
+            .join("tasks")
+            .join("42.json");
         fs::write(&marker, r#"{"key":"../outside","name":"demo"}"#).unwrap();
         assert!(task_repository::read("42").is_err());
         assert!(task_repository::resolve_api_path("/workspace/42").is_err());

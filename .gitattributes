@@ -3,5 +3,9 @@
 *.cmd text eol=crlf
 *.bat text eol=crlf
 
+# Keep shebang scripts executable and valid under native module transforms.
+*.sh text eol=lf
+*.mjs text eol=lf
+
 # SDK inventories hash source bytes, including when checked out on Windows.
 sdk/** text eol=lf

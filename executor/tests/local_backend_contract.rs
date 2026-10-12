@@ -1038,6 +1038,7 @@ impl RecordingTransport {
         *self.disconnects.lock().unwrap()
     }
 
+    #[cfg(unix)]
     async fn wait_for_emits(&self, count: usize) -> Vec<RecordedCall> {
         timeout(Duration::from_secs(10), async {
             loop {

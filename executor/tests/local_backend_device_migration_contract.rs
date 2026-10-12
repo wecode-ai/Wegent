@@ -18,25 +18,32 @@ use tokio::{
 };
 use wegent_executor::{
     config::device::UpdateConfig,
-    emitter::EventEnvelope,
     local::{
         backend::{
-            CapabilityReportProvider, CapabilitySyncRpcHandler, DeviceExtensionHandler,
-            DeviceExtensionRunner, DeviceUpgradeHandler, EventHandler, HttpPackageProvider,
-            LocalBackendClient, LocalBackendConfig, LocalBackendRunner, LocalBackendTransport,
-            LocalRunningTaskTracker, LocalTaskController, LocalUpgradeService,
-            ManagedLocalTaskRunner,
+            CapabilityReportProvider, CapabilitySyncRpcHandler, DeviceUpgradeHandler, EventHandler,
+            HttpPackageProvider, LocalBackendClient, LocalBackendConfig, LocalBackendRunner,
+            LocalBackendTransport, LocalTaskController, LocalUpgradeService,
         },
         capabilities::{CapabilityPackageProvider, SkillSyncSpec},
         session::{LocalSessionHandler, PtySpawnRequest, SessionPtyManager, TerminalPty},
     },
-    process::{CommandSpec, StreamProcessEngine},
     protocol::{ExecutionRequest, TaskStatus},
-    runner::EventSink,
     server::{RunnerResult, TaskRunner},
     services::updater::UpdateResult,
 };
 
+#[cfg(unix)]
+use wegent_executor::{
+    emitter::EventEnvelope,
+    local::backend::{
+        DeviceExtensionHandler, DeviceExtensionRunner, LocalRunningTaskTracker,
+        ManagedLocalTaskRunner,
+    },
+    process::{CommandSpec, StreamProcessEngine},
+    runner::EventSink,
+};
+
+#[cfg(unix)]
 const TEST_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
 
 #[path = "support/terminal_protocol_compatibility.rs"]
@@ -1268,17 +1275,20 @@ struct RecordingTaskRunner {
     submitted: Arc<Mutex<Vec<ExecutionRequest>>>,
 }
 
+#[cfg(unix)]
 #[derive(Clone, Default)]
 struct RecordingEventSink {
     events: Arc<Mutex<Vec<EventEnvelope>>>,
 }
 
+#[cfg(unix)]
 impl RecordingEventSink {
     fn events(&self) -> Vec<EventEnvelope> {
         self.events.lock().unwrap().clone()
     }
 }
 
+#[cfg(unix)]
 impl EventSink for RecordingEventSink {
     type SendFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 

@@ -180,10 +180,7 @@ fn restore_skill_entry(link: &Path, backup: &SkillBackup) -> Result<(), Capabili
             Ok(())
         }
         SkillBackup::Link(target) => {
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(target, link)?;
-            #[cfg(windows)]
-            std::os::windows::fs::symlink_dir(target, link)?;
+            crate::directory_link::create(target, link)?;
             Ok(())
         }
     }
@@ -627,9 +624,12 @@ mod tests {
             fs::read_to_string(store.codex_skills_dir.join("example/SKILL.md")).unwrap(),
             "v2"
         );
-        assert!(fs::read_link(store.skills_dir.join("example"))
-            .unwrap()
-            .is_relative());
+        assert_eq!(
+            fs::read_link(store.skills_dir.join("example"))
+                .unwrap()
+                .is_relative(),
+            cfg!(unix)
+        );
     }
 
     #[tokio::test]
