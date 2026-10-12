@@ -36,6 +36,8 @@ flowchart LR
 
 ### Wework 打包 App 本地优先通道
 
+本地 Electron 打包与正式发布包复用相同的品牌元数据和更新源配置。本地打包也必须在 Resources 中生成 `app-update.yml`，包含按包名生成的 `updaterCacheDirName`，以便启动时能迁移真实的更新缓存目录；该文件必须在 macOS 签名之前写入。
+
 打包后的 Wework Electron app 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Electron renderer 内，Electron 主进程提供 app 内部命令层。
 
 本地优先模式包含 Electron 主进程、executor sidecar 和 core DSH 三个本机运行时角色：

@@ -90,6 +90,33 @@ When the upstream has not started a response stream and the model service return
 
 If the upstream returns a standard `Retry-After` header, the proxy uses that delay instead, capped at 60 seconds for one wait. Non-429 responses do not activate this policy. After the retry budget is exhausted, the proxy returns the final 429 status and error body to Codex. A stream that has already started is never replayed by this mechanism, preventing duplicate generation or tool execution.
 
+### Codex Direct-Provider Overload Recovery
+
+Native Codex providers can bypass the compatibility proxy. When the app-server
+reports a structured `serverOverloaded` error, the executor waits for the failed
+turn's `turn/completed` event before continuing in the same thread with the same
+model. Recovery is bounded to five attempts, delayed by 5, 10, 20, 40, and 60
+seconds.
+
+Recovery submits an empty native `turn/start` input against the saved history. It
+does not replay the original task, attachments, user-message identity, or already
+merged additional context. Completed tool results remain in history. The task
+stays running and exposes reconnecting status during recovery; cancellation stops
+the wait immediately, and exhausted recovery returns the final failure. Quota,
+authentication, context-window, and subagent errors, as well as errors already
+being retried by Codex, do not trigger this policy.
+
+The executor persists the IDs of failed turns that entered recovery. Native and
+cached transcript reads clear only those turns' terminal error state while
+preserving user messages and tool output, so reopening a task does not restore
+handled failure cards. The final exhausted turn and unrelated failures remain
+unchanged.
+
+The `codex overloaded turn recovery` diagnostic records the thread, retry number,
+limit, and delay in milliseconds. The `model-overload-recovery` desktop checkpoint
+uses real Electron, Codex, and executor processes to verify tool-history retention,
+automatic continuation, no duplicate user messages, and cancellation.
+
 ### Anthropic Empty-Output Recovery
 
 Some Anthropic Messages-compatible services may return a stop reason and positive `output_tokens` in `message_delta` without sending any text, thinking content, or tool call. The executor Codex compatibility proxy converts this incomplete response into a failure event instead of incorrectly emitting a successful completion. Codex can then retry the current model request through its stream-error recovery path, preventing Wework from ending the task without an assistant response.

@@ -1184,11 +1184,14 @@ def test_reject_with_stale_version_has_no_side_effects(
     assert execution.approval_status == "pending"
 
 
-def test_assign_requires_admin_and_visible_bot(
+def test_assign_ignores_member_role_but_respects_bot_visibility(
     test_db: Session, test_user: User
 ) -> None:
+    """Only the creator or Developer+ may assign; the robot must stay visible."""
+
     project = _make_project(test_db, test_user)
     private_bot = _make_bot(test_db, project, test_user, visibility="private")
+    viewer = _make_member(test_db, project, "viewer", BaseRole.Viewer)
     developer = _make_member(test_db, project, "dev", BaseRole.Developer)
     maintainer = _make_member(test_db, project, "admin", BaseRole.Maintainer)
     item = _make_item(test_db, project, test_user)
@@ -1198,7 +1201,7 @@ def test_assign_requires_admin_and_visible_bot(
             test_db,
             project_id=int(project.id),
             item_id=item.id,
-            user_id=developer.id,
+            user_id=viewer.id,
             values=LoopItemAssign(
                 version=item.version,
                 assignee_type="agent",
@@ -1206,18 +1209,67 @@ def test_assign_requires_admin_and_visible_bot(
             ),
         )
 
-    with pytest.raises(HTTPException, match="not visible"):
-        loop_item_service.assign(
-            test_db,
-            project_id=int(project.id),
-            item_id=item.id,
-            user_id=maintainer.id,
-            values=LoopItemAssign(
-                version=item.version,
-                assignee_type="agent",
-                assignee_id=private_bot.id,
-            ),
-        )
+    for assigner in (developer, maintainer):
+        with pytest.raises(HTTPException, match="not visible"):
+            loop_item_service.assign(
+                test_db,
+                project_id=int(project.id),
+                item_id=item.id,
+                user_id=assigner.id,
+                values=LoopItemAssign(
+                    version=item.version,
+                    assignee_type="agent",
+                    assignee_id=private_bot.id,
+                ),
+            )
+
+
+def test_developer_can_assign_issue_to_member(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    developer = _make_member(test_db, project, "dev", BaseRole.Developer)
+    member = _make_member(test_db, project, "assignee", BaseRole.Developer)
+    item = _make_item(test_db, project, test_user)
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=developer.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="user",
+            assignee_id=str(member.id),
+        ),
+    )
+
+    assert updated.assignee_user_id == member.id
+    metadata = updated.metadata_json or {}
+    assert metadata["assignment_history"][-1]["by_user_id"] == developer.id
+
+
+def test_issue_creator_can_assign_regardless_of_role(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    creator = _make_member(test_db, project, "creator", BaseRole.Viewer)
+    item = _make_item(test_db, project, creator)
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=creator.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
+    )
+
+    assert updated.assignee_agent_id == bot.id
 
 
 def test_queue_listing_is_a_projection_of_assigned_tasks(
@@ -1345,3 +1397,210 @@ def test_my_work_limits_results_before_loading_item_details(
     assert [row["id"] for row in rows] == list(reversed(item_ids[5:]))
     with pytest.raises(ValueError, match="limit must be between 1 and 100"):
         loop_item_service.list_my_work(test_db, test_user.id, limit=101)
+
+
+def _make_external_project(db: Session, user: User) -> CloudProject:
+    project = _make_project(db, user)
+    project.metadata_json = {
+        "task_provider": "github",
+        "provider_config": {"repository": "octo/example"},
+    }
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def _external_issue(*labels: str) -> dict[str, object]:
+    return {
+        "number": 7,
+        "title": "External issue",
+        "state": "open",
+        "labels": list(labels),
+    }
+
+
+def _external_response(*, can_view_detail: bool) -> dict[str, object]:
+    return {
+        "can_view_detail": can_view_detail,
+        "can_edit": can_view_detail,
+        "tags": ["bug"],
+        "status": "inbox",
+        "priority": "none",
+        "security_level": "open",
+        "parent_id": None,
+        "description": "",
+        "assignee_user_id": None,
+    }
+
+
+def test_update_requires_content_permission_for_mixed_change(
+    test_db: Session, test_user: User
+) -> None:
+    """A Viewer creator may only reroute the assignee, never the content."""
+
+    project = _make_project(test_db, test_user)
+    creator = _make_member(test_db, project, "creator", BaseRole.Viewer)
+    item = _make_item(test_db, project, creator)
+    original_title = item.title
+
+    with pytest.raises(HTTPException) as excinfo:
+        loop_item_service.update(
+            test_db,
+            item.id,
+            creator.id,
+            LoopItemUpdate(
+                version=item.version,
+                title="renamed",
+                assignee_user_id=test_user.id,
+            ),
+        )
+
+    assert excinfo.value.status_code == 403
+    test_db.refresh(item)
+    assert item.title == original_title
+
+    updated = loop_item_service.update(
+        test_db,
+        item.id,
+        creator.id,
+        LoopItemUpdate(version=item.version, assignee_user_id=test_user.id),
+    )
+
+    assert updated.assignee_user_id == test_user.id
+    test_db.refresh(item)
+    assert item.title == original_title
+
+
+def test_external_assign_rejects_issue_hidden_from_developer(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Assignment must respect issue visibility, not just the assign action."""
+
+    from app.services.loop_items.external_provider import (
+        external_loop_item_provider,
+    )
+
+    project = _make_external_project(test_db, test_user)
+    developer = _make_member(test_db, project, "dev", BaseRole.Developer)
+    issue = _external_issue("wegent:creator:9999:hidden", "wegent:security:related")
+    update_issue = MagicMock()
+    monkeypatch.setattr(
+        external_loop_item_provider, "_get_issue", MagicMock(return_value=issue)
+    )
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_response",
+        MagicMock(return_value=_external_response(can_view_detail=False)),
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+
+    with pytest.raises(HTTPException) as excinfo:
+        external_loop_item_provider.assign(
+            test_db,
+            f"{project.project_key}-7",
+            developer.id,
+            LoopItemAssign(
+                version=1,
+                assignee_type="user",
+                assignee_id=str(test_user.id),
+            ),
+        )
+
+    assert excinfo.value.status_code == 404
+    update_issue.assert_not_called()
+
+
+def test_external_assign_preserves_creator_label(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Provider writes replace every label, so the creator label must survive."""
+
+    from app.services.loop_items.external_provider import (
+        external_loop_item_provider,
+    )
+
+    project = _make_external_project(test_db, test_user)
+    developer = _make_member(test_db, project, "dev", BaseRole.Developer)
+    assignee = _make_member(test_db, project, "assignee", BaseRole.Developer)
+    issue = _external_issue("bug", "wegent:creator:1234:owner")
+    update_issue = MagicMock(return_value=issue)
+    monkeypatch.setattr(
+        external_loop_item_provider, "_get_issue", MagicMock(return_value=issue)
+    )
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_response",
+        MagicMock(return_value=_external_response(can_view_detail=True)),
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+
+    external_loop_item_provider.assign(
+        test_db,
+        f"{project.project_key}-7",
+        developer.id,
+        LoopItemAssign(
+            version=1,
+            assignee_type="user",
+            assignee_id=str(assignee.id),
+            notify_assignee=False,
+        ),
+    )
+
+    labels = update_issue.call_args.args[2]["labels"]
+    assert "wegent:creator:1234:owner" in labels
+    assert f"wegent:assignee:user:{assignee.id}" in labels
+
+
+def test_external_update_lets_creator_reroute_assignee_only(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The creator can save an assignee-only change but not a content change."""
+
+    from app.services.loop_items.external_provider import (
+        external_loop_item_provider,
+    )
+
+    project = _make_external_project(test_db, test_user)
+    creator = _make_member(test_db, project, "creator", BaseRole.Viewer)
+    assignee = _make_member(test_db, project, "assignee", BaseRole.Developer)
+    issue = _external_issue(f"wegent:creator:{creator.id}:creator")
+    update_issue = MagicMock(return_value=issue)
+    monkeypatch.setattr(
+        external_loop_item_provider, "_get_issue", MagicMock(return_value=issue)
+    )
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_response",
+        MagicMock(return_value=_external_response(can_view_detail=True)),
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+    monkeypatch.setattr(
+        external_loop_item_provider, "_apply_assignee_executions", MagicMock()
+    )
+
+    external_loop_item_provider.update(
+        test_db,
+        f"{project.project_key}-7",
+        creator.id,
+        LoopItemUpdate(
+            version=1,
+            assignee_user_id=assignee.id,
+            notify_assignee=False,
+        ),
+    )
+
+    assert update_issue.called
+    assert (
+        f"wegent:assignee:user:{assignee.id}"
+        in update_issue.call_args.args[2]["labels"]
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        external_loop_item_provider.update(
+            test_db,
+            f"{project.project_key}-7",
+            creator.id,
+            LoopItemUpdate(version=1, title="renamed"),
+        )
+
+    assert excinfo.value.status_code == 403

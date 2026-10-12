@@ -129,9 +129,7 @@ pub(crate) fn append_stdio_environment(
     let Some(object) = server.as_object() else {
         return Ok(());
     };
-    if object.get("type").and_then(Value::as_str) != Some("stdio")
-        && !object.contains_key("command")
-    {
+    if !crate::mcp_utils::is_stdio_mcp_server(server) {
         return Ok(());
     }
     let environment = match object.get("env") {
@@ -200,6 +198,18 @@ mod tests {
             resolve_context(&mut config, &BTreeMap::new()).unwrap_err(),
             "Missing MCP execution context"
         );
+    }
+
+    #[test]
+    fn remote_empty_command_does_not_publish_stdio_environment() {
+        let mut config = Map::new();
+        append_stdio_environment(
+            "remote",
+            &json!({"command": "", "url": "https://example.test/mcp", "env": false}),
+            &mut config,
+        )
+        .unwrap();
+        assert!(config.is_empty());
     }
 
     #[test]

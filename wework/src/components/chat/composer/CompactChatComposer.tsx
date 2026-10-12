@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ReactNode,
 } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
@@ -46,6 +47,7 @@ import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
+import { ModelSelector } from './ModelSelector'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import type { CloudProject } from '@/api/deliveries'
 import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
@@ -108,6 +110,7 @@ interface CompactChatComposerProps {
   onSelectModel?: (model: UnifiedModel | null) => boolean | void
   onSelectModelOption?: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
+  modelSelectorOverride?: ReactNode
   isModelSelectionReady?: boolean
   isStreaming?: boolean
   onPause?: () => void
@@ -161,6 +164,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       onSelectModel,
       onSelectModelOption,
       onBlockedModelSelect,
+      modelSelectorOverride,
       isModelSelectionReady = true,
       isStreaming = false,
       onPause,
@@ -321,6 +325,19 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       setCanExpandInput(explicitLineCount > 4 || textarea.scrollHeight > 124)
     }, [explicitLineCount, textareaRef, value])
 
+    const modelSelector = (
+      <ModelSelector
+        models={models}
+        selectedModel={selectedModel ?? null}
+        selectedModelOptions={selectedModelOptions}
+        disabled={disabled || !onSelectModel}
+        onSelectModel={onSelectModel ?? (() => {})}
+        onSelectModelOption={onSelectModelOption ?? (() => {})}
+        onBlockedModelSelect={onBlockedModelSelect}
+        nextTurn={isStreaming && modelChangePending}
+      />
+    )
+
     return (
       <div className="w-full">
         {drawingDialog}
@@ -374,6 +391,12 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
             title={t('workbench.collaboration_mode', '运行模式')}
           />
         ) : null}
+        {!fullscreenInputOpen &&
+          (modelSelectorOverride === undefined ? (
+            <div className="mb-2 flex min-w-0 justify-end">{modelSelector}</div>
+          ) : (
+            modelSelectorOverride
+          ))}
         <form
           className="flex w-full items-end gap-2"
           onSubmit={event => {
@@ -646,6 +669,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
             data-testid="fullscreen-input-sheet"
             className="fixed inset-0 z-modal flex h-dvh flex-col bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
           >
+            <div className="mb-2 flex min-w-0 justify-end">{modelSelector}</div>
             <div className="relative min-h-0 flex-1">
               <button
                 type="button"
