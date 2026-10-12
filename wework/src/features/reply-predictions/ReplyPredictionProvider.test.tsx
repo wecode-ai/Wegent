@@ -48,7 +48,8 @@ function fixture(
   enabled = true,
   copies = 1,
   configuredModel: typeof model | null = model,
-  taskModel = 'task-a'
+  taskModel = 'task-a',
+  modelAvailable = true
 ) {
   let api = apis.get(generateText)
   if (!api) {
@@ -71,7 +72,7 @@ function fixture(
           {
             services: { textGenerationApi: api },
             projectChat: {
-              models: ['predictor', 'task-a', 'task-b'].map(name => ({
+              models: (modelAvailable ? ['predictor', 'task-a', 'task-b'] : []).map(name => ({
                 name,
                 type: 'runtime',
                 isActive: true,
@@ -93,6 +94,38 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  it('does not let an unavailable pane cancel another pane using the same model', async () => {
+    let signal: AbortSignal | undefined
+    let resolve!: (text: string) => void
+    const generate = vi.fn(async (data: { signal?: AbortSignal }) => {
+      signal = data.signal
+      return new Promise<string>(done => {
+        resolve = done
+      })
+    })
+    const { rerender } = render(<>{fixture(generate, source)}</>)
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    rerender(
+      <>
+        {fixture(generate, source)}
+        {fixture(
+          generate,
+          { ...source, scope: 'unavailable-pane' },
+          false,
+          true,
+          1,
+          model,
+          'task-a',
+          false
+        )}
+      </>
+    )
+    expect(signal?.aborted).toBe(false)
+    resolve('{"suggestion":"请继续"}')
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('empty')).toBeVisible()
+  })
   it('keeps an independent prediction model when the task model changes', async () => {
     const generate = vi.fn<(data: { signal?: AbortSignal }) => Promise<string>>(
       async () => '{"suggestion":"请继续"}'

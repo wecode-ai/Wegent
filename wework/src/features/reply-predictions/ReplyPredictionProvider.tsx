@@ -66,13 +66,6 @@ export function ReplyPredictionProvider({
       options: execution.modelOptions,
     }
   }, [enabled, independentModel, selectedModel, selectedOptions])
-  const api = configured ? workbench?.services.textGenerationApi : undefined
-  const configuredKey = JSON.stringify(configured)
-  const service = useMemo(
-    () => (api ? replyPredictionService(api, configuredKey) : null),
-    [api, configuredKey]
-  )
-  useSyncExternalStore(service?.subscribe ?? noSubscription, service?.getSnapshot ?? emptySnapshot)
   const model =
     configured &&
     workbench?.projectChat.models.some(
@@ -84,6 +77,12 @@ export function ReplyPredictionProvider({
       ? configured
       : null
   const modelKey = JSON.stringify(model)
+  const api = model ? workbench?.services.textGenerationApi : undefined
+  const service = useMemo(
+    () => (api ? replyPredictionService(api, modelKey) : null),
+    [api, modelKey]
+  )
+  useSyncExternalStore(service?.subscribe ?? noSubscription, service?.getSnapshot ?? emptySnapshot)
   const runtimeRevision = `${lifecycle?.turn.id ?? ''}:${lifecycle?.task?.updatedAt ?? ''}`
   const runtimeBusy = lifecycle?.derived.isBusy || Boolean(lifecycle?.interactionStatus)
   const deviceId = address?.deviceId

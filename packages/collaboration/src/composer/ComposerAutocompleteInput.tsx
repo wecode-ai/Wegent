@@ -900,6 +900,9 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     services: transferServices,
   })
 
+  const predictionHidden =
+    hasDraft || disabled || isStreaming || showSkillMenu || showSlashMenu || modelMenuOpen
+
   return (
     <div className="relative min-w-0 flex-1 w-full">
       <ComposerErrorBanner error={transferError || actionError} />
@@ -942,7 +945,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
           }
         }}
         disabled={disabled}
-        prediction={!isStreaming && !showSkillMenu && !showSlashMenu ? prediction : null}
+        prediction={predictionHidden ? null : prediction}
         placeholder={placeholder}
         testId={testId}
         rows={rows}
@@ -954,7 +957,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       />
       <ComposerPredictionStatus
         target={predictionStatusTarget}
-        hidden={hasDraft || disabled || isStreaming || showSkillMenu || showSlashMenu}
+        hidden={predictionHidden}
         testId={testId}
         onAccept={text => {
           editorRef.current?.setValue(text)

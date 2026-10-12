@@ -9,6 +9,7 @@ const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const INPUT = `${ACTIVE} [data-testid="chat-message-input"]`
 const GHOST = `${ACTIVE} [data-testid="chat-message-input-prediction"]`
 const PENDING = `${ACTIVE} [data-testid="chat-message-input-prediction-pending"]`
+const ACCEPT = `${ACTIVE} [data-testid="chat-message-input-prediction-accept"]`
 const INITIAL = '请分析迁移方案，保留运行中的任务，不要重启服务。'
 const ANSWER = '可以先迁移当前进程，再配置后续任务的启动入口。迁移不会中断正在运行的任务。'
 const SUGGESTION = '请按这个方案迁移，并配置后续启动入口，不要中断当前任务。'
@@ -122,6 +123,18 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       assert.equal(await control.command('getValue', INPUT), '')
       assert.equal(normalRequests, 1)
       await capture('reply-04-ghost-suggestion.png')
+      await control.command('fill', INPUT, { value: '/model' })
+      await control.command('waitFor', `${ACTIVE} [data-testid="slash-command-option-model"]`)
+      await control.command('click', `${ACTIVE} [data-testid="slash-command-option-model"]`)
+      await control.command('waitFor', `${ACTIVE} [data-testid="slash-model-menu"]`)
+      assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
+      assert.equal(Number(await control.command('getElementCount', ACCEPT)), 0)
+      assert.equal(await control.command('getValue', INPUT), '')
+      await capture('reply-04c-model-menu-suppresses-suggestion.png')
+      await control.command('press', `${ACTIVE} [data-testid="slash-model-search-input"]`, {
+        key: 'Escape',
+      })
+      await control.command('waitFor', GHOST, { text: SUGGESTION })
       await control.command('fill', INPUT, { value: '我自己写的草稿' })
       assert.equal(Number(await control.command('getElementCount', GHOST)), 0)
       assert.equal(await control.command('getValue', INPUT), '我自己写的草稿')

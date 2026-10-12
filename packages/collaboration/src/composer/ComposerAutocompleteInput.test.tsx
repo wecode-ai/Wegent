@@ -308,6 +308,22 @@ describe('shared autocomplete controller in a browser host', () => {
     expect(onSelectModel).toHaveBeenCalledWith(model)
     expect(input.current!.getValue()).toBe('')
   })
+  it('hides suggestions and does not accept them while the slash model menu is open', async () => {
+    const accepted = vi.fn()
+    await act(async () => root.render(
+      <ComposerPredictionContext.Provider value={{ text: '请继续', acceptLabel: '接受建议', onAccept: accepted }}>
+        <Harness models={[{ name: 'model-a', displayName: 'Model A', type: 'user' }]} onSelectModel={vi.fn()} />
+      </ComposerPredictionContext.Provider>
+    ))
+    await type('/model')
+    await click('slash-command-option-model')
+    expect(container.querySelector('[data-testid="editor-prediction-accept"]')).toBeNull()
+    await act(async () => {
+      element('editor').dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    })
+    expect(accepted).not.toHaveBeenCalled()
+    expect(input.current!.getValue()).toBe('')
+  })
   it('does not delete the trigger when keyboard selection reaches an unavailable file picker', async () => {
     await mount()
     await type('@')
