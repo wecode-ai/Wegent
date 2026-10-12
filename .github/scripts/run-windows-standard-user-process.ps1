@@ -67,6 +67,7 @@ try {
   $env:LOCALAPPDATA = Join-Path $profileRoot "AppData/Local"
   $env:PNPM_HOME = Join-Path $env:LOCALAPPDATA "pnpm"
   $env:npm_config_store_dir = Join-Path $env:PNPM_HOME "store"
+  $env:PNPM_CONFIG_STORE_DIR = $env:npm_config_store_dir
   $env:TEMP = Join-Path $profileRoot "AppData/Local/Temp"
   $env:TMP = $env:TEMP
   New-Item -ItemType Directory -Path $env:APPDATA, $env:LOCALAPPDATA, $env:TEMP -Force |
