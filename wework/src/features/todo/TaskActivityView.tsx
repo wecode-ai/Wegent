@@ -26,6 +26,8 @@ import {
   issueThreadActivityTimestamp,
   formatIssueTimestamp,
   IssueStatusHistoryList,
+  humanDispatchAssignment,
+  type HumanDispatchAssignment,
   type SharedIssueStatusHistoryEntry,
   type IssueActivityThreadModel,
 } from '@wegent/collaboration'
@@ -113,6 +115,18 @@ interface TaskActivityViewProps {
   focusedCommentId?: string | null
   /** Changes for each navigation request, including reopening the same comment. */
   focusedCommentRequestKey?: string | null
+  /**
+   * Opens a task for the member a manager assigned this Issue to. A reply on a
+   * thread that has no execution to continue posts its comment and then asks
+   * the host to start that work item.
+   */
+  onStartHumanTaskFromReply?: (input: StartHumanTaskFromReplyInput) => void | Promise<void>
+}
+
+export interface StartHumanTaskFromReplyInput {
+  issueId: string
+  dispatch: HumanDispatchAssignment
+  replyText: string
 }
 
 interface ActivityExecutionDetail {
@@ -216,6 +230,7 @@ export function TaskActivityView({
   agents = [],
   focusedCommentId = null,
   focusedCommentRequestKey = null,
+  onStartHumanTaskFromReply,
 }: TaskActivityViewProps) {
   const { t, i18n } = useTranslation('common')
   const activityTranslate = createCollaborationTranslator(
@@ -395,6 +410,16 @@ export function TaskActivityView({
       ?.querySelector<HTMLElement>('[contenteditable="true"], textarea')
       ?.focus()
   }, [replyTarget])
+  // A reply on a thread with no execution to continue only lands as a comment.
+  // When a manager assigned this member a human work item, the reply also opens
+  // that work item's task composer.
+  const replyHumanDispatch = useMemo(
+    () =>
+      replyTarget && onStartHumanTaskFromReply && !cardSessionAddress(replyTarget)
+        ? humanDispatchAssignment(messages, chatCurrentUserId ?? currentUserId)
+        : null,
+    [chatCurrentUserId, currentUserId, messages, onStartHumanTaskFromReply, replyTarget]
+  )
   // The code workspace the assigned robot is bound to. Only a rebound backend
   // project can be selected here; a legacy record that still needs rebinding
   // and a device-owned workspace carry no selectable project.
@@ -890,9 +915,21 @@ export function TaskActivityView({
       setError(result.error ?? t('workbench.project_chat_send_failed'))
       return
     }
+    const dispatch = replyHumanDispatch
     setReplyTarget(null)
     setNewCommentDraft('')
     attachmentSelection.resetAttachments()
+    if (dispatch && onStartHumanTaskFromReply) {
+      try {
+        await onStartHumanTaskFromReply({
+          issueId: String(task.id),
+          dispatch,
+          replyText: text,
+        })
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed'))
+      }
+    }
   }
 
   const renderActivityMessage = (
@@ -1000,22 +1037,34 @@ export function TaskActivityView({
                 : {})}
             >
               {replyTarget ? (
-                <div className="mx-3 flex min-h-8 items-center gap-2 border-b border-border/60 px-1 text-xs text-text-muted">
-                  <span className="min-w-0 flex-1 truncate">
-                    {t('workbench.task_activity_replying_to', {
-                      name: replyTarget.root.sender.name,
-                    })}
-                    {replyTarget.root.content ? ` · ${replyTarget.root.content}` : ''}
-                  </span>
-                  <button
-                    type="button"
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary"
-                    data-testid="issue-reply-cancel"
-                    aria-label={t('workbench.task_activity_cancel_reply')}
-                    onClick={() => setReplyTarget(null)}
-                  >
-                    ×
-                  </button>
+                <div className="mx-3 border-b border-border/60 px-1 text-xs text-text-muted">
+                  <div className="flex min-h-8 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate">
+                      {t('workbench.task_activity_replying_to', {
+                        name: replyTarget.root.sender.name,
+                      })}
+                      {replyTarget.root.content ? ` · ${replyTarget.root.content}` : ''}
+                    </span>
+                    <button
+                      type="button"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary"
+                      data-testid="issue-reply-cancel"
+                      aria-label={t('workbench.task_activity_cancel_reply')}
+                      onClick={() => setReplyTarget(null)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  {replyHumanDispatch ? (
+                    <p
+                      className="min-h-6 pb-1.5 leading-5"
+                      data-testid="issue-reply-starts-task-hint"
+                    >
+                      {t('workbench.task_activity_reply_starts_task', {
+                        title: replyHumanDispatch.taskTitle,
+                      })}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
               <TaskCommentComposer

@@ -36,6 +36,7 @@ export * from "./Tooltip";
 export * from "./executionStatus";
 export * from "./activityMessageUtils";
 export * from "./managerActivity";
+export * from "./humanDispatchAssignment";
 
 export * from "./IssueMainCommentComposer";
 export * from "./useIssueMentionCandidates";

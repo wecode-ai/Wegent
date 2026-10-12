@@ -29,6 +29,7 @@ import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { normalizeTaskDescription } from './taskDescription'
 import { AITableTaskFields } from './AITableTaskFields'
 import { TaskActivityView } from './TaskActivityView'
+import type { StartHumanTaskFromReplyInput } from './TaskActivityView'
 import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import { HumanIssueWorkPanel } from './HumanIssueWorkPanel'
@@ -113,6 +114,8 @@ export type TodoEditorProps = TodoEditorApiProps & {
   onCreateTask?: () => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
+  /** Starts the work item a manager assigned this member, from a reply. */
+  onStartHumanTaskFromReply?: (input: StartHumanTaskFromReplyInput) => void | Promise<void>
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
 function canCreatePersonalTask(props: TodoEditorProps): boolean {
@@ -222,6 +225,7 @@ export function TodoEditor(props: TodoEditorProps) {
           projectMembers={context.members as import('@/api/deliveries').CloudProjectMember[]}
           issueTimeline={props.presentation === 'workspace-panel'}
           onOpenTask={props.onOpenTaskConversation}
+          onStartHumanTaskFromReply={props.onStartHumanTaskFromReply}
           onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
           members={context.members}
           agents={context.agents}

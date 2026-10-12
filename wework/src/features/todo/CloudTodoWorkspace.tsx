@@ -104,8 +104,9 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
 import {
   issueDispatchPersonalTaskInput,
-  type IssueDispatchPersonalTaskAction,
+  type IssueTaskDispatchInput,
 } from '@/features/notifications/NotificationTaskSourceContext'
+import { humanTaskDispatchInput } from './humanTaskDispatch'
 import type { DeliveryApi, WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
@@ -438,7 +439,7 @@ type TaskComposerRequest = {
   backgroundAfterSend: boolean
   taskRequest?: RuntimeTaskCreateRequest
   inheritFromTask?: RuntimeTaskAddress | null
-  dispatch?: IssueDispatchPersonalTaskAction
+  dispatch?: IssueTaskDispatchInput
 }
 
 type AssigneeQuickAddRequest = {
@@ -2404,6 +2405,67 @@ export function CloudTodoWorkspace({
     })
   }
 
+  /**
+   * Opens a task for a manager assignment: the member's runtime when the task
+   * already exists, otherwise a composer prefilled with the assigned work item.
+   * A notification passes its idempotency key so one dispatch opens one composer.
+   */
+  async function openIssueAssignmentTask(
+    project: LocatedCloudProject,
+    issue: LocatedLoopItem,
+    assignment: IssueTaskDispatchInput,
+    options: { backgroundAfterSend: boolean; idempotencyKey?: string }
+  ) {
+    if (!cloudWorkspaceApi) throw new Error('当前工作台无法打开个人任务')
+    const existingBindings = await cloudWorkspaceApi.taskBindings.list(issue.id, String(project.id))
+    const existing = existingBindings.find(
+      binding => binding.humanAssignmentId === assignment.humanAssignmentId
+    )
+    if (existing) {
+      if (!onOpenRuntimeTask) throw new Error('当前工作台无法打开个人任务')
+      await onOpenRuntimeTask({
+        deviceId: existing.deviceId,
+        taskId: existing.taskId,
+        ...(existing.modelSelection
+          ? { runtimeHandle: { modelSelection: existing.modelSelection } }
+          : {}),
+      })
+      return
+    }
+    if (options.idempotencyKey) {
+      if (acceptedDispatchTaskActions.current.has(options.idempotencyKey)) return
+      acceptedDispatchTaskActions.current.add(options.idempotencyKey)
+    }
+    const initialInput = issueDispatchPersonalTaskInput(assignment)
+    selectProject(project)
+    setProjectView('board')
+    setSelectedTaskBinding(null)
+    setSelectedItem(issue)
+    setBackgroundTaskItemId(options.backgroundAfterSend ? issue.id : null)
+    openTaskComposer({
+      workItemId: issue.id,
+      initialInput,
+      backgroundAfterSend: options.backgroundAfterSend,
+      dispatch: assignment,
+      taskRequest: {
+        runtime: 'codex',
+        message: initialInput,
+        title: assignment.taskTitle,
+        cloudProjectId: String(project.id),
+        origin: {
+          type: 'issue_dispatch',
+          cloudProjectId: String(project.id),
+          loopItemId: String(issue.id),
+          projectStore: project.project_store,
+          dispatchId: assignment.dispatchId,
+          roundId: assignment.roundId,
+          assignmentId: assignment.assignmentId,
+          humanAssignmentId: assignment.humanAssignmentId,
+        },
+      },
+    })
+  }
+
   useIssueDispatchNotificationActionRegistration(
     notificationActionRegistrationId,
     workspaceActive,
@@ -2418,67 +2480,17 @@ export function CloudTodoWorkspace({
       if (!project) {
         throw new Error('未找到任务所属项目')
       }
-
-      const existingBindings = await cloudWorkspaceApi.taskBindings.list(
-        action.itemId,
-        action.projectId
-      )
-      const existing = existingBindings.find(
-        binding => binding.humanAssignmentId === action.humanAssignmentId
-      )
-      if (existing) {
-        acceptedDispatchTaskActions.current.add(action.idempotencyKey)
-        await onOpenRuntimeTask({
-          deviceId: existing.deviceId,
-          taskId: existing.taskId,
-          ...(existing.modelSelection
-            ? { runtimeHandle: { modelSelection: existing.modelSelection } }
-            : {}),
-        })
-        return
-      }
-      if (acceptedDispatchTaskActions.current.has(action.idempotencyKey)) return
-
-      acceptedDispatchTaskActions.current.add(action.idempotencyKey)
-      try {
-        const issue = await cloudWorkspace.commands.getIssue(action.itemId)
-        if (!issue) throw new Error(cloudWorkspaceMessages.loadFailed)
-        const item = {
+      const issue = await cloudWorkspace.commands.getIssue(action.itemId)
+      if (!issue) throw new Error(cloudWorkspaceMessages.loadFailed)
+      await openIssueAssignmentTask(
+        project,
+        {
           ...toCloudLoopItem(issue),
           project_store: project.project_store,
-        }
-        const initialInput = issueDispatchPersonalTaskInput(action)
-        selectProject(project)
-        setProjectView('board')
-        setSelectedTaskBinding(null)
-        setSelectedItem(item)
-        setBackgroundTaskItemId(item.id)
-        openTaskComposer({
-          workItemId: item.id,
-          initialInput,
-          backgroundAfterSend: true,
-          dispatch: action,
-          taskRequest: {
-            runtime: 'codex',
-            message: initialInput,
-            title: action.taskTitle,
-            cloudProjectId: String(project.id),
-            origin: {
-              type: 'issue_dispatch',
-              cloudProjectId: String(project.id),
-              loopItemId: String(item.id),
-              projectStore: project.project_store,
-              dispatchId: action.dispatchId,
-              roundId: action.roundId,
-              assignmentId: action.assignmentId,
-              humanAssignmentId: action.humanAssignmentId,
-            },
-          },
-        })
-      } catch (cause) {
-        acceptedDispatchTaskActions.current.delete(action.idempotencyKey)
-        throw cause
-      }
+        },
+        action,
+        { backgroundAfterSend: true, idempotencyKey: action.idempotencyKey }
+      )
     }
   )
 
@@ -5464,6 +5476,22 @@ export function CloudTodoWorkspace({
                     })
                   }}
                   onClose={closeIssuePanelStack}
+                  onStartHumanTaskFromReply={({ issueId, dispatch, replyText }) => {
+                    if (
+                      !selectedItem ||
+                      !selectedItemProject ||
+                      selectedItemProject.location !== 'cloud' ||
+                      String(selectedItem.id) !== String(issueId)
+                    ) {
+                      return
+                    }
+                    return openIssueAssignmentTask(
+                      selectedItemProject,
+                      selectedItem,
+                      humanTaskDispatchInput(dispatch, replyText),
+                      { backgroundAfterSend: false }
+                    )
+                  }}
                   onOpenTaskConversation={task => {
                     openTaskBinding({
                       ...task,

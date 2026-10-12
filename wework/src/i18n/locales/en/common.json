@@ -432,6 +432,7 @@
     "task_activity_reply_action": "Reply and continue this task",
     "task_activity_replying_to": "Replying to {{name}} · Continues the existing execution",
     "task_activity_cancel_reply": "Cancel reply",
+    "task_activity_reply_starts_task": "A task panel will open after you reply to start “{{title}}”",
     "task_activity_ready_for_review": "Result submitted, waiting for review",
     "task_activity_view_execution": "View execution details",
     "task_activity_open_task": "View task details",

@@ -1584,6 +1584,123 @@ describe('TaskActivityView', () => {
     expect(screen.queryByTestId('issue-reply-composer')).toBeNull()
   })
 
+  function humanAssignmentMessages(humanUserId: number): ProjectChatMessage[] {
+    const comment: ProjectChatMessage = {
+      ...userMessage,
+      sequenceNumber: 1,
+      messageId: 'message-1',
+      rootMessageId: null,
+      content: '看看 CPU',
+      metadata: {},
+    }
+    const managerAssignment: ProjectChatMessage = {
+      ...userMessage,
+      sequenceNumber: 2,
+      messageId: 'manager-assignment',
+      rootMessageId: null,
+      type: 'text',
+      content: '',
+      sender: { type: 'agent', id: 'manager-1', name: '负责人' },
+      metadata: {
+        dispatch_role: 'manager',
+        activity_type: 'manager_assignment',
+        dispatch_id: 'dispatch-1',
+        coordination_round_id: 'round-1',
+        dispatch_assignments: [
+          {
+            assignee_type: 'human',
+            human_assignment_id: 'human-1',
+            human_user_id: humanUserId,
+            assignment_id: 'assignment-1',
+            task_title: '核对发布清单',
+            workflow_stage_id: 'review',
+          },
+        ],
+      },
+      status: 'completed',
+    }
+    return [comment, managerAssignment]
+  }
+
+  function humanAssignmentClient(messages: ProjectChatMessage[]): ProjectChatClient {
+    return {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages, latestSequence: messages.length, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => messages[0]),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+  }
+
+  it('starts the assigned work item when replying to a thread with no execution', async () => {
+    const user = userEvent.setup()
+    const onStartHumanTaskFromReply = vi.fn()
+
+    render(
+      <TaskActivityView
+        client={humanAssignmentClient(humanAssignmentMessages(1))}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: '干啥呢', status: 'in_progress', version: 1 } as never}
+        issueTimeline
+        linear
+        onStartHumanTaskFromReply={onStartHumanTaskFromReply}
+      />
+    )
+
+    const card = await screen.findByTestId('cloud-task-activity-card-message-1')
+    await user.click(within(card).getByTestId('cloud-task-activity-reply-toggle-message-1'))
+    expect(screen.getByTestId('issue-reply-starts-task-hint')).toHaveTextContent('核对发布清单')
+
+    await user.type(screen.getByTestId('cloud-task-activity-composer'), '补充 CPU 占用')
+    await user.click(sendButtonFor('cloud-task-activity-composer'))
+
+    await waitFor(() =>
+      expect(onStartHumanTaskFromReply).toHaveBeenCalledWith({
+        issueId: 'WEG-1',
+        dispatch: {
+          humanAssignmentId: 'human-1',
+          dispatchId: 'dispatch-1',
+          roundId: 'round-1',
+          assignmentId: 'assignment-1',
+          taskTitle: '核对发布清单',
+          workflowStageId: 'review',
+        },
+        replyText: '补充 CPU 占用',
+      })
+    )
+  })
+
+  it('keeps a reply on an unassigned thread as a plain comment', async () => {
+    const user = userEvent.setup()
+    const onStartHumanTaskFromReply = vi.fn()
+
+    render(
+      <TaskActivityView
+        client={humanAssignmentClient(humanAssignmentMessages(7))}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: '干啥呢', status: 'in_progress', version: 1 } as never}
+        issueTimeline
+        linear
+        onStartHumanTaskFromReply={onStartHumanTaskFromReply}
+      />
+    )
+
+    const card = await screen.findByTestId('cloud-task-activity-card-message-1')
+    await user.click(within(card).getByTestId('cloud-task-activity-reply-toggle-message-1'))
+    expect(screen.queryByTestId('issue-reply-starts-task-hint')).not.toBeInTheDocument()
+
+    await user.type(screen.getByTestId('cloud-task-activity-composer'), '补充 CPU 占用')
+    await user.click(sendButtonFor('cloud-task-activity-composer'))
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('issue-reply-composer')).not.toBeInTheDocument()
+    )
+    expect(onStartHumanTaskFromReply).not.toHaveBeenCalled()
+  })
+
   it('allows replies to queue while the comment execution is running', async () => {
     const runningComment = {
       ...agentMessage,

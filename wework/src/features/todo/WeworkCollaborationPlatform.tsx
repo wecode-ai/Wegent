@@ -53,8 +53,9 @@ import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAg
 import { useIssueDispatchNotificationActionRegistration } from '@/features/notifications/useIssueDispatchNotificationActionRegistration'
 import {
   issueDispatchPersonalTaskInput,
-  type IssueDispatchPersonalTaskAction,
+  type IssueTaskDispatchInput,
 } from '@/features/notifications/NotificationTaskSourceContext'
+import { humanTaskDispatchInput } from './humanTaskDispatch'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type {
   ArchiveRuntimeConversationsResult,
@@ -379,7 +380,7 @@ export function WeworkSharedProject({
     issue: CollaborationIssue
     conversationKey: string
     taskRequest?: RuntimeTaskCreateRequest | null
-    dispatch?: IssueDispatchPersonalTaskAction
+    dispatch?: IssueTaskDispatchInput
     humanWorkBinding?: NonNullable<CollaborationIssue['human_work']>['ai_task_binding']
   } | null>(null)
   const latestProjectRef = useRef(project)
@@ -695,7 +696,7 @@ export function WeworkSharedProject({
   }, [detailServices?.projectChatClient, project.id])
 
   const openNewTaskConversation = useCallback(
-    async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
+    async (issue: CollaborationIssue, dispatch?: IssueTaskDispatchInput) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
       const humanWorkBinding = issue.human_work?.can_submit
         ? issue.human_work.ai_task_binding
@@ -773,19 +774,21 @@ export function WeworkSharedProject({
     [project.id, project.project_store, projectHost, runtimeWork, scopedApi.taskBindings]
   )
 
-  useIssueDispatchNotificationActionRegistration(
-    `collaboration-project:${project.id}`,
-    true,
-    async action => {
-      if (String(action.projectId) !== String(project.id)) {
-        throw new Error('请先打开任务所属项目')
-      }
-      const issue = await scopedApi.issues.get(action.itemId)
-      const existing = (await scopedApi.taskBindings?.list(action.itemId, action.projectId))?.find(
-        binding => binding.humanAssignmentId === action.humanAssignmentId
+  /**
+   * Opens a task for a manager assignment: the member's own runtime when they
+   * already started it, otherwise a composer prefilled with the work item. A
+   * notification passes its idempotency key so one dispatch opens one composer.
+   */
+  const openAssignmentTask = useCallback(
+    async (
+      issue: CollaborationIssue,
+      assignment: IssueTaskDispatchInput,
+      idempotencyKey?: string
+    ) => {
+      const existing = (await scopedApi.taskBindings?.list(issue.id, String(project.id)))?.find(
+        binding => binding.humanAssignmentId === assignment.humanAssignmentId
       )
       if (existing) {
-        acceptedDispatchTaskActions.current.add(action.idempotencyKey)
         if (runtimePort) {
           setTaskComposer({
             issue,
@@ -802,14 +805,37 @@ export function WeworkSharedProject({
         })
         return
       }
-      if (acceptedDispatchTaskActions.current.has(action.idempotencyKey)) return
-      acceptedDispatchTaskActions.current.add(action.idempotencyKey)
+      if (idempotencyKey) {
+        if (acceptedDispatchTaskActions.current.has(idempotencyKey)) return
+        acceptedDispatchTaskActions.current.add(idempotencyKey)
+      }
       try {
-        await openNewTaskConversation(issue, action)
+        await openNewTaskConversation(issue, assignment)
       } catch (cause) {
-        acceptedDispatchTaskActions.current.delete(action.idempotencyKey)
+        if (idempotencyKey) acceptedDispatchTaskActions.current.delete(idempotencyKey)
         throw cause
       }
+    },
+    [
+      onOpenRuntimeTask,
+      openNewTaskConversation,
+      project.id,
+      projectHost,
+      runtimePort,
+      runtimeWork,
+      scopedApi.taskBindings,
+    ]
+  )
+
+  useIssueDispatchNotificationActionRegistration(
+    `collaboration-project:${project.id}`,
+    true,
+    async action => {
+      if (String(action.projectId) !== String(project.id)) {
+        throw new Error('请先打开任务所属项目')
+      }
+      const issue = await scopedApi.issues.get(action.itemId)
+      await openAssignmentTask(issue, action, action.idempotencyKey)
     }
   )
 
@@ -1019,6 +1045,11 @@ export function WeworkSharedProject({
                   onCreateTask={onCreateTask}
                   onDelete={onDelete}
                   deleteLabel={createCollaborationTranslator(locale)('todo.archive_issue')}
+                  onStartHumanTaskFromReply={({ issueId, dispatch, replyText }) =>
+                    String(issueId) === String(issue.id)
+                      ? openAssignmentTask(issue, humanTaskDispatchInput(dispatch, replyText))
+                      : undefined
+                  }
                   onOpenTaskConversation={
                     runtimePort
                       ? task =>

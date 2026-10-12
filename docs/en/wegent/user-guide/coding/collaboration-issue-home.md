@@ -34,6 +34,12 @@ When a native cloud project Issue is assigned directly to one member, they can o
 
 These actions record status history and project activity and notify the relevant members. Reassignment clears the previous review result. Use these actions to advance the status of human-owned work. **Human processing** in Project settings explains the workflow, reviewer, and AI draft behavior; it does not introduce another set of rules to fill in.
 
+## Start a collaboration-group task from the activity timeline
+
+After a collaboration group assigns a work item to a human member, that member can start the work straight from the Issue's **Activity** timeline: select **Reply and continue this task** on a thread that has no running execution. The reply is still posted as a comment, and then the personal task panel opens with the assigned work item as its title and the Issue reference, the work item title, and your reply already in the input. The panel does not start anything for you: confirm the device, model, and workspace, then press Enter to run. If you already started a task for that assigned work item, Wework opens that task instead.
+
+A thread that is not assigned to you still only posts the comment and never opens the task panel.
+
 ## Archive completed Issues
 
 Project boards and tables can archive Issues whose status is **Completed**. Incomplete Issues do not expose the archive action and cannot be included in a batch archive.
@@ -57,3 +63,5 @@ Archiving a parent Issue also archives its child Issues so the active task tree 
 Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only in the test Executor home. Failures retain runner logs; tests do not skip or retry to hide failures.
 
 `pnpm --filter wework e2e:desktop --segment collaboration-issue-archive` uses a real local project to verify that incomplete Issues cannot be archived, along with single archive and restore, batch archive, and archive-drawer updates.
+
+`pnpm --filter wework e2e:desktop --segment collaboration-human-round-resume` verifies concurrent AI and human assignments plus the resumed owner after a human delivery, and covers a human assignee replying in a thread with no running execution to open the prefilled personal task panel.
