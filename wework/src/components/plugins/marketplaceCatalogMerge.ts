@@ -130,7 +130,7 @@ export function mergeMarketplaceCatalog(
             installedPluginId: cloudInstall
               ? (item.installedPluginId ??
                 linkedCloudInstalledPluginId(cloudInstall) ??
-                cloudInstall.metadata.labels?.id ??
+                localPluginId(cloudInstall) ??
                 null)
               : (localPluginId(matchedInstall) ?? item.installedPluginId),
             installedLocally:
