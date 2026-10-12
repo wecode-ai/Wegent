@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import { extract } from 'tar'
+import { acquireProcessLock } from './lib/process-lock.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -250,9 +251,7 @@ async function ensureTarballIntegrity(tarballPath, entry, target) {
   if (actualIntegrity === entry.integrity) return
 
   if (skipDownloads) {
-    throw new Error(
-      `Cached Codex archive is invalid for ${target}; downloads are disabled`
-    )
+    throw new Error(`Cached Codex archive is invalid for ${target}; downloads are disabled`)
   }
   await rm(tarballPath, { force: true })
   console.log(`Cached Codex archive is invalid for ${target}; downloading a fresh copy`)
@@ -337,7 +336,7 @@ async function copyLegalFiles() {
   await cp(bundledRatatuiLicense, join(legalDir, 'RATATUI-LICENSE.txt'))
 }
 
-async function main() {
+async function prepareBinaries() {
   const args = parseArgs(process.argv.slice(2))
   if (args.materialize) {
     process.env.WEWORK_CODEX_MATERIALIZE = '1'
@@ -363,6 +362,16 @@ async function main() {
     await prepareTarget(target, entry)
   }
   await copyLegalFiles()
+}
+
+async function main() {
+  await mkdir(outputRoot, { recursive: true })
+  const release = await acquireProcessLock(join(outputRoot, '.prepare.lock'))
+  try {
+    await prepareBinaries()
+  } finally {
+    await release()
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

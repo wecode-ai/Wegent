@@ -36,6 +36,8 @@ flowchart LR
 
 ### Wework 打包 App 本地优先通道
 
+本地 Electron 打包与正式发布包复用相同的品牌元数据和更新源配置。本地打包也必须在 Resources 中生成 `app-update.yml`，包含按包名生成的 `updaterCacheDirName`，以便启动时能迁移真实的更新缓存目录；该文件必须在 macOS 签名之前写入。
+
 打包后的 Wework Electron app 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Electron renderer 内，Electron 主进程提供 app 内部命令层。
 
 本地优先模式包含 Electron 主进程、executor sidecar 和 core DSH 三个本机运行时角色：
@@ -440,6 +442,8 @@ Claude Code 子进程启动前，executor 会完成以下准备：
 - 如果配置了 `WEGENT_FILE_EDIT_HOOK_COMMAND`，在 Claude `settings.json` 中写入 `Write|Edit|MultiEdit|NotebookEdit` 的 `PreToolUse` 和 `PostToolUse` hook，使文件变更记录能进入本轮 artifact。Wework macapp 启动本地 sidecar 时会默认生成该命令；可以用 `WEGENT_FILE_EDIT_HOOK_COMMAND` 覆盖完整命令，或用 `WEWORK_FILE_EDIT_LOG_ENDPOINT` 调整默认上报地址。
 
 本地 executor 对 Claude stdout 的 NDJSON 输出会即时转换为 Responses API 事件：可见文本产生 `response.output_text.delta`，reasoning 摘要产生 `response.reasoning_summary_text.delta`，进程结束后仍发送最终 `response.completed` 或错误事件。Backend 和前端不能假设 `response.created` 之后紧跟终态事件。
+
+Backend 处理设备回调时，同一 subtask 的队列写回、文本存储、前端广播和完成结果收集都在同一把消息锁内执行。数据库写回的等待不能让完成事件越过最后一段文本，否则完成结果中的文本块会截断。
 
 ---
 

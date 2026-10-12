@@ -519,6 +519,39 @@ describe('MobileWorkbenchLayout', () => {
     expect(onSelectProject).not.toHaveBeenCalled()
   })
 
+  test.each([false, true])(
+    'keeps one mobile model selector while unavailable (task: %s)',
+    async hasTask => {
+      renderAtMobileWidth(
+        <MobileWorkbenchLayout
+          state={{
+            ...baseState,
+            currentRuntimeTask: hasTask
+              ? { taskId: 'missing-model-task', deviceId: 'device-1', workspaceId: 'workspace-1' }
+              : null,
+          }}
+          messages={[]}
+          projectChat={{
+            ...baseProjectChat,
+            models: [],
+            selectedModel: null,
+            isModelSelectionReady: false,
+          }}
+          onSelectProject={vi.fn()}
+          onInputChange={vi.fn()}
+          onSend={vi.fn()}
+        />
+      )
+
+      const selector = screen.getByTestId('model-selector-button')
+      expect(selector).toBeEnabled()
+      expect(selector).not.toHaveTextContent(/^$/)
+      expect(screen.queryByTestId('model-selector-loading')).not.toBeInTheDocument()
+      await userEvent.click(selector)
+      expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    }
+  )
+
   test('does not show the user avatar on the mobile empty chat page', () => {
     renderAtMobileWidth(
       <MobileWorkbenchLayout

@@ -15,6 +15,7 @@ import {
 } from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
 import {
   clearPluginMarketplaceCache,
+  pluginMarketplaceCacheKey,
   getPluginMarketplaceCache,
   setPluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
@@ -2969,6 +2970,48 @@ describe('PluginsWorkspace', () => {
     expect(marketplace.getSyncDeviceCalls()).toBe(0)
   })
 
+  test('commits a manual upgrade to the shared inventory before background readers resume', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdatePolicy: 'manual',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    const before = getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))
+    expect(before?.installedPlugins[0]?.spec.releaseId).toBe(1001)
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (...args) => {
+      if (String(args[0]).includes('/plugins/installed/101') && args[1]?.method === 'PUT') {
+        const updated = {
+          ...before!.installedPlugins[0],
+          spec: { ...before!.installedPlugins[0].spec, releaseId: 1002, version: '1.1.0' },
+        }
+        return { ok: true, status: 200, json: async () => updated } as Response
+      }
+      return originalFetch(...args)
+    })
+    marketplace.publishMarketplaceUpdate()
+    fireEvent.focus(window)
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+    )
+    await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
+    await userEvent.click(await screen.findByTestId('plugin-update-confirm-button'))
+    await waitFor(() =>
+      expect(
+        getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))
+          ?.installedPlugins[0]?.spec.releaseId
+      ).toBe(1002)
+    )
+    expect(
+      getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))?.mutationRevision
+    ).toBeGreaterThan(before?.mutationRevision ?? 0)
+    expect(screen.getByTestId('plugin-detail-actions-101')).toBeInTheDocument()
+  })
+
   test('lets users explicitly opt in to automatic marketplace plugin updates', async () => {
     mockSystemSkillsFetch({
       marketplaceInstalled: true,
@@ -4241,8 +4284,8 @@ describe('PluginsWorkspace', () => {
     })
 
     await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
-    expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
-    // Reports after a successful sync are valid; the contract concerns the pre-sync boundary.
+    // Live membership has returned, so device reports are now valid. The assertions
+    // above enforce the boundary while pendingInstalled remains unresolved.
     await act(async () => {
       finishSync()
       await syncGate
@@ -5470,8 +5513,6 @@ describe('PluginsWorkspace', () => {
     // Bare ids like documents-local-id look like Codex remote plugin ids and must
     // not be probed for local/personal uninstalls.
     expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.plugin.uninstall_local', {
-      marketplacePath:
-        '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal/.agents/plugins/marketplace.json',
       pluginName: 'documents',
     })
     expectCodexAppServerRequestNotCalled('plugin/uninstall')

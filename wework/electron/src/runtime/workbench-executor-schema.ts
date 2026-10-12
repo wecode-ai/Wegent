@@ -5,7 +5,8 @@ const execute = promisify(execFile)
 const PROTOCOL_VERSION = 1
 const LAYOUT_VERSION = 1
 const MANIFEST_VERSION = 2
-export const EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS = 15_000
+// macOS can validate a newly installed native binary before its first execution.
+export const EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS = 30_000
 
 export function assertWorkbenchSchema(response: unknown): void {
   if (!response || typeof response !== 'object' || Array.isArray(response)) {

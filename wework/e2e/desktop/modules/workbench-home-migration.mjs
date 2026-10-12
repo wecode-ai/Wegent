@@ -15,7 +15,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DatabaseSync } from 'node:sqlite'
 
-import { CHECKPOINT_TASK_PROMPT } from './shared.mjs'
+import { CHECKPOINT_TASK_PROMPT, MODEL_PROVIDER_ID } from './shared.mjs'
 import { verifyNativeMcpEnvironment } from './native-mcp-environment.mjs'
 import { verifyNativeAgentMcp } from './native-agent-mcp.mjs'
 import {
@@ -45,6 +45,9 @@ async function runNativeTurn(fixture, home, resumeId) {
         '--skip-git-repo-check',
         `${CHECKPOINT_TASK_PROMPT} ${NATIVE_SESSION_MARKER}`,
       ]
+  // Desktop startup may select a different default provider. Native migration
+  // probes must keep using the runner's model service when resuming a session.
+  args.push('-c', `model_provider=${JSON.stringify(MODEL_PROVIDER_ID)}`)
   const execution = promisify(execFile)(fixture.codexBinary, args, {
     cwd: fixture.workspace,
     env: { ...fixture.environment, CODEX_HOME: home, WEGENT_CODEX_HOME: home },
@@ -320,6 +323,12 @@ export function createWorkbenchHomeMigrationScenario({
       completed.push('native-mcp-service-environment-start-resume')
       fixture.nativeAgentMcp = await verifyNativeAgentMcp({ fixture, resultDir })
       completed.push('native-agent-mcp-persistence-and-followup')
+      fixture.emptyCommandHttpMcp = await verifyNativeAgentMcp({
+        fixture,
+        resultDir,
+        emptyCommandHttp: true,
+      })
+      completed.push('native-agent-empty-command-http-mcp-start-and-resume')
       fixture.nativeAgentMcpOverride = await verifyNativeAgentMcp({
         fixture,
         resultDir,

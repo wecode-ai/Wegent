@@ -474,11 +474,16 @@ impl RuntimeWorkRpcHandler {
                 transcript_navigation_from_codex_turns(navigation),
             ));
         }
-        if local_execution_running && !refresh && !direct_thread_override {
-            if let Some(link) = local_link
-                .as_ref()
-                .filter(|link| runtime_has_provider_transcript_reader(&link.runtime))
-            {
+        if local_execution_running
+            && !refresh
+            && !direct_thread_override
+            && before_cursor.is_none()
+            && after_cursor.is_none()
+        {
+            if let Some(link) = local_link.as_ref().filter(|link| {
+                runtime_has_provider_transcript_reader(&link.runtime)
+                    && (link.runtime != "codex" || transcript_snapshot_pagination(link).is_some())
+            }) {
                 let mut messages = transcript_snapshot_messages(link);
                 append_unique_transcript_messages(
                     &mut messages,
@@ -732,6 +737,10 @@ impl RuntimeWorkRpcHandler {
             }
             Err(error) => return Err(AppIpcError::new("codex_error", error)),
         };
+        // Native history reads can overlap terminal events. Merge the latest
+        // completed items and execution state rather than the pre-read snapshot.
+        let local_link = self.local_task_link(&local_task_id).or(local_link);
+        let local_execution_running = self.is_active_local_task(&local_task_id);
         if let Some(workspace_path) = local_link
             .as_ref()
             .map(|link| link.workspace_path.as_str())
@@ -740,6 +749,9 @@ impl RuntimeWorkRpcHandler {
             if let Some(thread) = thread.as_object_mut() {
                 thread.insert("cwd".to_owned(), Value::String(workspace_path.to_owned()));
             }
+        }
+        if let Some(link) = local_link.as_ref().filter(|_| !direct_thread_override) {
+            normalize_overload_recovery_thread(&mut thread, &link.runtime_handle);
         }
         let presentation_page_turn_ids = thread
             .get("turns")
@@ -799,7 +811,9 @@ impl RuntimeWorkRpcHandler {
         if before_cursor.is_none() && after_cursor.is_none() && !include_full_content {
             let snapshot_changed = local_link.as_ref().is_some_and(|link| {
                 link.thread_id.as_deref() == Some(thread_id.as_str())
-                    && transcript_snapshot_messages(link) != messages
+                    && (transcript_snapshot_messages(link) != messages
+                        || transcript_snapshot_pagination(link)
+                            != Some((page_before_cursor.clone(), page_after_cursor.clone())))
             });
             if snapshot_changed {
                 let snapshot_messages = messages.clone();
@@ -809,6 +823,8 @@ impl RuntimeWorkRpcHandler {
                             &mut link.runtime_handle,
                             &thread_id,
                             snapshot_messages,
+                            page_before_cursor.clone(),
+                            page_after_cursor.clone(),
                         );
                     }
                 });

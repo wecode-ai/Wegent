@@ -132,7 +132,7 @@ describe('ModelSettingsPage local Codex subscription toggle', () => {
     expect(within(codexSection).queryByText('未连接云端')).toBeNull()
   })
 
-  test('shows the cloud connection pill when the subscription is on', async () => {
+  test('keeps cloud status separate from the local subscription', async () => {
     render(
       <AppPreferencesContext.Provider
         value={{
@@ -144,6 +144,12 @@ describe('ModelSettingsPage local Codex subscription toggle', () => {
       </AppPreferencesContext.Provider>
     )
 
-    expect(await screen.findByTestId('runtime-config-cloud-required')).toBeInTheDocument()
+    expect(await screen.findByTestId('local-codex-subscription-toggle')).toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-cloud-required')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-models-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('reply-prediction-settings')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('codex-official-models-section')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('codex-models-details-toggle'))
+    expect(await screen.findByTestId('codex-official-models-section')).toBeInTheDocument()
   })
 })

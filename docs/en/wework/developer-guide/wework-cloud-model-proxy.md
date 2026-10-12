@@ -16,6 +16,16 @@ Wework builds proxy model config directly from the configured cloud URL and logi
 - `POST /api/runtime-work/llm-responses-proxy/responses`: proxy endpoint authenticated with the user's login token.
 - `/models/unified`: returns the model name, type, namespace, and resource owner ID needed to identify the Model CRD exactly.
 
+### Default Position in Cloud Model Presets
+
+The Model CRD's `spec.modelConfig.ui.defaultModel: true` marks the default model,
+and `sliderModelsConfig.defaultPreset` names the default slider preset. Selecting
+that preset first targets the model that owns the preset configuration, even when
+it is second or later in `presets[].models`. An entry without `reasoningEffort`
+selects only the model and can also be the default position. Entries with an
+explicit effort match the owner's default reasoning effort. The first preset
+entry is selected only when no matching entry exists.
+
 ### Request Flow
 
 1. Wework fetches credential-free model metadata from `/models/unified`.
@@ -54,6 +64,33 @@ Generic cloud models can reuse the Wework GPT 5.6 compatibility catalog as a cap
 When the upstream has not started a response stream and the model service returns HTTP `429 Too Many Requests`, the executor Codex compatibility proxy automatically resends the same model request. It retries at most five times, waiting 1, 5, 10, 30, and 60 seconds between attempts.
 
 If the upstream returns a standard `Retry-After` header, the proxy uses that delay instead, capped at 60 seconds for one wait. Non-429 responses do not activate this policy. After the retry budget is exhausted, the proxy returns the final 429 status and error body to Codex. A stream that has already started is never replayed by this mechanism, preventing duplicate generation or tool execution.
+
+### Codex Direct-Provider Overload Recovery
+
+Native Codex providers can bypass the compatibility proxy. When the app-server
+reports a structured `serverOverloaded` error, the executor waits for the failed
+turn's `turn/completed` event before continuing in the same thread with the same
+model. Recovery is bounded to five attempts, delayed by 5, 10, 20, 40, and 60
+seconds.
+
+Recovery submits an empty native `turn/start` input against the saved history. It
+does not replay the original task, attachments, user-message identity, or already
+merged additional context. Completed tool results remain in history. The task
+stays running and exposes reconnecting status during recovery; cancellation stops
+the wait immediately, and exhausted recovery returns the final failure. Quota,
+authentication, context-window, and subagent errors, as well as errors already
+being retried by Codex, do not trigger this policy.
+
+The executor persists the IDs of failed turns that entered recovery. Native and
+cached transcript reads clear only those turns' terminal error state while
+preserving user messages and tool output, so reopening a task does not restore
+handled failure cards. The final exhausted turn and unrelated failures remain
+unchanged.
+
+The `codex overloaded turn recovery` diagnostic records the thread, retry number,
+limit, and delay in milliseconds. The `model-overload-recovery` desktop checkpoint
+uses real Electron, Codex, and executor processes to verify tool-history retention,
+automatic continuation, no duplicate user messages, and cancellation.
 
 ### Anthropic Empty-Output Recovery
 

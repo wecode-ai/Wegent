@@ -6,6 +6,17 @@ use serde_json::Value;
 
 use crate::protocol::ExecutionRequest;
 
+pub(crate) fn is_stdio_mcp_server(server: &Value) -> bool {
+    match server.get("type").and_then(Value::as_str) {
+        Some("stdio") => true,
+        Some("http" | "streamable-http" | "sse") => false,
+        _ => server
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(|command| !command.trim().is_empty()),
+    }
+}
+
 pub fn extract_mcp_servers_config(config: &Value) -> Option<&Value> {
     let object = config.as_object()?;
     let mut candidates = Vec::new();

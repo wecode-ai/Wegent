@@ -192,6 +192,80 @@ describe('DSH executor transport', () => {
     unsubscribe()
   })
 
+  test('shares one stream across subscribers and closes it after the last unsubscribe', () => {
+    const sources: FakeEventSource[] = []
+    vi.stubGlobal(
+      'EventSource',
+      class extends FakeEventSource {
+        constructor(url: string) {
+          super(url)
+          sources.push(this)
+        }
+      }
+    )
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const failingListener = vi.fn(() => {
+      throw new Error('reducer failed')
+    })
+    const listener = vi.fn()
+    const unsubscribeFailing = subscribeDshExecutorEvents(failingListener)
+    const unsubscribeFirst = subscribeDshExecutorEvents(listener)
+    const unsubscribeSecond = subscribeDshExecutorEvents(listener)
+    const otherListeners = Array.from({ length: 5 }, () => vi.fn())
+    const unsubscribeOthers = otherListeners.map(subscribeDshExecutorEvents)
+
+    expect(sources).toHaveLength(1)
+    sources[0].onopen?.()
+    emitExecutorEvent(sources[0].onmessage, eventEnvelope(1, 'response.created'))
+    expect(failingListener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(2)
+    otherListeners.forEach(other => expect(other).toHaveBeenCalledTimes(1))
+
+    unsubscribeFailing()
+    unsubscribeFirst()
+    unsubscribeOthers.forEach(unsubscribe => unsubscribe())
+    expect(sources[0].closed).toBe(false)
+    reconnectDshExecutorEvents()
+    expect(sources).toHaveLength(2)
+    expect(sources[0].closed).toBe(true)
+    expect(sources[1].url).toBe('/wework/executor/v1/events?after=1&replay=1')
+    emitExecutorEvent(sources[1].onmessage, eventEnvelope(1, 'response.created'))
+    expect(listener).toHaveBeenCalledTimes(2)
+    emitExecutorEvent(sources[1].onmessage, eventEnvelope(2, 'response.completed'))
+    expect(listener).toHaveBeenCalledTimes(3)
+
+    unsubscribeSecond()
+    expect(sources[1].closed).toBe(true)
+    const unsubscribeFresh = subscribeDshExecutorEvents(listener)
+    expect(sources[2].url).toBe('/wework/executor/v1/events?after=0&replay=0')
+    unsubscribeSecond()
+    expect(sources[2].closed).toBe(false)
+    unsubscribeFresh()
+    expect(sources[2].closed).toBe(true)
+    consoleError.mockRestore()
+  })
+
+  test('cancels a shared reconnect when all subscribers unsubscribe', () => {
+    vi.useFakeTimers()
+    const sources: FakeEventSource[] = []
+    vi.stubGlobal(
+      'EventSource',
+      class extends FakeEventSource {
+        constructor(url: string) {
+          super(url)
+          sources.push(this)
+        }
+      }
+    )
+    const unsubscribe = subscribeDshExecutorEvents(vi.fn())
+    sources[0].onerror?.()
+    unsubscribe()
+    vi.runAllTimers()
+    expect(sources).toHaveLength(1)
+    expect(sources[0].closed).toBe(true)
+    vi.useRealTimers()
+  })
+
   test('replaces a stale executor event stream after system resume', () => {
     const sources: FakeEventSource[] = []
     vi.stubGlobal(

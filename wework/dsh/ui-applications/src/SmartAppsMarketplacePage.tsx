@@ -762,6 +762,40 @@ export function SmartAppsMarketplacePage({
     }
   }
 
+  async function verifyInstallation(installation: HarnessAppInstallation) {
+    setBusy(installation.id)
+    setError(null)
+    setExportNotice(null)
+    try {
+      const report = await harnessAppsApi.verify(installation.id)
+      if (report.status !== 'passed') {
+        const issue = report.issues[0]
+        setError(
+          [issue?.code, issue?.message, issue?.hint].filter(Boolean).join(' · ') ||
+            t(
+              'workbench.smart_apps_error_verification_failed',
+              '工作台正式验证未通过，请查看验证结果并修复后再导出或发布。'
+            )
+        )
+      } else {
+        setExportNotice(t('workbench.smart_apps_verified', '工作台验证通过，可以导出或发布。'))
+      }
+    } catch (error) {
+      setError(
+        getSmartAppErrorMessage(
+          error,
+          t(
+            'workbench.smart_apps_error_verification_failed',
+            '工作台正式验证未通过，请查看验证结果并修复后再导出或发布。'
+          ),
+          t
+        )
+      )
+    } finally {
+      setBusy(null)
+    }
+  }
+
   function localActions(
     installation: HarnessAppInstallation,
     item: SmartAppMarketplaceItem | null
@@ -835,6 +869,15 @@ export function SmartAppsMarketplacePage({
       })
     }
     if (mode === 'owned' && (!installation.smartAppId || item?.accessRole === 'owner')) {
+      if (installation.source === 'linked') {
+        actions.push({
+          label: t('workbench.smart_apps_verify', '验证工作台'),
+          icon: Wrench,
+          testId: `smart-app-verify-${installation.id}`,
+          disabled: busy === installation.id,
+          onSelect: () => verifyInstallation(installation),
+        })
+      }
       actions.push({
         label: t('workbench.smart_apps_export_package', '导出发布包'),
         icon: PackageOpen,

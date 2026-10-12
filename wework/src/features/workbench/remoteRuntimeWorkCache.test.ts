@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import type { DeviceInfo, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
-import { mergeRuntimeWorkLists } from './workbenchCloudStatus'
+import { mergeRuntimeWorkLists } from './runtimeWorkMerge'
 import {
   createRemoteRuntimeWorkCacheSnapshot,
   readCachedRemoteRuntimeWork,

@@ -16,6 +16,7 @@ import {
   copyManagedPlugin,
   createCoreDshLaunch,
   prepareCoreDshRuntime,
+  resetCoreDshRuntime,
   selectBundledDshRuntimeMatching,
   selectCoreDshRuntime,
 } from './core-dsh-runtime.js'
@@ -703,7 +704,7 @@ describe('core DSH runtime', () => {
         '',
       ].join('\n')
     )
-    await rm(join(profileRoot, '.wework-runtime.json'))
+    await resetCoreDshRuntime(dataDirectory)
 
     const nextRuntime = await writeRuntime(root.path, CORE_DSH_VERSION, 'b')
     await prepareCoreDshLaunch({

@@ -535,6 +535,24 @@ then
   fail "Plugin auth CI must prepare real executables before its integration tests"
 fi
 
+if ! ruby -ryaml - "$wework_workflow" <<'RUBY'
+jobs = YAML.load_file(ARGV[0])['jobs']
+['wework-desktop-core-e2e', 'wework-desktop-windows-core-e2e'].each do |name|
+  steps = jobs.fetch(name).fetch('steps')
+  prepare = steps.index { |step| step['name'] == 'Install Electron for native startup and schema verification' }
+  run = steps.index { |step| step['name'].match?(/Run (Windows )?Wework desktop Core shard E2E/) }
+  abort "#{name} must prepare Electron before native verification" unless prepare && run && prepare < run
+  step = steps[prepare]
+  ['workbench-mode', 'native-window-startup'].each do |segment|
+    abort "#{name} must install Electron for #{segment}" unless step['if'].include?("contains(matrix.segments, '#{segment}')")
+  end
+  abort "#{name} must use the locked Electron toolchain" unless step['run'] == 'pnpm --dir wework/electron install --frozen-lockfile'
+end
+RUBY
+then
+  fail "Native startup and schema E2E must prepare their real Electron toolchain"
+fi
+
 if ! grep -Fq 'libmagic1' "$wework_browser_image" ||
   ! grep -Fq 'zstd' \
   "$wework_browser_image" ||

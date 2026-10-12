@@ -16,6 +16,14 @@ Wework 使用已配置的云端地址和登录 token 直接构造代理模型配
 - `POST /api/runtime-work/llm-responses-proxy/responses`：使用用户登录 token 鉴权的代理端点。
 - `/models/unified`：下发模型名称、类型、namespace 和资源 owner ID，供代理精确定位 Model CRD。
 
+### 云端模型预设的默认位置
+
+Model CRD 的 `spec.modelConfig.ui.defaultModel: true` 标记默认模型，
+`sliderModelsConfig.defaultPreset` 指定默认滑条预设。选择该预设时，Wework
+优先定位到拥有预设配置的模型，即使它位于 `presets[].models` 的第二项或更后面。
+未填写 `reasoningEffort` 的预设项表示只选择模型，同样可以作为默认位置；
+填写推理等级时，优先匹配该模型的默认推理等级。没有匹配项时才选择预设中的第一项。
+
 ### 请求流程
 
 1. Wework 从 `/models/unified` 获取不含 provider 凭证的模型元数据。
@@ -54,6 +62,27 @@ provider `base_url` 可以是服务根地址、带版本前缀的 API base，或
 executor 的 Codex compat proxy 在上游尚未开始返回响应流、且模型服务返回 HTTP `429 Too Many Requests` 时，会自动重发同一模型请求。默认最多重试 5 次，退避等待依次为 1 秒、5 秒、10 秒、30 秒和 60 秒。
 
 如果上游返回标准 `Retry-After` 响应头，proxy 会优先采用该等待时间，并将单次等待限制在 60 秒以内。非 429 响应不会触发这项策略；重试耗尽后，proxy 会把最后一次 429 状态和错误正文返回给 Codex。已经开始输出的流不会通过这项机制重放，避免重复生成或重复执行工具。
+
+### Codex 直连模型过载恢复
+
+使用原生 Codex provider 直连模型时，请求不经过 compat proxy。Codex
+app-server 报告结构化 `serverOverloaded` 错误后，executor 会等待该轮
+`turn/completed` 确认失败轮次已经结束，再在同一 thread、同一模型下恢复。
+最多恢复 5 次，等待时间依次为 5、10、20、40 和 60 秒。
+
+恢复使用原生 `turn/start` 的空 `input`，继续已保存的会话历史，不重发原任务、
+附件、用户消息 ID 或已合并的 additional context。已经完成的工具结果仍留在
+历史中。等待期间任务保持运行并显示重连状态；用户取消会立即终止等待，恢复
+耗尽后才向用户返回最终失败。额度不足、认证错误、上下文超限、子智能体失败，
+以及 Codex 自己正在重试的错误不会触发这项恢复。
+
+executor 持久化已进入恢复的失败轮次 ID。读取原生或缓存历史时，仅清除这些
+轮次的终止错误状态，保留用户消息和工具输出，避免重新打开任务后出现已处理
+的失败提示。最终耗尽恢复的轮次及其他错误不受影响。
+
+诊断日志 `codex overloaded turn recovery` 记录 thread、重试序号、上限和等待
+毫秒数。桌面检查点 `model-overload-recovery` 使用真实 Electron、Codex 和
+executor 验证工具结果保留、无重复用户消息、自动恢复与取消。
 
 ### Anthropic 空输出恢复
 

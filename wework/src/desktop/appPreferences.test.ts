@@ -45,6 +45,8 @@ const mergedDefaultPreferences = {
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
+  replyPredictionsEnabled: false,
+  replyPredictionModel: null,
   changeRequestStatusEnabled: true,
   quickPhrases: [
     {
