@@ -2302,18 +2302,17 @@ pub async fn run_codex_app_server_turn_with_cancel(
         .await?;
         let read_turn = rpc.read_turn(
             turn_request_id,
-            overload_turn_recovering,
-            overload_recovery::continuation_params(turn_start_params(
-                &thread_id,
-                request,
-                &launch_config,
-                Vec::new(),
-            )),
             &mut state,
-            notifications,
-            request_user_input_answers,
-            auto_approve_mcp_tool_calls,
-            defer_interactive_forms,
+            json_rpc::TurnReadOptions {
+                overload_turn_recovering,
+                overload_continuation_params: overload_recovery::continuation_params(
+                    turn_start_params(&thread_id, request, &launch_config, Vec::new()),
+                ),
+                notifications,
+                request_user_input_answers,
+                auto_approve_mcp_tool_calls,
+                defer_interactive_forms,
+            },
         );
         let outcome = if let Some(cancellation) = cancellation.as_mut() {
             tokio::select! {

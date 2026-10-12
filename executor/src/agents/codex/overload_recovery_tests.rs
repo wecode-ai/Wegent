@@ -343,15 +343,17 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         Duration::from_secs(10),
         rpc.read_turn(
             1,
-            Some(Box::new(move |thread_id, turn_id| {
-                recovery_tx.send((thread_id, turn_id)).unwrap();
-            })),
-            params,
             &mut state,
-            Some(notify_tx),
-            None,
-            false,
-            false,
+            super::super::json_rpc::TurnReadOptions {
+                overload_turn_recovering: Some(Box::new(move |thread_id, turn_id| {
+                    recovery_tx.send((thread_id, turn_id)).unwrap();
+                })),
+                overload_continuation_params: params,
+                notifications: Some(notify_tx),
+                request_user_input_answers: None,
+                auto_approve_mcp_tool_calls: false,
+                defer_interactive_forms: false,
+            },
         ),
     )
     .await

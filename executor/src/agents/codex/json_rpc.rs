@@ -28,6 +28,15 @@ pub(super) struct JsonRpcConnection {
     next_id: u64,
 }
 
+pub(super) struct TurnReadOptions {
+    pub overload_turn_recovering: Option<super::CodexActiveTurnCallback>,
+    pub overload_continuation_params: Value,
+    pub notifications: Option<CodexNotificationSender>,
+    pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
+    pub auto_approve_mcp_tool_calls: bool,
+    pub defer_interactive_forms: bool,
+}
+
 impl JsonRpcConnection {
     pub(super) fn new(stdin: ChildStdin, stdout: CodexStdout, next_id: u64) -> Self {
         Self {
@@ -105,14 +114,17 @@ impl JsonRpcConnection {
     pub(super) async fn read_turn(
         &mut self,
         mut turn_request_id: u64,
-        overload_turn_recovering: Option<super::CodexActiveTurnCallback>,
-        overload_continuation_params: Value,
         state: &mut CodexRunState,
-        notifications: Option<CodexNotificationSender>,
-        mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
-        auto_approve_mcp_tool_calls: bool,
-        defer_interactive_forms: bool,
+        options: TurnReadOptions,
     ) -> Result<ExecutionOutcome, String> {
+        let TurnReadOptions {
+            overload_turn_recovering,
+            overload_continuation_params,
+            notifications,
+            mut request_user_input_answers,
+            auto_approve_mcp_tool_calls,
+            defer_interactive_forms,
+        } = options;
         let mut saw_turn_response = false;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);

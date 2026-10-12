@@ -1924,6 +1924,21 @@ mod tests {
         assert!(!startup.try_timeout());
     }
 
+    #[tokio::test]
+    async fn restore_startup_allows_overload_continuation_until_execution_finishes() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+        let startup = RestoreStartupGate::new(permit);
+
+        assert!(startup.try_activate());
+        assert!(startup.try_activate());
+        assert_eq!(semaphore.available_permits(), 1);
+        assert!(!startup.try_timeout());
+        startup.finish();
+        assert!(!startup.try_activate());
+        assert!(!startup.try_timeout());
+    }
+
     #[test]
     fn scheduler_queues_over_limit_and_starts_in_fifo_order() {
         let mut scheduler = RuntimeTurnScheduler::new(2, VecDeque::new());
