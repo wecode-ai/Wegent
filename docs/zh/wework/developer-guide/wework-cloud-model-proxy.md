@@ -16,6 +16,14 @@ Wework 使用已配置的云端地址和登录 token 直接构造代理模型配
 - `POST /api/runtime-work/llm-responses-proxy/responses`：使用用户登录 token 鉴权的代理端点。
 - `/models/unified`：下发模型名称、类型、namespace 和资源 owner ID，供代理精确定位 Model CRD。
 
+### 云端模型预设的默认位置
+
+Model CRD 的 `spec.modelConfig.ui.defaultModel: true` 标记默认模型，
+`sliderModelsConfig.defaultPreset` 指定默认滑条预设。选择该预设时，Wework
+优先定位到拥有预设配置的模型，即使它位于 `presets[].models` 的第二项或更后面。
+未填写 `reasoningEffort` 的预设项表示只选择模型，同样可以作为默认位置；
+填写推理等级时，优先匹配该模型的默认推理等级。没有匹配项时才选择预设中的第一项。
+
 ### 请求流程
 
 1. Wework 从 `/models/unified` 获取不含 provider 凭证的模型元数据。

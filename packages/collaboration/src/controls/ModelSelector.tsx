@@ -755,10 +755,12 @@ export function ModelSelector({
       (control) => control.id === "reasoning",
     );
     const selectedSetting =
-      preset.settings.find(
-        (setting) =>
-          isSameModelSelection(setting.model, preset.owner) &&
-          setting.reasoningEffort === ownerReasoningControl?.defaultValue,
+      preset.settings.find((setting) =>
+        isSelectedPowerSetting(
+          setting,
+          preset.owner,
+          ownerReasoningControl?.defaultValue,
+        ),
       ) ?? preset.settings[0];
     if (!selectedSetting) return;
     const speedControl = getControlsForModel(selectedSetting.model).find(
