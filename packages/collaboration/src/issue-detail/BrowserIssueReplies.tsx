@@ -15,7 +15,7 @@ import {
   createHttpCommentRuntime,
   type CommentExecutionTarget,
 } from '../execution/httpCommentRuntime'
-import { groupIssueActivityThreads } from './IssueActivityThread'
+import { groupIssueTimelineThreads } from './IssueActivityThread'
 import { issueCommentBody } from './useIssueCommentAttachments'
 import { useBrowserIssueExecution } from './browserIssueExecutionContext'
 import { useBrowserReplyQueueStore } from './browserTaskDraftContext'
@@ -54,7 +54,7 @@ export function BrowserIssueReplies({
   const store = useBrowserReplyQueueStore()
   const execution = useBrowserIssueExecution()
   const serverExecution = project.project_store === 'backend' && Boolean(client.executeTaskComment)
-  const cards = useMemo(() => groupIssueActivityThreads(messages), [messages])
+  const cards = useMemo(() => groupIssueTimelineThreads(messages), [messages])
   const [activity, setActivity] = useState<Record<string, boolean>>({})
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null)
   const [subscriptionRevision, setSubscriptionRevision] = useState(0)

@@ -26,7 +26,7 @@ use super::{
     codex_notifications::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
-    codex_user_input::async_question_render_payload,
+    codex_user_input::async_question_payload_from_item,
     notification_mapping::{
         codex_stream_debug_enabled, log_dropped_notification, map_text_chunk,
         map_tool_output_delta, notification_item_id, TextChunkMapping,
@@ -275,6 +275,10 @@ fn map_codex_notification(
     );
 }
 
+#[cfg(test)]
+#[path = "background_terminal_tests.rs"]
+mod background_terminal_tests;
+
 struct EventEmitContext<'a> {
     event_tx: &'a Option<broadcast::Sender<Value>>,
     device_id: &'a str,
@@ -466,6 +470,26 @@ impl CodexNotificationEventMapper {
                     &notification.method,
                     notification.params,
                 );
+            }
+            "item/commandExecution/terminalInteraction" => {
+                let params = notification.params;
+                if let Some(item_id) = string_field(params, "itemId") {
+                    emit_response_event(
+                        event_tx,
+                        device_id,
+                        "response.block.updated",
+                        local_task_id,
+                        request,
+                        json!({
+                            "block_id": item_id,
+                            "updates": {"render_payload": {
+                                "kind": "command_execution",
+                                "processId": params.get("processId"),
+                                "stdin": params.get("stdin"),
+                            }},
+                        }),
+                    );
+                }
             }
             "item/plan/delta" => {
                 self.emit_plan_delta(
@@ -1614,6 +1638,9 @@ impl CodexNotificationEventMapper {
     }
 
     fn subagent_parent_block_id(&self, params: &Value) -> Option<String> {
+        if !self.is_subagent_delta(params) {
+            return None;
+        }
         if let Some(item_id) = notification_item_id(params) {
             if let Some(parent_id) = self.subagent_parent_ids.get(&item_id) {
                 return Some(parent_id.clone());
@@ -1862,7 +1889,7 @@ fn limit_tool_output_delta(delta: &str) -> String {
     truncate_utf8(delta, MAX_TOOL_OUTPUT_DELTA_BYTES)
 }
 
-fn push_limited_tool_output(content: &mut String, delta: &str) {
+pub(super) fn push_limited_tool_output(content: &mut String, delta: &str) {
     content.push_str(delta);
     if content.len() <= MAX_TOOL_OUTPUT_BUFFER_BYTES {
         return;
@@ -2008,17 +2035,10 @@ fn emit_request_user_input_block(
 /// message instead of a runtime response. Render the structured choices as the
 /// interactive card rather than the plain-text fallback the same item also carries.
 fn emit_async_request_user_input(context: &EventEmitContext<'_>, params: &Value) -> bool {
-    let item = params.get("item").unwrap_or(params);
-    if item_type(item).as_str() != "agentmessage" {
-        return false;
-    }
-    let Some(questions) = item.get("questions").and_then(Value::as_array) else {
+    let Some(render_payload) = async_question_payload_from_item(params) else {
         return false;
     };
-    let item_id = item_id(item, "request-user-input");
-    let Some(render_payload) = async_question_render_payload(item_id.as_str(), questions) else {
-        return false;
-    };
+    let item_id = render_payload["itemId"].as_str().unwrap();
     emit_request_user_input_block(
         context.event_tx,
         context.device_id,

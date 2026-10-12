@@ -226,16 +226,7 @@ fn or_truthy<'a>(a: Option<&'a Value>, b: Option<&'a Value>) -> Option<&'a Value
 }
 
 /// Python truthiness for a JSON value.
-fn is_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_none_or(|number| number != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(object) => !object.is_empty(),
-    }
-}
+use brz_json::adapters::python_truthy as is_truthy;
 
 /// pydantic `datetime` acceptance and serialization: an ISO-8601 string (an
 /// optional offset is preserved, `Z` for UTC) or a numeric Unix timestamp in

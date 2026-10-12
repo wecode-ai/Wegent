@@ -8,7 +8,10 @@ export interface WorkbenchMigrationLock {
 
 export type WorkbenchMigrationLockAdapter = (resources: string[]) => Promise<WorkbenchMigrationLock>
 
-export function executorMigrationLock(executorPath: string): WorkbenchMigrationLockAdapter {
+export function executorMigrationLock(
+  executorPath: string,
+  options: { wait?: boolean } = {}
+): WorkbenchMigrationLockAdapter {
   return async resources => {
     const files = [
       ...new Set(
@@ -17,7 +20,12 @@ export function executorMigrationLock(executorPath: string): WorkbenchMigrationL
     ].sort()
     const child = spawn(
       executorPath.trim(),
-      ['--workbench-lock', JSON.stringify(files), '--version'],
+      [
+        '--workbench-lock',
+        JSON.stringify(files),
+        '--version',
+        ...(options.wait ? ['--workbench-lock-wait'] : []),
+      ],
       {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {

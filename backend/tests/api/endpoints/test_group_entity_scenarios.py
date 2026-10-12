@@ -21,6 +21,7 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
+from app.services.adapters.team_kinds import team_kinds_service
 from app.services.external_entity_resolver import register_entity_resolver
 from app.services.group_member_helper import create_group_entity_member
 from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
@@ -327,23 +328,15 @@ class TestUC4DepartmentGroupToTeamNotExplicitlyShared:
         test_db.add(team)
         test_db.commit()
 
-        # Direct member sees the team
-        direct_token = create_access_token(data={"sub": direct_member.user_name})
-        direct_resp = test_client.get(
-            "/api/teams?scope=group&group_name=uc4-group",
-            headers=_auth_header(direct_token),
+        # Compare the shared service directly; GET /api/teams is owned by Rust.
+        direct_items, _ = team_kinds_service.get_user_teams_page(
+            db=test_db, user_id=direct_member.id, scope="group", group_name="uc4-group"
         )
-        assert direct_resp.status_code == 200
-        direct_teams = [t["name"] for t in direct_resp.json()["items"]]
-
-        # Entity member sees the same teams
-        employee_token = create_access_token(data={"sub": employee.user_name})
-        entity_resp = test_client.get(
-            "/api/teams?scope=group&group_name=uc4-group",
-            headers=_auth_header(employee_token),
+        entity_items, _ = team_kinds_service.get_user_teams_page(
+            db=test_db, user_id=employee.id, scope="group", group_name="uc4-group"
         )
-        assert entity_resp.status_code == 200
-        entity_teams = [t["name"] for t in entity_resp.json()["items"]]
+        direct_teams = [team["name"] for team in direct_items]
+        entity_teams = [team["name"] for team in entity_items]
 
         assert "uc4-team" in direct_teams
         assert entity_teams == direct_teams

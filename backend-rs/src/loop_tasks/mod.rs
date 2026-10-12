@@ -4,6 +4,8 @@
 
 //! `GET /api/v1/loop-items/{item_id}/tasks`.
 
+pub mod assignment_repository;
+pub mod assignments;
 pub mod auth;
 pub mod auth_error;
 pub mod cloud_context;

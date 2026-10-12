@@ -654,16 +654,7 @@ fn iso_now() -> String {
 }
 
 /// Python truthiness (`bool(value)`).
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
-        Value::String(value) => !value.is_empty(),
-        Value::Array(value) => !value.is_empty(),
-        Value::Object(value) => !value.is_empty(),
-    }
-}
+use brz_json::adapters::python_truthy as truthy;
 
 #[cfg(test)]
 mod tests {

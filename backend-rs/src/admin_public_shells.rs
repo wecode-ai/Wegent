@@ -26,8 +26,8 @@ use serde::Deserialize;
 
 use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
-use crate::json_compat::OpaqueJson;
 use crate::state::AppState;
+use brz_json::OpaqueJson;
 
 /// FastAPI `Query(1, ge=1)` default for `page`.
 const DEFAULT_PAGE: i64 = 1;
@@ -68,7 +68,7 @@ struct QueryValidationError<'a> {
     kind: &'a str,
     loc: [&'a str; 2],
     msg: &'a str,
-    input: crate::json_compat::JsonNull,
+    input: brz_json::JsonNull,
 }
 
 /// FastAPI-style 422 validation error body (`Query(...)` constraints).
@@ -77,7 +77,7 @@ fn validation_error(field: &str, kind: &str, message: &str) -> FastApiError {
         kind,
         loc: ["query", field],
         msg: message,
-        input: crate::json_compat::JsonNull,
+        input: brz_json::JsonNull,
     }])
 }
 
@@ -581,7 +581,7 @@ mod tests {
             user_name: "example-user".to_string(),
             users_password_hash: String::new(),
             email: None,
-            git_info: Json(OpaqueJson::from_serializable(crate::json_compat::JsonNull)),
+            git_info: Json(OpaqueJson::from_serializable(brz_json::JsonNull)),
             is_active: 1,
             role: "user".to_string(),
             auth_source: "oidc".to_string(),

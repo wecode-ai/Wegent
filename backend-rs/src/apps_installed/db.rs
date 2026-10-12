@@ -30,7 +30,7 @@ pub struct UserRow {
     #[allow(dead_code)]
     pub users_email: Option<String>,
     #[allow(dead_code)]
-    pub users_git_info: Json<crate::json_compat::OpaqueJson>,
+    pub users_git_info: Json<brz_json::OpaqueJson>,
     pub users_is_active: bool,
     pub users_role: String,
     #[allow(dead_code)]
@@ -54,7 +54,7 @@ pub struct KindRow {
     pub kinds_name: String,
     #[allow(dead_code)]
     pub kinds_namespace: String,
-    pub kinds_json: Json<crate::json_compat::OpaqueJson>,
+    pub kinds_json: Json<brz_json::OpaqueJson>,
     #[allow(dead_code)]
     pub kinds_is_active: bool,
     #[allow(dead_code)]

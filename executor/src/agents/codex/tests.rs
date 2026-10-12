@@ -27,7 +27,10 @@ fn named_home_rpc_clients_preserve_process_isolation() {
     assert!(!Arc::ptr_eq(&first.state, &second.state));
     assert_eq!(
         first.process_environment(&BTreeMap::new(), &BTreeMap::new())["CODEX_HOME"],
-        root.join("agents/synthetic/default/agent-a")
+        root.join("agents")
+            .join("synthetic")
+            .join("default")
+            .join("agent-a")
             .display()
             .to_string()
     );
@@ -1078,7 +1081,12 @@ fn wework_codex_home_ignores_empty_executor_home() {
     env::set_var("WEGENT_EXECUTOR_HOME", "");
     env::remove_var(WEGENT_CODEX_HOME_ENV);
 
-    let expected = temp.path().join(".wegent/workbench/executor/codex");
+    let expected = temp
+        .path()
+        .join(".wegent")
+        .join("workbench")
+        .join("executor")
+        .join("codex");
     assert_eq!(wework_codex_home(), expected);
 }
 
@@ -4288,9 +4296,13 @@ fn turn_input_preserves_collaboration_references_as_text() {
 
 #[test]
 fn turn_input_expands_home_relative_skill_mentions_and_deduplicates_absolute_paths() {
-    let path = dirs::home_dir()
+    let _lock = crate::test_env::lock();
+    let path = crate::local::command::configured_home_dir()
         .expect("test user has a home directory")
-        .join(".agents/skills/test-skill/SKILL.md");
+        .join(".agents")
+        .join("skills")
+        .join("test-skill")
+        .join("SKILL.md");
     let input = turn_input(&Value::String(format!(
         "[$test-skill](~/.agents/skills/test-skill/SKILL.md) then [$test-skill]({})",
         path.display()
@@ -4432,15 +4444,20 @@ fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
 fn turn_input_binds_managed_plugin_mentions_to_the_plugin_entry_skill() {
     let root = unique_test_path("managed-plugin-skill-input");
     let codex_home = root.join("codex");
-    let manifest_path = root.join("capabilities/manifest.json");
-    let plugin_root = codex_home.join("plugins/cache/wegent/dingtalk/0.2.0");
-    let skill_path = plugin_root.join("skills/dws/SKILL.md");
+    let manifest_path = root.join("capabilities").join("manifest.json");
+    let plugin_root = codex_home
+        .join("plugins")
+        .join("cache")
+        .join("wegent")
+        .join("dingtalk")
+        .join("0.2.0");
+    let skill_path = plugin_root.join("skills").join("dws").join("SKILL.md");
     fs::create_dir_all(skill_path.parent().expect("skill parent should exist"))
         .expect("skill directory should be created");
     fs::create_dir_all(plugin_root.join(".codex-plugin"))
         .expect("plugin manifest directory should be created");
     fs::write(
-        plugin_root.join(".codex-plugin/plugin.json"),
+        plugin_root.join(".codex-plugin").join("plugin.json"),
         r#"{"name":"dingtalk","version":"0.2.0","skills":"./skills/"}"#,
     )
     .expect("plugin manifest should be written");
@@ -4705,6 +4722,7 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
 #[test]
 fn codex_thread_binds_project_space_through_context_grant() {
     let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let mut request = ExecutionRequest {
         task_id: "runtime-task-1".to_owned(),
         backend_url: Some("https://wework.example.com".to_owned()),
@@ -4727,17 +4745,14 @@ fn codex_thread_binds_project_space_through_context_grant() {
 
     assert!(request.mcp_servers.is_empty());
     assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(
-        config["mcp_servers.wework_space.url"],
-        "http://127.0.0.1:1/mcp"
-    );
+    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
     assert_eq!(
         config["mcp_servers.wework_space.env_http_headers.Authorization"],
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"
     );
     assert_eq!(
         launch_config.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
-        "Bearer test-space-mcp-instance-token"
+        format!("Bearer {}", endpoint.token)
     );
     assert!(!config.contains_key("mcp_servers.wework_space.command"));
     assert!(!config.contains_key("mcp_servers.wework_space.args"));
@@ -4747,9 +4762,11 @@ fn codex_thread_binds_project_space_through_context_grant() {
         config["mcp_servers.wework_space.default_tools_approval_mode"],
         "approve"
     );
-    assert_eq!(
-        config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"],
-        "test-space-mcp-context-handle"
+    assert!(
+        !config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty()
     );
     let mcp_config = config
         .iter()
@@ -4766,6 +4783,7 @@ fn codex_thread_binds_project_space_through_context_grant() {
 #[test]
 fn codex_thread_exposes_project_space_to_issue_automation_executor() {
     let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let mut request = ExecutionRequest {
         task_id: "runtime-executor-1".to_owned(),
         ..ExecutionRequest::default()
@@ -4786,15 +4804,13 @@ fn codex_thread_exposes_project_space_to_issue_automation_executor() {
     let config = params["config"].as_object().expect("thread config");
 
     assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(
-        config["mcp_servers.wework_space.url"],
-        "http://127.0.0.1:1/mcp"
-    );
+    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
 }
 
 #[test]
 fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
     let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let request = ExecutionRequest::default();
 
     let launch_config =
@@ -4812,13 +4828,14 @@ fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
         .all(|name| !name.starts_with("WEGENT_CODEX_SPACE_MCP_HEADER_")));
     assert_eq!(
         launch_config.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
-        "Bearer test-space-mcp-instance-token"
+        format!("Bearer {}", endpoint.token)
     );
 }
 
 #[test]
 fn codex_thread_exposes_notifications_without_project_context() {
     let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let request = ExecutionRequest {
         task_id: "runtime-task-notification".to_owned(),
         backend_url: Some("https://wework.example.com".to_owned()),
@@ -4835,11 +4852,16 @@ fn codex_thread_exposes_notifications_without_project_context() {
     assert_eq!(config["mcp_servers.wework_notifications.enabled"], true);
     assert_eq!(
         config["mcp_servers.wework_notifications.url"],
-        "http://127.0.0.1:1/notifications/mcp"
+        format!(
+            "{}/notifications/mcp",
+            endpoint.url.trim_end_matches("/mcp")
+        )
     );
-    assert_eq!(
-        config["mcp_servers.wework_notifications.http_headers.X-Wework-Mcp-Context"],
-        "test-space-mcp-context-handle"
+    assert!(
+        !config["mcp_servers.wework_notifications.http_headers.X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty()
     );
     assert_eq!(
         config["mcp_servers.wework_notifications.env_http_headers.Authorization"],

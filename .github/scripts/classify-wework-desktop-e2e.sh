@@ -6,6 +6,7 @@ core_segments=(
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
+  collaboration-issue-task-discovery
   collaboration-issue-archive
   collaboration-first-use
   collaboration-worktree-policy
@@ -74,6 +75,7 @@ core_segments=(
   temporary-chat
   workspace-attachments
   rendering-extensions
+  background-terminals
   change-request-status
   claude-runtime
   local-file-preview
@@ -168,10 +170,10 @@ core_shards=(
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation
+  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
-  rendering-extensions,transcript-sync
+  rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
@@ -427,10 +429,15 @@ classify_wework_path() {
       wework/e2e/desktop/modules/native-agent-mcp.mjs | \
       wework/e2e/desktop/modules/workbench-home-migration.mjs | \
       wework/e2e/desktop/modules/workbench-schema-compatibility.mjs | \
+      wework/e2e/desktop/modules/workbench-desktop-startup.mjs | \
+      wework/e2e/desktop/modules/workbench-component-publication.mjs | \
+      wework/electron/src/runtime/immutable-directory* | \
       wework/electron/src/runtime/workbench-environment* | \
       wework/electron/src/runtime/development-isolation* | \
       wework/electron/src/runtime/workbench-executor-schema* | \
+      wework/electron/src/runtime/workbench-codex-migration* | \
       wework/electron/src/runtime/workbench-migration-lock* | \
+      wework/electron/src/runtime/workbench-desktop-startup* | \
       wework/electron/src/runtime/workbench-home-migration* | \
       wework/electron/src/runtime/workbench-mode* | \
       wework/src/features/workbench-mode/*)
@@ -472,6 +479,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx ]]; then
         select_target "core:temporary-chat"
+        select_target "core:background-terminals"
       fi
       return
       ;;
@@ -628,6 +636,10 @@ classify_wework_path() {
       select_target "core:collaboration-shared-core"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-task-discovery.scenario.mjs)
+      select_target "core:collaboration-issue-task-discovery"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs)
       select_target "core:collaboration-issue-archive"
       return
@@ -769,6 +781,10 @@ classify_wework_path() {
         "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:project-ai-settings"
       fi
+      if [[ "$path" == wework/src/api/local/localServices* || \
+        "$path" == wework/src/api/hybrid/hybridServices* ]]; then
+        select_target "core:background-terminals"
+      fi
       if [[ "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:send-key-preference"
       fi
@@ -823,6 +839,7 @@ classify_wework_path() {
       wework/src/components/layout/DesktopWorkbenchLayout.test.tsx)
       select_target "core:environment-panel-scroll"
       if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
+        select_target "core:background-terminals"
         select_target "core:temporary-chat"
         select_target "core:cloud-context-resilience"
         select_target "core:task-board-association"
@@ -832,8 +849,7 @@ classify_wework_path() {
 
     # Right-workspace temporary chats have an independently bootstrapped
     # ephemeral-thread scenario.
-    wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx | \
-      wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
+    wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
       wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
       select_target "core:temporary-chat"
       return
@@ -906,6 +922,15 @@ classify_wework_path() {
 
     wework/e2e/desktop/modules/shared-skill-runtime.mjs)
       select_target "core:claude-runtime"
+      return
+      ;;
+
+    wework/src/components/layout/BackgroundTerminalsSummary* | \
+      wework/src/components/layout/backgroundTerminals* | \
+      wework/src/components/layout/workspace-panels/BackgroundTerminalPanel* | \
+      wework/src/api/runtimeBackgroundTerminals.ts | \
+      wework/e2e/desktop/scenarios/background-terminals.scenario.mjs)
+      select_target "core:background-terminals"
       return
       ;;
 

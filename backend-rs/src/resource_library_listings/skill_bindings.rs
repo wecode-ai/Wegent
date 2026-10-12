@@ -89,14 +89,14 @@ where
 }
 
 /// `_is_user_default_binding`.
-fn is_user_default_binding(payload: &KindPayload, target_id: &str) -> bool {
+pub(crate) fn is_user_default_binding(payload: &KindPayload, target_id: &str) -> bool {
     let target_type = payload.spec.target_type.as_ref().map(JsonScalar::text);
     let target = payload.spec.target_id.as_ref().map(JsonScalar::text);
     target_type.as_deref() == Some("user") && target.as_deref() == Some(target_id)
 }
 
 /// `_extract_skill_id`: `spec.skillRef.skillId or spec.skillRef.skill_id`.
-fn extract_skill_id(payload: &KindPayload) -> Option<i64> {
+pub(crate) fn extract_skill_id(payload: &KindPayload) -> Option<i64> {
     let skill_ref = payload.spec.skill_ref.as_ref()?;
     let raw = match skill_ref.skill_id.as_ref() {
         Some(value) if !value.is_falsy() => Some(value),
@@ -106,7 +106,7 @@ fn extract_skill_id(payload: &KindPayload) -> Option<i64> {
 }
 
 /// `can_user_access_skill`.
-async fn can_user_access_skill<M>(
+pub(crate) async fn can_user_access_skill<M>(
     mysql: &M,
     erp: &ErpContext<'_, impl brz_redis::Redis>,
     user_id: i64,

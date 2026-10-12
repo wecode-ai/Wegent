@@ -72,16 +72,17 @@ impl brz_http_server::IntoHttpError for SkillDownloadError {
                 response
             }
             Self::NotModified { etag } => {
-                let empty = crate::http_compat::FastApiError::detail(
-                    StatusCode::NOT_MODIFIED,
-                    String::new(),
-                )
-                .into_http_error(arena);
+                // The source returns `Response(status_code=304,
+                // headers={"ETag": etag})`: a bare Starlette response with no
+                // media type, so it renders no `Content-Type` header (and a
+                // 304 never carries a body). Rendering it through the JSON
+                // error helper would add `content-type: application/json`.
+                let response = brz_http_server::Response::empty(StatusCode::NOT_MODIFIED);
                 let mut block = arena.alloc(format!("etag: {etag}\r\n").len());
                 block.extend_from_slice(format!("etag: {etag}\r\n").as_bytes());
                 match brz_http_server::HeaderBlock::new(block.freeze()) {
-                    Ok(header) => empty.headers(header),
-                    Err(_) => empty,
+                    Ok(header) => response.headers(header),
+                    Err(_) => response,
                 }
             }
         }
@@ -359,6 +360,67 @@ struct Resolved {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpStream;
+
+    // A dedicated test group so the probe route cannot collide with the real
+    // skills routes during the test build.
+    mod probe {
+        brz_http_server::registry!(group = skills_download_probe, dependencies());
+    }
+
+    #[brz_http_server::get(
+        "/probe/skills-download-not-modified",
+        group = probe::skills_download_probe,
+        access = public
+    )]
+    async fn probe_not_modified() -> Result<HttpResponse<Binary>, SkillDownloadError> {
+        Err(SkillDownloadError::NotModified {
+            etag: "\"sha256:abc\"".to_string(),
+        })
+    }
+
+    /// Drives the mapped error over a real `http-server` socket so status,
+    /// headers, and body are asserted exactly as the runtime renders them.
+    async fn serve(request: &str) -> String {
+        let handler = brz_http_server::handlers!(; group = probe::skills_download_probe)
+            .expect("probe router");
+        let server = brz_http_server::Server::bind("127.0.0.1:0".parse().unwrap(), handler)
+            .await
+            .expect("bind test server");
+        let address = server.local_addr().expect("local address");
+        let serve = tokio::spawn(async move {
+            let _ = server.serve_until(std::future::pending::<()>()).await;
+        });
+        let mut client = TcpStream::connect(address).await.expect("connect");
+        client.write_all(request.as_bytes()).await.expect("send");
+        let mut raw = Vec::new();
+        client.read_to_end(&mut raw).await.expect("read");
+        serve.abort();
+        String::from_utf8_lossy(&raw).into_owned()
+    }
+
+    fn header_of<'a>(raw: &'a str, name: &str) -> &'a str {
+        raw.lines()
+            .find(|line| line.to_ascii_lowercase().starts_with(name))
+            .map_or("", |line| line[name.len()..].trim())
+    }
+
+    #[tokio::test]
+    async fn not_modified_renders_etag_without_a_content_type() {
+        let raw = serve(
+            "GET /probe/skills-download-not-modified HTTP/1.1\r\n\
+             Host: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert!(raw.starts_with("HTTP/1.1 304"), "raw response: {raw}");
+        assert_eq!(header_of(&raw, "etag:"), "\"sha256:abc\"");
+        assert_eq!(
+            header_of(&raw, "content-type:"),
+            "",
+            "the source returns a bare Response(304), which has no media type"
+        );
+    }
 
     #[test]
     fn encodes_filenames_with_rfc5987() {

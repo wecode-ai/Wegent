@@ -13,7 +13,7 @@
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// `KnowledgeBaseListResponse` (`app.schemas.knowledge`): field order follows
 /// the pydantic model declaration.

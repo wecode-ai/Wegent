@@ -139,6 +139,7 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
+mod reply_prediction;
 mod text_generation;
 use text_generation::configure_text_generation;
 #[path = "codex/diagnostics.rs"]
@@ -6360,9 +6361,13 @@ fn visible_mention_text(name: &str, uri: &str) -> String {
 }
 
 fn normalize_skill_path(path: &str) -> String {
-    super::git_workspace::expand_tilde(path.strip_prefix("skill://").unwrap_or(path))
-        .to_string_lossy()
-        .into_owned()
+    let path = super::git_workspace::expand_tilde(path.strip_prefix("skill://").unwrap_or(path));
+    let path = if path.is_absolute() {
+        path.components().collect::<std::path::PathBuf>()
+    } else {
+        path
+    };
+    path.to_string_lossy().into_owned()
 }
 
 fn response_id(message: &Value) -> Option<u64> {

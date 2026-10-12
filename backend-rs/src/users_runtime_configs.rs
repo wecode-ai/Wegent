@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::SessionUser;
 use crate::http_compat::FastApiError;
-use crate::json_compat::OpaqueJson;
 use crate::state::AppState;
+use brz_json::OpaqueJson;
 
 /// `USER_RUNTIME_CONFIG_KIND`.
 const RUNTIME_CONFIG_KIND: &str = "UserRuntimeConfig";

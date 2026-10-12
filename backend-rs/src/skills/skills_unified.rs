@@ -21,11 +21,11 @@
 use crate::json_compat::OptionalOpaqueJsonExt;
 use std::collections::HashSet;
 
-use crate::json_compat::{JsonProjection, OpaqueJson};
 use brz_http_server::StatusCode;
+use brz_json::RawJson;
+use brz_json::{JsonProjection, OpaqueJson};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use serde::Deserialize;
-use serde_json::value::RawValue;
 
 use crate::auth::UserRow;
 use crate::http_compat::FastApiError;
@@ -77,20 +77,20 @@ struct SkillItem {
     id: i32,
     name: String,
     namespace: String,
-    description: Box<RawValue>,
+    description: RawJson,
     #[serde(rename = "displayName")]
-    display_name: Box<RawValue>,
-    version: Box<RawValue>,
-    author: Box<RawValue>,
-    tags: Box<RawValue>,
+    display_name: RawJson,
+    version: RawJson,
+    author: RawJson,
+    tags: RawJson,
     #[serde(rename = "bindShells")]
-    bind_shells: Box<RawValue>,
-    visible: Box<RawValue>,
+    bind_shells: RawJson,
+    visible: RawJson,
     is_active: bool,
     is_public: bool,
     user_id: i32,
     is_group_shared: bool,
-    publication_status: Box<RawValue>,
+    publication_status: RawJson,
     availability: SkillAvailability,
     source: Option<SkillSource>,
     created_at: String,
@@ -104,10 +104,13 @@ struct SkillAvailability {
 #[derive(serde::Serialize)]
 struct SkillSource {
     #[serde(rename = "type")]
-    kind: Box<RawValue>,
-    repo_url: Box<RawValue>,
-    skill_path: Box<RawValue>,
-    imported_at: Box<RawValue>,
+    kind: RawJson,
+    repo_url: RawJson,
+    skill_path: RawJson,
+    provider_key: RawJson,
+    skill_key: RawJson,
+    original_skill_key: RawJson,
+    imported_at: RawJson,
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -150,6 +153,9 @@ struct SkillSourceInput {
     kind: Option<OpaqueJson>,
     repo_url: Option<OpaqueJson>,
     skill_path: Option<OpaqueJson>,
+    provider_key: Option<OpaqueJson>,
+    skill_key: Option<OpaqueJson>,
+    original_skill_key: Option<OpaqueJson>,
     imported_at: Option<OpaqueJson>,
 }
 
@@ -183,7 +189,7 @@ fn user_skill_item(
             .capability
             .as_ref()
             .map(|capability| capability.publish_status.raw_or(()))
-            .unwrap_or_else(|| serde_json::value::to_raw_value(&()).expect("null serializes")),
+            .unwrap_or_else(|| brz_json::to_raw_value(&()).expect("null serializes")),
         availability: SkillAvailability {
             in_my_default: user_default_ids.contains(&kind.kinds_id),
             agent_builtin: false,
@@ -200,14 +206,19 @@ fn user_skill_item(
     }
 }
 
-/// Source information for git-imported skills: a truthy `spec.source` object
-/// with the type defaulting to `upload`.
+/// Source information for git/marketplace-imported skills: a truthy
+/// `spec.source` object with the type defaulting to `upload` and the remaining
+/// keys echoed as-is (`provider_key`/`skill_key`/`original_skill_key` are
+/// marketplace-import fields; missing keys serialize as `null`).
 fn source_info(spec: &SkillDisplaySpec) -> Option<SkillSource> {
     let source = spec.source.as_ref()?;
     Some(SkillSource {
         kind: source.kind.raw_or("upload"),
         repo_url: source.repo_url.raw_or(()),
         skill_path: source.skill_path.raw_or(()),
+        provider_key: source.provider_key.raw_or(()),
+        skill_key: source.skill_key.raw_or(()),
+        original_skill_key: source.original_skill_key.raw_or(()),
         imported_at: source.imported_at.raw_or(()),
     })
 }

@@ -7,8 +7,9 @@
 //! Mirrors the single-table `LoopNode` mapping (`app.models.delivery`): the
 //! `loop_items` table holds project (`resource_type='project'`), task
 //! (`'task'`), and execution/binding (`'execution'`) rows.
+use crate::board_snapshot::repository::ProjectRow as BoardProjectRow;
 use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow};
-use crate::json_compat::JsonProjection;
+use brz_json::JsonProjection;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 #[cfg(test)]
@@ -38,6 +39,8 @@ pub struct BindingMetadata {
 pub struct ItemMetadata {
     pub content_revision: Option<serde_json::Value>,
     pub read_revisions: Option<serde_json::Value>,
+    pub activity_read_sequences: Option<serde_json::Value>,
+    pub security_level: Option<serde_json::Value>,
     pub assignment_history: Option<serde_json::Value>,
     pub status_history: Option<serde_json::Value>,
     pub collaboration_group: Option<serde_json::Value>,
@@ -51,9 +54,6 @@ pub struct ItemMetadata {
     pub queued_at: Option<serde_json::Value>,
     pub ai_state: Option<serde_json::Value>,
     pub tags: Option<serde_json::Value>,
-    pub human_work: Option<serde_json::Value>,
-    pub external_index: Option<serde_json::Value>,
-    pub external_shadow: Option<serde_json::Value>,
 }
 
 /// `LoopItemComment.metadata_json` assignment-event fields
@@ -81,31 +81,24 @@ pub fn datetime_is_unset(value: Option<NaiveDateTime>) -> bool {
     }
 }
 
-/// `loop_items` project row (`CloudProject`, `resource_type='project'`).
+/// `loop_items` project row (`CloudProject`, `resource_type='project'`),
+/// selected with the source's labeled projection.
 #[allow(dead_code)]
 #[derive(Debug, FromMysqlRow)]
 pub struct ProjectRow {
+    #[mysql(rename = "loop_items_id")]
     pub id: String,
+    #[mysql(rename = "loop_items_project_key")]
     pub project_key: String,
+    #[mysql(rename = "loop_items_created_by_user_id")]
     pub created_by_user_id: i32,
+    #[mysql(rename = "loop_items_status")]
     pub status: String,
+    #[mysql(rename = "loop_items_metadata")]
     pub metadata: Option<Json<JsonProjection<ProjectMetadata>>>,
 }
 
 impl ProjectRow {
-    /// `CloudProject.task_provider`: metadata `task_provider` when it is one
-    /// of the known providers, otherwise `local`.
-    pub fn task_provider(&self) -> String {
-        let known = ["local", "github", "gitlab", "dingtalk_aitable"];
-        self.metadata
-            .as_ref()
-            .and_then(|json| json.0.value.as_ref())
-            .and_then(|metadata| metadata.task_provider.as_deref())
-            .filter(|provider| known.contains(provider))
-            .unwrap_or("local")
-            .to_string()
-    }
-
     /// `CloudProject.visibility`: `public` only when metadata says so.
     pub fn is_public(&self) -> bool {
         self.metadata
@@ -179,40 +172,15 @@ pub struct CloudContextBindingRow {
 
 impl CloudContextBindingRow {
     /// `LoopItemTaskBinding.workflow_node_id`: the metadata value when it is
-    /// a non-empty string, otherwise `None`.
+    /// a non-empty string, otherwise `None`. This is the only binding property
+    /// `find_runtime_task_cloud_context` injects explicitly; the other
+    /// metadata-derived response fields keep their pydantic defaults.
     pub fn workflow_node_id(&self) -> Option<String> {
         self.metadata
             .as_ref()
             .and_then(|json| json.0.value.as_ref())
             .and_then(|metadata| metadata.workflow_node_id.clone())
             .filter(|value| !value.is_empty())
-    }
-
-    /// `LoopItemTaskBinding.model_selection`: the metadata value when it is a
-    /// JSON object, otherwise `None`.
-    pub fn model_selection(&self) -> Option<serde_json::Value> {
-        self.metadata
-            .as_ref()
-            .and_then(|json| json.0.value.as_ref())
-            .and_then(|metadata| metadata.model_selection.clone())
-            .filter(serde_json::Value::is_object)
-    }
-
-    /// `LoopItemTaskBinding.change_requests`: the metadata list entries that
-    /// are JSON objects, otherwise an empty list.
-    pub fn change_requests(&self) -> Vec<serde_json::Value> {
-        self.metadata
-            .as_ref()
-            .and_then(|json| json.0.value.as_ref())
-            .and_then(|metadata| metadata.change_requests.clone())
-            .and_then(|value| match value {
-                serde_json::Value::Array(items) => Some(items),
-                _ => None,
-            })
-            .unwrap_or_default()
-            .into_iter()
-            .filter(serde_json::Value::is_object)
-            .collect()
     }
 }
 
@@ -370,7 +338,7 @@ impl CommentRow {
 
 /// The source's full column projection for `loop_item_executions`
 /// (`loop_item_execution_service.latest_for_item`).
-const EXECUTION_COLUMNS: &str = "loop_item_executions.id AS loop_item_executions_id, \
+pub(crate) const EXECUTION_COLUMNS: &str = "loop_item_executions.id AS loop_item_executions_id, \
      loop_item_executions.loop_item_id AS loop_item_executions_loop_item_id, \
      loop_item_executions.cloud_project_id AS loop_item_executions_cloud_project_id, \
      loop_item_executions.executor_owner_user_id AS loop_item_executions_executor_owner_user_id, \
@@ -507,31 +475,65 @@ pub struct LoopItemRepository<'a, M> {
     mysql: &'a M,
 }
 
+/// `visible_item_filter(user_id, project)` (`app.services.loop_items.access`)
+/// rendered exactly as SQLAlchemy emits it for the task-list query: the
+/// `security_level` JSON path through the `CASE ... WHEN 'null'` coalesce
+/// form, and the single-table-inheritance subqueries over `loop_items` with
+/// their `resource_type` guards (execution bindings, collaborator rows, and
+/// owned chat agents).
+fn visible_item_filter_sql(user_id: i32, default_security: &str) -> String {
+    format!(
+        " AND (coalesce(CASE JSON_EXTRACT(loop_items.metadata, '$.\"security_level\"') \
+         WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, \
+         '$.\"security_level\"')) END, '{default_security}') = 'open' \
+         OR loop_items.created_by_user_id = {user_id} \
+         OR loop_items.assignee_user_id = {user_id} \
+         OR loop_items.id IN (SELECT loop_items.loop_item_id \n\
+         FROM loop_items \n\
+         WHERE loop_items.task_user_id = {user_id} \
+         AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN \
+         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
+         AND loop_items.resource_type IN ('execution')) \
+         OR loop_items.id IN (SELECT loop_items.loop_item_id \n\
+         FROM loop_items \n\
+         WHERE loop_items.user_id = {user_id} \
+         AND loop_items.resource_type IN ('collaborator')) \
+         OR loop_items.assignee_agent_id IN (SELECT loop_items.id \n\
+         FROM loop_items \n\
+         WHERE loop_items.created_by_user_id = {user_id} \
+         AND loop_items.status = 'active' \
+         AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
+         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
+         AND loop_items.resource_type IN ('chat_agent')))"
+    )
+}
+
 impl<'a, M: Mysql> LoopItemRepository<'a, M> {
     pub fn new(mysql: &'a M) -> Self {
         Self { mysql }
     }
 
-    /// The underlying MySQL handle, for collaborators that share the same
-    /// connection (for example the `require_cloud_project_role` helper).
-    pub fn mysql(&self) -> &'a M {
-        self.mysql
-    }
-
     /// `ExternalLoopItemProvider._find_project`: resolve `KEY-number` ids to
     /// an external-provider project row. Returns `Ok(None)` when the id does
     /// not parse or the project is not github/gitlab backed.
-    pub async fn find_external_project(&self, item_id: &str) -> MysqlResult<Option<ProjectRow>> {
+    pub async fn find_external_project(
+        &self,
+        item_id: &str,
+    ) -> MysqlResult<Option<BoardProjectRow>> {
         let Some((key, number)) = split_external_item_id(item_id) else {
             return Ok(None);
         };
         let _ = number;
-        let project: Option<ProjectRow> = self
+        // `db.query(CloudProject).filter(CloudProject.project_key == key)`
+        // renders the full labeled projection, not a narrowed column list.
+        let project: Option<BoardProjectRow> = self
             .mysql
             .fetch_optional(
-                "SELECT id, project_key, created_by_user_id, status, metadata \
-                 FROM loop_items \
-                 WHERE project_key = ? AND resource_type IN ('project') LIMIT 1",
+                &format!(
+                    "SELECT {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
+                     WHERE loop_items.project_key = ? \n\
+                     AND loop_items.resource_type IN ('project') \n LIMIT 1",
+                ),
                 (key,),
             )
             .await?;
@@ -563,10 +565,11 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
     pub async fn get_project(&self, project_id: &str) -> MysqlResult<Option<ProjectRow>> {
         self.mysql
             .fetch_optional(
-                "SELECT id, project_key, created_by_user_id, status, metadata \
-                 FROM loop_items \
-                 WHERE id = ? AND status = 'active' \
-                 AND resource_type IN ('project') LIMIT 1",
+                &format!(
+                    "SELECT {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
+                     WHERE loop_items.id = ? AND loop_items.status = 'active' \n\
+                     AND loop_items.resource_type IN ('project') \n LIMIT 1",
+                ),
                 (project_id,),
             )
             .await
@@ -650,6 +653,36 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
                     "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
                      WHERE loop_items.id = '{item_id}' \
                      AND loop_items.resource_type IN ('task')",
+                ),
+                (),
+            )
+            .await
+    }
+
+    /// `loop_item_service.list`: the active task rows of one project, ordered
+    /// by `sort_order, updated_at DESC`. The recorded COM_QUERY inlines the
+    /// numeric `cloud_project_id`. When the caller lacks `Maintainer`, the
+    /// source adds the `visible_item_filter`; `default_security` is the
+    /// project's `default_issue_security`.
+    pub async fn list_project_task_items(
+        &self,
+        project_id: &str,
+        user_id: i32,
+        visible_filter: Option<&str>,
+    ) -> MysqlResult<Vec<TaskItemFullRow>> {
+        let visibility = match visible_filter {
+            Some(default_security) => visible_item_filter_sql(user_id, default_security),
+            None => String::new(),
+        };
+        self.mysql
+            .fetch_all(
+                &format!(
+                    "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
+                     WHERE loop_items.cloud_project_id = {project_id} \
+                     AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
+                         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')){visibility} \
+                     AND loop_items.resource_type IN ('task') \
+                     ORDER BY loop_items.sort_order, loop_items.updated_at DESC",
                 ),
                 (),
             )
@@ -745,16 +778,17 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
         Ok(row.is_some())
     }
 
-    /// `db.get(ProjectChatAgent, id)`: the chat-agent row when it exists.
+    /// `db.get(ProjectChatAgent, id)`: the chat-agent row when it exists. The
+    /// source's `Session.get` renders the unlabeled entity projection with no
+    /// `LIMIT`, matching the recorded exchange for replay.
     pub async fn chat_agent(&self, agent_id: &str) -> MysqlResult<Option<ChatAgentRow>> {
         self.mysql
             .fetch_optional(
                 &format!(
-                    "SELECT loop_items.name AS loop_items_name, loop_items.title AS loop_items_title, \
-                     loop_items.created_by_user_id AS loop_items_created_by_user_id \n\
-                     FROM loop_items \n\
+                    "SELECT {} \nFROM loop_items \n\
                      WHERE loop_items.id = '{agent_id}' \
-                     AND loop_items.resource_type IN ('chat_agent') \n LIMIT 1",
+                     AND loop_items.resource_type IN ('chat_agent')",
+                    crate::cloud_projects::entity_columns(),
                 ),
                 (),
             )
@@ -802,35 +836,6 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             )
             .await
     }
-
-    /// `human_issue_work_service._fallback_reviewer_ids`: the approved
-    /// `Owner`/`Maintainer` member ids of one project.
-    pub async fn project_reviewer_ids(&self, project_id: &str) -> MysqlResult<Vec<i64>> {
-        #[derive(Debug, FromMysqlRow)]
-        struct IdRow {
-            #[mysql(rename = "resource_members_entity_id")]
-            entity_id: String,
-        }
-        let rows: Vec<IdRow> = self
-            .mysql
-            .fetch_all(
-                &format!(
-                    "SELECT resource_members.entity_id AS resource_members_entity_id \n\
-                     FROM resource_members \n\
-                     WHERE resource_members.resource_type = 'CloudProject' \
-                     AND resource_members.resource_id = '{project_id}' \
-                     AND resource_members.entity_type = 'user' \
-                     AND resource_members.status = 'approved' \
-                     AND resource_members.`role` IN ('Owner', 'Maintainer')",
-                ),
-                (),
-            )
-            .await?;
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| row.entity_id.parse().ok())
-            .collect())
-    }
 }
 
 /// `ProjectChatMessage` projection consumed by `_present_cached_ai_state`.
@@ -845,18 +850,27 @@ pub struct ProjectChatMessageRow {
 }
 
 /// `ProjectChatAgent` projection consumed by the assignee-name and approval
-/// projections.
-#[derive(Debug, FromMysqlRow)]
+/// projections. The row carries its primary key so an identity-map hit can be
+/// recognized by id.
+#[derive(Debug, Clone, FromMysqlRow)]
 pub struct ChatAgentRow {
-    #[mysql(rename = "loop_items_name")]
+    #[mysql(rename = "id")]
+    #[allow(dead_code, reason = "carried for identity-map id comparison")]
+    pub id: String,
+    #[mysql(rename = "name")]
     pub name: Option<String>,
-    #[mysql(rename = "loop_items_title")]
+    #[mysql(rename = "title")]
     pub title: Option<String>,
-    #[mysql(rename = "loop_items_created_by_user_id")]
+    #[mysql(rename = "created_by_user_id")]
     pub created_by_user_id: Option<i32>,
 }
 
 impl ChatAgentRow {
+    /// Whether this row is the agent identified by `agent_id`.
+    pub fn matches_id(&self, agent_id: &str) -> bool {
+        self.id == agent_id
+    }
+
     /// `agent.title or agent.name`: the display name, preferring a non-empty
     /// title.
     pub fn display_name(&self) -> Option<String> {
@@ -877,72 +891,28 @@ fn split_external_item_id(item_id: &str) -> Option<(&str, u64)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod visible_filter_tests {
+    use super::visible_item_filter_sql;
 
     #[test]
-    fn splits_external_item_ids() {
-        assert_eq!(
-            split_external_item_id("WEWORKC2FA61-507"),
-            Some(("WEWORKC2FA61", 507))
+    fn visible_item_filter_matches_the_recorded_rendering() {
+        let rendered = visible_item_filter_sql(86, "open");
+        // The recorded statement's filter fragment (case 30e04068, user 86).
+        let expected = " AND (coalesce(CASE JSON_EXTRACT(loop_items.metadata, '$.\"security_level\"') WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, '$.\"security_level\"')) END, 'open') = 'open' OR loop_items.created_by_user_id = 86 OR loop_items.assignee_user_id = 86 OR loop_items.id IN (SELECT loop_items.loop_item_id \nFROM loop_items \nWHERE loop_items.task_user_id = 86 AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) AND loop_items.resource_type IN ('execution')) OR loop_items.id IN (SELECT loop_items.loop_item_id \nFROM loop_items \nWHERE loop_items.user_id = 86 AND loop_items.resource_type IN ('collaborator')) OR loop_items.assignee_agent_id IN (SELECT loop_items.id \nFROM loop_items \nWHERE loop_items.created_by_user_id = 86 AND loop_items.status = 'active' AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) AND loop_items.resource_type IN ('chat_agent')))";
+        let normalize = |s: &str| re_whitespace(s);
+        fn re_whitespace(s: &str) -> String {
+            s.split_whitespace().collect::<Vec<_>>().join(" ")
+        }
+        assert_eq!(normalize(&rendered), normalize(expected));
+        assert!(rendered.contains("$.\"security_level\""));
+        assert!(
+            rendered.contains(
+                "loop_items.user_id = 86 AND loop_items.resource_type IN ('collaborator')"
+            )
         );
-        assert_eq!(split_external_item_id("plain"), None);
-        assert_eq!(split_external_item_id("KEY-abc"), None);
-        assert_eq!(split_external_item_id("-507"), None);
-    }
-
-    #[test]
-    fn role_hierarchy() {
-        assert!(has_permission("Owner", "RestrictedAnalyst"));
-        assert!(has_permission("Maintainer", "Reporter"));
-        assert!(!has_permission("Reporter", "Developer"));
-        assert!(!has_permission("Unknown", "Reporter"));
-    }
-
-    #[test]
-    fn task_provider_falls_back_to_local() {
-        let project = |metadata: Value| ProjectRow {
-            id: "1".to_string(),
-            project_key: "K".to_string(),
-            created_by_user_id: 1,
-            status: "active".to_string(),
-            metadata: Some(Json(metadata.into())),
-        };
-        assert_eq!(
-            project(serde_json::json!({"task_provider": "gitlab"})).task_provider(),
-            "gitlab"
-        );
-        assert_eq!(
-            project(serde_json::json!({"task_provider": "weird"})).task_provider(),
-            "local"
-        );
-        assert_eq!(project(Value::Null).task_provider(), "local");
-    }
-
-    #[test]
-    fn workflow_node_id_reads_metadata() {
-        let binding = |metadata: Value| BindingRow {
-            id: "1".to_string(),
-            cloud_project_id: "2".to_string(),
-            loop_item_id: Some("3".to_string()),
-            task_user_id: 1,
-            device_id: "d".to_string(),
-            task_id: "t".to_string(),
-            task_title: None,
-            backend_task_id: 0,
-            linked_by_user_id: 1,
-            linked_at: None,
-            unlinked_at: None,
-            metadata: Some(Json(metadata.into())),
-        };
-        assert_eq!(
-            binding(serde_json::json!({"workflow_node_id": "node-1"})).workflow_node_id(),
-            Some("node-1".to_string())
-        );
-        assert_eq!(
-            binding(serde_json::json!({"workflow_node_id": ""})).workflow_node_id(),
-            None
-        );
-        assert_eq!(binding(serde_json::json!({})).workflow_node_id(), None);
     }
 }
+
+#[cfg(test)]
+#[path = "loop_repository_tests.rs"]
+mod tests;

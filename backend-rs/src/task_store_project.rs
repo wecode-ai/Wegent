@@ -65,7 +65,18 @@ pub async fn fetch_active_project_task<M: Mysql>(
 /// SQLAlchemy flushes the dirty columns in the mapper's column order
 /// (`json`, `updated_at`, `project_id`), keyed by the primary key.
 pub fn task_project_update_statement(table: &str) -> String {
-    format!("UPDATE {table} \nSET json = ?, updated_at = ?, project_id = ? \nWHERE id = ?")
+    format!("UPDATE {table} \nSET json = ?, updated_at = ?, project_id = ? \nWHERE {table}.id = ?")
+}
+
+/// `db.refresh(task)`: the task row re-read by primary key after the
+/// project-link write commits (`add_task_to_project_endpoint`). The source's
+/// PK lookup carries no kind/state filter and no `LIMIT`.
+pub fn task_by_id_refresh_statement(table: &str) -> String {
+    format!(
+        "SELECT id, user_id, kind, name, namespace, json, is_active, \
+         created_at, updated_at, project_id, client_origin, is_group_chat \
+         \nFROM {table} \nWHERE {table}.id = ?"
+    )
 }
 
 /// The project-link update bound to its parameters, followed by the source's
@@ -88,4 +99,32 @@ pub async fn update_task_project_and_json<M: Mysql>(
     // `db.commit()`: the source commits the single flushed update.
     let _ = mysql.execute("COMMIT", ()).await;
     Ok(())
+}
+
+/// `task_store.clear_project_for_owned_tasks`: the single bulk update clearing
+/// the project link of the caller's tasks, read/written from `tasks`.
+pub(super) async fn clear_project_for_owned_tasks<M: Mysql>(
+    mysql: &M,
+    project_id: i64,
+    owner_user_id: i64,
+    client_origin: Option<&str>,
+) -> MysqlResult<u64> {
+    use crate::task_store_projects::{clear_project_update_statement, task_update_timestamp};
+    // `TaskResource.updated_at`'s Python-side `onupdate` binds first; the
+    // single-table store runs the one bulk update the base store issues.
+    let timestamp = task_update_timestamp();
+    let sql = clear_project_update_statement("tasks", client_origin.is_some());
+    let execution = match client_origin {
+        Some(origin) => {
+            mysql
+                .execute(sql, (timestamp.as_str(), project_id, owner_user_id, origin))
+                .await?
+        }
+        None => {
+            mysql
+                .execute(sql, (timestamp.as_str(), project_id, owner_user_id))
+                .await?
+        }
+    };
+    Ok(execution.rows_affected)
 }

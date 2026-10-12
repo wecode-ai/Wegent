@@ -245,6 +245,87 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
+  test('keeps an unanswered async question visible after execution completes and reloads', () => {
+    const store = new RuntimeTaskLifecycleStore('async-question-test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))
+    store.userInputRequested(address, 'async')
+    expect(store.getTask(address)?.derived.isBusy).toBe(true)
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+
+    const completedTask = task({
+      running: false,
+      status: 'done',
+      completedAt: 123,
+      interactionStatus: 'awaitingUserReply',
+    })
+    store.turnSettled(address, null, 'succeeded')
+    store.syncRuntimeWork(runtimeWork(completedTask))
+    expect(store.getTask(address)?.derived).toMatchObject({
+      isBusy: false,
+      canSend: true,
+      shouldShowSidebarWaiting: true,
+    })
+
+    const restored = new RuntimeTaskLifecycleStore('async-question-restored-test')
+    restored.syncRuntimeWork(runtimeWork(completedTask))
+    expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    restored.userInputResponded(address)
+    expect(restored.getTask(address)?.derived).toMatchObject({
+      isBusy: false,
+      shouldShowSidebarWaiting: false,
+    })
+    restored.syncRuntimeWork(runtimeWork(completedTask))
+    restored.sendRequested(address)
+    expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    restored.sendRejected(address)
+    expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    restored.sendRequested(address)
+    restored.sendAccepted(address)
+    restored.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          threadStatus: 'active',
+          updatedAt: 124,
+          interactionStatus: null,
+        })
+      )
+    )
+    expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
+  })
+
+  test('keeps realtime async input through a terminal snapshot without interaction metadata', () => {
+    const store = new RuntimeTaskLifecycleStore('async-question-terminal-test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))
+    store.userInputRequested(address, 'async')
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done', completedAt: 123 })))
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({ running: false, status: 'done', completedAt: 123, interactionStatus: null })
+      )
+    )
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
+  })
+
+  test('does not let a terminal transcript clear newer async interaction state', () => {
+    const store = new RuntimeTaskLifecycleStore('async-question-transcript-test')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: true, status: 'running', interactionStatus: null }))
+    )
+    store.userInputRequested(address, 'async')
+    store.syncRuntimeTranscriptSnapshot(address, {
+      running: false,
+      turns: [{ id: 'turn-1', status: 'completed', completedAt: 123 }],
+    })
+    expect(store.getTask(address)?.derived).toMatchObject({
+      isBusy: false,
+      shouldShowSidebarWaiting: true,
+    })
+  })
+
   test('does not publish a new store snapshot for identical executor work', () => {
     const store = new RuntimeTaskLifecycleStore('identical-executor-work-test')
     const work = runtimeWork(

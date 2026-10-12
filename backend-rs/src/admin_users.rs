@@ -399,9 +399,7 @@ mod tests {
             user_name: "Wegent".to_string(),
             users_password_hash: "hash".to_string(),
             email: Some("admin@example.com".to_string()),
-            git_info: brz_mysql::Json(crate::json_compat::OpaqueJson::from_serializable(
-                crate::json_compat::JsonNull,
-            )),
+            git_info: brz_mysql::Json(brz_json::OpaqueJson::from_serializable(brz_json::JsonNull)),
             is_active: 1,
             role: "admin".to_string(),
             auth_source: "password".to_string(),

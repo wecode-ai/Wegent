@@ -9,9 +9,8 @@
 //! merged with the pydantic `LoopItemResponse` normalization
 //! (`app.schemas.delivery.LoopItemResponse`): the item row fields, the
 //! project-role permissions (`issue_permissions` / `can_view_item`), the
-//! metadata-derived history and AI projections, the newest execution overlay
-//! (`loop_item_execution_service.latest_for_item`), and the human-work view
-//! (`human_issue_work_service.view`).
+//! metadata-derived history and AI projections, and the newest execution
+//! overlay (`loop_item_execution_service.latest_for_item`).
 use chrono::{Local, NaiveDateTime};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -20,11 +19,11 @@ use brz_http_server::StatusCode;
 
 use super::http_error::HttpError;
 use super::loop_repository::{
-    CommentRow, ExecutionFullRow, ItemMetadata, LoopItemRepository, TaskItemFullRow,
+    ChatAgentRow, ExecutionFullRow, ItemMetadata, LoopItemRepository, TaskItemFullRow,
     datetime_is_unset, has_permission,
 };
 use crate::auth::SessionUser;
-use crate::board_snapshot::repository::BoardSnapshotRepository;
+use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectAccess};
 use crate::state::AppState;
 
 /// The `LoopItemResponse` body (`app.schemas.delivery.LoopItemResponse`):
@@ -59,7 +58,6 @@ pub struct LoopItemResponse {
     assignment_history: Vec<Value>,
     status_history: Vec<Value>,
     approval: Option<Value>,
-    human_work: Option<Value>,
     queued_at: Option<String>,
     execution_note: Option<String>,
     execution_error: Option<String>,
@@ -73,16 +71,26 @@ pub struct LoopItemResponse {
     created_by_user_id: i64,
     created_by_user_name: Option<String>,
     can_view_detail: bool,
+    security_level: &'static str,
     can_edit: bool,
     permissions: Permissions,
     detail_loaded: bool,
     content_revision: i64,
+    activity_read_sequence: i64,
     is_unread: bool,
     current_delivery_id: Option<String>,
     version: i64,
     created_at: String,
     updated_at: String,
     completed_at: Option<String>,
+}
+
+impl LoopItemResponse {
+    /// The item's primary key, consumed by callers that need the ids of a
+    /// projected list (for example the board-snapshot task-binding read).
+    pub fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 /// `LoopItemPermissions` (`app.schemas.delivery`).
@@ -113,59 +121,82 @@ struct ExecutionOverlay {
     ai_state: Option<Value>,
 }
 
-/// The owning project facts `response_values` needs: the numeric id, the
-/// resolved visibility, whether the task provider is local, and the creator.
+/// The owning project facts `response_values` needs: the numeric id (for the
+/// fallback access re-read), the resolved visibility, whether the task
+/// provider is local, the creator, and the project's default issue security.
+/// Only `number` and `default_issue_security` are consumed by this projection;
+/// the remaining fields are carried for sibling projections.
 pub struct ProjectFacts<'a> {
+    #[allow(dead_code, reason = "carried for sibling item projections")]
     pub number: i64,
+    #[allow(dead_code, reason = "carried for sibling item projections")]
     pub visibility: &'a str,
+    #[allow(dead_code, reason = "carried for sibling item projections")]
     pub provider_is_local: bool,
+    #[allow(dead_code, reason = "carried for sibling item projections")]
     pub created_by_user_id: i32,
+    pub default_issue_security: &'a str,
 }
 
 /// `LoopItemService.response_values`: project one task row to the
-/// `LoopItemResponse` body.
+/// `LoopItemResponse` body. `access` is the source's optional pre-resolved
+/// `CloudProjectAccess`; when `None` the guard re-reads it (the source's
+/// `access = access or require_cloud_project_role(...)`).
 pub async fn response_values(
     state: &AppState,
     item: &TaskItemFullRow,
     current_user: &SessionUser,
     project: &ProjectFacts<'_>,
+    access: Option<&ProjectAccess>,
 ) -> Result<LoopItemResponse, HttpError> {
     let repository = LoopItemRepository::new(&state.mysql);
     let project_number = project.number;
 
     // `access = access or require_cloud_project_role(db, item.cloud_project_id,
     // user_id, RestrictedAnalyst)`.
-    let access = BoardSnapshotRepository::new(&state.mysql)
-        .require_cloud_project_role(project_number, current_user.id)
-        .await
-        .map_err(HttpError::internal)?
-        .ok_or_else(HttpError::cloud_project_not_found)?;
+    let resolved_access;
+    let access = match access {
+        Some(access) => access,
+        None => {
+            resolved_access = BoardSnapshotRepository::new(&state.mysql)
+                .require_cloud_project_role(project_number, current_user.id)
+                .await
+                .map_err(HttpError::internal)?
+                .ok_or_else(HttpError::cloud_project_not_found)?;
+            &resolved_access
+        }
+    };
     let role = access.role.as_str();
-    let is_public_visitor = role == "RestrictedAnalyst";
+    let default_metadata = ItemMetadata::default();
+    let metadata = item.metadata().unwrap_or(&default_metadata);
 
-    // `_item_permissions` -> `can_view_item`.
-    let restricts_unrelated =
-        project.visibility == "public_restricted" && !has_permission(role, "Maintainer");
-    let can_view_detail = if restricts_unrelated {
+    // `item_security(item, access.project)` (`app.services.loop_items.access`):
+    // the item's own `security_level` when set, else the project default.
+    let security_level = match metadata_security_level(metadata) {
+        Some(level) => level,
+        None => {
+            if project.default_issue_security == "related" {
+                "related"
+            } else {
+                "open"
+            }
+        }
+    };
+
+    // `_item_permissions` -> `can_view_item`: maintainers and up always see
+    // the item; otherwise an `open` item or an item related to the caller.
+    let can_view_detail = if has_permission(role, "Maintainer") || security_level == "open" {
+        true
+    } else {
         repository
             .is_related_item(&item.id, current_user.id)
             .await
             .map_err(HttpError::internal)?
-    } else {
-        !is_public_visitor || item.created_by_user_id == Some(current_user.id)
     };
 
     // `issue_permissions(access, issue_creator_user_id=item.created_by_user_id,
     // user_id=user_id)`.
-    let permissions = issue_permissions(
-        role,
-        item.created_by_user_id,
-        current_user.id,
-        is_public_visitor,
-    );
-
-    let default_metadata = ItemMetadata::default();
-    let metadata = item.metadata().unwrap_or(&default_metadata);
+    let permissions = issue_permissions(role);
 
     // `db.get(User, item.assignee_user_id)`: the source identity map already
     // holds the session user, so the session name is used without a query.
@@ -173,7 +204,7 @@ pub async fn response_values(
         Some(user_id) if user_id == current_user.id => Some(current_user.user_name.clone()),
         Some(user_id) => state
             .user_reader
-            .get_by_id(i64::from(user_id))
+            .get_entity_by_id(i64::from(user_id))
             .await
             .map_err(|error| {
                 tracing::error!(%error, "cloud-context assignee lookup failed");
@@ -183,15 +214,20 @@ pub async fn response_values(
         None => None,
     };
 
-    // `db.get(ProjectChatAgent, item.assignee_agent_id)` when set.
-    let assignee_agent_name = match nonempty(item.assignee_agent_id.as_deref()) {
+    // `db.get(ProjectChatAgent, ...)`: the source identity map serves every
+    // lookup of one agent id with a single SQL read, so the row is resolved
+    // once here and reused by the approval and AI-state projections.
+    let assignee_agent_id = nonempty(item.assignee_agent_id.as_deref());
+    let assignee_agent = match assignee_agent_id.as_deref() {
         Some(agent_id) => repository
-            .chat_agent(&agent_id)
+            .chat_agent(agent_id)
             .await
-            .map_err(HttpError::internal)?
-            .and_then(|agent| agent.display_name()),
+            .map_err(HttpError::internal)?,
         None => None,
     };
+    let assignee_agent_name = assignee_agent
+        .as_ref()
+        .and_then(|agent| agent.display_name());
 
     // `db.get(Kind, item.assignee_team_id)` when set.
     let assignee_team_name = match item.assignee_team_id.filter(|id| *id != 0) {
@@ -223,16 +259,15 @@ pub async fn response_values(
         &repository,
         item,
         current_user.id,
+        assignee_agent.as_ref(),
         execution.as_ref(),
         cached_ai_state,
     )
     .await?;
 
-    let human_work =
-        human_work_view(state, &repository, item, metadata, current_user.id, project).await?;
-
     let content_revision = content_revision(metadata);
     let is_unread = is_unread(metadata, current_user.id);
+    let activity_read_sequence = activity_read_sequence(metadata, current_user.id);
     let description = if can_view_detail {
         item.description.clone().unwrap_or_default()
     } else {
@@ -271,7 +306,6 @@ pub async fn response_values(
         approval: overlay
             .approval
             .or_else(|| json_object(metadata.approval.as_ref())),
-        human_work,
         queued_at: overlay
             .queued_at
             .or_else(|| json_string(metadata.queued_at.as_ref())),
@@ -282,8 +316,8 @@ pub async fn response_values(
             .error
             .or_else(|| json_string(metadata.execution_error.as_ref())),
         automation: json_object(metadata.automation.as_ref()),
-        workflow: json_object(metadata.workflow.as_ref()),
-        execution_config: json_object(metadata.execution_config.as_ref()),
+        workflow: json_object(metadata.workflow.as_ref()).map(|workflow| workflow_view(&workflow)),
+        execution_config: execution_config_view(metadata.execution_config.as_ref()),
         priority: item.priority.clone().unwrap_or_default(),
         due_at: isoformat_unset(item.due_at),
         sort_order: item.sort_order,
@@ -291,10 +325,12 @@ pub async fn response_values(
         created_by_user_id: i64::from(item.created_by_user_id.unwrap_or(0)),
         created_by_user_name: None,
         can_view_detail,
+        security_level,
         can_edit: permissions.edit_content,
         permissions,
         detail_loaded: true,
         content_revision,
+        activity_read_sequence,
         is_unread,
         current_delivery_id: normalize_empty_id(item.current_delivery_id.as_deref()),
         version: item.version,
@@ -304,27 +340,27 @@ pub async fn response_values(
     })
 }
 
-/// `issue_permissions`: action-specific permissions for the caller.
-fn issue_permissions(
-    role: &str,
-    issue_creator_user_id: Option<i32>,
-    user_id: i32,
-    is_public_visitor: bool,
-) -> Permissions {
-    if is_public_visitor {
-        let owns_issue = issue_creator_user_id == Some(user_id);
-        return Permissions {
-            edit_content: owns_issue,
-            comment: owns_issue,
-            assign: false,
-            execute: owns_issue,
-        };
-    }
+/// `issue_permissions(access, ...)`: role-based action permissions, ignoring
+/// the issue creator and caller identity (`app.services.cloud_projects.access`).
+fn issue_permissions(role: &str) -> Permissions {
     Permissions {
         edit_content: has_permission(role, "Developer"),
-        comment: has_permission(role, "Reporter"),
+        comment: has_permission(role, "Developer"),
         assign: has_permission(role, "Maintainer"),
-        execute: has_permission(role, "Reporter"),
+        execute: has_permission(role, "Developer"),
+    }
+}
+
+/// `item_security(item, project)`: the item's own `security_level` when it is
+/// one of the known levels, else the project default.
+fn metadata_security_level(metadata: &ItemMetadata) -> Option<&'static str> {
+    match metadata.security_level.as_ref() {
+        Some(Value::String(level)) => match level.as_str() {
+            "open" => Some("open"),
+            "related" => Some("related"),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -335,26 +371,26 @@ async fn execution_overlay(
     repository: &LoopItemRepository<'_, brz_mysql::MysqlService>,
     item: &TaskItemFullRow,
     user_id: i32,
+    assignee_agent: Option<&ChatAgentRow>,
     execution: Option<&ExecutionFullRow>,
     cached_ai_state: Option<Value>,
 ) -> Result<ExecutionOverlay, HttpError> {
     let Some(execution) = execution else {
         return Ok(ExecutionOverlay::default());
     };
+    // `_can_approve_run`: `db.get(ProjectChatAgent, item.assignee_agent_id)`
+    // is an identity-map hit for the already-loaded assignee agent row.
     let can_approve = execution.status.as_deref() == Some("pending_approval")
         && nonempty(item.assignee_agent_id.as_deref()).is_some()
-        && match nonempty(item.assignee_agent_id.as_deref()) {
-            Some(agent_id) => {
-                repository
-                    .chat_agent(&agent_id)
-                    .await
-                    .map_err(HttpError::internal)?
-                    .and_then(|agent| agent.created_by_user_id)
-                    == Some(user_id)
-            }
-            None => false,
-        };
-    let ai_state = execution_ai_state(state, repository, execution, cached_ai_state).await?;
+        && assignee_agent.and_then(|agent| agent.created_by_user_id) == Some(user_id);
+    let ai_state = execution_ai_state(
+        state,
+        repository,
+        assignee_agent,
+        execution,
+        cached_ai_state,
+    )
+    .await?;
     Ok(ExecutionOverlay {
         id: Some(execution.id),
         display_state: Some(display_state(execution)),
@@ -544,6 +580,7 @@ fn parse_ai_state_datetime(value: &str) -> Option<NaiveDateTime> {
 async fn execution_ai_state(
     _state: &AppState,
     repository: &LoopItemRepository<'_, brz_mysql::MysqlService>,
+    assignee_agent: Option<&ChatAgentRow>,
     execution: &ExecutionFullRow,
     existing: Option<Value>,
 ) -> Result<Option<Value>, HttpError> {
@@ -554,35 +591,47 @@ async fn execution_ai_state(
         Some(Value::Object(map)) => map,
         _ => Map::new(),
     };
-    let agent = match nonempty(execution.agent_id.as_deref()) {
+    // `db.get(ProjectChatAgent, execution.agent_id)`: an identity-map hit for
+    // the assignee agent when the ids agree, else one extra SQL read.
+    let agent: Option<ChatAgentRow> = match nonempty(execution.agent_id.as_deref()) {
+        Some(agent_id) if assignee_agent.is_some_and(|agent| agent.matches_id(&agent_id)) => {
+            assignee_agent.cloned()
+        }
         Some(agent_id) => repository
             .chat_agent(&agent_id)
             .await
             .map_err(HttpError::internal)?,
         None => None,
     };
-    let team_name = match execution.team_id {
+    // `db.get(Kind, execution.team_id) if execution.team_id else None`: an
+    // unset team id is stored as 0, which is falsy, so no lookup runs.
+    let team_name = match execution.team_id.filter(|team_id| *team_id != 0) {
         Some(team_id) => repository
             .kind_name(team_id)
             .await
             .map_err(HttpError::internal)?,
         None => None,
     };
-    let agent_name = if execution.agent_id.is_none() && execution.team_id.is_none() {
-        Some("AI 托管".to_string())
-    } else if execution.agent_id.is_none() {
-        team_name
-    } else {
-        agent.and_then(|agent| agent.display_name())
-    };
+    // `execution.executor_type` is not selected by the recorded execution
+    // statement, so the agent's title/name wins whenever an agent is set and
+    // the team name is the fallback (`team.name if executor_type ==
+    // "wegent_team" and team is not None else (agent.title or agent.name)`).
+    let agent_name = agent.and_then(|agent| agent.display_name()).or(team_name);
     let run_id = state
         .get("run_id")
         .cloned()
         .unwrap_or_else(|| json!(format!("exec-{}", execution.id)));
     state.insert("run_id".to_string(), run_id);
     state.insert("status".to_string(), json!(display_state(execution)));
-    state.insert("agent_id".to_string(), json!(execution.agent_id));
-    state.insert("team_id".to_string(), json!(execution.team_id));
+    state.insert(
+        "agent_id".to_string(),
+        json!(nonempty(execution.agent_id.as_deref())),
+    );
+    // `execution.team_id or None`: an unset 0 renders as null.
+    state.insert(
+        "team_id".to_string(),
+        json!(execution.team_id.filter(|team_id| *team_id != 0)),
+    );
     state.insert("agent_name".to_string(), json!(agent_name));
     state.insert(
         "runtime_device_id".to_string(),
@@ -592,228 +641,34 @@ async fn execution_ai_state(
         "runtime_task_id".to_string(),
         json!(execution.runtime_task_id),
     );
+    // `iso(value)` wraps every datetime in `_optional_datetime`, whose
+    // `loop_datetime_value_is_unset` treats NULL and both MySQL unset
+    // sentinels (1970-01-01 00:00:00 and 00:00:01) as absent.
     state.insert(
         "started_at".to_string(),
-        optional_string(isoformat(execution.started_at)),
+        optional_string(isoformat_model_unset(execution.started_at)),
     );
     state.insert(
         "heartbeat_at".to_string(),
-        optional_string(isoformat(execution.heartbeat_at)),
+        optional_string(isoformat_model_unset(execution.heartbeat_at)),
     );
     state.insert(
         "lease_expires_at".to_string(),
-        optional_string(isoformat(execution.lease_expires_at)),
+        optional_string(isoformat_model_unset(execution.lease_expires_at)),
     );
     state.insert(
         "completed_at".to_string(),
-        optional_string(isoformat(execution.completed_at)),
+        optional_string(isoformat_model_unset(execution.completed_at)),
     );
     state.insert(
         "updated_at".to_string(),
-        optional_string(isoformat(execution.updated_at)),
+        optional_string(isoformat_model_unset(execution.updated_at)),
     );
     state.insert(
         "last_error".to_string(),
         nonempty(execution.error_message.as_deref()).map_or(Value::Null, Value::String),
     );
     Ok(Some(Value::Object(state)))
-}
-
-/// `human_issue_work_service.view`: the human-work projection for a directly
-/// human-assigned local issue, or `None` when the item has no single active
-/// human assignment.
-async fn human_work_view(
-    _state: &AppState,
-    repository: &LoopItemRepository<'_, brz_mysql::MysqlService>,
-    item: &TaskItemFullRow,
-    metadata: &ItemMetadata,
-    user_id: i32,
-    project: &ProjectFacts<'_>,
-) -> Result<Option<Value>, HttpError> {
-    // `_assignment`: a local provider and no workflow/external projection.
-    if !project.provider_is_local
-        || metadata.workflow.as_ref().is_some_and(truthy)
-        || metadata.external_index.as_ref().is_some_and(truthy)
-        || metadata.external_shadow.as_ref().is_some_and(truthy)
-    {
-        return Ok(None);
-    }
-    let comments = repository
-        .list_item_comments(&item.id)
-        .await
-        .map_err(HttpError::internal)?;
-    let active = active_assignments(&comments);
-    if active.len() != 1 {
-        return Ok(None);
-    }
-    let assignment = &active[0];
-    // Human, manually triggered, not a workflow step, matching the assignee.
-    let assignee_text = item
-        .assignee_user_id
-        .filter(|id| *id != 0)
-        .map(|id| id.to_string())
-        .unwrap_or_default();
-    if assignment.member_type != "human"
-        || assignment.trigger.as_deref() == Some("default")
-        || !assignment.workflow_step.is_empty()
-        || assignee_text != assignment.member_id
-    {
-        return Ok(None);
-    }
-    let stored = json_object(metadata.human_work.as_ref());
-    let work = match stored.as_ref() {
-        Some(Value::Object(map)) => map.clone(),
-        _ => Map::new(),
-    };
-    let assignment_id = assignment.comment_id.clone();
-    let reviewer_id = reviewer_id(
-        repository,
-        item.assignee_user_id,
-        assignment.assigned_by_user_id,
-        project.number,
-    )
-    .await?;
-    let is_assignee = item.assignee_user_id == Some(user_id);
-    let status = item.status.as_deref().unwrap_or("");
-    let can_review = status == "in_review"
-        && work.get("state").and_then(Value::as_str) == Some("submitted")
-        && work.get("assignment_id").and_then(Value::as_str) == Some(assignment_id.as_str())
-        && match reviewer_id {
-            Some(reviewer) => reviewer == user_id,
-            None => {
-                let mut fallback: Vec<i64> = vec![i64::from(project.created_by_user_id)];
-                fallback.extend(
-                    repository
-                        .project_reviewer_ids(&item.cloud_project_id)
-                        .await
-                        .map_err(HttpError::internal)?,
-                );
-                fallback.contains(&i64::from(user_id))
-            }
-        };
-    let state_value =
-        if work.get("assignment_id").and_then(Value::as_str) == Some(assignment_id.as_str()) {
-            work.get("state").cloned().unwrap_or_else(|| json!("none"))
-        } else {
-            json!("none")
-        };
-    let mut view = Map::new();
-    view.insert("assignment_id".to_string(), json!(assignment_id));
-    view.insert("assignee_user_id".to_string(), json!(item.assignee_user_id));
-    view.insert("reviewer_user_id".to_string(), json!(reviewer_id));
-    view.insert(
-        "submission_message_id".to_string(),
-        work.get("submission_message_id")
-            .cloned()
-            .unwrap_or(Value::Null),
-    );
-    view.insert(
-        "submitted_by_user_id".to_string(),
-        work.get("submitted_by_user_id")
-            .cloned()
-            .unwrap_or(Value::Null),
-    );
-    view.insert("state".to_string(), state_value);
-    view.insert(
-        "can_start".to_string(),
-        json!(is_assignee && matches!(status, "inbox" | "pending")),
-    );
-    view.insert(
-        "can_submit".to_string(),
-        json!(is_assignee && status == "in_progress"),
-    );
-    view.insert("can_review".to_string(), json!(can_review));
-    Ok(Some(Value::Object(view)))
-}
-
-/// `human_issue_work_service._reviewer_id`.
-async fn reviewer_id(
-    repository: &LoopItemRepository<'_, brz_mysql::MysqlService>,
-    assignee_user_id: Option<i32>,
-    assigner_id: i64,
-    project_number: i64,
-) -> Result<Option<i32>, HttpError> {
-    if assignee_user_id.map(i64::from) == Some(assigner_id) {
-        return Ok(None);
-    }
-    let access = BoardSnapshotRepository::new(repository.mysql())
-        .require_cloud_project_role(project_number, assigner_id as i32)
-        .await
-        .map_err(HttpError::internal)?;
-    Ok(match access {
-        Some(access) if access.role != "RestrictedAnalyst" => Some(assigner_id as i32),
-        _ => None,
-    })
-}
-
-/// One active assignment event (`issue_assignments.AssignmentEvent`).
-struct ActiveAssignment {
-    comment_id: String,
-    member_type: String,
-    member_id: String,
-    workflow_step: String,
-    trigger: Option<String>,
-    assigned_by_user_id: i64,
-}
-
-/// `issue_assignment_service._active_events`: the active `assign` events after
-/// applying the `unassign` cancellations, in activity order.
-fn active_assignments(comments: &[CommentRow]) -> Vec<ActiveAssignment> {
-    let cancelled: Vec<&str> = comments
-        .iter()
-        .filter_map(|comment| {
-            let metadata = comment.assignment()?;
-            (metadata.event_type.as_deref() == Some("assignment")
-                && metadata.action.as_deref() == Some("unassign"))
-            .then(|| metadata.assignment_event_id.as_deref().unwrap_or(""))
-        })
-        .collect();
-    let mut active: Vec<ActiveAssignment> = Vec::new();
-    for comment in comments {
-        let Some(metadata) = comment.assignment() else {
-            continue;
-        };
-        if metadata.event_type.as_deref() != Some("assignment")
-            || metadata.action.as_deref() != Some("assign")
-        {
-            continue;
-        }
-        if cancelled.contains(&comment.id.as_str()) {
-            continue;
-        }
-        let member_type = match metadata.target_type.as_deref() {
-            Some("user") | Some("human") => "human",
-            Some(_) => "agent",
-            None => "agent",
-        };
-        let key = (
-            member_type.to_string(),
-            metadata.target_id.clone().unwrap_or_default(),
-            metadata
-                .workflow_step
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .to_string(),
-        );
-        let entry = ActiveAssignment {
-            comment_id: comment.id.clone(),
-            member_type: key.0.clone(),
-            member_id: key.1.clone(),
-            workflow_step: key.2.clone(),
-            trigger: metadata.trigger.clone(),
-            assigned_by_user_id: i64::from(comment.created_by_user_id.unwrap_or(0)),
-        };
-        match active.iter_mut().find(|existing| {
-            existing.member_type == key.0
-                && existing.member_id == key.1
-                && existing.workflow_step == key.2
-        }) {
-            Some(existing) => *existing = entry,
-            None => active.push(entry),
-        }
-    }
-    active
 }
 
 /// `content_revision`: the metadata revision when it is an integer >= 1.
@@ -836,6 +691,18 @@ fn is_unread(metadata: &ItemMetadata, user_id: i32) -> bool {
     match read_revisions.get(&user_id.to_string()) {
         Some(Value::Number(value)) => value.as_i64().is_none_or(|read| read < revision),
         _ => true,
+    }
+}
+
+/// `activity_read_sequence(metadata, user_id)`: the caller's stored activity
+/// read sequence, or `0` when absent (`app.services.loop_item_unread`).
+fn activity_read_sequence(metadata: &ItemMetadata, user_id: i32) -> i64 {
+    let Some(Value::Object(sequences)) = metadata.activity_read_sequences.as_ref() else {
+        return 0;
+    };
+    match sequences.get(&user_id.to_string()).and_then(Value::as_i64) {
+        Some(value) if value >= 0 => value,
+        _ => 0,
     }
 }
 
@@ -880,6 +747,89 @@ fn json_object(value: Option<&Value>) -> Option<Value> {
     }
 }
 
+/// `WorkflowExecutionConfig.workspace_binding`: the stored metadata object
+/// re-serialized through `ProjectChatWorkspaceBinding`, whose `_to_camel`
+/// alias generator renames the multi-word keys (`projectId`,
+/// `deviceWorkspaceId`, `deviceId`, `runtimeProjectKey`) and whose field set
+/// drops any extra stored keys (for example a stored `status`).
+fn workspace_binding_alias_view(binding: &Value) -> Value {
+    let Some(map) = binding.as_object() else {
+        return binding.clone();
+    };
+    let key = |name: &str, alias: &str| {
+        map.get(name)
+            .or_else(|| map.get(alias))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    serde_json::json!({
+        "type": key("type", "type"),
+        "projectId": key("project_id", "projectId"),
+        "deviceWorkspaceId": key("device_workspace_id", "deviceWorkspaceId"),
+        "deviceId": key("device_id", "deviceId"),
+        "runtimeProjectKey": key("runtime_project_key", "runtimeProjectKey"),
+    })
+}
+
+/// `execution_config`: the stored metadata object with the nested
+/// `workspace_binding` re-serialized through its alias-generating schema.
+fn execution_config_view(value: Option<&Value>) -> Option<Value> {
+    let config = json_object(value)?;
+    let Some(map) = config.as_object() else {
+        return Some(config);
+    };
+    let mut map = map.clone();
+    if let Some(binding) = map.get("workspace_binding") {
+        map.insert(
+            "workspace_binding".to_string(),
+            workspace_binding_alias_view(binding),
+        );
+    }
+    Some(Value::Object(map))
+}
+
+/// `IssueWorkflowInstance`: the stored `metadata_json["workflow"]` object
+/// re-serialized through its pydantic schema. Only the observable differences
+/// from the stored shape are applied here: the nested `execution_config` uses
+/// the camel-case `ProjectChatWorkspaceBinding` aliases, and each node carries
+/// its defaulted `execution_error`. The stored object already holds every other
+/// schema field, so the remaining keys pass through unchanged.
+fn workflow_view(workflow: &Value) -> Value {
+    let Some(map) = workflow.as_object() else {
+        return workflow.clone();
+    };
+    let mut map = map.clone();
+    if let Some(config) = map.get("execution_config") {
+        map.insert(
+            "execution_config".to_string(),
+            execution_config_view(Some(config)).unwrap_or_else(|| config.clone()),
+        );
+    }
+    if let Some(Value::Array(nodes)) = map.get("nodes") {
+        let nodes: Vec<Value> = nodes.iter().map(workflow_node_view).collect();
+        map.insert("nodes".to_string(), Value::Array(nodes));
+    }
+    Value::Object(map)
+}
+
+/// `WorkflowNodeInstance`: the stored node re-serialized through its schema.
+/// Applies the nested `execution_config` alias view and materializes the
+/// defaulted `execution_error` when the stored node omits it.
+fn workflow_node_view(node: &Value) -> Value {
+    let Some(map) = node.as_object() else {
+        return node.clone();
+    };
+    let mut map = map.clone();
+    if let Some(config) = map.get("execution_config") {
+        map.insert(
+            "execution_config".to_string(),
+            execution_config_view(Some(config)).unwrap_or_else(|| config.clone()),
+        );
+    }
+    map.entry("execution_error").or_insert(Value::Null);
+    Value::Object(map)
+}
+
 /// A metadata value that is a JSON string, cloned; otherwise `None`.
 fn json_string(value: Option<&Value>) -> Option<String> {
     match value {
@@ -896,19 +846,6 @@ fn normalize_empty_id(value: Option<&str>) -> Option<String> {
 /// `x or None`: an empty string becomes `None`.
 fn nonempty(value: Option<&str>) -> Option<String> {
     value.filter(|text| !text.is_empty()).map(str::to_string)
-}
-
-/// Python truthiness for a JSON value (`None`/`false`/`0`/`""`/`[]`/`{}` are
-/// falsy).
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(map) => !map.is_empty(),
-    }
 }
 
 /// A JSON value for an optional string: `Some` renders the string, `None`
@@ -939,6 +876,29 @@ fn isoformat_required(value: Option<NaiveDateTime>) -> String {
 /// become `None`.
 fn isoformat_unset(value: Option<NaiveDateTime>) -> Option<String> {
     if datetime_is_unset(value) {
+        None
+    } else {
+        isoformat(value)
+    }
+}
+
+/// `loop_datetime_value_is_unset` (`app.models.delivery`): the model-level
+/// unset check that also treats the `1970-01-01 00:00:00` epoch constant as
+/// absent, used by `_optional_datetime` for the execution AI-state fields.
+fn datetime_model_is_unset(value: Option<NaiveDateTime>) -> bool {
+    match value {
+        None => true,
+        Some(value) => matches!(
+            value.format("%Y-%m-%d %H:%M:%S").to_string().as_str(),
+            "1970-01-01 00:00:00" | "1970-01-01 00:00:01"
+        ),
+    }
+}
+
+/// `iso(value)`: `_optional_datetime(value).isoformat()` — the model-variant
+/// unset datetimes render as `None`.
+fn isoformat_model_unset(value: Option<NaiveDateTime>) -> Option<String> {
+    if datetime_model_is_unset(value) {
         None
     } else {
         isoformat(value)

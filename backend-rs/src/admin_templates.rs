@@ -33,8 +33,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::SessionUser;
 use crate::http_compat::FastApiError;
-use crate::json_compat::{JsonField, OpaqueJson};
 use crate::state::AppState;
+use brz_json::FieldState as _;
+use brz_json::OpaqueJson;
 
 /// `template_service.TEMPLATE_KIND`.
 const TEMPLATE_KIND: &str = "Template";
@@ -193,26 +194,33 @@ struct TeamRef {
 }
 
 /// The stored `kinds.json` document. `_to_response` reads only `spec`.
+#[brz_json::model]
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct KindDocument {
-    spec: JsonField<KindSpec>,
+    #[json(presence, lenient)]
+    spec: KindSpec,
 }
 
-/// The `spec` members `_to_response` reads. `JsonField` keeps the distinction
+/// The `spec` members `_to_response` reads. presence-aware fields keeps the distinction
 /// between an absent member (which takes the response default) and a present
 /// member, so a present value of the wrong shape is reported the way pydantic
 /// rejects it.
+#[brz_json::model]
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct KindSpec {
     #[serde(rename = "displayName")]
-    display_name: JsonField<String>,
+    #[json(presence, lenient)]
+    display_name: String,
     description: Option<String>,
-    category: JsonField<String>,
-    tags: JsonField<Vec<String>>,
+    #[json(presence, lenient)]
+    category: String,
+    #[json(presence, lenient)]
+    tags: Vec<String>,
     icon: Option<String>,
-    resources: JsonField<TemplateResources>,
+    #[json(presence, lenient)]
+    resources: TemplateResources,
 }
 
 /// GET /api/admin/templates: the template list as a free function injecting the
@@ -235,7 +243,7 @@ async fn list_templates(
     for row in rows {
         let prepared = prepare(row)?;
         if let Some(category) = filter
-            && prepared.spec.category.value.as_deref() != Some(category)
+            && prepared.spec.category.value().map(|value| &**value) != Some(category)
         {
             continue;
         }
@@ -274,7 +282,7 @@ struct Prepared {
 fn prepare(row: KindRow) -> Result<Prepared, FastApiError> {
     let document: Option<KindDocument> = row.json.0.project();
     let document = document.ok_or_else(unhandled)?;
-    let spec = match (document.spec.present, document.spec.value) {
+    let spec = match (document.spec.is_present(), document.spec.into_value()) {
         (false, _) => KindSpec::default(),
         (true, None) => return Err(unhandled()),
         (true, Some(spec)) => spec,
@@ -286,23 +294,23 @@ fn prepare(row: KindRow) -> Result<Prepared, FastApiError> {
 fn to_response(row: &KindRow, spec: &KindSpec) -> Result<TemplateItem, FastApiError> {
     // `spec.get("displayName", kind.name)` — absent an explicit value the
     // response falls back to the stored template name.
-    let display_name = if spec.display_name.present {
-        spec.display_name.value.clone().ok_or_else(unhandled)?
+    let display_name = if spec.display_name.is_present() {
+        spec.display_name.value().cloned().ok_or_else(unhandled)?
     } else {
         row.name.clone()
     };
-    let category = if spec.category.present {
-        spec.category.value.clone().ok_or_else(unhandled)?
+    let category = if spec.category.is_present() {
+        spec.category.value().cloned().ok_or_else(unhandled)?
     } else {
         DEFAULT_CATEGORY.to_owned()
     };
-    let tags = if spec.tags.present {
-        spec.tags.value.clone().ok_or_else(unhandled)?
+    let tags = if spec.tags.is_present() {
+        spec.tags.value().cloned().ok_or_else(unhandled)?
     } else {
         Vec::new()
     };
-    let resources = if spec.resources.present {
-        spec.resources.value.clone().ok_or_else(unhandled)?
+    let resources = if spec.resources.is_present() {
+        spec.resources.value().cloned().ok_or_else(unhandled)?
     } else {
         TemplateResources::default()
     };
@@ -384,7 +392,7 @@ fn unhandled() -> FastApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json_compat::OpaqueJson;
+    use brz_json::OpaqueJson;
     use chrono::NaiveDate;
 
     fn row(json: &str) -> KindRow {

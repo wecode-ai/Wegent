@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 use super::kinds::KindCacheStore;
 use super::repository as repo;
 use crate::crd::{CrdDocument, CrdLabels, SkillRefMetaInput, reference_parts};
-use crate::json_compat::{JsonProjection, OpaqueJson};
 use crate::remote_workspace_tree::kinds::KindStore;
+use brz_json::{JsonProjection, OpaqueJson};
 use brz_mysql::Mysql;
 
 /// A resolved skill reference (`build_skill_ref_meta`): `content_hash` is

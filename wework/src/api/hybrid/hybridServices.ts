@@ -1,3 +1,4 @@
+import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import {
   createWorkbenchDeviceResolver,
   getWorkbenchDeviceIds,
@@ -974,6 +975,13 @@ export function createHybridWorkbenchServices(
     compactRuntimeTask(data: RuntimeCompactRequest) {
       return routeByAddress(data.address).compactRuntimeTask(data)
     },
+    cleanRuntimeBackgroundTerminals(address: RuntimeTaskAddress) {
+      const api = routeByAddress(address)
+      if (!api.cleanRuntimeBackgroundTerminals) {
+        throw new Error('Executor does not support background terminals')
+      }
+      return api.cleanRuntimeBackgroundTerminals(address)
+    },
     guideRuntimeTask(data) {
       return routeByAddress(data.address).guideRuntimeTask(data)
     },
@@ -1457,6 +1465,17 @@ export function createHybridWorkbenchServices(
     },
     branchNameApi: localServices.branchNameApi,
     textGenerationApi: localServices.textGenerationApi,
+    replyPredictionApi: {
+      async predict(data) {
+        const api = await runtimeApiForDevice(data.address.deviceId)
+        if (api === localServices.runtimeWorkApi) {
+          return localServices.replyPredictionApi!.predict(data)
+        }
+        return createReplyPredictionApi((method, params) =>
+          cloudRuntimeIpc.request(method, params, data.address.deviceId)
+        ).predict(data)
+      },
+    },
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     localExecutionServices: localProjectServices,

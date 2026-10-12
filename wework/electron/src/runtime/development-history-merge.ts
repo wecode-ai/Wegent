@@ -309,12 +309,12 @@ export async function publishDevelopmentHistory(
   target: string,
   assertHeld: () => void
 ): Promise<void> {
-  const suffixes = (await files(stage)).filter(path => path !== HISTORY_MARKER)
+  const suffixes = (await files(stage)).filter(path => path !== join(HISTORY_MARKER))
   const entries: PublicationEntry[] = []
   for (const suffix of [...suffixes, HISTORY_MARKER]) {
     const path = await safePath(target, suffix)
     const before = await fileIdentity(path)
-    if (before && /^(codex\/(archived_)?sessions\/)/.test(suffix))
+    if (before && /^(codex\/(archived_)?sessions\/)/.test(suffix.split(sep).join('/')))
       throw new Error('Development rollout path conflict; existing data was not changed')
     entries.push({ path: suffix, before, after: await fileIdentity(join(stage, suffix)) })
     if (suffix.endsWith('.sqlite'))

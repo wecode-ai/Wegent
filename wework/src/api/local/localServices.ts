@@ -1,3 +1,4 @@
+import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import { createLocalProjectAutomationApi } from './localProjectAutomations'
 import {
   cancellableTextGeneration,
@@ -721,7 +722,8 @@ function normalizeRuntimeTaskSummary(
   const interactionStatus =
     rawInteractionStatus === null
       ? null
-      : rawInteractionStatus === 'waitingForUserInput'
+      : rawInteractionStatus === 'waitingForUserInput' ||
+          rawInteractionStatus === 'awaitingUserReply'
         ? rawInteractionStatus
         : undefined
   const hasInteractionStatus = rawInteractionStatus === null || interactionStatus !== undefined
@@ -2729,6 +2731,21 @@ export function createRuntimeWorkApiFromIpc(
         localDeviceId
       )
     },
+    async cleanRuntimeBackgroundTerminals(
+      address: RuntimeTaskAddress
+    ): Promise<{ success: boolean; error?: string }> {
+      const deviceId = await resolveDeviceId({ address })
+      const normalizedAddress = normalizeLocalDeviceRecord({ address }, deviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.background_terminals.clean',
+        {
+          taskId: normalizedAddress.taskId,
+          address: normalizedAddress,
+        },
+        deviceId
+      )
+    },
     async guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
       const localDeviceId = await resolveDeviceId({ address: data.address })
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
@@ -3974,6 +3991,11 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return { data }
     },
   }
+  const replyPredictionApi = createReplyPredictionApi(async (method, params, signal) => {
+    const normalized = normalizeLocalDeviceRecord(params, await getLocalDeviceId())
+    signal?.throwIfAborted()
+    return request(method, normalized)
+  })
   const textGenerationApi: NonNullable<WorkbenchServices['textGenerationApi']> = {
     async generateText(data) {
       return cancellableTextGeneration(data.signal, data.timeoutMs, async signal => {
@@ -4201,6 +4223,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     pluginApi: projectPluginApi,
     branchNameApi,
     textGenerationApi,
+    replyPredictionApi,
     automationApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({

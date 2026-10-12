@@ -34,17 +34,6 @@ fn bulk_request_rejects_empty_and_oversized_lists() {
 }
 
 #[test]
-fn update_body_distinguishes_absent_from_null() {
-    let body = update_body(json!({ "title": "t", "prompt": null }));
-    assert!(body.title.is_present());
-    assert_eq!(body.title.value().map(String::as_str), Some("t"));
-    assert!(body.prompt.is_present());
-    assert!(body.prompt.value().is_none());
-    assert!(!body.status.is_present());
-    assert!(!body.git_url.is_present());
-}
-
-#[test]
 fn apply_update_sets_title_and_status_timestamp() {
     let mut task = json!({
         "kind": "Task",

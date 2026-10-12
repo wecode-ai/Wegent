@@ -80,10 +80,22 @@ impl HttpError {
             detail: "Internal server error".to_string(),
         }
     }
+
+    /// Convert to the shared FastAPI-compatible error, for callers outside the
+    /// loop-tasks route that reuse the same projection.
+    pub fn into_fastapi(self) -> crate::http_compat::FastApiError {
+        crate::http_compat::FastApiError::detail(self.status, self.detail)
+    }
 }
 
 impl IntoHttpError for HttpError {
     fn into_http_error(self, arena: &EphemeralBytesArena) -> Response {
         crate::http_compat::FastApiError::detail(self.status, self.detail).into_http_error(arena)
+    }
+}
+
+impl From<HttpError> for crate::http_compat::FastApiError {
+    fn from(error: HttpError) -> Self {
+        crate::http_compat::FastApiError::detail(error.status, error.detail)
     }
 }

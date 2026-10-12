@@ -191,7 +191,7 @@ fn video_context_renders_the_metadata_only_attachment_block() {
         "file_size": 26_528_973,
         "fid": 5_349_259_470_176_267_i64,
     }));
-    let content = build_user_message_content(
+    let content = metadata_only_content(
         vec![context],
         "hello",
         Vec::new(),
@@ -203,7 +203,7 @@ fn video_context_renders_the_metadata_only_attachment_block() {
         116_135_915_839_665,
     );
     assert_eq!(
-        serde_json::to_value(&content).expect("content serializes"),
+        content,
         json!([
             {
                 "type": "text",
@@ -214,6 +214,47 @@ fn video_context_renders_the_metadata_only_attachment_block() {
             {"type": "text", "text": "hello"},
         ])
     );
+}
+
+/// The `supports_video == false` shape needs no playback resolver: build it
+/// with the minimal async context through the tokio test harness.
+#[allow(clippy::too_many_arguments)]
+fn metadata_only_content(
+    contexts: Vec<SubtaskContextRow>,
+    text_content: &str,
+    extra_blocks: Vec<Value>,
+    supports_image: bool,
+    _supports_video: bool,
+    max_extracted_text_length: usize,
+    inject_max_chars: usize,
+    task_id: i64,
+    subtask_id: i64,
+) -> Value {
+    #[allow(clippy::too_many_arguments)]
+    let build = || async move {
+        let state = crate::startup::app::build()
+            .await
+            .expect("public application state");
+        build_user_message_content(
+            &state,
+            contexts,
+            text_content,
+            extra_blocks,
+            supports_image,
+            false,
+            max_extracted_text_length,
+            inject_max_chars,
+            task_id,
+            subtask_id,
+        )
+        .await
+        .expect("metadata-only content resolves without playback")
+    };
+    let content = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("test runtime")
+        .block_on(build());
+    serde_json::to_value(&content).expect("content serializes")
 }
 
 /// Build one assistant/user subtask row for the message-shaping tests.
@@ -275,11 +316,11 @@ fn legacy_fallback_keeps_value_skills_and_model_info() {
     assert_eq!(messages[0].role, "assistant");
     assert_eq!(content_of(&messages[0]), json!("done"));
     assert_eq!(
-        serde_json::to_value(messages[0].loaded_skills.as_deref()).expect("skills serialize"),
+        serde_json::to_value(messages[0].loaded_skills.as_ref()).expect("skills serialize"),
         json!(["example-tools"])
     );
     assert_eq!(
-        serde_json::to_value(messages[0].model_info.as_deref()).expect("model info serializes"),
+        serde_json::to_value(messages[0].model_info.as_ref()).expect("model info serializes"),
         json!({"model": "gpt-5.6-terra", "provider": "openai"})
     );
 }
@@ -432,7 +473,7 @@ fn chain_attaches_loaded_skills_to_the_last_assistant_message() {
     let messages = assistant_messages(&row);
     assert_eq!(messages.len(), 2);
     assert_eq!(
-        serde_json::to_value(messages[0].loaded_skills.as_deref()).expect("skills serialize"),
+        serde_json::to_value(messages[0].loaded_skills.as_ref()).expect("skills serialize"),
         json!(["example-tools"])
     );
     // The trailing tool entry is not an assistant message, so it stays bare.
@@ -458,7 +499,7 @@ fn chain_forwards_the_summary_compaction_marker() {
     let messages = assistant_messages(&row);
     assert_eq!(messages.len(), 1);
     assert_eq!(
-        serde_json::to_value(messages[0].metadata.as_deref()).expect("metadata serializes"),
+        serde_json::to_value(messages[0].metadata.as_ref()).expect("metadata serializes"),
         json!({"summary_compacted": true})
     );
 }

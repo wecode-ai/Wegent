@@ -25,8 +25,14 @@ async fn project_moves_preserve_nested_execution_roots_without_changing_normal_g
         link.runtime_project_key = Some(source.to_owned());
         let links = handler.visible_links_for_projects(vec![link], &index);
         let response = workspace_response(links, vec![]);
-        assert_eq!(response[0]["workspacePath"], target);
-        assert_eq!(response[0]["tasks"][0]["workspacePath"], expected);
+        assert_eq!(
+            response[0]["workspacePath"],
+            normalize_workspace_path(target)
+        );
+        assert_eq!(
+            response[0]["tasks"][0]["workspacePath"],
+            normalize_workspace_path(expected)
+        );
     }
 }
 
@@ -73,13 +79,22 @@ async fn moved_tasks_keep_execution_identity_and_override_creation_project() {
         link.running = true;
         let projected = handler.visible_links_for_projects(vec![link], &index);
         assert_eq!(projected.len(), 1);
-        assert_eq!(projected[0].group_project_key.as_deref(), Some("/target"));
+        assert_eq!(
+            projected[0].group_project_key.as_deref(),
+            Some(normalize_workspace_path("/target").as_str())
+        );
         assert_eq!(projected[0].workspace_path, path);
         assert_eq!(projected[0].thread_id.as_deref(), Some("thread-1"));
         assert!(projected[0].running);
         let response = workspace_response(projected, vec![]);
-        assert_eq!(response[0]["workspacePath"], "/target");
-        assert_eq!(response[0]["tasks"][0]["workspacePath"], path);
+        assert_eq!(
+            response[0]["workspacePath"],
+            normalize_workspace_path("/target")
+        );
+        assert_eq!(
+            response[0]["tasks"][0]["workspacePath"],
+            normalize_workspace_path(path)
+        );
         assert_eq!(response[0]["tasks"][0]["taskId"], "task-1");
     }
 }

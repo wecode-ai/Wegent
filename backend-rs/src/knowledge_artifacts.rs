@@ -39,11 +39,10 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use serde::Serialize;
 
 use crate::http_compat::FastApiError;
-use crate::json_compat::OpaqueJson;
 use crate::state::AppState;
+use brz_json::OpaqueJson;
 
-use super::knowledge_documents_content::access::{self, KnowledgeBase};
-use super::knowledge_documents_content::group_membership;
+use super::knowledge_documents_content::access::{self, can_manage_knowledge_base_documents};
 use super::permissions::EntityResolvers;
 
 /// `KNOWLEDGE_ARTIFACT_UNSET_ID` (`app.models.knowledge_artifact`): `task_id`
@@ -181,9 +180,8 @@ struct ArtifactRow {
     knowledge_artifacts_task_id: i64,
     knowledge_artifacts_assistant_subtask_id: i64,
     knowledge_artifacts_content: Option<String>,
-    knowledge_artifacts_source_document_ids:
-        Option<brz_mysql::Json<crate::json_compat::OpaqueJson>>,
-    knowledge_artifacts_generation_config: Option<brz_mysql::Json<crate::json_compat::OpaqueJson>>,
+    knowledge_artifacts_source_document_ids: Option<brz_mysql::Json<brz_json::OpaqueJson>>,
+    knowledge_artifacts_generation_config: Option<brz_mysql::Json<brz_json::OpaqueJson>>,
     knowledge_artifacts_error_message: Option<String>,
     knowledge_artifacts_user_id: i64,
     knowledge_artifacts_attempt: i64,
@@ -281,211 +279,6 @@ where
             (),
         )
         .await
-}
-
-/// `can_manage_knowledge_base_documents` — the raw ACL facts of
-/// `resolve_knowledge_base_permission` (creator/direct/organization/group/
-/// entity role sources) without the direct-access requirement step, then
-/// `can_manage_accessible_knowledge_base_documents`: creator or a role with
-/// at least Developer permission. The Kind record is re-loaded first
-/// (`get_user_knowledge_base_permission`'s `is_(True)` query).
-async fn can_manage_knowledge_base_documents<M, R>(
-    mysql: &M,
-    redis: Option<&R>,
-    resolvers: &EntityResolvers<R>,
-    knowledge_base_id: i64,
-    user_id: i64,
-) -> MysqlResult<bool>
-where
-    M: Mysql,
-    R: brz_redis::Redis,
-{
-    let Some(kb) = permission_kb_record(mysql, knowledge_base_id).await? else {
-        return Ok(false);
-    };
-    let (has_access, role, is_creator) =
-        resolve_permission_facts(mysql, redis, resolvers, &kb, user_id).await?;
-    Ok(has_access
-        && (is_creator
-            || role
-                .as_deref()
-                .is_some_and(|role| has_permission(role, "Developer"))))
-}
-
-/// `get_user_knowledge_base_permission`'s Kind lookup: SQLAlchemy renders
-/// `Kind.is_active.is_(True)` as `kinds.is_active IS true` (unlike
-/// `knowledge_base_record`'s `== True` rendering).
-async fn permission_kb_record<M>(
-    mysql: &M,
-    knowledge_base_id: i64,
-) -> MysqlResult<Option<KnowledgeBase>>
-where
-    M: Mysql,
-{
-    #[derive(Debug, FromMysqlRow)]
-    struct Row {
-        kinds_id: i64,
-        kinds_user_id: i64,
-        kinds_namespace: String,
-        kinds_json: Json<OpaqueJson>,
-        kinds_created_at: chrono::NaiveDateTime,
-        kinds_updated_at: chrono::NaiveDateTime,
-    }
-    let row: Option<Row> = mysql
-        .fetch_optional(
-            &format!(
-                "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
-                 kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
-                 kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
-                 kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
-                 kinds.updated_at AS kinds_updated_at \nFROM kinds \n\
-                 WHERE kinds.id = {knowledge_base_id} AND kinds.kind = 'KnowledgeBase' \
-                 AND kinds.is_active IS true \n LIMIT 1"
-            ),
-            (),
-        )
-        .await?;
-    Ok(row.map(|row| KnowledgeBase {
-        kinds_id: row.kinds_id,
-        kinds_user_id: row.kinds_user_id,
-        kinds_namespace: row.kinds_namespace,
-        kinds_json: row.kinds_json.0,
-        kinds_created_at: row.kinds_created_at,
-        kinds_updated_at: row.kinds_updated_at,
-    }))
-}
-
-/// `BaseRole` rank comparison (`app.schemas.base_role`): lower is more
-/// privileged.
-fn role_rank(role: &str) -> Option<u8> {
-    match role {
-        "Owner" => Some(0),
-        "Maintainer" => Some(1),
-        "Developer" => Some(2),
-        "Reporter" => Some(3),
-        "RestrictedAnalyst" => Some(4),
-        _ => None,
-    }
-}
-
-/// `has_permission` (`app.schemas.base_role`).
-fn has_permission(user_role: &str, required_role: &str) -> bool {
-    match (role_rank(user_role), role_rank(required_role)) {
-        (Some(user), Some(required)) => user <= required,
-        _ => false,
-    }
-}
-
-/// The highest role among candidates (`get_highest_role`).
-fn highest_role(roles: &[String]) -> Option<String> {
-    roles
-        .iter()
-        .filter(|role| role_rank(role).is_some())
-        .min_by_key(|role| role_rank(role).unwrap())
-        .cloned()
-}
-
-/// `resolve_knowledge_base_permission` role/creator facts. Shares the
-/// source-appending behavior (user row, restricted analyst, direct
-/// membership, organization, group, entity sources) with
-/// `knowledge_documents_content::access`.
-async fn resolve_permission_facts<M, R>(
-    mysql: &M,
-    redis: Option<&R>,
-    resolvers: &EntityResolvers<R>,
-    kb: &KnowledgeBase,
-    user_id: i64,
-) -> MysqlResult<(bool, Option<String>, bool)>
-where
-    M: Mysql,
-    R: brz_redis::Redis,
-{
-    // `db.query(User)` by id.
-    let user = access::user_by_id_row(mysql, user_id).await?;
-    let user_role = user.as_ref().map(|row| row.users_role.clone());
-    let is_creator = kb.kinds_user_id == user_id;
-
-    let mut roles: Vec<String> = Vec::new();
-    if is_creator {
-        roles.push("Owner".to_string());
-    }
-
-    // Restricted-analyst pre-check (non-default, non-organization
-    // namespaces, non-creators) is an explicit denial.
-    if !is_creator && kb.kinds_namespace != "default" {
-        let is_organization = access::is_organization_namespace(mysql, &kb.kinds_namespace).await?;
-        if !is_organization
-            && group_membership::is_restricted_analyst(
-                mysql,
-                redis,
-                resolvers,
-                user_id,
-                &kb.kinds_namespace,
-            )
-            .await?
-        {
-            return Ok((false, None, is_creator));
-        }
-    }
-
-    // Direct KB membership: a RestrictedAnalyst membership is an explicit
-    // denial; any other role grants.
-    if let Some(role) = access::direct_kb_member_role(mysql, kb.kinds_id, user_id).await? {
-        if role == "RestrictedAnalyst" {
-            return Ok((false, None, is_creator));
-        }
-        roles.push(role);
-    }
-
-    // Organization source (`_append_organization_source`): the organization
-    // role is appended for organization namespaces.
-    let is_organization = access::is_organization_namespace(mysql, &kb.kinds_namespace).await?;
-    if is_organization {
-        roles.push(
-            if user_role.as_deref() == Some("admin") {
-                "Owner"
-            } else {
-                "Reporter"
-            }
-            .to_string(),
-        );
-    }
-
-    // Group source (`_append_group_source`): the source short-circuits on the
-    // "default" namespace and otherwise re-checks `is_organization_namespace`,
-    // so a non-default namespace issues the lookup again (organization or
-    // group) before the group role resolves.
-    if kb.kinds_namespace != "default" {
-        let group_is_organization =
-            access::is_organization_namespace(mysql, &kb.kinds_namespace).await?;
-        if !group_is_organization
-            && let Some(group_role) = group_membership::effective_role_in_group(
-                mysql,
-                redis,
-                resolvers,
-                user_id,
-                &kb.kinds_namespace,
-            )
-            .await?
-        {
-            if group_role == "RestrictedAnalyst" {
-                return Ok((false, None, is_creator));
-            }
-            let base = match group_role.as_str() {
-                "Owner" => "Owner",
-                "Maintainer" => "Maintainer",
-                "Developer" => "Developer",
-                _ => "Reporter",
-            };
-            roles.push(base.to_string());
-        }
-    }
-
-    // Entity sources (`_append_entity_sources`).
-    roles.extend(access::entity_source_roles(mysql, redis, resolvers, kb.kinds_id, user_id).await?);
-
-    let has_access = !roles.is_empty() || is_creator;
-    Ok((has_access, highest_role(&roles), is_creator))
 }
 
 /// `_document_source_counts`: usable (active + success) and processing
@@ -621,6 +414,7 @@ fn artifact_response(artifact: &ArtifactRow, can_manage: bool) -> ArtifactItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::knowledge_documents_content::access::{has_permission, highest_role};
 
     fn row(status: &str, updated_at: chrono::NaiveDateTime) -> ArtifactRow {
         ArtifactRow {

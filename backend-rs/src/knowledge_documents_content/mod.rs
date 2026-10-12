@@ -42,7 +42,7 @@ const MAX_DOCUMENT_READ_LIMIT: i64 = 100_000;
 /// The response schema (`DocumentContentReadResponse`); field order matches
 /// the pydantic model's serialization order.
 #[derive(Debug, Serialize)]
-struct DocumentContentReadResponse {
+pub(crate) struct DocumentContentReadResponse {
     document_id: i64,
     name: String,
     content: String,
@@ -53,6 +53,17 @@ struct DocumentContentReadResponse {
     kb_id: i64,
     index_status: String,
     source_media_type: Option<String>,
+}
+
+impl DocumentContentReadResponse {
+    /// The document-detail endpoint's `(content, content_length, truncated)`.
+    /// `content_length` is the reader's total text length and `truncated`
+    /// mirrors the source's `(offset > 0) or has_more` over the *actual*
+    /// start offset (`KnowledgeOrchestrator.get_document_detail`).
+    pub(crate) fn into_detail_parts(self) -> (String, i64, bool) {
+        let truncated = self.offset > 0 || self.has_more;
+        (self.content, self.total_length, truncated)
+    }
 }
 
 /// A mapped source failure carrying the HTTP status and `detail` message.
@@ -94,11 +105,20 @@ impl ApiFailure {
             Self::new(StatusCode::BAD_REQUEST, message)
         }
     }
+
+    /// This failure as a plain [`FastApiError`], so sibling knowledge
+    /// endpoints can reuse the shared read pipeline under their own error
+    /// type. The mapped status and `detail` are preserved unchanged.
+    ///
+    /// [`FastApiError`]: crate::http_compat::FastApiError
+    pub(crate) fn into_fastapi_error(self) -> crate::http_compat::FastApiError {
+        crate::http_compat::FastApiError::detail(self.status, self.detail)
+    }
 }
 
 impl IntoHttpError for ApiFailure {
     fn into_http_error(self, arena: &EphemeralBytesArena) -> Response {
-        crate::http_compat::FastApiError::detail(self.status, self.detail).into_http_error(arena)
+        self.into_fastapi_error().into_http_error(arena)
     }
 }
 
@@ -138,15 +158,35 @@ impl FastApiValidation {
     fn status(&self) -> StatusCode {
         StatusCode::UNPROCESSABLE_ENTITY
     }
+
+    /// This validation failure as a plain [`FastApiError`], so sibling
+    /// knowledge endpoints can share the query binding rules under their own
+    /// error type.
+    ///
+    /// [`FastApiError`]: crate::http_compat::FastApiError
+    fn into_fastapi_error(self) -> crate::http_compat::FastApiError {
+        crate::http_compat::FastApiError::validation(
+            serde_json::to_value(self.body).unwrap_or_else(|_| serde_json::json!([])),
+        )
+    }
 }
 
 impl IntoHttpError for FastApiValidation {
     fn into_http_error(self, arena: &EphemeralBytesArena) -> Response {
-        crate::http_compat::FastApiError::validation(
-            serde_json::to_value(self.body).unwrap_or(serde_json::json!([])),
-        )
-        .into_http_error(arena)
+        self.into_fastapi_error().into_http_error(arena)
     }
+}
+
+/// The shared `offset`/`limit` query-constraint binding as a
+/// [`FastApiError`]: the document-detail endpoint applies the exact same
+/// `Query(ge=0)` / `Query(ge=1, le=100000)` rules as the content endpoint.
+///
+/// [`FastApiError`]: crate::http_compat::FastApiError
+pub(crate) fn parse_paging_fastapi(
+    offset_raw: Option<&str>,
+    limit_raw: Option<&str>,
+) -> Result<(i64, i64), crate::http_compat::FastApiError> {
+    parse_paging(offset_raw, limit_raw).map_err(FastApiValidation::into_fastapi_error)
 }
 
 /// Parse the `offset`/`limit` query parameters with the source `Query`
@@ -277,7 +317,7 @@ async fn document_content(
 
 /// `KnowledgeOrchestrator.read_document_content` after authentication:
 /// document load with access validation, then the paginated reader.
-async fn read_document_content(
+pub(crate) async fn read_document_content(
     state: &AppState,
     user_id: i64,
     document_id: i64,

@@ -54,6 +54,7 @@ const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
 const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const INTERACTION_WAITING_FOR_USER_INPUT: &str = "waitingForUserInput";
+const INTERACTION_AWAITING_USER_REPLY: &str = "awaitingUserReply";
 const COLLABORATION_MANAGER_CONTEXT_KEY: &str = "collaborationManagerContext";
 
 enum RestoreStartupState {
@@ -119,6 +120,7 @@ impl RestoreStartupGate {
 
 mod archives;
 mod automation_rpc;
+mod background_terminals;
 mod claude_turns;
 mod codex_accounts;
 mod codex_config;
@@ -177,7 +179,7 @@ use super::{
         clear_transcript_snapshot_messages, completed_transcript_messages,
         merge_assistant_transcript_message, set_runtime_handle_messages,
         set_transcript_snapshot_messages, transcript_snapshot_messages,
-        transcript_snapshot_pagination, user_message_presentations,
+        transcript_snapshot_pagination, user_message_presentations, visit_transcript_blocks_mut,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
@@ -1117,6 +1119,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.collaboration.dispatch" => self.create_collaboration_dispatch(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
+            "runtime.text.predict_reply" => self.predict_reply(payload).await,
             "runtime.text.cancel" => self.cancel_text_generation(payload),
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
@@ -1124,6 +1127,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
             "runtime.tasks.guidance" => self.send_guidance(payload).await,
             "runtime.tasks.compact" => self.compact_task(payload).await,
+            "runtime.tasks.background_terminals.clean" => {
+                self.clean_background_terminals(payload).await
+            }
             "runtime.tasks.prepare_fork_transfer" => self.prepare_fork_transfer(payload).await,
             "runtime.tasks.import_fork" => self.import_fork(payload).await,
             "runtime.tasks.archive" => self.archive_task(payload).await,

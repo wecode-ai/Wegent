@@ -69,24 +69,35 @@ fn detects_user_default_and_group_bindings() {
 fn source_info_defaults_type_and_keeps_all_keys() {
     let spec = json!({
         "source": {
-            "type": "git", "repo_url": "https://example.com/repo",
-            "skill_path": "skills/demo", "imported_at": "2026-07-30T12:12:36Z"
+            "type": "marketplace", "repo_url": "https://example.com/repo",
+            "skill_path": "skills/demo", "provider_key": "provider",
+            "skill_key": "a/b", "original_skill_key": "b",
+            "imported_at": "2026-07-30T12:12:36Z"
         }
     });
     let source = source_info(&spec);
-    assert_eq!(source.get("type"), Some(&json!("git")));
+    assert_eq!(source.get("type"), Some(&json!("marketplace")));
     assert_eq!(
         source.get("repo_url"),
         Some(&json!("https://example.com/repo"))
     );
     assert_eq!(source.get("skill_path"), Some(&json!("skills/demo")));
+    assert_eq!(source.get("provider_key"), Some(&json!("provider")));
+    assert_eq!(source.get("skill_key"), Some(&json!("a/b")));
+    assert_eq!(source.get("original_skill_key"), Some(&json!("b")));
     assert_eq!(
         source.get("imported_at"),
         Some(&json!("2026-07-30T12:12:36Z"))
     );
-    assert!(source.get("provider_key").is_none());
-    assert!(source.get("skill_key").is_none());
-    assert!(source.get("original_skill_key").is_none());
+    // Missing optional keys echo as `null` rather than being dropped, matching
+    // the source `source_data.get(...)` projection.
+    let git = source_info(&json!({"source": {"type": "git"}}));
+    assert_eq!(git.get("repo_url"), Some(&json!(null)));
+    assert_eq!(git.get("skill_path"), Some(&json!(null)));
+    assert_eq!(git.get("provider_key"), Some(&json!(null)));
+    assert_eq!(git.get("skill_key"), Some(&json!(null)));
+    assert_eq!(git.get("original_skill_key"), Some(&json!(null)));
+    assert_eq!(git.get("imported_at"), Some(&json!(null)));
     assert!(source_info(&json!({})).is_null());
     assert!(source_info(&json!({"source": null})).is_null());
     assert!(source_info(&json!({"source": "text"})).is_null());

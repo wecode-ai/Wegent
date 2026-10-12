@@ -20,7 +20,7 @@
 //! `{table}_{column}` and scalar filters inlined as literals; the target uses
 //! unqualified column names and `?` placeholders. The statements themselves
 //! belong to [`crate::task_store`]; this module decodes their rows.
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
 
@@ -59,8 +59,7 @@ pub struct SubtaskRow {
     /// Status enum text (`PENDING` / `RUNNING` / ...).
     pub status: String,
     /// `result` JSON column; SQL NULL stays `None`.
-    pub result:
-        Option<Json<crate::json_compat::JsonProjection<super::output_builder::ResultInput>>>,
+    pub result: Option<Json<brz_json::JsonProjection<super::output_builder::ResultInput>>>,
 }
 
 impl SubtaskRow {
@@ -237,6 +236,37 @@ pub async fn list_subtasks_for_user_ordered(
 ) -> MysqlResult<Vec<SubtaskRow>> {
     let rows = task_store.list_subtasks_for_user(task_id, user_id).await?;
     rows.iter().map(SubtaskRow::from_row).collect()
+}
+
+/// Model string from a task row's CRD team reference:
+/// `{team_namespace}#{team_name}` plus `#{model_id}` when the `modelId` label
+/// is set; `unknown` when the row is absent or has no team reference. Shared
+/// by `get_response` and `cancel_response`, both of which rebuild it from the
+/// task they resolved (`_task_to_response_object`'s `model_string` argument).
+pub fn model_string_for(task_kind: Option<&TaskRow>) -> String {
+    let Some(task_kind) = task_kind else {
+        return "unknown".to_string();
+    };
+    let task_crd = crate::crd::CrdDocument::project_opaque(&task_kind.json.0);
+    let Some(team_ref) = task_crd
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.team_ref.as_ref())
+    else {
+        return "unknown".to_string();
+    };
+    let team_name = team_ref.name();
+    let team_namespace = team_ref.namespace();
+    let model_id = task_crd
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.labels.as_ref())
+        .and_then(|labels| labels.model_id.as_ref())
+        .and_then(brz_json::OpaqueJson::project::<String>);
+    match model_id {
+        Some(model_id) => format!("{team_namespace}#{team_name}#{model_id}"),
+        None => format!("{team_namespace}#{team_name}"),
+    }
 }
 
 /// `task_store.get_task_by_states(states=[STATE_ACTIVE],
