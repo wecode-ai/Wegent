@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
+import { verifyWindowsDesktopDataStartup } from './workbench-desktop-startup.mjs'
 
 export function packagedResourcesRoot(appBinary) {
   return process.platform === 'darwin'
@@ -26,6 +27,15 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   }
   assert.equal(typeof input.executor, 'string')
   assert.equal(typeof input.incompatibleExecutor, 'string')
+  const windowsDesktopDataStartup =
+    process.platform === 'win32'
+      ? await verifyWindowsDesktopDataStartup({
+          resources: input.resources,
+          executor: input.executor,
+          environment: appEnvironment,
+          root: join(root, 'windows-desktop-startup'),
+        })
+      : undefined
   const script = `
     const assert = require('node:assert/strict');
     const fs = require('node:fs/promises');
@@ -183,6 +193,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
     }
   )
   const evidence = JSON.parse(stdout)
+  if (windowsDesktopDataStartup) evidence.windowsDesktopDataStartup = windowsDesktopDataStartup
   assert.equal(evidence.selectedComponentStateUnchanged, true)
   await writeFile(join(root, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`)
   return evidence

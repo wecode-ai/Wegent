@@ -63,3 +63,25 @@ test.each([
     /^Workbench Home migration lock unavailable$/
   )
 })
+
+test('desktop handoffs request blocking native locks while preserving the lock protocol', async () => {
+  const { directory, binary } = await fixture(
+    root => `
+    const fs = require('node:fs');
+    fs.writeFileSync(${JSON.stringify(join(root, 'arguments.json'))}, JSON.stringify(process.argv.slice(2)));
+    process.stdout.write('{"protocol_version":1,"locked":true}\\n');
+    process.stdin.resume();
+  `
+  )
+  const lock = await executorMigrationLock(binary, { wait: true })([join(directory, 'source')])
+  try {
+    expect(JSON.parse(await readFile(join(directory, 'arguments.json'), 'utf8'))).toEqual([
+      '--workbench-lock',
+      JSON.stringify([join(directory, '.wework-home-migration-source.lock')]),
+      '--version',
+      '--workbench-lock-wait',
+    ])
+  } finally {
+    await lock.release()
+  }
+})

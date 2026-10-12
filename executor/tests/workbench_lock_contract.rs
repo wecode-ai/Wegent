@@ -5,6 +5,8 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 struct Holder(Child);
 
@@ -78,6 +80,37 @@ fn partial_acquisition_failure_releases_earlier_locks() {
         .status
         .success());
     let _recovered = hold(&[first]);
+}
+
+#[test]
+fn waiting_launch_acquires_the_same_locks_after_the_previous_holder_releases() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = vec![root.path().join("desktop.lock")];
+    let first = hold(&paths);
+    let mut waiting_command = command(&paths);
+    waiting_command.arg("--workbench-lock-wait");
+    let mut waiting = Holder(waiting_command.spawn().unwrap());
+    let stdout = waiting.0.stdout.take().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut line = String::new();
+        BufReader::new(stdout).read_line(&mut line).unwrap();
+        sender.send(line).unwrap();
+    });
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(100)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    drop(first);
+    let line = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&line).unwrap(),
+        serde_json::json!({"protocol_version": 1, "locked": true})
+    );
+    reader.join().unwrap();
+    drop(waiting.0.stdin.take());
+    assert!(waiting.0.wait().unwrap().success());
+    assert!(paths[0].is_file());
 }
 
 #[test]

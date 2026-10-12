@@ -140,7 +140,12 @@ fn main() {
         let result = env::args()
             .nth(2)
             .ok_or_else(|| "Missing migration lock resources".to_owned())
-            .and_then(|resources| wegent_executor::local::workbench_lock::run(&resources));
+            .and_then(|resources| {
+                wegent_executor::local::workbench_lock::run(
+                    &resources,
+                    env::args().any(|argument| argument == "--workbench-lock-wait"),
+                )
+            });
         if let Err(error) = result {
             eprintln!("{error}");
             std::process::exit(1);
