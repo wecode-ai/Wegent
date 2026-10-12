@@ -101,10 +101,11 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs, modelResponseTi
     )
     const bindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)
     assert.equal(bindings.length, 1, 'AI assistance must create exactly one bound task')
-    assert.ok(
-      [currentApp.app_device_id, currentApp.device_id, currentApp.execution_target_id].includes(
-        bindings[0].device_id ?? bindings[0].deviceId
-      ),
+    const boundDeviceId = bindings[0].device_id ?? bindings[0].deviceId
+    assert.ok(boundDeviceId, 'The task binding must expose its device identity')
+    assert.equal(
+      boundDeviceId,
+      currentApp.app_device_id ?? currentApp.device_id,
       'Human AI assistance must run on the current computer, regardless of the project environment'
     )
     assert.equal(

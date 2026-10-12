@@ -24,6 +24,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['browser-toolbar-actions', ['macos-inspector-foreground']],
   ['tray-lifecycle', ['macos-inspector-foreground']],
   ['browser-annotation-design', ['macos-inspector-foreground']],
+  ['project-assignment-notification', ['macos-inspector-foreground']],
   // Fresh packaged runtime extraction contends when these cloud checkpoints share a runner.
   ['plugin-account-auth', ['desktop-runtime-intensive']],
   ['cloud-device-lifecycle', ['desktop-runtime-intensive']],
@@ -360,10 +361,12 @@ function checkpointScenarioEnv(env, checkpoint) {
   if (
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'browser-multi-tabs' ||
-    checkpoint === 'core-task-flow'
+    checkpoint === 'core-task-flow' ||
+    checkpoint === 'project-assignment-notification'
   ) {
     // Core task flow verifies the native drag-to-popout window. macOS background
     // mode prohibits activation and hides the app when that window is presented.
+    // Assignment notification also verifies tag commits through native focus loss.
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]
