@@ -9,6 +9,8 @@ import { promisify } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { stopProcessGroup } from '../process-lifecycle.mjs'
+import { startEmptyCommandHttpMcp } from './empty-command-http-mcp.mjs'
+import { cleanupNativeMcpResources } from './native-mcp-cleanup.mjs'
 import {
   assistantMessage,
   createSse,
@@ -24,7 +26,12 @@ import {
 
 // The real container HTTP entrypoint runs without callbacks in this isolated probe.
 // Only the model is simulated; MCP startup/calls, native sessions and files are real.
-export async function verifyNativeAgentMcp({ fixture, resultDir, explicitWorkbench = false }) {
+export async function verifyNativeAgentMcp({
+  fixture,
+  resultDir,
+  explicitWorkbench = false,
+  emptyCommandHttp = false,
+}) {
   assert.ok(
     process.env.WEWORK_E2E_EXECUTOR_BIN,
     'The shared runner must provide the built Executor'
@@ -33,6 +40,7 @@ export async function verifyNativeAgentMcp({ fixture, resultDir, explicitWorkben
   const home = join(root, 'home')
   await mkdir(home, { mode: 0o700 })
   const probePath = join(root, 'probe.json')
+  let remoteMcp
   const executorHome = join(root, 'legacy-executor')
   const workbench = explicitWorkbench
     ? join(root, 'custom-workbench')
@@ -173,7 +181,9 @@ export async function verifyNativeAgentMcp({ fixture, resultDir, explicitWorkben
   }
   const probes = []
   let firstContent, firstStat, systemInode, firstThread
+  let executionFailure
   try {
+    remoteMcp = emptyCommandHttp ? await startEmptyCommandHttpMcp(probePath) : null
     await waitFor(() => /listening on 127\.0\.0\.1:\d+/.test(output), 'Executor did not start')
     const port = output.match(/listening on 127\.0\.0\.1:(\d+)/)[1]
     for (let index = 1; index <= 3; index++) {
@@ -188,7 +198,7 @@ export async function verifyNativeAgentMcp({ fixture, resultDir, explicitWorkben
       const mcp =
         index === 1
           ? {
-              retained: {
+              retained: remoteMcp?.config ?? {
                 type: 'stdio',
                 command: process.execPath,
                 args: [
@@ -334,6 +344,10 @@ export async function verifyNativeAgentMcp({ fixture, resultDir, explicitWorkben
       const path = join(agentHome, 'config.toml')
       const content = await readFile(path, 'utf8')
       assert.ok(content.includes('[mcp_servers.retained]'))
+      if (emptyCommandHttp) {
+        assert.ok(content.includes(remoteMcp.config.url))
+        assert.ok(!/^command\s*=/m.test(content), 'Remote MCP must not persist a stdio command')
+      }
       assert.ok(!content.includes('synthetic-mcp-secret-'))
       const metadata = await stat(path, { bigint: true })
       const system = await stat(join(agentHome, 'skills/.system'), { bigint: true })
@@ -348,6 +362,7 @@ export async function verifyNativeAgentMcp({ fixture, resultDir, explicitWorkben
         assert.equal(system.ino, systemInode)
       }
     }
+    remoteMcp?.verify()
     const evidence = {
       passed: true,
       home: agentHome,
@@ -364,13 +379,24 @@ export async function verifyNativeAgentMcp({ fixture, resultDir, explicitWorkben
       explicitWorkbench,
       executorHomeIndependent: true,
       singleAgentConfigurationAccepted: true,
+      emptyCommandHttp,
     }
     await writeFile(join(root, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`)
     return evidence
+  } catch (error) {
+    executionFailure = error
   } finally {
-    await stopProcessGroup(child)
-    await writeFile(join(root, 'executor.log'), output, { mode: 0o600 })
-    model.closeAllConnections()
-    await new Promise(resolve => model.close(resolve))
+    await cleanupNativeMcpResources(
+      [
+        () => stopProcessGroup(child),
+        () => remoteMcp?.close(),
+        () => writeFile(join(root, 'executor.log'), output, { mode: 0o600 }),
+        async () => {
+          model.closeAllConnections()
+          await new Promise(resolve => model.close(resolve))
+        },
+      ],
+      executionFailure
+    )
   }
 }
