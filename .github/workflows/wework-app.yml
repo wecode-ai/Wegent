@@ -349,7 +349,8 @@ jobs:
           CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          # Signed apps unpack separate runtimes; keep cold starts within runner capacity.
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_REQUIRE_COMPRESSED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"

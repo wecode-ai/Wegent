@@ -418,7 +418,7 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('if: failure() && matrix.platform ==')
     expect(workflow).toContain('wework/test-results/desktop-e2e/')
     expect(workflow).toContain('WEWORK_ELECTRON_DEPENDENCIES_READY: "true"')
-    expect(workflow).toContain('WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"')
+    expect(workflow).toContain('WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"')
     expect(workflow).toContain(
       '--parallel-segments release-package-startup,component-update,app-update-full'
     )
