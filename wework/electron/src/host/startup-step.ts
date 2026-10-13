@@ -1,5 +1,6 @@
 import type { ProcessMetric, WebContents } from 'electron'
 import { startupExceptionKind } from './startup-exception-monitor.js'
+import { startupSystemResources } from './startup-system-resources.js'
 
 export function rendererStartupCpuDetails(
   enabled: boolean,
@@ -42,6 +43,7 @@ export function logStartupStep(
     systemCpuMs: Math.round(usage.systemCPUTime / 1000),
     voluntaryContextSwitches: usage.voluntaryContextSwitches,
     involuntaryContextSwitches: usage.involuntaryContextSwitches,
+    ...startupSystemResources(step, status, process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1'),
     ...details,
   })
 }

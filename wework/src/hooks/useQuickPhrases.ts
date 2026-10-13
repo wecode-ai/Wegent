@@ -6,11 +6,15 @@ import {
   type AppPreferences,
   type QuickPhrase,
 } from '@/desktop/appPreferences'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 
 export function useQuickPhrases(): QuickPhrase[] {
+  const appPreferences = useAppPreferencesState()
   const [phrases, setPhrases] = useState(defaultQuickPhrases)
 
   useEffect(() => {
+    if (appPreferences) return
+
     let active = true
     let hasReceivedEvent = false
     void getAppPreferences().then(preferences => {
@@ -25,7 +29,7 @@ export function useQuickPhrases(): QuickPhrase[] {
       active = false
       window.removeEventListener(APP_PREFERENCES_CHANGED_EVENT, handleChange)
     }
-  }, [])
+  }, [appPreferences])
 
-  return phrases
+  return appPreferences?.preferences.quickPhrases ?? phrases
 }
