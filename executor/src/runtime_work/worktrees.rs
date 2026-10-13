@@ -1085,16 +1085,24 @@ fn add_git_worktree(source: &Path, target: &Path, git_ref: Option<&str>) -> Resu
     git_output(source, &args, None).map(|_| ())
 }
 
+fn worktree_git_command() -> Command {
+    let mut command = Command::new("git");
+    // Git must enable long paths before discovering newly created worktree metadata.
+    #[cfg(windows)]
+    command.args(["-c", "core.longpaths=true"]);
+    crate::process::hide_windows_console(&mut command);
+    command
+}
+
 fn remove_git_worktree(path: &Path) -> Result<(), String> {
     let value = path.to_str().ok_or("Invalid worktree path")?;
     let common_dir = git_common_dir(path)?;
-    let mut command = Command::new("git");
+    let mut command = worktree_git_command();
     command
         .arg("--git-dir")
         .arg(common_dir)
         .args(["worktree", "remove", "--force", value]);
     command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
-    crate::process::hide_windows_console(&mut command);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
@@ -1128,32 +1136,29 @@ fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let mut command = Command::new("git");
+    let mut command = worktree_git_command();
     command
         .arg("--git-dir")
         .arg(git_common_dir)
         .args(["worktree", "add", "--detach"])
         .arg(path)
         .arg(reference);
-    crate::process::hide_windows_console(&mut command);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
 fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), String> {
-    let mut command = Command::new("git");
+    let mut command = worktree_git_command();
     command
         .arg("--git-dir")
         .arg(git_common_dir)
         .args(["update-ref", "-d", reference]);
-    crate::process::hide_windows_console(&mut command);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = worktree_git_command();
     command
         .arg("-c")
         .arg("core.bare=false")
@@ -1468,8 +1473,7 @@ fn git_ref_exists(repo_root: &Path, git_ref: &str) -> Result<bool, String> {
         return Ok(false);
     }
     let commit = format!("{git_ref}^{{commit}}");
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = worktree_git_command();
     command
         .arg("-c")
         .arg("core.bare=false")
@@ -2599,6 +2603,77 @@ mod tests {
 
         assert!(ensure_managed_path(&managed_root.join("task/repo"), &roots).is_err());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manages_worktrees_beyond_the_windows_legacy_path_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let mut nested = root.path().to_path_buf();
+        // Keep Git's cwd below its legacy limit while its new metadata exceeds it.
+        let source_length = |path: &Path| {
+            path.join("environment/workspace")
+                .to_string_lossy()
+                .encode_utf16()
+                .count()
+        };
+        while source_length(&nested) < 244 {
+            let remaining = 245 - source_length(&nested);
+            nested = nested.join("e".repeat((remaining - 1).min(100)));
+        }
+        let source = nested.join("environment/workspace");
+        assert!(source.to_string_lossy().encode_utf16().count() <= 248);
+        fs::create_dir_all(&source).unwrap();
+        git_output(&source, &["init"], None).unwrap();
+        git_output(&source, &["config", "core.longpaths", "false"], None).unwrap();
+        git_output(&source, &["config", "user.name", "Wegent Test"], None).unwrap();
+        git_output(
+            &source,
+            &["config", "user.email", "test@wegent.local"],
+            None,
+        )
+        .unwrap();
+        fs::write(source.join("tracked.txt"), "base\n").unwrap();
+        git_output(&source, &["add", "."], None).unwrap();
+        git_output(&source, &["commit", "-m", "base"], None).unwrap();
+        assert!(
+            source
+                .join(".git/worktrees/workspace")
+                .to_string_lossy()
+                .encode_utf16()
+                .count()
+                > 260
+        );
+
+        let manager = WorktreeManager::new(root.path().join("worktrees.json"));
+        manager
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(nested.join("managed-worktrees").display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .unwrap();
+        let record = manager
+            .prepare(&source, "isolated-task", None, false)
+            .unwrap();
+        let path = PathBuf::from(&record.path);
+        assert!(path.to_string_lossy().encode_utf16().count() > 260);
+        assert_eq!(
+            fs::read_to_string(path.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        assert_eq!(
+            git_output(&path, &["rev-parse", "--is-inside-work-tree"], None).unwrap(),
+            "true"
+        );
+        fs::write(path.join("tracked.txt"), "changed\n").unwrap();
+        assert_eq!(manager.delete(&path, true).unwrap().state, STATE_RESTORABLE);
+        assert!(!path.exists());
+        manager.restore(&path).unwrap();
+        assert_eq!(
+            fs::read_to_string(path.join("tracked.txt")).unwrap(),
+            "changed\n"
+        );
+        manager.delete(&path, false).unwrap();
+        assert!(!path.exists());
     }
 
     #[test]

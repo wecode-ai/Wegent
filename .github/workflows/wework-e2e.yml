@@ -525,6 +525,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
           cargo test --locked --release --manifest-path executor/Cargo.toml --lib runtime_work::store::tests
           if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
+          cargo test --locked --release --manifest-path executor/Cargo.toml --lib runtime_work::worktrees::tests::manages_worktrees_beyond_the_windows_legacy_path_limit
+          if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
           exit $compatibilityExitCode
 
       - name: Build Rust Backend Windows E2E gateway
