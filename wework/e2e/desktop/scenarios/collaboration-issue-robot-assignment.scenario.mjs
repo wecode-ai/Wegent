@@ -23,6 +23,9 @@ const MARKER = `ISSUE_ROBOT_ASSIGNMENT_${process.pid}`
 const BLOCKED_MARKER = `${MARKER}_NEEDS_CONFIG`
 const RUNNABLE_MARKER = `${MARKER}_FOLLOW_DEVICE`
 const RUNNABLE_RESULT = `${MARKER}_RUNNABLE_COMPLETED`
+// A real Runtime has to boot on the claimed device before it can answer, so the
+// end-to-end completion waits use a deliberately slow budget.
+const RUN_COMPLETION_TIMEOUT_MS = 5 * 60_000
 
 function scoped(selector) {
   return `${CONTENT} ${selector}`
@@ -35,6 +38,11 @@ function configurationBadge(issueId) {
 function writeEvents(response, responseId, events) {
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
   response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
+}
+
+/** The bound-Issue reference a cloud execution receives instead of a local prompt. */
+function issueReference(projectId, issueId) {
+  return `cloud://projects/${projectId}/todos/${issueId}`
 }
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
@@ -179,6 +187,8 @@ export function createDesktopScenario({
   let authToken = ''
   let project = null
   let modelRequests = 0
+  let runnableSawIssueReference = false
+  let runnableSawIssueTitle = false
   const blockedIssueId = { value: null }
   const queuedIssueId = { value: null }
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
@@ -218,6 +228,13 @@ export function createDesktopScenario({
       }
       if (serialized.includes(RUNNABLE_MARKER)) {
         modelRequests += 1
+        if (
+          queuedIssueId.value &&
+          serialized.includes(issueReference(project?.id, queuedIssueId.value))
+        ) {
+          runnableSawIssueReference = true
+        }
+        if (serialized.includes(QUEUED_ISSUE)) runnableSawIssueTitle = true
         writeEvents(response, responseId, [assistantMessage(RUNNABLE_RESULT)])
         return true
       }
@@ -328,7 +345,6 @@ export function createDesktopScenario({
         'A device-following robot assignment did not queue a runnable Run',
         modelResponseTimeoutMs
       )
-      assert.notEqual(runnableIssue.status, 'inbox')
 
       await closeIssueDetail(control, uiTimeoutMs)
       await control.command(
@@ -341,7 +357,55 @@ export function createDesktopScenario({
         0,
         'A runnable robot Run must not be reported as needing configuration'
       )
-      await captureScreenshot(control, 'issue-robot-assignment-02-runnable.png', CONTENT)
+
+      // Full flow: the owner that was just assigned has to run this Issue's task
+      // through to review instead of only owning it.
+      const completedIssue = await waitForValue(
+        () => loadIssue(QUEUED_ISSUE),
+        item => (item.status === 'in_review' && item.execution_state === 'succeeded' ? item : null),
+        'The assigned robot did not run the Issue task through to review',
+        RUN_COMPLETION_TIMEOUT_MS
+      )
+      const completedExecution = await waitForValue(
+        async () => {
+          const result = await request(
+            `/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`
+          )
+          return result.items.find(candidate => candidate.loopItemId === completedIssue.id) ?? null
+        },
+        candidate => (candidate?.displayState === 'succeeded' ? candidate : null),
+        'The assigned robot Run did not reach a succeeded terminal state',
+        RUN_COMPLETION_TIMEOUT_MS
+      )
+      assert.equal(completedExecution.executorType, 'project_robot')
+      assert.equal(completedExecution.agentId, deviceAgent.id)
+      assert.ok(modelRequests >= 1, 'The assigned robot never reached the model')
+      assert.ok(
+        runnableSawIssueReference || runnableSawIssueTitle,
+        `The assigned robot never received the Issue it was assigned (reference=${runnableSawIssueReference}, title=${runnableSawIssueTitle})`
+      )
+      await control.command(
+        'waitFor',
+        scoped(
+          `[data-testid="cloud-todo-column-in_review"] [data-testid="collaboration-issue-${completedIssue.id}"]`
+        ),
+        { visible: true, timeoutMs: RUN_COMPLETION_TIMEOUT_MS }
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', configurationBadge(completedIssue.id))),
+        0,
+        'A completed robot Run must not be reported as needing configuration'
+      )
+      await control.command(
+        'click',
+        scoped(`[data-testid="cloud-todo-card-${completedIssue.id}"]`),
+        { visible: true, timeoutMs: uiTimeoutMs }
+      )
+      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+        text: RUNNABLE_RESULT,
+        timeoutMs: RUN_COMPLETION_TIMEOUT_MS,
+      })
+      await captureScreenshot(control, 'issue-robot-assignment-02-runnable-completed.png', CONTENT)
     },
 
     diagnostics() {
@@ -350,6 +414,8 @@ export function createDesktopScenario({
         modelRequests,
         projectId: project?.id ?? null,
         queuedIssueId: queuedIssueId.value,
+        runnableSawIssueReference,
+        runnableSawIssueTitle,
       }
     },
   }
