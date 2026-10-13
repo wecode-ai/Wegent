@@ -376,7 +376,7 @@ else
 fi
 
 # Backfill the service URL required by the Rust gateway for older dotenv files.
-if ! grep -qE '^[[:space:]]*(export[[:space:]]+)?EXECUTOR_MANAGER_URL[[:space:]]*=' .env; then
+if ! grep -qE '^[[:space:]]*(export[[:space:]]+)?EXECUTOR_MANAGER_URL[[:space:]]*=[[:space:]]*[^[:space:]]' .env; then
     printf '\nEXECUTOR_MANAGER_URL=http://localhost:%s\n' "${EXECUTOR_MANAGER_PORT:-8001}" >> .env
     echo -e "${GREEN}✓ Added EXECUTOR_MANAGER_URL to .env${NC}"
 fi
