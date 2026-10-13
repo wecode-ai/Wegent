@@ -298,7 +298,7 @@ describe('CloudConnectionProvider', () => {
         redirectOnUnauthorized: false,
       })
     )
-    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent(/^connected$/)
     expect(credentialMocks.refreshAccessToken).not.toHaveBeenCalled()
   })
 
@@ -455,7 +455,7 @@ describe('CloudConnectionProvider', () => {
       render(hasParentProvider ? <AppPreferencesProvider>{cloud}</AppPreferencesProvider> : cloud)
 
       await waitFor(() =>
-        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent(/^connected$/)
       )
       expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).toMatchObject({
         user: { id: 7, user_name: 'alice' },
@@ -494,7 +494,7 @@ describe('CloudConnectionProvider', () => {
     await waitFor(() =>
       expect(httpMocks.get).toHaveBeenCalledWith('/users/me', { redirectOnUnauthorized: false })
     )
-    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent(/^connected$/)
     expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(1)
     expect(console.error).toHaveBeenCalledWith('[Wework] Failed to load app preferences:', failure)
   })
@@ -546,7 +546,7 @@ describe('CloudConnectionProvider', () => {
         backendUrl: 'http://127.0.0.1:8000',
         user: { id: 2, user_name: 'local' },
       })
-      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent(/^connected$/)
     })
     expect(createHttpClient).toHaveBeenCalledWith(
       expect.objectContaining({ baseUrl: 'http://127.0.0.1:8000/api' })
@@ -584,7 +584,7 @@ describe('CloudConnectionProvider', () => {
       render(hasParentProvider ? <AppPreferencesProvider>{cloud}</AppPreferencesProvider> : cloud)
 
       await waitFor(() =>
-        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent(/^connected$/)
       )
       await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
 
@@ -827,7 +827,7 @@ describe('CloudConnectionProvider', () => {
     window.dispatchEvent(new Event('online'))
 
     await waitFor(() =>
-      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent(/^connected$/)
     )
     expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(2)
   })
@@ -880,7 +880,7 @@ describe('CloudConnectionProvider', () => {
         await vi.advanceTimersByTimeAsync(60_000)
       })
 
-      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent(/^connected$/)
       expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
@@ -1033,7 +1033,7 @@ describe('CloudConnectionProvider', () => {
       )
 
       await waitFor(() => {
-        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent(/^connected$/)
         expect(screen.getByTestId('cloud-web-url')).toHaveTextContent('http://127.0.0.1:3000')
         expect(
           JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').socketBaseUrl
