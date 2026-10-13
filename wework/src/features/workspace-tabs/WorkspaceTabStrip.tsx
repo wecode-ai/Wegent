@@ -503,7 +503,7 @@ export function WorkspaceTabStrip({
               ref={addMenuRef}
               role="menu"
               data-testid="workspace-tab-add-menu"
-              className="fixed z-system-popover max-h-[70vh] w-[220px] overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-lg backdrop-blur-md"
+              className="fixed z-system-popover max-h-[70vh] w-[220px] overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-lg backdrop-blur-md"
               style={addMenuPosition}
             >
               {addMenuKinds.map(([kind, Icon, label]) => (
@@ -591,7 +591,7 @@ export function WorkspaceTabStrip({
               ref={contextMenuRef}
               role="menu"
               data-testid="workspace-tab-context-menu"
-              className="fixed z-system-popover w-[196px] rounded-xl border border-border/70 bg-popover/95 p-1 shadow-lg backdrop-blur-md"
+              className="fixed z-system-popover w-[196px] rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-lg backdrop-blur-md"
               style={{ left: contextMenu.left, top: contextMenu.top }}
             >
               {contextTab.fixed ? (
@@ -601,7 +601,7 @@ export function WorkspaceTabStrip({
                   data-testid="workspace-tab-unpin"
                   disabled={!appPreferences?.loaded}
                   onClick={() => void unpinContextTab()}
-                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-black/[0.04] disabled:opacity-50"
+                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   <Pin aria-hidden="true" className="h-4 w-4 text-text-secondary" />
                   {t('workbench.workspace_tab_unpin', '取消固定标签页')}
@@ -613,7 +613,7 @@ export function WorkspaceTabStrip({
                   data-testid="workspace-tab-pin"
                   disabled={!appPreferences?.loaded}
                   onClick={() => void pinContextTab()}
-                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-black/[0.04] disabled:opacity-50"
+                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   <Pin aria-hidden="true" className="h-4 w-4 text-text-secondary" />
                   {t('workbench.workspace_tab_pin', '固定标签页')}
@@ -624,7 +624,7 @@ export function WorkspaceTabStrip({
                 role="menuitem"
                 data-testid="workspace-tab-open-new-window"
                 onClick={() => void openContextTabInNewWindow()}
-                className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-black/[0.04]"
+                className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
               >
                 {t('workbench.workspace_tab_open_new_window', '在新窗口中打开')}
               </button>
@@ -636,7 +636,7 @@ export function WorkspaceTabStrip({
                   closeOtherTabs(contextTab.id)
                   setContextMenu(null)
                 }}
-                className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-black/[0.04]"
+                className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
               >
                 {t('workbench.workspace_tab_close_others', '关闭其他标签页')}
               </button>
