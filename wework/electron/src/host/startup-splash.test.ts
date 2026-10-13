@@ -357,7 +357,7 @@ describe('StartupSplash', () => {
     expect(target.isDestroyed()).toBe(true)
   })
 
-  test('captures and persists the rendered splash before closing when requested by E2E', async () => {
+  test('captures and persists the rendered splash when requested by E2E', async () => {
     const { show, splash, target, writePng } = createFixture()
     await show()
 
@@ -386,6 +386,7 @@ describe('StartupSplash', () => {
 
     const first = splash.close({ capturePath: '/tmp/wework-e2e/startup-splash.png' })
     const second = splash.close({ capturePath: '/tmp/wework-e2e/startup-splash-second.png' })
+    expect(target.close).not.toHaveBeenCalled()
     finishCapture?.()
 
     await expect(Promise.all([first, second])).resolves.toHaveLength(2)
@@ -396,6 +397,82 @@ describe('StartupSplash', () => {
       Buffer.from('splash-png')
     )
   })
+
+  test('closes after freezing pixels while all callers still await PNG persistence', async () => {
+    const { show, splash, target, writePng } = createFixture()
+    await show()
+    let finishWrite!: () => void
+    const toPNG = vi.fn(() => {
+      expect(target.isDestroyed()).toBe(true)
+      return Buffer.from('frozen-splash-png')
+    })
+    target.webContents.capturePage.mockResolvedValue({ toPNG })
+    writePng.mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finishWrite = resolve
+        })
+    )
+    const first = splash.close({ capturePath: '/tmp/wework-e2e/startup-splash.png' })
+    const settled = vi.fn()
+    void first.then(settled)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(target.close).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('closed')
+    expect(writePng).toHaveBeenCalledWith(
+      '/tmp/wework-e2e/startup-splash.png',
+      Buffer.from('frozen-splash-png')
+    )
+    expect(settled).not.toHaveBeenCalled()
+    const second = splash.close({ capturePath: '/tmp/wework-e2e/duplicate.png' })
+    expect(second).toBe(first)
+    finishWrite()
+    await Promise.all([first, second])
+    expect(settled).toHaveBeenCalledOnce()
+    expect(writePng).toHaveBeenCalledOnce()
+  })
+
+  test('waits for the native closed event before encoding frozen pixels', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+    const toPNG = vi.fn(() => Buffer.from('splash-png'))
+    target.webContents.capturePage.mockResolvedValue({ toPNG })
+    const nativeClose = target.close.getMockImplementation()!
+    target.close.mockImplementation(() => undefined)
+    const closed = splash.close({ capturePath: '/tmp/wework-e2e/startup-splash.png' })
+    await Promise.resolve()
+    expect(target.close).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('visible')
+    expect(toPNG).not.toHaveBeenCalled()
+    nativeClose()
+    await closed
+    expect(splash.snapshot().state).toBe('closed')
+    expect(toPNG).toHaveBeenCalledOnce()
+  })
+
+  test.each(['capture', 'encode', 'persist'] as const)(
+    'closes the splash and rejects when %s fails',
+    async stage => {
+      const { show, splash, target, writePng } = createFixture()
+      await show()
+      const error = new Error(`${stage} failed`)
+      if (stage === 'capture') target.webContents.capturePage.mockRejectedValue(error)
+      if (stage === 'encode') {
+        target.webContents.capturePage.mockResolvedValue({
+          toPNG: () => {
+            throw error
+          },
+        })
+      }
+      if (stage === 'persist') writePng.mockRejectedValue(error)
+      await expect(
+        splash.close({ capturePath: '/tmp/wework-e2e/startup-splash.png' })
+      ).rejects.toBe(error)
+      expect(target.close).toHaveBeenCalledOnce()
+      expect(splash.snapshot().state).toBe('closed')
+    }
+  )
 
   test('shows the main startup window only once when show is called concurrently', async () => {
     const { splash, target } = createFixture()

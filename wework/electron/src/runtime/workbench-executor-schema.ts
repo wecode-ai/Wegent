@@ -33,7 +33,8 @@ export function assertWorkbenchSchema(response: unknown): void {
 
 export async function assertExecutorWorkbenchCompatibility(
   environment: NodeJS.ProcessEnv,
-  packagedSchema?: PackagedExecutorSchema
+  packagedSchema?: PackagedExecutorSchema,
+  options: { candidateSchema?: PackagedExecutorSchema } = {}
 ): Promise<void> {
   const command = environment.WEWORK_EXECUTOR_PATH?.trim()
   if (!command) throw new Error('Workbench requires an executor binary before Home migration')
@@ -48,10 +49,16 @@ export async function assertExecutorWorkbenchCompatibility(
       'Workbench schema verification requires a direct executor binary without wrapper arguments'
     )
   }
-  const schema = packagedSchema ?? packagedSchemas.get(command)
+  let schema = packagedSchema ?? packagedSchemas.get(command)
+  let digest: string | undefined
+  if (!packagedSchema && options.candidateSchema) {
+    digest = await hashComponentFileContents(command)
+    if (options.candidateSchema.sha256 === digest) schema = options.candidateSchema
+  }
   if (schema) {
     assertWorkbenchSchema(schema.response)
-    if ((await hashComponentFileContents(command)) !== schema.sha256) {
+    digest ??= await hashComponentFileContents(command)
+    if (digest !== schema.sha256) {
       throw new Error('Executor Workbench schema checksum mismatch; no Home migration is permitted')
     }
     packagedSchemas.set(command, schema)

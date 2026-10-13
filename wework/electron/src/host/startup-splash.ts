@@ -132,8 +132,8 @@ export class StartupSplash {
   }
 
   close(options: CloseStartupSplashOptions = {}): Promise<StartupSplashSnapshot> {
-    if (this.state === 'closed') return Promise.resolve(this.snapshot())
     if (this.closePromise) return this.closePromise
+    if (this.state === 'closed') return Promise.resolve(this.snapshot())
 
     const operation = this.closeOnce(options)
     this.closePromise = operation.finally(() => {
@@ -166,17 +166,24 @@ export class StartupSplash {
       return this.snapshot()
     }
 
+    let image: SplashImage | undefined
     try {
       if (options.capturePath) {
-        const image = await target.webContents.capturePage()
-        await this.persistPng(options.capturePath, image.toPNG())
+        image = await target.webContents.capturePage()
       }
     } finally {
       if (!target.isDestroyed()) {
         this.controlledClose = true
-        target.close()
+        await new Promise<void>(resolve => {
+          target.once('closed', resolve)
+          target.close()
+        })
       }
       this.markClosed()
+    }
+
+    if (options.capturePath && image) {
+      await this.persistPng(options.capturePath, image.toPNG())
     }
 
     return this.snapshot()

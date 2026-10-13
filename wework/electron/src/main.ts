@@ -126,7 +126,6 @@ import {
 import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-startup.js'
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
-import { hashComponentPath } from './runtime/component-content-hash.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import {
@@ -1819,10 +1818,16 @@ async function configureDesktopRuntime(): Promise<void> {
             startupTelemetrySuccess.markRendererReady()
             if (!keepE2EWindowInBackground) mainWindow.show()
             logStartupStep('main-window-show', 'completed')
+            if (startupSplashWindow && !startupSplashWindow.isDestroyed()) {
+              startupSplashWindow.once('closed', () => {
+                logStartupStep('startup-splash-close', 'completed')
+              })
+            } else {
+              logStartupStep('startup-splash-close', 'completed')
+            }
             await startupSplash?.close({
               capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
             })
-            logStartupStep('startup-splash-close', 'completed')
             if (!keepE2EWindowInBackground) {
               mainWindow.focus()
               mainWindow.webContents.focus()
@@ -2219,9 +2224,8 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
           const command = process.env.WEWORK_EXECUTOR_PATH?.trim() || path
           await assertExecutorWorkbenchCompatibility(
             { ...process.env, WEWORK_EXECUTOR_PATH: command },
-            schema && (command === path || (await hashComponentPath(command)) === schema.sha256)
-              ? schema
-              : undefined
+            command === path ? schema : undefined,
+            command === path ? {} : { candidateSchema: schema }
           )
           logStartupStep('component-executor-schema-query', 'completed')
         },
