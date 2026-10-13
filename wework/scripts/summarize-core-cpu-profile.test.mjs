@@ -193,6 +193,48 @@ test('details known packages and builtins while preserving broad totals and safe
   )
 })
 
+test('waits for an asynchronous real inspector stop callback before publishing the startup marker', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-cpu-delayed-stop-'))
+  roots.push(root)
+  const delayedInspector = join(root, 'delayed-inspector.mjs')
+  await writeFile(
+    delayedInspector,
+    `import { Session } from 'node:inspector'
+const original = Session.prototype.post
+Session.prototype.post = function (method, ...args) {
+  if (method !== 'Profiler.stop') return original.call(this, method, ...args)
+  const callback = args.pop()
+  return original.call(this, method, ...args, (error, result) => setImmediate(() => callback(error, result)))
+}`
+  )
+  const dshHome = join(root, 'session/electron-user-data/dsh-core')
+  const { stdout } = await execute(
+    process.execPath,
+    [
+      '--import',
+      pathToFileURL(delayedInspector).href,
+      '--import',
+      pathToFileURL(resolve('dsh/electron-host/cpu-profile-bootstrap.js')).href,
+      '--input-type=module',
+      '-e',
+      'for(let i=0;i<1000000;i++)Math.sqrt(i);console.log(JSON.stringify(await globalThis[Symbol.for("wework.core.startupCpuProfiler")].complete()))',
+    ],
+    { env: { ...process.env, WEWORK_E2E_CORE_CPU_PROFILE: '1', DSH_HOME: dshHome } }
+  )
+  const marker = JSON.parse(stdout)
+  const summary = JSON.parse(
+    await readFile(
+      join(dshHome, '../logs', 'core-startup-cpu-profile-' + marker.cpuProfileProcessId + '.json'),
+      'utf8'
+    )
+  )
+  expect(marker.cpuProfileSummaryMode).toBe('before-endpoint')
+  expect(summary.scope).toBe('startup-to-endpoint')
+  expect(summary.samples).toBeGreaterThan(0)
+  expect(JSON.stringify(summary)).not.toContain(root)
+  expect(summary).not.toHaveProperty('nodes')
+})
+
 test('writes safe startup samples before forced termination of a preloaded real Node process', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-cpu-bootstrap-'))
   roots.push(root)
@@ -206,7 +248,7 @@ test('writes safe startup samples before forced termination of a preloaded real 
       bootstrap,
       '--input-type=module',
       '-e',
-      'let total=0;for(let i=0;i<20000000;i++)total+=Math.sqrt(i);console.log(JSON.stringify(globalThis[Symbol.for("wework.core.startupCpuProfiler")].complete()));setInterval(()=>{},1000);',
+      'let total=0;for(let i=0;i<20000000;i++)total+=Math.sqrt(i);console.log(JSON.stringify(await globalThis[Symbol.for("wework.core.startupCpuProfiler")].complete()));setInterval(()=>{},1000);',
     ],
     { env: { ...process.env, WEWORK_E2E_CORE_CPU_PROFILE: '1', DSH_HOME: dshHome } }
   )

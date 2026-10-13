@@ -488,7 +488,7 @@ describe('core DSH runtime', () => {
       entry,
       `let total = 0
        for (let i = 0; i < 10000000; i++) total += Math.sqrt(i)
-       globalThis[Symbol.for('wework.core.startupCpuProfiler')].complete()\n`
+       await globalThis[Symbol.for('wework.core.startupCpuProfiler')].complete()\n`
     )
     const launch = createCoreDshLaunch({ ...profiled, entry }, 3080)
     expect(launch.args[0]).toBe('--import')
