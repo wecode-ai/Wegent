@@ -681,7 +681,7 @@ fn activate_staged_marketplace(staging: &Path, destination: &Path) -> Result<(),
     Ok(())
 }
 
-fn directory_content_hash(root: &Path) -> Result<String, String> {
+pub(crate) fn directory_content_hash(root: &Path) -> Result<String, String> {
     let mut hasher = Sha256::new();
     hash_directory_contents(root, root, &mut hasher)?;
     Ok(format!("{:x}", hasher.finalize()))

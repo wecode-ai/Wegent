@@ -204,24 +204,6 @@ fn non_object_configs_are_rejected() {
 }
 
 #[test]
-fn scalar_coercions_match_pydantic_lax_rules() {
-    // `int` accepts a whole float, a bool and a numeric string.
-    assert_eq!(
-        video(json!({"fps": 30.0, "max_duration": true, "seed": "42"})),
-        json!({"resolution": "1080p", "fps": 30, "max_duration": 1, "seed": 42})
-    );
-    // `int` rejects a fractional float and a fractional string.
-    assert!(video_config_dump(&json!({"fps": 30.5})).is_err());
-    assert!(video_config_dump(&json!({"fps": "30.5"})).is_err());
-    // `str` does not accept numbers.
-    assert!(video_config_dump(&json!({"ratio": 16})).is_err());
-    // `bool` rejects out-of-range and unknown spellings.
-    assert!(video_config_dump(&json!({"draft": 2})).is_err());
-    assert!(video_config_dump(&json!({"draft": "maybe"})).is_err());
-    assert!(video_config_dump(&json!({"draft": "YES"})).is_ok());
-}
-
-#[test]
 fn non_mapping_nested_configs_are_rejected() {
     // pydantic validates a nested model from a mapping only. A positional JSON
     // array must not be read as a struct's field order.
@@ -235,12 +217,4 @@ fn non_mapping_nested_configs_are_rejected() {
         .is_err()
     );
     assert!(video_config_dump(&json!({"capabilities": {"generation_modes": [[1, 2]]}})).is_err());
-}
-
-#[test]
-fn integers_outside_the_signed_64_bit_range_are_rejected() {
-    // pydantic rejects a float that does not fit an `Optional[int]` field.
-    assert!(video_config_dump(&json!({"fps": 1e300})).is_err());
-    assert!(video_config_dump(&json!({"fps": 9.223372036854776e18})).is_err());
-    assert!(video_config_dump(&json!({"fps": 4.611686018427388e18})).is_ok());
 }

@@ -88,6 +88,7 @@ import {
   type StartupSplashTheme,
 } from './host/startup-splash.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
+import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
@@ -119,11 +120,11 @@ import {
   resolveWorkbenchPaths,
 } from './runtime/workbench-environment.js'
 import {
-  prepareDesktopDataSource,
-  migrateWorkbenchDesktopData,
   packagedUpdaterCache,
   migrateDesktopControlRegistry,
 } from './runtime/workbench-desktop-data.js'
+import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-startup.js'
+import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
@@ -230,42 +231,53 @@ const desktopDataPaths =
         homeDirectory: app.getPath('home'),
       })
     : null
-if (desktopDataPaths) prepareDesktopDataSource(userDataPath, desktopDataPaths.desktop)
-app.setPath('userData', userDataPath)
-// Acquire the existing installation's lock before moving any application state.
-const hasSingleInstanceLock = app.requestSingleInstanceLock({
+const singleInstanceData = {
   pluginDevelopmentCommand,
   workspaceOpenRequest: startupWorkspaceOpenRequest,
-})
-if (hasSingleInstanceLock && desktopDataPaths) {
+}
+let hasSingleInstanceLock: boolean
+if (desktopDataPaths) {
   try {
-    const migrated = migrateWorkbenchDesktopData({
+    const migrated = await initializeWorkbenchDesktopData({
+      app,
       source: userDataPath,
       desktop: desktopDataPaths.desktop,
-      logs: app.getPath('logs'),
+      additionalData: singleInstanceData,
+      acquireLock: executorMigrationLock(
+        process.env.WEWORK_EXECUTOR_PATH?.trim() ||
+          join(process.resourcesPath, 'bin', 'wegent-executor.exe'),
+        { wait: true }
+      ),
       updaterCache: packagedUpdaterCache(
         process.env.HOME?.trim() || app.getPath('home'),
         process.resourcesPath,
         process.env
       ),
     })
-    if (!process.env.WEWORK_DESKTOP_CONTROL_REGISTRY_DIR?.trim()) {
-      migrateDesktopControlRegistry(
-        process.env.HOME?.trim() || app.getPath('home'),
-        desktopDataPaths.shared
-      )
+    hasSingleInstanceLock = migrated !== null
+    if (migrated) {
+      if (!process.env.WEWORK_DESKTOP_CONTROL_REGISTRY_DIR?.trim()) {
+        migrateDesktopControlRegistry(
+          process.env.HOME?.trim() || app.getPath('home'),
+          desktopDataPaths.shared
+        )
+      }
+      userDataPath = migrated.userData
+      app.setPath('userData', userDataPath)
+      app.setPath('sessionData', userDataPath)
+      app.setAppLogsPath(migrated.logs)
     }
-    userDataPath = migrated.userData
-    app.setPath('userData', userDataPath)
-    app.setPath('sessionData', userDataPath)
-    app.setAppLogsPath(migrated.logs)
   } catch (error) {
     console.error('[startup] application data migration failed', error)
     dialog.showErrorBox('Wework', error instanceof Error ? error.message : String(error))
     app.exit(1)
     throw error
   }
-} else if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
+} else {
+  app.setPath('userData', userDataPath)
+  hasSingleInstanceLock = app.requestSingleInstanceLock(singleInstanceData)
+  if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
+}
 
 let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
@@ -309,7 +321,9 @@ let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
 let startupRecovery: StartupRecoveryService | null = null
+let startupRuntimeEnvironment: NodeJS.ProcessEnv | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
+let startupComponentUpdate: Promise<void> | null = null
 let pluginDevelopment: PluginDevelopmentManager | null = null
 const pluginDevelopmentChildRuntime =
   pluginDevelopmentInstance &&
@@ -1533,6 +1547,7 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('workbench-mode-initialize', 'completed')
   logStartupStep('desktop-environment', 'started')
   const environment = await desktopEnvironment()
+  startupRuntimeEnvironment = environment
   logStartupStep('desktop-environment', 'completed')
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
@@ -1913,14 +1928,18 @@ function startDesktopRuntime(): Promise<void> {
     logStartupStep('desktop-runtime-start', 'completed')
     startupTelemetrySuccess.markRuntimeReady()
     if (!pluginDevelopmentInstance && shouldStageDesktopComponentUpdates(process.env)) {
-      void componentUpdates
-        ?.stageAvailableUpdate()
-        .then(staged => {
-          if (staged) console.log('[components] update staged for the next application restart')
-        })
-        .catch(error => {
-          console.error('[components] update check failed', error)
-        })
+      startupComponentUpdate =
+        componentUpdates
+          ?.stageAvailableUpdate()
+          .then(staged => {
+            if (staged) console.log('[components] update staged for the next application restart')
+          })
+          .catch(error => {
+            console.error('[components] update check failed', error)
+          })
+          .finally(() => {
+            startupComponentUpdate = null
+          }) ?? null
     }
   })()
     .catch(async error => {
@@ -1996,10 +2015,39 @@ if (hasSingleInstanceLock) {
       rendererStorage,
       preferences,
       cloudCredentials,
+      prepareCleanup: async () => {
+        await runtimeStartPromise
+        await startupComponentUpdate
+        await prepareApplicationShutdown()
+        disposeCoreDshViews()
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          await mainWindow.webContents.loadURL('about:blank')
+        }
+      },
+      clearRuntimeFiles: () => clearStartupRuntimeFiles(app.getPath('userData')),
+      clearUserFiles: () => {
+        const environment = startupRuntimeEnvironment ?? process.env
+        const home = environment.WEGENT_EXECUTOR_HOME?.trim() || executorHome
+        return clearStartupUserFiles({
+          dataDirectory: app.getPath('userData'),
+          codexHome: environment.WEGENT_CODEX_HOME?.trim() || join(home, 'codex'),
+          claudeHome: environment.WEGENT_CLAUDE_HOME?.trim() || join(home, 'claude'),
+          capabilitiesHome:
+            environment.WEGENT_CAPABILITIES_HOME?.trim() || join(home, 'capabilities'),
+          protectedAgentHomes: [
+            join(app.getPath('home'), '.codex'),
+            join(app.getPath('home'), '.claude'),
+          ],
+        })
+      },
       clearCache: () => session.defaultSession.clearCache(),
       clearAppStorage: () =>
         session.defaultSession.clearStorageData({
           storages: ['serviceworkers', 'cachestorage'],
+        }),
+      clearUserStorage: () =>
+        session.defaultSession.clearStorageData({
+          storages: ['cookies', 'localstorage', 'indexdb'],
         }),
       disablePlugin: async name => {
         if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')

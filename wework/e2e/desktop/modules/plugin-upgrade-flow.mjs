@@ -166,6 +166,14 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   console.log('[plugin-upgrade] Observing update and its next catalog refresh')
   await new Promise(resolve => setTimeout(resolve, E2E_CATALOG_REFRESH_OBSERVATION_MS))
   const refreshed = await capture('04-after-refresh')
+  assert.ok(
+    refreshed.snapshot.testIds.includes(`plugin-detail-actions-${installedId}`),
+    'A catalog refresh must preserve the cloud installation identity after an upgrade'
+  )
+  assert.ok(
+    refreshed.snapshot.testIds.includes(`plugin-auto-update-toggle-${installedId}`),
+    'An upgraded cloud installation must retain its update policy controls'
+  )
   const newRoot = (await readCapabilities()).plugins[managedKey].runtime.codex_link
   assert.notEqual(newRoot, oldRoot, 'Updated content must use a distinct native cache path')
   const currentManifestPath = join(newRoot, '.codex-plugin/plugin.json')

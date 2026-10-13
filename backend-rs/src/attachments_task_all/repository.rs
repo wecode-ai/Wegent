@@ -11,7 +11,7 @@
 //! Task/subtask rows come from the injected `TaskStore`, which owns the table
 //! choice: the public store reads the base `tasks`/`subtasks` tables, while a
 //! deployment that resolves task storage differently supplies its own store.
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
 

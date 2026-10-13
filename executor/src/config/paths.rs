@@ -16,7 +16,7 @@ pub fn executor_home() -> PathBuf {
 }
 
 fn platform_home() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
+    crate::local::command::configured_home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn default_home(home: &Path) -> PathBuf {
@@ -88,11 +88,12 @@ fn migrate_at(home: &Path, target: &Path) -> io::Result<()> {
     writer.try_lock_exclusive().map_err(|_| {
         io::Error::other("Legacy Executor is still running; stop it before migrating its Home")
     })?;
-    fs::rename(&legacy, target)?;
-    #[cfg(unix)]
-    let linked = std::os::unix::fs::symlink(target, &legacy);
+    // Windows cannot move a directory while its writer-lock handle is open.
+    // This offline migration requires all executors to have stopped already.
     #[cfg(windows)]
-    let linked = std::os::windows::fs::symlink_dir(target, &legacy);
+    drop(writer);
+    fs::rename(&legacy, target)?;
+    let linked = crate::directory_link::create(target, &legacy);
     if let Err(error) = linked {
         fs::rename(target, &legacy)?;
         return Err(error);

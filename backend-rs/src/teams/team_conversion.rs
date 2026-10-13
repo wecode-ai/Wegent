@@ -7,13 +7,14 @@
 //! (`_convert_to_team_dict_with_cache` + `default_for_modes`).
 use crate::crd::{CrdDocument, ResourceReference as TeamReference, reference_parts};
 use crate::json_compat::OptionalOpaqueJsonExt;
-use crate::json_compat::{OpaqueJson, raw_null};
+use brz_json::{OpaqueJson, raw_null};
 use std::collections::{BTreeMap, HashMap};
 
+use brz_json::RawJson;
 use chrono::NaiveDateTime;
-use serde_json::value::RawValue;
 
 use super::public_model_access;
+use super::team_access_policy::filtered_agent_config;
 use super::teams_repository as repo;
 use super::teams_repository::{KindRow, TeamRow};
 
@@ -36,6 +37,17 @@ pub(crate) struct Preloaded {
     users: HashMap<i64, String>,
 }
 
+/// Source `TeamDisplayConfig` (pydantic) declares only `show_final_answer_only`
+/// and keeps pydantic's default `extra="ignore"`. The persisted CRD may carry
+/// other keys (for example `hide_tool_details`); they are dropped here, and
+/// `exclude_none` drops a null value, matching `dump_team_display_config`.
+#[derive(Default, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+struct TeamDisplayConfigInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    show_final_answer_only: Option<OpaqueJson>,
+}
+
 #[derive(Default, serde::Deserialize)]
 #[serde(default)]
 struct TeamSpecInput {
@@ -44,7 +56,7 @@ struct TeamSpecInput {
     #[serde(rename = "modeSpec")]
     mode_spec: Option<BTreeMap<String, Option<OpaqueJson>>>,
     #[serde(rename = "displayConfig")]
-    display_config: Option<BTreeMap<String, Option<OpaqueJson>>>,
+    display_config: Option<TeamDisplayConfigInput>,
     #[serde(rename = "inputPlaceholder")]
     input_placeholder: Option<BTreeMap<String, Option<OpaqueJson>>>,
     bind_mode: Option<OpaqueJson>,
@@ -388,26 +400,26 @@ pub(crate) struct TeamItem {
     user_id: i64,
     name: String,
     #[serde(rename = "displayName")]
-    display_name: Box<RawValue>,
+    display_name: RawJson,
     namespace: String,
-    description: Box<RawValue>,
+    description: RawJson,
     bots: Vec<TeamBot>,
     workflow: TeamWorkflow,
-    bind_mode: Box<RawValue>,
-    mode_spec: Box<RawValue>,
+    bind_mode: RawJson,
+    mode_spec: RawJson,
     recommended_mode: &'static str,
     is_mix_team: bool,
     is_active: bool,
     created_at: String,
     updated_at: String,
     agent_type: Option<String>,
-    icon: Box<RawValue>,
-    display_config: Box<RawValue>,
+    icon: RawJson,
+    display_config: RawJson,
     quick_phrases: Vec<String>,
     #[serde(rename = "inputPlaceholder")]
-    input_placeholder: Box<RawValue>,
-    requires_workspace: Box<RawValue>,
-    publication_status: Box<RawValue>,
+    input_placeholder: RawJson,
+    requires_workspace: RawJson,
+    publication_status: RawJson,
     access_source: String,
     default_for_modes: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -438,7 +450,7 @@ struct TeamBot {
 #[derive(serde::Serialize)]
 struct BotSummary {
     name: String,
-    agent_config: Box<RawValue>,
+    agent_config: RawJson,
     shell_type: String,
 }
 
@@ -447,6 +459,7 @@ pub(crate) fn team_item(
     team: &TeamRow,
     preloaded: &Preloaded,
     default_config: &[(&'static str, String, String)],
+    user_id: i64,
 ) -> TeamItem {
     let crd: TeamCrd = (&team.team_json.0).into();
     let is_group_resource = !team.team_namespace.is_empty() && team.team_namespace != "default";
@@ -535,7 +548,9 @@ pub(crate) fn team_item(
 
     let mode_fields = compact_fields(&crd.input.mode_spec);
     let mode_spec = (!mode_fields.is_empty()).then_some(mode_fields);
-    let display_config = compact_fields(&crd.input.display_config);
+    // `dump_team_display_config` runs on the typed `TeamDisplayConfig` model, so
+    // the response only ever carries the declared `show_final_answer_only` key.
+    let display_config = crd.input.display_config.clone().unwrap_or_default();
     let placeholder_fields = compact_fields(&crd.input.input_placeholder);
     let input_placeholder = (!placeholder_fields.is_empty()).then_some(placeholder_fields);
     let quick_phrases = crd
@@ -578,8 +593,7 @@ pub(crate) fn team_item(
             mode: crd.input.collaboration_model.clone(),
         },
         bind_mode: crd.input.bind_mode.raw_or(()),
-        mode_spec: serde_json::value::to_raw_value(&mode_spec)
-            .expect("team configuration serializes"),
+        mode_spec: brz_json::to_raw_value(&mode_spec).expect("team configuration serializes"),
         recommended_mode,
         is_mix_team: shell_types.len() > 1,
         is_active: true,
@@ -587,10 +601,10 @@ pub(crate) fn team_item(
         updated_at: datetime_value(team.team_updated_at),
         agent_type,
         icon: crd.input.icon.raw_or(()),
-        display_config: serde_json::value::to_raw_value(&display_config)
+        display_config: brz_json::to_raw_value(&display_config)
             .expect("team configuration serializes"),
         quick_phrases,
-        input_placeholder: serde_json::value::to_raw_value(&input_placeholder)
+        input_placeholder: brz_json::to_raw_value(&input_placeholder)
             .expect("team configuration serializes"),
         requires_workspace: crd.input.requires_workspace.raw_or(()),
         publication_status: crd
@@ -626,6 +640,13 @@ pub(crate) fn team_item(
             id: team.team_user_id,
             user_name: user_name.clone(),
         });
+    }
+
+    if team.restricted_guest_access != 0 && team.team_user_id != user_id {
+        for member in &mut item.bots {
+            member.bot_prompt.clear();
+            member.bot.agent_config = filtered_agent_config(&member.bot.agent_config);
+        }
     }
 
     item
@@ -723,7 +744,7 @@ fn json_value(
 ) -> BotSummary {
     BotSummary {
         name: bot.kinds_name.clone(),
-        agent_config: serde_json::value::to_raw_value(&agent_config)
+        agent_config: brz_json::to_raw_value(&agent_config)
             .expect("agent configuration serializes"),
         shell_type,
     }
@@ -782,3 +803,6 @@ fn datetime_value(value: NaiveDateTime) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod access_policy_tests;

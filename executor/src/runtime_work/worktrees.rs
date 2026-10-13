@@ -2065,10 +2065,13 @@ mod tests {
 
     #[test]
     fn managed_path_requires_exact_worktree_depth() {
-        let roots = vec!["/tmp/wegent-worktrees".to_owned()];
-        assert!(ensure_managed_path(Path::new("/tmp/wegent-worktrees/id/repo"), &roots).is_ok());
-        assert!(ensure_managed_path(Path::new("/tmp/wegent-worktrees/id"), &roots).is_err());
-        assert!(ensure_managed_path(Path::new("/tmp/outside/id/repo"), &roots).is_err());
+        let root = std::env::temp_dir().join("wegent-worktrees");
+        let roots = vec![root.display().to_string()];
+        assert!(ensure_managed_path(&root.join("id/repo"), &roots).is_ok());
+        assert!(ensure_managed_path(&root.join("id"), &roots).is_err());
+        assert!(
+            ensure_managed_path(&std::env::temp_dir().join("outside/id/repo"), &roots).is_err()
+        );
     }
 
     #[test]
@@ -2098,7 +2101,8 @@ mod tests {
 
     #[test]
     fn managed_path_rejects_unexpanded_or_ambiguous_paths() {
-        let roots = vec!["/tmp/wegent-worktrees".to_owned()];
+        let root = std::env::temp_dir().join("wegent-worktrees");
+        let roots = vec![root.display().to_string()];
 
         for path in [
             "/tmp/wegent-worktrees/$TASK/repo",
@@ -2107,9 +2111,15 @@ mod tests {
             "/tmp/wegent-worktrees/../outside/repo",
             "relative/worktrees/task/repo",
         ] {
+            let path = if let Some(suffix) = path.strip_prefix("/tmp/wegent-worktrees/") {
+                root.join(suffix)
+            } else {
+                PathBuf::from(path)
+            };
             assert!(
-                ensure_managed_path(Path::new(path), &roots).is_err(),
-                "{path} must not be accepted as a deletion target"
+                ensure_managed_path(&path, &roots).is_err(),
+                "{} must not be accepted as a deletion target",
+                path.display()
             );
         }
         for path in [
@@ -2117,7 +2127,15 @@ mod tests {
             "/tmp/wegent-worktrees/100%done/repo",
         ] {
             assert!(
-                ensure_managed_path(Path::new(path), &roots).is_ok(),
+                ensure_managed_path(
+                    &root.join(
+                        Path::new(path)
+                            .strip_prefix("/tmp/wegent-worktrees")
+                            .unwrap()
+                    ),
+                    &roots
+                )
+                .is_ok(),
                 "{path} is a concrete deletion target"
             );
         }
@@ -2589,6 +2607,7 @@ mod tests {
         let source = root.join("source");
         fs::create_dir_all(&source).unwrap();
         run_git(&source, &["init"]);
+        run_git(&source, &["config", "core.autocrlf", "false"]);
         run_git(&source, &["config", "user.name", "Wegent Test"]);
         run_git(&source, &["config", "user.email", "test@wegent.local"]);
         fs::write(source.join("tracked.txt"), "base\n").unwrap();
@@ -2926,6 +2945,7 @@ mod tests {
     fn initialize_repository(path: &Path) {
         fs::create_dir_all(path).unwrap();
         run_git(path, &["init"]);
+        run_git(path, &["config", "core.autocrlf", "false"]);
         run_git(path, &["config", "user.name", "Wegent Test"]);
         run_git(path, &["config", "user.email", "test@wegent.local"]);
         fs::write(path.join("tracked.txt"), "base\n").unwrap();

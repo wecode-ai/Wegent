@@ -1038,6 +1038,7 @@ impl RecordingTransport {
         *self.disconnects.lock().unwrap()
     }
 
+    #[cfg(unix)]
     async fn wait_for_emits(&self, count: usize) -> Vec<RecordedCall> {
         timeout(Duration::from_secs(10), async {
             loop {
@@ -1162,6 +1163,8 @@ impl LocalBackendTransport for RecordingTransport {
             .unwrap()
             .push((event.to_owned(), handler));
     }
+
+    fn on_close(&self, _: wegent_executor::local::backend::ConnectionClosedHandler) {}
 }
 
 fn local_backend_config() -> LocalBackendConfig {

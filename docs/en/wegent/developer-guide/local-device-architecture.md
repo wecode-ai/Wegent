@@ -36,6 +36,8 @@ flowchart LR
 
 ### Wework Packaged App Local-First Channel
 
+Local Electron packages reuse the release package's brand metadata and update source configuration. They must also include `app-update.yml` in Resources with `updaterCacheDirName` derived from the package name, allowing startup to migrate the actual updater cache directory. Write this file before signing the macOS app.
+
 The packaged Wework Electron app defaults to local-first mode. This mode does not start the frontend Node dev server and does not start an extra local HTTP Backend service. The React UI runs inside the Electron renderer, while the Electron main process provides the app's internal command layer.
 
 Local-first mode has three local runtime roles: the Electron main process, the executor sidecar, and core DSH:
@@ -448,6 +450,8 @@ Before launching a Claude Code child process, the executor prepares the task con
 - If `WEGENT_FILE_EDIT_HOOK_COMMAND` is configured, it writes `Write|Edit|MultiEdit|NotebookEdit` `PreToolUse` and `PostToolUse` hooks into Claude `settings.json` so file-change records can be captured as turn artifacts. When Wework macapp starts the local sidecar, it generates this command by default; `WEGENT_FILE_EDIT_HOOK_COMMAND` can override the full command, and `WEWORK_FILE_EDIT_LOG_ENDPOINT` can change the default reporting endpoint.
 
 The local executor converts Claude stdout NDJSON into Responses API events as soon as output arrives: visible text becomes `response.output_text.delta`, reasoning summaries become `response.reasoning_summary_text.delta`, and the process still sends a final `response.completed` or error event after exit. Backend and frontend code must not assume that `response.created` is followed immediately by a terminal event.
+
+For device callbacks, Backend holds the same per-subtask event lock across queue write-back, text storage, frontend broadcasting, and completed-result collection. Database awaits must not allow completion to overtake the final text delta, which would truncate the text blocks in the completed result.
 
 ---
 

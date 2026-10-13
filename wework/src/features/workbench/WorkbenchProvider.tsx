@@ -18,7 +18,14 @@ import { localSkillReference } from '@/lib/local-skill-reference'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
-import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
+import {
+  runtimeProjectTargetKey,
+  type RuntimeProjectSyncTarget,
+} from '@/lib/runtime-project-identity'
+import {
+  createWorkbenchDeviceResolver,
+  resolveLocalWorkbenchDeviceId,
+} from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
   getLocalRuntimeStateDeviceId,
@@ -309,7 +316,7 @@ export function WorkbenchProvider({
   const remoteProjectSyncActiveRef = useRef(syncRemoteProjects)
   const remoteProjectSyncActivationRevisionRef = useRef(0)
   const [remoteProjectSyncRetryRevision, setRemoteProjectSyncRetryRevision] = useState(0)
-  const removedRemoteProjectPathsRef = useRef(new Set<string>())
+  const removedRemoteProjectsRef = useRef<RuntimeProjectSyncTarget[]>([])
   const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectWorkPreferenceMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const modelSelectionMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
@@ -1087,15 +1094,22 @@ export function WorkbenchProvider({
     []
   )
 
-  const invalidateRemoteProjectSync = useCallback((workspacePath: string) => {
-    removedRemoteProjectPathsRef.current.add(normalizeRuntimeWorkspacePath(workspacePath))
+  const invalidateRemoteProjectSync = useCallback((target: RuntimeProjectSyncTarget) => {
+    removedRemoteProjectsRef.current.push(target)
     remoteProjectSyncRevisionRef.current += 1
   }, [])
 
-  const clearRemoteProjectSyncRemoval = useCallback((workspacePath: string) => {
-    removedRemoteProjectPathsRef.current.delete(normalizeRuntimeWorkspacePath(workspacePath))
-    remoteProjectSyncSignatureRef.current = ''
-  }, [])
+  const clearRemoteProjectSyncRemoval = useCallback(
+    (target: RuntimeProjectSyncTarget) => {
+      const devices = createWorkbenchDeviceResolver(state.devices)
+      const key = runtimeProjectTargetKey(target.deviceId, target.projectKey, devices)
+      removedRemoteProjectsRef.current = removedRemoteProjectsRef.current.filter(
+        removed => runtimeProjectTargetKey(removed.deviceId, removed.projectKey, devices) !== key
+      )
+      remoteProjectSyncSignatureRef.current = ''
+    },
+    [state.devices]
+  )
 
   useEffect(() => {
     if (syncRemoteProjects && !remoteProjectSyncActiveRef.current) {
@@ -1113,15 +1127,9 @@ export function WorkbenchProvider({
     }
     const projects = getRuntimeRemoteProjectRegistrations(
       state.runtimeWork,
-      localRuntimeStateDeviceId
-    )
-      .filter(
-        project =>
-          !removedRemoteProjectPathsRef.current.has(
-            normalizeRuntimeWorkspacePath(project.remotePath)
-          )
-      )
-      .sort((left, right) => left.id.localeCompare(right.id))
+      localRuntimeStateDeviceId,
+      { devices: state.devices, excludedTargets: removedRemoteProjectsRef.current }
+    ).sort((left, right) => left.id.localeCompare(right.id))
     if (!localRuntimeStateDeviceId || projects.length === 0) {
       remoteProjectSyncSignatureRef.current = ''
       return
@@ -1182,6 +1190,7 @@ export function WorkbenchProvider({
     refreshWorkLists,
     remoteProjectSyncRetryRevision,
     state.runtimeWork,
+    state.devices,
     syncRemoteProjects,
   ])
 
@@ -1226,7 +1235,8 @@ export function WorkbenchProvider({
     const activation = getRuntimeProjectActivation(
       state.runtimeWork,
       state.currentProject?.id,
-      localRuntimeStateDeviceId
+      localRuntimeStateDeviceId,
+      state.devices
     )
     if (!activation) {
       projectActivationSignatureRef.current = ''
@@ -1245,6 +1255,7 @@ export function WorkbenchProvider({
     state.currentProject?.id,
     state.currentRuntimeTask,
     state.runtimeWork,
+    state.devices,
   ])
 
   useEffect(() => {
@@ -1421,7 +1432,10 @@ export function WorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to register local project')
         }
-        response.roots.forEach(clearRemoteProjectSyncRemoval)
+        clearRemoteProjectSyncRemoval({
+          deviceId: response.deviceId,
+          projectKey: response.projectKey,
+        })
         writeLastProjectId(
           user.id,
           runtimeProjectUiId({
@@ -1454,7 +1468,10 @@ export function WorkbenchProvider({
         throw new Error(response.error || 'Failed to register runtime workspace')
       }
       const openedWorkspacePath = response.workspacePath || normalizedWorkspacePath
-      clearRemoteProjectSyncRemoval(openedWorkspacePath)
+      clearRemoteProjectSyncRemoval({
+        deviceId: response.deviceId?.trim() || requestDeviceId,
+        projectKey: normalizeRuntimeWorkspacePath(openedWorkspacePath),
+      })
       const openedDeviceId =
         resolveLocalWorkbenchDeviceId(
           devicesForResolution,

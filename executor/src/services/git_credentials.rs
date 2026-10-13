@@ -9,7 +9,7 @@ pub(crate) fn environment() -> BTreeMap<String, String> {
     let Ok(workbench) = super::workbench::workbench_root() else {
         return BTreeMap::new();
     };
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::local::command::configured_home_dir() else {
         return BTreeMap::new();
     };
     let managed_device = matches!(
@@ -24,7 +24,7 @@ fn environment_for(
     home: &Path,
     managed_device: bool,
 ) -> BTreeMap<String, String> {
-    let isolated = workbench != home.join(".wegent/workbench");
+    let isolated = workbench != home.join(".wegent").join("workbench");
     let mut root = workbench.join("git-auth");
     let mut values = BTreeMap::new();
     // Desktop and disposable tasks keep native CLI login unless a device store exists.
@@ -34,13 +34,14 @@ fn environment_for(
     if isolated {
         values.insert(
             "GIT_CONFIG_GLOBAL".into(),
-            root.join("current/gitconfig")
+            root.join("current")
+                .join("gitconfig")
                 .to_string_lossy()
                 .into_owned(),
         );
     } else if !root.join("current").is_dir() {
         // Old devices retain their account store until an explicit successful sync.
-        root = home.join(".wecode/git-auth");
+        root = home.join(".wecode").join("git-auth");
     }
     if isolated || root.join("current").is_dir() {
         for (key, directory) in [("GH_CONFIG_DIR", "gh"), ("GLAB_CONFIG_DIR", "glab")] {
@@ -64,19 +65,23 @@ mod tests {
     #[test]
     fn device_store_switches_without_restarting_or_copying_secrets() {
         let home = tempfile::tempdir().unwrap();
-        let root = home.path().join(".wegent/workbench");
+        let root = home.path().join(".wegent").join("workbench");
         assert!(environment_for(&root, home.path(), true).is_empty());
-        let legacy = home.path().join(".wecode/git-auth/current");
+        let legacy = home.path().join(".wecode").join("git-auth").join("current");
         fs::create_dir_all(&legacy).unwrap();
         assert_eq!(
             environment_for(&root, home.path(), true)["GH_CONFIG_DIR"],
             legacy.join("gh").to_str().unwrap()
         );
-        fs::create_dir_all(root.join("git-auth/current")).unwrap();
+        fs::create_dir_all(root.join("git-auth").join("current")).unwrap();
         let values = environment_for(&root, home.path(), true);
         assert_eq!(
             values["GH_CONFIG_DIR"],
-            root.join("git-auth/current/gh").to_str().unwrap()
+            root.join("git-auth")
+                .join("current")
+                .join("gh")
+                .to_str()
+                .unwrap()
         );
         assert!(!values.contains_key("GIT_CONFIG_GLOBAL"));
         assert!(!values.contains_key("GH_TOKEN"));
@@ -85,9 +90,16 @@ mod tests {
     #[test]
     fn custom_root_never_uses_default_or_legacy_accounts_even_before_sync() {
         let home = tempfile::tempdir().unwrap();
-        fs::create_dir_all(home.path().join(".wecode/git-auth/current")).unwrap();
-        fs::create_dir_all(home.path().join(".wegent/workbench/git-auth/current")).unwrap();
-        let root = home.path().join("development/workbench");
+        fs::create_dir_all(home.path().join(".wecode").join("git-auth").join("current")).unwrap();
+        fs::create_dir_all(
+            home.path()
+                .join(".wegent")
+                .join("workbench")
+                .join("git-auth")
+                .join("current"),
+        )
+        .unwrap();
+        let root = home.path().join("development").join("workbench");
         let values = environment_for(&root, home.path(), true);
         for value in values.values() {
             assert!(Path::new(value).starts_with(&root));
@@ -99,7 +111,7 @@ mod tests {
     #[test]
     fn unmanaged_custom_runtime_keeps_native_cli_login() {
         let home = tempfile::tempdir().unwrap();
-        let root = home.path().join("desktop/workbench");
+        let root = home.path().join("desktop").join("workbench");
         assert!(environment_for(&root, home.path(), false).is_empty());
     }
 }

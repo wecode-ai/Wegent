@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   ensureLocalExecutorStarted: vi.fn(),
   ensureBundledPluginMarketplaceRegistered: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn(() => null),
+  pauseBundledUpdates: vi.fn(),
+  resumeBundledUpdates: vi.fn(),
   knownDeviceId: 'local-device' as string | null,
   runtime: {
     desktop: true,
@@ -31,6 +33,17 @@ vi.mock('@/lib/runtime-environment', () => ({
 vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: () => mocks.ensureLocalExecutorStarted(),
   ensureBundledPluginMarketplaceRegistered: () => mocks.ensureBundledPluginMarketplaceRegistered(),
+  initializeBundledPluginMarketplace: async () => ({
+    id: 'wework-personal',
+    path: '/tmp/wework-personal',
+    defaultPluginNames: [],
+  }),
+  ensureBundledPluginInstalled: vi.fn().mockResolvedValue(undefined),
+  withBundledPluginUpdatesPaused: (name: string, mutation: () => Promise<unknown>) => {
+    mocks.pauseBundledUpdates(name)
+    return mutation()
+  },
+  resumeBundledPluginUpdates: (name: string) => mocks.resumeBundledUpdates(name),
   getInitializedBundledPluginMarketplace: () => mocks.getInitializedBundledPluginMarketplace(),
   getKnownLocalExecutorDeviceId: () => mocks.knownDeviceId,
   requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
@@ -87,12 +100,23 @@ const createdPlugin: InstalledPlugin = {
 }
 
 describe('local codex plugin readState cache', () => {
+  test('uninstalls an orphaned personal plugin without reading its missing marketplace', async () => {
+    mocks.requestLocalExecutor.mockResolvedValue({ localCommitted: true })
+    await createLocalCodexPluginApi().uninstallInstalledPlugin('orphan@wework-personal')
+    expect(mocks.pauseBundledUpdates).toHaveBeenCalledWith('orphan')
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledExactlyOnceWith(
+      'runtime.codex.plugin.uninstall_local',
+      { pluginName: 'orphan' }
+    )
+  })
   beforeEach(() => {
     clearLocalCodexPluginsReadStateCache()
     mocks.runtime.desktop = true
     mocks.runtime.electron = true
     mocks.knownDeviceId = 'local-device'
     mocks.requestLocalExecutor.mockReset()
+    mocks.pauseBundledUpdates.mockReset()
+    mocks.resumeBundledUpdates.mockReset()
     mocks.ensureLocalExecutorStarted.mockReset()
     mocks.ensureBundledPluginMarketplaceRegistered.mockReset()
     mocks.ensureLocalExecutorStarted.mockResolvedValue({ deviceId: 'local-device' })
@@ -137,6 +161,62 @@ describe('local codex plugin readState cache', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  test('installs a cold-cached local official plugin without remote catalog authentication', async () => {
+    const marketplacePath = '/tmp/github-marketplace/.agents/plugins/marketplace.json'
+    let installed = false
+    mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+      if (method === 'executor.plugins.links.list') return []
+      if (method === 'executor.plugins.manifest.read') return {}
+      if (method === 'executor.plugins.store.list') return { storePath: '/tmp/store', plugins: [] }
+      if (method !== 'codex.app_server_request') throw new Error(`Unexpected method ${method}`)
+      if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+        return {
+          marketplaces: [
+            {
+              name: 'openai-official',
+              path: marketplacePath,
+              plugins: [
+                {
+                  id: 'github@openai-official',
+                  name: 'github',
+                  installed,
+                  enabled: installed,
+                  source: { source: 'local', path: './plugins/github' },
+                },
+              ],
+            },
+          ],
+        }
+      }
+      if (params.method === 'plugin/install') {
+        expect(params.params).toEqual({
+          marketplacePath,
+          remoteMarketplaceName: null,
+          pluginName: 'github',
+        })
+        installed = true
+        return {}
+      }
+      if (params.method === 'plugin/read') {
+        expect(params.params.marketplacePath).toBe(marketplacePath)
+        return {
+          plugin: { summary: { name: 'github', version: '1.0.0', description: 'GitHub CLI' } },
+        }
+      }
+      throw new Error(`Unexpected app-server method ${params.method}`)
+    })
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    const durable = window.localStorage.getItem('wework.plugins.codexCatalog.v1')!
+    clearLocalCodexPluginsReadStateCache()
+    window.localStorage.setItem('wework.plugins.codexCatalog.v1', durable)
+
+    const cached = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })!
+    expect(cached.marketplaceItems[0].manifest.marketplacePath).toBe(marketplacePath)
+    const result = await api.installAvailablePlugin(cached.marketplaceItems[0])
+    expect(result.metadata.name).toBe('github')
   })
 
   test('reads remote discovery without membership, disk reconciliation or bundled registration', async () => {
@@ -506,6 +586,7 @@ describe('local codex plugin readState cache', () => {
     expect(operationResults).toEqual([
       { failureStage: 'request', key: 'plugin.zip_import', outcome: 'failed' },
     ])
+    expect(mocks.resumeBundledUpdates).not.toHaveBeenCalled()
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'executor.plugins.import_package.rollback',
       {
@@ -642,6 +723,7 @@ describe('local codex plugin readState cache', () => {
         rollbackId: 'rollback-verify',
       }
     )
+    expect(mocks.resumeBundledUpdates).toHaveBeenCalledWith('example-plugin')
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'runtime.codex.plugin.install_local_first',
       {
@@ -3017,7 +3099,6 @@ describe('local codex plugin readState cache', () => {
         }
         if (method === 'runtime.codex.plugin.uninstall_local') {
           expect(params).toEqual({
-            marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
             pluginName: 'dev-tools',
           })
           installed = false
@@ -3062,7 +3143,6 @@ describe('local codex plugin readState cache', () => {
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'runtime.codex.plugin.uninstall_local',
       {
-        marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
         pluginName: 'dev-tools',
       }
     )

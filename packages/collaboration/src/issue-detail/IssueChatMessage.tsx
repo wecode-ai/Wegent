@@ -31,7 +31,7 @@ import {
   type IssueActivityAiState,
 } from "./activityMessageUtils";
 import { IssueActivityContent } from "./IssueActivityContent";
-import { formatIssueTimestamp } from "./issueTimestamp";
+import { formatIssueTimestamp, issueActivityTimestamp } from "./issueTimestamp";
 import { managerActivityPresentation } from "./managerActivity";
 
 export interface ExecutionTaskSummary {
@@ -364,10 +364,10 @@ export function IssueChatMessage({
             ) : null}
           </div>
           <time
-            dateTime={message.createdAt}
+            dateTime={issueActivityTimestamp(message)}
             className="text-xs text-text-muted"
           >
-            {formatIssueTimestamp(message.createdAt)}
+            {formatIssueTimestamp(issueActivityTimestamp(message))}
           </time>
         </div>
       </div>
@@ -579,7 +579,9 @@ export function IssueChatMessage({
                 </span>
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-text-muted">
-                <span>{formatIssueTimestamp(message.createdAt)}</span>
+                <span>
+                  {formatIssueTimestamp(issueActivityTimestamp(message))}
+                </span>
                 {deviceName ? (
                   <span>{deviceName}</span>
                 ) : runId ? (
@@ -633,7 +635,7 @@ export function IssueChatMessage({
       <IssueActivityMessage
         {...focusAttributes}
         author={activityAuthor}
-        createdAt={message.createdAt}
+        createdAt={issueActivityTimestamp(message)}
         avatar={avatar}
         hideTime={hideTime}
         metadata={

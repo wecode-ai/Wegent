@@ -44,6 +44,10 @@ Local Wework does not render cloud username/password forms and does not call `/a
 
 Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. Deployments with separate API and Web origins must configure the Web root URL explicitly. The Wework client only opens the complete `authorize_url` returned by Backend and does not infer the Web address itself.
 
+When the underlying Socket.IO connection closes, the local executor immediately clears its connected status and starts the existing reconnect flow. Account operations therefore do not treat the Backend as available while waiting for a heartbeat to detect the disconnect. Registration tracks the close epoch and uses the same lock to publish readiness and process close notifications, so registration cannot overwrite a recent disconnect. A stale connection's close callback cannot invalidate a newer connection.
+
+Plugin account authentication processes disable Python bytecode writes so imports do not modify verified shared plugin packages. New publication records inventory bytecode paths included in the archive. If generated caches cause verification to fail, a non-mutating hash check first proves that excluding candidate caches restores the original content. Only then are they removed under the publication lock, followed by full verification. Published bytecode stays protected. When an older record cannot establish cache ownership, verification rejects the package without changing it. It never rewrites the record or ignores files that could still execute. Modified sources, special files, and symlinks inside caches remain rejected; bytecode already included in the verified original archive remains unchanged. Concurrent synchronization and publication share the same lock. Package publication, repository operations, and Agent Home locks share an ownership guard that explicitly unlocks when the owning operation ends, so inherited descriptors in concurrently launched child processes cannot extend the lock lifetime.
+
 ## Interaction Entry
 
 The desktop sidebar provides two cloud entry points with distinct responsibilities:
@@ -155,6 +159,17 @@ dispatch rules: `wework <path>` opens a workspace, while
 `wework desktop ...` controls a running instance.
 
 ## Model Identity and Execution Transport
+
+Task composers always display the model selector, including initial loading,
+catalog refresh failures, empty catalogs, and task restoration after a cloud
+model is retired or a local configuration is deleted. Sending remains blocked
+until an available model is selected, while the selector still allows adding
+a local model or connecting to the cloud. Selecting a replacement resumes
+follow-ups in the same task. Never use send readiness to hide the selector or
+silently replace the task's model. Desktop and compact composers follow the
+same rule. The `task-model-deletion` desktop E2E checkpoint covers reopening a
+task after local configuration deletion, cold restoration after cloud model
+deletion, and continuing the original conversation with a replacement model.
 
 Models keep one canonical identity across the UI, task state, and execution requests: `name`, `type`, `namespace`, and `resourceUserId`. The frontend must not add `local:` or `cloud:` prefixes to distinguish execution locations, and model config must not carry a separate transport source. When catalogs are merged, an Executor-discovered model wins over a Backend-synthesized runtime Codex model with the same `modelId`.
 

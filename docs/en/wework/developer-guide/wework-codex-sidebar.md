@@ -16,7 +16,7 @@ The Wework desktop app follows the Codex App sidebar state model. Project and li
 | Task grouping, order, and pins             | Codex global state                             | Uses assignments, workspace hints, per-project thread order, and pinned thread IDs |
 | Expansion and scroll preferences           | Wework localStorage                            | UI-only preferences that do not affect Codex                                       |
 
-A project UI identity combines the state-owning device with the project key. Identical paths on different devices therefore remain isolated.
+Project UI ids normally derive from the state-owning device and project key. Resolved remote references use the target device and project key to preserve UI identity across synchronization; existing references retain their UI id during reconciliation. Data merging follows the project identity rules below rather than comparing numeric UI ids.
 
 A task UI identity combines the state-owning device with the task ID. Live-list refreshes merge tasks only by that identity; title, workspace path, and runtime kind are not identity fields. Distinct tasks can share a title, such as consecutive attachment-only submissions with no text, so neither the frontend nor Executor may infer duplicates from those display fields.
 
@@ -33,6 +33,65 @@ Executor merges three Codex project representations:
 3. `remote-projects` for projects on remote hosts.
 
 Thread grouping applies this precedence: exclusion through `projectless-thread-ids`, explicit `thread-project-assignments`, `thread-workspace-root-hints`, then longest-root path matching. Explicit metadata always wins over path inference.
+
+## Executor identity, projects, and local sidebar references
+
+- `deviceId` is the device address used for execution requests. `workbench-device.ts` resolves aliases centrally. When available, the persisted `runtime_instance_id` determines executor equality while requests retain the routable `device_id`. Records without a Runtime identity are associated only through known aliases; conflicting Runtime owners of one alias produce an explicit error.
+- `remoteHostId` is the host reference stored in a Codex remote-project entry. Preserve its original value on read and write; resolve it for comparison without replacing it during list reconciliation.
+- `stateDeviceId` owns pins, order, and sidebar-entry metadata. It may differ from the execution device and must not redirect tasks.
+
+Executor projects are identified by their owning executor and project key. Directory identity consists of executor identity and normalized path. Numeric UI ids are not project merge keys. Actual Backend project ids retain their separate global namespace.
+
+Wework's `wegent-remote:<host>:<projectKey>` entries explicitly reference a target project. Reconciliation indexes actual projects before resolving references, independently of input order. The reference supplies name, pins, order, and appearance; the actual project supplies directories and tasks. Distinct projects may share a directory without becoming one project. Legacy directory records and external directory-only references attach only to a unique project on the same executor and path. Ambiguous references remain separate. A missing explicit target must not bind to another project at the same path.
+
+Executor responses preserve project keys and remote-host boundaries too. Tasks follow their existing `group_project_key`. Unassigned standalone chats keep their own directory group even when their directory is inside a code project; other unassigned tasks may belong to a unique longest local root. A remote reference cannot claim local tasks at an identical path. Workspace kind is metadata, not directory identity.
+
+Sync removal records are scoped by device and project key. An unresolved external reference is scoped by its state device and sidebar key. Removing or reopening one project cannot affect another device or another project sharing its directory. Never suppress references by display name or block synchronization by path alone.
+
+This model introduces no public API field, database migration, or newly allocated device identifier. Existing reference formats remain readable; unknown external hosts retain their original values.
+
+The diagram shows responsibilities and dependencies across device identity, project references, work list reconciliation, and synchronization.
+
+```mermaid
+flowchart TB
+    nf8c710a5da["Device identity and routes"]
+    n6ab4221df2["Projects and references"]
+    nd2df7ee7c2["Work list reconciliation"]
+    nd5cc531454["Sidebar mutations and sync"]
+    ne5f2afb869["IPC adaptation"]
+    n4152ff64e4["Executor projects and tasks"]
+    n9ca42483ee["Offline summary cache"]
+    n485ac7c8b2["Hybrid routing"]
+    n6ab4221df2 -->|"uses"| nf8c710a5da
+    nd2df7ee7c2 -->|"calls"| nf8c710a5da
+    nd2df7ee7c2 -->|"uses"| n6ab4221df2
+    nd5cc531454 -->|"persists-through"| ne5f2afb869
+    nd5cc531454 -->|"uses"| n6ab4221df2
+    ne5f2afb869 -->|"adapts"| n4152ff64e4
+    ne5f2afb869 -->|"uses"| n6ab4221df2
+    n9ca42483ee -->|"calls"| nd2df7ee7c2
+    n9ca42483ee -->|"uses"| nf8c710a5da
+    n485ac7c8b2 -->|"calls"| nf8c710a5da
+    n485ac7c8b2 -->|"calls"| nd2df7ee7c2
+    n485ac7c8b2 -->|"dispatches-through"| ne5f2afb869
+```
+
+## User questions and execution state
+
+Executor persists task `interactionStatus` independently of turn and execution
+completion. Blocking questions use `waitingForUserInput`. Codex's
+`request_user_input_async` uses `awaitingUserReply`: the model can keep working,
+and the answer travels as the next user message. Both states show the sidebar
+bell, but an async pending reply alone does not prevent sending a message.
+
+Async reminders survive successful execution completion, task switching, and
+task-list reloads. Executor clears them when it accepts the next message or
+in-turn guidance, or when execution fails or is cancelled. Completing a turn or
+the question's tool call does not constitute an answer.
+
+The desktop `priority-filter` checkpoint covers the async bell regression: wait
+for execution to finish, verify the bell in the current and background task,
+then submit an answer and verify that the reminder disappears.
 
 ## Writes and concurrency
 

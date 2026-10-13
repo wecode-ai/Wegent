@@ -6,8 +6,8 @@
 //! source SQLAlchemy renderings token for token: full labeled
 //! `{table}_{column}` projections and the direct public tables selected by
 //! the open-source readers.
-use crate::json_compat::OpaqueJson;
 use crate::task_store::TaskStore;
+use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 

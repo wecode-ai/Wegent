@@ -78,6 +78,37 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('persists a title edit when execution changes the Issue version during saving', async () => {
+    const user = userEvent.setup()
+    const latest = { ...baseItem, version: 2, status: 'in_review' } as CloudLoopItem
+    const saved = { ...latest, version: 3, title: 'Renamed while running' }
+    const updateLoopItem = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('task changed'), { code: 'version_conflict' }))
+      .mockResolvedValue(saved)
+    const onUpdated = vi.fn()
+    render(
+      <TodoEditor
+        mode="edit"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={onUpdated}
+        onClose={vi.fn()}
+        currentUserId={1}
+        api={{ ...api, getLoopItem: vi.fn().mockResolvedValue(latest), updateLoopItem } as never}
+      />
+    )
+    await user.clear(screen.getByTestId('cloud-todo-detail-title'))
+    await user.paste(saved.title)
+    await user.click(screen.getByTestId('cloud-todo-save'))
+    await vi.waitFor(() => expect(onUpdated).toHaveBeenCalledWith(saved))
+    expect(updateLoopItem.mock.calls).toEqual([
+      [baseItem.id, { version: 1, title: saved.title }],
+      [baseItem.id, { version: 2, title: saved.title }],
+    ])
+  })
+
   it('retains the archive label and outside-click dismissal in the properties menu', async () => {
     const user = userEvent.setup()
     const onArchive = vi.fn()
@@ -1140,7 +1171,7 @@ describe('TodoEditor external item sync', () => {
 
     await vi.waitFor(() => {
       expect(assignApi.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
-        version: 2,
+        version: 1,
         assigneeType: 'user',
         assigneeId: '5',
         notifyAssignee: notify,
@@ -1198,7 +1229,7 @@ describe('TodoEditor external item sync', () => {
 
     await vi.waitFor(() => {
       expect(clearApi.updateLoopItem).toHaveBeenLastCalledWith('WEG-1', {
-        version: 2,
+        version: 1,
         assignee_user_id: null,
         assignee_agent_id: null,
         assignee_team_id: null,
@@ -1257,7 +1288,7 @@ describe('TodoEditor external item sync', () => {
 
     await vi.waitFor(() => {
       expect(assignApi.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
-        version: 2,
+        version: 1,
         assigneeType: 'team',
         assigneeId: '42',
       })
@@ -1553,11 +1584,29 @@ describe('TodoEditor create parent resolution', () => {
     expect(onAddAssigneeAgent).toHaveBeenCalledTimes(1)
   })
 
+  it('offers the assignee selector to a Developer creating an Issue', () => {
+    render(
+      <TodoEditor
+        mode="create"
+        project={{ ...project, access_role: 'Developer' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-create-assignee')).not.toHaveAttribute('disabled')
+  })
+
   it.each([
-    { mode: 'create' as const, accessRole: 'Developer' },
-    { mode: 'create' as const, accessRole: 'Reporter' },
+    { mode: 'create' as const, accessRole: 'Viewer' },
     { mode: 'edit' as const, accessRole: 'Owner' },
-  ])('hides assignee management actions outside authorized creation: %j', async values => {
+    { mode: 'edit' as const, accessRole: 'Developer' },
+  ])('hides create-only assignee management actions: %j', async values => {
     const user = userEvent.setup()
     render(
       values.mode === 'create' ? (
@@ -2278,8 +2327,6 @@ describe('TodoEditor shared attachments', () => {
       expect.objectContaining({
         version: 1,
         title: '共享编辑',
-        parentId: null,
-        dueAt: null,
       })
     )
   })

@@ -5,16 +5,14 @@
 from datetime import datetime
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
+import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-
-
-def _auth_header(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
+from app.services.remote_workspace_service import remote_workspace_service
 
 
 def _create_task_with_executor_bound_subtask(
@@ -88,8 +86,6 @@ def _create_task_with_executor_bound_subtask(
 
 
 def test_remote_workspace_status_connected_but_unavailable_integration(
-    test_client: TestClient,
-    test_token: str,
     test_db: Session,
     test_user: User,
 ):
@@ -105,13 +101,11 @@ def test_remote_workspace_status_connected_but_unavailable_integration(
             return_value=None,
         ),
     ):
-        response = test_client.get(
-            f"/api/tasks/{task.id}/remote-workspace/status",
-            headers=_auth_header(test_token),
+        response = remote_workspace_service.get_status(
+            db=test_db, task_id=task.id, user_id=test_user.id
         )
 
-    assert response.status_code == 200
-    payload = response.json()
+    payload = response.model_dump()
     assert payload["connected"] is True
     assert payload["available"] is False
     assert payload["root_path"] == f"/workspace/{task.id}"
@@ -119,8 +113,6 @@ def test_remote_workspace_status_connected_but_unavailable_integration(
 
 
 def test_remote_workspace_status_connected_when_namespace_empty_integration(
-    test_client: TestClient,
-    test_token: str,
     test_db: Session,
     test_user: User,
 ):
@@ -140,13 +132,11 @@ def test_remote_workspace_status_connected_when_namespace_empty_integration(
             return_value=None,
         ),
     ):
-        response = test_client.get(
-            f"/api/tasks/{task.id}/remote-workspace/status",
-            headers=_auth_header(test_token),
+        response = remote_workspace_service.get_status(
+            db=test_db, task_id=task.id, user_id=test_user.id
         )
 
-    assert response.status_code == 200
-    payload = response.json()
+    payload = response.model_dump()
     assert payload["connected"] is True
     assert payload["available"] is False
     assert payload["root_path"] == f"/workspace/{task.id}"
@@ -154,8 +144,6 @@ def test_remote_workspace_status_connected_when_namespace_empty_integration(
 
 
 def test_remote_workspace_tree_root_path_and_escape_guard_integration(
-    test_client: TestClient,
-    test_token: str,
     test_db: Session,
     test_user: User,
 ):
@@ -171,23 +159,21 @@ def test_remote_workspace_tree_root_path_and_escape_guard_integration(
             return_value=None,
         ),
     ):
-        root_response = test_client.get(
-            f"/api/tasks/{task.id}/remote-workspace/tree",
-            params={"path": "/workspace"},
-            headers=_auth_header(test_token),
+        with pytest.raises(HTTPException) as unavailable:
+            remote_workspace_service.list_tree(
+                db=test_db, task_id=task.id, user_id=test_user.id, path="/workspace"
+            )
+
+    assert unavailable.value.status_code == 409
+    assert unavailable.value.detail == "Remote workspace is unavailable"
+
+    with pytest.raises(HTTPException) as escape:
+        remote_workspace_service.list_tree(
+            db=test_db,
+            task_id=task.id,
+            user_id=test_user.id,
+            path="/srv/workspaces/demo-12345678/../other",
         )
 
-    assert root_response.status_code == 409
-    assert root_response.json()["detail"] == "Remote workspace is unavailable"
-
-    escape_response = test_client.get(
-        f"/api/tasks/{task.id}/remote-workspace/tree",
-        params={"path": "/workspace/../etc"},
-        headers=_auth_header(test_token),
-    )
-
-    assert escape_response.status_code == 400
-    assert (
-        escape_response.json()["detail"]
-        == f"Path must stay within /workspace/{task.id}"
-    )
+    assert escape.value.status_code == 400
+    assert escape.value.detail == "Parent traversal is not allowed"

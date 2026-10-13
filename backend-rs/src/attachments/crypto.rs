@@ -18,7 +18,7 @@
 //! no dependency to the migrated surface.
 use std::borrow::Cow;
 
-use aes_gcm::aes::cipher::{Block, BlockDecrypt, KeyInit};
+use aes_gcm::aes::cipher::{Block, BlockDecrypt, BlockEncrypt, KeyInit};
 use aes_gcm::aes::{Aes128, Aes192, Aes256};
 
 /// `_get_attachment_encryption_key`'s `ATTACHMENT_AES_KEY` default.
@@ -65,7 +65,11 @@ fn configured(name: &str, default: &'static str) -> Cow<'static, str> {
 }
 
 /// `AES(key)` + `CBC(iv)` + `decryptor.update(...)`.
-fn decrypt_with_key(
+///
+/// Shared with the share-token decoder (`share_token.rs`), whose
+/// `shared_task._aes_decrypt` applies the same AES-CBC + PKCS#7 primitive
+/// with the `SHARE_TOKEN_AES_*` key material.
+pub(crate) fn decrypt_with_key(
     key: &[u8],
     iv: &[u8],
     encrypted: &[u8],
@@ -127,6 +131,80 @@ fn unpad_pkcs7(mut plain: Vec<u8>) -> Result<Vec<u8>, AttachmentDecryptionError>
     }
     plain.truncate(content);
     Ok(plain)
+}
+
+/// The `cryptography` failure `encrypt_attachment` re-raises (an unsupported
+/// key length); the endpoint renders it as its generic 500.
+#[derive(Debug)]
+pub struct AttachmentEncryptionError;
+
+impl std::fmt::Display for AttachmentEncryptionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Failed to encrypt attachment data")
+    }
+}
+
+/// `encrypt_attachment(binary_data)`: raw AES-CBC ciphertext with PKCS#7
+/// padding (NOT base64 encoded). `if not binary_data: return b""`.
+pub fn encrypt_attachment(plain: &[u8]) -> Result<Vec<u8>, AttachmentEncryptionError> {
+    if plain.is_empty() {
+        return Ok(Vec::new());
+    }
+    let key = configured("ATTACHMENT_AES_KEY", DEFAULT_AES_KEY);
+    let iv = configured("ATTACHMENT_AES_IV", DEFAULT_AES_IV);
+    encrypt_with_key(key.as_bytes(), iv.as_bytes(), plain)
+}
+
+/// `AES(key)` + `CBC(iv)` + `encryptor.update(...)`.
+fn encrypt_with_key(
+    key: &[u8],
+    iv: &[u8],
+    plain: &[u8],
+) -> Result<Vec<u8>, AttachmentEncryptionError> {
+    let iv: [u8; BLOCK_SIZE] = iv.try_into().map_err(|_| AttachmentEncryptionError)?;
+    match key.len() {
+        16 => encrypt_cbc::<Aes128>(key, iv, plain),
+        24 => encrypt_cbc::<Aes192>(key, iv, plain),
+        32 => encrypt_cbc::<Aes256>(key, iv, plain),
+        _ => Err(AttachmentEncryptionError),
+    }
+}
+
+/// CBC encryption: PKCS#7-pad the plaintext to a whole number of blocks, then
+/// each ciphertext block is the encrypted plaintext block XORed with the
+/// preceding ciphertext block (`encryptor.update` + `finalize`).
+fn encrypt_cbc<C>(
+    key: &[u8],
+    iv: [u8; BLOCK_SIZE],
+    plain: &[u8],
+) -> Result<Vec<u8>, AttachmentEncryptionError>
+where
+    C: BlockEncrypt + KeyInit,
+{
+    let cipher = C::new_from_slice(key).map_err(|_| AttachmentEncryptionError)?;
+    let padded = pad_pkcs7(plain);
+    let mut previous = iv;
+    let mut encrypted = Vec::with_capacity(padded.len());
+    for chunk in padded.as_chunks::<BLOCK_SIZE>().0 {
+        let mut block = Block::<C>::clone_from_slice(chunk);
+        for (byte, mask) in block.iter_mut().zip(previous.iter()) {
+            *byte ^= mask;
+        }
+        cipher.encrypt_block(&mut block);
+        encrypted.extend_from_slice(&block);
+        previous.copy_from_slice(&block);
+    }
+    Ok(encrypted)
+}
+
+/// `padding.PKCS7(128).padder()`: append `1..=16` bytes whose value is the
+/// pad length (a whole extra block when the plaintext is already aligned).
+fn pad_pkcs7(plain: &[u8]) -> Vec<u8> {
+    let padding = BLOCK_SIZE - (plain.len() % BLOCK_SIZE);
+    let mut padded = Vec::with_capacity(plain.len() + padding);
+    padded.extend_from_slice(plain);
+    padded.extend(std::iter::repeat_n(padding as u8, padding));
+    padded
 }
 
 #[cfg(test)]
@@ -237,5 +315,18 @@ mod tests {
     fn empty_payloads_stay_empty() {
         // `if not encrypted_data: return b""` runs before any key lookup.
         assert_eq!(decrypt_attachment(b"").unwrap(), Vec::<u8>::new());
+        assert_eq!(encrypt_attachment(b"").unwrap(), Vec::<u8>::new());
+    }
+
+    /// `encrypt_attachment` is the exact inverse of `decrypt_attachment`.
+    #[test]
+    fn encryption_round_trips_through_decryption() {
+        for plain in [b"wegent".as_slice(), b"xxxxxxxxxxxxxxxx", b"decrypt-me"] {
+            let encrypted = encrypt_with_key(DEFAULT_KEY, DEFAULT_IV, plain).unwrap();
+            assert_eq!(
+                decrypt_with_key(DEFAULT_KEY, DEFAULT_IV, &encrypted).unwrap(),
+                plain
+            );
+        }
     }
 }

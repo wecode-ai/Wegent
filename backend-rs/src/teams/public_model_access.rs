@@ -15,7 +15,7 @@
 
 use serde_json::Value;
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 use super::teams_repository::{KindRow, user_by_id};
 

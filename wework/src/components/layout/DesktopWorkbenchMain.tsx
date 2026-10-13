@@ -1,4 +1,7 @@
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
+import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
+import { conversationTerminals } from './backgroundTerminals'
+import type { BackgroundTerminal } from './backgroundTerminals'
 import {
   isWorkspaceFileTab,
   workspaceFileTabId,
@@ -3188,6 +3191,27 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
+  const backgroundTerminals = useMemo(
+    () => conversationTerminals(paneMessages, currentRuntimeTask?.taskId ?? paneKey),
+    [paneMessages, currentRuntimeTask?.taskId, paneKey]
+  )
+  const runningBackgroundTerminals = backgroundTerminals.filter(terminal => terminal.background)
+
+  const openBackgroundTerminal = useCallback(
+    (terminal: BackgroundTerminal) => {
+      if (environmentInfoOpen && !environmentInfoDocked) setEnvironmentInfoOpen(false)
+      openRightPanelTab(terminal.tabId)
+    },
+    [environmentInfoOpen, environmentInfoDocked, setEnvironmentInfoOpen, openRightPanelTab]
+  )
+  const stopBackgroundTerminals =
+    currentRuntimeTask && runtimeWorkApi?.cleanRuntimeBackgroundTerminals && !issueExecutionReadOnly
+      ? async () => {
+          const response = await runtimeWorkApi.cleanRuntimeBackgroundTerminals!(currentRuntimeTask)
+          if (!response.success)
+            throw new Error(response.error || 'Unable to stop background terminals')
+        }
+      : undefined
   const openSubagentConversation = useCallback(
     (block: SubagentBlock) => {
       if (environmentInfoOpen) {
@@ -4663,11 +4687,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       environmentInfoOpen={environmentInfoOpen}
       onEnvironmentInfoOpenChange={setEnvironmentInfoOpen}
       environmentInfoFooter={
-        subagentConversations.length > 0 ? (
-          <SubagentEnvironmentSummary
-            blocks={subagentConversations}
-            onOpen={openSubagentOverview}
-          />
+        subagentConversations.length > 0 || runningBackgroundTerminals.length > 0 ? (
+          <div className="flex flex-col gap-3">
+            <SubagentEnvironmentSummary
+              blocks={subagentConversations}
+              onOpen={openSubagentOverview}
+            />
+            <BackgroundTerminalsSummary
+              terminals={runningBackgroundTerminals}
+              onOpen={openBackgroundTerminal}
+              onStop={stopBackgroundTerminals}
+            />
+          </div>
         ) : undefined
       }
       onRefreshEnvironmentInfo={refreshEnvironmentInfo}
@@ -5817,6 +5848,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               }
               review={reviewState}
               planContent={rightPanelPlanContent}
+              backgroundTerminals={backgroundTerminals}
               subagentPanel={
                 selectedSubagentBlock ? (
                   <SubagentConversationPanel

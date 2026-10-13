@@ -45,8 +45,17 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn read_codex_recent_turns(&self, thread_id: &str) -> Result<Value, String> {
+        self.read_codex_recent_turns_with_client(&self.codex_app_server, thread_id)
+            .await
+    }
+
+    pub(super) async fn read_codex_recent_turns_with_client(
+        &self,
+        client: &CodexAppServerClient,
+        thread_id: &str,
+    ) -> Result<Value, String> {
         load_codex_transcript(
-            &self.codex_app_server,
+            client,
             CodexTranscriptRequest {
                 thread_id,
                 cursor: None,
@@ -749,6 +758,9 @@ impl RuntimeWorkRpcHandler {
             if let Some(thread) = thread.as_object_mut() {
                 thread.insert("cwd".to_owned(), Value::String(workspace_path.to_owned()));
             }
+        }
+        if let Some(link) = local_link.as_ref().filter(|_| !direct_thread_override) {
+            normalize_overload_recovery_thread(&mut thread, &link.runtime_handle);
         }
         let presentation_page_turn_ids = thread
             .get("turns")

@@ -2197,7 +2197,7 @@ fn prepare_local_marketplace_root(path: &Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn prepare_personal_marketplace_root_for_executor_home(
     path: &Path,
     executor_home: &Path,

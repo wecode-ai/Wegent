@@ -139,6 +139,7 @@ async function seedPaginatedTurnHistory(sqliteHome, threadId, cwd, timeoutMs) {
       turn = readTurn.get(threadId)
     }
     assert.ok(turn, 'The native running turn was not persisted')
+    database.exec('BEGIN IMMEDIATE')
     const ordinal = database
       .prepare(
         'SELECT COALESCE(MAX(rollout_ordinal), 0) AS value FROM thread_items WHERE thread_id = ?'
@@ -147,7 +148,6 @@ async function seedPaginatedTurnHistory(sqliteHome, threadId, cwd, timeoutMs) {
     const insert = database.prepare(`INSERT INTO thread_items
       (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type)
       VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    database.exec('BEGIN IMMEDIATE')
     for (let index = 0; index < PAGED_ITEM_COUNT; index += 1) {
       const id = `paged-history-command-${index}`
       insert.run(

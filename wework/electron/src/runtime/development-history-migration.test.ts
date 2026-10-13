@@ -437,7 +437,8 @@ test('merged databases retain new records committed to a WAL after a process exi
     ],
     { env: { PATH: process.env.PATH, HOME: fixture, ELECTRON_RUN_AS_NODE: '1' }, stdio: 'pipe' }
   )
-  expect(crashed.signal, crashed.stderr?.toString()).toBe('SIGKILL')
+  if (process.platform === 'win32') expect(crashed.status, crashed.stderr?.toString()).toBe(1)
+  else expect(crashed.signal, crashed.stderr?.toString()).toBe('SIGKILL')
   expect((await readFile(path + '-wal')).length).toBeGreaterThan(0)
   await migrateDevelopmentHistory(options())
   const db = new DatabaseSync(path, { readOnly: true })

@@ -35,6 +35,117 @@ impl<R: Redis> EntityResolver<R> for NamespaceResolver {
             .cloned()
             .collect())
     }
+
+    /// `NamespaceEntityResolver.get_resource_ids_by_entity`: the `resource_type`
+    /// resources bound to the user's reachable namespaces. Only
+    /// `entity_type == "namespace"` resolves; other types return nothing.
+    async fn get_resource_ids_by_entity(
+        &self,
+        registry: &EntityResolvers<R>,
+        mysql: &brz_mysql::MysqlService,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_type: &str,
+        resource_type: &str,
+    ) -> MysqlResult<Vec<i64>> {
+        if entity_type != "namespace" {
+            return Ok(Vec::new());
+        }
+
+        // 1) Direct user memberships of Namespace resources.
+        let direct: Vec<IdRow> = mysql
+            .fetch_all(
+                "SELECT resource_members.resource_id AS resource_members_resource_id \n\
+                 FROM resource_members \n\
+                 WHERE resource_members.resource_type = 'Namespace' \
+                 AND resource_members.entity_type = 'user' \
+                 AND resource_members.entity_id = ? \
+                 AND resource_members.status = 'approved'",
+                (user_id.to_string(),),
+            )
+            .await?;
+        let mut namespace_ids: Vec<i64> = direct
+            .into_iter()
+            .map(|row| row.resource_members_resource_id)
+            .collect();
+
+        // 2) Entity-derived memberships: namespaces whose non-user entity
+        //    bindings the user matches.
+        for other in registry.external_types() {
+            let pairs: Vec<BindingRow> = mysql
+                .fetch_all(
+                    "SELECT resource_members.resource_id AS resource_members_resource_id, \
+                     resource_members.entity_type AS resource_members_entity_type, \
+                     resource_members.entity_id AS resource_members_entity_id \n\
+                     FROM resource_members \n\
+                     WHERE resource_members.resource_type = 'Namespace' \
+                     AND resource_members.entity_type = ? \
+                     AND resource_members.status = 'approved'",
+                    (other,),
+                )
+                .await?;
+            if pairs.is_empty() {
+                continue;
+            }
+            let mut entity_ids: Vec<String> = pairs
+                .iter()
+                .map(|row| row.resource_members_entity_id.clone())
+                .collect();
+            entity_ids.sort();
+            entity_ids.dedup();
+            let matched = registry
+                .match_bindings(
+                    redis,
+                    user_id,
+                    other,
+                    &entity_ids,
+                    ResolutionPurpose::ResourceAccess,
+                )
+                .await?;
+            for row in &pairs {
+                if matched.contains(&row.resource_members_entity_id) {
+                    namespace_ids.push(row.resource_members_resource_id);
+                }
+            }
+        }
+        namespace_ids.sort();
+        namespace_ids.dedup();
+        if namespace_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 3) The `resource_type` resources bound to those namespaces.
+        let mut variants = vec![resource_type.to_string()];
+        if resource_type == "KnowledgeBase" {
+            variants.push("KNOWLEDGE_BASE".to_string());
+        }
+        let variant_placeholders = vec!["?"; variants.len()].join(", ");
+        let namespace_placeholders = vec!["?"; namespace_ids.len()].join(", ");
+        let rows: Vec<IdRow> = mysql
+            .fetch_all(
+                &format!(
+                    "SELECT resource_members.resource_id AS resource_members_resource_id \n\
+                     FROM resource_members \n\
+                     WHERE resource_members.resource_type IN ({variant_placeholders}) \
+                     AND resource_members.entity_type = 'namespace' \
+                     AND resource_members.entity_id IN ({namespace_placeholders}) \
+                     AND resource_members.status = 'approved'"
+                ),
+                {
+                    let mut args = variants;
+                    args.extend(namespace_ids.iter().map(i64::to_string));
+                    args
+                },
+            )
+            .await?;
+        let mut result: Vec<i64> = rows
+            .into_iter()
+            .map(|row| row.resource_members_resource_id)
+            .collect();
+        result.sort();
+        result.dedup();
+        Ok(result)
+    }
 }
 /// `NamespaceEntityResolver.match_entity_bindings` for `namespace` ids:
 /// direct user memberships plus entity-derived matches through the other
@@ -161,6 +272,18 @@ mod tests {
                 .cloned()
                 .collect())
         }
+
+        async fn get_resource_ids_by_entity(
+            &self,
+            _: &EntityResolvers,
+            _: &brz_mysql::MysqlService,
+            _: Option<&RedisService>,
+            _: i64,
+            _: &str,
+            _: &str,
+        ) -> MysqlResult<Vec<i64>> {
+            Ok(Vec::new())
+        }
     }
     fn binding(namespace: i64, id: &str) -> BindingRow {
         BindingRow {
@@ -229,6 +352,18 @@ mod tests {
             registry
                 .match_bindings(redis, user_id, "cycle", ids, purpose)
                 .await
+        }
+
+        async fn get_resource_ids_by_entity(
+            &self,
+            _: &EntityResolvers,
+            _: &brz_mysql::MysqlService,
+            _: Option<&RedisService>,
+            _: i64,
+            _: &str,
+            _: &str,
+        ) -> MysqlResult<Vec<i64>> {
+            Ok(Vec::new())
         }
     }
     #[tokio::test]

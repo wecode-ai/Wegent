@@ -136,7 +136,7 @@ describe('workspace Issue assignee', () => {
     await user.click(inlineSave)
     await vi.waitFor(() => {
       expect(api.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
-        version: 2,
+        version: 1,
         assigneeType: 'user',
         assigneeId: '5',
         notifyAssignee: notify,
@@ -144,6 +144,7 @@ describe('workspace Issue assignee', () => {
       expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
     })
     expect(owner.querySelector('strong')).toHaveTextContent('张三')
+    expect(api.updateLoopItem).not.toHaveBeenCalled()
   })
 
   it('clears the owner and shows the add-owner entry', async () => {
@@ -156,7 +157,7 @@ describe('workspace Issue assignee', () => {
     await user.click(screen.getByTestId('cloud-todo-save'))
     await vi.waitFor(() =>
       expect(api.updateLoopItem).toHaveBeenLastCalledWith('WEG-1', {
-        version: 2,
+        version: 1,
         assignee_user_id: null,
         assignee_agent_id: null,
         assignee_team_id: null,
@@ -166,11 +167,26 @@ describe('workspace Issue assignee', () => {
   })
 
   it.each([
-    { canEdit: false, role: 'Owner' },
-    { canEdit: true, role: 'Developer' },
-  ])('keeps the owner visible without assignment permission: %j', async ({ canEdit, role }) => {
-    setup({ can_edit: canEdit }, role)
+    { canViewDetail: false, role: 'Owner' },
+    { canViewDetail: true, role: 'Viewer' },
+  ])(
+    'keeps the owner visible without assignment permission: %j',
+    async ({ canViewDetail, role }) => {
+      setup({ can_view_detail: canViewDetail }, role)
+      expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Codex 工程师')
+      expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeDisabled()
+    }
+  )
+
+  it('switches the owner for a Developer without project management role', () => {
+    setup({}, 'Developer')
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Codex 工程师')
-    expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeDisabled()
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).not.toBeDisabled()
+  })
+
+  it('lets the Issue creator change the owner without a Developer role', () => {
+    setup({ created_by_user_id: 1 }, 'Viewer')
+    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Codex 工程师')
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).not.toBeDisabled()
   })
 })

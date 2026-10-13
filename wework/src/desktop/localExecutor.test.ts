@@ -13,9 +13,12 @@ import {
   connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend,
   ensureBundledPluginInstalled,
+  withBundledPluginUpdatesPaused,
+  resumeBundledPluginUpdates,
   ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
+  getBundledPluginUpdateState,
   getKnownLocalExecutorDeviceId,
   getLocalExecutorStatus,
   readLocalExecutorLog,
@@ -58,6 +61,9 @@ function mockStartup(): void {
       return { ready: true, started: true, initializeElapsedMs: 37 }
     }
     if (method === 'executor.plugins.initialize_bundled_marketplace') return marketplace
+    if (method === 'runtime.codex.plugin.reconcile_bundled_marketplace')
+      return { marketplaceName: marketplace.id, action: 'unchanged' }
+    if (method === 'runtime.codex.plugin.sync_bundled') return { status: 'ready', updated: false }
     return {}
   })
 }
@@ -70,6 +76,7 @@ describe('localExecutor', () => {
     describeDshExecutorMock.mockReset()
     requestDshExecutorMock.mockReset()
     subscribeDshExecutorEventsMock.mockReset()
+    subscribeDshExecutorEventsMock.mockReturnValue(() => undefined)
     mockStartup()
   })
 
@@ -109,6 +116,7 @@ describe('localExecutor', () => {
       codexInitializeElapsedMs: 37,
       version: '1.8.6',
     })
+    await ensureBundledPluginInstalled('smart-app-builder')
     expect(getInitializedBundledPluginMarketplace()).toEqual(marketplace)
     expect(requestDshExecutorMock.mock.calls.slice(0, 3)).toEqual([
       ['runtime.codex.runtime_config.update', { proxyUrl: null }],
@@ -159,11 +167,16 @@ describe('localExecutor', () => {
 
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
     // Startup also reconciles the bundled marketplace into Codex (local RPC).
-    expect(requestDshExecutorMock).toHaveBeenCalledTimes(4)
+    expect(
+      requestDshExecutorMock.mock.calls.filter(
+        ([method]) => method === 'runtime.codex.ensure_started'
+      )
+    ).toHaveLength(1)
   })
 
   test('invalidates the initialized status after an executor request failure', async () => {
     await ensureLocalExecutorStarted()
+    await ensureBundledPluginInstalled('smart-app-builder')
     requestDshExecutorMock.mockRejectedValueOnce(new Error('executor unavailable'))
 
     await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow('executor unavailable')
@@ -175,6 +188,7 @@ describe('localExecutor', () => {
 
   test('keeps the initialized status after an executor business error', async () => {
     await ensureLocalExecutorStarted()
+    await ensureBundledPluginInstalled('smart-app-builder')
     requestDshExecutorMock.mockRejectedValueOnce(
       new DshExecutorTransportError(
         'connector_cloud_disconnected',
@@ -188,43 +202,199 @@ describe('localExecutor', () => {
     await ensureLocalExecutorStarted()
 
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
-    expect(requestDshExecutorMock).toHaveBeenCalledTimes(5)
+    expect(
+      requestDshExecutorMock.mock.calls.filter(
+        ([method]) => method === 'runtime.codex.ensure_started'
+      )
+    ).toHaveLength(1)
   })
 
-  test('installs a declared bundled plugin through Codex app-server', async () => {
-    requestDshExecutorMock.mockImplementation(async (method, params) => {
-      if (method === 'runtime.codex.ensure_started') {
-        return { ready: true, started: true, initializeElapsedMs: 37 }
-      }
-      if (method === 'executor.plugins.initialize_bundled_marketplace') return marketplace
-      if (method === 'runtime.codex.plugin.reconcile_bundled_marketplace') {
-        return { marketplaceName: marketplace.id, action: 'added' }
-      }
-      if (method !== 'codex.app_server_request') return {}
-      const request = params as { method?: string }
-      if (request.method === 'config/read') return { config: { plugins: {} } }
-      if (request.method === 'plugin/install') return {}
-      throw new Error(`Unexpected request: ${request.method}`)
-    })
-
+  test('synchronizes declared bundled plugins even when already configured', async () => {
     await ensureBundledPluginInstalled('smart-app-builder')
-
-    expect(requestDshExecutorMock).toHaveBeenCalledWith(
-      'runtime.codex.plugin.reconcile_bundled_marketplace',
-      {
-        marketplaceId: marketplace.id,
-        source: marketplace.path,
-      }
-    )
-
-    expect(requestDshExecutorMock).toHaveBeenCalledWith('codex.app_server_request', {
-      method: 'plugin/install',
-      params: {
-        marketplacePath: `${marketplace.path}/.agents/plugins/marketplace.json`,
-        remoteMarketplaceName: null,
-        pluginName: 'smart-app-builder',
-      },
+    expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.codex.plugin.sync_bundled', {
+      marketplacePath: `${marketplace.path}/.agents/plugins/marketplace.json`,
+      pluginName: 'smart-app-builder',
     })
+    expect(getBundledPluginUpdateState('smart-app-builder')).toEqual({ status: 'ready' })
+  })
+
+  test('startup becomes ready while bundled marketplace initialization is pending', async () => {
+    let finish!: (value: typeof marketplace) => void
+    const pending = new Promise<typeof marketplace>(resolve => {
+      finish = resolve
+    })
+    const original = requestDshExecutorMock.getMockImplementation()!
+    requestDshExecutorMock.mockImplementation((method, params) =>
+      method === 'executor.plugins.initialize_bundled_marketplace'
+        ? pending
+        : original(method, params)
+    )
+    await expect(ensureLocalExecutorStarted()).resolves.toMatchObject({ ready: true })
+    expect(getInitializedBundledPluginMarketplace()).toBeNull()
+    finish(marketplace)
+    await ensureBundledPluginInstalled('smart-app-builder')
+    expect(getBundledPluginUpdateState('smart-app-builder')?.status).toBe('ready')
+  })
+
+  test('concurrent uses share one pending plugin update', async () => {
+    let finish!: (value: { status: 'ready'; updated: boolean }) => void
+    const pending = new Promise<{ status: 'ready'; updated: boolean }>(resolve => {
+      finish = resolve
+    })
+    const original = requestDshExecutorMock.getMockImplementation()!
+    requestDshExecutorMock.mockImplementation((method, params) =>
+      method === 'runtime.codex.plugin.sync_bundled' ? pending : original(method, params)
+    )
+    const first = ensureBundledPluginInstalled('smart-app-builder')
+    const second = ensureBundledPluginInstalled('smart-app-builder')
+    await vi.waitFor(() =>
+      expect(getBundledPluginUpdateState('smart-app-builder')?.status).toBe('updating')
+    )
+    finish({ status: 'ready', updated: true })
+    await Promise.all([first, second])
+    expect(
+      requestDshExecutorMock.mock.calls.filter(
+        ([method]) => method === 'runtime.codex.plugin.sync_bundled'
+      )
+    ).toHaveLength(1)
+  })
+
+  test('busy updates defer usage and resume only after work finishes', async () => {
+    vi.useFakeTimers()
+    try {
+      let busy = true
+      const original = requestDshExecutorMock.getMockImplementation()!
+      requestDshExecutorMock.mockImplementation((method, params) =>
+        method === 'runtime.codex.plugin.sync_bundled'
+          ? Promise.resolve({ status: busy ? 'deferred' : 'ready', updated: !busy })
+          : original(method, params)
+      )
+      await expect(ensureBundledPluginInstalled('smart-app-builder')).rejects.toMatchObject({
+        code: 'bundled_plugin_update_deferred',
+      })
+      busy = false
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(getBundledPluginUpdateState('smart-app-builder')?.status).toBe('ready')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('uninstall cancels deferred retries until an explicit reinstall', async () => {
+    vi.useFakeTimers()
+    try {
+      const original = requestDshExecutorMock.getMockImplementation()!
+      requestDshExecutorMock.mockImplementation((method, params) =>
+        method === 'runtime.codex.plugin.sync_bundled'
+          ? Promise.resolve({ status: 'deferred', updated: false })
+          : original(method, params)
+      )
+      await expect(ensureBundledPluginInstalled('smart-app-builder')).rejects.toMatchObject({
+        code: 'bundled_plugin_update_deferred',
+      })
+      const uninstall = vi.fn().mockResolvedValue(undefined)
+      await withBundledPluginUpdatesPaused('smart-app-builder', uninstall)
+      const syncCount = requestDshExecutorMock.mock.calls.length
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(requestDshExecutorMock.mock.calls).toHaveLength(syncCount)
+      expect(getBundledPluginUpdateState('smart-app-builder')).toBeUndefined()
+      await expect(ensureBundledPluginInstalled('smart-app-builder')).rejects.toMatchObject({
+        code: 'bundled_plugin_uninstalled',
+      })
+      resumeBundledPluginUpdates('smart-app-builder')
+      mockStartup()
+      await ensureBundledPluginInstalled('smart-app-builder')
+      expect(getBundledPluginUpdateState('smart-app-builder')?.status).toBe('ready')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test.each(['ready', 'deferred'] as const)(
+    'uninstall waits for an in-flight %s result and ignores its state',
+    async status => {
+      let finish!: (result: { status: typeof status; updated: boolean }) => void
+      const pending = new Promise<{ status: typeof status; updated: boolean }>(resolve => {
+        finish = resolve
+      })
+      const original = requestDshExecutorMock.getMockImplementation()!
+      requestDshExecutorMock.mockImplementation((method, params) =>
+        method === 'runtime.codex.plugin.sync_bundled' ? pending : original(method, params)
+      )
+      const use = ensureBundledPluginInstalled('smart-app-builder')
+      const rejectedUse = expect(use).rejects.toMatchObject({ code: 'bundled_plugin_uninstalled' })
+      await vi.waitFor(() =>
+        expect(getBundledPluginUpdateState('smart-app-builder')?.status).toBe('updating')
+      )
+      const uninstall = vi.fn().mockResolvedValue(undefined)
+      const completion = withBundledPluginUpdatesPaused('smart-app-builder', uninstall)
+      expect(uninstall).not.toHaveBeenCalled()
+      finish({ status, updated: status === 'ready' })
+      await completion
+      await rejectedUse
+      expect(uninstall).toHaveBeenCalledOnce()
+      expect(getBundledPluginUpdateState('smart-app-builder')).toBeUndefined()
+    }
+  )
+
+  test('failed uninstall restores deferred upgrade recovery', async () => {
+    vi.useFakeTimers()
+    try {
+      await ensureBundledPluginInstalled('smart-app-builder')
+      await expect(
+        withBundledPluginUpdatesPaused('smart-app-builder', async () => {
+          throw new Error('uninstall failed')
+        })
+      ).rejects.toThrow('uninstall failed')
+      await vi.advanceTimersByTimeAsync(2_000)
+      await ensureBundledPluginInstalled('smart-app-builder')
+      expect(getBundledPluginUpdateState('smart-app-builder')?.status).toBe('ready')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('a failed plugin does not block other default plugins', async () => {
+    const original = requestDshExecutorMock.getMockImplementation()!
+    requestDshExecutorMock.mockImplementation((method, params) => {
+      if (method === 'executor.plugins.initialize_bundled_marketplace')
+        return Promise.resolve({
+          ...marketplace,
+          defaultPluginNames: ['smart-app-builder', 'wework-space'],
+        })
+      if (
+        method === 'runtime.codex.plugin.sync_bundled' &&
+        (params as { pluginName: string }).pluginName === 'wework-space'
+      )
+        return Promise.reject(
+          new DshExecutorTransportError('bundled_plugin_update_failed', 'cache locked')
+        )
+      return original(method, params)
+    })
+    await ensureBundledPluginInstalled('smart-app-builder')
+    expect(getBundledPluginUpdateState('smart-app-builder')?.status).toBe('ready')
+    expect(getBundledPluginUpdateState('wework-space')?.status).toBe('failed')
+  })
+
+  test('a previous runtime update cannot overwrite a new runtime state', async () => {
+    let finish!: (result: { status: 'deferred'; updated: boolean }) => void
+    const pending = new Promise<{ status: 'deferred'; updated: boolean }>(resolve => {
+      finish = resolve
+    })
+    const original = requestDshExecutorMock.getMockImplementation()!
+    requestDshExecutorMock.mockImplementation((method, params) =>
+      method === 'runtime.codex.plugin.sync_bundled' ? pending : original(method, params)
+    )
+    const oldUse = ensureBundledPluginInstalled('smart-app-builder')
+    await vi.waitFor(() =>
+      expect(getBundledPluginUpdateState('smart-app-builder')?.status).toBe('updating')
+    )
+    resetLocalExecutorStateForTests()
+    mockStartup()
+    await ensureBundledPluginInstalled('smart-app-builder')
+    finish({ status: 'deferred', updated: false })
+    await oldUse
+    expect(getBundledPluginUpdateState('smart-app-builder')?.status).toBe('ready')
   })
 
   test('rejects a plugin that is not installed by default', async () => {

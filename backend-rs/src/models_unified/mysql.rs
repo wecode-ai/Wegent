@@ -18,7 +18,7 @@ pub struct UserRow {
     pub id: i32,
     pub user_name: String,
     pub email: Option<String>,
-    pub git_info: Option<brz_mysql::Json<crate::json_compat::OpaqueJson>>,
+    pub git_info: Option<brz_mysql::Json<brz_json::OpaqueJson>>,
     pub is_active: bool,
     pub role: String,
     pub auth_source: String,

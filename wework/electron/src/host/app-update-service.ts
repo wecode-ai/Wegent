@@ -3,6 +3,7 @@ import type { AppUpdater, UpdateInfo } from 'electron-updater'
 import type {
   ComponentDownloadProgress,
   WeworkUpdateDownloadProgress,
+  WeworkUpdateFailure,
 } from './app-update-progress.js'
 export type { WeworkUpdateDownloadProgress } from './app-update-progress.js'
 
@@ -46,6 +47,7 @@ export class AppUpdateService {
   private pendingVersion: string | null = null
   private pendingChannel: WeworkUpdateChannel | null = null
   private downloadedVersion: string | null = null
+  private downloadFailure: WeworkUpdateFailure | null = null
   private downloadPromise: Promise<void> | null = null
   private progress: WeworkUpdateDownloadProgress = {
     downloadedBytes: 0,
@@ -117,6 +119,7 @@ export class AppUpdateService {
     const update = toWeworkUpdateInfo(this.currentVersion(), result.updateInfo)
     if (this.pendingVersion !== update.version || this.pendingChannel !== channel) {
       this.downloadedVersion = null
+      this.downloadFailure = null
       this.progress = { downloadedBytes: 0, totalBytes: null }
     }
     this.pendingUpdate = update
@@ -126,12 +129,15 @@ export class AppUpdateService {
   }
 
   downloadProgress(): WeworkUpdateDownloadProgress {
-    return this.progress
+    if (!this.downloadFailure) return this.progress
+    return { ...this.progress, phase: 'failed', failure: this.downloadFailure }
   }
 
   async download(): Promise<void> {
     if (!this.pendingVersion || !this.pendingChannel) {
-      throw new Error('No pending Wework update is available.')
+      const error = new Error('No pending Wework update is available.')
+      this.downloadFailure = updateFailureFromError(error)
+      throw error
     }
     if (this.downloadedVersion === this.pendingVersion) return
     if (this.downloadPromise) return this.downloadPromise
@@ -156,6 +162,7 @@ export class AppUpdateService {
       report()
     }
     this.progress = { downloadedBytes: 0, totalBytes: null, phase: 'preparing' }
+    this.downloadFailure = null
     this.downloadPromise = (async () => {
       this.updater.on('download-progress', progress)
       this.log({
@@ -179,6 +186,7 @@ export class AppUpdateService {
         this.progress = { ...this.progress, phase: 'ready' }
         this.log({ taskId, event: 'update-ready', ...this.progress })
       } catch (error) {
+        this.downloadFailure = updateFailureFromError(error)
         this.log({
           taskId,
           event: 'update-failed',
@@ -220,6 +228,14 @@ function errorLogFields(error: unknown): Record<string, unknown> {
             : {}),
         }
       : {}),
+  }
+}
+
+function updateFailureFromError(error: unknown): WeworkUpdateFailure {
+  if (!(error instanceof Error)) return { message: String(error) }
+  return {
+    message: error.message,
+    ...('code' in error && typeof error.code === 'string' ? { code: error.code } : {}),
   }
 }
 

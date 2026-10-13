@@ -34,8 +34,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::SessionUser;
 use crate::http_compat::FastApiError;
-use crate::json_compat::{JsonField, OpaqueJson};
 use crate::state::AppState;
+use brz_json::FieldState as _;
+use brz_json::OpaqueJson;
 
 /// `app/core/security.py::get_admin_user` rejection detail.
 const ADMIN_DETAIL: &str = "Permission denied. Admin access required.";
@@ -263,16 +264,21 @@ struct BotDocument {
     metadata: BotMetadata,
 }
 
+#[brz_json::model]
 #[derive(Debug, Default, Deserialize)]
 struct BotSpec {
     #[serde(default, rename = "ghostRef")]
-    ghost_ref: JsonField<Reference>,
+    #[json(presence, lenient)]
+    ghost_ref: Reference,
     #[serde(default, rename = "shellRef")]
-    shell_ref: JsonField<Reference>,
+    #[json(presence, lenient)]
+    shell_ref: Reference,
     #[serde(default, rename = "modelRef")]
-    model_ref: JsonField<Reference>,
+    #[json(presence, lenient)]
+    model_ref: Reference,
     #[serde(default, rename = "secondaryModelRef")]
-    secondary_model_ref: JsonField<Reference>,
+    #[json(presence, lenient)]
+    secondary_model_ref: Reference,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -296,22 +302,29 @@ struct GhostDocument {
     spec: GhostSpec,
 }
 
+#[brz_json::model]
 #[derive(Debug, Default, Deserialize)]
 struct GhostSpec {
     #[serde(default, rename = "systemPrompt")]
-    system_prompt: JsonField<String>,
+    #[json(presence, lenient)]
+    system_prompt: String,
     #[serde(default, rename = "mcpServers")]
-    mcp_servers: JsonField<OpaqueJson>,
-    #[serde(default)]
-    skills: JsonField<OpaqueJson>,
+    #[json(presence, lenient)]
+    mcp_servers: OpaqueJson,
+    #[json(presence, lenient)]
+    skills: OpaqueJson,
     #[serde(default, rename = "skill_refs")]
-    skill_refs: JsonField<BTreeMap<String, SkillRefMeta>>,
+    #[json(presence, lenient)]
+    skill_refs: BTreeMap<String, SkillRefMeta>,
     #[serde(default, rename = "preload_skills")]
-    preload_skills: JsonField<OpaqueJson>,
+    #[json(presence, lenient)]
+    preload_skills: OpaqueJson,
     #[serde(default, rename = "preload_skill_refs")]
-    preload_skill_refs: JsonField<BTreeMap<String, SkillRefMeta>>,
+    #[json(presence, lenient)]
+    preload_skill_refs: BTreeMap<String, SkillRefMeta>,
     #[serde(default, rename = "defaultKnowledgeBaseRefs")]
-    default_knowledge_base_refs: JsonField<OpaqueJson>,
+    #[json(presence, lenient)]
+    default_knowledge_base_refs: OpaqueJson,
 }
 
 /// Read projection of one Model `kinds.json` document.
@@ -321,14 +334,17 @@ struct ModelDocument {
     spec: ModelSpec,
 }
 
+#[brz_json::model]
 #[derive(Debug, Default, Deserialize)]
 struct ModelSpec {
     #[serde(default, rename = "isCustomConfig")]
-    is_custom_config: JsonField<bool>,
+    #[json(presence, lenient)]
+    is_custom_config: bool,
     #[serde(default, rename = "modelConfig")]
-    model_config: JsonField<BTreeMap<String, OpaqueJson>>,
-    #[serde(default)]
-    protocol: JsonField<String>,
+    #[json(presence, lenient)]
+    model_config: BTreeMap<String, OpaqueJson>,
+    #[json(presence, lenient)]
+    protocol: String,
 }
 
 /// The `bind_model` reference rendered for a predefined model.
@@ -387,7 +403,7 @@ async fn public_bots(
         let ghost_name = reference_name(&document.spec.ghost_ref);
         let shell_name = reference_name(&document.spec.shell_ref);
         let model_name = reference_name(&document.spec.model_ref);
-        let secondary = document.spec.secondary_model_ref.value.as_ref();
+        let secondary = document.spec.secondary_model_ref.value();
         let secondary_model_name = secondary.and_then(|reference| reference.name.clone());
         let secondary_model_namespace = secondary.map(|reference| {
             reference
@@ -522,9 +538,9 @@ impl GhostExpansion {
 }
 
 /// `spec.get(key, "")` for a `Optional[str]` field.
-fn string_field(field: &JsonField<String>) -> Option<String> {
-    if field.present {
-        field.value.clone()
+fn string_field(field: &impl brz_json::FieldState<Value = String>) -> Option<String> {
+    if field.is_present() {
+        field.value().cloned()
     } else {
         Some(String::new())
     }
@@ -532,11 +548,14 @@ fn string_field(field: &JsonField<String>) -> Option<String> {
 
 /// `spec.get(key, default)` for an opaque field: absent becomes the default,
 /// a present JSON `null` stays `None` (rendered as `null`).
-fn opaque_field(field: &JsonField<OpaqueJson>, default: OpaqueJson) -> Option<OpaqueJson> {
-    if !field.present {
+fn opaque_field(
+    field: &impl brz_json::FieldState<Value = OpaqueJson>,
+    default: OpaqueJson,
+) -> Option<OpaqueJson> {
+    if !field.is_present() {
         return Some(default);
     }
-    match &field.value {
+    match field.value() {
         Some(value) if !value.is_null() => Some(value.clone()),
         _ => None,
     }
@@ -544,10 +563,10 @@ fn opaque_field(field: &JsonField<OpaqueJson>, default: OpaqueJson) -> Option<Op
 
 /// `spec.get(key, {})` validated into `Dict[str, SkillRefMeta]`.
 fn map_field(
-    field: &JsonField<BTreeMap<String, SkillRefMeta>>,
+    field: &impl brz_json::FieldState<Value = BTreeMap<String, SkillRefMeta>>,
 ) -> Option<BTreeMap<String, SkillRefMeta>> {
-    if field.present {
-        field.value.clone()
+    if field.is_present() {
+        field.value().cloned()
     } else {
         Some(BTreeMap::new())
     }
@@ -557,18 +576,18 @@ fn map_field(
 /// `bind_model` reference, a custom model renders its `modelConfig` (plus the
 /// `protocol` when present).
 fn model_agent_config(model: &KindRow, spec: &ModelSpec) -> OpaqueJson {
-    if spec.is_custom_config.value != Some(true) {
+    if spec.is_custom_config.value() != Some(&true) {
         return OpaqueJson::from_serializable(BindModel {
             bind_model: &model.name,
             bind_model_namespace: &model.namespace,
         });
     }
 
-    let mut config = spec.model_config.value.clone().unwrap_or_default();
+    let mut config = spec.model_config.value().cloned().unwrap_or_default();
     if let Some(protocol) = spec
         .protocol
-        .value
-        .as_deref()
+        .value()
+        .map(|value| &**value)
         .filter(|value| !value.is_empty())
     {
         config.insert(
@@ -596,18 +615,14 @@ fn display_name(bot: &KindRow, json: &OpaqueJson) -> Option<String> {
 }
 
 /// `_get_bot_ref_info`: the referenced name when the ref is an object.
-fn reference_name(field: &JsonField<Reference>) -> Option<String> {
-    field
-        .value
-        .as_ref()
-        .and_then(|reference| reference.name.clone())
+fn reference_name(field: &impl brz_json::FieldState<Value = Reference>) -> Option<String> {
+    field.value().and_then(|reference| reference.name.clone())
 }
 
 /// `spec.<key>.namespace` with the source's `"default"` fallback.
-fn reference_namespace(field: &JsonField<Reference>) -> String {
+fn reference_namespace(field: &impl brz_json::FieldState<Value = Reference>) -> String {
     field
-        .value
-        .as_ref()
+        .value()
         .and_then(|reference| reference.namespace.clone())
         .unwrap_or_else(default_namespace)
 }

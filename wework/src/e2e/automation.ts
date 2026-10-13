@@ -41,6 +41,9 @@ import {
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   failNextLocalExecutorRequestForE2E,
+  ensureBundledPluginInstalled,
+  getInitializedBundledPluginMarketplace,
+  getBundledPluginUpdateState,
   getLocalExecutorStatus,
   readLocalExecutorLog,
 } from '@/desktop/localExecutor'
@@ -1864,6 +1867,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'restartLocalCodexAppServerIfIdle':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.codex.app_server.restart', { ifIdle: true })
+      )
     case 'setLocalRuntimeMaxConcurrentTasks':
       return JSON.stringify(
         await requestLocalExecutor('runtime.settings.update', {
@@ -2562,6 +2569,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await checkForWeworkUpdate('stable'))
     case 'getAppUpdateProgress':
       return JSON.stringify(await invokeDesktopHost('appUpdate.downloadProgress'))
+    // Starts the host download without following it to completion, so a
+    // scenario can observe that accepting the download does not wait for the
+    // whole transfer. downloadPendingAppUpdate remains the end-to-end command.
+    case 'startAppUpdateDownload':
+      await invokeDesktopHost<void>('appUpdate.download')
+      return 'started'
     case 'downloadPendingAppUpdate':
       await downloadPendingWeworkUpdate()
       return 'downloaded'
@@ -2952,6 +2965,33 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
       return JSON.stringify(await getLocalExecutorStatus())
+    case 'getBundledPluginUpdates': {
+      const marketplace = getInitializedBundledPluginMarketplace()
+      return JSON.stringify({
+        marketplace,
+        states: Object.fromEntries(
+          (marketplace?.defaultPluginNames ?? []).map(name => [
+            name,
+            getBundledPluginUpdateState(name),
+          ])
+        ),
+      })
+    }
+    case 'ensureBundledPluginUpdated': {
+      const name = command.value ?? ''
+      await ensureBundledPluginInstalled(name)
+      return JSON.stringify({
+        marketplace: getInitializedBundledPluginMarketplace(),
+        state: getBundledPluginUpdateState(name),
+      })
+    }
+    case 'uninstallInstalledPlugin': {
+      const pluginId = command.value ?? ''
+      if (!pluginId) throw new Error('uninstallInstalledPlugin requires a plugin id')
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      await createLocalCodexPluginApi().uninstallInstalledPlugin(pluginId)
+      return ''
+    }
     case 'getLocalExecutorLog':
       return JSON.stringify(await readLocalExecutorLog())
     case 'previewPluginImport': {

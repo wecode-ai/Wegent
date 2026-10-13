@@ -61,6 +61,68 @@ function officialModel(modelId: string, isDefault = false): CodexOfficialModel {
 
 describe("model controls without a desktop host", () => {
   it.each([false, true])(
+    "selects the preset owner without an explicit effort even when it is second (atomic=%s)",
+    (atomic) => {
+      const firstModel: UnifiedModel = {
+        name: "cloud-first-deepseek",
+        type: "public",
+        config: { ui: { family: "deepseek" } },
+      };
+      const defaultModel: UnifiedModel = {
+        ...cloudDeepseekModel,
+        config: {
+          ...cloudDeepseekModel.config,
+          ui: {
+            defaultModel: true,
+            sliderModelsConfig: {
+              defaultPreset: "recommended",
+              presets: [
+                {
+                  name: "recommended",
+                  models: [
+                    { modelName: firstModel.name },
+                    { modelName: cloudDeepseekModel.name },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      };
+      const onSelectModel = vi.fn();
+      const onSelectModelOption = vi.fn();
+      const onSelectModelAndOptions = vi.fn();
+      act(() =>
+        root.render(
+          <ModelSelector
+            translate={translate}
+            isMobile={false}
+            models={[firstModel, defaultModel]}
+            selectedModel={firstModel}
+            selectedModelOptions={{ reasoning: "high" }}
+            disabled={false}
+            onSelectModel={onSelectModel}
+            onSelectModelOption={onSelectModelOption}
+            onSelectModelAndOptions={
+              atomic ? onSelectModelAndOptions : undefined
+            }
+            onOpenModelSettings={vi.fn()}
+          />,
+        ),
+      );
+      act(() => element("model-selector-button").click());
+      act(() => element("model-advanced-toggle").click());
+      act(() => element("model-option-default").click());
+      if (atomic) {
+        expect(onSelectModelAndOptions).toHaveBeenCalledWith(defaultModel, {});
+      } else {
+        expect(onSelectModel).toHaveBeenCalledWith(defaultModel);
+      }
+      expect(onSelectModelOption).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])(
     "selects model-only preset steps without reasoning (atomic=%s)",
     (atomic) => {
       const glm: UnifiedModel = {

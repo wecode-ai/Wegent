@@ -7,6 +7,7 @@ fn cached_transcript_response(
     before_cursor: Option<&str>,
     after_cursor: Option<&str>,
 ) -> Value {
+    normalize_overload_recovery_messages(&mut messages, &link.runtime_handle);
     remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
     let turn_navigation = transcript_turn_navigation(&messages);
     let history_unavailable = !running
@@ -56,6 +57,53 @@ fn cached_transcript_response(
     response
 }
 
+fn overload_recovery_turn_ids(runtime_handle: &Value) -> std::collections::HashSet<&str> {
+    runtime_handle
+        .get("overloadRecoveryTurnIds")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect()
+}
+
+fn normalize_overload_recovery_thread(thread: &mut Value, runtime_handle: &Value) {
+    let ids = overload_recovery_turn_ids(runtime_handle);
+    if let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) {
+        for turn in turns {
+            if turn
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| ids.contains(id))
+            {
+                turn["status"] = json!("completed");
+                turn.as_object_mut()
+                    .expect("turn is an object")
+                    .remove("error");
+            }
+        }
+    }
+}
+
+fn normalize_overload_recovery_messages(messages: &mut [Value], runtime_handle: &Value) {
+    let ids = overload_recovery_turn_ids(runtime_handle);
+    for message in messages {
+        if message
+            .get("turnId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| ids.contains(id))
+        {
+            let object = message
+                .as_object_mut()
+                .expect("transcript message is an object");
+            object.insert("status".to_owned(), json!("done"));
+            object.insert("runtimeStatus".to_owned(), json!("completed"));
+            object.remove("error");
+            object.remove("errorType");
+        }
+    }
+}
+
 pub(super) fn remove_superseded_transcript_turns(
     messages: &mut Vec<Value>,
     runtime_handle: &Value,
@@ -93,12 +141,31 @@ fn merge_latest_completed_transcript_messages(
     if before_cursor.is_some() || after_cursor.is_some() {
         return;
     }
-    for completed in completed_transcript_messages(link) {
+    for mut completed in completed_transcript_messages(link) {
         let message_id = string_field(&completed, "id");
         if let Some(existing) = messages
             .iter_mut()
             .find(|message| message_id.is_some() && string_field(message, "id") == message_id)
         {
+            // Exit snapshots are authoritative; running commands use their live event buffer.
+            visit_transcript_blocks_mut(&mut completed, |block| {
+                if block.pointer("/render_payload/kind").and_then(Value::as_str)
+                    != Some("command_execution")
+                {
+                    return;
+                }
+                if let Some(native) = existing.get("blocks").and_then(Value::as_array)
+                    .into_iter().flatten().find(|native| {
+                        native.get("id") == block.get("id")
+                            && native.pointer("/render_payload/kind").and_then(Value::as_str) == Some("command_execution")
+                            && matches!(native.get("status").and_then(Value::as_str), Some("done" | "error"))
+                    })
+                {
+                    if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object()) {
+                        block.extend(native.clone());
+                    }
+                }
+            });
             *existing = merge_assistant_transcript_message(existing, completed);
         } else {
             messages.push(completed);

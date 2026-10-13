@@ -38,6 +38,7 @@ from app.services.delivery.storage import (
     DeliveryObjectNotFoundError,
     DeliveryStorageUnavailableError,
 )
+from app.services.loop_items.service import loop_item_service
 from app.services.project_automations import project_automation_execution
 from app.services.project_incoming_hooks import project_incoming_hook_service
 
@@ -358,6 +359,7 @@ def test_external_loop_item_update_allows_unchanged_null_schedule_fields(
 
     issue = {"number": 7, "title": "Old title"}
     response = {
+        "can_view_detail": True,
         "can_edit": True,
         "start_at": None,
         "due_at": None,
@@ -1452,6 +1454,8 @@ def test_binding_task_preserves_started_or_finished_todo_status(
 def test_runtime_task_can_narrow_project_context_to_todo(
     test_client: TestClient,
     test_token: str,
+    test_db: Session,
+    test_user: User,
     delivery_project: CloudProject,
 ) -> None:
     task = {"deviceId": "local-device", "taskId": "project-context-task"}
@@ -1464,14 +1468,11 @@ def test_runtime_task_can_narrow_project_context_to_todo(
     assert str(project_binding.json()["cloud_project_id"]) == str(delivery_project.id)
     assert project_binding.json()["loop_item_id"] is None
 
-    context = test_client.get(
-        "/api/v1/runtime-tasks/cloud-context",
-        headers=_auth(test_token),
-        params={"device_id": task["deviceId"], "task_id": task["taskId"]},
+    binding, project, loop_item = loop_item_service.find_cloud_context(
+        test_db, test_user.id, task["deviceId"], task["taskId"]
     )
-    assert context.status_code == 200
-    assert context.json()["project"]["name"] == delivery_project.name
-    assert context.json()["loop_item"] is None
+    assert project.name == delivery_project.name
+    assert loop_item is None
 
     item = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
@@ -1485,13 +1486,11 @@ def test_runtime_task_can_narrow_project_context_to_todo(
     )
     assert todo_binding.status_code == 201
 
-    narrowed = test_client.get(
-        "/api/v1/runtime-tasks/cloud-context",
-        headers=_auth(test_token),
-        params={"device_id": task["deviceId"], "task_id": task["taskId"]},
-    ).json()
-    assert str(narrowed["cloud_project_id"]) == str(delivery_project.id)
-    assert narrowed["loop_item"]["id"] == item["id"]
+    narrowed, _, loop_item = loop_item_service.find_cloud_context(
+        test_db, test_user.id, task["deviceId"], task["taskId"]
+    )
+    assert str(narrowed.cloud_project_id) == str(delivery_project.id)
+    assert loop_item.id == item["id"]
 
 
 def test_delivery_submitter_becomes_collaborator_without_runtime_task(

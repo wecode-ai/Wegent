@@ -1,4 +1,5 @@
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
+import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import * as Popover from "@radix-ui/react-popover";
 import {
   useCallback,
@@ -68,6 +69,10 @@ import {
 } from "./issue-detail";
 import "./issue-detail/issue-detail.css";
 import { issueDraftFromText } from "./issueDraft";
+import {
+  canAssignCollaborationIssue,
+  canManageCollaborationIssueSecurity,
+} from "./permissions";
 import type {
   CollaborationAssignment,
   CollaborationAttachment,
@@ -1570,12 +1575,11 @@ export function TodoEditor(props: TodoEditorProps) {
       : null);
   const canAssign =
     props.canAssign ??
-    (editable &&
-      Boolean(
-        project &&
-        (project.access_role === "Owner" ||
-          project.access_role === "Maintainer"),
-      ));
+    (project !== undefined &&
+      (item === null || item.can_view_detail !== false) &&
+      canAssignCollaborationIssue(project, item ?? undefined));
+  const canManageIssueSecurity =
+    project !== undefined && canManageCollaborationIssueSecurity(project);
   const assigneeChanged =
     item !== null && assigneeTarget !== issueAssigneeTarget(item);
   const creator =
@@ -1781,17 +1785,20 @@ export function TodoEditor(props: TodoEditorProps) {
         {
           getAssigneeTarget: issueAssigneeTarget,
           update: (source, values) =>
-            editorPort.issues.update(source.id, {
-              version: source.version,
-              title: values.title.trim(),
-              description: values.description,
-              status: values.status,
-              priority: values.priority,
-              parent_id: values.parentId || null,
-              start_at: startAt,
-              due_at: dueAt,
-              tags: values.tags,
-            }),
+            persistIssueDetailFields(
+              source,
+              {
+                title: values.title.trim(),
+                description: values.description,
+                status: values.status,
+                priority: values.priority,
+                parent_id: values.parentId || null,
+                start_at: startAt,
+                due_at: dueAt,
+                tags: values.tags,
+              },
+              editorPort.issues,
+            ),
           clearAssignment: (source) =>
             editorPort.issues.update(source.id, {
               version: source.version,
@@ -3385,7 +3392,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       {scheduleRangeControl("task-detail-state-due relative")}
                       {item &&
                       project?.project_store === "backend" &&
-                      canAssign ? (
+                      canManageIssueSecurity ? (
                         <Tooltip
                           label={t(
                             "todo.issue_security_help",

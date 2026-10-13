@@ -24,6 +24,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['browser-toolbar-actions', ['macos-inspector-foreground']],
   ['tray-lifecycle', ['macos-inspector-foreground']],
   ['browser-annotation-design', ['macos-inspector-foreground']],
+  ['project-assignment-notification', ['macos-inspector-foreground']],
   // Fresh packaged runtime extraction contends when these cloud checkpoints share a runner.
   ['plugin-account-auth', ['desktop-runtime-intensive']],
   ['cloud-device-lifecycle', ['desktop-runtime-intensive']],
@@ -32,10 +33,15 @@ const CHECKPOINT_RESOURCES = new Map([
   ['workspace-attachments', ['desktop-runtime-intensive']],
   ['automation-lifecycle', ['desktop-runtime-intensive']],
   ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-issue-task-discovery', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  [
+    'collaboration-remote-group-planning-details',
+    ['collaboration-runtime', 'desktop-runtime-intensive'],
+  ],
   ['collaboration-human-round-resume', ['collaboration-runtime', 'desktop-runtime-intensive']],
   [
     'collaboration-local-group-cancellation',
@@ -47,6 +53,7 @@ const CHECKPOINT_RESOURCES = new Map([
 const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
+  'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
   'cloud-model-presets': './scenarios/cloud-model-presets.scenario.mjs',
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
   'plugin-uninstall-resilience': './scenarios/plugin-uninstall-resilience.scenario.mjs',
@@ -70,11 +77,14 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'codex-invalid-launch-cwd': './scenarios/codex-invalid-launch-cwd.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
+  'model-overload-recovery': './scenarios/model-overload-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
   'running-plan-history': './scenarios/running-plan-history.scenario.mjs',
+  'running-sidebar-state': './scenarios/running-sidebar-state.scenario.mjs',
   'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
+  'background-terminals': './scenarios/background-terminals.scenario.mjs',
   'computer-use': './scenarios/computer-use.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
@@ -90,6 +100,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
+  'collaboration-issue-task-discovery':
+    './scenarios/collaboration-issue-task-discovery.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-dispatch':
@@ -100,6 +112,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-group-coordinate.scenario.mjs',
   'collaboration-remote-group-coordinate':
     './scenarios/collaboration-remote-group-coordinate.scenario.mjs',
+  'collaboration-remote-group-planning-details':
+    './scenarios/collaboration-remote-group-planning-details.scenario.mjs',
   'collaboration-human-round-resume': './scenarios/collaboration-human-round-resume.scenario.mjs',
   'collaboration-local-group-cancellation':
     './scenarios/collaboration-local-group-cancellation.scenario.mjs',
@@ -113,6 +127,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'drawing-attachment': './scenarios/drawing-attachment.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
   'send-key-preference': './scenarios/send-key-preference.scenario.mjs',
+  'reply-predictions': './scenarios/reply-predictions.scenario.mjs',
+  'model-settings': './scenarios/model-settings.scenario.mjs',
   'system-proxy': './scenarios/system-proxy.scenario.mjs',
   'system-pac': './scenarios/system-pac.scenario.mjs',
   'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
@@ -120,8 +136,11 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'model-settings',
+  'reply-predictions',
   'collaboration-worktree-policy',
   'cloud-model-recovery',
+  'task-model-deletion',
   'cloud-model-presets',
   'plugin-account-auth',
   'plugin-uninstall-resilience',
@@ -137,12 +156,14 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-context-resilience',
   'cloud-login-proxy',
   'collaboration-shared-core',
+  'collaboration-issue-task-discovery',
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
   'collaboration-remote-group-coordinate',
+  'collaboration-remote-group-planning-details',
   'collaboration-human-round-resume',
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
@@ -155,11 +176,14 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'runtime-task-queue',
   'codex-invalid-launch-cwd',
   'executor-stream-recovery',
+  'model-overload-recovery',
   'transcript-sync',
   'running-conversation-history',
   'running-plan-history',
+  'running-sidebar-state',
   'codex-notification-isolation',
   'context-compaction',
+  'background-terminals',
   'computer-use',
   'split-workbench',
   'release-package-startup',
@@ -348,10 +372,12 @@ function checkpointScenarioEnv(env, checkpoint) {
   if (
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'browser-multi-tabs' ||
-    checkpoint === 'core-task-flow'
+    checkpoint === 'core-task-flow' ||
+    checkpoint === 'project-assignment-notification'
   ) {
     // Core task flow verifies the native drag-to-popout window. macOS background
     // mode prohibits activation and hides the app when that window is presented.
+    // Assignment notification also verifies tag commits through native focus loss.
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]

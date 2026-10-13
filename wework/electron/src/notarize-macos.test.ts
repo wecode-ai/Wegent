@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const {
@@ -11,6 +11,8 @@ const {
   isTransientNotaryFailure,
   retryAttempts,
   s3AccelerationArgs,
+  runNotaryCommand,
+  hasStapledTicket,
 } = require('../scripts/notarize-macos.cjs')
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -88,6 +90,58 @@ test('limits notarization upload attempts', () => {
   expect(retryAttempts('5')).toBe(5)
   expect(() => retryAttempts('0')).toThrow('between 1 and 5')
   expect(() => retryAttempts('6')).toThrow('between 1 and 5')
+})
+
+test.each(['staple', 'validate'])(
+  'recovers %s from the observed Apple CloudKit transport failure',
+  async action => {
+    const execute = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          'xcrun exited with code 68: NSURLErrorDomain Code=-1005 "The network connection was lost."'
+        )
+      )
+      .mockResolvedValue('The validate action worked!')
+    const wait = vi.fn().mockResolvedValue(undefined)
+    const args = ['stapler', action, '/tmp/WeWork.app']
+
+    await expect(runNotaryCommand(args, {}, execute, wait)).resolves.toBe(
+      'The validate action worked!'
+    )
+    expect(execute).toHaveBeenNthCalledWith(1, 'xcrun', args)
+    expect(execute).toHaveBeenNthCalledWith(2, 'xcrun', args)
+    expect(wait).toHaveBeenCalledExactlyOnceWith(5000)
+  }
+)
+
+test('preserves ticket rejection and exhausts bounded transport failures', async () => {
+  const invalid = new Error('xcrun exited with code 68: The validate action failed!')
+  const execute = vi.fn().mockRejectedValue(invalid)
+  const wait = vi.fn().mockResolvedValue(undefined)
+  const args = ['stapler', 'validate', '/tmp/WeWork.app']
+  await expect(runNotaryCommand(args, {}, execute, wait)).rejects.toBe(invalid)
+  expect(execute).toHaveBeenCalledOnce()
+  expect(wait).not.toHaveBeenCalled()
+
+  execute.mockClear()
+  const transport = new Error('NSURLErrorDomain Code=-1005 "The network connection was lost."')
+  execute.mockRejectedValue(transport)
+  await expect(
+    runNotaryCommand(args, { WEWORK_NOTARY_UPLOAD_ATTEMPTS: '3' }, execute, wait)
+  ).rejects.toBe(transport)
+  expect(execute).toHaveBeenCalledTimes(3)
+  expect(wait.mock.calls).toEqual([[5000], [10000]])
+})
+
+test('does not mistake a failed ticket lookup for a missing ticket', async () => {
+  const transport = new Error('NSURLErrorDomain Code=-1005 "The network connection was lost."')
+  const execute = vi.fn().mockRejectedValue(transport)
+  await expect(hasStapledTicket('/tmp/WeWork.app', {}, execute)).rejects.toBe(transport)
+  execute.mockRejectedValue(new Error('WeWork.app does not have a ticket stapled to it.'))
+  await expect(hasStapledTicket('/tmp/WeWork.app', {}, execute)).resolves.toBe(false)
+  execute.mockResolvedValue('The validate action worked!')
+  await expect(hasStapledTicket('/tmp/WeWork.app', {}, execute)).resolves.toBe(true)
 })
 
 test('uses S3 acceleration by default and supports explicit standard S3', () => {

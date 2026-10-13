@@ -152,7 +152,12 @@ mod tests {
         );
         assert_eq!(
             env.get("WEGENT_TASK_WORKSPACE"),
-            Some(&"/workspace/conversation-1".to_owned())
+            Some(
+                &std::path::Path::new("/workspace")
+                    .join("conversation-1")
+                    .display()
+                    .to_string()
+            )
         );
     }
 }

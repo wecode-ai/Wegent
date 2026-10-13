@@ -130,7 +130,7 @@ describe("project schedule views", () => {
 
   it("renders single-day issues as draggable bars", () => {
     const issue = scheduledIssue();
-    issue.created_at = issue.due_at!;
+    issue.start_at = issue.due_at!;
     const markup = renderToStaticMarkup(
       <ProjectGanttView
         issues={[issue]}

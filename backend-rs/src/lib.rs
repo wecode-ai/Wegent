@@ -30,7 +30,15 @@ use std::sync::Arc;
 pub use application::Application;
 pub use attachments::external_media::{
     AttachmentDownload, ExternalMediaReference, ExternalMediaRelay, ExternalMediaRequest,
-    MediaStream,
+    ExternalPlayback, ExternalPlaybackResolver, MediaStream, NoExternalPlaybackResolver,
+    PlaybackDeliveryMode,
+};
+pub use attachments::minio_client::{MinioConfig, encode_object_path, ensure_bucket_exists};
+pub use attachments::s3_signing::{
+    EMPTY_BODY_SHA256, SignedRequest, amz_timestamp_now, hex_sha256, sign_headers,
+};
+pub use attachments::upload::{
+    AttachmentUploadBackend, ImagePid, ImageUploadRequest, StoreObjectRequest, UploadBackendError,
 };
 pub use brz_http_gateway::{
     BoxError, ConfigError, ExclusionRule, Gateway, GatewayBody, GatewayResponse,
@@ -40,10 +48,13 @@ pub use brz_http_gateway::{
 pub use brz_http_server as http_server;
 pub use config::{init_env, init_env_file};
 pub use filters::RequestIdFilter;
+pub use git_repositories::GitRepositoriesService;
 pub use hybrid::{
     HybridConfig, load_routes_config, run_hybrid, run_hybrid_with_gateway, serve_hybrid,
     serve_hybrid_application, serve_hybrid_application_with_gateway,
 };
+pub use knowledge_documents_content::access::is_organization_namespace;
+pub use repository_tokens::{RepositoryTokenResolver, StoredRepositoryTokens};
 pub use startup::app::build as build_app_state;
 pub use startup::mysql::connect as connect_mysql;
 pub use startup::redis::cache_client as build_cache_client;
@@ -73,12 +84,17 @@ mod attachments_task_all;
 pub mod auth;
 mod auth_login;
 mod board_snapshot;
+mod bots;
 mod chat_attachment_text;
+mod chat_guidance;
+mod chat_guidance_consume;
 mod chat_history;
+mod chat_message_update;
 mod chat_repository;
 mod cloud_project_automations;
 mod cloud_projects;
 mod cloud_projects_members;
+mod cloud_projects_runtime_default;
 pub mod config;
 mod connector_runtime;
 mod crd;
@@ -86,26 +102,39 @@ mod device_identity;
 mod device_records;
 mod device_running_tasks;
 pub mod devices;
+mod dsh_plugin_storage;
 pub mod erp_provider;
 pub mod erp_types;
 mod executor_manager;
 pub mod executor_version;
 mod filters;
+mod git_repositories;
 mod groups;
 mod headers;
 pub mod http_compat;
 mod http_fallback;
+pub mod http_trust;
 mod hybrid;
+mod im_private_sessions;
+mod internal_api_keys;
 mod internal_auth;
+mod internal_callback;
 mod knowledge_artifacts;
 mod knowledge_base_detail;
 mod knowledge_bases_all_grouped;
 mod knowledge_bases_list;
 mod knowledge_documents_content;
+mod knowledge_documents_detail;
 mod knowledge_documents_list;
 pub mod knowledge_download_policy;
+mod knowledge_external_import_status;
 mod knowledge_organization_namespace;
-mod loop_item_pages;
+pub mod llm_proxy;
+mod loop_deliveries;
+mod loop_item_attachments;
+mod loop_item_executions;
+pub(crate) mod loop_item_pages;
+mod loop_items;
 mod loop_tasks;
 mod market_subscriptions;
 mod marketplace_tags;
@@ -114,6 +143,7 @@ pub mod media_policy;
 mod models_error_recommendations;
 mod models_unified;
 mod oidc_callback;
+mod oidc_login;
 mod oidc_service;
 pub mod permissions;
 mod pet;
@@ -124,17 +154,22 @@ mod py_set_order;
 mod quota;
 mod remote_workspace_status;
 mod remote_workspace_tree;
+mod repository_tokens;
 mod resource_library_listings;
 mod resource_library_tags;
 mod resource_refs;
 mod responses;
 mod runtime_check;
+mod runtime_profiles;
 mod runtime_work_im_notifications;
+mod shells_unified;
 mod shutdown_state;
 mod site_app_types;
 mod sites;
 pub mod skill_market;
 mod skills;
+mod smart_apps_download;
+mod socketio_emit;
 mod sql_support;
 #[cfg(test)]
 mod sql_test_support;
@@ -145,7 +180,9 @@ mod subscription_executions;
 mod subscriptions_item;
 mod subscriptions_list;
 pub use subscriptions_list::workspaces as subscription_workspaces;
+mod subtasks;
 mod tables;
+pub mod task_creation;
 mod task_detail_api;
 pub mod task_export_docx;
 mod task_mutation_api;
@@ -153,12 +190,19 @@ mod task_pipeline_stage_info;
 #[path = "task_pipeline_stage_info_repo.rs"]
 mod task_pipeline_stage_info_repo;
 pub mod task_routing;
+mod task_share_api;
 mod task_skills;
 pub mod task_store;
+mod task_store_create;
+mod task_store_default;
 mod task_store_listing;
 mod task_store_project;
 mod task_store_projects;
 mod task_store_statements;
+mod task_store_subtask_content;
+mod task_store_subtask_writes;
+mod tasks_db_projection;
+mod tasks_list;
 mod tasks_lite_group;
 mod tasks_lite_personal;
 mod tasks_search;
@@ -166,6 +210,7 @@ pub use tasks_search::statements as tasks_search_statements;
 mod admin_marketplace_resources;
 mod admin_templates;
 mod teams;
+mod url_metadata;
 mod user_git_accounts_sync_summary;
 pub mod user_profile;
 pub mod user_reader;
@@ -175,14 +220,26 @@ mod users_me;
 mod users_me_available_channels;
 mod users_me_mcps_providers_services;
 mod users_me_proxy_config;
+mod users_me_wegent_runtime_token;
 mod users_runtime_configs;
 mod users_search;
 mod users_welcome_config;
+mod v1_resources;
 pub mod video_result_urls;
+mod wework_auth;
+mod wework_auth_refresh;
+mod wework_auth_tokens;
+mod wework_notification_preferences;
 mod wework_notifications;
+mod wework_transcript_archive_storage;
 mod wework_transcript_encryption;
+mod wework_transcript_lease_release;
 mod wework_transcripts;
+mod wework_transcripts_lease;
 mod work_queues;
+mod workspace_archive;
+mod workspace_members;
+mod workspaces;
 
 // Shared route registrations stay at crate scope for the HTTP macros.
 // Public routes are composed by startup::routes.

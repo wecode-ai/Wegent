@@ -69,24 +69,31 @@ pub(crate) const LOOP_ITEMS_COLUMNS: &str = "loop_items.id AS loop_items_id, \
      loop_items.delivered_at AS loop_items_delivered_at, \
      loop_items.deleted_at AS loop_items_deleted_at";
 
-/// `workspace_project_ids`: the projects granted to one workspace through an
-/// approved `resource_members` workspace grant. Selecting a string keeps the
-/// project primary key uncast when joining numeric grants.
-pub(crate) const WORKSPACE_PROJECT_IDS_SQL: &str = "\
-SELECT CAST(resource_members.resource_id AS CHAR(64)) \n\
-FROM resource_members \n\
-WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'workspace' AND resource_members.entity_id = ? AND resource_members.status = 'approved'";
+/// The unlabeled `loop_items` entity projection that SQLAlchemy renders for a
+/// `Session.get`/`db.get` lookup: the legacy `Query` API labels columns
+/// `loop_items_<column>`, while `db.get` selects the bare columns. Derived
+/// from [`LOOP_ITEMS_COLUMNS`] so the column list stays defined once.
+pub(crate) fn entity_columns() -> String {
+    LOOP_ITEMS_COLUMNS
+        .split(", ")
+        .map(|column| column.split(" AS ").next().unwrap_or(column))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// `cloud_project_visibility.ROLES_BY_PRIORITY`: lower number is the higher
 /// privilege. `None` for a priority the union cannot emit, which the source
-/// indexes as a missing key.
+/// indexes as a missing key. The hierarchy is `Owner`, `Maintainer`,
+/// `Developer`, `Reporter`, `Viewer`, `RestrictedAnalyst`, so priority `4` is
+/// `Viewer` and `5` is `RestrictedAnalyst`.
 pub(crate) fn role_for_priority(priority: i64) -> Option<&'static str> {
     match priority {
         0 => Some("Owner"),
         1 => Some("Maintainer"),
         2 => Some("Developer"),
         3 => Some("Reporter"),
-        4 => Some("RestrictedAnalyst"),
+        4 => Some("Viewer"),
+        5 => Some("RestrictedAnalyst"),
         _ => None,
     }
 }
@@ -94,9 +101,9 @@ pub(crate) fn role_for_priority(priority: i64) -> Option<&'static str> {
 /// Which shape of `project_access_query` to render.
 pub(crate) enum ProjectAccessMode {
     /// `project_access_query(db, user_id)`: every accessible project, newest
-    /// first. `workspace_filtered` adds the `workspace_project_ids`
-    /// restriction before the ordering.
-    List { workspace_filtered: bool },
+    /// first. `workspace_id` adds the `workspace_project_ids` restriction
+    /// before the ordering.
+    List { workspace_id: Option<i64> },
     /// `project_access_query(db, user_id, project_id)`: the same union with the
     /// project id pushed into each branch, reduced to one row.
     Point,
@@ -106,57 +113,83 @@ pub(crate) enum ProjectAccessMode {
 ///
 /// The union keeps the source's branch order — direct `resource_members`
 /// grant, grant inherited through an active `CollaborationWorkspace` at
-/// `Reporter` priority 3, public / `public_restricted` projects at
-/// `RestrictedAnalyst` priority 4, and projects the caller created at `Owner`
-/// priority 0 — aggregated to the highest role per project through
-/// `min(priority)`. The outer statement joins the active `loop_items` project
-/// rows and selects `anon_1.priority`, so the caller resolves the access role
-/// without a second per-project read.
-pub(crate) fn project_access_statement(mode: ProjectAccessMode) -> String {
+/// `Viewer` priority 4, public grants held by every signed-in user
+/// (`authenticated_users`/`*`) at their stored priority, and projects the
+/// caller created at `Owner` priority 0 — aggregated to the highest role per
+/// project through `min(priority)`. The outer statement joins the active
+/// `loop_items` project rows and selects `anon_1.priority`, so the caller
+/// resolves the access role without a second per-project read.
+///
+/// The source renders every grant value inline (SQLAlchemy `Query` inlines
+/// bound literals), so this statement carries no bind parameters; `user_id`
+/// and (for the point form) `project_id` are interpolated exactly as the
+/// recorded `COM_QUERY` shows them.
+pub(crate) fn project_access_statement(
+    mode: ProjectAccessMode,
+    user_id: i32,
+    project_id: Option<i64>,
+) -> String {
     // The point form narrows each branch to the requested project; the list
-    // form does not. Positions match the source's `query.filter(...)` calls.
-    let point = matches!(mode, ProjectAccessMode::Point);
-    let direct = if point {
-        " AND resource_members.resource_id = ?"
-    } else {
-        ""
+    // form does not. `resource_id` is a numeric primary key while
+    // `loop_items.id` is the string primary key, matching the source casts.
+    let (direct, inherited, public, owned) = match mode {
+        ProjectAccessMode::Point => {
+            let project_id = project_id.unwrap_or_default();
+            (
+                format!(" AND resource_members.resource_id = {project_id}"),
+                format!(" AND resource_members.resource_id = {project_id}"),
+                format!(" AND resource_members.resource_id = {project_id}"),
+                format!(" AND loop_items.id = '{project_id}'"),
+            )
+        }
+        ProjectAccessMode::List { .. } => Default::default(),
     };
-    let inherited = direct;
-    let public = if point { " AND loop_items.id = ?" } else { "" };
-    let owned = public;
 
     let mut sql = format!(
         "SELECT {LOOP_ITEMS_COLUMNS}, anon_1.priority AS anon_1_priority \n\
          FROM loop_items INNER JOIN (SELECT anon_2.project_id AS project_id, min(anon_2.priority) AS priority \n\
-         FROM (SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'RestrictedAnalyst' THEN 4 END AS priority \n\
+         FROM (SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END AS priority \n\
          FROM resource_members \n\
-         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'user' AND resource_members.entity_id = ? AND resource_members.status = 'approved' AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter', 'RestrictedAnalyst'){direct} UNION ALL SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, 3 AS priority \n\
+         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'user' AND resource_members.entity_id = '{user_id}' AND resource_members.status = 'approved' AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer'){direct} UNION ALL SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, 4 AS priority \n\
          FROM resource_members INNER JOIN (SELECT resource_members.resource_id AS resource_id \n\
          FROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id \n\
-         WHERE resource_members.resource_type = 'Workspace' AND resource_members.entity_type = 'user' AND resource_members.entity_id = ? AND resource_members.status = 'approved' AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter', 'RestrictedAnalyst') AND kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true AND resource_members.`role` != 'RestrictedAnalyst') AS anon_3 ON CAST(resource_members.entity_id AS SIGNED INTEGER) = anon_3.resource_id \n\
-         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'workspace' AND resource_members.status = 'approved'{inherited} UNION ALL SELECT loop_items.id AS project_id, 4 AS priority \n\
+         WHERE resource_members.resource_type = 'Workspace' AND resource_members.entity_type = 'user' AND resource_members.entity_id = '{user_id}' AND resource_members.status = 'approved' AND kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter')) AS anon_3 ON CAST(resource_members.entity_id AS SIGNED INTEGER) = anon_3.resource_id \n\
+         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'workspace' AND resource_members.status = 'approved'{inherited} UNION ALL SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, CASE resource_members.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END AS priority \n\
+         FROM resource_members \n\
+         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'authenticated_users' AND resource_members.entity_id = '*' AND resource_members.status = 'approved' AND resource_members.`role` IN ('Developer', 'Viewer'){public} UNION ALL SELECT loop_items.id AS project_id, 0 AS priority \n\
          FROM loop_items \n\
-         WHERE loop_items.status = 'active' AND CASE JSON_EXTRACT(loop_items.metadata, '$.\\\"visibility\\\"') WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, '$.\\\"visibility\\\"')) END IN ('public_restricted', 'public'){public} AND loop_items.resource_type IN ('project') UNION ALL SELECT loop_items.id AS project_id, 0 AS priority \n\
-         FROM loop_items \n\
-         WHERE loop_items.created_by_user_id = ? AND loop_items.status = 'active'{owned} AND loop_items.resource_type IN ('project')) AS anon_2 GROUP BY anon_2.project_id) AS anon_1 ON loop_items.id = anon_1.project_id \n\
+         WHERE loop_items.created_by_user_id = {user_id} AND loop_items.status = 'active'{owned} AND loop_items.resource_type IN ('project')) AS anon_2 GROUP BY anon_2.project_id) AS anon_1 ON loop_items.id = anon_1.project_id \n\
          WHERE loop_items.status = 'active' AND loop_items.resource_type IN ('project')"
     );
     match mode {
         ProjectAccessMode::List {
-            workspace_filtered: true,
+            workspace_id: Some(workspace_id),
         } => {
             // `query.filter(CloudProject.id.in_(workspace_project_ids(workspace_id)))`
             sql.push_str(&format!(
-                " AND loop_items.id IN ({WORKSPACE_PROJECT_IDS_SQL})"
+                " AND loop_items.id IN ({})",
+                workspace_project_ids_statement(workspace_id)
             ));
         }
-        ProjectAccessMode::List { .. } | ProjectAccessMode::Point => {}
+        ProjectAccessMode::List { workspace_id: None } | ProjectAccessMode::Point => {}
     }
     sql.push_str(match mode {
         ProjectAccessMode::List { .. } => " ORDER BY loop_items.updated_at DESC, loop_items.id",
         ProjectAccessMode::Point => " LIMIT 1",
     });
     sql
+}
+
+/// `workspace_project_ids(workspace_id)`: the projects granted to one
+/// workspace through an approved `resource_members` workspace grant. Selecting
+/// a string keeps the project primary key uncast when joining numeric grants.
+/// The workspace id is inlined like every other source grant value.
+pub(crate) fn workspace_project_ids_statement(workspace_id: i64) -> String {
+    format!(
+        "SELECT CAST(resource_members.resource_id AS CHAR(64)) \n\
+         FROM resource_members \n\
+         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'workspace' AND resource_members.entity_id = '{workspace_id}' AND resource_members.status = 'approved'"
+    )
 }
 
 #[cfg(test)]

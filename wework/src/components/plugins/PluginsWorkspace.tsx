@@ -1977,13 +1977,8 @@ export function PluginsWorkspace({
         pluginApi
           .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, targetDeviceId)
           .then(plugin => {
-            const next = toInstalledPluginItem(plugin)
             const device = currentDeviceInstallation(plugin, targetDeviceId)
-            setInstalledPlugins(previous =>
-              previous.map(candidate =>
-                String(candidate.id) === String(next.id) ? next : candidate
-              )
-            )
+            commitPluginInventoryInstallation(marketplaceCacheKeyValue, targetDeviceId, plugin)
             setPluginMarketplaceState(previous => ({
               ...previous,
               items: previous.items.map(candidate =>

@@ -862,7 +862,7 @@ where
         .filter(|row| {
             is_public_model_visible(&row.json.0)
                 && crate::teams::public_model_access::allowed_for_user_name(
-                    &crate::json_compat::OpaqueJson::from(row.json.0.clone()),
+                    &brz_json::OpaqueJson::from(row.json.0.clone()),
                     user_name,
                 )
         })

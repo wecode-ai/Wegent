@@ -24,6 +24,7 @@ import type {
   createLocalProjectChatAgentApi,
 } from '@/api/local/localDelivery'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import type { RuntimeBackgroundTerminalsApi } from '@/api/runtimeBackgroundTerminals'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
@@ -37,6 +38,7 @@ import type {
   Attachment,
   ModelOptions,
   ModelType,
+  RuntimeTaskAddress,
   ProjectDeviceSessionResponse,
   RuntimeProjectPluginRef,
   User,
@@ -177,7 +179,7 @@ export interface WorkbenchServices {
   projectSpaceApis?: ProjectSpaceApis
   projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
-  runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
+  runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi> & Partial<RuntimeBackgroundTerminalsApi>
   /** Backend-free execution ports for locally owned projects in a connected workbench. */
   localExecutionServices?: Pick<WorkbenchServices, 'runtimeWorkApi' | 'deviceApi'>
   composerCatalogApi?: Pick<ReturnType<typeof createRuntimeComposerApi>, 'readCatalog'>
@@ -220,6 +222,13 @@ export interface WorkbenchServices {
       modelOptions?: ModelOptions
     }) => Promise<string>
   }
+  replyPredictionApi?: {
+    predict: (data: {
+      address: RuntimeTaskAddress
+      latestTurnId?: string | null
+      signal?: AbortSignal
+    }) => Promise<{ suggestion: string | null }>
+  }
   textGenerationApi?: {
     generateText: (data: {
       prompt: string
@@ -229,6 +238,8 @@ export interface WorkbenchServices {
       modelType?: ModelType | null
       modelOptions?: ModelOptions
       outputSchema?: Record<string, unknown>
+      signal?: AbortSignal
+      timeoutMs?: number
       onProgress?: (phase: 'preparing' | 'generating') => void
       onDelta?: (delta: string) => void
     }) => Promise<string>

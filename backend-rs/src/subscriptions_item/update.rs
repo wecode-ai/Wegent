@@ -99,7 +99,10 @@ enum UpdateOutcome {
 }
 
 /// `db.refresh(subscription)` then `_convert_to_subscription_in_db`.
-async fn refresh(state: &AppState, subscription_id: i64) -> Result<SubscriptionItem, FastApiError> {
+pub(super) async fn refresh(
+    state: &AppState,
+    subscription_id: i64,
+) -> Result<SubscriptionItem, FastApiError> {
     let row = state
         .mysql
         .fetch_optional(super::REFRESH_SUBSCRIPTION_QUERY, (subscription_id,))
@@ -433,16 +436,7 @@ fn set(object: &mut Value, key: &str, value: Value) {
 }
 
 /// Python truthiness (`bool(value)`).
-pub(crate) fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
-        Value::String(value) => !value.is_empty(),
-        Value::Array(value) => !value.is_empty(),
-        Value::Object(value) => !value.is_empty(),
-    }
-}
+pub(crate) use brz_json::adapters::python_truthy as truthy;
 
 /// Python `str(value)` for an f-string of a request value.
 fn display(value: &Value) -> String {
@@ -466,7 +460,7 @@ pub(crate) fn random_token_urlsafe(byte_count: usize) -> String {
 }
 
 /// `extract_trigger_config` — the stored trigger's config for its type.
-fn extract_trigger_config(trigger: Option<&Value>) -> Value {
+pub(super) fn extract_trigger_config(trigger: Option<&Value>) -> Value {
     let Some(trigger) = trigger.and_then(Value::as_object) else {
         return json!({});
     };

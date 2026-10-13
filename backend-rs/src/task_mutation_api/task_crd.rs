@@ -11,11 +11,13 @@
 //! in that order, and serialize it with [`python_json_value`] so the persisted
 //! document matches the source's `json.dumps` rendering.
 
+use brz_json::FieldState as _;
 use serde_json::Value;
 
 use super::models::TaskUpdateBody;
 use crate::crd::CrdDocument;
-use crate::json_compat::{JsonNull, OpaqueJson, python_json_value};
+use crate::json_compat::python_json_value;
+use brz_json::{JsonNull, OpaqueJson};
 
 /// `TaskStatus` final states that reject a move to a non-final state.
 const FINAL_STATES: [&str; 4] = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"];

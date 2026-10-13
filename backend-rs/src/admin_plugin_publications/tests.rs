@@ -10,7 +10,7 @@ use brz_mysql::Json;
 
 use super::sql::SqlArg;
 use super::*;
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// The recorded `plugin_publication_requests` projection, copied literally so
 /// an accidental change to the production constants fails these tests.

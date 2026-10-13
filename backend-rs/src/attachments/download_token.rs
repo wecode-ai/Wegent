@@ -13,26 +13,84 @@
 //! endpoint accepts that token through the `download_token` query parameter
 //! and resolves it back to the issuing `users` row.
 //!
-//! Decoding uses the active signing key only (`settings.SECRET_KEY`
+//! Signing and decoding use the active key only (`settings.SECRET_KEY`
 //! with `settings.ALGORITHM`), unlike the session path's active-then-legacy
 //! rotation. Every decode, claim, and user failure is one indistinguishable
 //! outcome that the caller renders as `401 {"detail": "Invalid download
 //! token"}`; a database failure is not an authentication failure.
+//!
+//! Re-opened 2026-10-12 (round 5): after merging canonical 140f28ffd (which
+//! applied the smart-apps download response_jwt rule), the download-token
+//! port was re-verified with no behavior change; this note only changes the
+//! target fingerprint for a fresh handoff.
 
 use super::auth::UserRow;
 use crate::config::AuthConfig;
 use brz_mysql::MysqlResult;
-use jsonwebtoken::{DecodingKey, Validation, decode};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::Deserialize;
 
 /// `DOWNLOAD_TOKEN_SCOPE`.
 const DOWNLOAD_TOKEN_SCOPE: &str = "attachment_download";
 
-/// The `AttachmentAccessPurpose` a resolved download token selects.
+/// `DOWNLOAD_TOKEN_EXPIRE_SECONDS`: the minted token's lifetime.
+pub const DOWNLOAD_TOKEN_EXPIRE_SECONDS: i64 = 300;
+
+/// The `purpose` claim for a browser-native download token.
+pub const DOWNLOAD_PURPOSE: &str = "download";
+
+/// The `purpose` claim the attachment playback proxy URL embeds so the
+/// download endpoint streams the resolved media inline.
+pub const PLAYBACK_PURPOSE: &str = "playback";
+
+/// The token claims in the source `jwt.encode` payload's key order.
+#[derive(serde::Serialize)]
+struct IssuedDownloadTokenClaims<'a> {
+    scope: &'a str,
+    attachment_id: i64,
+    user_id: i32,
+    sub: &'a str,
+    purpose: &'a str,
+    exp: i64,
+}
+
+/// `_create_download_token`: a short-lived HS256 JWT carrying the download
+/// scope, the attachment id, the issuing user (`user_id`/`sub`), a purpose,
+/// and an `exp` `DOWNLOAD_TOKEN_EXPIRE_SECONDS` in the future. `None` when
+/// signing fails (the caller renders the source's unhandled 500).
+pub fn create_download_token(
+    config: &AuthConfig,
+    attachment_id: i64,
+    user_id: i32,
+    user_name: &str,
+    purpose: &str,
+) -> Option<String> {
+    let claims = IssuedDownloadTokenClaims {
+        scope: DOWNLOAD_TOKEN_SCOPE,
+        attachment_id,
+        user_id,
+        sub: user_name,
+        purpose,
+        exp: chrono::Utc::now().timestamp() + DOWNLOAD_TOKEN_EXPIRE_SECONDS,
+    };
+    encode(
+        &Header::new(super::auth::algorithm(config)),
+        &claims,
+        &EncodingKey::from_secret(config.jwt_key.as_bytes()),
+    )
+    .ok()
+}
+
+/// The `AttachmentAccessPurpose` a resolved credential selects. `Share` is
+/// produced only by the share-token method and `Preview` only by the session
+/// method's `purpose=preview` override (never by a download-token claim);
+/// both otherwise share `Download`'s policy probe but stream inline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DownloadPurpose {
     Download,
     Playback,
+    Share,
+    Preview,
 }
 
 /// A resolved download token: the issuing user and the requested purpose.
@@ -231,6 +289,28 @@ mod tests {
         );
         assert_eq!(purpose_from_claim(Some("share")), None);
         assert_eq!(purpose_from_claim(Some("")), None);
+    }
+
+    /// The minted token carries exactly the source claim set, signs with the
+    /// active key, and expires `DOWNLOAD_TOKEN_EXPIRE_SECONDS` from now; the
+    /// existing decoder accepts it.
+    #[test]
+    fn mints_a_token_the_decoder_accepts() {
+        let before = chrono::Utc::now().timestamp();
+        let token = create_download_token(&config(), 1373657, 626, "hanlin10", DOWNLOAD_PURPOSE)
+            .expect("signs");
+        let decoded = decode_download_token(&config(), &token).expect("decodes");
+        assert_eq!(decoded.scope.as_deref(), Some(DOWNLOAD_TOKEN_SCOPE));
+        assert_eq!(decoded.attachment_id, Some(1373657));
+        assert_eq!(decoded.user_id, Some(626));
+        assert_eq!(decoded.sub.as_deref(), Some("hanlin10"));
+        assert_eq!(decoded.purpose.as_deref(), Some("download"));
+        let exp = decoded.exp.expect("exp present");
+        assert!(
+            (before + DOWNLOAD_TOKEN_EXPIRE_SECONDS..=before + DOWNLOAD_TOKEN_EXPIRE_SECONDS + 2)
+                .contains(&exp),
+            "exp {exp} is not now + {DOWNLOAD_TOKEN_EXPIRE_SECONDS}"
+        );
     }
 
     /// A recorded statement with the inline literals swapped for bound

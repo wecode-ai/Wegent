@@ -9,6 +9,12 @@
 //! (`app.api.endpoints.projects.delete_project_endpoint` ->
 //! `app.services.project_service.delete_project`).
 //!
+//! It also owns the project-task association routes: `POST
+//! /api/projects/{project_id}/tasks` adds a task to a project
+//! (`add_task_to_project_endpoint` -> `project_service.add_task_to_project`),
+//! and `DELETE /api/projects/{project_id}/tasks/{task_id}` removes one
+//! (`remove_task_from_project_endpoint` -> `project_service.remove_task_from_project`).
+//!
 //! Source pipeline (recorded case `api-projects/deaea280`, JWT bearer
 //! session for a sample user, `include_tasks=true`):
 //!
@@ -204,24 +210,11 @@ struct ProjectModelSelection {
     #[serde(default, rename = "modelType")]
     model_type: Option<String>,
     #[serde(default = "default_options_map")]
-    options: OptionsMap,
+    options: Option<brz_json::RawJson>,
 }
 
-/// The `options` dict (`default_factory=dict`); dynamic string keys echo
-/// verbatim through `raw_value` without a materialized dynamic value.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-struct OptionsMap(Option<Box<serde_json::value::RawValue>>);
-
-impl<'de> Deserialize<'de> for OptionsMap {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Option::<Box<serde_json::value::RawValue>>::deserialize(deserializer).map(OptionsMap)
-    }
-}
-
-fn default_options_map() -> OptionsMap {
-    OptionsMap(Some(
-        serde_json::value::RawValue::from_string("{}".to_string()).expect("valid JSON"),
-    ))
+fn default_options_map() -> Option<brz_json::RawJson> {
+    Some(brz_json::RawJson::from_string("{}".to_string()).expect("valid JSON"))
 }
 
 /// One `tasks`/`tasks_{:04}` row of the per-project task query, decoded by
@@ -864,6 +857,9 @@ fn delete_project_error(error: brz_mysql::MysqlError) -> FastApiError {
         format!("Failed to delete project: {error}"),
     )
 }
+
+#[path = "projects_add_task.rs"]
+pub(super) mod add_task;
 
 #[cfg(test)]
 #[path = "projects_tests.rs"]

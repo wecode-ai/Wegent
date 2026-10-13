@@ -10,6 +10,26 @@ interface ErrorTranslation {
 
 const ERROR_TRANSLATIONS: ErrorTranslation[] = [
   {
+    pattern: /^SA-PACKAGE-UNVERIFIED$/,
+    key: 'workbench.smart_apps_error_unverified',
+    fallback: '请先完成工作台正式验证，再导出或发布。',
+  },
+  {
+    pattern: /^SA-PACKAGE-STALE$/,
+    key: 'workbench.smart_apps_error_verification_stale',
+    fallback: '工作台文件已修改，请重新验证后再导出或发布。',
+  },
+  {
+    pattern: /^SA-/,
+    key: 'workbench.smart_apps_error_verification_failed',
+    fallback: '工作台正式验证未通过，请查看验证结果并修复后再导出或发布。',
+  },
+  {
+    pattern: /^Bundled plugin update is waiting for active work to finish$/,
+    key: 'workbench.bundled_plugin_update_deferred',
+    fallback: '插件将在当前任务结束后更新，请稍后再使用。',
+  },
+  {
     pattern: /^Smart app default save location is unavailable$/i,
     key: 'workbench.smart_apps_default_location_unavailable',
     fallback: '无法在系统“文档”中创建工作台，请选择其他保存位置。',

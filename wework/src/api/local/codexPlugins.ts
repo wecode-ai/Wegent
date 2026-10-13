@@ -36,10 +36,14 @@ import { LocalPluginUninstallCleanupError } from './pluginUninstallError'
 import { remotePluginInstallation } from './codexPluginInstallation'
 import {
   ensureBundledPluginMarketplaceRegistered,
+  ensureBundledPluginInstalled,
+  initializeBundledPluginMarketplace,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
   getKnownLocalExecutorDeviceId,
   requestLocalExecutor,
+  withBundledPluginUpdatesPaused,
+  resumeBundledPluginUpdates,
 } from '@/desktop/localExecutor'
 import type {
   InstalledPlugin,
@@ -67,6 +71,7 @@ import { rankMarketplaceSearchResults } from '@/features/plugins/marketplaceSear
 import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPluginMigration'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
+import { slimPluginManifestForCache } from '@/features/plugins/slimPluginManifest'
 import { mergeLocalInstalledWithStorePackages } from '@/components/plugins/installedPluginMerge'
 import { installedPluginMarketplaceId } from '@/components/plugins/pluginDistribution'
 
@@ -569,26 +574,6 @@ function slimPluginInterfaceForDurableCache(
   }
 }
 
-function slimPluginManifestForDurableCache(
-  manifest: Record<string, unknown> | null | undefined
-): Record<string, unknown> {
-  if (!manifest) return {}
-  const keys = [
-    'name',
-    'id',
-    'marketplaceId',
-    'source',
-    'installPolicy',
-    'authPolicy',
-    'availability',
-    'disabledReason',
-    'eligiblePlanTypes',
-  ] as const
-  return Object.fromEntries(
-    keys.flatMap(key => (manifest[key] === undefined ? [] : [[key, manifest[key]]]))
-  )
-}
-
 /**
  * Persist a compact catalog snapshot so cold launches can paint OpenAI/local tabs
  * before plugin/list (~10s). Drop screenshots and keep skill/app/connector names
@@ -611,7 +596,7 @@ function toDurableReadState(state: LocalCodexPluginsState): LocalCodexPluginsSta
         (item.description.length > 240 ? `${item.description.slice(0, 240)}…` : item.description),
       components: slimPluginComponentsForCache(item.components),
       interface: slimPluginInterfaceForDurableCache(item.interface),
-      manifest: slimPluginManifestForDurableCache(item.manifest),
+      manifest: slimPluginManifestForCache(item.manifest),
     })),
     // Installed membership belongs to the renderer inventory and live plugin/installed.
     // Persisting it here created a second seven-day source that survived uninstall.
@@ -1049,19 +1034,19 @@ async function resolveWeworkPersonalMarketplacePath(
 
 async function uninstallWeworkPersonalPluginLocally(
   pluginName: string,
-  marketplacePath: string
+  marketplacePath?: string
 ): Promise<void> {
-  const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
-    'runtime.codex.plugin.uninstall_local',
-    {
-      marketplacePath: codexMarketplaceManifestSource(marketplacePath),
-      pluginName,
+  await withBundledPluginUpdatesPaused(pluginName, async () => {
+    const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
+      'runtime.codex.plugin.uninstall_local',
+      { pluginName }
+    )
+    if (!commit.localCommitted) {
+      throw new Error('Plugin did not reach its local uninstall commit')
     }
-  )
-  if (!commit.localCommitted) {
-    throw new Error('Plugin did not reach its local uninstall commit')
-  }
+  })
   clearLocalCodexPluginsReadStateCache()
+  if (!marketplacePath) return
   try {
     await unlinkLocalPluginRelease(marketplacePath, pluginName)
   } catch (error) {
@@ -1092,6 +1077,7 @@ async function ensurePluginInWeworkPersonal(options: {
         marketplacePath: codexMarketplaceManifestSource(ensured.marketplacePath),
         pluginName: ensured.pluginName,
       })
+      resumeBundledPluginUpdates(ensured.pluginName)
     } catch (error) {
       // Migration already landed on disk; install can be retried on the next refresh.
       console.warn('[Wework] Failed to install migrated personal plugin', error)
@@ -2590,6 +2576,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           if (!commit.localCommitted) {
             throw new Error('Plugin package did not reach its local installation commit')
           }
+          resumeBundledPluginUpdates(imported.pluginName)
           await requestLocalExecutor('executor.plugins.import_package.finalize', {
             marketplacePath,
             rollbackId: imported.rollbackId,
@@ -2793,6 +2780,17 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         installed = findInstalled(loaded.installedPlugins) ?? null
       }
       if (!installed) throw new Error('Codex plugin is not installed')
+      if (installedPluginMarketplaceId(installed) === WEWORK_PERSONAL_MARKETPLACE_ID) {
+        const marketplace =
+          getInitializedBundledPluginMarketplace() ?? (await initializeBundledPluginMarketplace())
+        const name = installed.spec.source.pluginKey
+        if (marketplace.defaultPluginNames?.includes(name)) {
+          await ensureBundledPluginInstalled(name)
+          clearLocalCodexPluginsReadStateCache()
+          installed = findInstalled((await loadInstalledPluginsOnly()).installedPlugins) ?? null
+          if (!installed) throw new Error('Updated bundled plugin was not returned by app-server')
+        }
+      }
       return readDetailForInstalledPlugin(installed)
     },
     async deleteMarketplace(id) {
@@ -2873,6 +2871,9 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         }
       }
       if (installError) throw installError
+      if (marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID) {
+        resumeBundledPluginUpdates(acceptedPluginName)
+      }
       clearLocalCodexPluginsReadStateCache()
       if (!localMarketplace) {
         return remotePluginInstallation(
@@ -2958,7 +2959,12 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (requestedId.endsWith(localPersonalSuffix)) {
         const pluginName = requestedId.slice(0, -localPersonalSuffix.length)
         if (pluginName) {
-          const marketplacePath = await resolveWeworkPersonalMarketplacePath()
+          const marketplacePath =
+            getInitializedBundledPluginMarketplace()?.path ||
+            cachedState?.marketplaces.find(
+              marketplace => marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID
+            )?.path ||
+            undefined
           await uninstallWeworkPersonalPluginLocally(pluginName, marketplacePath)
           return
         }

@@ -27,8 +27,8 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
 use crate::http_compat::FastApiError;
-use crate::json_compat::{JsonNull, OpaqueJson};
 use crate::state::AppState;
+use brz_json::{JsonNull, OpaqueJson};
 
 /// `kinds` projection rendered by `db.query(Kind)` (SQLAlchemy labels every
 /// column `kinds_<name>`); shared by the count subquery and the page query.

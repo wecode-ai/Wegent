@@ -26,7 +26,7 @@ use crate::{
         bind_codex_thread_model_route, codex_notification_requires_user_input,
         codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
         AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexAuthMutationError,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError,
         CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
@@ -54,6 +54,7 @@ const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
 const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const INTERACTION_WAITING_FOR_USER_INPUT: &str = "waitingForUserInput";
+const INTERACTION_AWAITING_USER_REPLY: &str = "awaitingUserReply";
 const COLLABORATION_MANAGER_CONTEXT_KEY: &str = "collaborationManagerContext";
 
 enum RestoreStartupState {
@@ -81,6 +82,9 @@ impl RestoreStartupGate {
             .state
             .lock()
             .expect("restore startup state lock should not be poisoned");
+        if matches!(*state, RestoreStartupState::Active) {
+            return true;
+        }
         if !matches!(*state, RestoreStartupState::Waiting { .. }) {
             return false;
         }
@@ -116,10 +120,12 @@ impl RestoreStartupGate {
 
 mod archives;
 mod automation_rpc;
+mod background_terminals;
 mod claude_turns;
 mod codex_accounts;
 mod codex_config;
 mod collection;
+mod context_compaction;
 mod fork_transfer;
 mod hooks;
 mod notifications;
@@ -131,6 +137,7 @@ mod sidebar;
 mod supervisor;
 mod system;
 mod tasks;
+mod text_generation;
 mod transcript_sync;
 mod turns;
 mod workspaces;
@@ -173,7 +180,7 @@ use super::{
         clear_transcript_snapshot_messages, completed_transcript_messages,
         merge_assistant_transcript_message, set_runtime_handle_messages,
         set_transcript_snapshot_messages, transcript_snapshot_messages,
-        transcript_snapshot_pagination, user_message_presentations,
+        transcript_snapshot_pagination, user_message_presentations, visit_transcript_blocks_mut,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
@@ -203,19 +210,9 @@ const CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL: Duration = Duration::from_secs(30);
 const CODEX_TRANSCRIPT_NAVIGATION_CACHE_MAX_ENTRIES: usize = 64;
 const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
-const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
-/// How long a context-compaction action waits for the Codex app-server to finish
-/// the compaction turn.
-const CONTEXT_COMPACTION_WAIT_BUDGET: Duration = Duration::from_secs(120);
-/// Margin covering the Codex app-server round trips around the wait loop and the
-/// App-IPC response for the action.
-const CONTEXT_COMPACTION_ACTION_MARGIN: Duration = Duration::from_secs(60);
-/// Wall-clock budget a single context-compaction action may consume: the wait
-/// loop below plus the round trips around it. The App-IPC deadline for
-/// `runtime.tasks.compact` must stay above this budget, otherwise the frontend
-/// reports a timeout for an action that is still running.
-pub(crate) const CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS: u64 =
-    CONTEXT_COMPACTION_WAIT_BUDGET.as_secs() + CONTEXT_COMPACTION_ACTION_MARGIN.as_secs();
+/// How long the App-IPC caller waits for a compaction response. The owned native
+/// action retains its activity and model route until completion beyond this.
+pub(crate) const CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS: u64 = 180;
 const PROVIDER_TURN_INTERRUPT_WAIT_MS: u64 = 100;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
@@ -603,6 +600,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
+    active_text_generations: Arc<Mutex<HashMap<String, Option<oneshot::Sender<()>>>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     codex_transcript_navigation_cache: Arc<Mutex<HashMap<String, CachedCodexTranscriptNavigation>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
@@ -874,6 +872,7 @@ impl RuntimeWorkRpcHandler {
             turn_queue_path: Arc::new(turn_queue_path),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
+            active_text_generations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             codex_transcript_navigation_cache: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
@@ -1111,12 +1110,17 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.collaboration.dispatch" => self.create_collaboration_dispatch(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
+            "runtime.text.predict_reply" => self.predict_reply(payload).await,
+            "runtime.text.cancel" => self.cancel_text_generation(payload),
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
             "runtime.tasks.guidance" => self.send_guidance(payload).await,
             "runtime.tasks.compact" => self.compact_task(payload).await,
+            "runtime.tasks.background_terminals.clean" => {
+                self.clean_background_terminals(payload).await
+            }
             "runtime.tasks.prepare_fork_transfer" => self.prepare_fork_transfer(payload).await,
             "runtime.tasks.import_fork" => self.import_fork(payload).await,
             "runtime.tasks.archive" => self.archive_task(payload).await,
@@ -1177,6 +1181,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
+            "runtime.codex.plugin.sync_bundled" => self.sync_bundled_plugin(payload).await,
             "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
             "runtime.codex.plugin.reconcile_bundled_marketplace" => {
                 self.reconcile_bundled_plugin_marketplace(payload).await
