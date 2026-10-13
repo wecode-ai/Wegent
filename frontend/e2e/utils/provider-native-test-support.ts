@@ -336,10 +336,38 @@ export async function getMcpCalls(request: APIRequestContext): Promise<RecordedP
   return (await response.json()) as RecordedProviderCall[]
 }
 
+interface TaskTerminalSnapshot {
+  task_status?: string
+  subtasks?: {
+    role: string
+    prompt: string
+    message_id: number
+    parent_id: number
+    status: string
+  }[]
+}
+
+function currentTurnStatus(body: TaskTerminalSnapshot, prompt: string, expected: RegExp): string {
+  const user = body.subtasks
+    ?.slice()
+    .reverse()
+    .find(subtask => subtask.role === 'USER' && subtask.prompt === prompt)
+  const assistants = user
+    ? body.subtasks?.filter(
+        subtask => subtask.role === 'ASSISTANT' && subtask.parent_id === user.message_id
+      )
+    : undefined
+  const statuses = assistants?.map(subtask => subtask.status.toUpperCase()) ?? []
+  return (
+    statuses.find(status => !expected.test(status)) ?? statuses[0] ?? 'CURRENT_TURN_NOT_CREATED'
+  )
+}
+
 export async function waitForTaskTerminal(
   token: string,
   taskId: number,
-  expected: RegExp = /^COMPLETED/
+  expected: RegExp = /^COMPLETED/,
+  currentTurnPrompt?: string
 ): Promise<string> {
   const runtimeRequest = await playwrightRequest.newContext({
     extraHTTPHeaders: authHeaders(token),
@@ -352,7 +380,7 @@ export async function waitForTaskTerminal(
           let response
           try {
             response = await runtimeRequest.get(
-              `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`
+              `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}${currentTurnPrompt === undefined ? '/runtime-check' : ''}`
             )
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
@@ -360,8 +388,11 @@ export async function waitForTaskTerminal(
             return `TRANSPORT_ERROR_${message}`
           }
           if (response.status() !== 200) return `HTTP_${response.status()}`
-          const body = (await response.json()) as { task_status: string }
-          finalStatus = body.task_status.toUpperCase()
+          const body = (await response.json()) as TaskTerminalSnapshot
+          finalStatus =
+            currentTurnPrompt === undefined
+              ? (body.task_status?.toUpperCase() ?? 'TASK_STATUS_MISSING')
+              : currentTurnStatus(body, currentTurnPrompt, expected)
           return finalStatus
         },
         { timeout: 60_000, message: `Task ${taskId} should reach ${expected}` }
