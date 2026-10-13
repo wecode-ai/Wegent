@@ -28,6 +28,14 @@ describe('device workspace path helpers', () => {
     expect(executorWorkspaceRoot('/workspace')).toBe('/workspace')
   })
 
+  test.each([
+    ['\\\\?\\D:\\projects', 'D:/'],
+    ['\\\\?\\UNC\\server\\share\\projects', '//server/share'],
+  ])('keeps the Windows root when locating the executor workspace %s', (path, root) => {
+    expect(executorWorkspaceRoot(path)).toBe(root)
+    expect(joinDevicePath(root, 'worktrees', '42')).toBe(`${root.replace(/\/$/, '')}/worktrees/42`)
+  })
+
   test('builds managed worktree paths beside executor projects', () => {
     expect(
       buildManagedWorktreePath({

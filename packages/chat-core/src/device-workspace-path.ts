@@ -1,8 +1,13 @@
+import { normalizeAbsoluteWorkspacePath } from './workspace-file-contract'
+
 const PARENT_TRAVERSAL_ERROR = 'Workspace path cannot contain parent traversal'
 
 export function normalizeDevicePath(path: string): string {
   const trimmed = path.trim().replace(/\\/g, '/')
   if (!trimmed) return ''
+  if (/^[a-z]:\//i.test(trimmed) || trimmed.startsWith('//')) {
+    return normalizeAbsoluteWorkspacePath(trimmed, PARENT_TRAVERSAL_ERROR)
+  }
 
   const absolute = trimmed.startsWith('/')
   const segments: string[] = []
@@ -32,15 +37,13 @@ export function normalizeRelativeWorkspacePath(path: string): string {
 
 export function joinDevicePath(root: string, ...segments: string[]): string {
   const normalizedRoot = normalizeDevicePath(root)
-  const absolute = normalizedRoot.startsWith('/') || root.trim().startsWith('/')
-  const parts = [
-    absolute ? normalizedRoot.replace(/^\/+|\/+$/g, '') : normalizedRoot,
-    ...segments.map(segment => normalizeRelativeWorkspacePath(segment)),
-  ].filter(Boolean)
-
-  const joined = parts.join('/')
-  if (absolute) return joined ? `/${joined}` : '/'
-  return joined
+  const suffix = segments
+    .map((segment) => normalizeRelativeWorkspacePath(segment))
+    .filter(Boolean)
+    .join('/')
+  if (!suffix) return normalizedRoot
+  if (!normalizedRoot) return suffix
+  return `${normalizedRoot.replace(/\/+$/, '')}/${suffix}`
 }
 
 export function devicePathBasename(path: string, fallback = 'project'): string {
@@ -53,6 +56,8 @@ export function devicePathDirname(path: string): string {
   const segments = normalized.split('/').filter(Boolean)
   if (segments.length <= 1) return absolute ? '/' : ''
   const dirname = segments.slice(0, -1).join('/')
+  if (normalized.startsWith('//')) return `//${dirname}`
+  if (/^[a-z]:$/i.test(dirname)) return `${dirname}/`
   return absolute ? `/${dirname}` : dirname
 }
 
@@ -76,6 +81,6 @@ export function buildManagedWorktreePath({
     executorWorkspaceRoot(projectWorkspaceRoot),
     'worktrees',
     String(worktreeId),
-    devicePathBasename(sourceWorkspacePath)
+    devicePathBasename(sourceWorkspacePath),
   )
 }
