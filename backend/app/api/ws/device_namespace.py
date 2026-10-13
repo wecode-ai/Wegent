@@ -1748,7 +1748,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
         session["runtime_transfer_port"] = runtime_transfer_port
         session["runtime_instance_id"] = payload.runtime_instance_id
         session["device_type"] = payload.device_type.value
-        session["execution_target_id"] = payload.app_device_id or payload.device_id
+        session["execution_target_id"] = (
+            route_id
+            if payload.device_type == DeviceType.APP
+            else payload.app_device_id or payload.device_id
+        )
         session["registered"] = True
 
         device_room = f"device:{user_id}:{route_id}"
