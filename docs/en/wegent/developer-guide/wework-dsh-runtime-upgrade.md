@@ -170,3 +170,5 @@ the retiring process so subsequent requests continue waiting for exit. Terminati
 or exit-confirmation failures propagate rather than reporting successful restart.
 Windows process-tree termination runs in a blocking task, preserving existing
 active-turn, pending-request, and forced-restart semantics.
+
+Failed-directory diagnostics add only the actual reported Gitdir UTF-16 length, existence, and membership under the current common directory worktrees metadata, without exposing paths. Desktop startup reuses existing phase logging for the main module, instance lock, Electron readiness, renderer initialization, and controller registration. Renderer logs use the shared structured phase format so the host retains them. Phase records do not replace real controller connection, application readiness, or startup-budget assertions.

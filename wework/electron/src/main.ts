@@ -156,6 +156,8 @@ import { isEffectivePackagedApplication } from './host/application-packaging-mod
 import { normalizeWeworkSyncApiBaseUrl, requestWeworkSync } from './host/wework-sync-request.js'
 import { fixedWorkspaceWindowDescriptors } from './host/fixed-workspace-window-restore.js'
 
+logStartupStep('electron-main-module', 'completed')
+
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
   name: string
@@ -239,6 +241,7 @@ const singleInstanceData = {
   workspaceOpenRequest: startupWorkspaceOpenRequest,
 }
 let hasSingleInstanceLock: boolean
+logStartupStep('desktop-instance-lock', 'started')
 if (desktopDataPaths) {
   try {
     const migrated = await initializeWorkbenchDesktopData({
@@ -281,6 +284,8 @@ if (desktopDataPaths) {
   hasSingleInstanceLock = app.requestSingleInstanceLock(singleInstanceData)
   if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 }
+
+logStartupStep('desktop-instance-lock', 'completed', { acquired: hasSingleInstanceLock })
 
 let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
@@ -770,6 +775,8 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
           assets: resources.map(entry => ({
             path: new URL(entry.name).pathname,
             bytes: entry.decodedBodySize,
+            responseStatus: entry.responseStatus ?? null,
+            transferBytes: entry.transferSize,
           })),
           slowest: resources.sort((left, right) => right.duration - left.duration)
             .slice(0, 5).map(entry => ({
@@ -2088,6 +2095,7 @@ function startDesktopRuntime(createStartupWindow?: () => Promise<void>): Promise
 }
 
 if (hasSingleInstanceLock) {
+  logStartupStep('electron-ready', 'started')
   app.whenReady().then(async () => {
     logStartupStep('electron-ready', 'completed')
     if (process.platform === 'darwin' && app.dock && developmentDockIdentity) {

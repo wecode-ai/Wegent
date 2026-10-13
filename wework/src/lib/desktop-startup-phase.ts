@@ -1,6 +1,14 @@
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 
 type DesktopStartupPhase =
+  | 'renderer-entry'
+  | 'renderer-storage-initialize'
+  | 'react-mount'
+  | 'renderer-startup'
+  | 'wework-mount'
+  | 'automation-bridge-install'
+  | 'controller-client'
+  | 'controller-register'
   | 'app-gate'
   | 'home-module-import'
   | 'core-app-module-import'

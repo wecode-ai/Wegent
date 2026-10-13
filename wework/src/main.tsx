@@ -1,3 +1,4 @@
+import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 import { initializeProviderModelConfiguration } from '@/features/model-settings/providerModelConfiguration'
 import './i18n'
 import { Profiler, StrictMode } from 'react'
@@ -28,20 +29,7 @@ interface WeworkAppRuntime {
   mount(container: HTMLElement, context: Context): Promise<() => void>
 }
 
-const rendererStartupStartedAt = performance.now()
-
-function logRendererStartupStep(
-  step: string,
-  status: 'started' | 'completed' | 'failed',
-  details: Record<string, unknown> = {}
-): void {
-  console.info('[startup][renderer]', {
-    step,
-    status,
-    elapsedMs: Math.round(performance.now() - rendererStartupStartedAt),
-    ...details,
-  })
-}
+markDesktopStartupPhase('renderer-entry', 'completed')
 
 declare global {
   interface Window {
@@ -66,7 +54,7 @@ if (!isSystemDragPanel) {
 const performanceDiagnostics = isSystemDragPanel ? null : installPerformanceDiagnostics()
 
 async function mountApp(container: HTMLElement, context: Context | null): Promise<() => void> {
-  logRendererStartupStep('react-mount', 'started')
+  markDesktopStartupPhase('react-mount', 'started')
   const root = createRoot(container)
   root.render(
     <StrictMode>
@@ -81,14 +69,12 @@ async function mountApp(container: HTMLElement, context: Context | null): Promis
       </DshClientContextProvider>
     </StrictMode>
   )
-  logRendererStartupStep('react-mount', 'completed')
+  markDesktopStartupPhase('react-mount', 'completed')
   return () => root.unmount()
 }
 
 function renderStartupFailure(container: HTMLElement, error: unknown): void {
-  logRendererStartupStep('renderer-startup', 'failed', {
-    errorType: error instanceof Error ? error.name : typeof error,
-  })
+  markDesktopStartupPhase('renderer-startup', 'failed')
   console.error('[Wework] Failed to initialize the desktop frontend:', error)
   void invokeDesktopHost<void>('renderer.startupFailed').catch(startupError => {
     console.error('[Wework] Failed to report desktop startup failure:', startupError)
@@ -117,43 +103,39 @@ function renderStartupFailure(container: HTMLElement, error: unknown): void {
 }
 
 const desktopStorageReady = (async () => {
-  logRendererStartupStep('renderer-storage-initialize', 'started')
+  markDesktopStartupPhase('renderer-storage-initialize', 'started')
   try {
     await initializeDesktopLocalStoragePersistence()
     await initializeProviderModelConfiguration()
-    logRendererStartupStep('renderer-storage-initialize', 'completed')
+    markDesktopStartupPhase('renderer-storage-initialize', 'completed')
     return null
   } catch (error) {
-    logRendererStartupStep('renderer-storage-initialize', 'failed', {
-      errorType: error instanceof Error ? error.name : typeof error,
-    })
+    markDesktopStartupPhase('renderer-storage-initialize', 'failed')
     return error
   }
 })()
 
 async function mountWework(container: HTMLElement, context: Context | null): Promise<() => void> {
-  logRendererStartupStep('wework-mount', 'started')
+  markDesktopStartupPhase('wework-mount', 'started')
   const storageError = await desktopStorageReady
   if (storageError !== null) {
     renderStartupFailure(container, storageError)
     return () => {}
   }
   if (!isSystemDragPanel && isWeworkAutomationEnabled()) {
-    logRendererStartupStep('automation-bridge-install', 'started')
+    markDesktopStartupPhase('automation-bridge-install', 'started')
     try {
       const { installWeworkAutomationBridge } = await import('./e2e/automation')
       await installWeworkAutomationBridge()
-      logRendererStartupStep('automation-bridge-install', 'completed')
+      markDesktopStartupPhase('automation-bridge-install', 'completed')
     } catch (error) {
-      logRendererStartupStep('automation-bridge-install', 'failed', {
-        errorType: error instanceof Error ? error.name : typeof error,
-      })
+      markDesktopStartupPhase('automation-bridge-install', 'failed')
       console.error('[Wework] Failed to install the automation bridge:', error)
     }
   }
   try {
     const unmount = await mountApp(container, context)
-    logRendererStartupStep('wework-mount', 'completed')
+    markDesktopStartupPhase('wework-mount', 'completed')
     return unmount
   } catch (error) {
     renderStartupFailure(container, error)

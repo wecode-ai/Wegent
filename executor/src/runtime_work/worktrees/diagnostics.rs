@@ -90,6 +90,23 @@ fn git_worktree_failure_fields(
         ("repository_error_form", form.to_owned()),
         ("failed_gitdir_role", role.to_owned()),
     ];
+    if let Some(failed) = failed_gitdir {
+        let worktrees_prefix = format!("{}/worktrees/", normalize(&common_dir.to_string_lossy()));
+        fields.extend([
+            (
+                "failed_gitdir_utf16_len",
+                failed.encode_utf16().count().to_string(),
+            ),
+            (
+                "failed_gitdir_exists",
+                Path::new(failed).exists().to_string(),
+            ),
+            (
+                "failed_gitdir_under_common_worktrees",
+                normalize(failed).starts_with(&worktrees_prefix).to_string(),
+            ),
+        ]);
+    }
     for (length_key, exists_key, path) in [
         ("source_utf16_len", "source_exists", source),
         ("target_utf16_len", "target_exists", target),
@@ -147,6 +164,33 @@ fn safe_error_kind(error: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_repository_failure_measures_the_actual_linked_metadata_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("private-source");
+        let common_dir = source.join(".git");
+        let target = root.path().join("private-target");
+        let metadata = common_dir.join("worktrees/private-metadata-😀");
+        std::fs::create_dir_all(&metadata).unwrap();
+        let error = format!("fatal: not a git repository: {}", metadata.display());
+        let fields = git_worktree_failure_fields(&source, &target, &common_dir, &error);
+        assert!(fields.contains(&(
+            "failed_gitdir_utf16_len",
+            metadata
+                .to_string_lossy()
+                .encode_utf16()
+                .count()
+                .to_string()
+        )));
+        assert!(fields.contains(&("failed_gitdir_exists", "true".to_owned())));
+        assert!(fields.contains(&("failed_gitdir_under_common_worktrees", "true".to_owned())));
+        assert!(fields.contains(&("failed_gitdir_role", "unknown".to_owned())));
+        assert!(fields.iter().all(|(_, value)| !value.contains("private")));
+        std::fs::remove_dir(&metadata).unwrap();
+        let missing = git_worktree_failure_fields(&source, &target, &common_dir, &error);
+        assert!(missing.contains(&("failed_gitdir_exists", "false".to_owned())));
+    }
 
     #[test]
     fn git_repository_failure_distinguishes_discovery_from_explicit_gitdir() {

@@ -1,3 +1,4 @@
+import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { createElementFrameSampler } from './element-frame-metrics'
@@ -3156,6 +3157,7 @@ async function postDesktopControlStarted(
 }
 
 async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
+  markDesktopStartupPhase('controller-client', 'started')
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
@@ -3164,15 +3166,18 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     })
   let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
+  markDesktopStartupPhase('controller-register', 'started')
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
   })
   if (!readyResponse.ok) {
+    markDesktopStartupPhase('controller-register', 'failed')
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }
 
+  markDesktopStartupPhase('controller-register', 'completed')
   while (true) {
     try {
       const response = await commandRequest

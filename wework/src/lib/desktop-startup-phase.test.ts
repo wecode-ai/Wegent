@@ -60,6 +60,22 @@ describe('desktop startup phase diagnostics', () => {
     expect(info).toHaveBeenCalledTimes(1)
   })
 
+  test.each([
+    'renderer-entry',
+    'renderer-storage-initialize',
+    'automation-bridge-install',
+    'controller-client',
+    'controller-register',
+  ] as const)('persists the %s boundary without exposing control configuration', phase => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    markDesktopStartupPhase(phase, 'started', { ...{ controlUrl: 'private', token: 'private' } })
+    markDesktopStartupPhase(phase, 'completed')
+    expect(recordedPhases(info)).toEqual([
+      { phase, status: 'started', navigationTimeMs: expect.any(Number) },
+      { phase, status: 'completed', navigationTimeMs: expect.any(Number) },
+    ])
+  })
+
   test.each(['plugins/wework-ui-home-developer.js', 'plugins/wework-ui-core-apps.js'])(
     'records one import interval for %s while preserving its shared promise and loaded cache',
     async modulePath => {

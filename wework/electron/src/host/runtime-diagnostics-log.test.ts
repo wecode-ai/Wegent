@@ -65,6 +65,11 @@ test('persists task diagnostics from separate renderer surfaces without recordin
       'http://127.0.0.1:1234/wework/app/assets/initial-renderer.js?token=source-private-token'
     )
     await log.record(
+      1,
+      'Uncaught ReferenceError: private-runtime-message http://127.0.0.1/private-api-secret-path?token=private-message-token',
+      'http://127.0.0.1/private-source-secret-path?token=private-source-token'
+    )
+    await log.record(
       2,
       '[Wework] Runtime task create diagnostic {"stage":"pane-waiting-state","taskId":"runtime-1","waiting":false}'
     )
@@ -76,6 +81,13 @@ test('persists task diagnostics from separate renderer surfaces without recordin
     expect(contents).toContain('web_contents_id=2')
     expect(contents).toContain('web_contents_id=3')
     expect(contents).toContain('"waiting":false')
+    expect(contents).toContain('"failure":"Uncaught ReferenceError"')
+    expect(contents).toContain('"failure":"Uncaught ReferenceError","paths":[]')
+    expect(contents).not.toContain('private-api-secret-path')
+    expect(contents).not.toContain('private-source-secret-path')
+    expect(contents).not.toContain('private-message-token')
+    expect(contents).not.toContain('private-runtime-message')
+    expect(contents).not.toContain('private-source-token')
     expect(contents).not.toContain('unrelated console output')
     expect(contents).toContain('[startup][renderer-phase]')
     expect(contents).toContain('"phase":"core-app-module-import"')

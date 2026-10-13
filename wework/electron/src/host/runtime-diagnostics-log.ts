@@ -64,6 +64,16 @@ export class RuntimeDiagnosticsLog {
       await this.log.write('stdout', `web_contents_id=${contentsId} ${streamMessage}`)
       return
     }
+    const uncaught = message.match(
+      /^Uncaught(?: \(in promise\))? (?:SyntaxError|ReferenceError|TypeError|Error)/
+    )?.[0]
+    if (uncaught) {
+      await this.log.write(
+        'stderr',
+        `web_contents_id=${contentsId} ${JSON.stringify({ failure: uncaught, paths: [] })}`
+      )
+      return
+    }
     const failure = message.match(
       /Failed to (?:load module script|fetch dynamically imported module)|Importing a module script failed|Expected a JavaScript(?:-or-Wasm)? module script/
     )?.[0]
