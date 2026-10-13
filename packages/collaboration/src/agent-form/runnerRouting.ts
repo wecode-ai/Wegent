@@ -70,8 +70,7 @@ export function cloudRunnerModels(models: UnifiedModel[]): RunnerModel[] {
       model.resourceUserId == null
     )
       return []
-    const runtimes: RunnerModelIdentity['runtime'][] =
-      protocol === 'anthropic-messages' ? ['codex', 'claude_code'] : ['codex']
+    const runtimes: RunnerModelIdentity['runtime'][] = ['codex', 'claude_code']
     return runtimes.map(runtime => ({
       runtime,
       source: 'cloud' as const,

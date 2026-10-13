@@ -95,10 +95,14 @@ def group_scenario(scenario, monkeypatch):
     monkeypatch.setattr(
         loop_item_execution_service,
         "_runtime_profile_and_context",
-        lambda *_args, **_kwargs: (
+        lambda _db, *, execution: (
             SimpleNamespace(build_runtime_request=builder),
-            context,
+            {**context, **execution.runtime_origin_context},
         ),
+    )
+    monkeypatch.setattr(
+        "app.services.loop_item_executions.service.notify_execution_lifecycle",
+        MagicMock(),
     )
     s.db.commit()
     return s

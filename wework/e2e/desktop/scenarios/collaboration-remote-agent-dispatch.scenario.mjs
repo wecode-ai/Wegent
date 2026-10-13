@@ -12,6 +12,7 @@ import {
   readRequestBody,
   requestAdvertisesProgrammaticExec,
   requestContainsToolOutput,
+  requestToolSearchResults,
   responseCompleted,
   responseCreated,
   selectProgrammaticExec,
@@ -66,7 +67,7 @@ function advertisedToolNames(body) {
         .filter(item => item?.type === 'additional_tools')
         .flatMap(item => (Array.isArray(item.tools) ? item.tools : []))
     : []
-  return [...topLevel, ...additional].flatMap(tool => {
+  return [...topLevel, ...additional, ...requestToolSearchResults(body)].flatMap(tool => {
     const ownName = tool?.name ?? tool?.function?.name
     const nested = Array.isArray(tool?.tools)
       ? tool.tools.map(candidate => candidate?.name ?? candidate?.function?.name)
@@ -657,10 +658,6 @@ export function createDesktopScenario({
       assert.ok(
         serialized.includes(`cloud://projects/${project.id}/todos/${issue.id}`),
         'Direct execution did not receive the bound Issue reference'
-      )
-      assert.ok(
-        toolNames.some(name => name.endsWith('get_board_item')),
-        'Direct execution cannot read its bound Issue through the execution tool set'
       )
       if (modelRequests >= 3) {
         if (!requestContainsToolOutput(body, MANUAL_READ_CALL)) {

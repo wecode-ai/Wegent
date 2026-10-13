@@ -82,11 +82,6 @@ def require_cloud_model(db: Session, user_id: int, model: ModelIdentity) -> dict
             "RUNNER_MODEL_UNAVAILABLE",
             "The cloud model is unavailable, misconfigured, or no longer authorized for this user",
         ) from error
-    if model.runtime == "claude_code" and protocol != "anthropic-messages":
-        raise routing_error(
-            "RUNNER_RUNTIME_MISMATCH",
-            "Claude Code requires an Anthropic Messages model",
-        )
     return {
         "weworkCloudModelNamespace": ref.namespace,
         "weworkCloudModelResourceUserId": str(ref.resource_user_id),
@@ -114,3 +109,23 @@ def execution_model_values(
         {"runnerModelProvider": native.provider},
         native.account_label,
     )
+
+
+def fixed_model_config(db: Session, user_id: int, model: ModelIdentity) -> dict:
+    """Compile an agent policy through the same gateway as explicit selections."""
+    if model.source == "native":
+        return {"model_id": model.model_id, "model_provider": model.provider}
+
+    from app.services.runtime_work_service import _runtime_model_override_values
+
+    options = require_cloud_model(db, user_id, model)
+    ref = model.cloud_model
+    config, _, _ = _runtime_model_override_values(
+        db=db,
+        user_id=user_id,
+        runtime=model.runtime,
+        model_id=ref.name,
+        model_type=ref.type,
+        model_options=options,
+    )
+    return config

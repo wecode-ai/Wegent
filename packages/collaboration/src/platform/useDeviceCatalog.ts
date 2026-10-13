@@ -49,7 +49,9 @@ export function useDeviceCatalog(
   // Cloud records carry the registered identity; local-only runners remain usable locally.
   const devices = new Map<string, CollaborationExecutionEnvironment>()
   const identity = (device: CollaborationExecutionEnvironment) =>
-    device.device_key?.trim() || `device:${device.device_id ?? device.id}`
+    device.app_device_id?.trim() ||
+    device.device_key?.trim() ||
+    `device:${device.device_id ?? device.id}`
   const localKeys = new Set((local.items ?? []).map(identity))
   for (const device of local.items ?? []) devices.set(identity(device), device)
   for (const device of cloud.items ?? []) {

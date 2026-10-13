@@ -166,11 +166,16 @@ export async function initializeProjectExecutionEnvironment(page: Page): Promise
     await expect(candidate).toBeVisible()
     await candidate.click()
   }
+  await expect(initialize.first()).toBeAttached()
+  const initializeId = await initialize.first().getAttribute('data-testid')
+  expect(initializeId).toBeTruthy()
+  await page.getByTestId(initializeId!.replace('-initialize-', '-actions-toggle-')).click()
   await expect(initialize.first()).toBeVisible()
   await initialize.first().click()
-  await expect(
-    page.getByTestId('collaboration-project-execution-environment-completion-status')
-  ).toHaveAttribute('data-state', 'ready')
+  await expect(page.getByTestId(initializeId!.replace('-initialize-', '-'))).toHaveAttribute(
+    'data-preparation-state',
+    'ready'
+  )
   await page.getByTestId('collaboration-tab-board').click()
 }
 
@@ -178,8 +183,7 @@ export async function addProjectMember(page: Page, userName: string): Promise<st
   await page.getByTestId('cloud-todo-detail-close').click()
   await expect(page.getByTestId('collaboration-issue-detail')).toHaveCount(0)
   await page.getByTestId('collaboration-tab-manage').click()
-  await page.getByTestId('collaboration-project-settings-participants').click()
-  await page.getByTestId('collaboration-participants-tab-members').click()
+  await page.getByTestId('collaboration-project-settings-members').click()
   await page.getByTestId('cloud-project-members-toggle').click()
   await page.getByTestId('cloud-member-search').fill(userName)
   await page.getByTestId('cloud-member-role').selectOption('Developer')
@@ -208,8 +212,7 @@ export async function createProjectAgent(
     await expect(issueDetail).toHaveCount(0)
   }
   await page.getByTestId('collaboration-tab-manage').click()
-  await page.getByTestId('collaboration-project-settings-participants').click()
-  await page.getByTestId('collaboration-participants-tab-agents').click()
+  await page.getByTestId('collaboration-project-settings-agents').click()
   await page.getByTestId('project-agent-add').click()
   await page.getByTestId('project-agent-mode-create').click()
   await expect(page.getByTestId('web-agent-resource-creator')).toBeVisible()
@@ -246,7 +249,7 @@ export async function createCollaborationGroup(
     leader: { id: string; type: 'agent' | 'human' }
   }
 ): Promise<string> {
-  await page.getByTestId('collaboration-participants-tab-groups').click()
+  await page.getByTestId('collaboration-project-settings-groups').click()
   await page.getByTestId('collaboration-group-open-create').click()
   await page.getByTestId('collaboration-group-name').fill(name)
   await page.getByTestId('collaboration-group-create-add-members').click()

@@ -3861,7 +3861,8 @@ describe("CollaborationPlatformApp real component flow", () => {
     const current = {
       ...environment,
       id: "current",
-      device_key: "current-runtime",
+      device_key: "app-record-42",
+      app_device_id: "current-runtime",
       name: "Z current",
     };
     const other = (id: string, name: string, status: "online" | "offline") => ({
@@ -3882,7 +3883,12 @@ describe("CollaborationPlatformApp real component flow", () => {
       initialResources: { agents: [], execution_environments: catalog },
     });
     api.resources!.devices.local = vi.fn(async () => [
-      { ...current, id: "local-placeholder", is_current_device: true },
+      {
+        ...current,
+        id: "local-placeholder",
+        device_key: "current-runtime",
+        is_current_device: true,
+      },
     ]);
     const manageResource = vi.fn();
     await render(

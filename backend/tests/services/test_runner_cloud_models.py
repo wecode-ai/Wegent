@@ -95,20 +95,23 @@ def test_same_name_cannot_substitute_another_resource_owner(
     resolve.assert_not_called()
 
 
-def test_claude_requires_anthropic_messages(test_db, test_user, cloud_model, mocker):
+@pytest.mark.parametrize(
+    "protocol", ["openai-responses", "openai-chat-completions", "anthropic-messages"]
+)
+def test_claude_preserves_upstream_protocol_for_executor_bridge(
+    test_db, test_user, cloud_model, mocker, protocol
+):
     mocker.patch(
         "app.services.llm_proxy_service.resolve_llm_proxy_model_config",
-        return_value={"protocol": "openai-responses"},
+        return_value={"protocol": protocol},
     )
 
-    with pytest.raises(HTTPException) as error:
-        require_cloud_model(
-            test_db,
-            test_user.id,
-            cloud_model.model_copy(update={"runtime": "claude_code"}),
-        )
-
-    assert error.value.detail["error_code"] == "RUNNER_RUNTIME_MISMATCH"
+    options = require_cloud_model(
+        test_db,
+        test_user.id,
+        cloud_model.model_copy(update={"runtime": "claude_code"}),
+    )
+    assert options["weworkCloudModelUpstreamApiFormat"] == protocol
 
 
 @pytest.mark.parametrize("source", ["native", "cloud"])
@@ -212,3 +215,81 @@ def test_routed_team_materializes_current_model_without_a_stored_model(
     assert execution.user["id"] == test_user.id
     assert execution.team_id == team.id
     assert "modelRef" not in bot.json["spec"]
+
+
+@pytest.mark.parametrize("source", ["native", "cloud"])
+def test_fixed_bot_policy_resolves_without_legacy_model_binding(
+    test_db, test_user, cloud_model, mocker, source
+):
+    from types import SimpleNamespace
+
+    from app.services.execution.request_builder import TaskRequestBuilder
+
+    identity = (
+        cloud_model.model_copy(update={"source": "native", "cloud_model": None})
+        if source == "native"
+        else cloud_model
+    )
+    bot = SimpleNamespace(
+        json={
+            "spec": {"model_policy": {"mode": "fixed", "model": identity.model_dump()}}
+        }
+    )
+    expected = {"model_id": "cloud-model", "api_key": "current-user-gateway-token"}
+    if source == "cloud":
+        mocker.patch(
+            "app.services.llm_proxy_service.resolve_llm_proxy_model_config",
+            return_value={"protocol": "openai-responses"},
+        )
+        gateway = mocker.patch(
+            "app.services.chat.trigger.request_preparation._build_cloud_gateway_model_config",
+            return_value=expected.copy(),
+        )
+    result = TaskRequestBuilder(test_db)._get_model_config(
+        bot=bot,
+        user_id=test_user.id,
+        user_name="user",
+        override_model_name=None,
+        force_override=False,
+        task_id=1,
+        team_id=1,
+    )
+    if source == "native":
+        assert result == {
+            "model_id": identity.model_id,
+            "model_provider": identity.provider,
+        }
+    else:
+        assert result["model_id"] == expected["model_id"]
+        assert result["api_key"] == expected["api_key"]
+        assert gateway.call_args.kwargs["creator"].id == test_user.id
+
+
+def test_user_selected_bot_policy_requires_runtime_selection(test_db, test_user):
+    from types import SimpleNamespace
+
+    from app.services.execution.request_builder import TaskRequestBuilder
+
+    bot = SimpleNamespace(json={"spec": {"model_policy": {"mode": "user_select"}}})
+    builder = TaskRequestBuilder(test_db)
+    with pytest.raises(HTTPException) as error:
+        builder._get_model_config(
+            bot=bot,
+            user_id=test_user.id,
+            user_name="user",
+            override_model_name=None,
+            force_override=False,
+            task_id=1,
+            team_id=1,
+        )
+    assert error.value.detail["error_code"] == "RUNNER_MODEL_REQUIRED"
+    assert builder._get_model_config(
+        bot=bot,
+        user_id=test_user.id,
+        user_name="user",
+        runtime_model_config={"model_id": "chosen"},
+        override_model_name=None,
+        force_override=False,
+        task_id=1,
+        team_id=1,
+    ) == {"model_id": "chosen"}

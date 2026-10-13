@@ -4,7 +4,11 @@ import { ApiError } from '@/api/http'
 import { LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
 
 function executionEnvironmentIdentity(environment: CollaborationExecutionEnvironment): string {
-  return environment.device_key?.trim() || `device:${environment.device_id ?? environment.id}`
+  return (
+    environment.app_device_id?.trim() ||
+    environment.device_key?.trim() ||
+    `device:${environment.device_id ?? environment.id}`
+  )
 }
 
 export function mergeExecutionEnvironmentResources(

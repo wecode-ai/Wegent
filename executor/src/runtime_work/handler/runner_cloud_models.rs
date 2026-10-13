@@ -147,11 +147,6 @@ fn materialize_cloud_payload(
         let protocol = cloud_protocol(model)
             .ok_or_else(|| cloud_error("The cloud model protocol is unavailable"))?;
         let claude = identity["runtime"] == "claude_code";
-        if claude && protocol != "anthropic-messages" {
-            return Err(cloud_error(
-                "Claude Code requires an Anthropic Messages model",
-            ));
-        }
         let base_url = format!(
             "{}/api/runtime-work/llm-responses-proxy",
             backend_url.trim_end_matches('/')
@@ -163,26 +158,20 @@ fn materialize_cloud_payload(
             "X-Wegent-Upstream-Header-wecode-executor": if claude {"claude"} else {"codex"},
             "X-Wegent-Upstream-Header-wecode-source": "wegent-local",
         });
-        let mut config = if claude {
-            let custom_headers = headers
-                .as_object()
-                .expect("headers are an object")
-                .iter()
-                .map(|(key, value)| format!("{key}: {}", value.as_str().unwrap_or_default()))
-                .collect::<Vec<_>>()
-                .join("\n");
-            json!({"model":"claude", "model_id":reference["name"], "wework_model_kind":"cloud",
-                "ANTHROPIC_AUTH_TOKEN":token,"ANTHROPIC_BASE_URL":base_url,"ANTHROPIC_CUSTOM_HEADERS":custom_headers})
-        } else {
-            json!({"model":"openai","model_id":reference["name"],"wework_model_kind":"cloud",
-                "api_format":"responses","protocol":"openai-responses","upstream_api_format":protocol,
-                "base_url":base_url,"api_key":token,"default_headers":headers,
-                "codex_catalog_model_id":model.pointer("/config/codex_catalog_model_id").and_then(Value::as_str).unwrap_or("wework-gpt-5.6-sol"),
-                "codex_responses_compat_proxy":true,"tool_profile":"custom",
-                "native_tool_search":model.pointer("/config/native_tool_search").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
-                "native_namespace_tools":model.pointer("/config/native_namespace_tools").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
-                "runtime_config":{"codex":{"use_user_config":false,"configured":true}}})
-        };
+        let mut config = json!({"model":"openai", "model_id":reference["name"], "wework_model_kind":"cloud",
+            "api_format":"responses", "protocol":"openai-responses", "upstream_api_format":protocol,
+            "base_url":base_url, "api_key":token, "default_headers":headers});
+        if !claude {
+            config.as_object_mut().expect("config is an object").extend(
+                json!({
+                    "codex_catalog_model_id":model.pointer("/config/codex_catalog_model_id").and_then(Value::as_str).unwrap_or("wework-gpt-5.6-sol"),
+                    "codex_responses_compat_proxy":true,"tool_profile":"custom",
+                    "native_tool_search":model.pointer("/config/native_tool_search").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
+                    "native_namespace_tools":model.pointer("/config/native_namespace_tools").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
+                    "runtime_config":{"codex":{"use_user_config":false,"configured":true}}
+                }).as_object().expect("Codex config is an object").clone()
+            );
+        }
         if let Some(window) = model
             .get("contextWindow")
             .and_then(Value::as_u64)
@@ -288,31 +277,32 @@ mod tests {
     }
 
     #[test]
-    fn claude_cloud_models_require_messages_and_use_the_same_user_gateway() {
-        let mut payload = cloud_payload("claude_code");
-        assert!(materialize_cloud_payload(
-            &mut payload,
-            &[model("openai-responses")],
-            "http://test-backend",
-            "token"
-        )
-        .is_err());
-        materialize_cloud_payload(
-            &mut payload,
-            &[model("anthropic-messages")],
-            "http://test-backend",
-            "current-user-token",
-        )
-        .unwrap();
-        let config = &payload["executionRequest"]["model_config"];
-        assert_eq!(config["ANTHROPIC_AUTH_TOKEN"], "current-user-token");
-        assert_eq!(
-            config["ANTHROPIC_BASE_URL"],
-            "http://test-backend/api/runtime-work/llm-responses-proxy"
-        );
-        assert!(config["ANTHROPIC_CUSTOM_HEADERS"]
-            .as_str()
-            .unwrap()
-            .contains("X-Wegent-Model-User-Id: 0"));
+    fn claude_cloud_models_preserve_protocol_for_the_executor_bridge() {
+        for protocol in [
+            "openai-responses",
+            "openai-chat-completions",
+            "anthropic-messages",
+        ] {
+            let mut payload = cloud_payload("claude_code");
+            materialize_cloud_payload(
+                &mut payload,
+                &[model(protocol)],
+                "http://test-backend",
+                "current-user-token",
+            )
+            .unwrap();
+            let config = &payload["executionRequest"]["model_config"];
+            assert_eq!(config["api_key"], "current-user-token");
+            assert_eq!(
+                config["base_url"],
+                "http://test-backend/api/runtime-work/llm-responses-proxy"
+            );
+            assert_eq!(config["upstream_api_format"], protocol);
+            assert_eq!(config["default_headers"]["X-Wegent-Model-User-Id"], "0");
+            assert_eq!(
+                config["default_headers"]["X-Wegent-Upstream-Header-wecode-executor"],
+                "claude"
+            );
+        }
     }
 }

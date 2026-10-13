@@ -67,6 +67,7 @@ def execution_environment_values(
         "workspace_id": workspace_id or grant.entity_id,
         "device_id": device.id,
         "device_key": runtime_device_route_id(device),
+        "app_device_id": spec.get("appDeviceId"),
         "name": str(spec.get("displayName") or device.name),
         "kind": execution_environment_kind(
             str(spec.get("deploymentLocation") or device_type)
@@ -108,6 +109,7 @@ def personal_environment_values(
         "id": str(device.id),
         "device_id": device.id,
         "device_key": runtime_device_route_id(device),
+        "app_device_id": spec.get("appDeviceId"),
         "name": str(spec.get("displayName") or device.name),
         "kind": execution_environment_kind(
             str(spec.get("deploymentLocation") or device_type)

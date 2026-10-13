@@ -50,7 +50,8 @@ def test_workspace_cleanup_sync_adapters_supply_database_session(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
+@pytest.mark.parametrize("catalog", [None, {"runtimes": ["codex"], "models": []}])
+async def test_registered_device_pulls_work_with_socket_identity(monkeypatch, catalog):
     namespace = DeviceNamespace()
     namespace.get_session = AsyncMock(
         return_value={
@@ -69,7 +70,9 @@ async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
 
     monkeypatch.setattr(device_namespace_module, "pull_execution", pull)
 
-    result = await namespace.on_runtime_tasks_pull("socket-1", {})
+    result = await namespace.on_runtime_tasks_pull(
+        "socket-1", {} if catalog is None else {"runner_catalog": catalog}
+    )
 
     assert result == {"success": True, "task": {"execution_id": 268}}
     assert calls == [
@@ -79,6 +82,7 @@ async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
             "runtime_device_id": "cloud-device",
             "runtime_instance_id": "runtime-1",
             "environment": "cloud",
+            "runner_catalog": catalog,
         }
     ]
 
@@ -113,6 +117,7 @@ async def test_app_executor_pulls_local_work_for_its_app_target(monkeypatch):
             "runtime_device_id": "executor-runtime-device",
             "runtime_instance_id": "runtime-1",
             "environment": "local",
+            "runner_catalog": None,
         }
     ]
 

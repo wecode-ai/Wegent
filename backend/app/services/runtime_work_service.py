@@ -4573,25 +4573,9 @@ def _runtime_model_override_values(
             )
         _apply_runtime_cloud_model_options(config, model_options)
         if runtime == "claude_code":
-            if config.get("upstream_api_format") != "anthropic-messages":
-                raise HTTPException(
-                    422, "Claude Code requires an Anthropic Messages model"
-                )
             config["default_headers"][
                 "X-Wegent-Upstream-Header-wecode-executor"
             ] = "claude"
-            config.update(
-                {
-                    "model": "claude",
-                    "protocol": "anthropic-messages",
-                    "ANTHROPIC_AUTH_TOKEN": config["api_key"],
-                    "ANTHROPIC_BASE_URL": config["base_url"],
-                    "ANTHROPIC_CUSTOM_HEADERS": "\n".join(
-                        f"{key}: {value}"
-                        for key, value in config["default_headers"].items()
-                    ),
-                }
-            )
         return config, None, False
     if runtime == "codex" and model_type is None:
         # Centralized V1 adapter for persisted robot records created before

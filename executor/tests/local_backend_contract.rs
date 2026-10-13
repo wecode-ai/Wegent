@@ -820,7 +820,10 @@ async fn registration_pulls_without_publishing_scheduler_capacity() {
 
     let calls = transport.wait_for_calls(2).await;
     assert_eq!(calls[1].event, "runtime.tasks.pull");
-    assert_eq!(calls[1].payload, json!({}));
+    assert_eq!(
+        calls[1].payload,
+        json!({"runner_catalog": {"runtimes": ["codex"], "models": []}})
+    );
     let heartbeats = transport.wait_for_emit_count("device:heartbeat", 1).await;
     assert!(heartbeats[0].payload.get("runtime_capacity").is_none());
     assert_eq!(heartbeats[0].payload["runtime_instance_id"], "runtime-1");
@@ -1238,6 +1241,8 @@ impl RuntimeWorkHandler for QueueRuntimeWorkHandler {
         Box::pin(async move {
             if data.get("method").and_then(Value::as_str) == Some("runtime.capacity.get") {
                 Ok(json!({"limit": 2, "active": 0, "queued": 0}))
+            } else if data.get("method").and_then(Value::as_str) == Some("runtime.runner.catalog") {
+                Ok(json!({"runtimes": ["codex"], "models": []}))
             } else {
                 Ok(json!({"success": true}))
             }

@@ -118,7 +118,7 @@ impl RuntimeWorkRpcHandler {
             Ok(response) => (
                 true,
                 Value::Null,
-                codex_models_with_provider(&response, &provider),
+                codex_models_with_configured_default(&response, &provider, &config),
             ),
             Err(error) => (false, Value::String(error), Vec::new()),
         };
@@ -377,6 +377,58 @@ impl RuntimeWorkRpcHandler {
             .request("account/rateLimits/read", Value::Null)
             .await
             .map_err(|error| AppIpcError::new("codex_rate_limits_unavailable", error))
+    }
+}
+
+fn codex_models_with_configured_default(
+    response: &Value,
+    provider: &CodexModelProviderInfo,
+    config: &Value,
+) -> Vec<Value> {
+    let mut models = codex_models_with_provider(response, provider);
+    if let Some(default) = config.pointer("/config/model").and_then(Value::as_str) {
+        for model in &mut models {
+            let id = model
+                .get("model")
+                .or_else(|| model.get("id"))
+                .and_then(Value::as_str);
+            model["isDefault"] = Value::Bool(id == Some(default));
+        }
+    }
+    models
+}
+
+#[cfg(test)]
+mod configured_default_tests {
+    use super::*;
+
+    #[test]
+    fn configured_model_overrides_the_catalog_recommendation() {
+        let config = json!({"config": {"model": "chosen", "model_provider": "custom"}});
+        let provider = current_codex_model_provider_from_config(&config);
+        let models = codex_models_with_configured_default(
+            &json!({"data": [
+                {"model": "recommended", "isDefault": true},
+                {"model": "chosen", "isDefault": false}
+            ]}),
+            &provider,
+            &config,
+        );
+        assert_eq!(models[0]["isDefault"], false);
+        assert_eq!(models[1]["isDefault"], true);
+        assert_eq!(models[1]["providerId"], "custom");
+    }
+
+    #[test]
+    fn unavailable_configured_model_does_not_choose_a_replacement() {
+        let config = json!({"config": {"model": "removed"}});
+        let provider = current_codex_model_provider_from_config(&config);
+        let models = codex_models_with_configured_default(
+            &json!({"data": [{"model": "recommended", "isDefault": true}]}),
+            &provider,
+            &config,
+        );
+        assert_eq!(models[0]["isDefault"], false);
     }
 }
 

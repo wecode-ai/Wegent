@@ -42,6 +42,10 @@ const environment = (id: string, provider = 'openai'): RunnerEnvironment => ({
 const environments = [environment('a'), environment('b', 'other')]
 
 describe('runner routing', () => {
+  it('offers cloud models to both native runtimes through the executor protocol bridge', () => {
+    expect(cloudModels.map(model => model.runtime)).toEqual(['codex', 'claude_code'])
+    expect(JSON.stringify(cloudModels)).not.toContain('must-not-be-copied')
+  })
   it('keeps native models distinct by stable provider identity', () => {
     const models = policyModels(environments, 'codex', { mode: 'fixed', environment_id: 'a' })
     expect(models).toHaveLength(1)
@@ -118,10 +122,12 @@ describe('runner routing', () => {
   })
 
   it('uses cloud catalogs for automatic and deferred policies, and adds fixed runner models', () => {
-    expect(cloudModels).toHaveLength(1)
+    expect(cloudModels).toHaveLength(2)
     for (const mode of ['project_pool', 'user_select'] as const) {
       expect(policyModels(environments, 'codex', { mode }, cloudModels)).toEqual(
-        cloudModels.map(item => ({ ...item, environments: [] }))
+        cloudModels
+          .filter(item => item.runtime === 'codex')
+          .map(item => ({ ...item, environments: [] }))
       )
     }
     const fixed = policyModels(
