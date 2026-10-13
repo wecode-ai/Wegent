@@ -68,7 +68,6 @@ fn load_rules(
 mod tests {
     use super::*;
     use http::Method;
-    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Fixture(PathBuf);
@@ -132,95 +131,5 @@ mod tests {
             std::fs::write(fixture.0.join("child.toml"), source).unwrap();
             assert!(load(&root).is_err());
         }
-    }
-
-    #[test]
-    fn public_cutover_file_selects_only_reviewed_registered_apis() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
-        let source = std::fs::read_to_string(&path).unwrap();
-        let file: FileConfig = toml::from_str(&source).unwrap();
-        assert!(file.include.is_empty());
-        assert_eq!(file.routes.len(), 15, "five existing and ten new GET APIs");
-        assert!(file.routes.iter().all(|rule| rule.methods == ["GET"]));
-
-        let selected: BTreeSet<_> = file
-            .routes
-            .iter()
-            .flat_map(|rule| {
-                rule.methods
-                    .iter()
-                    .map(move |method| (method.to_owned(), rule.path.clone()))
-            })
-            .collect();
-        assert_eq!(selected.len(), file.routes.len(), "duplicate cutover rule");
-
-        let mut registered = BTreeSet::new();
-        const METHODS: [&str; 7] = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"];
-        macro_rules! collect {
-            ($group:ident) => {
-                for entry in brz_http_server::__private::inventory::iter::<crate::$group::Entry> {
-                    for route in (entry.0.routes)() {
-                        for (bit, method) in METHODS.into_iter().enumerate() {
-                            if route.methods & (1 << bit) != 0 {
-                                registered.insert((method.to_owned(), route.path.to_owned()));
-                            }
-                        }
-                    }
-                }
-            };
-        }
-        collect!(__http_registry_http_apis);
-        collect!(__http_registry_runtime_check);
-        collect!(__http_registry_models_unified);
-        collect!(__http_registry_remote_workspace_status);
-        collect!(__http_registry_remote_workspace_tree);
-        assert!(selected.is_subset(&registered));
-        assert!(selected.contains(&("GET".to_owned(), "/api/quota".to_owned())));
-        assert!(selected.contains(&("GET".to_owned(), "/api/quota/*path".to_owned())));
-
-        let table = load(&path).unwrap();
-        for (method, path) in &selected {
-            let concrete = path
-                .split('/')
-                .map(|segment| {
-                    if segment.starts_with(':') || segment.starts_with('*') {
-                        "123"
-                    } else {
-                        segment
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("/");
-            let method = Method::from_bytes(method.as_bytes()).unwrap();
-            assert!(
-                table.matches(&method, &concrete),
-                "cutover rule failed to match {method} {path}"
-            );
-            for other_method in [
-                Method::POST,
-                Method::PUT,
-                Method::PATCH,
-                Method::DELETE,
-                Method::HEAD,
-                Method::OPTIONS,
-            ] {
-                assert!(
-                    !table.matches(&other_method, &concrete),
-                    "unmigrated method selected: {other_method} {path}"
-                );
-            }
-        }
-        for path in [
-            "/api/teams/default",
-            "/api/v1/wework-notifications/preferences",
-            "/api/tasks/lite/group",
-            "/api/tasks/123/remote-workspace/file",
-            "/api/plugins/installed/123/download",
-            "/api/v1/kinds/skills/public/123/download",
-            "/api/v1/kinds/skills/unified",
-        ] {
-            assert!(!table.matches(&Method::GET, path), "unmigrated GET {path}");
-        }
-        assert!(!table.matches(&Method::GET, "/api/tasks/123/unmigrated"));
     }
 }

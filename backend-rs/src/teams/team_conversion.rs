@@ -14,6 +14,7 @@ use brz_json::RawJson;
 use chrono::NaiveDateTime;
 
 use super::public_model_access;
+use super::team_access_policy::filtered_agent_config;
 use super::teams_repository as repo;
 use super::teams_repository::{KindRow, TeamRow};
 
@@ -458,6 +459,7 @@ pub(crate) fn team_item(
     team: &TeamRow,
     preloaded: &Preloaded,
     default_config: &[(&'static str, String, String)],
+    user_id: i64,
 ) -> TeamItem {
     let crd: TeamCrd = (&team.team_json.0).into();
     let is_group_resource = !team.team_namespace.is_empty() && team.team_namespace != "default";
@@ -640,6 +642,13 @@ pub(crate) fn team_item(
         });
     }
 
+    if team.restricted_guest_access != 0 && team.team_user_id != user_id {
+        for member in &mut item.bots {
+            member.bot_prompt.clear();
+            member.bot.agent_config = filtered_agent_config(&member.bot.agent_config);
+        }
+    }
+
     item
 }
 
@@ -794,3 +803,6 @@ fn datetime_value(value: NaiveDateTime) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod access_policy_tests;
