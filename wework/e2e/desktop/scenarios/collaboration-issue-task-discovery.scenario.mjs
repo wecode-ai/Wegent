@@ -49,6 +49,9 @@ export function createDesktopScenario({
       name: label,
       workspace_id: workspace.id,
     })
+    await request(`/api/v1/workspaces/${workspace.id}/execution-environments`, {
+      device_id: device.id,
+    })
     await request(`/api/v1/cloud-projects/${project.id}/execution-environments`, {
       device_id: device.id,
     })
@@ -89,7 +92,7 @@ export function createDesktopScenario({
     )
     await control.command(
       'waitFor',
-      scoped(`[data-testid="collaboration-project-execution-environment-initialize-${device.id}"]`)
+      scoped(`[data-testid="collaboration-project-execution-environment-${device.id}"]`)
     )
     await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
     await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))

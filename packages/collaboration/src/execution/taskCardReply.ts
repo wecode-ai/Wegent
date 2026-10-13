@@ -121,8 +121,7 @@ export async function dispatchTaskCardReply<
   };
   if (!reply.content.trim())
     return { ok: false, persisted, error: sendFailedText };
-  const serverExecution =
-    project.project_store === "backend" && client.executeTaskComment;
+  const serverExecution = client.executeTaskComment;
   try {
     const text = input.prepareComment
       ? await input.prepareComment(reply.content, attachments)
@@ -136,9 +135,7 @@ export async function dispatchTaskCardReply<
       // runtime address. Mention-driven enqueue is reserved for a new root
       // comment; including the mention here would create a second session.
       mentions: [
-        ...(!serverExecution &&
-        agent &&
-        !(input.selfManagedExecution && address)
+        ...(!serverExecution && agent && !input.selfManagedExecution
           ? [{ type: "agent" as const, id: agent.id, label: agent.name }]
           : []),
         // Members the reply composer mentioned are addressed, not enqueued.
@@ -159,7 +156,9 @@ export async function dispatchTaskCardReply<
           attachmentIds: remoteAttachmentIds(attachments),
         }),
       );
-    } else if (agent && (!input.selfManagedExecution || address)) {
+    } else if (agent) {
+      if (input.selfManagedExecution && !address)
+        throw new Error(startFailedText);
       if (agent.runtime === "wegent") {
         if (!client.continueWegentTask) throw new Error(startFailedText);
         onMessages([

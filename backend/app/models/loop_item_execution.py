@@ -14,6 +14,7 @@ import json
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Column,
     DateTime,
@@ -21,10 +22,14 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    case,
     event,
     func,
     text,
+    type_coerce,
 )
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.db.base import Base
 from shared.models.db.types import big_integer_id_type
@@ -225,6 +230,29 @@ class LoopItemExecution(Base):
         if self.agent_id:
             return "project_robot"
         return "wegent_team" if self.team_id else "generic_robot"
+
+    @hybrid_property
+    def uses_runner_routing(self) -> bool:
+        """Identify routed work from its persisted intent, including in queue SQL."""
+        return isinstance(self.runtime_selection.get("runner_routing"), dict)
+
+    @uses_runner_routing.expression
+    def uses_runner_routing(cls) -> ColumnElement[bool]:
+        # Historical payloads may be empty or malformed; JSON functions must
+        # only inspect valid documents on both MySQL and SQLite.
+        payload = case(
+            (func.json_valid(cls.execution_payload) == 1, cls.execution_payload),
+            else_="{}",
+        )
+        document = type_coerce(payload, JSON)
+        routing = case(
+            (
+                func.lower(func.json_type(document["runtime_selection"])) == "object",
+                document["runtime_selection"]["runner_routing"],
+            ),
+            else_=document["runner_routing"],
+        )
+        return func.coalesce(func.lower(func.json_type(routing)) == "object", False)
 
     @property
     def runtime_selection(self) -> dict:

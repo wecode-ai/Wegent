@@ -56,7 +56,7 @@ import { canEditCollaborationIssue } from "./permissions";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
 import {
-  ProjectCollaborationParticipants,
+  createProjectAiTeamSections,
   ProjectCollaborationGroups,
   ProjectAutomaticProcessing,
   ProjectBoardSettingsDialog,
@@ -997,77 +997,69 @@ export function CollaborationApp({
                           />
                         ),
                       },
-                      {
-                        id: "collaboration-participants",
-                        label: messages.collaborationParticipants,
-                        testId: "collaboration-project-settings-participants",
-                        content: (
-                          <ProjectCollaborationParticipants
+                      ...createProjectAiTeamSections({
+                        translate: translate,
+                        membersContent: (
+                          <CollaborationSettings
+                            api={api}
+                            embedded
+                            project={project}
+                            onChange={commands.replaceProject}
+                            onError={() =>
+                              commands.reportError(messages.saveFailed)
+                            }
                             translate={translate}
-                            membersContent={
-                              <CollaborationSettings
-                                api={api}
-                                embedded
-                                project={project}
-                                onChange={commands.replaceProject}
-                                onError={() =>
-                                  commands.reportError(messages.saveFailed)
-                                }
-                                translate={translate}
-                                section="members"
-                              />
-                            }
-                            agentsContent={
-                              <CollaborationSettings
-                                agentConfigurationHost={
-                                  host.projectAgentConfiguration
-                                }
-                                agentResourceContext={
-                                  host.projectAgentResourceContext
-                                }
-                                api={api}
-                                embedded
-                                project={project}
-                                onChange={commands.replaceProject}
-                                onError={() =>
-                                  commands.reportError(messages.saveFailed)
-                                }
-                                onAgentsChange={() =>
-                                  void commands.refreshProjectAgents(project.id)
-                                }
-                                translate={translate}
-                                section="agents"
-                              />
-                            }
-                            groupsContent={
-                              api.projects.listCollaborationGroups ? (
-                                <ProjectCollaborationGroups
-                                  api={api}
-                                  projectId={project.id}
-                                  workspaceId={project.workspace_id}
-                                  locale={locale}
-                                  members={members}
-                                  agents={agents}
-                                  canManage={
-                                    project.access_role === "Owner" ||
-                                    project.access_role === "Maintainer"
-                                  }
-                                />
-                              ) : (
-                                <div
-                                  className="rounded-xl border border-border bg-surface-subtle px-5 py-4 text-sm text-text-muted"
-                                  data-testid="collaboration-project-groups-unavailable"
-                                >
-                                  {translate(
-                                    "todo.collaboration_groups_unavailable_description",
-                                    "协作小组服务当前不可用。",
-                                  )}
-                                </div>
-                              )
-                            }
+                            section="members"
                           />
                         ),
-                      },
+                        agentsContent: (
+                          <CollaborationSettings
+                            agentConfigurationHost={
+                              host.projectAgentConfiguration
+                            }
+                            agentResourceContext={
+                              host.projectAgentResourceContext
+                            }
+                            api={api}
+                            embedded
+                            project={project}
+                            onChange={commands.replaceProject}
+                            onError={() =>
+                              commands.reportError(messages.saveFailed)
+                            }
+                            onAgentsChange={() =>
+                              void commands.refreshProjectAgents(project.id)
+                            }
+                            translate={translate}
+                            section="agents"
+                          />
+                        ),
+                        groupsContent: api.projects.listCollaborationGroups ? (
+                          <ProjectCollaborationGroups
+                            api={api}
+                            projectId={project.id}
+                            workspaceId={project.workspace_id}
+                            locale={locale}
+                            members={members}
+                            agents={agents}
+                            canManage={
+                              project.access_role === "Owner" ||
+                              project.access_role === "Maintainer"
+                            }
+                          />
+                        ) : (
+                          <div
+                            className="rounded-xl border border-border bg-surface-subtle px-5 py-4 text-sm text-text-muted"
+                            data-testid="collaboration-project-groups-unavailable"
+                          >
+                            {translate(
+                              "todo.collaboration_groups_unavailable_description",
+                              "协作小组服务当前不可用。",
+                            )}
+                          </div>
+                        ),
+                        testIdPrefix: "collaboration-project-settings",
+                      }),
                       {
                         id: "environments",
                         label: messages.projectEnvironments,

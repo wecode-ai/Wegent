@@ -23,6 +23,8 @@ BotRuntime = Literal["codex", "claude_code", "wegent"]
 BotWorkspacePolicy = Literal["project", "git_worktree"]
 WorkspaceBindingType = Literal["backend_project", "device_project", "standalone"]
 
+from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy, RunnerSelection
+
 
 class ProjectChatSchema(BaseModel):
     model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True)
@@ -117,6 +119,9 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     system_prompt: str = Field(default="", max_length=20_000)
     capability_description: str = Field(default="", max_length=2_000)
     capability_mode: BotCapabilityMode = "follow_device"
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
+
     visibility: BotVisibility = "creator_admin"
     execution_environment: BotExecutionEnvironment = "local"
     execution_mode: BotExecutionMode = "auto"
@@ -146,6 +151,9 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     system_prompt: str | None = Field(default=None, max_length=20_000)
     capability_description: str | None = Field(default=None, max_length=2_000)
     capability_mode: BotCapabilityMode | None = None
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
+
     status: Literal["active", "archived"] | None = None
     visibility: BotVisibility | None = None
     execution_environment: BotExecutionEnvironment | None = None
@@ -177,6 +185,8 @@ class ProjectChatAgentView(ProjectChatSchema):
     system_prompt: str
     capability_description: str
     capability_mode: BotCapabilityMode
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
     status: Literal["active", "archived"]
     visibility: BotVisibility
     execution_environment: BotExecutionEnvironment
@@ -200,6 +210,7 @@ class ProjectChatAgentView(ProjectChatSchema):
 class LoopItemAssign(ProjectChatSchema):
     """Assign a loop item to a project member or board robot."""
 
+    runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     notify_self: bool = False
 
@@ -294,6 +305,9 @@ class LoopItemExecutionManagerDecision(ProjectChatSchema):
     loop_item_id: str = Field(min_length=1, max_length=64)
     dispatch_id: str = Field(min_length=1, max_length=255)
     manager_agent_id: str = Field(min_length=1, max_length=128)
+    manager_runtime_task_id: str | None = Field(
+        default=None, min_length=1, max_length=255
+    )
     idempotency_key: str = Field(min_length=1, max_length=255)
     target_status: Literal["inbox", "pending", "in_progress", "in_review", "completed"]
     reason: str = Field(min_length=1, max_length=2_000)
@@ -326,6 +340,7 @@ class LoopItemExecutionAssignmentStatus(ProjectChatSchema):
 
 
 class LoopItemExecutionView(ProjectChatSchema):
+    runner_routing: dict[str, Any] | None = None
     id: int
     workspace_id: SnowflakeId | None = None
     loop_item_id: str
@@ -440,6 +455,7 @@ class ProjectChatCommentExecution(ProjectChatSchema):
 
     project_id: str = Field(min_length=1, max_length=64)
     task_id: str = Field(min_length=1, max_length=64)
+    runner_selection: RunnerSelection | None = None
     trigger_message_id: str = Field(min_length=1, max_length=64)
     attachment_ids: list[int] = Field(default_factory=list, max_length=64)
 

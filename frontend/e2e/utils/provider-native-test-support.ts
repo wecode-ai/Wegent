@@ -6,6 +6,7 @@ import {
   ProviderNativeKnowledgeFixture,
 } from '../fixtures/provider-native-knowledge'
 import { ApiClient, createApiClient, createBackendRequestHeaders } from './api-client'
+import { modelToolDefinitions } from './model-tool-discovery'
 
 export const PROVIDER_NATIVE_API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 export const PROVIDER_NATIVE_MOCK_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -481,16 +482,7 @@ export function modelRequestText(bodies: unknown[]): string {
 }
 
 export function modelToolNames(bodies: Record<string, unknown>[]): string[] {
-  return bodies.flatMap(body => {
-    const tools = Array.isArray(body.tools) ? body.tools : []
-    return tools
-      .map(tool => {
-        if (!tool || typeof tool !== 'object') return ''
-        const value = tool as { name?: string; function?: { name?: string } }
-        return value.function?.name || value.name || ''
-      })
-      .filter(Boolean)
-  })
+  return bodies.flatMap(body => modelToolDefinitions(body).map(tool => tool.name))
 }
 
 export function authHeaders(token: string): Record<string, string> {

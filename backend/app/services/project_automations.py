@@ -199,6 +199,13 @@ class ProjectAutomationService:
             target_id=values.target_id,
         )
         dispatch_target["execution_device_id"] = values.execution_device_id
+        dispatch_target["runner_selection"] = (
+            values.runner_selection.model_dump(exclude_none=True)
+            if values.runner_selection
+            else None
+        )
+        if values.enabled:
+            self._validate_runner_selection(db, project_id, user_id, dispatch_target)
         validate_trigger(values.trigger_type, values.event_type, values.cron_expression)
         event_config = _canonical_event_config(
             values.event_type if values.trigger_type == "event" else None,
@@ -433,6 +440,14 @@ class ProjectAutomationService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Human targets do not use an execution device",
             )
+        if "runner_selection" in values.model_fields_set:
+            dispatch_target["runner_selection"] = (
+                values.runner_selection.model_dump(exclude_none=True)
+                if values.runner_selection
+                else None
+            )
+        if values.enabled if values.enabled is not None else row.status == "enabled":
+            self._validate_runner_selection(db, project_id, user_id, dispatch_target)
         row.assignee_agent_id = ""
         if values.name is not None:
             row.title = values.name
@@ -939,6 +954,7 @@ class ProjectAutomationService:
             "cron_expression": rule_metadata.get("cron_expression"),
             "timezone": str(rule_metadata.get("timezone") or "Asia/Shanghai"),
             "execution_device_id": text(dispatch_target.get("execution_device_id")),
+            "runner_selection": dispatch_target.get("runner_selection"),
             "target_kind": str(dispatch_target["kind"]),
             "target_id": str(dispatch_target["id"]),
             "target_name": str(dispatch_target["name"]),
@@ -956,6 +972,54 @@ class ProjectAutomationService:
             "created_at": _utc_aware(row.created_at, database_timezone),
             "updated_at": _utc_aware(row.updated_at, database_timezone),
         }
+
+    @staticmethod
+    def _validate_runner_selection(
+        db: Session, project_id: str, user_id: int, target: dict
+    ) -> None:
+        if target["kind"] == "collaboration_group":
+            from app.services.runner_routing import resolve_group_routing
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                (
+                    item
+                    for item in workspace_service.list_project_collaboration_groups(
+                        db, project_id, user_id
+                    )
+                    if str(item["id"]) == str(target["id"])
+                ),
+                None,
+            )
+            if group is None:
+                raise HTTPException(422, "Collaboration group is unavailable")
+            resolve_group_routing(
+                db,
+                group=group,
+                project_id=project_id,
+                issue_id="",
+                user_id=user_id,
+                selection=target.get("runner_selection"),
+                automatic=True,
+            )
+            return
+        if target["kind"] != "agent":
+            return
+        from app.services.project_chat.service import compiled_bot_config
+        from app.services.runner_routing import resolve_routing
+
+        agent = project_agent(db, project_id, str(target["id"]))
+        config = compiled_bot_config(db, agent, execution_user_id=user_id)
+        if config.get("execution_policy"):
+            resolve_routing(
+                db,
+                config=config,
+                project_id=project_id,
+                issue_id="",
+                user_id=user_id,
+                selection=target.get("runner_selection"),
+                automatic=True,
+            )
 
     @staticmethod
     def _validate_dispatch_target(

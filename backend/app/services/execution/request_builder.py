@@ -1228,6 +1228,19 @@ class TaskRequestBuilder:
         if runtime_model_config:
             return dict(runtime_model_config)
 
+        policy = (bot.json or {}).get("spec", {}).get("model_policy")
+        if policy is not None:
+            from app.schemas.runner_routing import ModelPolicy
+            from app.services.runner_cloud_models import fixed_model_config
+            from app.services.runner_routing import routing_error
+
+            selected = ModelPolicy.model_validate(policy)
+            if selected.mode != "fixed":
+                raise routing_error(
+                    "RUNNER_MODEL_REQUIRED", "Choose a model before running this agent"
+                )
+            return fixed_model_config(self.db, user_id, selected.model)
+
         from app.services.chat.config.model_resolver import (
             _process_model_config_placeholders,
             get_model_config_for_bot,

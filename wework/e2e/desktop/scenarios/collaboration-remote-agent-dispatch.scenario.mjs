@@ -2,14 +2,18 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
+import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
+import { selectCloudAgentModel } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
   codexRequestKind,
   createSse,
   customToolCall,
+  mcpToolRequestEvents,
   readRequestBody,
   requestAdvertisesProgrammaticExec,
   requestContainsToolOutput,
+  requestToolSearchResults,
   responseCompleted,
   responseCreated,
   selectProgrammaticExec,
@@ -22,7 +26,7 @@ import {
   resultDir,
 } from '../modules/shared.mjs'
 import {
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
 
@@ -64,7 +68,7 @@ function advertisedToolNames(body) {
         .filter(item => item?.type === 'additional_tools')
         .flatMap(item => (Array.isArray(item.tools) ? item.tools : []))
     : []
-  return [...topLevel, ...additional].flatMap(tool => {
+  return [...topLevel, ...additional, ...requestToolSearchResults(body)].flatMap(tool => {
     const ownName = tool?.name ?? tool?.function?.name
     const nested = Array.isArray(tool?.tools)
       ? tool.tools.map(candidate => candidate?.name ?? candidate?.function?.name)
@@ -118,27 +122,6 @@ async function waitForPromise(promise, message, timeoutMs) {
   }
 }
 
-async function selectOptionByLabel(control, selector, label, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let options = []
-  while (Date.now() < deadline) {
-    const count = Number(await control.command('getElementCount', `${selector} option`))
-    options = []
-    for (let index = 1; index <= count; index += 1) {
-      const option = `${selector} option:nth-child(${index})`
-      const optionLabel = await control.command('getText', option)
-      const value = await control.command('getAttribute', option, { value: 'value' })
-      options.push({ label: optionLabel, value })
-      if (optionLabel === label) {
-        await control.command('select', selector, { value })
-        return
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`Option ${label} was not available in ${selector}: ${JSON.stringify(options)}`)
-}
-
 async function createWorkspaceAndProject(control, request, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-workspace-create"]'))
   await control.command('fill', scoped('[data-testid="collaboration-workspace-name-input"]'), {
@@ -185,17 +168,13 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
 }
 
 async function createAgent(control, request, projectId, timeoutMs) {
-  await control.command(
-    'click',
-    scoped('[data-testid="collaboration-project-settings-participants"]')
-  )
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-agents"]'))
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
     timeoutMs,
   })
   await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', { timeoutMs })
   await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: AGENT })
-  await selectOptionByLabel(control, '[data-testid="wework-agent-model"]', MODEL, timeoutMs)
+  await selectCloudAgentModel(control, request, MODEL, timeoutMs)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
     value: `${MARKER}。直接执行当前 Issue，不创建工作流、不调用负责人或协作小组。`,
   })
@@ -304,7 +283,14 @@ async function activityIds(control) {
   return snapshot.testIds.filter(id => id.startsWith(prefix)).map(id => id.slice(prefix.length))
 }
 
-async function verifyManualSessionReply(control, request, issueId, timeoutMs, captureScreenshot) {
+async function verifyManualSessionReply(
+  control,
+  request,
+  cloud,
+  issueId,
+  timeoutMs,
+  captureScreenshot
+) {
   const previousIds = await activityIds(control)
   const previousBindings = await request(`/api/v1/loop-items/${issueId}/tasks`)
   await control.command(
@@ -331,11 +317,31 @@ async function verifyManualSessionReply(control, request, issueId, timeoutMs, ca
     binding => !previousBindings.some(previous => previous.task_id === binding.task_id)
   )
   assert.ok(manualBinding?.task_id, 'Manual execution did not persist its TaskBinding')
+  assert.equal(manualBinding.device_id, REMOTE_DOCKER_DEVICE_ID)
 
+  const persistedMessages = await readProjectChatMessages(cloud, issueId, timeoutMs)
+  const manualResponse = persistedMessages.find(message => message.messageId === rootId)
+  const userRoot = persistedMessages.find(
+    message => message.messageId === manualResponse?.rootMessageId
+  )
+  assert.equal(userRoot?.sender.type, 'user', 'Manual execution must retain its user comment root')
+  assert.equal(manualResponse.triggerMessageId, userRoot.messageId)
+  assert.equal(manualResponse.runtimeAddress.taskId, manualBinding.task_id)
+
+  const cardTestId = await control.command(
+    'getAttribute',
+    scoped(
+      `[data-testid^="cloud-task-activity-card-"]:has([data-testid="cloud-task-activity-execution-badge-${rootId}"])`
+    ),
+    { value: 'data-testid' }
+  )
+  assert.ok(cardTestId?.startsWith('cloud-task-activity-card-'))
+  const executionCardId = cardTestId.slice('cloud-task-activity-card-'.length)
+  assert.equal(executionCardId, rootId, 'The execution must have its own activity card')
   const beforeReply = await activityIds(control)
   await control.command(
     'click',
-    scoped(`[data-testid="cloud-task-activity-reply-toggle-${rootId}"]`)
+    scoped(`[data-testid="cloud-task-activity-reply-toggle-${executionCardId}"]`)
   )
   const composer = scoped('[data-testid="issue-reply-composer"]')
   await control.command('fill', `${composer} [data-testid="cloud-task-activity-composer"]`, {
@@ -356,6 +362,10 @@ async function verifyManualSessionReply(control, request, issueId, timeoutMs, ca
     scoped(`[data-testid="cloud-task-activity-execution-badge-${replyId}"]`),
     { text: '已完成', timeoutMs }
   )
+  const replyMessages = await readProjectChatMessages(cloud, issueId, timeoutMs)
+  const continuedResponse = replyMessages.find(message => message.messageId === replyId)
+  assert.equal(continuedResponse?.rootMessageId, userRoot.messageId)
+  assert.deepEqual(continuedResponse.runtimeAddress, manualResponse.runtimeAddress)
   const afterReply = await request(`/api/v1/loop-items/${issueId}/tasks`)
   assert.deepEqual(
     afterReply.map(binding => [binding.device_id, binding.task_id]).sort(),
@@ -380,6 +390,15 @@ async function verifyConfiguredExecutionEnvironment(
     scoped('[data-testid="collaboration-project-settings-environments"]')
   )
   const repositoryUrl = pathToFileURL(join(resultDir, 'workspace')).href
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation"]:not([open])`)
+  )
+  await control.command('click', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation-toggle"]`))
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation"][open]`)
+  )
   await control.command('click', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-add-repository"]`))
   await control.command('fill', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-repository-url-0"]`), {
     value: repositoryUrl,
@@ -401,6 +420,10 @@ async function verifyConfiguredExecutionEnvironment(
     }
   )
   const initialize = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-initialize-${remoteDeviceId}"]`)
+  await control.command(
+    'click',
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-actions-toggle-${remoteDeviceId}"]`)
+  )
   await control.command('clickWhenEnabled', initialize, { timeoutMs })
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}`),
@@ -452,11 +475,10 @@ async function verifyConfiguredExecutionEnvironment(
   )
   await control.command(
     'waitFor',
-    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-completion-status"]`),
-    {
-      text: '环境已初始化',
-      timeoutMs,
-    }
+    scoped(
+      `[data-testid="${ENVIRONMENT_PREFIX}-${remoteDeviceId}"][data-preparation-state="ready"]`
+    ),
+    { timeoutMs }
   )
   await captureScreenshot(control, 'remote-environment-02-retried-ready.png', CONTENT)
 }
@@ -567,6 +589,7 @@ export function createDesktopScenario({
   let project = null
   let issue = null
   let modelRequests = 0
+  let toolSearchRequests = 0
   let releaseModel
   let resolveModelStarted
   const modelRelease = new Promise(resolve => {
@@ -579,6 +602,7 @@ export function createDesktopScenario({
 
   return {
     requiresCloudEnvironment: true,
+    backendEnv: { WEGENT_BACKEND_PUBLIC_URL: 'http://backend-public-unreachable.invalid:8000' },
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
@@ -657,10 +681,34 @@ export function createDesktopScenario({
         serialized.includes(`cloud://projects/${project.id}/todos/${issue.id}`),
         'Direct execution did not receive the bound Issue reference'
       )
-      assert.ok(
-        toolNames.some(name => name.endsWith('get_board_item')),
-        'Direct execution cannot read its bound Issue through the execution tool set'
-      )
+      if (modelRequests >= 3) {
+        if (!requestContainsToolOutput(body, MANUAL_READ_CALL)) {
+          const selection = mcpToolRequestEvents(body, {
+            toolName: 'get_board_item',
+            argumentsValue: { space_id: project.id, item_id: issue.id },
+            directToolName: toolNames.find(name => name.endsWith('get_board_item')),
+            searchCallId: `${MANUAL_READ_CALL}_SEARCH`,
+            toolCallId: MANUAL_READ_CALL,
+          })
+          if (selection.mode === 'search') {
+            toolSearchRequests += 1
+            assert.equal(toolSearchRequests, 1, 'The Issue tool must be discovered only once')
+          }
+          writeEvents(response, responseId, selection.events)
+          return true
+        }
+        const rawOutput = body.input.find(
+          item =>
+            ['function_call_output', 'mcp_tool_call_output'].includes(item.type) &&
+            item.call_id === MANUAL_READ_CALL
+        )?.output
+        const output = typeof rawOutput === 'string' ? JSON.parse(rawOutput) : rawOutput
+        assert.notEqual(output?.isError, true, 'The bound Issue MCP read failed')
+        assert.ok(
+          JSON.stringify(output)?.includes(issue.id),
+          'The real MCP read did not return the bound Issue'
+        )
+      }
       resolveModelStarted()
       await modelRelease
       writeEvents(response, responseId, [
@@ -693,11 +741,17 @@ export function createDesktopScenario({
       })
       await selectCollaborationDomain(control, CONTENT, 'cloud')
       project = await createWorkspaceAndProject(control, request, uiTimeoutMs)
-      await initializeFirstProjectExecutionEnvironment(
+      await configureFirstProjectExecutionEnvironment(
         control,
         CONTENT,
         modelResponseTimeoutMs,
         remoteDevice.id
+      )
+      const authorizedProject = await request(`/api/v1/cloud-projects/${project.id}`)
+      assert.equal(
+        authorizedProject.execution_environment?.repositories?.length ?? 0,
+        0,
+        'Direct assignment must work with an authorized runner and no code repository'
       )
       const agent = await createAgent(control, request, project.id, uiTimeoutMs)
       issue = await createAndAssignIssue(control, request, project.id, agent, uiTimeoutMs)
@@ -758,6 +812,10 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       assert.equal(runtimeTask.taskId, execution.runtimeTaskId)
+      assert.ok(
+        runtimeTask.workspacePath,
+        'Direct assignment did not create a standalone workspace'
+      )
 
       const persistedIssue = await waitForValue(
         () => request(`/api/v1/loop-items/${issue.id}`),
@@ -827,11 +885,17 @@ export function createDesktopScenario({
       await verifyManualSessionReply(
         control,
         request,
+        { backendUrl, authToken, projectId: project.id },
         issue.id,
         modelResponseTimeoutMs,
         captureScreenshot
       )
-      assert.equal(modelRequests, 5, 'Manual execution and its reply did not use the Team model')
+      assert.equal(
+        modelRequests - toolSearchRequests,
+        5,
+        'Manual execution and its reply made unexpected model requests'
+      )
+      const requestsAfterReply = modelRequests
       await verifyConfiguredExecutionEnvironment(
         control,
         request,
@@ -847,13 +911,18 @@ export function createDesktopScenario({
         uiTimeoutMs,
         captureScreenshot
       )
-      assert.equal(modelRequests, 5, 'Managing a default human automation invoked the model')
+      assert.equal(
+        modelRequests,
+        requestsAfterReply,
+        'Managing a default human automation invoked the model'
+      )
     },
 
     diagnostics() {
       return {
         issueId: issue?.id ?? null,
         modelRequests,
+        toolSearchRequests,
         projectId: project?.id ?? null,
         remoteDeviceId: remoteDevice?.device_id ?? null,
       }

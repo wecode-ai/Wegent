@@ -21,7 +21,8 @@ import {
 } from '../modules/shared.mjs'
 import {
   inCollaborationSidebar,
-  initializeFirstProjectExecutionEnvironment,
+  inProjectCreateDialog,
+  configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
 
@@ -219,14 +220,24 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
   )
   await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
   await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
-  await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-    value: PROJECT,
-  })
-  await control.command('click', scoped('[data-testid="collaboration-project-create-advanced"]'))
-  await control.command('click', scoped('[data-testid="cloud-project-task-provider-local"]'))
+  await control.command(
+    'fill',
+    inProjectCreateDialog('[data-testid="collaboration-project-name-input"]'),
+    {
+      value: PROJECT,
+    }
+  )
+  await control.command(
+    'click',
+    inProjectCreateDialog('[data-testid="collaboration-project-create-advanced"]')
+  )
+  await control.command(
+    'click',
+    inProjectCreateDialog('[data-testid="cloud-project-task-provider-local"]')
+  )
   await control.command(
     'clickWhenEnabled',
-    scoped('[data-testid="collaboration-project-create-confirm"]'),
+    inProjectCreateDialog('[data-testid="collaboration-project-create-confirm"]'),
     { timeoutMs: uiTimeoutMs }
   )
   const project = await waitForValue(
@@ -610,7 +621,7 @@ export function createDesktopScenario({
       )
       const currentApp = await cloudEnvironment.waitForConnectedAppDevice()
       assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
-      await initializeFirstProjectExecutionEnvironment(
+      await configureFirstProjectExecutionEnvironment(
         control,
         CONTENT,
         modelResponseTimeoutMs,

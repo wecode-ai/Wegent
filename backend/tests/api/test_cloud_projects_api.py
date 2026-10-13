@@ -2289,6 +2289,13 @@ def test_cloud_project_codex_agent_requires_explicit_project_environment(
         "Execution environment is not configured in this Project"
     )
 
+    shared = test_client.post(
+        f"/api/v1/workspaces/{project['workspace_id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": device.id},
+    )
+    assert shared.status_code == 201, shared.text
+
     selected = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/execution-environments",
         headers=_auth(test_token),
@@ -2328,7 +2335,7 @@ def test_cloud_project_codex_agent_requires_explicit_project_environment(
             ResourceMember.entity_id == str(project["workspace_id"]),
         )
         .count()
-        == 0
+        == 1
     )
 
     listed = test_client.get(
@@ -2361,6 +2368,13 @@ def test_cloud_project_codex_agent_requires_explicit_project_environment(
     assert rejected_update.json()["detail"] == (
         "Execution environment is not configured in this Project"
     )
+
+    shared_other = test_client.post(
+        f"/api/v1/workspaces/{project['workspace_id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": other_device.id},
+    )
+    assert shared_other.status_code == 201, shared_other.text
 
     selected_other = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/execution-environments",
@@ -3026,6 +3040,12 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
     )
     assert project_response.status_code == 201
     project = project_response.json()
+    shared = test_client.post(
+        f"/api/v1/workspaces/{project['workspace_id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": device.id},
+    )
+    assert shared.status_code == 201, shared.text
     bound = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/execution-environments",
         headers=_auth(test_token),

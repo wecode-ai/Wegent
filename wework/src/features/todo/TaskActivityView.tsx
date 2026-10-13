@@ -819,10 +819,7 @@ export function TaskActivityView({
         text,
         mentions: activeMentions,
         replyToMessageId: null,
-        model:
-          projectLocation !== 'local' && client.executeTaskComment
-            ? null
-            : (selectedModel?.name ?? null),
+        model: client.executeTaskComment ? null : (selectedModel?.name ?? null),
         ...(projectLocation === 'local' && executionProject
           ? { localProjectId: executionProject.id }
           : {}),
@@ -833,7 +830,7 @@ export function TaskActivityView({
       attachmentSelection.resetAttachments()
       scrollTaskCommentsToBottom()
       void persistConversationAttachments(attachments)
-      if (projectLocation !== 'local' && client.executeTaskComment) {
+      if (client.executeTaskComment) {
         const incoming = await client.executeTaskComment({
           projectId: project.id,
           taskId: task.id,
@@ -988,8 +985,7 @@ export function TaskActivityView({
           </div>
         }
         composer={
-          issueTimeline &&
-          (linear || (projectLocation !== 'local' && client?.executeTaskComment)) ? (
+          issueTimeline && (linear || client?.executeTaskComment) ? (
             <div
               ref={replyComposerRef}
               {...(replyTarget
@@ -1033,7 +1029,7 @@ export function TaskActivityView({
                 translate={activityTranslate}
                 controls={commentProjectChat}
                 projectWork={commentProjectWork}
-                serverExecution={projectLocation !== 'local' && Boolean(client?.executeTaskComment)}
+                serverExecution={Boolean(client?.executeTaskComment)}
                 placeholder={
                   replyTarget ? t('workbench.task_activity_inline_placeholder') : undefined
                 }
@@ -1041,7 +1037,7 @@ export function TaskActivityView({
             </div>
           ) : (
             <>
-              {linear || (projectLocation !== 'local' && client?.executeTaskComment) ? (
+              {linear || client?.executeTaskComment ? (
                 <TaskCommentComposer
                   key={task.id}
                   value={newCommentDraft}
@@ -1054,9 +1050,7 @@ export function TaskActivityView({
                   translate={activityTranslate}
                   controls={commentProjectChat}
                   projectWork={commentProjectWork}
-                  serverExecution={
-                    projectLocation !== 'local' && Boolean(client?.executeTaskComment)
-                  }
+                  serverExecution={Boolean(client?.executeTaskComment)}
                 />
               ) : (
                 <div className="task-detail-comment-chat-input">

@@ -98,6 +98,9 @@ fn shared_index_reload_preserves_process_local_execution_state() {
         task.runtime_handle["queuePosition"] = Value::from(2);
         task.runtime_handle["lastError"] = Value::from("temporary error");
         task.runtime_handle["lastErrorCode"] = Value::from("temporary_error");
+        task.runtime_handle["collaborationMemberRuntimeProfiles"] = serde_json::json!([{
+            "runtimePayload": {"executionRequest": {"model_config": {"api_key": "memory-only"}}}
+        }]);
     });
     peer_store.update_task("owner-task", |task| {
         task.title = "Updated owner task".to_owned();
@@ -133,6 +136,11 @@ fn shared_index_reload_preserves_process_local_execution_state() {
         owner_task.runtime_handle["lastErrorCode"],
         Value::from("temporary_error")
     );
+    assert_eq!(
+        owner_task.runtime_handle["collaborationMemberRuntimeProfiles"][0]["runtimePayload"]
+            ["executionRequest"]["model_config"]["api_key"],
+        "memory-only"
+    );
 
     let persisted: Value =
         serde_json::from_slice(&fs::read(&index_path).expect("shared index should be readable"))
@@ -141,6 +149,9 @@ fn shared_index_reload_preserves_process_local_execution_state() {
         .as_object()
         .expect("owner task should be persisted");
     assert!(!persisted_owner.contains_key("running"));
+    assert!(persisted_owner["runtime_handle"]
+        .get("collaborationMemberRuntimeProfiles")
+        .is_none());
     assert!(!persisted_owner.contains_key("status"));
     assert!(!persisted_owner.contains_key("thread_status"));
     assert!(!persisted_owner.contains_key("turn_status"));

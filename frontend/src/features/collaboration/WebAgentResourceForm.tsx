@@ -338,7 +338,6 @@ export function WebAgentResourceForm({
       labels={{
         advanced: t('agent_form.advanced'),
         advancedDescription: t('agent_form.advanced_description'),
-        capabilitiesSection: t('agent_form.capabilities_section'),
         cancel: t('actions.cancel'),
         close: t('actions.close'),
         owner: t('agent_form.owner'),

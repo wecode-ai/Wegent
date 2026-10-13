@@ -553,7 +553,12 @@ class LoopItemService:
         )
         sequence = project.next_item_number
         project.next_item_number += 1
-        payload = values.model_dump(exclude={"notify_assignee"})
+        payload = values.model_dump(exclude={"notify_assignee", "runner_selection"})
+        runner_selection = (
+            values.runner_selection.model_dump(exclude_none=True)
+            if values.runner_selection is not None
+            else (automation_context or {}).get("runner_selection")
+        )
         tags = payload.pop("tags")
         explicit_workflow = values.workflow
         explicit_execution_config = values.execution_config
@@ -759,6 +764,9 @@ class LoopItemService:
                 item=item,
                 user_id=user_id,
                 group=collaboration_group,
+                runner_selection=runner_selection,
+                automatic=bool((automation_context or {}).get("run_id")),
+                automation_context=automation_context,
             )
         assignment_member: tuple[str, str] | None = None
         if agent_id:
@@ -815,7 +823,14 @@ class LoopItemService:
                         else None
                     ),
                     priority=item.priority,
-                    automation_context=automation_context,
+                    automation_context=(
+                        {
+                            **(automation_context or {}),
+                            "runner_selection": runner_selection,
+                        }
+                        if runner_selection is not None
+                        else automation_context
+                    ),
                     instruction=instruction,
                 )
         elif team_id:
@@ -1451,6 +1466,7 @@ class LoopItemService:
                 "version",
                 "automation_rule_id",
                 "notify_assignee",
+                "runner_selection",
                 "assignee_group_id",
                 "security_level",
             },
@@ -2019,6 +2035,13 @@ class LoopItemService:
                     execution_config,
                     runtime_subject_user_id=int(agent.created_by_user_id or user_id),
                 )
+            if values.runner_selection is not None:
+                effective_automation_context = {
+                    **(effective_automation_context or {}),
+                    "runner_selection": values.runner_selection.model_dump(
+                        exclude_none=True
+                    ),
+                }
             cancelled_runs = (
                 self._sync_execution_for_assignment(
                     db,
@@ -2156,6 +2179,7 @@ class LoopItemService:
                 LoopItemUpdate(
                     version=values.version,
                     assignee_group_id=values.assignee_id,
+                    runner_selection=values.runner_selection,
                     notify_assignee=values.notify_assignee,
                 ),
                 commit=commit,
