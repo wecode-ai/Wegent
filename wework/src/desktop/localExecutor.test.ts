@@ -265,6 +265,42 @@ describe('localExecutor', () => {
     expect(getKnownLocalExecutorDeviceId()).toBeNull()
   })
 
+  test('a pending description cannot restore identity revoked by a protocol error', async () => {
+    const originalDescription = await describeDshExecutorMock()
+    await ensureLocalExecutorAvailable()
+    requestDshExecutorMock.mockRejectedValueOnce(
+      new DshExecutorTransportError('transport_disconnected', 'Executor disconnected', true)
+    )
+    await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow(
+      'Executor disconnected'
+    )
+    let finish!: (value: typeof originalDescription) => void
+    describeDshExecutorMock.mockReturnValueOnce(
+      new Promise(resolve => {
+        finish = resolve
+      })
+    )
+    const pendingStatus = getLocalExecutorStatus()
+    requestDshExecutorMock.mockRejectedValueOnce(
+      new DshExecutorTransportError('protocol_mismatch', 'Invalid Runtime identity')
+    )
+    await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow(
+      'Invalid Runtime identity'
+    )
+    expect(getKnownLocalExecutorDeviceId()).toBeNull()
+
+    const rejectedStatus = expect(pendingStatus).rejects.toMatchObject({
+      code: 'protocol_mismatch',
+    })
+    finish(originalDescription)
+    await rejectedStatus
+    expect(getKnownLocalExecutorDeviceId()).toBeNull()
+    await expect(getLocalExecutorStatus()).resolves.toMatchObject({
+      running: true,
+      runtimeInstanceId: 'electron-runtime',
+    })
+  })
+
   test('synchronizes declared bundled plugins even when already configured', async () => {
     await ensureBundledPluginInstalled('smart-app-builder')
     expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.codex.plugin.sync_bundled', {

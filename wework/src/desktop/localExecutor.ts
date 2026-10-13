@@ -88,6 +88,7 @@ export interface BundledPluginMarketplace {
 
 let ensureLocalExecutorAvailablePromise: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
+let localExecutorIdentityEpoch = 0
 let availableLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedBundledPluginMarketplace: BundledPluginMarketplace | null = null
@@ -235,6 +236,7 @@ function isExecutorHealthy(status: LocalExecutorStatus): boolean {
 
 function markLocalExecutorUnavailable(cause: unknown): void {
   if (cause instanceof DshExecutorTransportError && cause.code === 'protocol_mismatch') {
+    localExecutorIdentityEpoch += 1
     availableLocalExecutorStatus = null
   } else if (availableLocalExecutorStatus) {
     availableLocalExecutorStatus = {
@@ -380,8 +382,15 @@ export function ensureLocalExecutorAvailable(): Promise<LocalExecutorStatus> {
     return Promise.resolve(availableLocalExecutorStatus)
   }
   if (!ensureLocalExecutorAvailablePromise) {
-    ensureLocalExecutorAvailablePromise = describeDshExecutor()
+    const epoch = localExecutorIdentityEpoch
+    const availability = describeDshExecutor()
       .then(description => {
+        if (epoch !== localExecutorIdentityEpoch) {
+          throw new DshExecutorTransportError(
+            'protocol_mismatch',
+            'Executor identity was revoked while describing the executor'
+          )
+        }
         const status: LocalExecutorStatus = {
           running: true,
           ready: true,
@@ -393,12 +402,14 @@ export function ensureLocalExecutorAvailable(): Promise<LocalExecutorStatus> {
         return status
       })
       .catch((cause: unknown) => {
-        markLocalExecutorUnavailable(cause)
+        if (epoch === localExecutorIdentityEpoch) markLocalExecutorUnavailable(cause)
         throw cause
       })
       .finally(() => {
-        ensureLocalExecutorAvailablePromise = null
+        if (ensureLocalExecutorAvailablePromise === availability)
+          ensureLocalExecutorAvailablePromise = null
       })
+    ensureLocalExecutorAvailablePromise = availability
   }
   return ensureLocalExecutorAvailablePromise
 }
@@ -479,6 +490,7 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
 }
 
 export function resetLocalExecutorStateForTests(): void {
+  localExecutorIdentityEpoch += 1
   bundledPluginUpdateEpoch += 1
   bundledPluginRetryListener?.()
   bundledPluginRetryListener = null
