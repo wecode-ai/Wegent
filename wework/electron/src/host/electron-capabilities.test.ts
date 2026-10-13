@@ -394,6 +394,19 @@ describe('Core DSH runtime capabilities', () => {
 })
 
 describe('Popout Window sizing capabilities', () => {
+  test('reveals the main workbench through the host', async () => {
+    const showMain = vi.fn().mockResolvedValue(undefined)
+    const { router } = createIsolatedClipboardRouter(true, { showMain })
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'window.showMain', {})
+    expect(showMain).toHaveBeenCalledOnce()
+  })
+
+  test('closes the explicitly named workspace window', async () => {
+    const closeWorkspace = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, { closeWorkspace })
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'window.closeWorkspace', { label: 'workspace-task' })
+    expect(closeWorkspace).toHaveBeenCalledWith('workspace-task')
+  })
   test('forwards validated conversation and menu states to the native window', async () => {
     const popoutHost = {
       openPopoutTaskInMain: vi.fn(),

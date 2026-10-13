@@ -32,6 +32,10 @@ import {
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import { projectSpaceRouteRequestsDefaultProject } from '@/features/todo/projectSpaceRoute'
 import { writeSettingsReturnPath } from './settingsReturnPath'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
+import { getAppPreferences } from '@/desktop/appPreferences'
+import { fixedWorkspaceTabPreference, saveFixedWorkspaceTabs } from './fixedWorkspaceTabs'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -52,6 +56,7 @@ type WorkspaceTabsAction =
       updates?: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>
     }
   | { type: 'open'; tab: WorkspaceTab }
+  | { type: 'receive'; tab: WorkspaceTab }
   | { type: 'close'; tabId: string; fallback: WorkspaceTab }
   | { type: 'detach'; tabId: string; fallback: WorkspaceTab }
   | { type: 'closeOthers'; tabId: string }
@@ -243,6 +248,12 @@ function workspaceTabsReducer(
         : state
     case 'open':
       return { ...state, tabs: [...state.tabs, action.tab], activeTabId: action.tab.id }
+    case 'receive':
+      return {
+        ...state,
+        tabs: [...state.tabs.filter(tab => tab.id !== action.tab.id), action.tab],
+        activeTabId: action.tab.id,
+      }
     case 'close': {
       const closingTab = state.tabs.find(tab => tab.id === action.tabId)
       if (!closingTab || closingTab.fixed) return state
@@ -365,6 +376,47 @@ export function WorkspaceTabsProvider({
       loadPersistedTabs(storageScope, pathname, search, labels, fixedTabs, restoreSessionTabs)
   )
   const stateRef = useRef(state)
+
+  useEffect(() => {
+    if (getDesktopWindowLabel() !== 'main') return
+    const receive = (event: StorageEvent) => {
+      if (!event.key?.startsWith(WORKSPACE_TAB_RETURN_PREFIX) || !event.newValue) return
+      let tab: unknown
+      try {
+        tab = JSON.parse(event.newValue)
+      } catch {
+        return
+      }
+      if (!validTab(tab)) return
+      const key = event.key
+      const receivedTab = tab
+      void (async () => {
+        if (receivedTab.fixed) {
+          const preferences = await getAppPreferences()
+          await saveFixedWorkspaceTabs(
+            preferences.fixedWorkspaceTabs.map(preference =>
+              preference.id === receivedTab.id
+                ? fixedWorkspaceTabPreference(receivedTab)
+                : preference
+            ),
+            preferences.startupWorkspaceTabId
+          )
+        }
+        // An expired request must not move a tab whose source is still open.
+        if (!localStorage.getItem(key)) return
+        flushSync(() => dispatch({ type: 'receive', tab: receivedTab }))
+        navigateTo(workspaceTabRoute(receivedTab))
+        localStorage.removeItem(key)
+      })().catch(error => {
+        console.error('Failed to accept returned workspace tab', error)
+        if (localStorage.getItem(key)) {
+          localStorage.setItem(key, JSON.stringify({ error: String(error) }))
+        }
+      })
+    }
+    window.addEventListener('storage', receive)
+    return () => window.removeEventListener('storage', receive)
+  }, [])
 
   useLayoutEffect(() => {
     stateRef.current = state

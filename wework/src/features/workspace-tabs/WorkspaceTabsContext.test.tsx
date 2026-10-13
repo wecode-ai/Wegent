@@ -10,6 +10,15 @@ import {
   type WorkspaceTabsContextValue,
 } from './workspaceTabsContextValue'
 import { WORKSPACE_TABS_CLOSED_EVENT, type WorkspaceTabsClosedEventDetail } from './workspaceTabs'
+import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
+
+const preferencesApi = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn() }))
+vi.mock('@/desktop/appPreferences', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/desktop/appPreferences')>()),
+  getAppPreferences: preferencesApi.get,
+  updateAppPreferences: preferencesApi.update,
+}))
 
 const labels = {
   task: '任务',
@@ -173,6 +182,8 @@ describe('WorkspaceTabsProvider routing', () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
+    preferencesApi.get.mockReset().mockResolvedValue(defaultAppPreferences)
+    preferencesApi.update.mockReset().mockResolvedValue(defaultAppPreferences)
     window.history.replaceState({}, '', '/')
   })
 
@@ -187,6 +198,83 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('auxiliary')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
+  })
+
+  test('accepts a returned tab, preserves its identity and acknowledges after navigation', () => {
+    render(<RoutingHarness />)
+    const key = `${WORKSPACE_TAB_RETURN_PREFIX}test`
+    const tab = {
+      id: 'returned-tab',
+      kind: 'task',
+      title: 'Returned',
+      contentRoute: '/?taskId=task-1',
+      fixed: false,
+    }
+    const value = JSON.stringify(tab)
+    localStorage.setItem(key, value)
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key, newValue: value })))
+    expect(screen.getByTestId('tab-ids').textContent).toContain('returned-tab')
+    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('Returned')
+    expect(window.location.search).toContain('workspaceTab=returned-tab')
+    expect(localStorage.getItem(key)).toBeNull()
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key, newValue: value })))
+    expect(screen.getByTestId('tab-ids').textContent?.match(/returned-tab/g)).toHaveLength(1)
+  })
+
+  test('returns fixed-tab ownership to main before acknowledging it', async () => {
+    preferencesApi.get.mockResolvedValue({
+      ...defaultAppPreferences,
+      fixedWorkspaceTabs: [
+        {
+          id: 'returned-fixed',
+          kind: 'task',
+          title: 'Fixed',
+          contentRoute: '/',
+          windowLabel: 'workspace-fixed',
+        },
+      ],
+      startupWorkspaceTabId: 'returned-fixed',
+    })
+    render(<RoutingHarness />)
+    const key = `${WORKSPACE_TAB_RETURN_PREFIX}fixed`
+    const value = JSON.stringify({
+      id: 'returned-fixed',
+      kind: 'task',
+      title: 'Fixed',
+      contentRoute: '/',
+      fixed: true,
+    })
+    localStorage.setItem(key, value)
+    await act(async () =>
+      window.dispatchEvent(new StorageEvent('storage', { key, newValue: value }))
+    )
+    expect(preferencesApi.update).toHaveBeenCalledWith({
+      fixedWorkspaceTabs: [
+        { id: 'returned-fixed', kind: 'task', title: 'Fixed', contentRoute: '/' },
+      ],
+      startupWorkspaceTabId: 'returned-fixed',
+    })
+    expect(localStorage.getItem(key)).toBeNull()
+    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('Fixed')
+  })
+
+  test('rejects a failed preference update without accepting the fixed tab', async () => {
+    preferencesApi.update.mockRejectedValue(new Error('Preferences failed'))
+    render(<RoutingHarness />)
+    const key = `${WORKSPACE_TAB_RETURN_PREFIX}failed`
+    const value = JSON.stringify({
+      id: 'failed-return',
+      kind: 'task',
+      title: 'Fixed',
+      contentRoute: '/',
+      fixed: true,
+    })
+    localStorage.setItem(key, value)
+    await act(async () =>
+      window.dispatchEvent(new StorageEvent('storage', { key, newValue: value }))
+    )
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ error: 'Error: Preferences failed' })
+    expect(screen.getByTestId('tab-ids')).not.toHaveTextContent('failed-return')
   })
 
   test('does not broadcast a second tab state after selecting an already updated route', () => {

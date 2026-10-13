@@ -19,7 +19,11 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
-import { openWorkspaceTabWindow } from './workspaceWindow'
+import {
+  closeEmptyWorkspaceWindow,
+  openWorkspaceTabWindow,
+  returnWorkspaceTabToMain,
+} from './workspaceWindow'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
 import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
@@ -362,6 +366,18 @@ export function WorkspaceTabStrip({
     setAddMenuPosition(null)
   }
   const contextTab = visibleTabs.find(tab => tab.id === contextMenu?.tabId) ?? null
+  const detachedWindow = getDesktopWindowLabel().startsWith('workspace-')
+  const returnContextTabToMain = async () => {
+    if (!contextTab || !detachedWindow) return
+    setContextMenu(null)
+    try {
+      await returnWorkspaceTabToMain(contextTab)
+      detachTab?.(contextTab.id)
+      if (tabs.length === 1) await closeEmptyWorkspaceWindow()
+    } catch (error) {
+      console.error('Failed to return workspace tab to main window', error)
+    }
+  }
   const pinContextTab = async () => {
     if (!contextTab || contextTab.fixed || !appPreferences?.loaded) return
     setContextMenu(null)
@@ -628,6 +644,17 @@ export function WorkspaceTabStrip({
               >
                 {t('workbench.workspace_tab_open_new_window', '在新窗口中打开')}
               </button>
+              {detachedWindow ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="workspace-tab-return-to-main"
+                  onClick={() => void returnContextTabToMain()}
+                  className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
+                >
+                  {t('workbench.workspace_tab_return_to_main', '移回主窗口')}
+                </button>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"
