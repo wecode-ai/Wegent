@@ -21,6 +21,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -601,6 +602,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const filePanelRef = useRef<FileWorkspacePanelHandle>(null)
+  const tabsViewportRef = useRef<HTMLDivElement>(null)
   const activeFileTab = isWorkspaceFileTab(activeView) ? fileTabs[activeView] : undefined
   const activeFilePanelTarget = activeFileTab?.target ?? fileWorkspaceTarget
   const activeFileOpenRequest =
@@ -671,6 +673,19 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const platform = getPlatform()
   const renderTabsInTitlebar =
     renderTabsInAppTitlebar && isDesktopRuntime() && platform !== 'win' && visible && showTabs
+  useLayoutEffect(() => {
+    const viewport = tabsViewportRef.current
+    const activeTab = viewport?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (!viewport || !activeTab) return
+
+    const viewportRect = viewport.getBoundingClientRect()
+    const tabRect = activeTab.getBoundingClientRect()
+    if (tabRect.left < viewportRect.left) {
+      viewport.scrollLeft += tabRect.left - viewportRect.left
+    } else if (tabRect.right > viewportRect.right) {
+      viewport.scrollLeft += tabRect.right - viewportRect.right
+    }
+  }, [activeView, renderTabsInTitlebar, showTabs, visible])
   const harnessSessionsById = new Map(
     harnessSessions.map(session => [session.sessionId, session] as const)
   )
@@ -820,60 +835,66 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       data-testid="right-workspace-tabbar"
       role="tablist"
       className={cn(
-        'electron-titlebar-interactive-region relative z-chrome flex shrink-0 items-center gap-1.5 pointer-events-auto',
+        'electron-titlebar-interactive-region relative z-chrome flex min-w-0 shrink-0 items-center pointer-events-auto',
         renderTabsInTitlebar
-          ? 'h-[38px] w-full bg-transparent pl-4 pr-2'
+          ? 'h-[38px] w-full gap-1 bg-transparent pl-4'
           : cn(
-              'h-10 px-3',
+              'h-10 gap-1.5 px-3',
               platform === 'win' ? '' : 'border-b border-border',
               showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
             )
       )}
     >
-      {visibleTabs.map(tab => (
-        <RightWorkspaceTitleTab
-          key={tab}
-          tab={tab}
-          active={activeView === tab}
-          title={backgroundTerminals.find(terminal => terminal.tabId === tab)?.command}
-          filePath={
-            isWorkspaceFileTab(tab)
-              ? fileTabs[tab]?.path
-              : tab === 'files'
-                ? primaryFilePath
-                : undefined
-          }
-          label={getRightWorkspaceTabLabel(
-            tab,
-            t,
-            browserStates,
-            harnessSessionsById,
-            extensionTabs,
-            backgroundTerminals
-          )}
-          icon={
-            isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.developmentPreview
-              ? LayoutDashboard
-              : getRightWorkspaceTabIcon(tab)
-          }
-          extensionState={isRightWorkspaceExtensionTab(tab) ? extensionTabs[tab] : undefined}
-          iconSrc={
-            isRightWorkspaceBrowserTab(tab) && !browserStates[tab]?.developmentPreview
-              ? browserStates[tab]?.faviconUrl
-              : null
-          }
-          loading={
-            isRightWorkspaceBrowserTab(tab) &&
-            (browserStates[tab]?.isLoading ||
-              browserStates[tab]?.developmentPreview?.status === 'starting' ||
-              browserStates[tab]?.developmentPreview?.status === 'reloading')
-          }
-          agentActive={isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.agentActive}
-          onSelect={getTabSelectHandler(tab)}
-          onClose={() => closeTab(tab)}
-        />
-      ))}
-      <div className="relative">
+      <div
+        ref={tabsViewportRef}
+        data-testid="right-workspace-tabs-viewport"
+        className="flex min-w-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden scrollbar-none"
+      >
+        {visibleTabs.map(tab => (
+          <RightWorkspaceTitleTab
+            key={tab}
+            tab={tab}
+            active={activeView === tab}
+            title={backgroundTerminals.find(terminal => terminal.tabId === tab)?.command}
+            filePath={
+              isWorkspaceFileTab(tab)
+                ? fileTabs[tab]?.path
+                : tab === 'files'
+                  ? primaryFilePath
+                  : undefined
+            }
+            label={getRightWorkspaceTabLabel(
+              tab,
+              t,
+              browserStates,
+              harnessSessionsById,
+              extensionTabs,
+              backgroundTerminals
+            )}
+            icon={
+              isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.developmentPreview
+                ? LayoutDashboard
+                : getRightWorkspaceTabIcon(tab)
+            }
+            extensionState={isRightWorkspaceExtensionTab(tab) ? extensionTabs[tab] : undefined}
+            iconSrc={
+              isRightWorkspaceBrowserTab(tab) && !browserStates[tab]?.developmentPreview
+                ? browserStates[tab]?.faviconUrl
+                : null
+            }
+            loading={
+              isRightWorkspaceBrowserTab(tab) &&
+              (browserStates[tab]?.isLoading ||
+                browserStates[tab]?.developmentPreview?.status === 'starting' ||
+                browserStates[tab]?.developmentPreview?.status === 'reloading')
+            }
+            agentActive={isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.agentActive}
+            onSelect={getTabSelectHandler(tab)}
+            onClose={() => closeTab(tab)}
+          />
+        ))}
+      </div>
+      <div className="relative shrink-0">
         {visible ? (
           <WorkspaceAddMenu
             ariaLabel={t('workbench.workspace_tab_new', '打开新标签页')}
@@ -1270,7 +1291,7 @@ function RightWorkspaceTitleTab({
       onClick={onSelect}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group/tab relative flex h-8 min-w-0 max-w-[200px] cursor-pointer items-stretch rounded-md text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 pointer-events-auto',
+        'group/tab relative flex h-8 min-w-0 max-w-[200px] shrink-0 cursor-pointer items-stretch rounded-md text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 pointer-events-auto',
         active
           ? 'bg-muted text-text-primary'
           : 'text-text-secondary hover:bg-muted hover:text-text-primary'

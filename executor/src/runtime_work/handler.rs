@@ -42,7 +42,9 @@ use crate::{
     logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
-    server::{executor_loopback_base_url, harness_context, local_model_proxy},
+    server::{
+        executor_loopback_base_url, harness_context, local_decision_proxy, local_model_proxy,
+    },
     task_runtime::LocalTaskStore,
 };
 
@@ -626,6 +628,10 @@ pub struct RuntimeWorkRpcHandler {
     /// carry credentials, so turns fill them from here before launching the
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    /// Trusted configuration for the local decision proxy. Smart App
+    /// registration prompts only the scope; upstream and model catalog stay
+    /// here.
+    decision_proxy: Arc<local_decision_proxy::DecisionProxyConfig>,
 }
 
 struct CodexRuntimeProxyConfig {
@@ -895,6 +901,7 @@ impl RuntimeWorkRpcHandler {
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
             hook_service: HookService::from_env(),
             backend_connection: Arc::new(Mutex::new(None)),
+            decision_proxy: local_decision_proxy::config_from_env_or_unconfigured(),
         };
         for (local_task_id, turn) in handler
             .active_goal_turns
@@ -963,6 +970,15 @@ impl RuntimeWorkRpcHandler {
         self.register_cloud_collaboration_dispatcher();
         self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_decision_proxy_config(
+        mut self,
+        decision_proxy: Arc<local_decision_proxy::DecisionProxyConfig>,
+    ) -> Self {
+        self.decision_proxy = decision_proxy;
         self
     }
 
@@ -1195,6 +1211,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.harness_proxy.register" => self.register_harness_proxy(payload).await,
             "runtime.harness_proxy.unregister" => self.unregister_harness_proxy(payload).await,
+            "runtime.decision_proxy.register" => self.register_decision_proxy(payload).await,
+            "runtime.decision_proxy.unregister" => self.unregister_decision_proxy(payload).await,
             "runtime.harness_context.register" => self.register_harness_context(payload).await,
             "runtime.harness_context.unregister" => self.unregister_harness_context(payload).await,
             "runtime.connectors.configure" => self.connectors.configure(payload).await,

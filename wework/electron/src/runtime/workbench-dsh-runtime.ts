@@ -32,6 +32,13 @@ export interface WorkbenchAppManifest {
     spec: string
     path?: string
   }>
+  /**
+   * Capability requests. Declaring one here grants it: Wework does not gate
+   * these on install provenance, and the Smart App decides when to use them.
+   */
+  capabilities?: {
+    decisionModel?: boolean
+  }
 }
 
 export interface PrepareWorkbenchDshOptions {
@@ -45,6 +52,8 @@ export interface PrepareWorkbenchDshOptions {
   modelBaseUrl?: string | null
   contextBaseUrl?: string | null
   contextToken?: string | null
+  decisionBaseUrl?: string | null
+  decisionProtocolVersion?: 1 | null
   includeElectronHostBridge?: boolean
   run?: CommandRunner
 }
@@ -557,6 +566,16 @@ function runtimeEnvironment(
     ...(options.modelBaseUrl ? { WEWORK_HARNESS_API_KEY: 'wework-local-router' } : {}),
     ...(options.contextBaseUrl ? { WEWORK_HARNESS_CONTEXT_BASE_URL: options.contextBaseUrl } : {}),
     ...(options.contextToken ? { WEWORK_HARNESS_CONTEXT_TOKEN: options.contextToken } : {}),
+    // The decision route is injected as its own capability. Host-controlled
+    // values win over anything already present in the inherited environment,
+    // so a Smart app package cannot pre-seed a hostile router address.
+    ...(options.decisionBaseUrl
+      ? {
+          WEWORK_DECISION_ROUTER_BASE_URL: options.decisionBaseUrl,
+          WEWORK_DECISION_ROUTER_KEY: 'wework-local-router',
+          WEWORK_DECISION_ROUTER_PROTOCOL_VERSION: String(options.decisionProtocolVersion ?? 1),
+        }
+      : {}),
   }
 }
 

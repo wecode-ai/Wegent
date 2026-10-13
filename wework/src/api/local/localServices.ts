@@ -11,6 +11,7 @@ import {
 import type { InstalledPlugin } from '@wegent/chat-core/installed-plugin-types'
 import { codexRuntimeModels } from '@wegent/chat-core/runtime-model-catalog'
 import type {
+  LocalDecisionRouterLaunch,
   LocalProjectSpaceApi,
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
@@ -505,6 +506,56 @@ function runtimeExecutionUser(
 
 function cloudConnectionRequired(name: string): never {
   throw new Error(`${name} requires cloud connection`)
+}
+
+/** Executor reply for `runtime.decision_proxy.register`. */
+interface DecisionProxyRegistration {
+  token?: unknown
+  baseUrl?: unknown
+  protocolVersion?: unknown
+}
+
+const DECISION_ROUTER_LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+const DECISION_ROUTER_PROTOCOL_VERSION = 1
+
+/**
+ * Validates the Executor's decision route reply.
+ *
+ * The base URL is the only address the Smart App ever learns about it, so it
+ * must stay on loopback and carry no credentials, query, or fragment.
+ */
+function normalizeDecisionRouterLaunch(
+  registration: DecisionProxyRegistration
+): LocalDecisionRouterLaunch {
+  const token = typeof registration?.token === 'string' ? registration.token.trim() : ''
+  if (!token) {
+    throw new Error('Wework decision router did not return a route token')
+  }
+  if (registration?.protocolVersion !== DECISION_ROUTER_PROTOCOL_VERSION) {
+    throw new Error('Wework decision router protocol version is not supported')
+  }
+  const rawBaseUrl = typeof registration?.baseUrl === 'string' ? registration.baseUrl.trim() : ''
+  let baseUrl: URL
+  try {
+    baseUrl = new URL(rawBaseUrl)
+  } catch {
+    throw new Error('Wework decision router base URL is not a valid URL')
+  }
+  if (
+    baseUrl.protocol !== 'http:' ||
+    !DECISION_ROUTER_LOOPBACK_HOSTS.has(baseUrl.hostname) ||
+    Boolean(baseUrl.username) ||
+    Boolean(baseUrl.password) ||
+    Boolean(baseUrl.search) ||
+    Boolean(baseUrl.hash)
+  ) {
+    throw new Error('Wework decision router base URL must be a loopback address')
+  }
+  return {
+    token,
+    baseUrl: rawBaseUrl,
+    protocolVersion: DECISION_ROUTER_PROTOCOL_VERSION,
+  }
 }
 
 function modelCatalogSyncCancelled(): Error {
@@ -4183,6 +4234,21 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
       async unregisterContext(token: string) {
         await request('runtime.harness_context.unregister', { token })
+      },
+    },
+    localDecisionRouterApi: {
+      async resolveLaunch(scope?: string) {
+        await ensureStatus()
+        // Only the scope is caller-supplied. The upstream URL, the credential,
+        // and the model catalogue stay in Executor-controlled configuration.
+        const registration = await request<DecisionProxyRegistration>(
+          'runtime.decision_proxy.register',
+          { scope: scope?.trim() || `decision:${crypto.randomUUID()}` }
+        )
+        return normalizeDecisionRouterLaunch(registration)
+      },
+      async unregister(token: string) {
+        await request('runtime.decision_proxy.unregister', { token })
       },
     },
     localProjectChatClient,

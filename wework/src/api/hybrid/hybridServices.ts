@@ -1481,6 +1481,7 @@ export function createHybridWorkbenchServices(
     localProjectChatAgentApi: localProjectServices.localProjectChatAgentApi,
     localLoopItemExecutionApi: localServices.localLoopItemExecutionApi,
     localHarnessModelApi: localServices.localHarnessModelApi,
+    localDecisionRouterApi: localServices.localDecisionRouterApi,
     localProjectChatClient: localServices.localProjectChatClient,
     projectSpaceApis: {
       local: localServices.deliveryApi,
