@@ -145,6 +145,8 @@ While a task is running, the conversation shows the tools in use and the current
 
 After a parent agent starts a subagent, the subagent activity remains anchored at its original invocation position. Later status, progress, and result updates appear at that position even if the parent continues producing other output; the activity does not move to the end of the conversation or render a second time.
 
+Click a subagent activity to view its execution in the right workspace. The panel shows model-provided reasoning summaries, progress messages, tool calls, and results in order. Content updates live while the subagent runs, and saved process content remains available after completion or reloading the task.
+
 ## Navigate long conversations
 
 When a conversation is taller than the current viewport, turn markers appear along the left side of the message area. The navigation stays centered in the conversation viewport instead of scrolling with message content. Select a marker to jump to that turn, or hover over it to preview the user request and assistant response summary.
