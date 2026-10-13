@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import { renameWorkbenchData } from './workbench-data-rename.js'
+
 interface EntryMigration {
   source: string
   target: string
@@ -83,7 +85,7 @@ function replaceJournal(journal: Journal): void {
     flag: 'wx',
     mode: 0o600,
   })
-  fs.renameSync(temporary, journal.journal)
+  renameWorkbenchData(temporary, journal.journal)
 }
 
 function complete(journal: Journal): void {
@@ -121,7 +123,7 @@ function refreshMutableFileBridge(options: EntryMigration, journal: Journal): bo
     throw new Error('Application data migration temporary file conflict')
   if (!original || !owns(options.source, replacement)) {
     if (!pending) fs.linkSync(options.target, temporary)
-    fs.renameSync(temporary, options.source)
+    renameWorkbenchData(temporary, options.source)
   } else if (pending) fs.unlinkSync(temporary)
   const completed = { ...journal, ...replacement }
   delete completed.replacement
@@ -169,7 +171,7 @@ function preserveRelativeLinks(directory: string): void {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
       fs.symlinkSync(`${dirname(path)}${sep}${target}`, temporary, directory ? 'dir' : 'file')
-      fs.renameSync(temporary, path)
+      renameWorkbenchData(temporary, path)
     }
   }
 }
@@ -282,7 +284,7 @@ export function migrateWorkbenchDataEntry(options: EntryMigration): void {
     if (process.platform === 'win32' && !journal.directory) fs.linkSync(source, probe)
     else fs.symlinkSync(target, probe, journal.directory ? 'junction' : 'file')
     fs.unlinkSync(probe)
-    fs.renameSync(source, target)
+    renameWorkbenchData(source, target)
   }
   if (!owns(target, journal)) throw new Error('Application data migration target identity changed')
   bridge(options, journal.directory)

@@ -25,6 +25,7 @@ async function fixture() {
     'workbench-data-worker',
     'workbench-executor-data',
     'workbench-data-migration',
+    'workbench-data-rename',
   ]) {
     const source = await readFile(new URL(`./${name}.ts`, import.meta.url), 'utf8')
     const result = ts.transpileModule(source, {

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import { migrateWorkbenchDataEntry } from './workbench-data-migration.js'
+import { renameWorkbenchData } from './workbench-data-rename.js'
 
 function exists(path: string): boolean {
   try {
@@ -58,7 +59,7 @@ function migrateChildren(
       .sort()
     const temporary = `${manifest}.tmp`
     fs.writeFileSync(temporary, JSON.stringify(names), { mode: 0o600 })
-    fs.renameSync(temporary, manifest)
+    renameWorkbenchData(temporary, manifest)
   }
   for (const name of names) {
     migrateWorkbenchDataEntry({

@@ -139,6 +139,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       await fs.writeFile(path.join(legacyCodexHome, 'auth.json'), 'synthetic-upgrade-auth');
       await fs.writeFile(path.join(legacyCodexHome, 'sessions', 'marker'), 'legacy-session');
       await fs.writeFile(path.join(upgradeExecutorHome, 'device-config.json'), '{"marker":"legacy-device"}');
+      await fs.writeFile(path.join(upgradeExecutorHome, 'device-config.json.lock'), '');
       const { DatabaseSync } = require('node:sqlite');
       const seedPath = path.join(upgradeHome, 'seed.sqlite');
       const seed = new DatabaseSync(seedPath);
