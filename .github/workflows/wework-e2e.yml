@@ -512,6 +512,12 @@ jobs:
           test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
 
+      - name: Verify native Windows registry PATH compatibility
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: cargo test --locked --release --manifest-path executor/Cargo.toml --lib process_environment::tests::windows_registry
+
       - name: Build Rust Backend Windows E2E gateway
         shell: pwsh
         run: |

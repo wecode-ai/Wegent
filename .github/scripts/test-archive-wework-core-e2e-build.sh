@@ -11,11 +11,15 @@ export ARCHIVE_TEST_ROOT="$temp_dir"
 
 package="$temp_dir/package"
 mkdir -p "$temp_dir/bin" "$temp_dir/repo/wework/scripts/lib" \
+  "$temp_dir/repo/wework/electron/src/runtime" \
   "$temp_dir/repo/wework/resources/binaries/codex/x86_64-unknown-linux-gnu" \
   "$package/resources/bin" "$package/resources/wework-core-plugins" \
   "$package/resources/harness-runtime" "$package/resources/codex"
 cp "$repo_root/wework/scripts/lib/component-content-hash.mjs" \
   "$temp_dir/repo/wework/scripts/lib/"
+cp "$repo_root/wework/electron/src/runtime/component-content-hash.ts" \
+  "$repo_root/wework/electron/src/runtime/file-operation-queue.ts" \
+  "$temp_dir/repo/wework/electron/src/runtime/"
 printf 'app bytes\n' >"$package/WeWork"
 printf 'executor bytes\n' >"$package/resources/bin/wegent-executor"
 printf 'backend bytes\n' >"$temp_dir/backend"

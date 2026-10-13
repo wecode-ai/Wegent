@@ -23,9 +23,13 @@ Wework Core、内置 DSH 插件和新 Smart app 模板使用官方 `0.2.0-rc.2`�
 旧应用首次下载与离线重启、新模板、停止应用及进程清理。运行时归档由真实 HTTP
 服务提供；Linux 和 Windows CI 需要在共享构建产物中传递测试服务使用的归档，
 不能依赖构建用户的私有缓存，也不能将这些测试资源混入正式发行包。
-Windows 的启动预算使用 release Executor。普通用户测试进程的 `PNPM_HOME` 和
+Windows 的启动预算使用 release Executor。Executor 通过原生注册表 API 读取并展开
+机器和用户 PATH，保留父进程路径优先级，不在启动时创建 PowerShell 进程。
+Windows CI 对比原生读取和 .NET 的实际结果，并验证缺失值不阻止启动。普通用户测试进程的 `PNPM_HOME` 和
 pnpm store 必须属于该测试账户，不能继承 CI 管理员的包存储；测试日志实时输出，
 以便在进程卡住或诊断包上传失败时保留失败证据。
+插件市场注册验证应解析 TOML 后比较市场类型和完整路径；合法的 Windows 单引号
+路径不能因为与 JSON 双引号格式不同而被拒绝。
 
 切换稳定版或测试版更新渠道后，Electron 更新器必须明确禁止自动降级，避免较旧
 发行版下载和重启提示干扰当前应用。抽屉动画 E2E 在隔离 Electron 中明确设置

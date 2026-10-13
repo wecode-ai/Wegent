@@ -31,10 +31,16 @@ restarts, new templates, app termination, and process cleanup. A real HTTP serve
 delivers runtime archives. Linux and Windows CI must transfer these archives with
 the shared test build instead of relying on the build user's private cache.
 These test assets must not enter production releases.
-Windows measures the startup budget with a release Executor. The standard-user
+Windows measures the startup budget with a release Executor. Native registry APIs
+read and expand machine and user PATH while preserving parent-process precedence,
+without spawning PowerShell during startup. Windows CI compares native reads with
+actual .NET results and verifies that missing values do not block startup. The standard-user
 test process must own its `PNPM_HOME` and pnpm store rather than inheriting the CI
 administrator's package storage. Stream test logs so evidence survives a hung
 process or a failed diagnostic upload.
+Marketplace registration verification parses TOML and checks the local type and
+complete source path. Valid single-quoted Windows paths must not be rejected
+because their serialization differs from JSON double-quoted strings.
 
 Explicitly disallow automatic downgrades after selecting the stable or beta
 Electron update channel, preventing older releases from downloading and showing

@@ -13,14 +13,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(windows)]
-use std::{
-    io::Read,
-    process::Command as WindowsCommand,
-    thread,
-    time::{Duration, Instant},
-};
-
 #[cfg(unix)]
 use regex::Regex;
 
@@ -51,11 +43,6 @@ const TRANSIENT_SHELL_ENV_KEYS: &[&str] = &[
     "CODEX_SHELL",
     SHELL_ENV_MARKER,
 ];
-
-#[cfg(windows)]
-const WINDOWS_PATH_READ_TIMEOUT: Duration = Duration::from_secs(10);
-#[cfg(windows)]
-const WINDOWS_PATH_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShellEnvironmentLoad {
@@ -140,104 +127,77 @@ pub fn hydrate_process_environment() -> Result<Option<ShellEnvironmentLoad>, Str
 
 #[cfg(windows)]
 fn windows_registry_paths() -> Result<(Option<String>, Option<String>), String> {
-    let system_root = env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_owned());
-    let powershell = format!("{system_root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    let script = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; \
-        [string]::Join('===', @([Environment]::GetEnvironmentVariable('Path','Machine'),\
-        [Environment]::GetEnvironmentVariable('Path','User')))";
-    let mut child = WindowsCommand::new(&powershell)
-        .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-        ])
-        .arg(script)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            format!("Failed to read Windows registry PATH with {powershell}: {error}")
-        })?;
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    Ok((
+        registry_path(
+            HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        )?,
+        registry_path(HKEY_CURRENT_USER, "Environment")?,
+    ))
+}
 
-    // Drain stdout and stderr on dedicated threads while the main thread waits
-    // with a deadline, mirroring the bounded Unix shell capture. A registry
-    // PATH can exceed the pipe buffer, so a naive wait-then-read would
-    // deadlock, and an unbounded wait would hang executor startup.
-    let mut stdout_pipe = child
-        .stdout
-        .take()
-        .ok_or_else(|| "PowerShell stdout pipe is unavailable".to_owned())?;
-    let mut stderr_pipe = child
-        .stderr
-        .take()
-        .ok_or_else(|| "PowerShell stderr pipe is unavailable".to_owned())?;
-    let stdout_reader = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let result = stdout_pipe.read_to_end(&mut bytes);
-        (bytes, result)
-    });
-    let stderr_reader = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let result = stderr_pipe.read_to_end(&mut bytes);
-        (bytes, result)
-    });
-
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait().map_err(|error| {
-            format!("Failed to wait for PowerShell registry PATH lookup: {error}")
-        })? {
-            Some(status) => break status,
-            None => {
-                if started.elapsed() >= WINDOWS_PATH_READ_TIMEOUT {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err("Timed out reading the Windows registry PATH".to_owned());
-                }
-                thread::sleep(WINDOWS_PATH_POLL_INTERVAL);
-            }
-        }
+#[cfg(windows)]
+fn registry_path(
+    root: windows_sys::Win32::System::Registry::HKEY,
+    subkey: &str,
+) -> Result<Option<String>, String> {
+    use windows_sys::Win32::{
+        Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS},
+        System::Registry::{RegGetValueW, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ},
     };
-    let (stdout_bytes, stdout_result) = stdout_reader
-        .join()
-        .map_err(|_| "PowerShell stdout reader thread panicked".to_owned())?;
-    let (stderr_bytes, stderr_result) = stderr_reader
-        .join()
-        .map_err(|_| "PowerShell stderr reader thread panicked".to_owned())?;
-    stdout_result.map_err(|error| format!("Failed to read PowerShell stdout: {error}"))?;
-    stderr_result.map_err(|error| format!("Failed to read PowerShell stderr: {error}"))?;
-
-    if !status.success() {
-        let stderr = String::from_utf8_lossy(&stderr_bytes).trim().to_owned();
-        return Err(if stderr.is_empty() {
-            "PowerShell failed to read the Windows registry PATH".to_owned()
-        } else {
-            stderr
-        });
+    let key = subkey.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    let name = "Path".encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ;
+    let mut bytes = 0;
+    // RegGetValueW expands REG_EXPAND_SZ and reports the required UTF-16 buffer size.
+    let status = unsafe {
+        RegGetValueW(
+            root,
+            key.as_ptr(),
+            name.as_ptr(),
+            flags,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut bytes,
+        )
+    };
+    if status == ERROR_FILE_NOT_FOUND {
+        return Ok(None);
     }
-    let combined = String::from_utf8(stdout_bytes)
-        .map_err(|error| format!("PowerShell PATH output is not valid UTF-8: {error}"))?
-        .trim()
-        .to_owned();
-    let (machine_path, user_path) = match combined.split_once("===") {
-        Some((machine, user)) => (machine, user),
-        None => (combined.as_str(), ""),
+    if status != ERROR_SUCCESS {
+        return Err(registry_path_error(subkey, status));
+    }
+    let mut buffer = vec![0u16; (bytes as usize).div_ceil(2)];
+    let status = unsafe {
+        RegGetValueW(
+            root,
+            key.as_ptr(),
+            name.as_ptr(),
+            flags,
+            std::ptr::null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut bytes,
+        )
     };
-    let machine_path = if machine_path.is_empty() {
-        None
-    } else {
-        Some(machine_path.to_owned())
-    };
-    let user_path = if user_path.is_empty() {
-        None
-    } else {
-        Some(user_path.to_owned())
-    };
-    Ok((machine_path, user_path))
+    if status != ERROR_SUCCESS {
+        return Err(registry_path_error(subkey, status));
+    }
+    buffer.truncate(bytes as usize / 2);
+    if buffer.last() == Some(&0) {
+        buffer.pop();
+    }
+    let path = String::from_utf16(&buffer)
+        .map_err(|error| format!("Invalid UTF-16 registry PATH in {subkey}: {error}"))?;
+    Ok((!path.is_empty()).then_some(path))
+}
+
+#[cfg(windows)]
+fn registry_path_error(subkey: &str, status: u32) -> String {
+    format!(
+        "Failed to read registry PATH in {subkey}: {}",
+        std::io::Error::from_raw_os_error(status as i32)
+    )
 }
 
 #[cfg(windows)]
@@ -582,6 +542,38 @@ mod tests {
                 .filter(|key| key.eq_ignore_ascii_case("PATH"))
                 .count(),
             1
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_registry_native_paths_match_dotnet_expansion() {
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+                "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; ConvertTo-Json -Compress -InputObject @([Environment]::GetEnvironmentVariable('Path','Machine'), [Environment]::GetEnvironmentVariable('Path','User'))"])
+            .output().unwrap();
+        assert!(output.status.success());
+        let expected: Vec<Option<String>> = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            windows_registry_paths().unwrap(),
+            (
+                expected[0].clone().filter(|s| !s.is_empty()),
+                expected[1].clone().filter(|s| !s.is_empty())
+            )
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_registry_missing_path_is_optional() {
+        use windows_sys::Win32::System::Registry::HKEY_CURRENT_USER;
+        assert_eq!(
+            registry_path(
+                HKEY_CURRENT_USER,
+                &format!("Software\\Wegent\\missing-{}", uuid::Uuid::new_v4())
+            )
+            .unwrap(),
+            None
         );
     }
 

@@ -1,3 +1,5 @@
+import { matchesBundledMarketplaceConfig } from './marketplace-config.mjs'
+
 import {
   assertMentionRenderedAsToken,
   closeComposerPluginPicker,
@@ -314,16 +316,11 @@ async function initializeBlankCodexHome({ codexHome, control }) {
 
 async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) {
   const configPath = join(codexHome, 'config.toml')
-  const expectedSourceLine = expectedSource ? `source = ${JSON.stringify(expectedSource)}` : null
   const startedAt = Date.now()
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
     if (await pathExists(configPath)) {
       const config = await readFile(configPath, 'utf8')
-      if (
-        config.includes('[marketplaces.wework-personal]') &&
-        config.includes('source_type = "local"') &&
-        (!expectedSourceLine || config.includes(expectedSourceLine))
-      ) {
+      if (matchesBundledMarketplaceConfig(config, expectedSource)) {
         return
       }
     }
