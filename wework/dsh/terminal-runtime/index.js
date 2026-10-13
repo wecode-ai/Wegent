@@ -8,10 +8,19 @@ export const inject = ['webServer']
 const BASE_PATH = '/wework/terminal/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
 const require = createRequire(import.meta.url)
+let diagnosticRequestSequence = 0
+let diagnosticStreamSequence = 0
+let diagnosticActiveStreams = 0
+
+function terminalDiagnostic(fields) {
+  if (!process.env.WEWORK_E2E_CONTROL_URL) return
+  console.info('[wework-terminal-runtime] diagnostic', fields)
+}
 
 export function apply(ctx) {
   const runtime = new TerminalRuntime({
     spawn: (...args) => require('node-pty').spawn(...args),
+    diagnostic: terminalDiagnostic,
   })
   ctx.effect(() => () => runtime.dispose(), 'wework-terminal-runtime: PTY registry')
   register(ctx, BASE_PATH, (req, res) => describe(req, res, runtime))
@@ -37,8 +46,11 @@ function describe(req, res, runtime) {
 async function rpc(req, res, runtime) {
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST')
+  const sequence = ++diagnosticRequestSequence
+  terminalDiagnostic({ phase: 'request-body-started', sequence })
   try {
     const body = await readJsonBody(req)
+    terminalDiagnostic({ phase: 'request-body-completed', sequence })
     if (!isRecord(body) || typeof body.method !== 'string' || !isRecord(body.params)) {
       throw new TerminalRuntimeError(
         'invalid_params',
@@ -46,9 +58,15 @@ async function rpc(req, res, runtime) {
         400
       )
     }
+    const method = runtime.describe().capabilities.includes(body.method)
+      ? body.method
+      : 'unsupported'
+    terminalDiagnostic({ phase: 'request-dispatched', sequence, method })
     const result = await runtime.request(body.method, body.params)
+    terminalDiagnostic({ phase: 'request-completed', sequence, method })
     sendJson(res, 200, { ok: true, result: result ?? null })
   } catch (error) {
+    terminalDiagnostic({ phase: 'request-failed', sequence })
     sendError(res, error)
   }
 }
@@ -56,7 +74,15 @@ async function rpc(req, res, runtime) {
 function events(req, res, runtime) {
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
-  streamTerminalEvents(req, res, runtime, eventCursor(req))
+  const sequence = ++diagnosticStreamSequence
+  streamTerminalEvents(req, res, runtime, eventCursor(req), status => {
+    diagnosticActiveStreams += status === 'opened' ? 1 : -1
+    terminalDiagnostic({
+      phase: `events-${status}`,
+      sequence,
+      activeStreams: diagnosticActiveStreams,
+    })
+  })
 }
 
 function eventCursor(req) {

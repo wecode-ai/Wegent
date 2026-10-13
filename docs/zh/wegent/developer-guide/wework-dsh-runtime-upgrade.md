@@ -227,3 +227,9 @@ component-update 的首个 Core 进程报告固定 `core_profile_summarize_faile
 [第 15 组](https://github.com/wecode-ai/Wegent/actions/runs/38451605915/job/115500677051) 的 `running-sidebar-state` mock 只处理 Responses，但场景未选择模型。两次真实请求使用 `kimi-k3` 的 `/v1/chat/completions`，用户消息正确包含该场景的 FIRST 标记，却落入通用 initial handler 的 TASK_PROMPT 断言。场景现在在首次发送前调用既有 `selectE2EModel`，为其 Responses mock 选择匹配模型；侧栏运行状态、迟到快照和虚拟化断言不变。
 
 [第 16 组](https://github.com/wecode-ai/Wegent/actions/runs/38451605915/job/115500676931) 其余五场景通过，`workbench-mode` 在 835 毫秒启动失败，原因为 Home 迁移凭据保护拒绝。该 fixture 明确未设置 MCP 凭据存储模式，而 Windows 默认启用加密存储，`auto` 模式会被现有保护判为绑定 Home。隔离 fixture 现在在 TOML 根部显式设置 `mcp_oauth_credentials_store = "file"`，保留原合成认证、真实原生会话、数据库、文件身份、链接与恢复验证。真实 Executor 的受控元数据探针确认开启加密特性时，原隐式模式被拒绝、显式文件模式允许；产品保护与原超时均未修改。两处 fixture 的语法、格式及 lint 检查通过，完整 Windows 场景须在下一轮 CI 验证。
+
+### 终端 SSE 生命周期与输入取证
+
+[Windows 第 11 组](https://github.com/wecode-ai/Wegent/actions/runs/38451605915/job/115500677035) 未等到终端输入标记，原日志不能确定输入、PTY 写入或输出订阅哪一环丢失。审查发现 SSE 用 request `close` 注销响应订阅，而 [Node IncomingMessage 契约](https://nodejs.org/download/release/v18.20.8/docs/api/http.html#event-close_3) 从 v16 起将该事件定义为请求完成。真实 HTTP 回归在请求读取完成、响应仍开放时复现旧实现提前注销；修复使用 response 关闭、完成或错误以及请求中断，单次清理订阅。新回归确认请求完成后仍收到 live output，实际断开响应后注销；新增用例有界超时并统一清理自己的客户端和服务端。
+
+两个终端测试文件共 12 项通过，格式与 lint 通过。仅既有 E2E control 标志开启时记录固定输入/输出阶段、字节数、匿名序号和订阅数量，不记录输入、输出、cwd、token 或原始错误。该回归证明 SSE 生命周期缺陷，尚不能证明本次 Windows 标记超时由它导致；保留原终端命令、完整 E2E 断言和预算，下一轮通过阶段日志继续定位。

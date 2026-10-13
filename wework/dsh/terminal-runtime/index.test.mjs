@@ -90,3 +90,27 @@ test('propagates native loading failure through the existing terminal spawn erro
   `
   )
 })
+
+test('terminal RPC diagnostics expose fixed phases and counts without method or input secrets', async t => {
+  const directory = await isolatedPlugin(
+    t,
+    `exports.spawn = () => ({ onData(listener) { listener('private-output-secret'); return { dispose() {} } }, onExit: () => ({ dispose() {} }), write() {}, kill() {} })`
+  )
+  runFixture(
+    directory,
+    `
+    process.env.WEWORK_E2E_CONTROL_URL = 'private-control-secret'
+    const diagnostics = []
+    console.info = (...args) => diagnostics.push(args[1])
+    ${exerciseRoutes}
+    await request('/wework/terminal/v1/rpc', 'POST', { method: 'terminal.start', params: { session_id: 'private-session-secret', cwd: process.cwd() } })
+    await request('/wework/terminal/v1/rpc', 'POST', { method: 'terminal.input', params: { session_id: 'private-session-secret', data: 'private-input-secret' } })
+    await request('/wework/terminal/v1/rpc', 'POST', { method: 'private-method-secret', params: {} })
+    assert.deepEqual(diagnostics.filter(event => event.phase === 'request-dispatched').map(event => event.method), ['terminal.start', 'terminal.input', 'unsupported'])
+    assert.ok(diagnostics.some(event => event.phase === 'input-completed' && event.bytes === 20))
+    assert.ok(diagnostics.some(event => event.phase === 'request-failed'))
+    assert.doesNotMatch(JSON.stringify(diagnostics), /private|secret|session_id|cwd|data/)
+    cleanups.reverse().forEach(cleanup => cleanup())
+  `
+  )
+})
