@@ -52,32 +52,19 @@ pub(super) fn bind_context(
     environment: &mut BTreeMap<String, String>,
 ) -> Result<(), String> {
     let context = request.variable_context();
-    for server in servers.values_mut() {
+    let mut unconfigured = Vec::new();
+    for (name, server) in servers.iter_mut() {
+        normalize_context_references(server, request.auth_token.as_deref())?;
+        if let Some(path) = missing_user_mcp_context(server, &context)? {
+            let mut fields = crate::logging::task_fields(&request.task_id, &request.subtask_id);
+            fields.extend([("server_name", name.clone()), ("context_path", path)]);
+            crate::logging::log_executor_event("unconfigured user MCP skipped", &fields);
+            unconfigured.push(name.clone());
+            continue;
+        }
         visit_strings(server, &mut |text| {
-            if let Some(token) = request
-                .auth_token
-                .as_deref()
-                .filter(|token| !token.is_empty())
-            {
-                *text = text.replace(token, "${{auth_token}}");
-            }
-            *text = task_reference()
-                .replace_all(text, |captures: &regex::Captures| {
-                    format!("${{{}}}", context_variable(captures[1].trim()))
-                })
-                .into_owned();
             for captures in env_reference().captures_iter(text) {
-                let encoded = &captures[1];
-                let bytes = (0..encoded.len())
-                    .step_by(2)
-                    .map(|index| {
-                        encoded
-                            .get(index..index + 2)
-                            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-                            .ok_or("Invalid MCP context reference")
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let path = String::from_utf8(bytes).map_err(|_| "Invalid MCP context reference")?;
+                let path = decode_context_path(&captures[1])?;
                 let value = get_nested_value(Some(&context), &path)
                     .filter(|value| !value.is_null())
                     .ok_or_else(|| format!("Missing MCP execution context: {path}"))?;
@@ -92,7 +79,58 @@ pub(super) fn bind_context(
             Ok(())
         })?;
     }
+    for name in unconfigured {
+        servers.remove(&name);
+    }
     Ok(())
+}
+
+fn normalize_context_references(server: &mut Value, token: Option<&str>) -> Result<(), String> {
+    visit_strings(server, &mut |text| {
+        if let Some(token) = token.filter(|token| !token.is_empty()) {
+            *text = text.replace(token, "${{auth_token}}");
+        }
+        *text = task_reference()
+            .replace_all(text, |captures: &regex::Captures| {
+                format!("${{{}}}", context_variable(captures[1].trim()))
+            })
+            .into_owned();
+        Ok(())
+    })
+}
+
+fn decode_context_path(encoded: &str) -> Result<String, String> {
+    let bytes = (0..encoded.len())
+        .step_by(2)
+        .map(|index| {
+            encoded
+                .get(index..index + 2)
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                .ok_or("Invalid MCP context reference")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    String::from_utf8(bytes).map_err(|_| "Invalid MCP context reference".to_owned())
+}
+
+// User-managed integrations are optional. Apply this to both incoming templates
+// and persisted references so removing credentials also removes stale services.
+fn missing_user_mcp_context(server: &mut Value, context: &Value) -> Result<Option<String>, String> {
+    let mut missing = None;
+    visit_strings(server, &mut |text| {
+        for captures in env_reference().captures_iter(text) {
+            let path = decode_context_path(&captures[1])?;
+            if path.starts_with("task_data.user_mcps.")
+                && get_nested_value(Some(context), &path)
+                    .filter(|value| !value.is_null())
+                    .filter(|value| !value.as_str().is_some_and(|text| text.trim().is_empty()))
+                    .is_none()
+            {
+                missing = Some(path);
+            }
+        }
+        Ok(())
+    })?;
+    Ok(missing)
 }
 
 pub(crate) fn resolve_context(
@@ -161,6 +199,54 @@ pub(crate) fn append_stdio_environment(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn unconfigured_user_mcps_do_not_block_other_services_or_bind_partial_credentials() {
+        let path = "task_data.user_mcps.example.services.storage.credentials.url";
+        for url in [Value::Null, json!(""), json!(" \t")] {
+            for reference in [
+                format!("${{{{{path}}}}}"),
+                format!("${{{}}}", context_variable(path)),
+            ] {
+                let mut request = ExecutionRequest {
+                    auth_token: Some("synthetic-token".to_owned()),
+                    ..Default::default()
+                };
+                request.extra.insert("task_data".to_owned(), json!({
+                    "user_mcps": {"example": {"services": {"storage": {"credentials": {"url": url}}}}}
+                }));
+                let mut servers = BTreeMap::from([
+                    (
+                        "custom-table".to_owned(),
+                        json!({"url": reference, "headers": {"Authorization": "Bearer ${{auth_token}}"}}),
+                    ),
+                    ("web".to_owned(), json!({"url": "https://example.test/mcp"})),
+                ]);
+                let mut environment = BTreeMap::new();
+                bind_context(&mut servers, &request, &mut environment).unwrap();
+                assert_eq!(servers.len(), 1);
+                assert!(servers.contains_key("web"));
+                assert!(environment.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn missing_required_context_still_fails() {
+        let mut servers = BTreeMap::from([(
+            "required".to_owned(),
+            json!({"url": "${{backend_url}}/mcp"}),
+        )]);
+        assert_eq!(
+            bind_context(
+                &mut servers,
+                &ExecutionRequest::default(),
+                &mut BTreeMap::new()
+            )
+            .unwrap_err(),
+            "Missing MCP execution context: backend_url"
+        );
+    }
 
     #[test]
     fn resolves_execution_url_and_headers_without_changing_persisted_templates() {
