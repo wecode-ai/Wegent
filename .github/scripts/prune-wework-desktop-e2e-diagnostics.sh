@@ -9,6 +9,9 @@ if [[ ! -d "$diagnostics_root" ]]; then
 fi
 
 # Raw V8 profiles contain local paths and function names; only safe summaries are uploaded.
+summary_status=0
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+node "$repository_root/wework/scripts/summarize-core-startup-profiles.mjs" "$diagnostics_root" || summary_status=$?
 find "$diagnostics_root" -type f -name '*.cpuprofile' -delete
 
 find "$diagnostics_root" \
@@ -60,3 +63,5 @@ find "$diagnostics_root" \
     -name 'wegent-executor.exe' \
   \) \
   -delete
+
+exit "$summary_status"

@@ -385,6 +385,7 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
+          WEWORK_E2E_CORE_CPU_PROFILE: ${{ contains(matrix.segments, 'dsh-runtime-upgrade') && '1' || '' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_TOML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/smol-toml.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
@@ -734,6 +735,7 @@ jobs:
         shell: pwsh
         env:
           CI: true
+          WEWORK_E2E_CORE_CPU_PROFILE: ${{ contains(matrix.segments, 'dsh-runtime-upgrade') && '1' || '' }}
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/WeWork.exe
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe

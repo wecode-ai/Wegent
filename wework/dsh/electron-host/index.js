@@ -8,6 +8,8 @@ const BASE_PATH = '/wework/electron-host/v1'
 const MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
 
 export async function apply(ctx) {
+  const cpuProfileClock =
+    process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1' ? await import('./cpu-profile-clock.js') : null
   const client = ElectronHostClient.fromEnvironment(process.env, {
     onDisconnect: hostDisconnectHandler(ctx),
   })
@@ -16,8 +18,20 @@ export async function apply(ctx) {
     ctx.inject(['connection'], endpointCtx => {
       const url = `http://127.0.0.1:${endpointCtx.webServer.port}/`
       const usage = process.resourceUsage()
+      let cpuProfileEndpoint = {}
+      if (cpuProfileClock) {
+        try {
+          cpuProfileEndpoint = {
+            cpuProfileEndTimeUs: cpuProfileClock.captureCpuProfileEndpoint(),
+            cpuProfileProcessId: process.pid,
+          }
+        } catch {
+          cpuProfileEndpoint = { cpuProfileClockStatus: 'failed' }
+        }
+      }
       console.info('[startup][core-dsh-endpoint]', {
         elapsedMs: Math.round(process.uptime() * 1000),
+        ...cpuProfileEndpoint,
         userCpuMs: Math.round(usage.userCPUTime / 1000),
         systemCpuMs: Math.round(usage.systemCPUTime / 1000),
         fsReadBlocks: usage.fsRead,

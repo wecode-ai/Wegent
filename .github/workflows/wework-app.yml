@@ -354,12 +354,13 @@ jobs:
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_REQUIRE_COMPRESSED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
+          WEWORK_E2E_CORE_CPU_PROFILE: "1"
         run: |
           pnpm --filter wework e2e:desktop -- \
             --parallel-segments dsh-runtime-upgrade,release-package-startup,component-update,app-update-full
 
       - name: Prune formal release verification diagnostics
-        if: failure() && matrix.platform == 'macos' && matrix.arch == 'arm64'
+        if: always() && matrix.platform == 'macos' && matrix.arch == 'arm64'
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
       - name: Upload formal release verification diagnostics

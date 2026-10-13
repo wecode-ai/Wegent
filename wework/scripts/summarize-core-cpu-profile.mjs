@@ -65,7 +65,7 @@ function rows(groups) {
     .sort((left, right) => right.sampledMs - left.sampledMs)
 }
 
-export function summarizeCoreCpuProfile(profile) {
+export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
   if (
     !Array.isArray(profile?.nodes) ||
     !Array.isArray(profile.samples) ||
@@ -77,6 +77,14 @@ export function summarizeCoreCpuProfile(profile) {
   ) {
     throw new Error('Invalid CPU profile')
   }
+  if (
+    startupEndTimeUs !== undefined &&
+    (!Number.isFinite(startupEndTimeUs) ||
+      startupEndTimeUs <= profile.startTime ||
+      startupEndTimeUs > profile.endTime)
+  ) {
+    throw new Error('Startup marker is outside CPU profile')
+  }
   const nodes = new Map(profile.nodes.map(node => [node.id, node]))
   const parents = new Map()
   for (const node of profile.nodes) {
@@ -84,13 +92,22 @@ export function summarizeCoreCpuProfile(profile) {
   }
   const modules = new Map()
   const operations = new Map()
+  let sampleTime = profile.startTime
+  let capturedSamples = 0
   for (const [index, id] of profile.samples.entries()) {
     const delta = profile.timeDeltas[index]
     const node = nodes.get(id)
     if (!node?.callFrame || !Number.isFinite(delta) || delta < 0) {
       throw new Error('Invalid CPU profile')
     }
-    addSample(modules, moduleGroup(node.callFrame), delta)
+    const capturedDelta = Math.max(
+      0,
+      Math.min(sampleTime + delta, startupEndTimeUs ?? profile.endTime) - sampleTime
+    )
+    sampleTime += delta
+    if (capturedDelta === 0) continue
+    capturedSamples += 1
+    addSample(modules, moduleGroup(node.callFrame), capturedDelta)
     let current = node
     const visited = new Set()
     while (current && !visited.has(current.id)) {
@@ -100,16 +117,16 @@ export function summarizeCoreCpuProfile(profile) {
         bootOperations.has(frame?.functionName) &&
         ['@deepseek-ai/dsh', '@deepseek-ai/dsh-app-boot'].includes(moduleGroup(frame))
       ) {
-        addSample(operations, frame.functionName, delta)
+        addSample(operations, frame.functionName, capturedDelta)
         break
       }
       current = nodes.get(parents.get(current.id))
     }
   }
   return {
-    scope: 'captured-process-lifecycle',
-    durationMs: (profile.endTime - profile.startTime) / 1000,
-    samples: profile.samples.length,
+    scope: startupEndTimeUs === undefined ? 'captured-process-lifecycle' : 'startup-to-endpoint',
+    durationMs: ((startupEndTimeUs ?? profile.endTime) - profile.startTime) / 1000,
+    samples: capturedSamples,
     modules: rows(modules),
     bootOperations: rows(operations),
   }
@@ -118,7 +135,8 @@ export function summarizeCoreCpuProfile(profile) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const profile = JSON.parse(await readFile(process.argv[2], 'utf8'))
-    console.log(JSON.stringify(summarizeCoreCpuProfile(profile), null, 2))
+    const startupEndTimeUs = process.argv[3] === undefined ? undefined : Number(process.argv[3])
+    console.log(JSON.stringify(summarizeCoreCpuProfile(profile, startupEndTimeUs), null, 2))
   } catch {
     console.error('Could not summarize CPU profile')
     process.exitCode = 1
