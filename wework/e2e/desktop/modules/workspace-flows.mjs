@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
 
 import {
   ensureExperimentalFeaturesDisabled,
@@ -2375,6 +2376,12 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     }
   )
   control.activateWindow('main')
+  await verifyWorkspaceTabReturn(
+    control,
+    restoredDetachedControl,
+    secondTaskId,
+    waitForPersistedComposerInput
+  )
 }
 
 export {

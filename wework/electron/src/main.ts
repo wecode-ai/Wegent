@@ -1846,6 +1846,12 @@ async function configureDesktopRuntime(): Promise<void> {
             return snapshot ? { ...snapshot, dockBadge: app.dock?.getBadge() ?? null } : null
           },
           openWorkspace: openWorkspaceWindow,
+          showMain: reactivateMainWindow,
+          closeWorkspace: label => {
+            const target = workspaceWindows.get(label)
+            if (!target || target.isDestroyed()) throw new Error('Workspace window is unavailable')
+            target.close()
+          },
           openPopoutTaskInMain: taskAddressId => {
             popoutWindow?.hide()
             dispatchTrayAction({ type: 'open-task', source: 'popout', taskId: taskAddressId })

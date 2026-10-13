@@ -180,6 +180,7 @@ export const HOST_CAPABILITIES = [
   'navigation.pendingSchemes',
   'navigation.acknowledgeScheme',
   'window.close',
+  'window.closeWorkspace',
   'window.cancelCloseToTray',
   'window.closeToTray',
   'window.dismissPopout',
@@ -189,6 +190,7 @@ export const HOST_CAPABILITIES = [
   'window.openPopoutTaskInMain',
   'window.setPopoutMode',
   'window.showPopout',
+  'window.showMain',
   'window.toggleMaximize',
   'weworkSync.request',
 ] as const

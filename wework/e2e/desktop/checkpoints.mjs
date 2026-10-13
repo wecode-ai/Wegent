@@ -9,6 +9,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-space-mention',
   'collaboration-shared-core',
   'collaboration-issue-task-discovery',
+  'collaboration-app-queue-identity',
   'collaboration-first-use',
   'collaboration-worktree-policy',
   'collaboration-group-onboarding',
