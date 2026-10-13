@@ -262,6 +262,7 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
       apiFormat: config.apiFormat,
       upstreamApiFormat: config.apiFormat,
       ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
+      ...(config.maxOutputTokens ? { max_output_tokens: config.maxOutputTokens } : {}),
       ui: {
         family,
         ...(group ? { familyLabel: group } : {}),
@@ -995,6 +996,7 @@ function localRuntimeModelConfig(
       provider_name: localModel.displayName,
       display_name: localModel.displayName,
       ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
+      ...(localModel.maxOutputTokens ? { max_output_tokens: localModel.maxOutputTokens } : {}),
       web_search: localModel.webSearchMode ?? 'disabled',
       image_generation: localModel.imageGenerationEnabled === true,
       ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),

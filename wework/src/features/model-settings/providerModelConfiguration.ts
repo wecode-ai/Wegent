@@ -92,6 +92,7 @@ export function resolveProviderModel(
     codexToolCompatibility:
       apiFormat === 'openai-responses' ? (model.codex_tool_compatibility ?? 'native') : 'standard',
     contextWindow: model.context_window,
+    maxOutputTokens: model.max_output_tokens,
     webSearchMode: model.web_search_mode ?? 'disabled',
     imageGenerationEnabled: model.image_generation_enabled ?? false,
     visionModelConfigId: model.vision_model_config_id,
@@ -239,6 +240,7 @@ function modelToFile(config: LocalModelConfig): ProviderModel {
     api_format: config.apiFormat,
     request_path: config.requestPath,
     context_window: config.contextWindow,
+    max_output_tokens: config.maxOutputTokens,
     tool_profile: config.toolProfile,
     codex_tool_compatibility: config.codexToolCompatibility,
     web_search_mode: config.webSearchMode,

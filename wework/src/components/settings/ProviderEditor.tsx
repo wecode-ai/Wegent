@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { DialogForm } from '@/components/common/DialogForm'
 import { ProviderModelFields } from './ProviderModelFields'
+import { ProviderConnectionTestButton } from './ProviderConnectionTestButton'
 import {
   LOCAL_MODEL_PROVIDER_PROFILES,
   findLocalModelProviderProfile,
@@ -581,27 +582,33 @@ export function ProviderEditor({
                 </p>
               )}
             </fieldset>
-            <p className="text-xs text-text-secondary">{t('saveHint')}</p>
           </div>
-          <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
-            <button
-              type="button"
-              className={BUTTON}
-              data-testid="provider-editor-cancel"
+          <div className="grid grid-cols-1 gap-3 border-t border-border px-5 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+            <ProviderConnectionTestButton
+              provider={draft}
               disabled={pending}
-              onClick={() => (dirty ? setDiscard(true) : onClose())}
-            >
-              {t('cancel')}
-            </button>
-            <button
-              type="submit"
-              className={PRIMARY}
-              data-testid="provider-editor-save"
-              disabled={pending || !presetId || (!existing && !draft.models.length)}
-            >
-              {pending && <Loader2 className="h-4 w-4 animate-spin" />}
-              {existing ? t('save') : t('addProvider')}
-            </button>
+              testId="provider-editor-test"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className={BUTTON}
+                data-testid="provider-editor-cancel"
+                disabled={pending}
+                onClick={() => (dirty ? setDiscard(true) : onClose())}
+              >
+                {t('cancel')}
+              </button>
+              <button
+                type="submit"
+                className={PRIMARY}
+                data-testid="provider-editor-save"
+                disabled={pending || !presetId || (!existing && !draft.models.length)}
+              >
+                {pending && <Loader2 className="h-4 w-4 animate-spin" />}
+                {existing ? t('save') : t('addProvider')}
+              </button>
+            </div>
           </div>
         </DialogForm>
       )}
