@@ -2608,7 +2608,8 @@ mod tests {
     #[test]
     fn manages_worktrees_beyond_the_windows_legacy_path_limit() {
         let root = tempfile::tempdir().unwrap();
-        let mut nested = root.path().to_path_buf();
+        // Git resolves temporary-directory aliases before reading its initial config.
+        let mut nested = strip_windows_verbatim_prefix(&fs::canonicalize(root.path()).unwrap());
         // Keep Git's cwd below its legacy limit while its new metadata exceeds it.
         let source_length = |path: &Path| {
             path.join("environment/workspace")
@@ -2623,6 +2624,15 @@ mod tests {
         let source = nested.join("environment/workspace");
         assert!(source.to_string_lossy().encode_utf16().count() <= 248);
         fs::create_dir_all(&source).unwrap();
+        let source = strip_windows_verbatim_prefix(&fs::canonicalize(&source).unwrap());
+        assert!(
+            source
+                .join(".git/config")
+                .to_string_lossy()
+                .encode_utf16()
+                .count()
+                < 260
+        );
         git_output(&source, &["init"], None).unwrap();
         git_output(&source, &["config", "core.longpaths", "false"], None).unwrap();
         git_output(&source, &["config", "user.name", "Wegent Test"], None).unwrap();
