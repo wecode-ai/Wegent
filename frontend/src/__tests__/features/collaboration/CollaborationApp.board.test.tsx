@@ -75,6 +75,7 @@ function issue(): CollaborationIssue {
     updated_at: '2026-09-10T00:00:00Z',
     completed_at: null,
     can_edit: true,
+    is_unread: true,
   }
 }
 
@@ -108,6 +109,7 @@ async function dragCardTo(card: HTMLElement, target: HTMLElement) {
     fireEvent.pointerDown(handle, { clientX: 20, clientY: 20, button: 0 })
     fireEvent.pointerMove(document, { clientX: 30, clientY: 20 })
     expect(await screen.findByTestId('project-board-drag-overlay')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-card-unread-issue-1')).not.toBeInTheDocument()
     fireEvent.pointerMove(document, { clientX: 420, clientY: 20 })
     await act(async () => {
       fireEvent.pointerUp(document, { clientX: 420, clientY: 20 })
@@ -125,116 +127,125 @@ async function dragCardTo(card: HTMLElement, target: HTMLElement) {
 }
 
 describe('CollaborationApp shared project board', () => {
-  it('renders the shared project shell and five-column board with real API state', async () => {
-    const currentProject = project()
-    const updateProject = jest.fn().mockResolvedValue(project('priority'))
-    const updateIssue = jest.fn().mockResolvedValue({ ...issue(), status: 'completed', version: 2 })
-    const reorderIssue = jest
-      .fn()
-      .mockResolvedValue([{ ...issue(), status: 'completed', version: 2 }])
-    const api = {
-      projects: {
-        get: jest.fn().mockResolvedValue(currentProject),
-        update: updateProject,
-        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
-      },
-      issues: {
-        getBoardSnapshot: jest.fn().mockResolvedValue({
-          items: [issue()],
-          members: [],
-        }),
-        update: updateIssue,
-        reorder: reorderIssue,
-      },
-      members: {
-        list: jest.fn().mockResolvedValue([]),
-        searchUsers: jest.fn().mockResolvedValue([]),
-        add: jest.fn(),
-        update: jest.fn(),
-        remove: jest.fn(),
-      },
-      agents: {
-        list: jest.fn().mockResolvedValue([]),
-      },
-    } as unknown as SharedWorkspaceApi
-    const host: CollaborationHostAdapter = {
-      capabilities: {
-        automation: true,
-        dingtalkAitable: false,
-      },
-      location: {
-        projectId: currentProject.id,
-        issueId: null,
-        view: 'board',
-      },
-      navigate: jest.fn(),
-    }
+  it.each([false, true])(
+    'renders the shared board without unread indicators (runtime=%s)',
+    async withRuntime => {
+      const currentProject = project()
+      const updateProject = jest.fn().mockResolvedValue(project('priority'))
+      const updateIssue = jest
+        .fn()
+        .mockResolvedValue({ ...issue(), status: 'completed', version: 2 })
+      const reorderIssue = jest
+        .fn()
+        .mockResolvedValue([{ ...issue(), status: 'completed', version: 2 }])
+      const api = {
+        runtime: withRuntime ? { work: {} } : undefined,
+        projects: {
+          get: jest.fn().mockResolvedValue(currentProject),
+          update: updateProject,
+          listExecutionEnvironments: jest.fn().mockResolvedValue([]),
+        },
+        issues: {
+          getBoardSnapshot: jest.fn().mockResolvedValue({
+            items: [issue()],
+            members: [],
+            taskBindings: [],
+          }),
+          update: updateIssue,
+          reorder: reorderIssue,
+        },
+        members: {
+          list: jest.fn().mockResolvedValue([]),
+          searchUsers: jest.fn().mockResolvedValue([]),
+          add: jest.fn(),
+          update: jest.fn(),
+          remove: jest.fn(),
+        },
+        agents: {
+          list: jest.fn().mockResolvedValue([]),
+        },
+      } as unknown as SharedWorkspaceApi
+      const host: CollaborationHostAdapter = {
+        capabilities: {
+          automation: true,
+          dingtalkAitable: false,
+        },
+        location: {
+          projectId: currentProject.id,
+          issueId: null,
+          view: 'board',
+        },
+        navigate: jest.fn(),
+      }
 
-    render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
+      render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
 
-    expect(await screen.findByTestId('cloud-project-header')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-project-header-title')).toHaveTextContent('Web 协作项目')
-    expect(screen.getByTestId('collaboration-board')).toHaveClass(
-      'flex',
-      'min-h-0',
-      'min-w-0',
-      'flex-1',
-      'flex-col'
-    )
-    expect(screen.getByTestId('cloud-board-toolbar')).toBeInTheDocument()
-    expect(screen.getByTestId('collaboration-board-settings')).toHaveTextContent('看板设置')
-    for (const status of statuses) {
-      expect(screen.getByTestId(`cloud-todo-column-${status.id}`)).toBeInTheDocument()
-    }
-    expect(screen.getByTestId('collaboration-issue-issue-1')).toHaveTextContent('共享看板任务')
+      expect(await screen.findByTestId('cloud-project-header')).toBeInTheDocument()
+      expect(screen.getByTestId('cloud-project-header-title')).toHaveTextContent('Web 协作项目')
+      expect(screen.getByTestId('collaboration-board')).toHaveClass(
+        'flex',
+        'min-h-0',
+        'min-w-0',
+        'flex-1',
+        'flex-col'
+      )
+      expect(screen.getByTestId('cloud-board-toolbar')).toBeInTheDocument()
+      expect(screen.getByTestId('collaboration-board-settings')).toHaveTextContent('看板设置')
+      for (const status of statuses) {
+        expect(screen.getByTestId(`cloud-todo-column-${status.id}`)).toBeInTheDocument()
+      }
+      expect(screen.getByTestId('collaboration-issue-issue-1')).toHaveTextContent('共享看板任务')
+      expect(screen.queryByTestId('cloud-todo-card-unread-issue-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('collaboration-issue-issue-1')).not.toHaveClass('bg-focus/10')
 
-    await dragCardTo(
-      screen.getByTestId('collaboration-issue-issue-1'),
-      screen.getByTestId('cloud-todo-column-dropzone-completed')
-    )
-    await waitFor(() =>
-      expect(updateIssue).toHaveBeenCalledWith('issue-1', {
-        version: 1,
-        status: 'completed',
-      })
-    )
-    await waitFor(() =>
-      expect(reorderIssue).toHaveBeenCalledWith(currentProject.id, {
-        parentId: null,
-        status: 'completed',
-        issueIds: ['issue-1'],
-      })
-    )
-    expect(updateIssue.mock.invocationCallOrder[0]).toBeLessThan(
-      reorderIssue.mock.invocationCallOrder[0]
-    )
-
-    fireEvent.click(screen.getByTestId('collaboration-board-settings'))
-    expect(await screen.findByTestId('project-board-settings-dialog')).toHaveAccessibleName(
-      '看板设置'
-    )
-    fireEvent.click(screen.getByTestId('project-board-settings-close'))
-    await waitFor(() =>
-      expect(screen.queryByTestId('project-board-settings-dialog')).not.toBeInTheDocument()
-    )
-
-    fireEvent.change(screen.getByTestId('cloud-board-search'), {
-      target: { value: '不存在的任务' },
-    })
-    expect(screen.queryByTestId('collaboration-issue-issue-1')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('cloud-board-group-by'))
-    fireEvent.click(screen.getByTestId('cloud-board-group-option-priority'))
-    await waitFor(() =>
-      expect(updateProject).toHaveBeenCalledWith(
-        currentProject.id,
-        expect.objectContaining({
-          version: currentProject.version,
-          boardConfig: expect.objectContaining({ group_by: 'priority' }),
+      await dragCardTo(
+        screen.getByTestId('collaboration-issue-issue-1'),
+        screen.getByTestId('cloud-todo-column-dropzone-completed')
+      )
+      await waitFor(() =>
+        expect(updateIssue).toHaveBeenCalledWith('issue-1', {
+          version: 1,
+          status: 'completed',
         })
       )
-    )
-  })
+      await waitFor(() =>
+        expect(reorderIssue).toHaveBeenCalledWith(currentProject.id, {
+          parentId: null,
+          status: 'completed',
+          issueIds: ['issue-1'],
+        })
+      )
+      expect(updateIssue.mock.invocationCallOrder[0]).toBeLessThan(
+        reorderIssue.mock.invocationCallOrder[0]
+      )
+
+      fireEvent.click(screen.getByTestId('collaboration-board-settings'))
+      expect(await screen.findByTestId('project-board-settings-dialog')).toHaveAccessibleName(
+        '看板设置'
+      )
+      fireEvent.click(screen.getByTestId('project-board-settings-close'))
+      await waitFor(() =>
+        expect(screen.queryByTestId('project-board-settings-dialog')).not.toBeInTheDocument()
+      )
+
+      fireEvent.change(screen.getByTestId('cloud-board-search'), {
+        target: { value: '不存在的任务' },
+      })
+      expect(screen.queryByTestId('collaboration-issue-issue-1')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByTestId('cloud-board-group-by'))
+      fireEvent.click(screen.getByTestId('cloud-board-group-option-priority'))
+      await waitFor(() =>
+        expect(updateProject).toHaveBeenCalledWith(
+          currentProject.id,
+          expect.objectContaining({
+            version: currentProject.version,
+            boardConfig: expect.objectContaining({ group_by: 'priority' }),
+          })
+        )
+      )
+    }
+  )
 
   it.each([
     {

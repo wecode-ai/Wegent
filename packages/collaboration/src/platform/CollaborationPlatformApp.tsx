@@ -71,7 +71,6 @@ import {
 } from "../project-manage";
 import type {
   CollaborationExecutionEnvironment,
-  CollaborationExecution,
   CollaborationGroup,
   CollaborationIssue,
   CollaborationMember,
@@ -197,16 +196,11 @@ const platformMessages = {
     issueGuideReviewHint: "沉淀备选方案、关键取舍和待确认事项。",
     issueGuideResearch: "整理调研与决策",
     issueGuideResearchHint: "汇总背景、证据、结论和后续行动。",
-    myWork: "我的工作",
     inbox: "收件箱",
-    runCenter: "运行中心",
     needsYourAction: "需要你处理",
     activeWork: "进行中的工作",
     recentProjects: "最近访问",
-    noActiveWork: "当前没有正在推进的工作",
-    noActiveWorkHint: "可以进入最近项目创建 Issue，或查看已有工作。",
     noInboxItems: "当前没有需要你处理的事项",
-    noRuns: "当前没有执行记录",
     currentOwner: "当前负责人",
     currentStep: "当前步骤",
     runStatus: "运行状态",
@@ -421,17 +415,11 @@ const platformMessages = {
     issueGuideResearch: "Turn research into a decision",
     issueGuideResearchHint:
       "Summarize context, evidence, conclusions, and next actions.",
-    myWork: "My work",
     inbox: "Inbox",
-    runCenter: "Run center",
     needsYourAction: "Needs your action",
     activeWork: "Work in progress",
     recentProjects: "Recently visited",
-    noActiveWork: "No work is currently in progress",
-    noActiveWorkHint:
-      "Open a recent project to create an issue or review existing work.",
     noInboxItems: "Nothing needs your attention right now",
-    noRuns: "No execution records yet",
     currentOwner: "Current owner",
     currentStep: "Current step",
     runStatus: "Run status",
@@ -2918,7 +2906,6 @@ function WorkItemsPage({
   locale,
   messages,
   onOpenItem,
-  showHumanFilter = false,
 }: {
   title: string;
   subtitle: string;
@@ -2927,170 +2914,31 @@ function WorkItemsPage({
   locale: CollaborationLocale;
   messages: PlatformMessages;
   onOpenItem(item: WorkspaceMyWorkItem): void;
-  showHumanFilter?: boolean;
 }) {
-  const [humanOnly, setHumanOnly] = useState(false);
-  const filterHuman = showHumanFilter && humanOnly;
-  const visibleItems = filterHuman
-    ? items.filter((item) => item.human_work)
-    : items;
-  const sections = filterHuman
-    ? [
-        {
-          id: "human-action",
-          title: locale === "zh-CN" ? "待我处理" : "Needs my action",
-          items: visibleItems.filter(
-            (item) => item.human_work?.can_start || item.human_work?.can_submit,
-          ),
-        },
-        {
-          id: "human-review",
-          title: locale === "zh-CN" ? "待我确认" : "Needs my review",
-          items: visibleItems.filter((item) => item.human_work?.can_review),
-        },
-        {
-          id: "human-waiting",
-          title: locale === "zh-CN" ? "等待确认" : "Awaiting review",
-          items: visibleItems.filter(
-            (item) =>
-              item.human_work?.state === "submitted" &&
-              !item.human_work.can_review,
-          ),
-        },
-        {
-          id: "human-done",
-          title: locale === "zh-CN" ? "已完成" : "Completed",
-          items: visibleItems.filter((item) => item.status === "completed"),
-        },
-        {
-          id: "human-other",
-          title: locale === "zh-CN" ? "等待处理" : "Waiting for others",
-          items: visibleItems.filter(
-            (item) =>
-              item.status !== "completed" &&
-              item.human_work?.state !== "submitted" &&
-              !item.human_work?.can_start &&
-              !item.human_work?.can_submit &&
-              !item.human_work?.can_review,
-          ),
-        },
-      ].filter((section) => section.items.length)
-    : [
-        {
-          id: "assigned",
-          title: locale === "zh-CN" ? "待我处理" : "Assigned to me",
-          items: visibleItems,
-        },
-      ];
   return (
     <div className="collaboration-platform-page">
-      <PageHeader
-        title={title}
-        subtitle={subtitle}
-        action={
-          showHumanFilter ? (
-            <button
-              type="button"
-              className="collaboration-platform-secondary-button"
-              data-testid="collaboration-my-work-human-filter"
-              aria-pressed={humanOnly}
-              onClick={() => setHumanOnly((current) => !current)}
-            >
-              {locale === "zh-CN" ? "人工任务" : "Human tasks"}
-            </button>
-          ) : null
-        }
-      />
-      {visibleItems.length ? (
+      <PageHeader title={title} subtitle={subtitle} />
+      {items.length ? (
         <div className="collaboration-home-work-groups">
-          {sections.map((section) => (
-            <section
-              key={section.id}
-              data-testid={`collaboration-work-group-${section.id}`}
-            >
-              <h2 className="collaboration-home-work-group-title">
-                {section.title}
-              </h2>
-              <div className="collaboration-home-work-list">
-                {section.items.map((item) => (
-                  <WorkItemRow
-                    item={item}
-                    locale={locale}
-                    messages={messages}
-                    key={item.id}
-                    onOpen={onOpenItem}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+          <section data-testid="collaboration-work-group-assigned">
+            <h2 className="collaboration-home-work-group-title">
+              {locale === "zh-CN" ? "待我处理" : "Assigned to me"}
+            </h2>
+            <div className="collaboration-home-work-list">
+              {items.map((item) => (
+                <WorkItemRow
+                  item={item}
+                  locale={locale}
+                  messages={messages}
+                  key={item.id}
+                  onOpen={onOpenItem}
+                />
+              ))}
+            </div>
+          </section>
         </div>
       ) : (
-        <EmptyState
-          title={
-            filterHuman
-              ? locale === "zh-CN"
-                ? "暂无人工任务"
-                : "No human tasks"
-              : empty
-          }
-          description={messages.workspaceHint}
-        />
-      )}
-    </div>
-  );
-}
-
-function RunCenter({
-  entries,
-  locale,
-  messages,
-}: {
-  entries: Array<{
-    project: CollaborationProject;
-    execution: CollaborationExecution;
-  }>;
-  locale: CollaborationLocale;
-  messages: PlatformMessages;
-}) {
-  return (
-    <div className="collaboration-platform-page">
-      <PageHeader
-        title={messages.runCenter}
-        subtitle={messages.operationsHint}
-      />
-      {entries.length ? (
-        <div className="collaboration-run-center-list">
-          {entries.map(({ project, execution }) => (
-            <article key={`${project.id}-${execution.id}`}>
-              <span>
-                <strong>{execution.task_title}</strong>
-                <small>
-                  {project.name} · #{execution.id}
-                </small>
-              </span>
-              <span>{execution.executor_type}</span>
-              <OperationStateBadge
-                messages={messages}
-                state={
-                  execution.status === "failed"
-                    ? "failed"
-                    : execution.completed_at
-                      ? "completed"
-                      : "running"
-                }
-              />
-              <time dateTime={execution.updated_at}>
-                {formatOperationTime(locale, execution.updated_at)}
-              </time>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <EmptyState
-          title={messages.noRuns}
-          description={messages.operationsHint}
-        />
+        <EmptyState title={empty} description={messages.workspaceHint} />
       )}
     </div>
   );
@@ -4073,23 +3921,6 @@ export function CollaborationPlatformApp({
             await commands.reload();
           }}
           onManageResource={manageRootResource}
-        />
-      ) : rootView === "runs" ? (
-        <RunCenter
-          entries={state.executions}
-          locale={locale}
-          messages={messages}
-        />
-      ) : rootView === "my-work" ? (
-        <WorkItemsPage
-          title={messages.myWork}
-          subtitle={messages.workspaceHint}
-          empty={messages.noActiveWork}
-          items={state.myWork}
-          locale={locale}
-          messages={messages}
-          onOpenItem={openMyWorkItem}
-          showHumanFilter
         />
       ) : rootView === "inbox" ? (
         <WorkItemsPage

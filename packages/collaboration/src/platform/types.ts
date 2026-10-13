@@ -27,9 +27,7 @@ export type CollaborationPlatformRootView =
   | "agents"
   | "teams"
   | "devices"
-  | "my-work"
-  | "inbox"
-  | "runs";
+  | "inbox";
 
 export type CollaborationWorkspaceView =
   | "home"

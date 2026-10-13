@@ -194,9 +194,7 @@
     "agents": "Agents",
     "teams": "Teams",
     "devices": "Devices",
-    "my_work": "My work",
-    "inbox": "Inbox",
-    "run_center": "Run center"
+    "inbox": "Inbox"
   },
   "sidebar": {
     "recent_visits": "Recent Visits",

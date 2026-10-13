@@ -863,7 +863,6 @@ function PlatformControllerHarness({
         workspaceIds: state.workspaces.map((candidate) => candidate.id),
         projectIds: state.projects.map((candidate) => candidate.id),
         myWork: state.myWork,
-        executions: state.executions,
       })}
     </output>
   );
@@ -1757,7 +1756,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.resources!.list).toHaveBeenCalledOnce();
   });
 
-  it("loads only run data alongside navigation on the runs page", async () => {
+  it("loads navigation without personal work or execution data on the home page", async () => {
     const { api } = createApi();
     const listMyWork = vi
       .fn()
@@ -1769,19 +1768,14 @@ describe("CollaborationPlatformApp real component flow", () => {
     api.executions.list = listExecutions;
 
     await render(
-      <PlatformControllerHarness
-        api={api}
-        location={{ ...initialLocation, rootView: "runs" }}
-      />,
+      <PlatformControllerHarness api={api} location={initialLocation} />,
     );
 
     const state = JSON.parse(
       byTestId("platform-controller-state").textContent ?? "{}",
     );
     expect(listMyWork).not.toHaveBeenCalled();
-    expect(listExecutions).toHaveBeenCalledWith(project.id, {
-      includeTerminal: true,
-    });
+    expect(listExecutions).not.toHaveBeenCalled();
     expect(state).toEqual({
       loading: false,
       error: null,
@@ -1789,11 +1783,10 @@ describe("CollaborationPlatformApp real component flow", () => {
       workspaceIds: [workspace.id],
       projectIds: [project.id],
       myWork: [],
-      executions: [],
     });
   });
 
-  it("filters My Work to human tasks and groups them by the next human action", async () => {
+  it("keeps actionable human tasks in the inbox after removing My Work", async () => {
     const { api } = createApi();
     const humanIssue = {
       ...issue,
@@ -1830,13 +1823,16 @@ describe("CollaborationPlatformApp real component flow", () => {
     await render(
       <PlatformHarness
         api={api}
-        start={{ ...initialLocation, rootView: "my-work" }}
+        start={{ ...initialLocation, rootView: "inbox" }}
       />,
     );
     expect(byTestId("collaboration-home-work-human-work-1")).toBeTruthy();
-    expect(byTestId("collaboration-home-work-ordinary-work-1")).toBeTruthy();
-    await click(byTestId("collaboration-my-work-human-filter"));
-    expect(byTestId("collaboration-work-group-human-action")).toBeTruthy();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-my-work-human-filter"]',
+      ),
+    ).toBeNull();
+    expect(byTestId("collaboration-work-group-assigned")).toBeTruthy();
     expect(byTestId("collaboration-home-work-human-work-1")).toBeTruthy();
     expect(
       container.querySelector(

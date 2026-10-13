@@ -194,9 +194,7 @@
     "agents": "智能体",
     "teams": "协作小组",
     "devices": "设备",
-    "my_work": "我的工作",
-    "inbox": "收件箱",
-    "run_center": "运行中心"
+    "inbox": "收件箱"
   },
   "sidebar": {
     "recent_visits": "最近访问",

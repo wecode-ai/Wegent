@@ -31,12 +31,13 @@ export function IssueBoardCardContent({
   display,
   labels,
   agentNames,
+  unread,
   goal,
   needsExecutionConfiguration,
   translate: t,
 }: Pick<
   CollaborationIssueCardProps,
-  "item" | "reference" | "display" | "labels" | "agentNames"
+  "item" | "reference" | "display" | "labels" | "agentNames" | "unread"
 > & {
   goal?: { bindingId: string | number; objective: string } | null;
   needsExecutionConfiguration?: boolean;
@@ -46,6 +47,7 @@ export function IssueBoardCardContent({
     <>
       <CollaborationIssueCardContent
         item={item}
+        unread={unread}
         reference={reference}
         display={display}
         labels={labels}
