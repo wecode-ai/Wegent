@@ -255,3 +255,9 @@ component-update 的首个 Core 进程报告固定 `core_profile_summarize_faile
 存储恢复差值尚无足够证据归因。沿用主 Electron renderer 的既有阶段记录，将固定 `rendererStorage.initialize` 拆为收到响应头、JSON 解码和同步存储替换；Core 仅在既有 CPU 诊断开启时记录请求体解析、宿主结果返回及 `res.end` 调用返回。后者不代表响应已送达或 flush 完成；日志不含内容、键、路径、token 或请求标识。32 项 renderer、9 项 Core 路由测试以及类型、lint、格式检查通过；原 await、同步替换、错误身份及就绪条件保留。新增诊断仍须下一轮真实 CI 给出阶段证据，不构成性能修复。
 
 `267a908aa` 另完成一次隔离源代码 Electron 验证：构建测试专用 Executor，启动独立会话，snapshot 后等待实际 `desktop-workbench-surface`；工作台及输入框存在，无启动错误。新阶段实际记录恢复 289.4 毫秒，响应头等待 116.8 毫秒，响应体解码等待 172.3 毫秒，同步替换 0.1 毫秒。`response.json()` 的等待包含浏览器调度与响应体接收，不等于纯 JSON 解析 CPU，也不能外推到 CI。验证结束执行 stop 返回零，应用及所属会话进程均已退出，认证链接已移除；未保存截图或提交会话文件。这验证了真实启动及诊断接线，不替代完整跨平台 E2E、旧版兼容或严格冷启动预算。
+
+本轮 Windows 原生构建仍使用 Git `2.55.0.windows.5`，registry 3 项、execution clone 1 项、workstore 15 项、长路径工作树 4 项全部通过，无失败或忽略。[Windows 第 11 组](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115533239020) 的原 workspace-attachments（含严格终端标记与拖拽）、automation-lifecycle、drawing-attachment 全部通过；这不单独证明旧标记超时唯一由 SSE 生命周期缺陷造成。[第 16 组](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115533239262) 六项原场景全部通过，包括 workbench-mode 的真实 Home 迁移与原生会话恢复，为明确文件存储的隔离 fixture 提供完整闭环。
+
+[第 14 组](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115533239278) component-update 通过；实际暂存解包约 13.30 秒，未变更 Core 快照约 14.26 秒，彼此并行，43 秒是完整场景而非暂存阶段耗时。失败来自 native-window-startup 内部的启动恢复子 Electron 退出 1；原 execFile 错误未暴露具体原因，子目录错误制品又被清理。当前证据不能定位实际子进程根因，也不能归为旧组件暂存超时。后续只增加安全阶段诊断，保留原断言和预算，必须由下一轮实际错误证据继续定位。
+
+启动恢复取证新增固定阶段、验证模式和白名单错误名称/代码，失败报告复制到结果顶层，避免 compact 删除子目录后失去证据。诊断落盘仅尽力执行，失败不阻止原退出，也不替换原 exec 错误；不持久化原 stderr、错误 stack、秘密 URL 或截图。8 项聚焦 Vitest 回归覆盖真实文件写失败、错误身份及实际 compact 保留报告，类型、lint、格式检查通过。新测试位于 CI 默认收集的 scripts 目录；原 E2E 断言、预算与重启流程不改，实际 Windows 子退出原因仍待下一轮诊断。
