@@ -88,6 +88,12 @@ import {
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
 
+const filePickerDiagnostic = vi.hoisted(() => ({
+  active: false,
+  selections: [] as { path: string; selectedPaths: string[]; suppressed: boolean }[],
+  selectionCallbackCount: 0,
+}))
+
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
 }))
@@ -646,9 +652,19 @@ vi.mock('@pierre/trees/react', async () => {
   }
 
   function selectModelPath(model: MockTreeModel, path: string) {
+    if (filePickerDiagnostic.active) {
+      filePickerDiagnostic.selections.push({
+        path,
+        selectedPaths: [...model.selectedPaths],
+        suppressed: model.selectedPaths[0] === path,
+      })
+    }
     if (model.selectedPaths[0] === path) return
 
     model.selectedPaths = [path]
+    if (filePickerDiagnostic.active && model.onSelectionChange) {
+      filePickerDiagnostic.selectionCallbackCount += 1
+    }
     model.onSelectionChange?.([path])
   }
 
@@ -934,6 +950,7 @@ describe('DesktopWorkbenchLayout', () => {
   }
 
   beforeEach(async () => {
+    filePickerDiagnostic.active = false
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
     experimentalFeatures.enabled = true
@@ -1928,10 +1945,16 @@ describe('DesktopWorkbenchLayout', () => {
   test('keeps startup blocked until a selected task transcript is restored', async () => {
     startupMarkdownRenderer.enabled = true
     runtimeMocks.electron = true
+    const phaseLog = vi.spyOn(console, 'info')
     const invoke = desktopHostMocks.invoke.getMockImplementation()
     desktopHostMocks.invoke.mockImplementation(async capability => {
       if (capability === 'renderer.startupReady') {
         expect(screen.getByText('Restored startup answer')).toBeVisible()
+        expect(phaseLog).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /^\[startup\]\[renderer-phase\] .*"phase":"surface-ready","status":"completed","navigationTimeMs":\d+/
+          )
+        )
       }
       return invoke?.(capability)
     })
@@ -10020,6 +10043,14 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('workspace-file-breadcrumb-/fixture/repo/backend/app/schemas')
     ).toHaveTextContent('schemas')
 
+    filePickerDiagnostic.active = true
+    filePickerDiagnostic.selections = []
+    filePickerDiagnostic.selectionCallbackCount = 0
+    let secondClickTarget: {
+      connected: boolean
+      popoverState: string | null
+      currentTreeCount: number
+    } | null = null
     const clickPickerEntry = async (name: string) => {
       const tree = await screen.findByTestId('workspace-file-picker-tree')
       const row = await waitFor(() => {
@@ -10035,6 +10066,16 @@ describe('DesktopWorkbenchLayout', () => {
         expect(candidate).toBeDefined()
         return candidate!
       })
+      if (name === 'quick_launch.py') {
+        secondClickTarget = {
+          connected: row.isConnected,
+          popoverState:
+            row
+              .closest('[data-testid="workspace-file-siblings-menu"]')
+              ?.getAttribute('data-state') ?? null,
+          currentTreeCount: screen.queryAllByTestId('workspace-file-picker-tree').length,
+        }
+      }
       fireEvent.click(row)
     }
 
@@ -10051,9 +10092,24 @@ describe('DesktopWorkbenchLayout', () => {
 
     await user.click(screen.getByTestId('workspace-file-name-button'))
     await clickPickerEntry('quick_launch.py')
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-file-name-button')).toHaveTextContent('quick_launch.py')
-    )
+    try {
+      await waitFor(() =>
+        expect(screen.getByTestId('workspace-file-name-button')).toHaveTextContent(
+          'quick_launch.py'
+        )
+      )
+    } catch (error) {
+      console.error('[workspace-file-picker-fixture]', {
+        secondClickTarget,
+        selections: filePickerDiagnostic.selections,
+        selectionCallbackCount: filePickerDiagnostic.selectionCallbackCount,
+        fileReadPaths: readWorkspaceTextFile.mock.calls.map(([, filePath]) => filePath),
+        displayedFile: screen.queryByTestId('workspace-file-name-button')?.textContent ?? null,
+      })
+      throw error
+    } finally {
+      filePickerDiagnostic.active = false
+    }
     expect(screen.getAllByRole('tab', { name: /quick_launch.py|admin.py/ })).toHaveLength(2)
 
     await user.click(screen.getByRole('tab', { name: /admin.py/ }))

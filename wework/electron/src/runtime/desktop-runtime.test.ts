@@ -1,3 +1,4 @@
+import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { HostCapabilityRouter } from '../host/capability-router.js'
 import { HostPipeServer } from '../host/host-pipe.js'
@@ -18,14 +19,17 @@ vi.mock('./workbench-executor-schema.js', () => ({
 interface Deferred<T> {
   promise: Promise<T>
   resolve: (value: T) => void
+  reject: (reason: unknown) => void
 }
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>(res => {
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
     resolve = res
+    reject = rej
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 class FakeCoreDsh implements CoreDshHandle {
@@ -243,6 +247,93 @@ describe('DesktopRuntime lifecycle generation', () => {
       DSH_HOME: '/managed/home',
     })
     await runtime.stop()
+  })
+
+  test('prepares Core while updater host registration is held and gates both process starts', async () => {
+    vi.mocked(resolveDesktopDeviceId).mockClear()
+    const registration = deferred<HostPipeServer>()
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    const runtime = createRuntime(
+      { WEWORK_EXECUTOR_PATH: '/executor', WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime' },
+      { hostPipe: registration.promise, createExecutor }
+    )
+    const preparation = runtime.prepare()
+    await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(1))
+    prepareState.resolveLaunch?.({
+      command: 'node',
+      entry: 'entry.js',
+      cwd: '/managed/runtime',
+      dshHome: '/managed/home',
+      environment: { WEWORK_APP_WEB_ROOT: '/managed/web' },
+      profile: 'test',
+      version: '0.0.0',
+      sourceFingerprint: 'test',
+    })
+    await preparation
+    let settled = false
+    const startup = runtime.start().finally(() => {
+      settled = true
+    })
+    const result = startup.catch(error => error)
+    await flush()
+    expect(settled).toBe(false)
+    expect(createExecutor).not.toHaveBeenCalled()
+    expect(resolveDesktopDeviceId).not.toHaveBeenCalled()
+    expect(created).toHaveLength(0)
+    registration.resolve(hostPipe)
+    expect(await result).toBeUndefined()
+    expect(prepareState.prepareCalls).toBe(1)
+    expect(createExecutor).toHaveBeenCalledTimes(1)
+    expect(createdOptions[0].hostPipe).toBe(hostPipe)
+    expect(createdOptions[0].env).toMatchObject(hostPipe.environment())
+    await runtime.stop()
+  })
+
+  test('preserves updater host registration errors before any managed process starts', async () => {
+    const registration = deferred<HostPipeServer>()
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { hostPipe: registration.promise, createExecutor }
+    )
+    const failure = new Error('updater initialization failed')
+    registration.reject(failure)
+    await flush()
+    await runtime.prepare()
+    await expect(runtime.start()).rejects.toBe(failure)
+    expect(createExecutor).not.toHaveBeenCalled()
+    expect(created).toHaveLength(0)
+    await runtime.stop()
+  })
+
+  test('shutdown waits for updater registration and disposes its late host pipe', async () => {
+    const registration = deferred<HostPipeServer>()
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { hostPipe: registration.promise, createExecutor }
+    )
+    const startup = runtime.start()
+    let stopped = false
+    const stop = runtime.stop().then(() => {
+      stopped = true
+    })
+    await flush()
+    expect(stopped).toBe(false)
+    const latePipe = new HostPipeServer(new HostCapabilityRouter())
+    const input = new PassThrough()
+    const output = new PassThrough()
+    latePipe.attachStreams(input, output, null)
+    const dispose = vi.spyOn(latePipe, 'stop')
+    registration.resolve(latePipe)
+    await Promise.all([startup, stop])
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(output.writableEnded).toBe(true)
+    expect(input.listenerCount('close')).toBe(0)
+    expect(createExecutor).not.toHaveBeenCalled()
+    expect(created).toHaveLength(0)
+    input.destroy()
+    output.destroy()
   })
 
   test('early preparation preserves the executor compatibility gate', async () => {

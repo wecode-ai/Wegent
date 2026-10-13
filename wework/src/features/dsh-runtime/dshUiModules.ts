@@ -39,7 +39,31 @@ export function importDshUiModule<T>(module: string): Promise<T> {
     : import(/* @vite-ignore */ url)
   const loaded = loading
     .then(async value => {
-      await loadDshUiStylesheets(value)
+      if (startupModule) {
+        markDesktopStartupPhase('module-import-resolved', 'completed', {
+          modulePath: startupModule,
+          durationMs: Math.round(performance.now() - startedAt),
+        })
+        markDesktopStartupPhase('module-stylesheets', 'started', { modulePath: startupModule })
+      }
+      const stylesStartedAt = performance.now()
+      try {
+        await loadDshUiStylesheets(value)
+      } catch (error) {
+        if (startupModule) {
+          markDesktopStartupPhase('module-stylesheets', 'failed', {
+            modulePath: startupModule,
+            durationMs: Math.round(performance.now() - stylesStartedAt),
+          })
+        }
+        throw error
+      }
+      if (startupModule) {
+        markDesktopStartupPhase('module-stylesheets', 'completed', {
+          modulePath: startupModule,
+          durationMs: Math.round(performance.now() - stylesStartedAt),
+        })
+      }
       return value
     })
     .then(

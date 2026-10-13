@@ -2645,6 +2645,7 @@ mod tests {
         );
         git_output(&source, &["init"], None).unwrap();
         git_output(&source, &["config", "core.longpaths", "false"], None).unwrap();
+        git_output(&source, &["config", "core.autocrlf", "false"], None).unwrap();
         git_output(&source, &["config", "user.name", "Wegent Test"], None).unwrap();
         git_output(
             &source,

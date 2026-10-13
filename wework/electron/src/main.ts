@@ -444,6 +444,7 @@ const logRetention = new LogRetentionService({
 let appUpdates: AppUpdateService | null = null
 const prepareAppUpdateService = createSingleFlight(async () => {
   if (appUpdates) return appUpdates
+  logStartupStep('app-update-preparation', 'started')
   const { default: electronUpdater } = await import('electron-updater')
   const { autoUpdater } = electronUpdater
   autoUpdater.logger = appUpdateLogger
@@ -466,6 +467,7 @@ const prepareAppUpdateService = createSingleFlight(async () => {
     },
     updateBaseUrl,
   })
+  logStartupStep('app-update-preparation', 'completed')
   return appUpdates
 })
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
@@ -1613,6 +1615,8 @@ async function configureDesktopRuntime(): Promise<void> {
   }
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
+  const runtimePreferences = preferences
+  const runtimeRendererStorage = rendererStorage
   logStartupStep('runtime-preferences-read', 'started')
   const codexSubscriptionPreferences = await preferences.read()
   logStartupStep('runtime-preferences-read', 'completed')
@@ -1646,6 +1650,8 @@ async function configureDesktopRuntime(): Promise<void> {
       )
     },
   })
+  const runtimeBrowser = embeddedBrowser
+  const runtimeBrowserAnnotations = browserAnnotations
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
@@ -1678,6 +1684,7 @@ async function configureDesktopRuntime(): Promise<void> {
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
+  const runtimeComputerUse = computerUse
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
@@ -1700,40 +1707,17 @@ async function configureDesktopRuntime(): Promise<void> {
         : undefined,
     })
   }
-  const [updatesResult] = await updatesPreparation
-  if (updatesResult.status === 'rejected') throw updatesResult.reason
-  desktopRuntime = new DesktopRuntime({
-    environment,
-    authenticateBrowserSession: (url, _cookie, setCookies) =>
-      installDshBrowserSession(session.defaultSession.cookies, url, setCookies),
-    dataDirectory: app.getPath('userData'),
-    logDirectory: app.getPath('logs'),
-    onStartupStep: logStartupStep,
-    onCoreDshRestarted: async () => {
-      disposeCoreDshViews()
-      await loadPrimaryDshView()
-      await restoreFixedWorkspaceWindows()
-      notifyRuntimeChanged()
-    },
-    readWorkbenchMode: async () =>
-      normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
-    createWorkbenchHostPipe: tabId => {
-      const pipe = new HostPipeServer(createWorkbenchCapabilityRouter(embeddedBrowser, tabId))
-      return { hostPipe: pipe, principal: WEWORK_WORKBENCH_PRINCIPAL }
-    },
-    onExecutorEvent: (event, payload) => {
-      systemSleep.handleExecutorEvent(event, payload)
-      trayNativeStatus?.handleExecutorEvent(event)
-    },
-    hostPipe: new HostPipeServer(
+  const hostPipe = updatesPreparation.then(([updatesResult]) => {
+    if (updatesResult.status === 'rejected') throw updatesResult.reason
+    return new HostPipeServer(
       createElectronCapabilityRouter(
         () => mainWindow,
         () => rendererHealth.snapshot(),
         () => smartApps,
-        preferences,
-        rendererStorage,
-        embeddedBrowser,
-        computerUse,
+        runtimePreferences,
+        runtimeRendererStorage,
+        runtimeBrowser,
+        runtimeComputerUse,
         {
           executorHome:
             environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
@@ -1763,7 +1747,7 @@ async function configureDesktopRuntime(): Promise<void> {
                 }
               : null,
           appUpdates: updatesResult.value,
-          browserAnnotations,
+          browserAnnotations: runtimeBrowserAnnotations,
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
@@ -1932,12 +1916,36 @@ async function configureDesktopRuntime(): Promise<void> {
             ),
         }
       )
-    ),
+    )
   })
-  const [browserResult, controlResult, corePreparationResult] = await Promise.allSettled([
-    ...bridgePreparations,
-    desktopRuntime.prepare(),
-  ])
+  desktopRuntime = new DesktopRuntime({
+    environment,
+    authenticateBrowserSession: (url, _cookie, setCookies) =>
+      installDshBrowserSession(session.defaultSession.cookies, url, setCookies),
+    dataDirectory: app.getPath('userData'),
+    logDirectory: app.getPath('logs'),
+    onStartupStep: logStartupStep,
+    onCoreDshRestarted: async () => {
+      disposeCoreDshViews()
+      await loadPrimaryDshView()
+      await restoreFixedWorkspaceWindows()
+      notifyRuntimeChanged()
+    },
+    readWorkbenchMode: async () =>
+      normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
+    createWorkbenchHostPipe: tabId => {
+      const pipe = new HostPipeServer(createWorkbenchCapabilityRouter(embeddedBrowser, tabId))
+      return { hostPipe: pipe, principal: WEWORK_WORKBENCH_PRINCIPAL }
+    },
+    onExecutorEvent: (event, payload) => {
+      systemSleep.handleExecutorEvent(event, payload)
+      trayNativeStatus?.handleExecutorEvent(event)
+    },
+    hostPipe,
+  })
+  const [browserResult, controlResult, corePreparationResult, hostPipeResult] =
+    await Promise.allSettled([...bridgePreparations, desktopRuntime.prepare(), hostPipe])
+  if (hostPipeResult.status === 'rejected') throw hostPipeResult.reason
   if (browserResult.status === 'rejected') throw browserResult.reason
   if (controlResult.status === 'rejected') throw controlResult.reason
   if (corePreparationResult.status === 'rejected') throw corePreparationResult.reason

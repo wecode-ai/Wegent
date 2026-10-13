@@ -4,7 +4,106 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
-import { SqliteSyncOutbox } from './outbox.js'
+import { measureOutboxStartupPhase, SqliteSyncOutbox } from './outbox.js'
+
+function captureStartupPhases(t, enabled) {
+  const previous = process.env.WEWORK_E2E_CORE_CPU_PROFILE
+  process.env.WEWORK_E2E_CORE_CPU_PROFILE = enabled
+  t.after(() => {
+    if (previous === undefined) delete process.env.WEWORK_E2E_CORE_CPU_PROFILE
+    else process.env.WEWORK_E2E_CORE_CPU_PROFILE = previous
+  })
+  const messages = []
+  t.mock.method(console, 'info', message => messages.push(message))
+  return messages
+}
+
+test('outbox diagnostics preserve the disabled production path without logging', t => {
+  const messages = captureStartupPhases(t, '0')
+  const result = {}
+  assert.equal(
+    measureOutboxStartupPhase('database-open', () => result),
+    result
+  )
+  const error = new Error('private-path-secret')
+  assert.throws(
+    () =>
+      measureOutboxStartupPhase('pragmas', () => {
+        throw error
+      }),
+    value => value === error
+  )
+  assert.deepEqual(messages, [])
+})
+
+test('measures real SQLite startup phases with only fixed safe metadata', async t => {
+  const messages = captureStartupPhases(t, '1')
+  const directory = await mkdtemp(join(tmpdir(), 'wework-private-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'private-auth-secret.sqlite3')
+  const outbox = measureOutboxStartupPhase(
+    'outbox-initialization',
+    () => new SqliteSyncOutbox(path)
+  )
+  assert.equal(outbox.count(), 0)
+  outbox.close()
+  const entries = messages.map(message =>
+    JSON.parse(message.replace('[startup][transcript-outbox] ', ''))
+  )
+  assert.deepEqual(
+    entries.map(entry => `${entry.phase}:${entry.status}`),
+    [
+      'outbox-initialization:started',
+      'database-open:started',
+      'database-open:completed',
+      'pragmas:started',
+      'pragmas:completed',
+      'schema-transaction:started',
+      'schema-transaction:completed',
+      'outbox-initialization:completed',
+    ]
+  )
+  for (const [index, entry] of entries.entries()) {
+    assert.deepEqual(
+      Object.keys(entry).sort(),
+      entry.status === 'started'
+        ? ['monotonicTimeMs', 'phase', 'status']
+        : ['durationMs', 'monotonicTimeMs', 'phase', 'status']
+    )
+    assert.ok(Number.isFinite(entry.monotonicTimeMs))
+    if (index) assert.ok(entry.monotonicTimeMs >= entries[index - 1].monotonicTimeMs)
+    if (entry.status === 'completed') assert.ok(entry.durationMs >= 0)
+  }
+  assert.equal(messages.join('\n').includes(path), false)
+  assert.equal(messages.join('\n').includes('CREATE TABLE'), false)
+  assert.equal(messages.join('\n').includes('secret'), false)
+})
+
+test('reports failed startup phases without exposing or replacing the original error', t => {
+  const messages = captureStartupPhases(t, '1')
+  const error = new Error('private-path-secret SQL credential')
+  assert.throws(
+    () =>
+      measureOutboxStartupPhase('schema-transaction', () => {
+        throw error
+      }),
+    value => value === error
+  )
+  const entries = messages.map(message =>
+    JSON.parse(message.replace('[startup][transcript-outbox] ', ''))
+  )
+  assert.deepEqual(
+    entries.map(entry => entry.status),
+    ['started', 'failed']
+  )
+  assert.ok(entries[1].durationMs >= 0)
+  assert.equal(messages.join('\n').includes(error.message), false)
+  assert.equal(
+    measureOutboxStartupPhase('private-path-secret', () => 42),
+    42
+  )
+  assert.equal(messages.length, 2)
+})
 
 test('stores only durable turn locators across a month of intensive offline use', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
-import { SqliteSyncOutbox } from './outbox.js'
+import { measureOutboxStartupPhase, SqliteSyncOutbox } from './outbox.js'
 
 export const name = 'wework-transcript-sync'
 export const inject = [
@@ -39,7 +39,10 @@ export async function apply(ctx) {
   const home = process.env.DSH_HOME ?? '.'
   const state = new SyncState(join(home, 'wework-transcript-sync.json'))
   await state.load()
-  const outbox = new SqliteSyncOutbox(join(home, 'wework-transcript-sync-outbox.sqlite3'))
+  const outbox = measureOutboxStartupPhase(
+    'outbox-initialization',
+    () => new SqliteSyncOutbox(join(home, 'wework-transcript-sync-outbox.sqlite3'))
+  )
   const secure = ctx.weworkSecureStorage.scope('wework-transcript-sync')
   let clientId = process.env.WEGENT_APP_IPC_DEVICE_ID?.trim()
   if (!clientId) clientId = await secure.get('client-id')

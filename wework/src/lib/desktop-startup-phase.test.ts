@@ -3,6 +3,7 @@ let markDesktopStartupPhase: typeof import('./desktop-startup-phase').markDeskto
 let clearDshUiModuleCache: typeof import('@/features/dsh-runtime/dshUiModules').clearDshUiModuleCache
 let getLoadedDshUiModule: typeof import('@/features/dsh-runtime/dshUiModules').getLoadedDshUiModule
 let importDshUiModule: typeof import('@/features/dsh-runtime/dshUiModules').importDshUiModule
+let stylesheetModule: typeof import('@/features/dsh-runtime/dshUiStylesheets')
 
 const runtime = vi.hoisted(() => ({ electron: true, label: 'main' }))
 vi.mock('@/lib/runtime-environment', () => ({
@@ -21,6 +22,7 @@ describe('desktop startup phase diagnostics', () => {
     vi.resetModules()
     const diagnostics = await import('./desktop-startup-phase')
     const modules = await import('@/features/dsh-runtime/dshUiModules')
+    stylesheetModule = await import('@/features/dsh-runtime/dshUiStylesheets')
     markDesktopStartupPhase = diagnostics.markDesktopStartupPhase
     clearDshUiModuleCache = modules.clearDshUiModuleCache
     getLoadedDshUiModule = modules.getLoadedDshUiModule
@@ -76,9 +78,76 @@ describe('desktop startup phase diagnostics', () => {
       resolve(value)
       await expect(first).resolves.toBe(value)
       expect(getLoadedDshUiModule(modulePath)).toBe(value)
-      expect(recordedPhases(info).map(({ status }) => status)).toEqual(['started', 'completed'])
+      expect(recordedPhases(info).map(({ phase, status }) => [phase, status])).toEqual([
+        [
+          modulePath.includes('core-apps') ? 'core-app-module-import' : 'home-module-import',
+          'started',
+        ],
+        ['module-import-resolved', 'completed'],
+        ['module-stylesheets', 'started'],
+        ['module-stylesheets', 'completed'],
+        [
+          modulePath.includes('core-apps') ? 'core-app-module-import' : 'home-module-import',
+          'completed',
+        ],
+      ])
     }
   )
+
+  test('records module and stylesheet boundaries without completing a held stylesheet', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    let clock = 10
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    let release!: () => void
+    vi.spyOn(stylesheetModule, 'loadDshUiStylesheets').mockImplementation(
+      () => new Promise<void>(resolve => (release = resolve))
+    )
+    const modulePath = 'plugins/wework-ui-core-apps.js'
+    const value = { privateContent: 'private' }
+    window.__WEWORK_DSH_UI_MODULES__ = { [modulePath]: value }
+    const loading = importDshUiModule(modulePath)
+    clock = 20
+    await Promise.resolve()
+    expect(getLoadedDshUiModule(modulePath)).toBeNull()
+    expect(recordedPhases(info).map(({ phase, status }) => [phase, status])).toEqual([
+      ['core-app-module-import', 'started'],
+      ['module-import-resolved', 'completed'],
+      ['module-stylesheets', 'started'],
+    ])
+    clock = 35
+    release()
+    await expect(loading).resolves.toBe(value)
+    expect(getLoadedDshUiModule(modulePath)).toBe(value)
+    expect(recordedPhases(info).map(({ navigationTimeMs }) => navigationTimeMs)).toEqual([
+      10, 20, 20, 35, 35,
+    ])
+    expect(recordedPhases(info).map(({ durationMs }) => durationMs)).toEqual([
+      undefined,
+      10,
+      undefined,
+      15,
+      25,
+    ])
+    expect(JSON.stringify(info.mock.calls)).not.toContain('private')
+  })
+
+  test('preserves stylesheet error identity and records no private error or module data', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const error = new Error('private-stylesheet-url?token=private')
+    vi.spyOn(stylesheetModule, 'loadDshUiStylesheets').mockRejectedValue(error)
+    const modulePath = 'plugins/wework-ui-home-focus.js'
+    window.__WEWORK_DSH_UI_MODULES__ = { [modulePath]: { privateContent: 'private' } }
+    await expect(importDshUiModule(modulePath)).rejects.toBe(error)
+    expect(getLoadedDshUiModule(modulePath)).toBeNull()
+    expect(recordedPhases(info).map(({ phase, status }) => [phase, status])).toEqual([
+      ['home-module-import', 'started'],
+      ['module-import-resolved', 'completed'],
+      ['module-stylesheets', 'started'],
+      ['module-stylesheets', 'failed'],
+      ['home-module-import', 'failed'],
+    ])
+    expect(JSON.stringify(info.mock.calls)).not.toContain('private')
+  })
 
   test('preserves failed imports without recording error contents or custom module paths', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)

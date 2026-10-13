@@ -35,7 +35,7 @@ export interface DesktopRuntimeOptions {
   environment: NodeJS.ProcessEnv
   dataDirectory: string
   logDirectory: string
-  hostPipe: HostPipeServer
+  hostPipe: HostPipeServer | Promise<HostPipeServer>
   readWorkbenchMode?: () => Promise<WorkbenchMode>
   createWorkbenchHostPipe?: (tabId: string) => {
     hostPipe: HostPipeServer
@@ -95,6 +95,7 @@ export interface DesktopRuntimeDiagnostics {
 }
 
 export class DesktopRuntime {
+  private readonly hostPipePreparation: Promise<PromiseSettledResult<HostPipeServer>>
   private executor: ManagedExecutorHandle | null = null
   private coreDsh: CoreDshHandle | null = null
   private desktopDeviceId: Promise<string> | null = null
@@ -113,6 +114,7 @@ export class DesktopRuntime {
   } | null = null
 
   constructor(private readonly options: DesktopRuntimeOptions) {
+    this.hostPipePreparation = Promise.allSettled([options.hostPipe]).then(([result]) => result)
     this.workbench = new WorkbenchRuntimeManager(
       runtimeOptions =>
         new DshRuntime({
@@ -175,6 +177,7 @@ export class DesktopRuntime {
     try {
       const preparation = this.prepareInitialRuntime()
       await preparation.compatibility
+      await this.requiredHostPipe()
       if (this.lifecycleGeneration !== generation) return
       const executorPreparation = this.prepareExecutor()
       const executorReady = executorPreparation.then(async executor => {
@@ -323,6 +326,9 @@ export class DesktopRuntime {
       this.workbench.stop(),
       coreDsh?.stop(),
       executor?.stop(),
+      this.hostPipePreparation.then(result => {
+        if (result.status === 'fulfilled') result.value.stop()
+      }),
     ])
   }
 
@@ -461,6 +467,8 @@ export class DesktopRuntime {
       command = launch.command
       args = launch.args
     }
+    const hostPipe = await this.requiredHostPipe()
+    if (this.lifecycleGeneration !== generation) return null
     const runtimeOptions: DshRuntimeOptions = {
       name: 'dsh-core',
       authenticateBrowserSession: this.options.authenticateBrowserSession,
@@ -479,16 +487,22 @@ export class DesktopRuntime {
       startTimeoutMs: CORE_DSH_START_TIMEOUT_MS,
       env: {
         ...runtimeEnvironment,
-        ...this.options.hostPipe.environment(),
+        ...hostPipe.environment(),
         ...(dshHome ? { DSH_HOME: dshHome } : {}),
         ...(managedRuntime ? { WEWORK_DSH_MANAGED_ENDPOINT: '1' } : {}),
         WEGENT_APP_IPC_DEVICE_ID: deviceId,
       },
-      hostPipe: this.options.hostPipe,
+      hostPipe,
     }
     if (this.lifecycleGeneration !== generation) return null
     this.startupStep('core-dsh-prepare', 'completed')
     return { plugins, port, runtimeOptions }
+  }
+
+  private async requiredHostPipe(): Promise<HostPipeServer> {
+    const result = await this.hostPipePreparation
+    if (result.status === 'rejected') throw result.reason
+    return result.value
   }
 
   private resolveDesktopDeviceId(): Promise<string> {

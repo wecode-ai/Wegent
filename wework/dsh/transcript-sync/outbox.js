@@ -2,18 +2,57 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
+const STARTUP_PHASES = new Set([
+  'outbox-initialization',
+  'database-open',
+  'pragmas',
+  'schema-transaction',
+])
+
+export function measureOutboxStartupPhase(phase, operation) {
+  if (process.env.WEWORK_E2E_CORE_CPU_PROFILE !== '1' || !STARTUP_PHASES.has(phase)) {
+    return operation()
+  }
+  const startedAt = performance.now()
+  const report = status => {
+    const monotonicTimeMs = performance.now()
+    console.info(
+      `[startup][transcript-outbox] ${JSON.stringify({
+        phase,
+        status,
+        monotonicTimeMs,
+        ...(status === 'started' ? {} : { durationMs: monotonicTimeMs - startedAt }),
+      })}`
+    )
+  }
+  report('started')
+  try {
+    const result = operation()
+    report('completed')
+    return result
+  } catch (error) {
+    report('failed')
+    throw error
+  }
+}
+
 export class SqliteSyncOutbox {
   constructor(path) {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-    this.database = new DatabaseSync(path)
-    this.database.exec(`
+    this.database = measureOutboxStartupPhase('database-open', () => {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+      return new DatabaseSync(path)
+    })
+    measureOutboxStartupPhase('pragmas', () =>
+      this.database.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
       PRAGMA busy_timeout = 5000;
     `)
-    this.database.exec('BEGIN')
-    try {
-      this.database.exec(`
+    )
+    measureOutboxStartupPhase('schema-transaction', () => {
+      this.database.exec('BEGIN')
+      try {
+        this.database.exec(`
       CREATE TABLE IF NOT EXISTS session_routes (
         session_id TEXT PRIMARY KEY,
         transcript_id TEXT NOT NULL,
@@ -46,18 +85,19 @@ export class SqliteSyncOutbox {
       CREATE INDEX IF NOT EXISTS pending_turns_transcript
         ON pending_turns (transcript_id);
     `)
-      const pendingColumns = this.database
-        .prepare('PRAGMA table_info(pending_turns)')
-        .all()
-        .map(column => column.name)
-      if (!pendingColumns.includes('executor_turn_id')) {
-        this.database.exec('ALTER TABLE pending_turns ADD COLUMN executor_turn_id TEXT')
+        const pendingColumns = this.database
+          .prepare('PRAGMA table_info(pending_turns)')
+          .all()
+          .map(column => column.name)
+        if (!pendingColumns.includes('executor_turn_id')) {
+          this.database.exec('ALTER TABLE pending_turns ADD COLUMN executor_turn_id TEXT')
+        }
+        this.database.exec('COMMIT')
+      } catch (error) {
+        this.database.close()
+        throw error
       }
-      this.database.exec('COMMIT')
-    } catch (error) {
-      this.database.close()
-      throw error
-    }
+    })
     this.selectRoute = this.database.prepare(`
       SELECT
         session_id,

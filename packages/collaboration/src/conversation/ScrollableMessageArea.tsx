@@ -1,5 +1,5 @@
 import { ArrowDown } from 'lucide-react'
-import { memo, useCallback, useEffect, useLayoutEffect } from 'react'
+import { memo, Suspense, useCallback, useEffect, useLayoutEffect } from 'react'
 
 import { useConversationTranslation } from './ConversationTranslation'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
@@ -713,6 +713,15 @@ function ScrollableMessagePaneContent({
     </button>
   ) : null
 
+  const loadingState = (
+    <div
+      data-testid="chat-loading-state"
+      className="flex min-h-full items-center justify-center px-6 py-16 text-center text-sm text-text-muted"
+    >
+      {t('workbench.loading_conversation')}
+    </div>
+  )
+
   return (
     <div className={cn('relative min-h-0 flex-1', className)}>
       {turnNavigationLoading && (
@@ -753,12 +762,7 @@ function ScrollableMessagePaneContent({
         >
           {messages.length === 0 ? (
             loading ? (
-              <div
-                data-testid="chat-loading-state"
-                className="flex min-h-full items-center justify-center px-6 py-16 text-center text-sm text-text-muted"
-              >
-                {t('workbench.loading_conversation')}
-              </div>
+              loadingState
             ) : historyError ? (
               historyError
             ) : (
@@ -795,60 +799,62 @@ function ScrollableMessagePaneContent({
                   </button>
                 </div>
               )}
-              <MessageList
-                userMessageServices={userMessageServices}
-                virtualize={virtualize}
-                useContentVisibility={useContentVisibility}
-                onVirtualMeasurement={onVirtualMeasurement}
-                onContentReady={onContentReady}
-                renderVisualization={renderVisualization}
-                key={currentScrollKey ?? 'keyless-conversation'}
-                messages={messages}
-                turns={turns}
-                onBeforeUserMessageToggle={preserveUserMessagePosition}
-                onVirtualLayoutChange={handleContentLayoutChange}
-                scrollElementRef={scrollRef}
-                initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
-                className={messageListClassName}
-                conversationKey={conversationKey}
-                forceVirtualMessageId={turnNavigationTargetMessageId}
-                isWaitingForAssistant={isWaitingForAssistant}
-                disableContentVisibility={turnNavigationLoading}
-                devices={devices}
-                onRetryFailedMessage={onRetryFailedMessage}
-                onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
-                onLoadFileChangesDiff={onLoadFileChangesDiff}
-                onRevertFileChanges={onRevertFileChanges}
-                onOpenFileChangesReview={onOpenFileChangesReview}
-                fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-                onOpenLocalSkillFile={onOpenLocalSkillFile}
-                onRequestUserInputSubmit={onRequestUserInputSubmit}
-                onRequestUserInputIgnore={onRequestUserInputIgnore}
-                onOpenAssistantPlan={onOpenAssistantPlan}
-                onOpenSubagent={onOpenSubagent}
-                onEditLastUserMessage={onEditLastUserMessage}
-                canEditLastUserMessage={canEditLastUserMessage}
-                onForkMessage={onForkMessage}
-                hideRequestUserInputBlocks={hideRequestUserInputBlocks}
-                hiddenRequestUserInputIds={hiddenRequestUserInputIds}
-                onAddSelectionToConversation={onAddSelectionToConversation}
-                onAskSelectionInSidebar={onAskSelectionInSidebar}
-                virtualAnchorToEnd={!showScrollButton}
-                bottomOrigin={bottomOrigin}
-                renderGapAfterMessage={(message, nextMessage) => {
-                  const transcriptGap = renderTranscriptGapAfterMessage?.(message, nextMessage)
-                  const customGap = renderGapAfterMessage?.(message, nextMessage)
-                  if (!transcriptGap) return customGap
-                  if (!customGap) return transcriptGap
-                  return (
-                    <>
-                      {transcriptGap}
-                      {customGap}
-                    </>
-                  )
-                }}
-              />
+              <Suspense fallback={loadingState}>
+                <MessageList
+                  userMessageServices={userMessageServices}
+                  virtualize={virtualize}
+                  useContentVisibility={useContentVisibility}
+                  onVirtualMeasurement={onVirtualMeasurement}
+                  onContentReady={onContentReady}
+                  renderVisualization={renderVisualization}
+                  key={currentScrollKey ?? 'keyless-conversation'}
+                  messages={messages}
+                  turns={turns}
+                  onBeforeUserMessageToggle={preserveUserMessagePosition}
+                  onVirtualLayoutChange={handleContentLayoutChange}
+                  scrollElementRef={scrollRef}
+                  initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
+                  className={messageListClassName}
+                  conversationKey={conversationKey}
+                  forceVirtualMessageId={turnNavigationTargetMessageId}
+                  isWaitingForAssistant={isWaitingForAssistant}
+                  disableContentVisibility={turnNavigationLoading}
+                  devices={devices}
+                  onRetryFailedMessage={onRetryFailedMessage}
+                  onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
+                  onLoadFileChangesDiff={onLoadFileChangesDiff}
+                  onRevertFileChanges={onRevertFileChanges}
+                  onOpenFileChangesReview={onOpenFileChangesReview}
+                  fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
+                  onOpenWorkspaceFile={onOpenWorkspaceFile}
+                  onOpenLocalSkillFile={onOpenLocalSkillFile}
+                  onRequestUserInputSubmit={onRequestUserInputSubmit}
+                  onRequestUserInputIgnore={onRequestUserInputIgnore}
+                  onOpenAssistantPlan={onOpenAssistantPlan}
+                  onOpenSubagent={onOpenSubagent}
+                  onEditLastUserMessage={onEditLastUserMessage}
+                  canEditLastUserMessage={canEditLastUserMessage}
+                  onForkMessage={onForkMessage}
+                  hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+                  hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+                  onAddSelectionToConversation={onAddSelectionToConversation}
+                  onAskSelectionInSidebar={onAskSelectionInSidebar}
+                  virtualAnchorToEnd={!showScrollButton}
+                  bottomOrigin={bottomOrigin}
+                  renderGapAfterMessage={(message, nextMessage) => {
+                    const transcriptGap = renderTranscriptGapAfterMessage?.(message, nextMessage)
+                    const customGap = renderGapAfterMessage?.(message, nextMessage)
+                    if (!transcriptGap) return customGap
+                    if (!customGap) return transcriptGap
+                    return (
+                      <>
+                        {transcriptGap}
+                        {customGap}
+                      </>
+                    )
+                  }}
+                />
+              </Suspense>
               {contentFooter ? (
                 <div
                   data-testid={`${scrollTestId}-content-footer`}

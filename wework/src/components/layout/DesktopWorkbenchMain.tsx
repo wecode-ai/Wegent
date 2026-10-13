@@ -160,6 +160,7 @@ import {
   isElectronRuntime,
 } from '@/lib/runtime-environment'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 import { getPlatform } from '@/lib/platform'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import {
@@ -2554,6 +2555,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       step: 'task-list-ready',
       status: 'completed',
     })
+    markDesktopStartupPhase('surface-ready', 'completed')
     void invokeDesktopHost<void>('renderer.startupReady', { source: 'task-list' })
       .then(() => {
         console.info('[startup][renderer]', {
