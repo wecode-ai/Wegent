@@ -294,7 +294,10 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
 
     // Open the window while the click is still a user activation; the session
     // request performs discovery and client registration before we know the URL.
-    const popup = window.open('', '_blank')
+    // Use a same-origin placeholder page instead of a blank URL: embedded
+    // browsers reject an empty address, which strands the user on an error page
+    // until the authorization URL is ready.
+    const popup = window.open('/mcp-oauth-pending.html', '_blank')
     if (popup) popup.opener = null
 
     updateServiceState(serviceId, service => ({ ...service, connecting: true }))
