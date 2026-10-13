@@ -3547,6 +3547,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       closeSmartAppDevelopmentPreviewBrowser,
       defaultEmbeddedBrowserLabel,
       getHarnessModelOptions,
+      services.localDecisionRouterApi,
       services.localHarnessModelApi,
       t,
       updateBrowserState,
@@ -3604,6 +3605,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       closeSmartAppDevelopmentPreviewBrowser,
       loadSmartAppDevelopmentPreview,
+      services.localDecisionRouterApi,
       services.localHarnessModelApi,
       t,
       updateBrowserState,
