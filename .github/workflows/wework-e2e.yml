@@ -639,6 +639,7 @@ jobs:
 
     steps:
       - name: Checkout code
+        id: checkout
         uses: actions/checkout@v4
         with:
           filter: blob:none
@@ -775,7 +776,7 @@ jobs:
         run: exit 1
 
       - name: Prune transient Wework desktop E2E caches
-        if: always()
+        if: always() && steps.checkout.outcome == 'success'
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
       - name: Upload Windows Wework desktop E2E diagnostics
