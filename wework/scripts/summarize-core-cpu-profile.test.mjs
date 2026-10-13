@@ -96,28 +96,31 @@ test('retains safe summaries while the real CI diagnostics pruner removes raw pr
 test.each([
   [JSON.stringify(fixture()), 'CPU profile startup marker is unavailable'],
   ['private-token-not-json', 'Diagnostic input is unavailable'],
-])('reports a safe failure and still prunes raw profiles (case %#)', async (rawContents, reason) => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-cpu-profile-private-'))
-  roots.push(root)
-  const logs = join(root, 'session/electron-user-data/logs')
-  const privateRoot = join(root, 'session/electron-user-data/dsh-core/.cpu-profile')
-  await mkdir(logs, { recursive: true })
-  await mkdir(privateRoot, { recursive: true })
-  const raw = join(privateRoot, 'CPU.20261013.120000.10.0.001.cpuprofile')
-  await writeFile(raw, rawContents)
-  await writeFile(
-    join(logs, 'dsh-core-runtime.log'),
-    '[startup][core-dsh-endpoint] { cpuProfileEndTimeUs: 14000, cpuProfileProcessId: 10 }'
-  )
-  const result = await execute('bash', [
-    resolve('../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'),
-    root,
-  ]).catch(error => error)
-  expect(result.code).toBe(1)
-  expect(result.stderr).toContain(reason)
-  expect(result.stderr).not.toMatch(/private-token|private\/user|secret=|file:\/\//)
-  await expect(readFile(raw)).rejects.toMatchObject({ code: 'ENOENT' })
-})
+])(
+  'reports a safe failure and still prunes raw profiles (case %#)',
+  async (rawContents, reason) => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cpu-profile-private-'))
+    roots.push(root)
+    const logs = join(root, 'session/electron-user-data/logs')
+    const privateRoot = join(root, 'session/electron-user-data/dsh-core/.cpu-profile')
+    await mkdir(logs, { recursive: true })
+    await mkdir(privateRoot, { recursive: true })
+    const raw = join(privateRoot, 'CPU.20261013.120000.10.0.001.cpuprofile')
+    await writeFile(raw, rawContents)
+    await writeFile(
+      join(logs, 'dsh-core-runtime.log'),
+      '[startup][core-dsh-endpoint] { cpuProfileEndTimeUs: 14000, cpuProfileProcessId: 10 }'
+    )
+    const result = await execute('bash', [
+      resolve('../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'),
+      root,
+    ]).catch(error => error)
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain(reason)
+    expect(result.stderr).not.toMatch(/private-token|private\/user|secret=|file:\/\//)
+    await expect(readFile(raw)).rejects.toMatchObject({ code: 'ENOENT' })
+  }
+)
 
 test('clips the boundary interval and excludes all subsequent runtime samples', () => {
   const summary = summarizeCoreCpuProfile(fixture(), 3500)
@@ -212,6 +215,7 @@ test('writes safe startup samples before forced termination of a preloaded real 
     const output = await once(child.stdout, 'data')
     const marker = JSON.parse(String(output[0]))
     expect(marker.cpuProfileProcessId).toBe(child.pid)
+    expect(marker.cpuProfileSummaryMode).toBe('before-endpoint')
     const summaryPath = join(logsRoot, 'core-startup-cpu-profile-' + child.pid + '.json')
     const before = await readFile(summaryPath, 'utf8')
     child.kill('SIGKILL')
@@ -225,7 +229,7 @@ test('writes safe startup samples before forced termination of a preloaded real 
     expect(summary).not.toHaveProperty('timeDeltas')
     await writeFile(
       join(logsRoot, 'dsh-core-runtime.log'),
-      `[startup][core-dsh-endpoint] { cpuProfileEndTimeUs: ${marker.cpuProfileEndTimeUs}, cpuProfileProcessId: ${child.pid} }`
+      `[startup][core-dsh-endpoint] { cpuProfileEndTimeUs: ${marker.cpuProfileEndTimeUs}, cpuProfileProcessId: ${child.pid}, cpuProfileSummaryMode: '${marker.cpuProfileSummaryMode}' }`
     )
     await execute('bash', [
       resolve('../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'),
@@ -244,6 +248,49 @@ test('writes safe startup samples before forced termination of a preloaded real 
     await exited
   }
 })
+
+test.each([
+  [true, true],
+  [true, false],
+  [false, true],
+])(
+  'requires a saved summary only for the before-endpoint mode (case %#)',
+  async (beforeEndpoint, hasRawProfile) => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cpu-summary-missing-'))
+    roots.push(root)
+    const logs = join(root, 'session/electron-user-data/logs')
+    const privateRoot = join(root, 'session/electron-user-data/dsh-core/.cpu-profile')
+    await mkdir(logs, { recursive: true })
+    const raw = join(privateRoot, 'CPU.20261013.120000.10.0.001.cpuprofile')
+    if (hasRawProfile) {
+      await mkdir(privateRoot, { recursive: true })
+      await writeFile(raw, JSON.stringify(fixture()))
+    }
+    await writeFile(
+      join(logs, 'dsh-core-runtime.log'),
+      `[startup][core-dsh-endpoint] { cpuProfileEndTimeUs: 5000, cpuProfileProcessId: 10${beforeEndpoint ? ", cpuProfileSummaryMode: 'before-endpoint'" : ''} }`
+    )
+    const result = await execute('bash', [
+      resolve('../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'),
+      root,
+    ]).catch(error => error)
+    if (beforeEndpoint) {
+      expect(result.code).toBe(1)
+      expect(result.stderr).toContain('Core startup CPU summary is unavailable before endpoint')
+      expect(result.stderr).not.toMatch(/private-token|private\/user|secret=|file:\/\//)
+      await expect(readFile(join(logs, 'core-startup-cpu-summary-1.json'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    } else {
+      expect(result.stderr).toBe('')
+      const summary = JSON.parse(
+        await readFile(join(logs, 'core-startup-cpu-summary-1.json'), 'utf8')
+      )
+      expect(summary.scope).toBe('startup-to-endpoint')
+    }
+    await expect(readFile(raw)).rejects.toMatchObject({ code: 'ENOENT' })
+  }
+)
 
 test('an unmatched clock fails diagnostics and still deletes every raw profile', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-cpu-clock-invalid-'))

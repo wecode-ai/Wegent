@@ -36,6 +36,7 @@ export async function summarizeCoreStartupProfiles(root) {
       .map(match => ({
         time: Number(match[1].match(/cpuProfileEndTimeUs:\s*(\d+)/)?.[1]),
         processId: Number(match[1].match(/cpuProfileProcessId:\s*(\d+)/)?.[1]),
+        requiresSummary: /cpuProfileSummaryMode:\s*['"]before-endpoint['"]/.test(match[1]),
       }))
     if (
       markers.some(marker => !Number.isFinite(marker.time) || !Number.isInteger(marker.processId))
@@ -54,6 +55,11 @@ export async function summarizeCoreStartupProfiles(root) {
         throw new Error('Core startup CPU summary endpoint is unavailable')
       }
       completedProcesses.add(processId)
+    }
+    if (
+      markers.some(marker => marker.requiresSummary && !completedProcesses.has(marker.processId))
+    ) {
+      throw new Error('Core startup CPU summary is unavailable before endpoint')
     }
     if (profiles.length === 0 && completedProcesses.size === 0 && markers.length === 0) continue
     for (const [index, name] of profiles.entries()) {
@@ -100,6 +106,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       'CPU profile startup clock is unavailable',
       'Core startup CPU summary is invalid',
       'Core startup CPU summary endpoint is unavailable',
+      'Core startup CPU summary is unavailable before endpoint',
       'CPU profile process identity is unavailable',
       'CPU profile startup marker is unavailable',
       'Invalid CPU profile',

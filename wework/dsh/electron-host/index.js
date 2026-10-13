@@ -23,7 +23,10 @@ export async function apply(ctx) {
           if (!profiler) throw new Error('Core startup CPU profiler unavailable')
           cpuProfileEndpoint = profiler.complete()
         } catch {
-          cpuProfileEndpoint = { cpuProfileClockStatus: 'failed' }
+          cpuProfileEndpoint = {
+            cpuProfileClockStatus: 'failed',
+            cpuProfileSummaryMode: 'before-endpoint',
+          }
         }
       }
       console.info('[startup][core-dsh-endpoint]', {

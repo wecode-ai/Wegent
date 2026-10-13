@@ -29,7 +29,11 @@ if (process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1') {
           `${JSON.stringify(summary, null, 2)}\n`,
           { mode: 0o600 }
         )
-        completed = { cpuProfileEndTimeUs: profile.endTime, cpuProfileProcessId: process.pid }
+        completed = {
+          cpuProfileEndTimeUs: profile.endTime,
+          cpuProfileProcessId: process.pid,
+          cpuProfileSummaryMode: 'before-endpoint',
+        }
         return completed
       } finally {
         session.disconnect()
