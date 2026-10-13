@@ -8,7 +8,7 @@ import {
   type AgentModelPolicy,
   type RunnerEnvironment,
   type RunnerModelIdentity,
-} from '@wegent/collaboration'
+} from '@wegent/collaboration/agent-form/runnerRouting'
 import type { UnifiedModel } from '@/types/api'
 import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
 

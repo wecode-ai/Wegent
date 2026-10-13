@@ -4,7 +4,7 @@ import {
   resolveRunnerSelection,
   runnerModelKey,
   type RunnerSelection,
-} from '@wegent/collaboration'
+} from '@wegent/collaboration/agent-form/runnerRouting'
 import type { RunnerEnvironment, RunnerModel } from '@wegent/collaboration'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import { createLocalProjectAutomationApi } from './localProjectAutomations'

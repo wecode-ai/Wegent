@@ -1,4 +1,4 @@
-import { runnerModelKey } from '@wegent/collaboration'
+import { runnerModelKey } from '@wegent/collaboration/agent-form/runnerRouting'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { useAgentRouting } from './useAgentRouting'
 

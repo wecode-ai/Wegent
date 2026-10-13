@@ -458,6 +458,10 @@
       "types": "./src/agent-form/types.ts",
       "import": "./src/agent-form/types.ts"
     },
+    "./agent-form/runnerRouting": {
+      "types": "./src/agent-form/runnerRouting.ts",
+      "import": "./src/agent-form/runnerRouting.ts"
+    },
     "./http-api": {
       "types": "./src/http-api/index.ts",
       "import": "./src/http-api/index.ts"

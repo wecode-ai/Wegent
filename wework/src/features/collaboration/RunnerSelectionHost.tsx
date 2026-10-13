@@ -1,7 +1,10 @@
 import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { runnerSupportsModel, type RunnerSelection } from '@wegent/collaboration'
+import {
+  runnerSupportsModel,
+  type RunnerSelection,
+} from '@wegent/collaboration/agent-form/runnerRouting'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { registerRunnerSelectionHandler, type RunnerSelectionRequest } from '@/lib/runner-selection'
