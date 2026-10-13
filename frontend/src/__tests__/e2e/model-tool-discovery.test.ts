@@ -10,7 +10,7 @@ describe('mock model deferred tool discovery', () => {
   it('searches missing tools before issuing a scenario call', () => {
     expect(deferredToolSearchCall({ tools: [search] }, ['wework_space__get_board_item'])).toEqual({
       toolName: 'search_deferred_tools',
-      arguments: { query: 'wework_space__get_board_item', limit: 1 },
+      arguments: { query: 'get_board_item', limit: 1 },
     })
   })
 
@@ -54,5 +54,30 @@ describe('mock model deferred tool discovery', () => {
         'get_document_info',
       ])?.arguments.query
     ).toBe('get_document_info')
+  })
+
+  it('fails explicitly when a completed search did not expose the required tool', () => {
+    expect(() =>
+      deferredToolSearchCall(
+        {
+          tools: [search],
+          messages: [
+            {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  function: {
+                    name: 'search_deferred_tools',
+                    arguments: JSON.stringify({ query: 'get_board_item' }),
+                  },
+                },
+              ],
+            },
+            { role: 'tool', content: JSON.stringify({ tools: [] }) },
+          ],
+        },
+        ['wework_space__get_board_item']
+      )
+    ).toThrow('Deferred tool search did not make wework_space__get_board_item available')
   })
 })

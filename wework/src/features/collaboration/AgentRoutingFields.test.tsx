@@ -32,6 +32,38 @@ function deferred<T>() {
 }
 
 describe('agent routing editor', () => {
+  test.each(['environment-first', 'cloud-first'])(
+    'selects the configured default from multiple models when catalogs resolve %s',
+    async order => {
+      const runners = deferred<RunnerEnvironment[]>()
+      const cloud = deferred<[]>()
+      const api = { listModels: () => cloud.promise, listRunnerEnvironments: () => runners.promise }
+      const { result } = renderHook(
+        () =>
+          useAgentRouting(api, 'codex', 'project', {
+            creationDefaults: { preferredDeviceIds: ['device'] },
+          }),
+        { reactStrictMode: true }
+      )
+      const finishEnvironment = () =>
+        runners.resolve([
+          environment('device', [
+            { ...model, model_id: 'recommended', is_default: false },
+            { ...model, provider: 'wework-e2e', model_id: 'gpt-5.6-luna' },
+          ]),
+        ])
+      if (order === 'environment-first') {
+        await act(async () => finishEnvironment())
+        await act(async () => cloud.resolve([]))
+      } else {
+        await act(async () => cloud.resolve([]))
+        await act(async () => finishEnvironment())
+      }
+      expect(result.current.model?.model_id).toBe('gpt-5.6-luna')
+      expect(result.current.valid).toBe(true)
+    }
+  )
+
   test('initializes the only environment and its runtime default without copying catalog details', async () => {
     const api = {
       listModels: async () => [],

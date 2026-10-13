@@ -10,6 +10,7 @@ import {
   type RunnerModelIdentity,
 } from '@wegent/collaboration'
 import type { UnifiedModel } from '@/types/api'
+import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
 
 export interface RunnerCatalogApi {
   listRunnerEnvironments(projectId?: string): Promise<RunnerEnvironment[]>
@@ -36,6 +37,7 @@ export function useAgentRouting(
     creationDefaults?: { preferredDeviceIds: string[] }
   } = {}
 ) {
+  const [traceId] = useState(createModelLoadingTrace)
   const [catalog, setCatalog] = useState<{
     api: RunnerCatalogApi
     projectId?: string
@@ -78,15 +80,17 @@ export function useAgentRouting(
   )
   const setModelMode = useCallback(
     (mode: 'fixed' | 'user_select') => {
+      logModelLoading(traceId, 'agent.model_mode_selected', { fixed: mode === 'fixed' })
       setDraft(draft => ({ ...draft, modelMode: mode, initializeModel: false }))
     },
-    [setDraft]
+    [setDraft, traceId]
   )
   const setModel = useCallback(
     (model: RunnerModelIdentity | null) => {
+      logModelLoading(traceId, 'agent.model_selected', { selected: model !== null })
       setDraft(draft => ({ ...draft, model, initializeModel: false }))
     },
-    [setDraft]
+    [setDraft, traceId]
   )
 
   useEffect(() => {
@@ -94,6 +98,13 @@ export function useAgentRouting(
     void api
       .listRunnerEnvironments(projectId)
       .then(environments => {
+        logModelLoading(traceId, 'agent.runner_catalog_loaded', {
+          environments: environments.length,
+          models: environments.flatMap(environment => environment.models).length,
+          defaultModels: environments
+            .flatMap(environment => environment.models)
+            .filter(model => model.is_default).length,
+        })
         if (active) setCatalog({ api, projectId, environments, error: null })
       })
       .catch(cause => {
@@ -109,7 +120,7 @@ export function useAgentRouting(
     return () => {
       active = false
     }
-  }, [api, projectId])
+  }, [api, projectId, traceId])
 
   useEffect(() => {
     let active = true
@@ -171,6 +182,11 @@ export function useAgentRouting(
   ) {
     const defaultModel =
       models.find(model => model.is_default) ?? (models.length === 1 ? models[0] : undefined)
+    logModelLoading(traceId, 'agent.model_default_initialized', {
+      models: models.length,
+      defaultModels: models.filter(model => model.is_default).length,
+      selected: Boolean(defaultModel),
+    })
     initializedDraft = {
       ...initializedDraft,
       initializeModel: false,

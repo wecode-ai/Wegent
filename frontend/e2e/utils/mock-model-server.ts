@@ -960,14 +960,27 @@ const server = http.createServer((req, res) => {
       }
     }
 
+    const modelEndpoint =
+      req.url?.includes('/responses') ||
+      req.url?.includes('/chat/completions') ||
+      (req.url?.includes('/messages') && !req.url.includes('/messages/count_tokens'))
+    const toolScenario = modelEndpoint ? findToolScenario(parsedBody, req.headers) : undefined
+    if (toolScenario && parsedBody) {
+      toolScenario.capturedRequests.push(parsedBody)
+      toolScenario.capturedHeaders.push({ ...req.headers })
+    }
+    let scenarioStep: ToolScenarioStep | undefined
+    try {
+      scenarioStep = nextScenarioStep(toolScenario, parsedBody)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`Mock tool scenario failed: ${message}`)
+      writeJson(res, 500, { error: { message, type: 'tool_scenario_error' } })
+      return
+    }
+
     // Handle different endpoints
     if (req.url?.includes('/responses')) {
-      const toolScenario = findToolScenario(parsedBody, req.headers)
-      if (toolScenario && parsedBody) {
-        toolScenario.capturedRequests.push(parsedBody)
-        toolScenario.capturedHeaders.push({ ...req.headers })
-      }
-      const scenarioStep = nextScenarioStep(toolScenario, parsedBody)
       if (toolScenario && scenarioStep) {
         if (scenarioStep.toolCalls?.length) {
           writeResponsesToolCalls(
@@ -993,12 +1006,6 @@ const server = http.createServer((req, res) => {
         scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0
       )
     } else if (req.url?.includes('/chat/completions')) {
-      const toolScenario = findToolScenario(parsedBody, req.headers)
-      if (toolScenario && parsedBody) {
-        toolScenario.capturedRequests.push(parsedBody)
-        toolScenario.capturedHeaders.push({ ...req.headers })
-      }
-      const scenarioStep = nextScenarioStep(toolScenario, parsedBody)
       if (toolScenario && scenarioStep) {
         if (scenarioStep.toolCalls?.length) {
           if (parsedBody?.stream === true) {
@@ -1073,12 +1080,6 @@ const server = http.createServer((req, res) => {
         input_tokens: Math.max(1, Math.ceil(getRequestText(parsedBody).length / 4)),
       })
     } else if (req.url?.includes('/messages')) {
-      const toolScenario = findToolScenario(parsedBody, req.headers)
-      if (toolScenario && parsedBody) {
-        toolScenario.capturedRequests.push(parsedBody)
-        toolScenario.capturedHeaders.push({ ...req.headers })
-      }
-      const scenarioStep = nextScenarioStep(toolScenario, parsedBody)
       if (toolScenario && scenarioStep) {
         if (scenarioStep.toolCalls?.length) {
           const model = parsedBody?.model || 'mock-claude'

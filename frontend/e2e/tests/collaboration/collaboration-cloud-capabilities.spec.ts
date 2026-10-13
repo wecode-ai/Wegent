@@ -465,7 +465,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.getByTestId(`cloud-todo-create-assignee-option-group:${projectGroup.id}`).click()
       await expect(page.getByTestId('cloud-todo-create-confirm')).toBeEnabled()
       await expect(page.getByTestId('issue-execution-environment-notice')).toContainText(
-        '不影响创建和人工处理 Issue'
+        /Issue creation and human work are available|不影响创建和人工处理 Issue/
       )
       await page.getByTestId('cloud-todo-create-confirm').click()
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()

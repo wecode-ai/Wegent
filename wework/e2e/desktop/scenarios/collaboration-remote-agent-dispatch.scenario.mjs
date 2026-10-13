@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
+import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
 import { selectCloudAgentModel } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -282,7 +283,14 @@ async function activityIds(control) {
   return snapshot.testIds.filter(id => id.startsWith(prefix)).map(id => id.slice(prefix.length))
 }
 
-async function verifyManualSessionReply(control, request, issueId, timeoutMs, captureScreenshot) {
+async function verifyManualSessionReply(
+  control,
+  request,
+  cloud,
+  issueId,
+  timeoutMs,
+  captureScreenshot
+) {
   const previousIds = await activityIds(control)
   const previousBindings = await request(`/api/v1/loop-items/${issueId}/tasks`)
   await control.command(
@@ -311,6 +319,15 @@ async function verifyManualSessionReply(control, request, issueId, timeoutMs, ca
   assert.ok(manualBinding?.task_id, 'Manual execution did not persist its TaskBinding')
   assert.equal(manualBinding.device_id, REMOTE_DOCKER_DEVICE_ID)
 
+  const persistedMessages = await readProjectChatMessages(cloud, issueId, timeoutMs)
+  const manualResponse = persistedMessages.find(message => message.messageId === rootId)
+  const userRoot = persistedMessages.find(
+    message => message.messageId === manualResponse?.rootMessageId
+  )
+  assert.equal(userRoot?.sender.type, 'user', 'Manual execution must retain its user comment root')
+  assert.equal(manualResponse.triggerMessageId, userRoot.messageId)
+  assert.equal(manualResponse.runtimeAddress.taskId, manualBinding.task_id)
+
   const cardTestId = await control.command(
     'getAttribute',
     scoped(
@@ -319,12 +336,12 @@ async function verifyManualSessionReply(control, request, issueId, timeoutMs, ca
     { value: 'data-testid' }
   )
   assert.ok(cardTestId?.startsWith('cloud-task-activity-card-'))
-  const threadRootId = cardTestId.slice('cloud-task-activity-card-'.length)
-  assert.notEqual(threadRootId, rootId, 'Manual execution did not retain its user comment root')
+  const executionCardId = cardTestId.slice('cloud-task-activity-card-'.length)
+  assert.equal(executionCardId, rootId, 'The execution must have its own activity card')
   const beforeReply = await activityIds(control)
   await control.command(
     'click',
-    scoped(`[data-testid="cloud-task-activity-reply-toggle-${threadRootId}"]`)
+    scoped(`[data-testid="cloud-task-activity-reply-toggle-${executionCardId}"]`)
   )
   const composer = scoped('[data-testid="issue-reply-composer"]')
   await control.command('fill', `${composer} [data-testid="cloud-task-activity-composer"]`, {
@@ -345,6 +362,10 @@ async function verifyManualSessionReply(control, request, issueId, timeoutMs, ca
     scoped(`[data-testid="cloud-task-activity-execution-badge-${replyId}"]`),
     { text: '已完成', timeoutMs }
   )
+  const replyMessages = await readProjectChatMessages(cloud, issueId, timeoutMs)
+  const continuedResponse = replyMessages.find(message => message.messageId === replyId)
+  assert.equal(continuedResponse?.rootMessageId, userRoot.messageId)
+  assert.deepEqual(continuedResponse.runtimeAddress, manualResponse.runtimeAddress)
   const afterReply = await request(`/api/v1/loop-items/${issueId}/tasks`)
   assert.deepEqual(
     afterReply.map(binding => [binding.device_id, binding.task_id]).sort(),
@@ -859,6 +880,7 @@ export function createDesktopScenario({
       await verifyManualSessionReply(
         control,
         request,
+        { backendUrl, authToken, projectId: project.id },
         issue.id,
         modelResponseTimeoutMs,
         captureScreenshot

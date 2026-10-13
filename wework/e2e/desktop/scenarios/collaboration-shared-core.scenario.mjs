@@ -324,6 +324,17 @@ export function createDesktopScenario({
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
 
+        // Creation authorizes the current runner; this recovery case needs an unassigned project.
+        const initialEnvironments = await request(
+          `/api/v1/cloud-projects/${project.id}/execution-environments`
+        )
+        for (const environment of initialEnvironments.items) {
+          await request(
+            `/api/v1/cloud-projects/${project.id}/execution-environments/${environment.device_id}`,
+            { method: 'DELETE' }
+          )
+        }
+
         agent = await request(`/api/v1/cloud-projects/${project.id}/chat-agents`, {
           method: 'POST',
           body: JSON.stringify({
