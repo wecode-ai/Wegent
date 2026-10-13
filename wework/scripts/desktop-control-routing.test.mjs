@@ -32,6 +32,27 @@ test('binds distinct live ports for parallel desktop checkpoints', async t => {
   assert.ok(controls.every(control => control.server.listening && control.controlServer.listening))
 })
 
+test('attaches a scenario after its model server has bound a live port', async t => {
+  const control = await startControl(t)
+  let connections = 0
+  control.setDesktopScenario({
+    attachServer(server) {
+      assert.ok(server.listening)
+      server.on('connection', () => connections++)
+    },
+    handleHttp(_request, response, url) {
+      if (url.pathname !== '/bound-scenario') return false
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ origin: control.url }))
+      return true
+    },
+  })
+  const response = await fetch(`${control.url}/bound-scenario`)
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { origin: control.url })
+  assert.ok(connections > 0)
+})
+
 test('delivers the runner wait budget to the renderer and preserves explicit budgets', async t => {
   const control = await startControl(t)
   await register(control, 'main', 'main-1')

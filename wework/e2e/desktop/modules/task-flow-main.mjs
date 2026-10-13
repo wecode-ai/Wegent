@@ -1166,28 +1166,8 @@ async function main() {
   })
 
   const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
-  const desktopScenario = await loadDesktopScenario(
-    process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
-    {
-      appIdentifier,
-      captureScreenshot: (control, name, selector) =>
-        captureVerificationScreenshot(control, name, selector),
-      codexSqliteHome,
-      executorHome,
-      electronUserDataDirectory,
-      homePath,
-      resultDir,
-      standalone: DESKTOP_SCENARIO_ONLY,
-      uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      modelResponseTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),
-      workbenchReadyTimeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-      workspacePath,
-    }
-  )
-  if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
-    throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
-  }
-  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario, {
+  let desktopScenario
+  const control = new DesktopE2EServer(workspacePath, workspacePath, null, {
     enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
   })
   const modelSwitchVerification = []
@@ -1203,6 +1183,25 @@ async function main() {
     // Publish bound ports for scenarios without releasing the listening sockets.
     process.env.WEWORK_E2E_MODEL_SERVER_PORT = new URL(control.url).port
     process.env.WEWORK_E2E_CONTROL_SERVER_PORT = new URL(control.controlUrl).port
+    desktopScenario = await loadDesktopScenario(process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE, {
+      appIdentifier,
+      captureScreenshot: (control, name, selector) =>
+        captureVerificationScreenshot(control, name, selector),
+      codexSqliteHome,
+      executorHome,
+      electronUserDataDirectory,
+      homePath,
+      resultDir,
+      standalone: DESKTOP_SCENARIO_ONLY,
+      uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      modelResponseTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),
+      workbenchReadyTimeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      workspacePath,
+    })
+    if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
+      throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
+    }
+    control.setDesktopScenario(desktopScenario)
     if (RUNS_PLUGIN_E2E) {
       blockingNetworkProxy = new BlockingNetworkProxy()
       await blockingNetworkProxy.start()
