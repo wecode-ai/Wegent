@@ -70,6 +70,21 @@ export function macosCodesignIdentityArguments(identity, keychainPath) {
   return [...macosCodesignKeychainArguments(keychainPath), '--sign', identity]
 }
 
+function isTimestampRequestFailure(error) {
+  if (typeof error?.stderr !== 'string') return false
+  const timestampFailure =
+    /(?:^|:\s*)(?:The timestamp service is not available|A timestamp was expected but was not found)\.$/
+  const lines = error.stderr.trim().split(/\r?\n/)
+  return (
+    timestampFailure.test(lines.at(-1)) &&
+    lines.every(
+      line =>
+        timestampFailure.test(line.trim()) ||
+        /(?:^|:\s*)replacing existing signature$/.test(line.trim())
+    )
+  )
+}
+
 export async function executeMacOsCodesign(
   args,
   { execute = runCommand, cwd, logger = console.log, sleepImpl } = {}
@@ -80,8 +95,7 @@ export async function executeMacOsCodesign(
       args.includes('--sign') &&
       args.includes('--timestamp') &&
       !args.includes('--verify') &&
-      typeof error?.stderr === 'string' &&
-      /(?:^|:\s*)The timestamp service is not available\.$/.test(error.stderr.trim()),
+      isTimestampRequestFailure(error),
     onRetry: ({ attempt, attempts }) =>
       logger(`[codesign] timestamp-service-unavailable attempt=${attempt}/${attempts}`),
   })

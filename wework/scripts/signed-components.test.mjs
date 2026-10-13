@@ -16,7 +16,10 @@ import { executeMacOsCodesign } from './lib/deepseek-harness-signing.mjs'
 
 const roots = []
 
-test('never publishes a signed cache when the timestamp service remains unavailable', async () => {
+test.each([
+  'The timestamp service is not available.',
+  'A timestamp was expected but was not found.',
+])('never publishes a signed cache after persistent %s', async message => {
   const root = await mkdtemp(join(tmpdir(), 'wework-signing-failed-'))
   roots.push(root)
   const source = join(root, 'executor')
@@ -24,7 +27,7 @@ test('never publishes a signed cache when the timestamp service remains unavaila
   await writeFile(source, 'unsigned executor')
   await mkdir(cacheRoot)
   const error = Object.assign(new Error('codesign failed'), {
-    stderr: `${source}: The timestamp service is not available.`,
+    stderr: `${source}: ${message}`,
   })
   const execute = vi.fn().mockRejectedValue(error)
   const verify = vi.fn()

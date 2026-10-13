@@ -37,17 +37,19 @@ describe('executeMacOsCodesign', () => {
     '--preserve-metadata=entitlements',
     '/private/component',
   ]
-  const timestampError = () =>
+  const timestampError = (message = 'The timestamp service is not available.') =>
     Object.assign(new Error('codesign failed'), {
-      stderr:
-        '/private/component: replacing existing signature\n/private/component: The timestamp service is not available.\n',
+      stderr: `/private/component: replacing existing signature\n/private/component: ${message}\n`,
     })
 
-  test('repeats identical signing arguments only for unavailable timestamp service', async () => {
+  test.each([
+    'The timestamp service is not available.',
+    'A timestamp was expected but was not found.',
+  ])('repeats identical signing arguments for %s', async message => {
     const execute = vi
       .fn()
-      .mockRejectedValueOnce(timestampError())
-      .mockRejectedValueOnce(timestampError())
+      .mockRejectedValueOnce(timestampError(message))
+      .mockRejectedValueOnce(timestampError(message))
       .mockResolvedValue('signed')
     const sleepImpl = vi.fn().mockResolvedValue(undefined)
     const logger = vi.fn()
@@ -62,8 +64,11 @@ describe('executeMacOsCodesign', () => {
     ])
   })
 
-  test('preserves the final service failure after exhausting attempts', async () => {
-    const error = timestampError()
+  test.each([
+    'The timestamp service is not available.',
+    'A timestamp was expected but was not found.',
+  ])('preserves the final service failure after exhausting attempts for %s', async message => {
+    const error = timestampError(message)
     const execute = vi.fn().mockRejectedValue(error)
     await expect(
       executeMacOsCodesign(args, {
@@ -79,6 +84,10 @@ describe('executeMacOsCodesign', () => {
     ['permission denied', args],
     ['errSecInternalComponent', args],
     ['The timestamp service is not available.\ninvalid signature', args],
+    ['invalid signature\nA timestamp was expected but was not found.', args],
+    ['A timestamp was expected but was not found.\ninvalid signature', args],
+    ['A timestamp was expected but was not found.', ['--verify', '--strict', '/private/component']],
+    ['A timestamp was expected but was not found.', ['--sign', 'identity', '/private/component']],
     ['The timestamp service is not available.', ['--verify', '--strict', '/private/component']],
     ['The timestamp service is not available.', ['--sign', 'identity', '/private/component']],
   ])(
