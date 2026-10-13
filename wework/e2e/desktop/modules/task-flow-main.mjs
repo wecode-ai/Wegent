@@ -159,8 +159,6 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
-  DESKTOP_CONTROL_SERVER_PORT,
-  DESKTOP_MODEL_SERVER_PORT,
   DESKTOP_READY_TIMEOUT_MS,
   DESKTOP_SCENARIO_ONLY,
   DESKTOP_SEGMENT,
@@ -1202,6 +1200,9 @@ async function main() {
   let testFailed = false
   try {
     await control.start()
+    // Publish bound ports for scenarios without releasing the listening sockets.
+    process.env.WEWORK_E2E_MODEL_SERVER_PORT = new URL(control.url).port
+    process.env.WEWORK_E2E_CONTROL_SERVER_PORT = new URL(control.controlUrl).port
     if (RUNS_PLUGIN_E2E) {
       blockingNetworkProxy = new BlockingNetworkProxy()
       await blockingNetworkProxy.start()

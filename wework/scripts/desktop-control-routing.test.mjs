@@ -23,6 +23,14 @@ async function register(control, windowLabel, clientId) {
   await post(control, 'ready', { windowLabel, clientId, location: 'http://localhost/' })
 }
 
+test('binds distinct live ports for parallel desktop checkpoints', async t => {
+  const controls = await Promise.all(Array.from({ length: 16 }, () => startControl(t)))
+  const urls = controls.flatMap(control => [control.url, control.controlUrl])
+  assert.equal(new Set(urls).size, urls.length)
+  await Promise.all(controls.map((control, index) => register(control, 'main', `main-${index}`)))
+  assert.ok(controls.every(control => control.server.listening && control.controlServer.listening))
+})
+
 test('keeps main-window commands on main after the popout registers', async t => {
   const control = await startControl(t)
   await register(control, 'main', 'main-1')
