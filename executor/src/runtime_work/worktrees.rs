@@ -2620,19 +2620,19 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         // Git resolves temporary-directory aliases before reading its initial config.
         let mut nested = strip_windows_verbatim_prefix(&fs::canonicalize(root.path()).unwrap());
-        // Keep Git's cwd below its legacy limit while its new metadata exceeds it.
+        // Git discovers linked HEAD files before core.longpaths can take effect.
         let source_length = |path: &Path| {
             path.join("environment/workspace")
                 .to_string_lossy()
                 .encode_utf16()
                 .count()
         };
-        while source_length(&nested) < 244 {
-            let remaining = 245 - source_length(&nested);
+        while source_length(&nested) < 209 {
+            let remaining = 210 - source_length(&nested);
             nested = nested.join("e".repeat((remaining - 1).min(100)));
         }
         let source = nested.join("environment/workspace");
-        assert!(source.to_string_lossy().encode_utf16().count() <= 248);
+        assert_eq!(source.to_string_lossy().encode_utf16().count(), 210);
         fs::create_dir_all(&source).unwrap();
         let source = strip_windows_verbatim_prefix(&fs::canonicalize(&source).unwrap());
         assert!(
@@ -2666,14 +2666,32 @@ mod tests {
         fs::write(source.join(&long_file), "long base\n").unwrap();
         git_output(&source, &["add", "."], None).unwrap();
         git_output(&source, &["commit", "-m", "base"], None).unwrap();
-        assert!(
-            source
-                .join(".git/worktrees/workspace")
-                .to_string_lossy()
-                .encode_utf16()
-                .count()
-                > 260
-        );
+        for discovery_file in ["HEAD", "commondir", "config.worktree"] {
+            assert!(
+                source
+                    .join(".git/worktrees/workspace")
+                    .join(discovery_file)
+                    .to_string_lossy()
+                    .encode_utf16()
+                    .count()
+                    < 260
+            );
+        }
+        let blob = git_output(
+            &source,
+            &[
+                "rev-parse",
+                &format!("HEAD:{}", long_file.to_string_lossy().replace('\\', "/")),
+            ],
+            None,
+        )
+        .unwrap();
+        let object_path = source
+            .join(".git/objects")
+            .join(&blob[..2])
+            .join(&blob[2..]);
+        assert!(object_path.to_string_lossy().encode_utf16().count() > 260);
+        assert!(object_path.is_file());
 
         let manager = WorktreeManager::new(root.path().join("worktrees.json"));
         manager
