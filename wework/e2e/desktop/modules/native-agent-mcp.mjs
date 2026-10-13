@@ -309,7 +309,10 @@ export async function verifyNativeAgentMcp({
       assert.equal(treeResponse.status, 200)
       const tree = await treeResponse.json()
       const expectedReadmePath = await realpath(join(workspace, 'README.md'))
-      assert.ok(tree.some(entry => entry.path === expectedReadmePath))
+      assert.ok(
+        tree.some(entry => entry.path === expectedReadmePath),
+        `Task tree must expose the canonical README path ${expectedReadmePath}; returned paths=${JSON.stringify(tree.map(entry => entry.path))}`
+      )
       const branch = await promisify(execFile)('git', ['-C', workspace, 'symbolic-ref', 'HEAD'], {
         env,
         timeout: 10_000,

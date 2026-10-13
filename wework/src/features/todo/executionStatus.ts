@@ -5,5 +5,5 @@ export {
   isExecutionCancellable,
   isExecutionFailed,
   reconcileExecutionStatus,
-  type ExecutionDisplayStatus,
-} from '@wegent/collaboration'
+} from '@wegent/collaboration/issue-detail'
+export type { ExecutionDisplayStatus } from '@wegent/collaboration'

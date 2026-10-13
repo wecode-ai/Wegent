@@ -77,6 +77,68 @@ describe('workbench mode runtime policy', () => {
     expect(preferences.update).toHaveBeenCalledWith({ workbenchMode: 'focus' })
   })
 
+  test('persists developer mode before an unrelated absent-command probe finishes', async () => {
+    let finishAbsentProbe!: (available: boolean) => void
+    const absentProbe = new Promise<boolean>(resolve => {
+      finishAbsentProbe = resolve
+    })
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockImplementation(async patch => patch),
+    }
+    const initialization = initializeWorkbenchModePreference(preferences, {
+      environment: {},
+      homeDirectory: '/home/alice',
+      probeCommand: command => (command === 'git' ? Promise.resolve(true) : absentProbe),
+    })
+    try {
+      await new Promise(resolve => setImmediate(resolve))
+      expect(preferences.update).toHaveBeenCalledWith({ workbenchMode: 'developer' })
+      await expect(initialization).resolves.toBe('developer')
+    } finally {
+      finishAbsentProbe(false)
+      await initialization
+    }
+  })
+
+  test('does not persist focus mode until the last absent-command probe finishes', async () => {
+    let finishLastProbe!: (available: boolean) => void
+    const lastProbe = new Promise<boolean>(resolve => {
+      finishLastProbe = resolve
+    })
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockImplementation(async patch => patch),
+    }
+    const initialization = initializeWorkbenchModePreference(preferences, {
+      environment: {},
+      homeDirectory: '/home/alice',
+      probeCommand: command => (command === 'code' ? lastProbe : Promise.resolve(false)),
+    })
+    try {
+      await new Promise(resolve => setImmediate(resolve))
+      expect(preferences.update).not.toHaveBeenCalled()
+    } finally {
+      finishLastProbe(false)
+    }
+    await expect(initialization).resolves.toBe('focus')
+    expect(preferences.update).toHaveBeenCalledWith({ workbenchMode: 'focus' })
+  })
+
+  test('propagates an unexpected probe failure before a mode has been confirmed', async () => {
+    const failure = new Error('Unexpected command probe failure')
+    const preferences = { read: vi.fn().mockResolvedValue({}), update: vi.fn() }
+    await expect(
+      initializeWorkbenchModePreference(preferences, {
+        environment: {},
+        homeDirectory: '/home/alice',
+        probeCommand: command =>
+          command === 'git' ? Promise.reject(failure) : Promise.resolve(false),
+      })
+    ).rejects.toBe(failure)
+    expect(preferences.update).not.toHaveBeenCalled()
+  })
+
   test('checks executable files without running development commands', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-mode-'))
     const preferences = {

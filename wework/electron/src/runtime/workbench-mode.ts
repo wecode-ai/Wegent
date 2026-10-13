@@ -61,10 +61,14 @@ export async function initializeWorkbenchModePreference(
     options.probeCommand ??
     ((command, commandEnvironment) =>
       probeDevelopmentCommand(command, commandEnvironment, platform))
-  const results = await Promise.all(
-    DEVELOPMENT_COMMANDS.map(command => probeCommand(command, environment))
-  )
-  const mode: WorkbenchMode = results.some(Boolean) ? 'developer' : 'focus'
+  const hasDevelopmentCommand = await new Promise<boolean>((resolve, reject) => {
+    Promise.all(
+      DEVELOPMENT_COMMANDS.map(async command => {
+        if (await probeCommand(command, environment)) resolve(true)
+      })
+    ).then(() => resolve(false), reject)
+  })
+  const mode: WorkbenchMode = hasDevelopmentCommand ? 'developer' : 'focus'
   await preferences.update({ workbenchMode: mode })
   return mode
 }

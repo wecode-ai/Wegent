@@ -489,6 +489,26 @@
     "./permissions": {
       "types": "./src/permissions.ts",
       "import": "./src/permissions.ts"
+    },
+    "./issue-detail": {
+      "types": "./src/issue-detail/index.ts",
+      "import": "./src/issue-detail/index.ts"
+    },
+    "./SharedIssueDetailEditor": {
+      "types": "./src/SharedIssueDetailEditor.tsx",
+      "import": "./src/SharedIssueDetailEditor.tsx"
+    },
+    "./my-work/model": {
+      "types": "./src/my-work/model.ts",
+      "import": "./src/my-work/model.ts"
+    },
+    "./board": {
+      "types": "./src/board.ts",
+      "import": "./src/board.ts"
+    },
+    "./issue-card/priorityBadgeClasses": {
+      "types": "./src/issue-card/priorityBadgeClasses.ts",
+      "import": "./src/issue-card/priorityBadgeClasses.ts"
     }
   },
   "scripts": {

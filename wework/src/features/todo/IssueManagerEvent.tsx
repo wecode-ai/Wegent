@@ -1,8 +1,8 @@
+import { createCollaborationTranslator } from '@wegent/collaboration/i18n'
 import {
-  createCollaborationTranslator,
   formatIssueTimestamp,
   managerActivityPresentation,
-} from '@wegent/collaboration'
+} from '@wegent/collaboration/issue-detail'
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { LoaderCircle } from 'lucide-react'

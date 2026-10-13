@@ -1,19 +1,21 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { LockKeyhole, Send } from 'lucide-react'
+import { TodoEditor as SharedIssueDetailEditor } from '@wegent/collaboration/SharedIssueDetailEditor'
+import type {
+  CollaborationAssignment,
+  SharedEditorIssue,
+  SharedEditorProject,
+  SharedIssueDetailCreateInput,
+  SharedIssueDetailExtensions,
+  SharedIssueDetailTaskBinding,
+  SharedIssueDetailTaskExecutionState,
+  SharedIssueDetailWorkspaceApi,
+} from '@wegent/collaboration'
+import { createCollaborationTranslator } from '@wegent/collaboration/i18n'
 import {
-  TodoEditor as SharedIssueDetailEditor,
-  type CollaborationAssignment,
-  createCollaborationTranslator,
   createSharedIssueDetailPort,
   formatIssueAttachmentSize,
-  type SharedEditorIssue,
-  type SharedEditorProject,
-  type SharedIssueDetailCreateInput,
-  type SharedIssueDetailExtensions,
-  type SharedIssueDetailTaskBinding,
-  type SharedIssueDetailTaskExecutionState,
-  type SharedIssueDetailWorkspaceApi,
-} from '@wegent/collaboration'
+} from '@wegent/collaboration/issue-detail'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import type { AITableApi } from '@/api/aitable'

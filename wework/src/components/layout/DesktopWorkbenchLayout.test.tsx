@@ -7937,6 +7937,60 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('restores the environment after closing the last subagent tab opened from an inline chip while the environment is closed', async () => {
+    renderWorkspacePanelLayout({
+      mainWidth: 1000,
+      currentRuntimeTask: {
+        deviceId: 'workspace-cloud-device',
+        taskId: 'runtime-inline-subagent-panel',
+        workspacePath: '/workspace/project',
+      },
+      onLoadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            id: 'inline-child-answer',
+            role: 'assistant',
+            content: 'Persisted child answer',
+            status: 'done',
+            createdAt: '2026-09-10T08:00:01.000Z',
+          },
+        ],
+      }),
+      messages: [
+        {
+          id: 'assistant-inline-subagent',
+          role: 'assistant',
+          content: '',
+          status: 'done',
+          createdAt: '2026-09-10T08:00:00.000Z',
+          blocks: [
+            {
+              id: 'inline-subagent-thread',
+              subtaskId: 'inline-turn',
+              type: 'subagent',
+              agentThreadId: 'inline-thread',
+              agentType: 'Explorer',
+              description: 'Inspect the runtime event flow',
+              status: 'done',
+              createdAt: 1770000000000,
+              children: [],
+            },
+          ],
+        },
+      ],
+    })
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('subagent-activity-chip'))
+    expect(await screen.findByTestId('subagent-conversation-panel')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('subagent-conversation-back'))
+    expect(screen.getByTestId('subagent-overview-panel')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('right-workspace-subagents-tab-close-button'))
+    expect(screen.queryByTestId('right-workspace-subagents-tab')).not.toBeInTheDocument()
+    expect(screen.getByTestId('environment-subagents-section')).toBeVisible()
+  })
+
   test('expands the right workspace panel without the composer and restores chat', async () => {
     renderWorkspacePanelLayout({
       mainWidth: 1000,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
 
 const PROFILE_NAME = 'wework-core'
@@ -402,7 +402,7 @@ export async function createDesktopScenario({
 
 async function verifyWindowsProfileDirectoryLinks(userDataDirectory) {
   if (process.platform !== 'win32') return
-  const assets = join(
+  const profileWeb = join(
     userDataDirectory,
     'dsh-core',
     'profiles',
@@ -410,9 +410,18 @@ async function verifyWindowsProfileDirectoryLinks(userDataDirectory) {
     'node_modules',
     '@wegent',
     'dsh-app-wework',
-    'web',
-    'assets'
+    'web'
   )
+  await assert.rejects(lstat(profileWeb), { code: 'ENOENT' })
+  const compositions = join(
+    userDataDirectory,
+    'managed-components',
+    'composed',
+    'wework-core-plugins'
+  )
+  const fingerprints = await readdir(compositions)
+  assert.equal(fingerprints.length, 1, 'A fresh release launch must publish one Core composition')
+  const assets = join(compositions, fingerprints[0], 'wework-app', 'web', 'assets')
   const linkType = await captureCommand(
     'powershell.exe',
     [
@@ -431,7 +440,7 @@ async function verifyWindowsProfileDirectoryLinks(userDataDirectory) {
   assert.equal(
     linkType.trim(),
     'Junction',
-    'Windows Core DSH profile assets must use a junction that does not require symlink privilege'
+    'Windows composed Core DSH assets must use a junction that does not require symlink privilege'
   )
 }
 

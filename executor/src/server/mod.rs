@@ -1457,7 +1457,9 @@ fn workspace_entry(entry: fs::DirEntry) -> Option<WorkspaceEntry> {
     let is_directory = metadata.is_dir();
     Some(WorkspaceEntry {
         name: entry.file_name().to_string_lossy().to_string(),
-        path: path.to_string_lossy().to_string(),
+        path: crate::path_compat::strip_windows_verbatim_prefix(&path)
+            .to_string_lossy()
+            .to_string(),
         is_directory,
         size: if is_directory { 0 } else { metadata.len() },
         modified_at: metadata
@@ -2174,6 +2176,25 @@ impl IntoResponse for HttpError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn workspace_directory_entries_expose_regular_paths_from_canonical_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("README.md");
+        fs::write(&file, "workspace contents").unwrap();
+        let canonical_directory = fs::canonicalize(directory.path()).unwrap();
+        let entries = list_workspace_entries(&canonical_directory).unwrap();
+        let expected =
+            crate::path_compat::strip_windows_verbatim_prefix(&fs::canonicalize(&file).unwrap());
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, expected.to_string_lossy());
+        assert!(!entries[0].path.starts_with(r"\\?\"));
+        assert_eq!(
+            fs::read_to_string(&entries[0].path).unwrap(),
+            "workspace contents"
+        );
+    }
 
     #[test]
     fn sandbox_home_remains_the_user_workspace() {

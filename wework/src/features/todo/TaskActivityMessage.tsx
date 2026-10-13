@@ -1,6 +1,7 @@
 import { useActivityExecutionDisplayStatus } from './useActivityExecutionStatus'
 import type { ComponentProps } from 'react'
-import { createCollaborationTranslator, IssueChatMessage } from '@wegent/collaboration'
+import { createCollaborationTranslator } from '@wegent/collaboration/i18n'
+import { IssueChatMessage } from '@wegent/collaboration/issue-detail'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import { useDesktopMarkdownServices } from '@/components/chat/useDesktopMarkdownServices'
 import { useTranslation } from '@/hooks/useTranslation'

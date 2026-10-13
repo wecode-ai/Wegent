@@ -4,7 +4,7 @@ export {
   getAttachmentTypeLabel,
   isTextAttachment,
   getAttachmentTextPreview,
-} from '@wegent/collaboration'
+} from '@wegent/collaboration/issue-detail'
 export {
   releaseAttachmentPreview,
   persistAttachmentReferences,

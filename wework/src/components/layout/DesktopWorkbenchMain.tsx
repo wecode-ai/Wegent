@@ -3250,8 +3250,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : undefined
   const openSubagentConversation = useCallback(
     (block: SubagentBlock) => {
+      restoreEnvironmentInfoAfterSubagentsRef.current = true
       if (environmentInfoOpen) {
-        restoreEnvironmentInfoAfterSubagentsRef.current = true
         setEnvironmentInfoOpen(false)
       }
       setSelectedSubagentConversationId(block.agentThreadId ?? block.agentId ?? block.id)

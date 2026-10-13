@@ -246,12 +246,11 @@ export function createDesktopScenario({
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await selectCollaborationDomain(control, CONTENT, 'cloud')
-      await control.command(
-        'click',
-        scoped(
-          `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
-        )
+      const workspaceIdentity = scoped(
+        `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
       )
+      await control.command('waitFor', workspaceIdentity, { visible: true })
+      await control.command('click', workspaceIdentity)
       await runAssistance(control, local)
       await runAssistance(control, other)
     },

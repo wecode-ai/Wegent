@@ -1,4 +1,4 @@
-import { IssueMainCommentComposer } from '@wegent/collaboration'
+import { IssueMainCommentComposer } from '@wegent/collaboration/issue-detail'
 import type { ComposerExternalMentionCandidate } from '@wegent/collaboration/composer/composerAutocompleteInputTypes'
 import { useContext } from 'react'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'

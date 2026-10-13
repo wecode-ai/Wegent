@@ -1398,6 +1398,15 @@ async function ensureModelOptionVisible(
         })
       }
     }
+    menu = JSON.parse(await control.command('snapshot', 'body'))
+    if (menu.testIds.includes('model-selector-empty-state')) {
+      // The recovery picker remains mounted while the initial catalog loads.
+      // Wait for that existing async prerequisite before revealing its options.
+      await control.command('waitFor', '[data-testid="model-selector-empty-state"]', {
+        visible: false,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
     if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))

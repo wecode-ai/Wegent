@@ -1,6 +1,6 @@
 import { MessageSquare, X } from 'lucide-react'
 import { useState } from 'react'
-import { ComposerAttachmentBadges } from '@wegent/collaboration'
+import { ComposerAttachmentBadges } from '@wegent/collaboration/issue-detail'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Attachment, AttachmentUploadProgress } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'

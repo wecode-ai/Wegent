@@ -876,7 +876,13 @@ impl RuntimeWorkRpcHandler {
         if project_preparation::needs_preparation(&turn) {
             let handler = self.clone();
             tokio::spawn(async move {
-                let _ = handler.prepare_and_start_reserved_turn(turn).await;
+                let local_task_id = turn.local_task_id.clone();
+                if let Err(error) = handler.prepare_and_start_reserved_turn(turn).await {
+                    log_executor_event(
+                        "runtime task worktree preparation failed",
+                        &[("task_id", local_task_id), ("code", error.code)],
+                    );
+                }
             });
             return;
         }
