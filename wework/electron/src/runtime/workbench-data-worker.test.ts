@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -65,6 +65,8 @@ test('large history migrates without blocking the parent event loop and restarts
     mkdirSync(directory, { recursive: true })
     writeFileSync(join(directory, 'attachment.txt'), 'synthetic attachment')
   }
+  const oldAttachment = join(source, 'data/objects/attachments/999/attachment.txt')
+  const attachmentIdentity = statSync(oldAttachment, { bigint: true }).ino
   let responsiveDuringMigration = 0
   const timer = setInterval(() => {
     if (
@@ -85,10 +87,12 @@ test('large history migrates without blocking the parent event loop and restarts
   } finally {
     migrated.close()
   }
-  const oldAttachment = join(source, 'data/objects/attachments/999/attachment.txt')
   expect(realpathSync(join(target, 'data/objects/attachments/999/attachment.txt'))).toBe(
-    oldAttachment
+    process.platform === 'win32'
+      ? join(target, 'data/objects/attachments/999/attachment.txt')
+      : oldAttachment
   )
+  expect(statSync(oldAttachment, { bigint: true }).ino).toBe(attachmentIdentity)
   // A completed restart must not enumerate old attachment trees again.
   // Removing the synthetic files also makes any unintended traversal observable.
   await rm(join(source, 'data/objects/attachments'), { recursive: true })

@@ -16,7 +16,13 @@ function exists(path: string): boolean {
 
 // Persist the inventory before moving entries so a crash between rename and
 // bridge publication cannot hide a missing source from the next startup.
-function migrateChildren(source: string, target: string, state: string, excluded: string[]): void {
+function migrateChildren(
+  source: string,
+  target: string,
+  state: string,
+  excluded: string[],
+  mutableFiles: string[] = []
+): void {
   fs.mkdirSync(source, { recursive: true, mode: 0o700 })
   fs.mkdirSync(target, { recursive: true, mode: 0o700 })
   fs.mkdirSync(state, { recursive: true, mode: 0o700 })
@@ -59,22 +65,29 @@ function migrateChildren(source: string, target: string, state: string, excluded
       source: join(source, name),
       target: join(target, name),
       journal: join(state, `${Buffer.from(name).toString('hex')}.json`),
+      ...(mutableFiles.includes(name) ? { mutableFile: true } : {}),
     })
   }
 }
 
 export function migrateWorkbenchExecutorData(source: string, target: string, state: string): void {
-  migrateChildren(source, target, join(state, 'executor-data-v1'), [
-    'codex',
-    'claude',
-    'capabilities',
-    'workspace',
-    'attachments',
-    'worktrees',
-    'data',
-    // The unbranded legacy root also contains other branded applications.
-    'apps',
-  ])
+  migrateChildren(
+    source,
+    target,
+    join(state, 'executor-data-v1'),
+    [
+      'codex',
+      'claude',
+      'capabilities',
+      'workspace',
+      'attachments',
+      'worktrees',
+      'data',
+      // The unbranded legacy root also contains other branded applications.
+      'apps',
+    ],
+    ['device-config.json']
+  )
   // Keep old workspace paths as aliases while only the historical task artifacts
   // remain physically in place. New attachments/worktrees use the new workspace.
   migrateChildren(
@@ -83,22 +96,33 @@ export function migrateWorkbenchExecutorData(source: string, target: string, sta
     join(state, 'executor-workspace-v1'),
     ['attachments', 'worktrees']
   )
-  migrateChildren(join(source, 'data'), join(target, 'data'), join(state, 'task-data-v1'), [
-    'objects',
-    'cache',
-  ])
-  migrateChildren(
-    join(source, 'data/objects'),
-    join(target, 'data/objects'),
-    join(state, 'task-objects-v1'),
-    ['attachments']
-  )
-  migrateChildren(
-    join(source, 'data/cache'),
-    join(target, 'data/cache'),
-    join(state, 'task-cache-v1'),
-    ['gitlab-attachments']
-  )
+  if (process.platform === 'win32') {
+    // Keep SQLite, WAL, and SHM in one real directory. A native junction keeps
+    // legacy paths valid without privileged or stale per-file sidecar aliases.
+    fs.mkdirSync(join(source, 'data'), { recursive: true, mode: 0o700 })
+    migrateWorkbenchDataEntry({
+      source: join(source, 'data'),
+      target: join(target, 'data'),
+      journal: join(state, 'task-data-directory-v1.json'),
+    })
+  } else {
+    migrateChildren(join(source, 'data'), join(target, 'data'), join(state, 'task-data-v1'), [
+      'objects',
+      'cache',
+    ])
+    migrateChildren(
+      join(source, 'data/objects'),
+      join(target, 'data/objects'),
+      join(state, 'task-objects-v1'),
+      ['attachments']
+    )
+    migrateChildren(
+      join(source, 'data/cache'),
+      join(target, 'data/cache'),
+      join(state, 'task-cache-v1'),
+      ['gitlab-attachments']
+    )
+  }
   for (const path of [
     'attachments',
     'worktrees',
@@ -107,6 +131,7 @@ export function migrateWorkbenchExecutorData(source: string, target: string, sta
     'data/objects/attachments',
     'data/cache/gitlab-attachments',
   ]) {
+    if (process.platform === 'win32' && path.startsWith('data/')) continue
     const marker = join(state, `retained-${Buffer.from(path).toString('hex')}-v1`)
     if (!exists(marker)) {
       retainChildren(join(source, path), join(target, path), !path.endsWith('worktrees'))
@@ -143,10 +168,25 @@ function retainChildren(source: string, target: string, recurse: boolean): void 
       continue
     }
     if (exists(newEntry)) {
-      if (fs.realpathSync(newEntry) !== fs.realpathSync(oldEntry))
+      const oldIdentity = fs.lstatSync(oldEntry, { bigint: true })
+      const newIdentity = fs.lstatSync(newEntry, { bigint: true })
+      const nativeFileAlias =
+        process.platform === 'win32' &&
+        oldIdentity.isFile() &&
+        newIdentity.isFile() &&
+        oldIdentity.dev === newIdentity.dev &&
+        oldIdentity.ino === newIdentity.ino
+      if (!nativeFileAlias && fs.realpathSync(newEntry) !== fs.realpathSync(oldEntry))
         throw new Error(`Historical artifact path conflict: ${newEntry}`)
     } else {
-      fs.symlinkSync(oldEntry, newEntry, fs.statSync(oldEntry).isDirectory() ? 'junction' : 'file')
+      if (process.platform === 'win32' && fs.statSync(oldEntry).isFile())
+        fs.linkSync(oldEntry, newEntry)
+      else
+        fs.symlinkSync(
+          oldEntry,
+          newEntry,
+          fs.statSync(oldEntry).isDirectory() ? 'junction' : 'file'
+        )
     }
   }
 }
