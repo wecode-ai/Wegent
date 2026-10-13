@@ -11,6 +11,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { join } from 'node:path'
+import { rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -26,6 +27,7 @@ import {
   selectCoreDshRuntime,
 } from './core-dsh-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
+import { hashComponentPath } from './component-content-hash.js'
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -390,6 +392,7 @@ describe('core DSH runtime', () => {
       role: 'core',
       sourceFingerprint: 'a'.repeat(64),
       corePluginsFingerprint: 'f'.repeat(64),
+      managedPluginLayout: 1,
     })
     const profileModules = join(
       dataDirectory,
@@ -686,9 +689,88 @@ describe('core DSH runtime', () => {
       role: 'core',
       sourceFingerprint: 'a'.repeat(64),
       corePluginsFingerprint: 'f'.repeat(64),
+      managedPluginLayout: 1,
     })
     await root.remove()
   })
+
+  test.each(['refresh', 'reset'] as const)(
+    'migrates legacy App web aliases safely during %s and preserves the current layout',
+    async action => {
+      const root = await temporaryDirectory('core-dsh-app-web-layout-')
+      try {
+        const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+        const immutableAssets = join(root.path, 'immutable-assets')
+        const appWeb = join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web')
+        await mkdir(immutableAssets)
+        await mkdir(appWeb)
+        await writeFile(join(immutableAssets, 'renderer.js'), 'window.wework = true\n')
+        await symlink(
+          immutableAssets,
+          join(appWeb, 'assets'),
+          process.platform === 'win32' ? 'junction' : 'dir'
+        )
+        const immutableHash = await hashComponentPath(immutableAssets)
+        const options = {
+          runtimeRoot: runtime.root,
+          dataDirectory: join(root.path, 'data'),
+          environment: {
+            WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+            WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+          },
+        }
+        const launch = await prepareCoreDshRuntime(options)
+        const profileRoot = join(launch.dshHome, 'profiles', 'wework-core')
+        const appRoot = join(profileRoot, 'node_modules', '@wegent', 'dsh-app-wework')
+        const stampPath = join(profileRoot, '.wework-runtime.json')
+        const manifestPath = join(profileRoot, 'package.json')
+        const stamp = JSON.parse(await readFile(stampPath, 'utf8'))
+        delete stamp.managedPluginLayout
+        await writeFile(stampPath, JSON.stringify(stamp))
+        await symlink(
+          appWeb,
+          join(appRoot, 'web'),
+          process.platform === 'win32' ? 'junction' : 'dir'
+        )
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+        manifest.dependencies['user-plugin'] = '1.2.3'
+        await writeFile(manifestPath, JSON.stringify(manifest))
+        const userRoot = join(profileRoot, 'node_modules', 'user-plugin')
+        await mkdir(userRoot)
+        await writeFile(join(userRoot, 'package.json'), '{"name":"user-plugin","version":"1.2.3"}')
+        const settingsPath = join(profileRoot, '.wework-core-plugins.json')
+        await writeFile(
+          settingsPath,
+          '{"version":1,"order":["user-plugin"],"disabled":["user-plugin"]}'
+        )
+
+        if (action === 'reset') await resetCoreDshRuntime(options.dataDirectory)
+        const migrated = await prepareCoreDshRuntime(options)
+
+        expect(migrated.environment.WEWORK_APP_WEB_ROOT).toBe(appWeb)
+        await expect(lstat(join(appRoot, 'web'))).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await hashComponentPath(immutableAssets)).toBe(immutableHash)
+        expect(JSON.parse(await readFile(manifestPath, 'utf8')).dependencies['user-plugin']).toBe(
+          '1.2.3'
+        )
+        expect(await readFile(join(userRoot, 'package.json'), 'utf8')).toContain('1.2.3')
+        expect(JSON.parse(await readFile(settingsPath, 'utf8')).disabled).toEqual(['user-plugin'])
+        expect(JSON.parse(await readFile(stampPath, 'utf8')).managedPluginLayout).toBe(1)
+
+        const marker = join(appRoot, 'current-layout-marker')
+        await writeFile(marker, 'retained without copying')
+        await prepareCoreDshRuntime(options)
+        expect(await readFile(marker, 'utf8')).toBe('retained without copying')
+        rmSync(appRoot, { recursive: true, force: true })
+        expect(await hashComponentPath(immutableAssets)).toBe(immutableHash)
+        expect(await readFile(join(appWeb, 'assets', 'renderer.js'), 'utf8')).toBe(
+          'window.wework = true\n'
+        )
+      } finally {
+        await root.remove()
+      }
+    }
+  )
 
   test('removes stale managed files when refreshing the profile', async () => {
     const root = await temporaryDirectory('core-dsh-stale-managed-file-')

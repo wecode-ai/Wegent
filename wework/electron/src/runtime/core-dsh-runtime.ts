@@ -8,6 +8,7 @@ import {
   realpath,
   rm,
   symlink,
+  unlink,
   writeFile,
 } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -78,6 +79,7 @@ const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 // User plugin packages and their manifests must survive a runtime-only reset.
 export async function resetCoreDshRuntime(dataDirectory: string): Promise<void> {
   const profileRoot = join(dataDirectory, 'dsh-core', 'profiles', PROFILE_NAME)
+  await unlinkManagedAppWebAlias(profileRoot)
   const paths = [
     join(profileRoot, PROFILE_STAMP),
     ...CORE_PLUGIN_PACKAGES.map(([name]) => join(profileRoot, 'node_modules', name)),
@@ -92,6 +94,7 @@ interface RuntimeIdentity {
 }
 
 interface ProfileStamp extends RuntimeIdentity {
+  managedPluginLayout: number
   managedUiPlugins: boolean
   corePluginsFingerprint: string
 }
@@ -323,6 +326,7 @@ async function prepareProfile(options: {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
   const expectedStamp: ProfileStamp = {
+    managedPluginLayout: 1,
     dshVersion: options.runtime.version,
     role: 'core',
     sourceFingerprint: options.runtime.sourceFingerprint,
@@ -419,6 +423,7 @@ async function prepareProfile(options: {
   await writeFile(join(profileRoot, 'cordis.patch.yml'), PRODUCTION_PROFILE_PATCH, { mode: 0o600 })
   await synchronizeModePluginState(profileRoot, modeStates, managedDependencyNames)
   await ensureCoreWorkspace(workspacePath)
+  await unlinkManagedAppWebAlias(profileRoot)
   options.onStartupStep?.('core-dsh-profile-config-write', 'completed')
   const preparePlugin = createFileOperationQueue(4)
   const results = await Promise.allSettled(
@@ -429,7 +434,9 @@ async function prepareProfile(options: {
         const step = `core-dsh-plugin-copy:${packageName}`
         options.onStartupStep?.(step, 'started')
         await rm(destination, { recursive: true, force: true })
-        await copyManagedPlugin(source, destination)
+        await copyManagedPlugin(source, destination, {
+          excludeWeb: packageName === '@wegent/dsh-app-wework',
+        })
         options.onStartupStep?.(step, 'completed')
       })
     )
@@ -476,11 +483,14 @@ export async function copyManagedPlugin(
   options: {
     platform?: NodeJS.Platform
     linkDirectory?: typeof symlink
+    excludeWeb?: boolean
   } = {}
 ): Promise<void> {
   const platform = options.platform ?? process.platform
   const linkDirectory = options.linkDirectory ?? symlink
-  const entries = await readdir(source, { withFileTypes: true })
+  const entries = (await readdir(source, { withFileTypes: true })).filter(
+    entry => !options.excludeWeb || entry.name !== 'web'
+  )
   if (platform !== 'win32') {
     await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
     await copyComponentTree(await realpath(source), destination, new Set(['web']), false)
@@ -505,6 +515,16 @@ export async function copyManagedPlugin(
     } else {
       await copyWindowsEntry(sourceEntry, destinationEntry, linkDirectory)
     }
+  }
+}
+
+async function unlinkManagedAppWebAlias(profileRoot: string): Promise<void> {
+  const web = join(profileRoot, 'node_modules', '@wegent', 'dsh-app-wework', 'web')
+  try {
+    // Electron's Windows rmSync follows junctions while replacing pnpm packages.
+    if ((await lstat(web)).isSymbolicLink()) await unlink(web)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
 }
 
@@ -764,7 +784,8 @@ async function stampMatches(path: string, expected: ProfileStamp): Promise<boole
       current.dshVersion === expected.dshVersion &&
       current.sourceFingerprint === expected.sourceFingerprint &&
       current.managedUiPlugins === expected.managedUiPlugins &&
-      current.corePluginsFingerprint === expected.corePluginsFingerprint
+      current.corePluginsFingerprint === expected.corePluginsFingerprint &&
+      current.managedPluginLayout === expected.managedPluginLayout
     )
   } catch {
     return false
