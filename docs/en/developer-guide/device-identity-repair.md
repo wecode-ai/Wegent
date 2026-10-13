@@ -16,6 +16,16 @@ Normal registration and user-requested removal still update records through appl
 - New Wework installations persist a UUIDv4 `device_id`. Restarts preserve it. Existing IDs, including `local-device`, and explicit configurations remain unchanged.
 - `runtime_instance_id` identifies the persistent Runtime installation; `app_device_id` identifies its desktop IPC exposure.
 - App records expose `execution_target_id` as `app-record-<primary key>` for exact routing. The UI still displays the registered device ID.
+
+App WebSocket registration sessions, execution queue pulls, and wake-up rooms
+must use the same confirmed `app-record-<primary key>`. Pulling with
+`app_device_id` cannot identify a unique record when installations share an IPC
+alias, and causes `Runner is no longer authorized` before an Issue starts.
+Reconnect the Executor after deploying this fix to refresh existing sessions;
+device removal and historical record changes are unnecessary. The desktop
+`collaboration-app-queue-identity` checkpoint starts two real Executors sharing
+an alias and verifies automatic cloud Issue execution, completion, record routing,
+and exactly one execution.
 - Configuration creation is file-locked and atomically persisted. Corrupt or unwritable configuration fails explicitly; it never invents a shared fallback identity.
 
 Registration matches the owner, default namespace, device ID, Runtime and IPC identities. Identical historical duplicates reuse a stable record; distinct installations retain separate records, online states and execution routes. Ambiguous identities are rejected, never guessed from display names.
