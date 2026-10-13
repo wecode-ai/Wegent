@@ -95,6 +95,12 @@ function detailedModuleGroup(frame) {
   for (const [pattern, name] of nodeGroups) {
     if (pattern.test(url)) return name
   }
+  if (group === 'other') {
+    if (!url) return 'unattributed-empty-url'
+    if (url.includes('/node_modules/')) return 'unattributed-installed-package'
+    if (/^(?:file:|\/|[a-z]:\/)/i.test(url)) return 'unattributed-file-module'
+    return 'unattributed-script'
+  }
   return group
 }
 

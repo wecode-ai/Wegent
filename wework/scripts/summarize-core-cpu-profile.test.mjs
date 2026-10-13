@@ -183,7 +183,7 @@ test('details known packages and builtins while preserving broad totals and safe
     { name: 'node-fs', samples: 1, sampledMs: 3 },
     { name: '@wegent/dsh-executor-runtime', samples: 1, sampledMs: 2 },
     { name: '@deepseek-ai/cosmokit', samples: 1, sampledMs: 1 },
-    { name: 'other', samples: 1, sampledMs: 0.5 },
+    { name: 'unattributed-installed-package', samples: 1, sampledMs: 0.5 },
   ])
   expect(summary.nearestLoaderAncestors).toEqual([
     { name: 'node-esm-loader', samples: 4, sampledMs: 6.5 },
@@ -191,6 +191,87 @@ test('details known packages and builtins while preserving broad totals and safe
   expect(JSON.stringify(summary)).not.toMatch(
     /private-token|private-package|secret=|private\/token|file:\/\//
   )
+})
+
+test('separates unattributed frame origins without exposing their functions or locations', () => {
+  const profile = {
+    startTime: 1000,
+    endTime: 7000,
+    nodes: [
+      { id: 1, callFrame: { url: '', functionName: 'private-token' } },
+      {
+        id: 2,
+        callFrame: {
+          url: 'file:///private/token/node_modules/private-package/source.js?secret=token',
+          functionName: 'private-token',
+        },
+      },
+      {
+        id: 3,
+        callFrame: { url: 'D:\\private\\token\\source.js', functionName: 'private-token' },
+      },
+      {
+        id: 4,
+        callFrame: {
+          url: 'https://private-token/source.js?secret=token',
+          functionName: 'private-token',
+        },
+      },
+      { id: 5, callFrame: { url: 'node:internal/private-token', functionName: 'private-token' } },
+      { id: 6, callFrame: { url: '', functionName: 'readFileUtf8' } },
+    ],
+    samples: [1, 2, 3, 4, 5, 6],
+    timeDeltas: [1000, 1000, 1000, 1000, 1000, 1000],
+  }
+  const summary = summarizeCoreCpuProfile(profile, 7000)
+  expect(summary.modules).toEqual([
+    { name: 'other', samples: 4, sampledMs: 4 },
+    { name: 'node-other', samples: 1, sampledMs: 1 },
+    { name: 'native:readFileUtf8', samples: 1, sampledMs: 1 },
+  ])
+  expect(summary.moduleDetails).toEqual([
+    { name: 'unattributed-empty-url', samples: 1, sampledMs: 1 },
+    { name: 'unattributed-installed-package', samples: 1, sampledMs: 1 },
+    { name: 'unattributed-file-module', samples: 1, sampledMs: 1 },
+    { name: 'unattributed-script', samples: 1, sampledMs: 1 },
+    { name: 'node-other', samples: 1, sampledMs: 1 },
+    { name: 'native:readFileUtf8', samples: 1, sampledMs: 1 },
+  ])
+  expect(summary.moduleDetails.reduce((total, row) => total + row.sampledMs, 0)).toBe(6)
+  expect(JSON.stringify(summary)).not.toMatch(
+    /private-token|private-package|secret=|private\/token|file:|https:/
+  )
+  expect(summary).not.toHaveProperty('nodes')
+  expect(summary).not.toHaveProperty('timeDeltas')
+})
+
+test('categorizes a real Node file module without retaining its private source', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-cpu-private-source-'))
+  roots.push(root)
+  const entry = join(root, 'private-token.mjs')
+  const dshHome = join(root, 'session/dsh-core')
+  await writeFile(
+    entry,
+    'let total=0;for(let i=0;i<20000000;i++)total+=Math.sqrt(i);console.log(JSON.stringify(await globalThis[Symbol.for("wework.core.startupCpuProfiler")].complete()))'
+  )
+  const { stdout } = await execute(
+    process.execPath,
+    ['--import', pathToFileURL(resolve('dsh/electron-host/cpu-profile-bootstrap.js')).href, entry],
+    { env: { ...process.env, WEWORK_E2E_CORE_CPU_PROFILE: '1', DSH_HOME: dshHome } }
+  )
+  const marker = JSON.parse(stdout)
+  const summary = JSON.parse(
+    await readFile(
+      join(dshHome, '../logs', `core-startup-cpu-profile-${marker.cpuProfileProcessId}.json`),
+      'utf8'
+    )
+  )
+  expect(
+    summary.moduleDetails.find(row => row.name === 'unattributed-file-module')?.samples
+  ).toBeGreaterThan(0)
+  expect(JSON.stringify(summary)).not.toMatch(/private-token|file:/)
+  expect(JSON.stringify(summary)).not.toContain(root)
+  expect(summary).not.toHaveProperty('nodes')
 })
 
 test('waits for an asynchronous real inspector stop callback before publishing the startup marker', async () => {
