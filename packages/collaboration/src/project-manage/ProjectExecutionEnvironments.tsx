@@ -25,6 +25,7 @@ import { repositoryKey } from './environmentConfiguration'
 import { environmentAuthorizationError } from './environmentAuthorization'
 import { useExecutionEnvironmentList } from '../execution-environment/useExecutionEnvironmentList'
 import { compareExecutionEnvironments } from '../execution-environment/compareExecutionEnvironments'
+import { ensureWorkspaceEnvironmentSharing } from '../execution-environment/ensureWorkspaceEnvironmentSharing'
 
 type RepositoryDraft = CollaborationExecutionEnvironmentRepository & {
   id: string
@@ -567,15 +568,19 @@ export function ProjectExecutionEnvironments({
     try {
       if (requireWorkspaceSharing && !workspaceDeviceIds.has(deviceId)) {
         sharing = true
-        const sharedEnvironment = await api.workspaces!.addExecutionEnvironment(
+        const sharedEnvironment = await ensureWorkspaceEnvironmentSharing(
+          api,
           project!.workspace_id!,
-          { deviceId }
+          deviceId,
+          workspaceDeviceIds
         )
-        shared.update(current => [
-          ...current.filter(item => item.device_id !== deviceId),
-          sharedEnvironment,
-        ])
-        sharedDuringAdd = true
+        if (sharedEnvironment) {
+          shared.update(current => [
+            ...current.filter(item => item.device_id !== deviceId),
+            sharedEnvironment,
+          ])
+          sharedDuringAdd = true
+        }
       }
       sharing = isWorkspaceScope
       const created = isWorkspaceScope

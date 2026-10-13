@@ -381,6 +381,9 @@ export function createSharedWorkspaceHttpApi(
             id: String(device.id),
             device_id: device.id,
             device_key: device.device_id,
+            ...(device.app_device_id
+              ? { app_device_id: device.app_device_id }
+              : {}),
             name: device.name,
             kind:
               device.device_type === "cloud" || device.device_type === "remote"

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  inProjectCreateDialog,
   selectCloudAgentModel,
   selectCollaborationDomain,
   waitForTestIdByText,
@@ -242,17 +243,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           '[data-testid="collaboration-workspace-project-create-blank"]'
         )
+        await control.command('waitFor', inProjectCreateDialog(), { timeoutMs: uiTimeoutMs })
         await control.command(
-          'waitFor',
-          scoped('[data-testid="collaboration-project-create-dialog"]'),
-          { timeoutMs: uiTimeoutMs }
+          'fill',
+          inProjectCreateDialog('[data-testid="collaboration-project-name-input"]'),
+          {
+            value: projectName,
+          }
         )
-        await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-          value: projectName,
-        })
         await control.command(
           'clickWhenEnabled',
-          scoped('[data-testid="collaboration-project-create-confirm"]'),
+          inProjectCreateDialog('[data-testid="collaboration-project-create-confirm"]'),
           { timeoutMs: uiTimeoutMs }
         )
         project = await waitForApiValue(
@@ -265,14 +266,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           uiTimeoutMs
         )
 
-        await control.command(
-          'waitFor',
-          scoped('[data-testid="collaboration-project-create-dialog"]'),
-          {
-            visible: false,
-            timeoutMs: uiTimeoutMs,
-          }
-        )
+        await control.command('waitFor', inProjectCreateDialog(), {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command(
           'clickWhenEnabled',
           scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),

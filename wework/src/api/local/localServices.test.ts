@@ -4840,6 +4840,53 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test.each(['openai-responses', 'openai-chat-completions', 'anthropic-messages'])(
+    'routes Claude cloud models through the protocol bridge for %s',
+    async upstreamApiFormat => {
+      const request = vi.fn().mockResolvedValue({ accepted: true })
+      const services = createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+        request,
+        subscribe: vi.fn(),
+        cloudModelGateway: {
+          baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+          apiKey: 'cloud-login-token',
+        },
+      })
+      await services.runtimeWorkApi?.createRuntimeTask({
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'claude-cloud',
+        runtime: 'claude_code',
+        message: 'hello',
+        modelId: 'shared-model',
+        modelType: 'user',
+        modelOptions: {
+          weworkCloudModelNamespace: 'team',
+          weworkCloudModelResourceUserId: '42',
+          weworkCloudModelUpstreamApiFormat: upstreamApiFormat,
+        },
+      })
+      const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+      expect(payload.executionRequest.model_config).toEqual(
+        expect.objectContaining({
+          model_id: 'shared-model',
+          upstream_api_format: upstreamApiFormat,
+          base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+          api_key: 'cloud-login-token',
+          default_headers: {
+            'X-Wegent-Model-Type': 'user',
+            'X-Wegent-Model-Namespace': 'team',
+            'X-Wegent-Model-User-Id': '42',
+            'X-Wegent-Upstream-Header-wecode-executor': 'claudecode',
+            'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
+          },
+        })
+      )
+      expect(payload.executionRequest.model_config).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
+    }
+  )
+
   test('passes native Responses tool capabilities to the executor', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({

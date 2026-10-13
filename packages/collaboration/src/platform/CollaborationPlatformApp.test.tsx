@@ -5111,6 +5111,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       },
     });
     api.members.list = emptyAsync([]);
+    api.workspaces!.listExecutionEnvironments = emptyAsync([]);
     api.projects.addExecutionEnvironment = vi.fn(
       async () => currentEnvironment,
     );
@@ -5131,6 +5132,46 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.projects.addExecutionEnvironment).toHaveBeenCalledWith(
       project.id,
       currentEnvironment.device_id,
+    );
+    expect(api.workspaces!.addExecutionEnvironment).toHaveBeenCalledWith(
+      workspace.id,
+      { deviceId: currentEnvironment.device_id },
+    );
+    expect(
+      api.workspaces!.addExecutionEnvironment.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      api.projects.addExecutionEnvironment.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not authorize an environment or create agents when workspace sharing fails", async () => {
+    const { api } = createApi({
+      initialProjects: [],
+      initialResources: {
+        agents: [agent],
+        execution_environments: [{ ...environment, is_current_device: true }],
+      },
+    });
+    api.workspaces!.listExecutionEnvironments = emptyAsync([]);
+    api.workspaces!.addExecutionEnvironment = vi.fn(async () => {
+      throw new Error("Insufficient permission");
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+    await chooseBlankProjectCreation("collaboration-workspace-project-create");
+    await change(
+      byTestId("collaboration-project-name-input") as HTMLInputElement,
+      project.name,
+    );
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
+    expect(api.agents.create).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Insufficient permission",
     );
   });
 

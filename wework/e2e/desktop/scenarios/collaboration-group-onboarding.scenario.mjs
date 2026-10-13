@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import { inCollaborationSidebar, inProjectCreateDialog } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -111,7 +111,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         scoped('[data-testid="collaboration-workspace-project-create"]')
       )
       await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
-      const dialog = scoped('[data-testid="collaboration-project-create-dialog"]')
+      const dialog = inProjectCreateDialog()
       await control.command('waitFor', dialog, { timeoutMs: uiTimeoutMs })
       const initialDialog = await snapshot(control, dialog)
       assert.ok(
@@ -132,25 +132,36 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         initialDialog.text.includes('我'),
         'Project creation did not include the current user'
       )
-      await control.command('waitFor', scoped('.collaboration-project-create-collaborator-token'), {
-        text: '当前设备智能体',
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        inProjectCreateDialog('.collaboration-project-create-collaborator-token'),
+        {
+          text: '当前设备智能体',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
 
-      await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-        value: PROJECT_NAME,
-      })
-      await control.command('click', scoped('[aria-label="取消 当前设备智能体"]'))
+      await control.command(
+        'fill',
+        inProjectCreateDialog('[data-testid="collaboration-project-name-input"]'),
+        {
+          value: PROJECT_NAME,
+        }
+      )
+      await control.command('click', inProjectCreateDialog('[aria-label="取消 当前设备智能体"]'))
       assert.equal(
         Number(
-          await control.command('getElementCount', scoped('[aria-label="取消 当前设备智能体"]'))
+          await control.command(
+            'getElementCount',
+            inProjectCreateDialog('[aria-label="取消 当前设备智能体"]')
+          )
         ),
         0,
         'The default local Agent could not be removed from the new project'
       )
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-create-add-collaborator"]')
+        inProjectCreateDialog('[data-testid="collaboration-project-create-add-collaborator"]')
       )
       assert.equal(
         Number(
@@ -169,13 +180,17 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'body'
       )
       await control.command('click', `[data-testid="${defaultAgentOptionTestId}"]`)
-      await control.command('waitFor', scoped('.collaboration-project-create-collaborator-token'), {
-        text: '当前设备智能体',
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        inProjectCreateDialog('.collaboration-project-create-collaborator-token'),
+        {
+          text: '当前设备智能体',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command(
         'clickWhenEnabled',
-        scoped('[data-testid="collaboration-project-create-confirm"]'),
+        inProjectCreateDialog('[data-testid="collaboration-project-create-confirm"]'),
         { timeoutMs: uiTimeoutMs }
       )
       await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {

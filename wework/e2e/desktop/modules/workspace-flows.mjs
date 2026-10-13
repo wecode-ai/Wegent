@@ -36,6 +36,11 @@ export function inCollaborationSidebar(selector, contentSelector = '') {
   return contentSelector ? `${contentSelector} ${sidebarSelector}` : sidebarSelector
 }
 
+export function inProjectCreateDialog(selector = '') {
+  const dialog = '[data-testid="collaboration-project-create-dialog"]'
+  return selector ? `${dialog} ${selector}` : dialog
+}
+
 export async function selectCollaborationDomain(control, contentSelector, domain) {
   assert.ok(domain === 'local' || domain === 'cloud', `Unknown collaboration domain: ${domain}`)
   await control.command(

@@ -27,6 +27,7 @@ import {
 
 import { useDeviceCatalog, type DeviceCatalogState } from "./useDeviceCatalog";
 import { DeviceCatalogFeedback } from "./DeviceCatalogFeedback";
+import { ensureWorkspaceEnvironmentSharing } from "../execution-environment/ensureWorkspaceEnvironmentSharing";
 import type { CollaborationTranslate } from "../i18n";
 
 import { CollaborationApp } from "../CollaborationApp";
@@ -4652,6 +4653,20 @@ export function CollaborationPlatformApp({
                     const selectedAgents = selectedProjectResourceAgents.filter(
                       (agent) => selection.agentResourceIds.includes(agent.id),
                     );
+                    const sharedDeviceIds = new Set<number>(
+                      projectWorkspace.location === "cloud" &&
+                        selection.executionEnvironmentDeviceIds.length
+                        ? (
+                            await api.workspaces!.listExecutionEnvironments(
+                              projectWorkspace.id,
+                            )
+                          ).flatMap((environment) =>
+                            environment.device_id == null
+                              ? []
+                              : [environment.device_id],
+                          )
+                        : [],
+                    );
                     await Promise.all([
                       ...selection.memberUserIds
                         .filter((userId) => !existingMemberIds.has(userId))
@@ -4659,11 +4674,20 @@ export function CollaborationPlatformApp({
                           api.members.add(project.id, userId, "Developer"),
                         ),
                       ...selection.executionEnvironmentDeviceIds.map(
-                        (deviceId) =>
-                          api.projects.addExecutionEnvironment(
+                        async (deviceId) => {
+                          if (projectWorkspace.location === "cloud") {
+                            await ensureWorkspaceEnvironmentSharing(
+                              api,
+                              projectWorkspace.id,
+                              deviceId,
+                              sharedDeviceIds,
+                            );
+                          }
+                          return api.projects.addExecutionEnvironment(
                             project.id,
                             deviceId,
-                          ),
+                          );
+                        },
                       ),
                     ]);
                     const selectedDefaultAgent = selectedAgents.find(

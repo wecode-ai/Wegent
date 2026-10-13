@@ -1039,28 +1039,34 @@ function localRuntimeModelConfig(
     if (!namespace || !resourceUserId || !/^\d+$/.test(resourceUserId)) {
       throw new Error('Cloud model identity is incomplete')
     }
-    if (runtime === 'claude_code') {
-      if (modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] !== 'anthropic-messages')
-        throw new Error('Claude Code requires an Anthropic Messages model')
-      return {
-        model: 'claude',
-        model_id: modelName,
-        wework_model_kind: 'cloud',
-        ANTHROPIC_AUTH_TOKEN: cloudModelGateway.apiKey,
-        ANTHROPIC_BASE_URL: cloudModelGateway.baseUrl,
-        ANTHROPIC_CUSTOM_HEADERS: [
-          `X-Wegent-Model-Type: ${modelType}`,
-          `X-Wegent-Model-Namespace: ${namespace}`,
-          `X-Wegent-Model-User-Id: ${resourceUserId}`,
-          'X-Wegent-Upstream-Header-wecode-executor: claude',
-          'X-Wegent-Upstream-Header-wecode-source: wegent-local',
-        ].join('\n'),
-      }
-    }
     const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
     const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
+    const gatewayConfig = {
+      model: 'openai',
+      model_id: modelName,
+      wework_model_kind: 'cloud',
+      api_format: RESPONSES_API_FORMAT,
+      protocol: OPENAI_RESPONSES_PROTOCOL,
+      upstream_api_format: upstreamApiFormat,
+      base_url: cloudModelGateway.baseUrl,
+      api_key: cloudModelGateway.apiKey,
+      default_headers: {
+        'X-Wegent-Model-Type': modelType,
+        'X-Wegent-Model-Namespace': namespace,
+        'X-Wegent-Model-User-Id': resourceUserId,
+        'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
+        'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
+      },
+      ...(Number.isFinite(contextWindow) && contextWindow > 0
+        ? { model_context_window: contextWindow }
+        : {}),
+      ...(Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
+        ? { max_output_tokens: maxOutputTokens }
+        : {}),
+    }
+    if (runtime === 'claude_code') return gatewayConfig
     const nativeByDefault = upstreamApiFormat === 'openai-responses'
     const codexRequestMode = modelOptions?.[CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION] ?? 'auto'
     if (
@@ -1081,32 +1087,12 @@ function localRuntimeModelConfig(
     const primaryCodexCatalogModelId =
       modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
     return {
-      model: 'openai',
-      model_id: modelName,
-      wework_model_kind: 'cloud',
+      ...gatewayConfig,
       codex_catalog_model_id: primaryCodexCatalogModelId,
-      api_format: RESPONSES_API_FORMAT,
-      upstream_api_format: upstreamApiFormat,
       codex_request_mode: codexRequestMode,
       native_tool_search: nativeToolSearch,
       native_namespace_tools: nativeNamespaceTools,
       tool_profile: 'custom',
-      protocol: OPENAI_RESPONSES_PROTOCOL,
-      base_url: cloudModelGateway.baseUrl,
-      api_key: cloudModelGateway.apiKey,
-      default_headers: {
-        'X-Wegent-Model-Type': modelType,
-        'X-Wegent-Model-Namespace': namespace,
-        'X-Wegent-Model-User-Id': resourceUserId,
-        'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
-        'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
-      },
-      ...(Number.isFinite(contextWindow) && contextWindow > 0
-        ? { model_context_window: contextWindow }
-        : {}),
-      ...(Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
-        ? { max_output_tokens: maxOutputTokens }
-        : {}),
       ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {

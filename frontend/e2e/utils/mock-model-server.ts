@@ -16,6 +16,11 @@ import * as http from 'http'
 import { handleEmbeddingRequest } from './mock-embedding'
 import { handleMineruRequest } from './mock-mineru'
 import { handleProviderMcpHttpRequest, providerMcpToolCallCount } from './mock-provider-mcp'
+import {
+  deferredToolSearchCall,
+  modelToolDefinitions,
+  modelToolMatches,
+} from './model-tool-discovery'
 
 interface CapturedRequest {
   timestamp: string
@@ -248,17 +253,8 @@ function resolveScenarioToolCalls(
 }
 
 function resolveToolName(request: ModelRequest | null, requestedName: string): string {
-  const tools = Array.isArray(request?.tools) ? request.tools : []
-  const toolNames: string[] = []
-  for (const tool of tools) {
-    if (!tool || typeof tool !== 'object') continue
-    const candidate = tool as { function?: { name?: string }; name?: string }
-    const name = candidate.function?.name || candidate.name
-    if (name) toolNames.push(name)
-  }
   return (
-    toolNames.find(name => name === requestedName) ??
-    toolNames.find(name => name.endsWith(requestedName)) ??
+    modelToolDefinitions(request).find(tool => modelToolMatches(tool, requestedName))?.name ??
     requestedName
   )
 }
@@ -267,28 +263,23 @@ function resolveResponsesTool(
   request: ModelRequest | null,
   requestedName: string
 ): { name: string; namespace?: string } {
-  const tools = Array.isArray(request?.tools) ? request.tools : []
-  const candidates = tools.flatMap(tool => {
-    if (!tool || typeof tool !== 'object') return []
-    const candidate = tool as {
-      function?: { name?: string }
-      name?: string
-      namespace?: string
-      tools?: Array<{ function?: { name?: string }; name?: string }>
-    }
-    const nestedTools = Array.isArray(candidate.tools)
-      ? candidate.tools.flatMap(nestedTool => {
-          const name = nestedTool.function?.name || nestedTool.name
-          return name && candidate.name ? [{ name, namespace: candidate.name }] : []
-        })
-      : []
-    const name = candidate.function?.name || (nestedTools.length === 0 ? candidate.name : undefined)
-    return name ? [{ name, namespace: candidate.namespace }, ...nestedTools] : nestedTools
-  })
-  return (
-    candidates.find(tool => tool.name === requestedName) ??
-    candidates.find(tool => tool.name.endsWith(requestedName)) ?? { name: requestedName }
+  const candidates = modelToolDefinitions(request)
+  return candidates.find(tool => modelToolMatches(tool, requestedName)) ?? { name: requestedName }
+}
+
+function nextScenarioStep(
+  scenario: ToolScenario | undefined,
+  request: ModelRequest | null
+): ToolScenarioStep | undefined {
+  const step = scenario?.steps[scenario.nextStep]
+  if (!scenario || !step) return undefined
+  const discovery = deferredToolSearchCall(
+    request,
+    step.toolCalls?.map(call => call.toolName) ?? []
   )
+  if (discovery) return { toolCalls: [discovery] }
+  scenario.nextStep += 1
+  return step
 }
 
 function extractContextToken(text: string): string | null {
@@ -976,9 +967,8 @@ const server = http.createServer((req, res) => {
         toolScenario.capturedRequests.push(parsedBody)
         toolScenario.capturedHeaders.push({ ...req.headers })
       }
-      const scenarioStep = toolScenario?.steps[toolScenario.nextStep]
+      const scenarioStep = nextScenarioStep(toolScenario, parsedBody)
       if (toolScenario && scenarioStep) {
-        toolScenario.nextStep += 1
         if (scenarioStep.toolCalls?.length) {
           writeResponsesToolCalls(
             res,
@@ -1008,9 +998,8 @@ const server = http.createServer((req, res) => {
         toolScenario.capturedRequests.push(parsedBody)
         toolScenario.capturedHeaders.push({ ...req.headers })
       }
-      const scenarioStep = toolScenario?.steps[toolScenario.nextStep]
+      const scenarioStep = nextScenarioStep(toolScenario, parsedBody)
       if (toolScenario && scenarioStep) {
-        toolScenario.nextStep += 1
         if (scenarioStep.toolCalls?.length) {
           if (parsedBody?.stream === true) {
             writeStreamingToolCalls(
@@ -1089,9 +1078,8 @@ const server = http.createServer((req, res) => {
         toolScenario.capturedRequests.push(parsedBody)
         toolScenario.capturedHeaders.push({ ...req.headers })
       }
-      const scenarioStep = toolScenario?.steps[toolScenario.nextStep]
+      const scenarioStep = nextScenarioStep(toolScenario, parsedBody)
       if (toolScenario && scenarioStep) {
-        toolScenario.nextStep += 1
         if (scenarioStep.toolCalls?.length) {
           const model = parsedBody?.model || 'mock-claude'
           if (parsedBody?.stream === true) {

@@ -131,6 +131,31 @@ impl RuntimeWorkRpcHandler {
             "error": error,
             "data": models.clone(),
         })];
+        log_executor_event(
+            "runtime model default resolved",
+            &[
+                ("query_id", query_id),
+                ("provider_id", provider.id.clone()),
+                (
+                    "configured_model",
+                    config
+                        .pointer("/config/model")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                ),
+                (
+                    "default_model",
+                    models
+                        .iter()
+                        .find(|model| model.get("isDefault").and_then(Value::as_bool) == Some(true))
+                        .and_then(|model| model.get("model").or_else(|| model.get("id")))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                ),
+            ],
+        );
         Ok(json!({
             "data": models,
             "providers": provider_results,

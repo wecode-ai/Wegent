@@ -38,6 +38,7 @@ describe("createSharedWorkspaceHttpApi", () => {
         {
           id: 42,
           device_id: "runner-42",
+          app_device_id: "desktop-installation-42",
           name: "Runner",
           device_type: "remote",
           status: "busy",
@@ -57,6 +58,7 @@ describe("createSharedWorkspaceHttpApi", () => {
         id: "42",
         device_id: 42,
         device_key: "runner-42",
+        app_device_id: "desktop-installation-42",
         kind: "cloud_host",
         status: "online",
       },
