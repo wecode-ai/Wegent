@@ -301,6 +301,40 @@ describe('localExecutor', () => {
     })
   })
 
+  test('a pending startup cannot restore identity revoked by a protocol error', async () => {
+    let finish!: (value: { ready: boolean }) => void
+    const pending = new Promise<{ ready: boolean }>(resolve => {
+      finish = resolve
+    })
+    const original = requestDshExecutorMock.getMockImplementation()!
+    requestDshExecutorMock.mockImplementation((method, params) =>
+      method === 'runtime.codex.ensure_started' ? pending : original(method, params)
+    )
+    const pendingStartup = ensureLocalExecutorStarted()
+    await vi.waitFor(() =>
+      expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.codex.ensure_started')
+    )
+    requestDshExecutorMock.mockRejectedValueOnce(
+      new DshExecutorTransportError('protocol_mismatch', 'Invalid Runtime identity')
+    )
+    await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow(
+      'Invalid Runtime identity'
+    )
+    expect(getKnownLocalExecutorDeviceId()).toBeNull()
+
+    const rejectedStartup = expect(pendingStartup).rejects.toMatchObject({
+      code: 'protocol_mismatch',
+    })
+    finish({ ready: true })
+    await rejectedStartup
+    expect(getKnownLocalExecutorDeviceId()).toBeNull()
+    mockStartup()
+    await expect(ensureLocalExecutorStarted()).resolves.toMatchObject({
+      running: true,
+      runtimeInstanceId: 'electron-runtime',
+    })
+  })
+
   test('synchronizes declared bundled plugins even when already configured', async () => {
     await ensureBundledPluginInstalled('smart-app-builder')
     expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.codex.plugin.sync_bundled', {
