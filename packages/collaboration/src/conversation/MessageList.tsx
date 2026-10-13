@@ -56,6 +56,7 @@ export interface MessageListProps {
     part: { file: string; mode?: 'wide'; title?: string },
     message: WorkbenchMessage
   ) => ReactNode
+  onContentReady?: () => void
   messages: WorkbenchMessage[]
   turns?: RuntimeConversationTurn[]
   scrollElementRef?: RefObject<HTMLDivElement | null>
@@ -140,6 +141,7 @@ export const MessageList = memo(function MessageList({
   onVirtualMeasurement,
   renderVisualization,
   messages,
+  onContentReady,
   turns = [],
   scrollElementRef,
   initialDistanceFromBottomPx = 0,
@@ -303,6 +305,11 @@ export const MessageList = memo(function MessageList({
   })
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
   const virtualRows = messageVirtualizer.getVirtualItems()
+  const contentCommitted =
+    visibleMessages.length === 0 || !virtualMessages || virtualRows.length > 0
+  useEffect(() => {
+    if (contentCommitted) onContentReady?.()
+  }, [contentCommitted, onContentReady])
   const markdownLayoutHandlerRef = useRef<(element: HTMLElement) => void>(() => {})
   const pendingMarkdownLayoutsRef = useRef(new Set<HTMLElement>())
   const markdownWindowingState = useMemo(

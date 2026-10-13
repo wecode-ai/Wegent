@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { act, fireEvent, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { MessageList } from './MessageList'
@@ -31,7 +32,7 @@ test.each([
   { scrollOrigin: 'bottom' as const, initialDistance: 180 },
 ])(
   'expands downward from $scrollOrigin origin, $initialDistance px above bottom',
-  ({ scrollOrigin, initialDistance }) => {
+  async ({ scrollOrigin, initialDistance }) => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -43,7 +44,7 @@ test.each([
         disconnect() {}
       }
     )
-    render(
+    await renderLazy(
       <ScrollableMessageArea
         conversationKey={`expansion-${scrollOrigin}-${initialDistance}`}
         scrollOrigin={scrollOrigin}
@@ -88,10 +89,10 @@ test.each([
   }
 )
 
-test('uses the latest toggle callback when messages stay unchanged', () => {
+test('uses the latest toggle callback when messages stay unchanged', async () => {
   const previousCallback = vi.fn()
   const nextCallback = vi.fn()
-  const { rerender } = render(
+  const { rerender } = await renderLazy(
     <MessageList messages={messages} onBeforeUserMessageToggle={previousCallback} />
   )
   rerender(<MessageList messages={messages} onBeforeUserMessageToggle={nextCallback} />)

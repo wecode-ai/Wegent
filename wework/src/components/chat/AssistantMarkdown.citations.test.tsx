@@ -1,9 +1,10 @@
-import { render, screen } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { screen } from '@testing-library/react'
 import { expect, test } from 'vitest'
 import { AssistantMarkdown } from './AssistantMarkdown'
 
-test('removes unsupported content-reference citations from assistant Markdown', () => {
-  render(
+test('removes unsupported content-reference citations from assistant Markdown', async () => {
+  await renderLazy(
     <AssistantMarkdown
       content={'First source. \uE200cite\uE202turn0search2\uE202turn0search8\uE201 Next sentence.'}
     />
@@ -14,8 +15,10 @@ test('removes unsupported content-reference citations from assistant Markdown', 
   expect(document.body).not.toHaveTextContent('\uE200cite')
 })
 
-test('hides an unfinished citation marker while assistant Markdown is streaming', () => {
-  render(<AssistantMarkdown content={'Visible answer. \uE200cite\uE202turn0search2'} isStreaming />)
+test('hides an unfinished citation marker while assistant Markdown is streaming', async () => {
+  await renderLazy(
+    <AssistantMarkdown content={'Visible answer. \uE200cite\uE202turn0search2'} isStreaming />
+  )
 
   expect(screen.getByText('Visible answer.')).toBeInTheDocument()
   expect(document.body).not.toHaveTextContent('turn0search2')

@@ -120,7 +120,7 @@ Core profiles no longer create a redundant `web` link to packaged App assets. St
 
 Runner selectors and local APIs import pure routing functions through the collaboration package's `agent-form/runnerRouting` entry. Environment and model selection retain their existing behavior while the initial page avoids statically loading the project platform and Issue editor through the package barrel. Startup readiness still waits for the actual page, modules, and data.
 
-Shared scrolling types reference `MessageListProps` through a full `import type`, so feedback diagnostics load only the code needed for scroll geometry. Actual conversation modules still load the Markdown parser, preserving message-rendering conditions and startup readiness. Bundle partitioning changes require independent verification with real startup measurements.
+Shared scrolling types reference `MessageListProps` through a full `import type`, so feedback diagnostics load only the code needed for scroll geometry.
 
 Candidate schemas for overridden Executor paths use one binary-content hash per check. A match uses the supplied proof; a mismatch queries the actual binary schema. Cached or explicitly required proofs are still revalidated on every independent check, and modified binaries continue to block startup.
 
@@ -130,6 +130,6 @@ Transcript outbox tables, indexes, and existing-column migrations initialize in 
 
 Automatic Goal continuation events advance the active turn through the sole lifecycle coordinator. Late settlement of an older turn cannot end the new turn, and turn settlement cannot end an active Goal. Remote collaboration E2E explicitly selects its required remote environment through the real agent editor rather than a project pool that allows multiple devices, retaining every remote-claim assertion.
 
-The Markdown renderer loads only when content is displayed, preserving the public component and props. It adds no inner loading boundary: initially restored messages must finish rendering through the existing page boundary, and a selected task cannot report startup readiness while its transcript is loading. Empty-task startup avoids the parser; real messages, plans, and subagent conversations retain the original renderer. Smaller build dependencies do not replace strict cross-platform startup measurements.
+The Markdown renderer loads only when content is displayed, preserving the public component and props. It adds no inner loading boundary: initially restored messages must finish rendering through the existing page boundary, and a selected task cannot report startup readiness while its transcript is loading or its virtual list has not committed visible content. Bootstrap loading placeholders cannot report readiness either. Empty-task startup avoids the parser; real messages, plans, and subagent conversations retain the original renderer. Smaller build dependencies do not replace strict cross-platform startup measurements.
 
 Terminal plugin route registration and its empty session manager do not load the native `node-pty` module. Starting a terminal loads the same dependency through the standard Node loader, retaining synchronous spawn, existing error responses, and paired-resource requirements. Real Node and Electron verification must create, exchange data with, and close a PTY.

@@ -9,6 +9,7 @@ interface CentralHarnessTerminalProps {
   active: boolean
   showHeader?: boolean
   onClose?: () => void
+  onContentReady?: () => void
   onExit: () => void
 }
 
@@ -20,6 +21,7 @@ export function CentralHarnessTerminal({
   showHeader = true,
   onClose,
   onExit,
+  onContentReady,
 }: CentralHarnessTerminalProps) {
   const { t } = useTranslation('common')
 
@@ -54,6 +56,7 @@ export function CentralHarnessTerminal({
           cwd={cwd}
           title={title}
           onExit={onExit}
+          onContentReady={onContentReady}
           testIdsEnabled
         />
       </div>

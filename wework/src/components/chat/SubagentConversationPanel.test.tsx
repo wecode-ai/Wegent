@@ -1,6 +1,7 @@
+import { renderLazy } from '@/test/render-lazy'
 import '@/i18n'
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import type { SubagentBlock, WorkbenchMessage } from '@/types/workbench'
 import {
@@ -45,7 +46,7 @@ describe('SubagentConversationPanel', () => {
       status: 'streaming' as const,
       createdAt: 1770000000100,
     }
-    const view = render(
+    const view = await renderLazy(
       <SubagentConversationPanel {...props} block={createSubagent({ children: [reasoning] })} />
     )
     expect(screen.getByTestId('process-thinking-block')).toHaveTextContent('Inspecting')
@@ -68,7 +69,7 @@ describe('SubagentConversationPanel', () => {
 
   test.each(['streaming', 'done'] as const)(
     'renders child reasoning and commentary around tools while %s',
-    status => {
+    async status => {
       const children: NonNullable<SubagentBlock['children']> = [
         {
           id: 'reasoning',
@@ -96,7 +97,7 @@ describe('SubagentConversationPanel', () => {
           createdAt: 1770000000300,
         },
       ]
-      render(
+      await renderLazy(
         <SubagentConversationPanel
           block={createSubagent({ status, children })}
           onBack={vi.fn()}
@@ -127,9 +128,9 @@ describe('SubagentConversationPanel', () => {
     }
   )
 
-  test('renders the ChatGPT-style subagent summary inside the environment panel', () => {
+  test('renders the ChatGPT-style subagent summary inside the environment panel', async () => {
     const onOpen = vi.fn()
-    render(
+    await renderLazy(
       <SubagentEnvironmentSummary
         blocks={[
           createSubagent(),
@@ -153,9 +154,9 @@ describe('SubagentConversationPanel', () => {
     expect(onOpen).toHaveBeenCalledTimes(1)
   })
 
-  test('lists active and completed subagents before opening a conversation', () => {
+  test('lists active and completed subagents before opening a conversation', async () => {
     const onSelect = vi.fn()
-    render(
+    await renderLazy(
       <SubagentOverviewPanel
         blocks={[
           createSubagent(),
@@ -181,8 +182,8 @@ describe('SubagentConversationPanel', () => {
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'subagent-2' }))
   })
 
-  test('lists failed subagents with completed work instead of active work', () => {
-    render(
+  test('lists failed subagents with completed work instead of active work', async () => {
+    await renderLazy(
       <SubagentOverviewPanel
         blocks={[
           createSubagent({
@@ -204,7 +205,7 @@ describe('SubagentConversationPanel', () => {
   test('renders the delegated prompt and streams child conversation updates', async () => {
     const onBack = vi.fn()
     const onOpenSubagent = vi.fn()
-    const view = render(
+    const view = await renderLazy(
       <SubagentConversationPanel
         block={createSubagent()}
         onBack={onBack}
@@ -251,9 +252,9 @@ describe('SubagentConversationPanel', () => {
     expect(onBack).toHaveBeenCalledTimes(1)
   })
 
-  test('opens a nested subagent conversation from the child thread', () => {
+  test('opens a nested subagent conversation from the child thread', async () => {
     const onOpenSubagent = vi.fn()
-    render(
+    await renderLazy(
       <SubagentConversationPanel
         block={createSubagent({
           children: [
@@ -278,7 +279,7 @@ describe('SubagentConversationPanel', () => {
     expect(onOpenSubagent).toHaveBeenCalledWith(expect.objectContaining({ id: 'nested-agent' }))
   })
 
-  test('renders persisted child-thread history after the parent task is restored', () => {
+  test('renders persisted child-thread history after the parent task is restored', async () => {
     const transcriptMessages: WorkbenchMessage[] = [
       {
         id: 'child-user',
@@ -296,7 +297,7 @@ describe('SubagentConversationPanel', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <SubagentConversationPanel
         block={createSubagent({
           agentType: undefined,
@@ -318,8 +319,8 @@ describe('SubagentConversationPanel', () => {
     expect(screen.queryByTestId('subagent-conversation-empty')).not.toBeInTheDocument()
   })
 
-  test('prefers live child output over an incomplete transcript snapshot while running', () => {
-    render(
+  test('prefers live child output over an incomplete transcript snapshot while running', async () => {
+    await renderLazy(
       <SubagentConversationPanel
         block={createSubagent({
           children: [

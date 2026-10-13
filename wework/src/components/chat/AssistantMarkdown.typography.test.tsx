@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { screen, waitFor } from '@testing-library/react'
 import { expect, test } from 'vitest'
 import { AssistantMarkdown } from './AssistantMarkdown'
 
-test('uses document typography for every Markdown heading level', () => {
-  render(
+test('uses document typography for every Markdown heading level', async () => {
+  await renderLazy(
     <AssistantMarkdown
       content={[
         '# Heading 1',
@@ -26,7 +27,7 @@ test('uses document typography for every Markdown heading level', () => {
 }, 15_000)
 
 test('shows the horizontal scrollbar for completed code blocks in document previews', async () => {
-  render(
+  await renderLazy(
     <AssistantMarkdown
       content={[
         '```sql',
@@ -47,11 +48,11 @@ test('shows the horizontal scrollbar for completed code blocks in document previ
   )
 })
 
-test('allows long Markdown links to wrap within narrow message cards', () => {
+test('allows long Markdown links to wrap within narrow message cards', async () => {
   const url =
     'http://127.0.0.1:58617/v1/codex-router/task-3fd8b50e7d269add73aff1114746a4a9fab19a10b9b97e19/result'
 
-  render(<AssistantMarkdown content={`[${url}](${url})`} />)
+  await renderLazy(<AssistantMarkdown content={`[${url}](${url})`} />)
 
   expect(screen.getByTestId('assistant-markdown-link')).toHaveClass('min-w-0', 'max-w-full')
   expect(screen.getByTestId('assistant-markdown-link-label')).toHaveClass(

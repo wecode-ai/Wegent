@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { copyTextToClipboard } from '@/lib/clipboard'
@@ -16,7 +17,7 @@ const table = '| 角色 | 知识库 |\n| --- | --- |\n| **使用者** | `read` �
 
 test('copies only the selected table, including formatted cells and empty cells', async () => {
   const secondTable = table.replace('使用者', '管理员')
-  render(<AssistantMarkdown content={`前文\n\n${table}\n\n后文\n\n${secondTable}`} />)
+  await renderLazy(<AssistantMarkdown content={`前文\n\n${table}\n\n后文\n\n${secondTable}`} />)
 
   const tables = screen.getAllByTestId('markdown-table')
   fireEvent.click(within(tables[1]).getByRole('button', { name: 'table.copy' }))
@@ -38,7 +39,7 @@ test.each(['default', 'document'] as const)(
       '| [网页](https://example.com/page) | [文件](/tmp/report.md) |',
       '| ~~删除~~ | |',
     ].join('\n')
-    render(<AssistantMarkdown content={`前文\n\n${source}\n\n后文`} variant={variant} />)
+    await renderLazy(<AssistantMarkdown content={`前文\n\n${source}\n\n后文`} variant={variant} />)
 
     fireEvent.click(screen.getByTestId('markdown-table-copy-button'))
 
@@ -47,7 +48,7 @@ test.each(['default', 'document'] as const)(
 )
 
 test('copies the current table after the message changes', async () => {
-  const { rerender } = render(<AssistantMarkdown content={table} />)
+  const { rerender } = await renderLazy(<AssistantMarkdown content={table} />)
   rerender(<AssistantMarkdown content={`${table}\n| 新角色 | 新权限 |`} />)
 
   fireEvent.click(screen.getByTestId('markdown-table-copy-button'))
@@ -59,7 +60,7 @@ test('copies the current table after the message changes', async () => {
 
 test('shows a clipboard failure and allows retry', async () => {
   vi.mocked(copyTextToClipboard).mockRejectedValueOnce(new Error('Clipboard unavailable'))
-  render(<AssistantMarkdown content={table} />)
+  await renderLazy(<AssistantMarkdown content={table} />)
 
   fireEvent.click(screen.getByTestId('markdown-table-copy-button'))
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('table.failed'))
@@ -71,7 +72,7 @@ test('shows a clipboard failure and allows retry', async () => {
 
 test('expands the selected table with formatting and restores keyboard focus on Escape', async () => {
   const user = userEvent.setup()
-  render(
+  await renderLazy(
     <AssistantMarkdown
       content={`${table}\n\n| Other | Table |\n| --- | --- |\n| Different | Content |`}
     />
@@ -99,7 +100,7 @@ test('expands the selected table with formatting and restores keyboard focus on 
 
 test('keeps the expanded table current and closes only via the close action or backdrop', async () => {
   const user = userEvent.setup()
-  const { rerender } = render(<AssistantMarkdown content={table} />)
+  const { rerender } = await renderLazy(<AssistantMarkdown content={table} />)
   await user.click(screen.getByTestId('markdown-table-expand-button'))
   rerender(<AssistantMarkdown content={`${table}\n| 新角色 | 新权限 |`} />)
   await user.click(within(screen.getByRole('dialog')).getByText('新角色'))

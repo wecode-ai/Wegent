@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { type AttachmentImageServices } from '@wegent/collaboration'
+import type { AttachmentImageServices } from '@wegent/collaboration'
 import type { Attachment } from '@/types/api'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isElectronRuntime } from '@/lib/runtime-environment'

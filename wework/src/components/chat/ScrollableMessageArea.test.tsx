@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { act, fireEvent, screen } from '@testing-library/react'
 import { createRef, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
@@ -88,7 +89,7 @@ interface AnchorHarness {
   dispose: () => void
 }
 
-function createAnchorHarness(): AnchorHarness {
+async function createAnchorHarness(): Promise<AnchorHarness> {
   const resizeCallbacks: ResizeObserverCallback[] = []
   const originalResizeObserver = globalThis.ResizeObserver
   const CLIENT_HEIGHT = 200
@@ -112,7 +113,7 @@ function createAnchorHarness(): AnchorHarness {
   )
 
   const externalScrollRef = createRef<HTMLDivElement>()
-  render(
+  await renderLazy(
     <div ref={externalScrollRef}>
       <ScrollableMessageArea
         conversationKey="anchor-harness"
@@ -292,24 +293,24 @@ describe('ScrollableMessageArea', () => {
     vi.useRealTimers()
   })
 
-  test('renders a centered empty state when the conversation has no messages', () => {
-    render(<ScrollableMessageArea messages={[]} />)
+  test('renders a centered empty state when the conversation has no messages', async () => {
+    await renderLazy(<ScrollableMessageArea messages={[]} />)
 
     const emptyState = screen.getByTestId('chat-empty-state')
     expect(emptyState).toHaveClass('min-h-full', 'items-center', 'justify-center')
     expect(emptyState).toHaveTextContent('开始新的对话')
   })
 
-  test('renders a loading state instead of the new conversation empty state', () => {
-    render(<ScrollableMessageArea messages={[]} loading />)
+  test('renders a loading state instead of the new conversation empty state', async () => {
+    await renderLazy(<ScrollableMessageArea messages={[]} loading />)
 
     expect(screen.getByTestId('chat-loading-state')).toHaveTextContent('正在加载会话')
     expect(screen.queryByTestId('chat-empty-state')).not.toBeInTheDocument()
   })
 
-  test('shows history failure and retries instead of displaying a new conversation', () => {
+  test('shows history failure and retries instead of displaying a new conversation', async () => {
     const retry = vi.fn()
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         messages={[]}
         transcriptError="Transfer interrupted"
@@ -326,8 +327,8 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('chat-loading-state')).toBeInTheDocument()
   })
 
-  test('top-aligns short conversations below the workspace header', () => {
-    render(
+  test('top-aligns short conversations below the workspace header', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -351,8 +352,8 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('chat-message-scroll-area-content')).not.toHaveClass('justify-end')
   })
 
-  test('uses scroll position zero as the bottom for an internal bottom-origin preview', () => {
-    render(
+  test('uses scroll position zero as the bottom for an internal bottom-origin preview', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         scrollOrigin="bottom"
         messages={[
@@ -373,7 +374,7 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTop).toBeCloseTo(0)
   })
 
-  test('updates the message list layout when only the layout class changes', () => {
+  test('updates the message list layout when only the layout class changes', async () => {
     const messages = [
       {
         id: '1',
@@ -383,7 +384,7 @@ describe('ScrollableMessageArea', () => {
         createdAt: '2026-05-29T00:00:00.000Z',
       },
     ]
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea messages={messages} messageListClassName="layout-width-a" />
     )
 
@@ -395,8 +396,8 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('message-assistant').parentElement).not.toHaveClass('layout-width-a')
   })
 
-  test('renders an optional sticky footer inside the scroll flow', () => {
-    render(
+  test('renders an optional sticky footer inside the scroll flow', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -423,8 +424,8 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.lastElementChild).toBe(footer)
   })
 
-  test('renders an optional content footer directly after the message list', () => {
-    render(
+  test('renders an optional content footer directly after the message list', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -450,8 +451,8 @@ describe('ScrollableMessageArea', () => {
     expect(messageList?.nextElementSibling).toBe(footer)
   })
 
-  test('keeps older transcript loading controls at the top of the message flow', () => {
-    render(
+  test('keeps older transcript loading controls at the top of the message flow', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         hasMoreBefore
         messages={[
@@ -470,7 +471,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeInTheDocument()
   })
 
-  test('preserves distance from the bottom when older transcript messages are prepended', () => {
+  test('preserves distance from the bottom when older transcript messages are prepended', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -492,7 +493,7 @@ describe('ScrollableMessageArea', () => {
         createdAt: '2026-08-10T00:00:01.000Z',
       },
     ]
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         conversationKey="paginated-scroll"
         hasMoreBefore
@@ -549,7 +550,7 @@ describe('ScrollableMessageArea', () => {
   })
 
   test('shows a scroll-to-bottom button when messages overflow above the bottom', async () => {
-    render(
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -597,7 +598,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps following the bottom after the scroll button is clicked during layout growth', () => {
+  test('keeps following the bottom after the scroll button is clicked during layout growth', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
 
     class ResizeObserverMock {
@@ -611,7 +612,7 @@ describe('ScrollableMessageArea', () => {
 
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
-    render(
+    await renderLazy(
       <ScrollableMessageArea
         conversationKey="scroll-button-layout-growth"
         messages={[
@@ -667,7 +668,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
   })
 
-  test('does not auto-scroll from content resize while auto-scroll is suspended', () => {
+  test('does not auto-scroll from content resize while auto-scroll is suspended', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
 
@@ -683,7 +684,7 @@ describe('ScrollableMessageArea', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
     try {
-      render(
+      await renderLazy(
         <ScrollableMessageArea
           autoScrollSuspended
           messages={[
@@ -728,8 +729,8 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps the text in place when the whole list reflows around it', () => {
-    const harness = createAnchorHarness()
+  test('keeps the text in place when the whole list reflows around it', async () => {
+    const harness = await createAnchorHarness()
     try {
       const { model } = harness
       const anchorBefore = model.anchorTopPx()
@@ -747,8 +748,8 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps the reader own scrolling when a row above the viewport re-measures', () => {
-    const harness = createAnchorHarness()
+  test('keeps the reader own scrolling when a row above the viewport re-measures', async () => {
+    const harness = await createAnchorHarness()
     try {
       const { model } = harness
       const anchorBefore = model.anchorTopPx()
@@ -765,8 +766,8 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('does not let a re-measured row above the viewport drag the reader towards the bottom', () => {
-    const harness = createAnchorHarness()
+  test('does not let a re-measured row above the viewport drag the reader towards the bottom', async () => {
+    const harness = await createAnchorHarness()
     try {
       const { scroller, model } = harness
       const anchorBefore = model.anchorTopPx()
@@ -785,8 +786,8 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps consecutive wheel steps stable through alternating row measurements', () => {
-    const harness = createAnchorHarness()
+  test('keeps consecutive wheel steps stable through alternating row measurements', async () => {
+    const harness = await createAnchorHarness()
     try {
       const { model } = harness
       const anchorBefore = model.anchorTopPx()
@@ -814,8 +815,8 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps the text in place when the scroller box is re-laid out and the content grows with it', () => {
-    const harness = createAnchorHarness()
+  test('keeps the text in place when the scroller box is re-laid out and the content grows with it', async () => {
+    const harness = await createAnchorHarness()
     try {
       const { model } = harness
       const anchorBefore = model.anchorTopPx()
@@ -833,8 +834,8 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('preserves a wheel step before a row remeasurement notification arrives', () => {
-    const harness = createAnchorHarness()
+  test('preserves a wheel step before a row remeasurement notification arrives', async () => {
+    const harness = await createAnchorHarness()
     try {
       const { model } = harness
       const anchorBefore = model.anchorTopPx()
@@ -852,8 +853,8 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('does not take a re-layout as the reader own position when a click lands first', () => {
-    const harness = createAnchorHarness()
+  test('does not take a re-layout as the reader own position when a click lands first', async () => {
+    const harness = await createAnchorHarness()
     try {
       const { scroller, model } = harness
       const anchorBefore = model.anchorTopPx()
@@ -873,8 +874,8 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps the reader own scrolling while the streaming response below it grows', () => {
-    const harness = createAnchorHarness()
+  test('keeps the reader own scrolling while the streaming response below it grows', async () => {
+    const harness = await createAnchorHarness()
     try {
       const { model } = harness
       const anchorBefore = model.anchorTopPx()
@@ -892,8 +893,8 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps the text in place while the streaming response below it grows', () => {
-    const harness = createAnchorHarness()
+  test('keeps the text in place while the streaming response below it grows', async () => {
+    const harness = await createAnchorHarness()
     try {
       const { scroller, model } = harness
       const anchorBefore = model.anchorTopPx()
@@ -921,8 +922,8 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('does not guess a correction when the sampled text is no longer on screen', () => {
-    const harness = createAnchorHarness()
+  test('does not guess a correction when the sampled text is no longer on screen', async () => {
+    const harness = await createAnchorHarness()
     try {
       const { scroller, anchor, model } = harness
       const scrollBefore = scroller.scrollTop
@@ -942,7 +943,7 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps the reader own scrolling when a width reflow re-lays out a top-origin list', () => {
+  test('keeps the reader own scrolling when a width reflow re-lays out a top-origin list', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
 
@@ -958,7 +959,7 @@ describe('ScrollableMessageArea', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
     try {
-      render(
+      await renderLazy(
         <ScrollableMessageArea
           conversationKey="top-origin-width-reflow"
           messages={[
@@ -1028,7 +1029,7 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps the first visible text line fixed when width changes reflow a paragraph', () => {
+  test('keeps the first visible text line fixed when width changes reflow a paragraph', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
     const originalCaretRangeDescriptor = Object.getOwnPropertyDescriptor(
@@ -1052,7 +1053,7 @@ describe('ScrollableMessageArea', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
     try {
-      render(
+      await renderLazy(
         <ScrollableMessageArea
           conversationKey="line-width-reflow"
           messages={[
@@ -1143,7 +1144,7 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('tracks scrolling from the external desktop scroll container', () => {
+  test('tracks scrolling from the external desktop scroll container', async () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const messages = [
       {
@@ -1154,7 +1155,7 @@ describe('ScrollableMessageArea', () => {
         createdAt: '2026-05-29T00:00:00.000Z',
       },
     ]
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <div ref={externalScrollRef}>
         <ScrollableMessageArea
           conversationKey="external-scroll-a"
@@ -1206,9 +1207,9 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('saves the bottom target instead of a smooth-scroll intermediate position', () => {
+  test('saves the bottom target instead of a smooth-scroll intermediate position', async () => {
     const externalScrollRef = createRef<HTMLDivElement>()
-    render(
+    await renderLazy(
       <div ref={externalScrollRef}>
         <ScrollableMessageArea
           conversationKey="external-smooth-bottom"
@@ -1257,7 +1258,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps following the external scroller when a virtualized response grows after render', () => {
+  test('keeps following the external scroller when a virtualized response grows after render', async () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const completedMessage = {
       id: 'completed-message',
@@ -1266,7 +1267,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <div ref={externalScrollRef}>
         <ScrollableMessageArea
           conversationKey="external-growing-stream"
@@ -1325,7 +1326,7 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTop).toBe(-0)
   })
 
-  test('stops external bottom following when the scroll position leaves the bottom', () => {
+  test('stops external bottom following when the scroll position leaves the bottom', async () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const streamingMessage = {
       id: 'external-streaming-message',
@@ -1334,7 +1335,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <div ref={externalScrollRef}>
         <ScrollableMessageArea
           conversationKey="external-stream-a"
@@ -1391,8 +1392,8 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('renders a compact left-side navigation for previous user messages', () => {
-    render(
+  test('renders a compact left-side navigation for previous user messages', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -1522,7 +1523,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.queryByText(/Referenced answer that must stay hidden/)).not.toBeInTheDocument()
   })
 
-  test('renders message navigation in an overlay outside the external scroller', () => {
+  test('renders message navigation in an overlay outside the external scroller', async () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const portalTarget = document.createElement('div')
     portalTarget.dataset.testid = 'external-navigation-overlay'
@@ -1536,7 +1537,7 @@ describe('ScrollableMessageArea', () => {
       runtimeMessageIndex: index,
     }))
 
-    render(
+    await renderLazy(
       <div ref={externalScrollRef}>
         <ScrollableMessageArea
           messages={messages}
@@ -1583,7 +1584,7 @@ describe('ScrollableMessageArea', () => {
     portalTarget.remove()
   })
 
-  test('keeps message navigation available while a cached external scroller is hidden', () => {
+  test('keeps message navigation available while a cached external scroller is hidden', async () => {
     const resizeObservers: Array<{
       callback: ResizeObserverCallback
       targets: Set<Element>
@@ -1608,7 +1609,7 @@ describe('ScrollableMessageArea', () => {
 
     try {
       const externalScrollRef = createRef<HTMLDivElement>()
-      render(
+      await renderLazy(
         <div ref={externalScrollRef}>
           <ScrollableMessageArea
             externalScrollRef={externalScrollRef}
@@ -1650,7 +1651,7 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('coalesces continuous virtualizer measurements without starving navigation', () => {
+  test('coalesces continuous virtualizer measurements without starving navigation', async () => {
     const resizeObservers: Array<{ callback: ResizeObserverCallback }> = []
     const originalResizeObserver = globalThis.ResizeObserver
     class ResizeObserverMock {
@@ -1665,7 +1666,7 @@ describe('ScrollableMessageArea', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
     try {
-      render(
+      await renderLazy(
         <ScrollableMessageArea
           messages={[
             {
@@ -1705,7 +1706,7 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('updates message navigation when the runtime appends to the same messages array', () => {
+  test('updates message navigation when the runtime appends to the same messages array', async () => {
     const messages = [
       {
         id: 'mutable-user-1',
@@ -1722,7 +1723,7 @@ describe('ScrollableMessageArea', () => {
         createdAt: '2026-05-29T00:00:01.000Z',
       },
     ]
-    const { rerender } = render(<ScrollableMessageArea messages={messages} />)
+    const { rerender } = await renderLazy(<ScrollableMessageArea messages={messages} />)
     flushScheduledTimers()
     expect(screen.queryByTestId('message-turn-navigation-marker')).not.toBeInTheDocument()
 
@@ -1739,7 +1740,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
-  test('does not reschedule marker calculation for unchanged turns', () => {
+  test('does not reschedule marker calculation for unchanged turns', async () => {
     const messages = [
       {
         id: 'stable-user-1',
@@ -1764,7 +1765,7 @@ describe('ScrollableMessageArea', () => {
       },
     ]
     const querySelectorAllSpy = vi.spyOn(HTMLElement.prototype, 'querySelectorAll')
-    const { rerender } = render(<ScrollableMessageArea messages={messages} />)
+    const { rerender } = await renderLazy(<ScrollableMessageArea messages={messages} />)
     flushScheduledTimers()
     querySelectorAllSpy.mockClear()
 
@@ -1779,8 +1780,8 @@ describe('ScrollableMessageArea', () => {
     querySelectorAllSpy.mockRestore()
   })
 
-  test('uses newer transcript turns while runtime navigation metadata is catching up', () => {
-    render(
+  test('uses newer transcript turns while runtime navigation metadata is catching up', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -1826,7 +1827,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
-  test('aligns the active navigation marker in the task-switch commit', () => {
+  test('aligns the active navigation marker in the task-switch commit', async () => {
     function NavigationFrame({ prefix }: { prefix: string }) {
       const scrollRef = useRef<HTMLDivElement>(null)
       const contentRef = useRef<HTMLDivElement>(null)
@@ -1890,7 +1891,7 @@ describe('ScrollableMessageArea', () => {
       )
     }
 
-    const view = render(<NavigationFrame prefix="first-task" />)
+    const view = await renderLazy(<NavigationFrame prefix="first-task" />)
     let markers = screen.getAllByTestId('message-turn-navigation-marker')
     expect(markers[0]).toHaveAttribute('data-active', 'false')
     expect(markers[1]).toHaveAttribute('data-active', 'true')
@@ -1903,8 +1904,8 @@ describe('ScrollableMessageArea', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  test('deduplicates retry navigation entries that point to the same user message', () => {
-    render(
+  test('deduplicates retry navigation entries that point to the same user message', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -1960,8 +1961,8 @@ describe('ScrollableMessageArea', () => {
     expect(visiblePreviews[0]).toHaveTextContent('继续')
   })
 
-  test('keeps message navigation available while its portal target is unavailable', () => {
-    render(
+  test('keeps message navigation available while its portal target is unavailable', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -1996,13 +1997,13 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('message-turn-navigation')).toBeInTheDocument()
   })
 
-  test('forces a loaded virtualized navigation target to mount before scrolling', () => {
+  test('forces a loaded virtualized navigation target to mount before scrolling', async () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
     const onLoadTurnNavigationItem = vi.fn()
     const onNavigationScrollTargetChange = vi.fn()
 
-    render(
+    await renderLazy(
       <>
         <div ref={scrollRef}>
           <div ref={contentRef} />
@@ -2068,7 +2069,7 @@ describe('ScrollableMessageArea', () => {
     expect(onLoadTurnNavigationItem).not.toHaveBeenCalled()
   })
 
-  test('merges newly loaded user turns into stale runtime navigation metadata', () => {
+  test('merges newly loaded user turns into stale runtime navigation metadata', async () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
     const messages = [
@@ -2090,7 +2091,7 @@ describe('ScrollableMessageArea', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <div ref={scrollRef}>
         <div ref={contentRef}>
           {messages.map(message => (
@@ -2135,7 +2136,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
-  test('keeps message navigation marker spacing fixed when the rail overflows', () => {
+  test('keeps message navigation marker spacing fixed when the rail overflows', async () => {
     const userMessages = Array.from({ length: 12 }, (_, index) => ({
       id: `overflow-user-${index + 1}`,
       role: 'user' as const,
@@ -2144,7 +2145,7 @@ describe('ScrollableMessageArea', () => {
       createdAt: `2026-05-29T00:00:${String(index).padStart(2, '0')}.000Z`,
     }))
 
-    render(<ScrollableMessageArea messages={userMessages} />)
+    await renderLazy(<ScrollableMessageArea messages={userMessages} />)
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
     Object.defineProperty(scroller, 'clientHeight', {
@@ -2191,7 +2192,7 @@ describe('ScrollableMessageArea', () => {
     expect(Number.parseFloat(markerRows[0].style.height)).toBeCloseTo(10.222)
   })
 
-  test('calculates turn navigation anchors with a single message-anchor query', () => {
+  test('calculates turn navigation anchors with a single message-anchor query', async () => {
     const messages = Array.from({ length: 12 }).flatMap((_, index) => [
       {
         id: `bulk-user-${index}`,
@@ -2210,7 +2211,7 @@ describe('ScrollableMessageArea', () => {
     ])
     const querySelectorAllSpy = vi.spyOn(HTMLElement.prototype, 'querySelectorAll')
 
-    render(<ScrollableMessageArea messages={messages} />)
+    await renderLazy(<ScrollableMessageArea messages={messages} />)
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
     Object.defineProperty(scroller, 'clientHeight', {
@@ -2244,8 +2245,8 @@ describe('ScrollableMessageArea', () => {
     querySelectorAllSpy.mockRestore()
   })
 
-  test('renders turn navigation before virtualized row styles settle', () => {
-    render(
+  test('renders turn navigation before virtualized row styles settle', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -2287,7 +2288,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
-  test('activates a turn from mounted assistant rows when user rows are virtualized', () => {
+  test('activates a turn from mounted assistant rows when user rows are virtualized', async () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
     const messages = [
@@ -2343,7 +2344,7 @@ describe('ScrollableMessageArea', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <div ref={scrollRef}>
         <div ref={contentRef}>
           <div data-message-id="virtual-active-assistant-1">First response</div>
@@ -2411,7 +2412,7 @@ describe('ScrollableMessageArea', () => {
     expect(markers[1]).toHaveAttribute('data-active', 'true')
   })
 
-  test('keeps the active turn stable until streaming layout measurements catch up', () => {
+  test('keeps the active turn stable until streaming layout measurements catch up', async () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
     const messages = [
@@ -2445,7 +2446,7 @@ describe('ScrollableMessageArea', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <div ref={scrollRef}>
         <div ref={contentRef}>
           {messages.map(message => (
@@ -2488,11 +2489,11 @@ describe('ScrollableMessageArea', () => {
     expect(markers[1]).toHaveAttribute('data-active', 'true')
   })
 
-  test('activates a turn from a page-leading assistant', () => {
+  test('activates a turn from a page-leading assistant', async () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
 
-    render(
+    await renderLazy(
       <div ref={scrollRef}>
         <div ref={contentRef}>
           <div data-message-id="boundary-assistant">Boundary response</div>
@@ -2573,8 +2574,8 @@ describe('ScrollableMessageArea', () => {
     expect(markers[2]).toHaveAttribute('data-active', 'false')
   })
 
-  test('activates every user message visible in the viewport', () => {
-    render(
+  test('activates every user message visible in the viewport', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -2633,7 +2634,7 @@ describe('ScrollableMessageArea', () => {
     expect(markers[2]).toHaveAttribute('data-active', 'false')
   })
 
-  test('tracks the active turn when the loaded page contains only its assistant response', () => {
+  test('tracks the active turn when the loaded page contains only its assistant response', async () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
     const messages = projectRuntimeConversationTurns([
@@ -2652,7 +2653,7 @@ describe('ScrollableMessageArea', () => {
       },
     ])
 
-    render(
+    await renderLazy(
       <div ref={scrollRef}>
         <div ref={contentRef}>
           <div data-message-id={messages[0].id}>Only the response is loaded on this page</div>
@@ -2709,8 +2710,8 @@ describe('ScrollableMessageArea', () => {
     expect(markers[2]).toHaveAttribute('data-active', 'false')
   })
 
-  test('clicks a message navigation marker to jump to that user message', () => {
-    render(
+  test('clicks a message navigation marker to jump to that user message', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -2788,9 +2789,9 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTop).toBe(624)
   })
 
-  test('falls back to message indexes when navigation turn ids are unavailable locally', () => {
+  test('falls back to message indexes when navigation turn ids are unavailable locally', async () => {
     const onLoadTurnNavigationItem = vi.fn()
-    render(
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -2860,7 +2861,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps turn navigation in control while a clicked target settles', () => {
+  test('keeps turn navigation in control while a clicked target settles', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
 
@@ -2897,7 +2898,9 @@ describe('ScrollableMessageArea', () => {
         createdAt: '2026-05-29T00:00:02.000Z',
       },
     ]
-    render(<ScrollableMessageArea conversationKey="navigation-settle" messages={messages} />)
+    await renderLazy(
+      <ScrollableMessageArea conversationKey="navigation-settle" messages={messages} />
+    )
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
     const content = screen.getByTestId('chat-message-scroll-area-content')
@@ -2938,7 +2941,7 @@ describe('ScrollableMessageArea', () => {
     vi.stubGlobal('ResizeObserver', originalResizeObserver)
   })
 
-  test('does not save stale turn navigation into a newly opened conversation', () => {
+  test('does not save stale turn navigation into a newly opened conversation', async () => {
     const messagesA = [
       {
         id: 'stale-navigation-user-1',
@@ -2975,7 +2978,7 @@ describe('ScrollableMessageArea', () => {
       distanceFromBottomPx: 420,
       pinnedToBottom: false,
     })
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="stale-navigation-a" messages={messagesA} />
     )
 
@@ -3048,7 +3051,7 @@ describe('ScrollableMessageArea', () => {
         responsePreview: '',
       },
     ]
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         messages={[latestMessage]}
         turnNavigation={turnNavigation}
@@ -3125,7 +3128,7 @@ describe('ScrollableMessageArea', () => {
         })
     )
 
-    render(
+    await renderLazy(
       <ScrollableMessageArea
         conversationKey="unresolved-transcript-gap"
         messages={[
@@ -3193,8 +3196,8 @@ describe('ScrollableMessageArea', () => {
     expect(onLoadTranscriptGap).toHaveBeenCalledTimes(2)
   })
 
-  test('does not render a gap for transcript indexes already covered by a loaded page', () => {
-    render(
+  test('does not render a gap for transcript indexes already covered by a loaded page', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -3222,10 +3225,10 @@ describe('ScrollableMessageArea', () => {
     expect(screen.queryByTestId('runtime-transcript-gap-marker')).not.toBeInTheDocument()
   })
 
-  test('loads only the uncovered part between partially loaded transcript ranges', () => {
+  test('loads only the uncovered part between partially loaded transcript ranges', async () => {
     const onLoadTranscriptGap = vi.fn()
 
-    render(
+    await renderLazy(
       <ScrollableMessageArea
         messages={[
           {
@@ -3258,8 +3261,8 @@ describe('ScrollableMessageArea', () => {
     expect(onLoadTranscriptGap).toHaveBeenCalledWith({ start: 3, end: 4 })
   })
 
-  test('pins the conversation to the bottom after opening a chat', () => {
-    render(
+  test('pins the conversation to the bottom after opening a chat', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         conversationKey={1}
         messages={[
@@ -3300,12 +3303,12 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('starts from the latest message when restore is disabled for a preview', () => {
+  test('starts from the latest message when restore is disabled for a preview', async () => {
     cacheConversationScrollSnapshot('latest-preview', {
       distanceFromBottomPx: 420,
       pinnedToBottom: false,
     })
-    render(
+    await renderLazy(
       <ScrollableMessageArea
         conversationKey="latest-preview"
         initialScrollPosition="latest"
@@ -3351,7 +3354,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps following the bottom while an unopened conversation is being measured', () => {
+  test('keeps following the bottom while an unopened conversation is being measured', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -3364,7 +3367,7 @@ describe('ScrollableMessageArea', () => {
       }
     )
 
-    render(
+    await renderLazy(
       <ScrollableMessageArea
         conversationKey="unopened-measuring"
         messages={[
@@ -3411,7 +3414,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps an unopened conversation pinned when the external scroller height changes', () => {
+  test('keeps an unopened conversation pinned when the external scroller height changes', async () => {
     const resizeObservers: Array<{
       callback: ResizeObserverCallback
       targets: Set<Element>
@@ -3434,7 +3437,7 @@ describe('ScrollableMessageArea', () => {
     )
 
     const externalScrollRef = createRef<HTMLDivElement>()
-    render(
+    await renderLazy(
       <div ref={externalScrollRef}>
         <ScrollableMessageArea
           conversationKey="unopened-external-resize"
@@ -3497,7 +3500,7 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTop).toBe(-0)
   })
 
-  test('follows the assistant response after latest-user placement stabilizes', () => {
+  test('follows the assistant response after latest-user placement stabilizes', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -3524,7 +3527,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:01.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         conversationKey="latest-user-turn"
         messages={[previousUserMessage, previousAssistantMessage]}
@@ -3595,7 +3598,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps scrolling through layout measurement when the waiting indicator appears after send', () => {
+  test('keeps scrolling through layout measurement when the waiting indicator appears after send', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -3622,7 +3625,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:01.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="waiting-after-send" messages={[previousMessage]} />
     )
 
@@ -3675,7 +3678,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('follows the first assistant response after starting from an empty conversation', () => {
+  test('follows the first assistant response after starting from an empty conversation', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -3688,7 +3691,7 @@ describe('ScrollableMessageArea', () => {
       }
     )
 
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="first-user-turn" messages={[]} />
     )
     const scroller = screen.getByTestId('chat-message-scroll-area')
@@ -3762,7 +3765,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('follows an assistant response that started while auto-scroll was suspended', () => {
+  test('follows an assistant response that started while auto-scroll was suspended', async () => {
     const initialMessages = [
       {
         id: 'suspended-user',
@@ -3779,7 +3782,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-29T00:00:01.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         conversationKey="suspended-assistant-start"
         messages={initialMessages}
@@ -3823,7 +3826,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('restores the previous scroll position when reopening a conversation', () => {
+  test('restores the previous scroll position when reopening a conversation', async () => {
     const messageA = {
       id: 'a',
       role: 'assistant' as const,
@@ -3838,7 +3841,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="conversation-a" messages={[messageA]} />
     )
 
@@ -3876,7 +3879,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps an unpinned reading position when the restored layout height changes', () => {
+  test('keeps an unpinned reading position when the restored layout height changes', async () => {
     const messageA = {
       id: 'height-change-a',
       role: 'assistant' as const,
@@ -3891,7 +3894,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:01.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="height-change-a" messages={[messageA]} />
     )
 
@@ -3921,7 +3924,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('does not overwrite a saved reading position with a restore-generated scroll event', () => {
+  test('does not overwrite a saved reading position with a restore-generated scroll event', async () => {
     const messageA = {
       id: 'transient-layout-a',
       role: 'assistant' as const,
@@ -3936,7 +3939,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:01.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="transient-layout-a" messages={[messageA]} />
     )
 
@@ -3969,7 +3972,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('restores a streaming conversation to its latest bottom after switching back', () => {
+  test('restores a streaming conversation to its latest bottom after switching back', async () => {
     const streamingMessage = {
       id: 'streaming-a',
       role: 'assistant' as const,
@@ -3984,7 +3987,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="streaming-switch-a" messages={[streamingMessage]} />
     )
 
@@ -4020,7 +4023,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
   })
 
-  test('captures a bottom-pinned streaming conversation before its pane unmounts', () => {
+  test('captures a bottom-pinned streaming conversation before its pane unmounts', async () => {
     const streamingMessage = {
       id: 'streaming-unmount',
       role: 'assistant' as const,
@@ -4028,7 +4031,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { unmount } = render(
+    const { unmount } = await renderLazy(
       <ScrollableMessageArea
         conversationKey="streaming-unmount-bottom"
         messages={[streamingMessage]}
@@ -4052,7 +4055,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('unmounts previously selected conversation DOM while preserving switch-back rendering', () => {
+  test('unmounts previously selected conversation DOM while preserving switch-back rendering', async () => {
     const messageA = {
       id: 'cached-message-a',
       role: 'assistant' as const,
@@ -4067,7 +4070,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:01.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="cached-a" messages={[messageA]} />
     )
     const messageElementA = screen.getByText('cached conversation a').closest('[data-message-id]')
@@ -4086,7 +4089,7 @@ describe('ScrollableMessageArea', () => {
     expect(nextMessageElementA).toBeInTheDocument()
   })
 
-  test('does not read inactive conversation content after switching away', () => {
+  test('does not read inactive conversation content after switching away', async () => {
     let messageAContentReads = 0
     const messageA = {
       id: 'cached-render-message-a',
@@ -4105,7 +4108,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:01.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="cached-render-a" messages={[messageA]} />
     )
 
@@ -4118,7 +4121,7 @@ describe('ScrollableMessageArea', () => {
     expect(messageAContentReads).toBe(0)
   })
 
-  test('does not overwrite a saved position while a reopened conversation is loading', () => {
+  test('does not overwrite a saved position while a reopened conversation is loading', async () => {
     const messageA = {
       id: 'a-loading-restore',
       role: 'assistant' as const,
@@ -4133,7 +4136,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="conversation-loading-a" messages={[messageA]} />
     )
 
@@ -4177,7 +4180,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('restores reopened conversations to the saved reading position', () => {
+  test('restores reopened conversations to the saved reading position', async () => {
     const messagesA = [
       {
         id: 'anchor-a-intro',
@@ -4208,7 +4211,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="conversation-anchor-a" messages={messagesA} />
     )
 
@@ -4262,7 +4265,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('restores long conversations to the saved reading position', () => {
+  test('restores long conversations to the saved reading position', async () => {
     const messageA = {
       id: 'markdown-anchor-message',
       role: 'assistant' as const,
@@ -4286,7 +4289,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         conversationKey="conversation-markdown-anchor-a"
         messages={[messageA]}
@@ -4353,7 +4356,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps the restored position while reopened conversation content grows', () => {
+  test('keeps the restored position while reopened conversation content grows', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -4387,7 +4390,7 @@ describe('ScrollableMessageArea', () => {
       createdAt: '2026-05-29T00:00:02.000Z',
     }
     const messagesA = [firstUserMessage, messageA]
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="conversation-growth-a" messages={messagesA} />
     )
 
@@ -4479,7 +4482,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('does not pull the user back down when they have scrolled up', () => {
+  test('does not pull the user back down when they have scrolled up', async () => {
     const initialMessage = {
       id: '1',
       role: 'assistant' as const,
@@ -4487,7 +4490,7 @@ describe('ScrollableMessageArea', () => {
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey={1} messages={[initialMessage]} />
     )
 
@@ -4535,7 +4538,7 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).not.toHaveBeenCalled()
   })
 
-  test('cancels delayed bottom following as soon as the user scrolls upward', () => {
+  test('cancels delayed bottom following as soon as the user scrolls upward', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -4548,7 +4551,7 @@ describe('ScrollableMessageArea', () => {
       }
     )
 
-    render(
+    await renderLazy(
       <ScrollableMessageArea
         conversationKey="delayed-bottom-follow"
         messages={[
@@ -4617,8 +4620,8 @@ describe('ScrollableMessageArea', () => {
     expect(anchor.getBoundingClientRect().top).toBe(60)
   })
 
-  test('keeps delayed bottom following for pointer input without scrolling', () => {
-    render(
+  test('keeps delayed bottom following for pointer input without scrolling', async () => {
+    await renderLazy(
       <ScrollableMessageArea
         conversationKey="pointer-without-scroll"
         messages={[
@@ -4658,7 +4661,7 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).toHaveBeenCalled()
   })
 
-  test('scrolls to a newly applied guidance message inserted before the assistant continuation', () => {
+  test('scrolls to a newly applied guidance message inserted before the assistant continuation', async () => {
     const streamingMessage = {
       id: 'guidance-stream',
       role: 'assistant' as const,
@@ -4666,7 +4669,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="guidance-scroll" messages={[streamingMessage]} />
     )
 
@@ -4740,7 +4743,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps streaming content pinned when the user was already at the bottom', () => {
+  test('keeps streaming content pinned when the user was already at the bottom', async () => {
     const streamingMessage = {
       id: '1',
       role: 'assistant' as const,
@@ -4748,7 +4751,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="pinned-stream" messages={[streamingMessage]} />
     )
 
@@ -4794,7 +4797,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps streaming content pinned within the bottom pixel tolerance', () => {
+  test('keeps streaming content pinned within the bottom pixel tolerance', async () => {
     const streamingMessage = {
       id: 'fractional-bottom-stream',
       role: 'assistant' as const,
@@ -4802,7 +4805,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         conversationKey="fractional-bottom-scroll"
         messages={[streamingMessage]}
@@ -4854,7 +4857,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
   })
 
-  test('does not follow streaming content after the user scrolls upward near the bottom', () => {
+  test('does not follow streaming content after the user scrolls upward near the bottom', async () => {
     const streamingMessage = {
       id: 'near-bottom-stream',
       role: 'assistant' as const,
@@ -4862,7 +4865,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="near-bottom-scroll" messages={[streamingMessage]} />
     )
 
@@ -4935,8 +4938,8 @@ describe('ScrollableMessageArea', () => {
     },
   ]
 
-  test('does not pull a reader parked in history down when the assistant turn starts waiting', () => {
-    const { rerender } = render(
+  test('does not pull a reader parked in history down when the assistant turn starts waiting', async () => {
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         conversationKey="parked-waiting"
         scrollOrigin="bottom"
@@ -4964,8 +4967,8 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).not.toHaveBeenCalled()
   })
 
-  test('still brings the newest turn into view when the assistant starts waiting at the bottom', () => {
-    const { rerender } = render(
+  test('still brings the newest turn into view when the assistant starts waiting at the bottom', async () => {
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         conversationKey="bottom-waiting"
         scrollOrigin="bottom"
@@ -5002,8 +5005,8 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).toHaveBeenCalled()
   })
 
-  test('brings a message the reader sends into view even while they are parked in history', () => {
-    const { rerender } = render(
+  test('brings a message the reader sends into view even while they are parked in history', async () => {
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         conversationKey="parked-send"
         scrollOrigin="bottom"
@@ -5038,8 +5041,8 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).toHaveBeenCalled()
   })
 
-  test('does not pull a parked reader down when a held response start is released', () => {
-    const { rerender } = render(
+  test('does not pull a parked reader down when a held response start is released', async () => {
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea
         conversationKey="held-start"
         scrollOrigin="bottom"
@@ -5107,7 +5110,7 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).not.toHaveBeenCalled()
   })
 
-  test('resumes streaming follow after the user returns to the bottom', () => {
+  test('resumes streaming follow after the user returns to the bottom', async () => {
     const streamingMessage = {
       id: 'resume-stream',
       role: 'assistant' as const,
@@ -5115,7 +5118,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <ScrollableMessageArea conversationKey="resume-scroll" messages={[streamingMessage]} />
     )
 
@@ -5168,7 +5171,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('preserves an upward user scroll that stays within the bottom tolerance', () => {
+  test('preserves an upward user scroll that stays within the bottom tolerance', async () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const streamingMessage = {
       id: 'within-bottom-tolerance-stream',
@@ -5177,7 +5180,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <div ref={externalScrollRef}>
         <ScrollableMessageArea
           conversationKey="within-bottom-tolerance"
@@ -5225,7 +5228,7 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).not.toHaveBeenCalled()
   })
 
-  test('treats dragging an external scrollbar as user scroll intent', () => {
+  test('treats dragging an external scrollbar as user scroll intent', async () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const externalScrollInteractionRef = createRef<HTMLDivElement>()
     const streamingMessage = {
@@ -5235,7 +5238,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-09-18T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <>
         <div ref={externalScrollRef}>
           <ScrollableMessageArea
@@ -5297,7 +5300,7 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).not.toHaveBeenCalled()
   })
 
-  test('keeps the conversation pinned to the bottom while it keeps growing after jump-to-bottom', () => {
+  test('keeps the conversation pinned to the bottom while it keeps growing after jump-to-bottom', async () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const streamingMessage = {
       id: 'jump-to-bottom-growing-stream',
@@ -5306,7 +5309,7 @@ describe('ScrollableMessageArea', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <div ref={externalScrollRef}>
         <ScrollableMessageArea
           conversationKey="jump-to-bottom-growing"

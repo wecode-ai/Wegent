@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import {
@@ -17,7 +18,7 @@ const message: WorkbenchMessage = {
   runtimeMessageIndex: 0,
 }
 
-function renderArea(
+async function renderArea(
   overrides: Partial<ScrollableMessageAreaProps> = {},
   locale: 'en' | 'zh-CN' = 'en'
 ) {
@@ -29,7 +30,7 @@ function renderArea(
     },
     ...overrides,
   }
-  return render(
+  return await renderLazy(
     <ConversationTranslationProvider translate={createCollaborationTranslator(locale)}>
       <ScrollableMessageArea {...props} />
     </ConversationTranslationProvider>
@@ -37,27 +38,27 @@ function renderArea(
 }
 
 describe('shared conversation scroll area without desktop services', () => {
-  test.each(['en', 'zh-CN'] as const)('renders the native loading copy in %s', locale => {
-    renderArea({ messages: [], loading: true }, locale)
+  test.each(['en', 'zh-CN'] as const)('renders the native loading copy in %s', async locale => {
+    await renderArea({ messages: [], loading: true }, locale)
     expect(screen.getByTestId('chat-loading-state')).toHaveTextContent(
       createCollaborationTranslator(locale)('conversation.workbench.loading_conversation')
     )
   })
 
-  test('does not enable history loading without a host loader', () => {
-    renderArea({ hasMoreBefore: true })
+  test('does not enable history loading without a host loader', async () => {
+    await renderArea({ hasMoreBefore: true })
     expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeDisabled()
   })
 
-  test('loads history through the actual host callback', () => {
+  test('loads history through the actual host callback', async () => {
     const load = vi.fn().mockResolvedValue(undefined)
-    renderArea({ hasMoreBefore: true, onLoadMoreBefore: load })
+    await renderArea({ hasMoreBefore: true, onLoadMoreBefore: load })
     fireEvent.click(screen.getByTestId('load-older-runtime-transcript-button'))
     expect(load).toHaveBeenCalledOnce()
   })
 
-  test('shows missing history without enabling an unavailable action', () => {
-    renderArea({ messages: [message, { ...message, id: 'later', runtimeMessageIndex: 8 }] })
+  test('shows missing history without enabling an unavailable action', async () => {
+    await renderArea({ messages: [message, { ...message, id: 'later', runtimeMessageIndex: 8 }] })
     expect(screen.getByTestId('load-runtime-transcript-gap-button')).toBeDisabled()
     expect(screen.getByTestId('runtime-transcript-gap-marker')).toHaveTextContent(
       'Some history is not loaded'
@@ -66,7 +67,7 @@ describe('shared conversation scroll area without desktop services', () => {
 
   test('requests the uncovered transcript range from the host', async () => {
     const load = vi.fn().mockResolvedValue(undefined)
-    renderArea({
+    await renderArea({
       messages: [message, { ...message, id: 'later', runtimeMessageIndex: 8 }],
       loadedTranscriptRanges: [{ start: 0, end: 3 }],
       onLoadTranscriptGap: load,

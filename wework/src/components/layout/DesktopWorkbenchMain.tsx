@@ -1207,27 +1207,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask,
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
-  const startupSurfaceReady =
-    state.runtimeWork !== null && paneActive && paneVisible && workbenchVisible
-  useEffect(() => {
-    if (!startupSurfaceReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
-      return
-    }
-    console.info('[startup][renderer]', {
-      step: 'task-list-ready',
-      status: 'completed',
-    })
-    void invokeDesktopHost<void>('renderer.startupReady', { source: 'task-list' })
-      .then(() => {
-        console.info('[startup][renderer]', {
-          step: 'startup-ready-notification',
-          status: 'completed',
-        })
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to reveal the ready workbench', error)
-      })
-  }, [startupSurfaceReady])
+  const [renderedTranscriptPaneKey, setRenderedTranscriptPaneKey] = useState<string | null>(null)
+  const handleTranscriptContentReady = useCallback(() => {
+    if (paneKeyRef.current !== paneKey) return
+    setRenderedTranscriptPaneKey(paneKey)
+  }, [paneKey])
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
     project: currentProject,
@@ -2535,6 +2519,52 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? harnessResumeLaunchError.message
       : null) ??
     centralHarnessError
+  const [renderedHarnessSessionKey, setRenderedHarnessSessionKey] = useState<string | null>(null)
+  const activeHarnessSessionId = activeLocalHarnessSession?.sessionId ?? null
+  const activeHarnessSessionIdRef = useRef(activeHarnessSessionId)
+  useLayoutEffect(() => {
+    activeHarnessSessionIdRef.current = activeHarnessSessionId
+  }, [activeHarnessSessionId])
+  const handleHarnessContentReady = useCallback(() => {
+    if (
+      paneKeyRef.current !== paneKey ||
+      activeHarnessSessionIdRef.current !== activeHarnessSessionId
+    )
+      return
+    setRenderedHarnessSessionKey(activeHarnessSessionId)
+  }, [activeHarnessSessionId, paneKey])
+  const startupSurfaceReady =
+    !isBootstrapping &&
+    state.runtimeWork !== null &&
+    paneActive &&
+    paneVisible &&
+    workbenchVisible &&
+    (activeLocalHarnessSession
+      ? activeLocalHarnessSession.active
+        ? renderedHarnessSessionKey === activeLocalHarnessSession.sessionId
+        : Boolean(activeHarnessDisplayError)
+      : !currentRuntimeTask ||
+        (!paneSession.transcriptLoading &&
+          (paneSession.messages.length === 0 || renderedTranscriptPaneKey === paneKey)))
+  useEffect(() => {
+    if (!startupSurfaceReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
+      return
+    }
+    console.info('[startup][renderer]', {
+      step: 'task-list-ready',
+      status: 'completed',
+    })
+    void invokeDesktopHost<void>('renderer.startupReady', { source: 'task-list' })
+      .then(() => {
+        console.info('[startup][renderer]', {
+          step: 'startup-ready-notification',
+          status: 'completed',
+        })
+      })
+      .catch(error => {
+        console.error('[Wework] Failed to reveal the ready workbench', error)
+      })
+  }, [startupSurfaceReady])
   useEffect(() => {
     harnessResumeRequestsRef.current.clear()
   }, [activeLocalHarnessSession?.sessionId])
@@ -5173,6 +5203,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   {activeLocalHarnessSession.active ? (
                     <CentralHarnessTerminal
                       sessionId={activeLocalHarnessSession.sessionId}
+                      onContentReady={handleHarnessContentReady}
                       title={activeLocalHarnessSession.title}
                       cwd={activeLocalHarnessSession.cwd}
                       active={paneActive && workbenchVisible}
@@ -5218,6 +5249,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     workspacePath={composerWorkspaceTarget?.path}
                     imageTarget={remoteImageTarget}
                     messages={paneMessages}
+                    onContentReady={handleTranscriptContentReady}
                     turns={paneSession.turns}
                     loading={paneSession.transcriptLoading}
                     transcriptError={paneSession.transcriptError}

@@ -1,4 +1,5 @@
-import { render, waitFor } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { AssistantMarkdown } from './AssistantMarkdown'
 
@@ -9,7 +10,7 @@ vi.mock('@wegent/collaboration/markdown/MarkdownDiagramPreview', () => ({
 }))
 
 test('routes Mermaid fenced code to the diagram preview', async () => {
-  const { container } = render(
+  const { container } = await renderLazy(
     <AssistantMarkdown content={'```mermaid\ngraph LR\n  A[Start] --> B[Done]\n```'} />
   )
 
@@ -23,7 +24,7 @@ test('routes Mermaid fenced code to the diagram preview', async () => {
 })
 
 test('keeps an unfinished Mermaid fence as source while the model is streaming', async () => {
-  const { container, rerender } = render(
+  const { container, rerender } = await renderLazy(
     <AssistantMarkdown content={'```mermaid\ngraph LR\n  A[Start]'} isStreaming />
   )
 
@@ -53,7 +54,7 @@ test('keeps an unfinished Mermaid fence as source while the model is streaming',
 
 test('distinguishes identical completed and unfinished Mermaid blocks while streaming', async () => {
   const diagram = 'graph LR\n  A[Start] --> B[Done]'
-  const { container } = render(
+  const { container } = await renderLazy(
     <AssistantMarkdown
       content={`\`\`\`mermaid\n${diagram}\n\`\`\`\n\n\`\`\`mermaid\n${diagram}`}
       isStreaming
@@ -74,7 +75,7 @@ test('distinguishes identical completed and unfinished Mermaid blocks while stre
 })
 
 test('preserves rendered paragraph identity across ordinary streaming updates', async () => {
-  const { container, rerender } = render(
+  const { container, rerender } = await renderLazy(
     <AssistantMarkdown content={'First paragraph.\n\nStable viewport anchor.'} isStreaming />
   )
 
@@ -101,7 +102,7 @@ test('preserves rendered paragraph identity across ordinary streaming updates', 
 })
 
 test('keeps an unfinished PlantUML fence as source while the model is streaming', async () => {
-  const { container } = render(
+  const { container } = await renderLazy(
     <AssistantMarkdown content={'```plantuml\n@startuml\nAlice -> Bob: Streaming'} isStreaming />
   )
 

@@ -39,6 +39,7 @@ function ScrollableMessagePaneContent({
   virtualize = true,
   useContentVisibility,
   onVirtualMeasurement,
+  onContentReady,
   renderVisualization,
   messages,
   renderGapAfterMessage,
@@ -799,6 +800,7 @@ function ScrollableMessagePaneContent({
                 virtualize={virtualize}
                 useContentVisibility={useContentVisibility}
                 onVirtualMeasurement={onVirtualMeasurement}
+                onContentReady={onContentReady}
                 renderVisualization={renderVisualization}
                 key={currentScrollKey ?? 'keyless-conversation'}
                 messages={messages}

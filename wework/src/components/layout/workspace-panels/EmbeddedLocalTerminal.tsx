@@ -25,6 +25,7 @@ interface EmbeddedLocalTerminalProps {
   workspacePath?: string | null
   cwd?: string | null
   title?: string | null
+  onContentReady?: () => void
   onExit?: () => void
   onTitleChange?: (title: string) => void
   testIdsEnabled?: boolean
@@ -55,6 +56,7 @@ export function EmbeddedLocalTerminal({
   cwd,
   title,
   onExit,
+  onContentReady,
   onTitleChange,
   testIdsEnabled = true,
   showWorkbenchBackground = false,
@@ -65,6 +67,8 @@ export function EmbeddedLocalTerminal({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const activeRef = useRef(active)
   const contextRef = useRef({ taskId, workspacePath, cwd, title })
+  const onContentReadyRef = useRef(onContentReady)
+  const terminalContentReadyRef = useRef(false)
   const onExitRef = useRef(onExit)
   const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
@@ -109,6 +113,13 @@ export function EmbeddedLocalTerminal({
   }, [cwd, taskId, title, workspacePath])
 
   useEffect(() => {
+    onContentReadyRef.current = onContentReady
+    if (terminalContentReadyRef.current && resourceRef.current?.sessionId === sessionId) {
+      onContentReady?.()
+    }
+  }, [onContentReady, sessionId])
+
+  useEffect(() => {
     onExitRef.current = onExit
   }, [onExit])
 
@@ -134,6 +145,7 @@ export function EmbeddedLocalTerminal({
       }
     }
     currentResource?.dispose()
+    terminalContentReadyRef.current = false
     lastSizeRef.current = null
 
     const terminalAppearance = appearanceRef.current
@@ -169,6 +181,11 @@ export function EmbeddedLocalTerminal({
       onTitleChangeRef.current?.(title)
     })
     let disposed = false
+    const markContentReady = () => {
+      if (disposed || terminalContentReadyRef.current) return
+      terminalContentReadyRef.current = true
+      onContentReadyRef.current?.()
+    }
     const unlisteners: Array<() => void> = []
 
     terminal.loadAddon(fitAddon)
@@ -239,6 +256,7 @@ export function EmbeddedLocalTerminal({
                 pendingTerminalInput = ''
               }
               refreshXterm(terminal)
+              markContentReady()
             }
           })
         }
@@ -263,7 +281,7 @@ export function EmbeddedLocalTerminal({
       .catch(error => {
         if (!disposed) {
           console.error('Failed to attach local terminal:', error)
-          terminal.writeln('\r\n[Terminal connection failed]')
+          terminal.write('\r\n[Terminal connection failed]\r\n', markContentReady)
         }
       })
 
