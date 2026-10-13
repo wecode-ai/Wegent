@@ -2,16 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { createSharedWorkspaceHttpApi } from '@wegent/collaboration/http-api'
+import { createAutomationExecutionCatalogApi } from '@wegent/collaboration/runtime-profile/executionCatalog'
+
 import {
-  createSharedWorkspaceHttpApi,
-  createAutomationExecutionCatalogApi,
   mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
   mapWorkspaceDeliveryAssetDto,
   mapWorkspaceDeliveryDto,
   mapWorkspaceIssueCollaboratorDto,
   mapWorkspaceTaskBindingDto,
-} from '@wegent/collaboration'
+} from '@wegent/collaboration/dto-mappers'
 import type {
   CollaborationAgent,
   CollaborationAttachment,

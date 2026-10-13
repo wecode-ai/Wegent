@@ -21,6 +21,14 @@ Shared E2E archives must preserve the packaged Executor's original bytes without
 stripping it after generating the proof. Verify its actual content hash against
 component metadata before publishing the archive.
 
+The main window loads its own initial dependencies. Load the popout page on
+demand and import service functions, translators, and small components through
+specific collaboration package modules so optional collaboration pages stay
+out of the initial bundle. Component composition and read-only Executor
+compatibility verification run concurrently, but both must complete before
+startup paths are returned. Node and CLI preparation also overlap component
+preparation. Home migration still runs after compatibility verification.
+
 Browser authentication exchanges a token once. Electron saves DSH's Set-Cookie
 headers in the existing browser partition, preserving domain, path, expiration,
 Secure, HttpOnly, and SameSite attributes.
@@ -40,7 +48,9 @@ administrator's package storage. Stream test logs so evidence survives a hung
 process or a failed diagnostic upload.
 Marketplace registration verification parses TOML and checks the local type and
 complete source path. Valid single-quoted Windows paths must not be rejected
-because their serialization differs from JSON double-quoted strings.
+because their serialization differs from JSON double-quoted strings. Minimal Linux E2E artifacts
+include standalone Socket.IO and TOML parser bundles so test containers do not
+require a local `node_modules` directory.
 
 Explicitly disallow automatic downgrades after selecting the stable or beta
 Electron update channel, preventing older releases from downloading and showing

@@ -7,7 +7,7 @@ import type {
   UnifiedAgentRuntime,
   UnifiedAgentSkillRef,
 } from './agentDefinition'
-import { parseAgentCapabilityMode } from '@wegent/collaboration'
+import { parseAgentCapabilityMode } from '@wegent/collaboration/agent-form/types'
 
 export type {
   UnifiedAgentCapabilityMode,

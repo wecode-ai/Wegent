@@ -243,26 +243,6 @@ export class ComponentUpdateManager {
     return true
   }
 
-  private async checkedPaths(
-    packaged: PackagedComponentManifest,
-    current?: ComponentSet
-  ): Promise<ComponentPaths> {
-    const paths = await this.resolvePaths(packaged, current)
-    const installedExecutor = current?.components.executor
-    const executor =
-      installedExecutor?.workbenchSchema !== undefined
-        ? installedExecutor
-        : packaged.components.executor
-    const sha256 = 'contentSha256' in executor ? executor.contentSha256 : executor.sha256
-    await this.validateExecutor(
-      paths.executor,
-      paths.contentSha256.executor === sha256 && executor.workbenchSchema !== undefined
-        ? { sha256, response: executor.workbenchSchema }
-        : undefined
-    )
-    return paths
-  }
-
   async stageAvailableUpdate(): Promise<boolean> {
     const packaged = await this.packagedManifest()
     const channel = packaged.channel
@@ -506,7 +486,7 @@ export class ComponentUpdateManager {
     return parsed
   }
 
-  private async resolvePaths(
+  private async checkedPaths(
     packaged: PackagedComponentManifest,
     current?: ComponentSet
   ): Promise<ComponentPaths> {
@@ -519,14 +499,38 @@ export class ComponentUpdateManager {
       paths[entry.id] = entry.path
       fingerprints[entry.id] = entry.contentSha256
     }
-    this.log({ event: 'startup-step', step: 'component-plugin-composition', status: 'started' })
-    const composedCorePlugins = await this.composeCorePlugins(
-      paths.weworkCorePlugins,
-      paths.weworkAppStatic,
-      fingerprints.weworkCorePlugins,
-      fingerprints.weworkAppStatic
-    )
-    this.log({ event: 'startup-step', step: 'component-plugin-composition', status: 'completed' })
+    const installedExecutor = current?.components.executor
+    const executor =
+      installedExecutor?.workbenchSchema !== undefined
+        ? installedExecutor
+        : packaged.components.executor
+    const sha256 = 'contentSha256' in executor ? executor.contentSha256 : executor.sha256
+    const preparations = await Promise.allSettled([
+      (async () => {
+        this.log({ event: 'startup-step', step: 'component-plugin-composition', status: 'started' })
+        const plugins = await this.composeCorePlugins(
+          paths.weworkCorePlugins,
+          paths.weworkAppStatic,
+          fingerprints.weworkCorePlugins,
+          fingerprints.weworkAppStatic
+        )
+        this.log({
+          event: 'startup-step',
+          step: 'component-plugin-composition',
+          status: 'completed',
+        })
+        return plugins
+      })(),
+      this.validateExecutor(
+        paths.executor,
+        fingerprints.executor === sha256 && executor.workbenchSchema !== undefined
+          ? { sha256, response: executor.workbenchSchema }
+          : undefined
+      ),
+    ])
+    const [composition, compatibility] = preparations
+    if (composition.status === 'rejected') throw composition.reason
+    if (compatibility.status === 'rejected') throw compatibility.reason
     fingerprints.weworkCorePlugins = createHash('sha256')
       .update(fingerprints.weworkCorePlugins)
       .update('\0')
@@ -534,7 +538,7 @@ export class ComponentUpdateManager {
       .digest('hex')
     return {
       coreDsh: paths.coreDsh,
-      weworkCorePlugins: composedCorePlugins,
+      weworkCorePlugins: composition.value,
       bundledPlugins: paths.bundledPlugins,
       executor: paths.executor,
       codex: await this.resolveCodexBinary(paths.codex),

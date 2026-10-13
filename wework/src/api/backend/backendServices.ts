@@ -26,7 +26,7 @@ import {
   type CloudRuntimeIpcClient,
 } from '@wegent/chat-core'
 import { createRuntimeComposerApi } from '@wegent/chat-core/runtime-composer-api'
-import { buildInstalledPluginProjectCatalog } from '@wegent/collaboration'
+import { buildInstalledPluginProjectCatalog } from '@wegent/collaboration/plugin-catalog'
 import { createProjectChatClient } from '@/api/backend/projectChatSocket'
 import { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import { createProjectAutomationApi } from '@/api/projectAutomations'

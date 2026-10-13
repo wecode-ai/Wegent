@@ -2185,32 +2185,40 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       ? resolve(configuredComponentResourcesRoot)
       : resourcesRoot
   logStartupStep('desktop-components-prepare', 'started')
-  const preparedComponents = await prepareDesktopComponents({
-    isPackaged: packagedApplication,
-    managerOptions: {
-      validateExecutor: async (path, schema) => {
-        logStartupStep('component-executor-schema-query', 'started')
-        const command = process.env.WEWORK_EXECUTOR_PATH?.trim() || path
-        await assertExecutorWorkbenchCompatibility(
-          { ...process.env, WEWORK_EXECUTOR_PATH: command },
-          schema && (command === path || (await hashComponentPath(command)) === schema.sha256)
-            ? schema
-            : undefined
-        )
-        logStartupStep('component-executor-schema-query', 'completed')
+  const preparations = await Promise.allSettled([
+    prepareDesktopComponents({
+      isPackaged: packagedApplication,
+      managerOptions: {
+        validateExecutor: async (path, schema) => {
+          logStartupStep('component-executor-schema-query', 'started')
+          const command = process.env.WEWORK_EXECUTOR_PATH?.trim() || path
+          await assertExecutorWorkbenchCompatibility(
+            { ...process.env, WEWORK_EXECUTOR_PATH: command },
+            schema && (command === path || (await hashComponentPath(command)) === schema.sha256)
+              ? schema
+              : undefined
+          )
+          logStartupStep('component-executor-schema-query', 'completed')
+        },
+        log: event => {
+          appUpdateLogger.info(event)
+          if (event.event === 'startup-step') {
+            logStartupStep(String(event.step), event.status as 'started' | 'completed')
+          }
+        },
+        resourcesRoot: componentResourcesRoot,
+        dataDirectory: app.getPath('userData'),
+        updateBaseUrl,
+        currentAppVersion: app.getVersion(),
       },
-      log: event => {
-        appUpdateLogger.info(event)
-        if (event.event === 'startup-step') {
-          logStartupStep(String(event.step), event.status as 'started' | 'completed')
-        }
-      },
-      resourcesRoot: componentResourcesRoot,
-      dataDirectory: app.getPath('userData'),
-      updateBaseUrl,
-      currentAppVersion: app.getVersion(),
-    },
-  })
+    }),
+    prepareDesktopNodeRuntime(),
+  ])
+  const [componentPreparation, nodePreparation] = preparations
+  if (componentPreparation.status === 'rejected') throw componentPreparation.reason
+  if (nodePreparation.status === 'rejected') throw nodePreparation.reason
+  const preparedComponents = componentPreparation.value
+  const nodeRuntime = nodePreparation.value
   logStartupStep('desktop-components-prepare', 'completed')
   componentUpdates = preparedComponents.manager
   const components = preparedComponents.paths
@@ -2231,47 +2239,6 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
         ])
       : developmentRuntimeRoot
   logStartupStep('core-runtime-materialize', 'completed')
-  logStartupStep('node-runtime-prepare', 'started')
-  const nodeRuntime = await electronNodeRuntime()
-  logStartupStep('node-runtime-prepare', 'completed')
-  const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
-  logStartupStep('wework-cli-install', 'started')
-  await installWeworkCli(
-    cliBin,
-    resolve(packageRoot, 'dist', 'cli', 'wework-cli.mjs'),
-    process.platform,
-    {
-      appCommand: weworkCliAppCommand(),
-      nodeCommand: [nodeRuntime.status.path],
-    }
-  )
-  if (
-    shouldInstallUserWeworkCli(process.platform, {
-      environment: process.env,
-      packagedApplication,
-      pluginDevelopmentInstance,
-    })
-  ) {
-    const userCliBin = join(app.getPath('home'), '.local', 'bin')
-    const userCliPath = join(userCliBin, 'wework')
-    if (await canReplaceWeworkCli(userCliPath)) {
-      await installWeworkCli(
-        userCliBin,
-        resolve(packageRoot, 'dist', 'cli', 'wework-cli.mjs'),
-        process.platform,
-        {
-          appCommand: weworkCliAppCommand(),
-          nodeCommand: [nodeRuntime.status.path],
-        }
-      )
-    } else {
-      console.warn(`Wework CLI install path is not managed by Wework: ${userCliPath}`)
-    }
-  }
-  nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
-    .filter(Boolean)
-    .join(delimiter)
-  logStartupStep('wework-cli-install', 'completed')
   logStartupStep('workbench-environment', 'started')
   const environment = await prepareWorkbenchEnvironment({
     environment: {
@@ -2315,6 +2282,43 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     logStartupStep('development-history', 'completed')
   }
   return environment
+}
+
+async function prepareDesktopNodeRuntime(): Promise<ElectronNodeRuntime> {
+  logStartupStep('node-runtime-prepare', 'started')
+  const nodeRuntime = await electronNodeRuntime()
+  logStartupStep('node-runtime-prepare', 'completed')
+  const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
+  const directories = [cliBin]
+  logStartupStep('wework-cli-install', 'started')
+  if (
+    shouldInstallUserWeworkCli(process.platform, {
+      environment: process.env,
+      packagedApplication,
+      pluginDevelopmentInstance,
+    })
+  ) {
+    const userCliBin = join(app.getPath('home'), '.local', 'bin')
+    const userCliPath = join(userCliBin, 'wework')
+    if (await canReplaceWeworkCli(userCliPath)) {
+      directories.push(userCliBin)
+    } else {
+      console.warn(`Wework CLI install path is not managed by Wework: ${userCliPath}`)
+    }
+  }
+  for (const directory of directories) {
+    await installWeworkCli(
+      directory,
+      resolve(packageRoot, 'dist', 'cli', 'wework-cli.mjs'),
+      process.platform,
+      { appCommand: weworkCliAppCommand(), nodeCommand: [nodeRuntime.status.path] }
+    )
+  }
+  nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
+    .filter(Boolean)
+    .join(delimiter)
+  logStartupStep('wework-cli-install', 'completed')
+  return nodeRuntime
 }
 
 function weworkCliAppCommand(): string[] {

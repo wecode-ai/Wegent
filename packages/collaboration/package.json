@@ -433,6 +433,42 @@
     "./controls/DialogForm": {
       "types": "./src/controls/DialogForm.tsx",
       "import": "./src/controls/DialogForm.tsx"
+    },
+    "./plugin-catalog": {
+      "types": "./src/plugin-catalog.ts",
+      "import": "./src/plugin-catalog.ts"
+    },
+    "./agent-form/types": {
+      "types": "./src/agent-form/types.ts",
+      "import": "./src/agent-form/types.ts"
+    },
+    "./http-api": {
+      "types": "./src/http-api/index.ts",
+      "import": "./src/http-api/index.ts"
+    },
+    "./dto-mappers": {
+      "types": "./src/dto-mappers/index.ts",
+      "import": "./src/dto-mappers/index.ts"
+    },
+    "./runtime-profile/executionCatalog": {
+      "types": "./src/runtime-profile/executionCatalog.ts",
+      "import": "./src/runtime-profile/executionCatalog.ts"
+    },
+    "./issue-detail/CompositedSpinner": {
+      "types": "./src/issue-detail/CompositedSpinner.tsx",
+      "import": "./src/issue-detail/CompositedSpinner.tsx"
+    },
+    "./issue-detail/Tooltip": {
+      "types": "./src/issue-detail/Tooltip.tsx",
+      "import": "./src/issue-detail/Tooltip.tsx"
+    },
+    "./i18n": {
+      "types": "./src/i18n.ts",
+      "import": "./src/i18n.ts"
+    },
+    "./permissions": {
+      "types": "./src/permissions.ts",
+      "import": "./src/permissions.ts"
     }
   },
   "scripts": {

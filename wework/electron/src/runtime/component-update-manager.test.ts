@@ -51,6 +51,42 @@ afterEach(async () => {
 })
 
 describe('ComponentUpdateManager', () => {
+  test('composes plugins while compatibility is pending and waits before publishing paths', async () => {
+    const fixture = await createFixture()
+    let releaseCompatibility!: () => void
+    const compatibility = new Promise<void>(resolve => {
+      releaseCompatibility = resolve
+    })
+    let compositionCompleted!: () => void
+    const composition = new Promise<void>(resolve => {
+      compositionCompleted = resolve
+    })
+    const manager = new ComponentUpdateManager({
+      resourcesRoot: fixture.resources,
+      dataDirectory: fixture.data,
+      updateBaseUrl: 'https://example.invalid/components',
+      currentAppVersion: appVersion,
+      validateExecutor: () => compatibility,
+      log: event => {
+        if (event.step === 'component-plugin-composition' && event.status === 'completed') {
+          compositionCompleted()
+        }
+      },
+    })
+    let ready = false
+    const startup = manager.prepareStartup().then(paths => {
+      ready = true
+      return paths
+    })
+    try {
+      await composition
+      expect(ready).toBe(false)
+    } finally {
+      releaseCompatibility()
+    }
+    expect((await startup).executor).toBe(join(fixture.resources, 'bin', 'wegent-executor'))
+  })
+
   test('uses packaged schema for an identical executor selected by old update metadata', async () => {
     const fixture = await createFixture()
     const schema = { protocol_version: 1, workbench_layout_versions: [1] }

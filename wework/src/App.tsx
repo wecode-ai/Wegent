@@ -6,6 +6,8 @@ import {
 import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
 import {
   Activity,
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -34,7 +36,6 @@ import { RuntimeTaskSystemSleepBridge } from '@/features/workbench/RuntimeTaskSy
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
-import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -155,6 +156,9 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { deviceSurfaceExtension } from '@extensions/device-surface'
 
 const POPOUT_WINDOW_LABEL = 'popout-window'
+const PopoutWorkbenchPage = lazy(() =>
+  import('@/pages/PopoutWorkbenchPage').then(module => ({ default: module.PopoutWorkbenchPage }))
+)
 
 function isPopoutWindowRuntime() {
   return isElectronRuntime() && getDesktopWindowLabel() === POPOUT_WINDOW_LABEL
@@ -705,7 +709,9 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           onStartupReadyChange={onWorkbenchStartupReadyChange}
         >
           {isElectronRuntime() && <SystemDragBridge />}
-          <PopoutWorkbenchPage />
+          <Suspense fallback={null}>
+            <PopoutWorkbenchPage />
+          </Suspense>
         </WorkbenchProvider>
       </>
     )
