@@ -3488,6 +3488,24 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 
+  test('fetches runtime work while device bootstrap is pending without exposing stale devices', async () => {
+    const devices = deferred<DeviceInfo[]>()
+    const services = createWorkbenchServices()
+    const listDevices = vi.mocked(services.deviceApi.listDevices)
+    listDevices.mockImplementationOnce(() => devices.promise)
+
+    renderWorkbench(<BootstrapProbe />, services)
+
+    await waitFor(() => expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('startup-ready')).toHaveTextContent('loading')
+    expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
+
+    devices.resolve([])
+
+    await waitFor(() => expect(screen.getByTestId('runtime-total')).toHaveTextContent('3'))
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+  })
+
   test('loads task composer catalogs after runtime work bootstrap', async () => {
     const runtimeWork = deferred<RuntimeWorkListResponse>()
     const services = createWorkbenchServices({

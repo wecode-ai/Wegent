@@ -464,6 +464,33 @@ impl RuntimeWorkStore {
         self.persist_current_index();
     }
 
+    pub fn upsert_task_durably(&self, link: RuntimeTaskLink) -> io::Result<()> {
+        self.mutate_index_durably(|index| {
+            index.tasks.insert(link.local_task_id.clone(), link);
+        })
+    }
+
+    fn mutate_index_durably<T>(
+        &self,
+        mutate: impl FnOnce(&mut RuntimeWorkIndex) -> T,
+    ) -> io::Result<T> {
+        self.refresh_index_from_disk_if_changed();
+        let _write_guard = self
+            .write_lock
+            .lock()
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let mut index = self
+            .index
+            .lock()
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let mut updated = index.clone();
+        let result = mutate(&mut updated);
+        let payload = serialize_index(&updated).map_err(io::Error::other)?;
+        self.persist_index_payload(payload)?;
+        *index = updated;
+        Ok(result)
+    }
+
     pub fn update_task(
         &self,
         local_task_id: &str,
@@ -477,20 +504,30 @@ impl RuntimeWorkStore {
         local_task_id: &str,
         new_local_task_id: &str,
         updater: impl FnOnce(&mut RuntimeTaskLink),
-    ) -> Option<RuntimeTaskLink> {
-        self.refresh_index_from_disk_if_changed();
-        let mut index = self.index.lock().ok()?;
-        if local_task_id != new_local_task_id && index.tasks.contains_key(new_local_task_id) {
-            return None;
-        }
-        let mut task = index.tasks.remove(local_task_id)?;
-        updater(&mut task);
-        task.local_task_id = new_local_task_id.to_owned();
-        let updated = task.clone();
-        index.tasks.insert(new_local_task_id.to_owned(), task);
-        drop(index);
-        self.persist_current_index();
-        Some(updated)
+    ) -> io::Result<Option<RuntimeTaskLink>> {
+        self.mutate_index_durably(|index| {
+            if local_task_id != new_local_task_id && index.tasks.contains_key(new_local_task_id) {
+                return None;
+            }
+            let mut task = index.tasks.remove(local_task_id)?;
+            updater(&mut task);
+            task.local_task_id = new_local_task_id.to_owned();
+            let updated = task.clone();
+            index.tasks.insert(new_local_task_id.to_owned(), task);
+            Some(updated)
+        })
+    }
+
+    pub fn update_task_durably(
+        &self,
+        local_task_id: &str,
+        updater: impl FnOnce(&mut RuntimeTaskLink),
+    ) -> io::Result<Option<RuntimeTaskLink>> {
+        self.mutate_index_durably(|index| {
+            let task = index.tasks.get_mut(local_task_id)?;
+            updater(task);
+            Some(task.clone())
+        })
     }
 
     fn update_task_with_persistence(
@@ -541,28 +578,32 @@ impl RuntimeWorkStore {
                 }
             }
         };
+        if let Err(error) = self.persist_index_payload(payload) {
+            eprintln!(
+                "[runtime-work-store] failed to persist index {}: {error}",
+                self.index_path.display()
+            );
+        }
+    }
+
+    fn persist_index_payload(&self, payload: Vec<u8>) -> io::Result<()> {
         if self
             .last_written_payload
             .lock()
             .ok()
             .is_some_and(|last_payload| last_payload.as_ref() == Some(&payload))
         {
-            return;
+            return Ok(());
         }
 
         #[cfg(test)]
         self.write_attempts.fetch_add(1, Ordering::Relaxed);
-        if let Err(error) = atomic_write_file(&self.index_path, &payload) {
-            eprintln!(
-                "[runtime-work-store] failed to persist index {}: {error}",
-                self.index_path.display()
-            );
-            return;
-        }
+        atomic_write_file(&self.index_path, &payload)?;
         if let Ok(mut last_payload) = self.last_written_payload.lock() {
             *last_payload = Some(payload);
         }
         self.update_index_signature();
+        Ok(())
     }
 
     fn refresh_index_from_disk_if_changed(&self) {
@@ -799,17 +840,27 @@ fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
-    let result = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
+    let started = std::time::Instant::now();
+    loop {
+        let result = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if result != 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        // Concurrent readers can temporarily deny delete sharing on Windows.
+        // Keep the same complete temporary file and preserve permanent failures.
+        if !matches!(error.raw_os_error(), Some(5 | 32))
+            || started.elapsed() >= std::time::Duration::from_millis(250)
+        {
+            return Err(error);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 

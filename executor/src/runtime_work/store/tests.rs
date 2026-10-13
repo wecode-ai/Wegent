@@ -15,6 +15,75 @@ fn atomic_write_replaces_existing_index() {
     assert!(temporary_files(directory.path()).is_empty());
 }
 
+#[cfg(windows)]
+#[test]
+fn atomic_write_waits_for_a_reader_that_temporarily_denies_delete_sharing() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+    let directory = tempfile::tempdir().unwrap();
+    let index_path = directory.path().join("index.json");
+    fs::write(&index_path, b"old index").unwrap();
+    let reader = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&index_path)
+        .unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        drop(reader);
+    });
+
+    atomic_write_file(&index_path, b"new index").unwrap();
+    release.join().unwrap();
+
+    assert_eq!(fs::read(&index_path).unwrap(), b"new index");
+    assert!(temporary_files(directory.path()).is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn atomic_write_reports_a_reader_that_keeps_delete_sharing_denied() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+    let directory = tempfile::tempdir().unwrap();
+    let index_path = directory.path().join("index.json");
+    fs::write(&index_path, b"old index").unwrap();
+    let reader = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&index_path)
+        .unwrap();
+
+    assert!(atomic_write_file(&index_path, b"new index").is_err());
+
+    assert_eq!(fs::read(&index_path).unwrap(), b"old index");
+    assert!(temporary_files(directory.path()).is_empty());
+    drop(reader);
+}
+
+#[test]
+fn durable_upsert_propagates_failure_without_publishing_an_in_memory_task() {
+    let directory = tempfile::tempdir().unwrap();
+    let index_path = directory.path().join("index.json");
+    fs::create_dir(&index_path).unwrap();
+    fs::write(index_path.join("sentinel"), b"original").unwrap();
+    let store = RuntimeWorkStore::new(index_path.clone());
+
+    assert!(store
+        .upsert_task_durably(RuntimeTaskLink::new_pending(
+            "restored-task".to_owned(),
+            "/tmp/restored".to_owned(),
+            "Restored task".to_owned()
+        ))
+        .is_err());
+
+    assert!(store.get_task("restored-task").is_none());
+    assert_eq!(fs::read(index_path.join("sentinel")).unwrap(), b"original");
+    assert!(temporary_files(directory.path()).is_empty());
+}
+
 #[test]
 fn atomic_write_cleans_up_temp_file_after_replace_failure() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");

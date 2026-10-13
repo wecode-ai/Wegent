@@ -599,10 +599,21 @@ export function useWorkbenchDataRefresh({
         step: 'device-list-load',
         status: 'started',
       })
-      const devicesResult = await timedWorkbenchBootstrapRequest(
+      const devicesRequest = timedWorkbenchBootstrapRequest(
         'devices',
         executorClient.commands.listDevices()
       )
+      const runtimeWorkStartedAt = nowMs()
+      logModelLoading(traceId, 'bootstrap.tasks_started')
+      console.info('[startup][renderer]', {
+        step: 'task-list-load',
+        status: 'started',
+      })
+      const runtimeWorkRequest = timedWorkbenchBootstrapRequest(
+        'runtimeWork',
+        executorClient.runtime.listRuntimeWork({ preferCached: true })
+      )
+      const devicesResult = await devicesRequest
       logModelLoading(traceId, 'bootstrap.devices_finished', {
         elapsedMs: Math.round(nowMs() - startedAt),
         ok: devicesResult.status === 'fulfilled',
@@ -641,16 +652,7 @@ export function useWorkbenchDataRefresh({
         standaloneDeviceId,
       })
 
-      const runtimeWorkStartedAt = nowMs()
-      logModelLoading(traceId, 'bootstrap.tasks_started')
-      console.info('[startup][renderer]', {
-        step: 'task-list-load',
-        status: 'started',
-      })
-      void timedWorkbenchBootstrapRequest(
-        'runtimeWork',
-        executorClient.runtime.listRuntimeWork({ preferCached: true })
-      ).then(runtimeWorkResult => {
+      void runtimeWorkRequest.then(runtimeWorkResult => {
         logModelLoading(traceId, 'bootstrap.tasks_received', {
           elapsedMs: Math.round(nowMs() - runtimeWorkStartedAt),
           ok: runtimeWorkResult.status === 'fulfilled',

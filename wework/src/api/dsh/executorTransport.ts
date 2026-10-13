@@ -263,7 +263,16 @@ function connectDshExecutorEventStream(
         scheduleReconnect()
         return
       }
-      if (event.sequence <= cursor) return
+      if (event.sequence <= cursor) {
+        if (globalThis.localStorage?.getItem('wework:debug-runtime-chat-stream') === '1') {
+          console.debug('[Wework] Executor event frame discarded', {
+            event: event.event,
+            sequence: event.sequence,
+            cursor,
+          })
+        }
+        return
+      }
       cursor = event.sequence
       reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
       if (event.event === 'executor.stream.cursor') return

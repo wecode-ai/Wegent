@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { selectCollaborationDomain } from '../modules/workspace-flows.mjs'
+import { selectCollaborationDomain, selectProjectView } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
   createSse,
@@ -79,7 +79,7 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs, modelResponseTi
       'waitFor',
       scoped(`[data-testid="collaboration-project-execution-environment-initialize-${device.id}"]`)
     )
-    await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+    await selectProjectView(control, CONTENT, 'board')
     await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
     await control.command('waitFor', scoped('[data-testid="human-issue-ai-assist"]'))
     await control.command('click', scoped('[data-testid="human-issue-ai-assist"]'))

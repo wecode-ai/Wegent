@@ -96,6 +96,21 @@ describe('DSH runtime readiness', () => {
     }
   })
 
+  test('reports the failed endpoint and HTTP status without its authentication query', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 403 }))
+    )
+    const runtime = new DshRuntime({ url: 'http://127.0.0.1/host?token=private-query' })
+    await expect(runtime.start(10)).rejects.toMatchObject({
+      message: 'DSH startup timed out',
+      cause: {
+        message: 'DSH endpoint readiness failed: /host',
+        cause: { message: 'HTTP 403' },
+      },
+    })
+  })
+
   test('preserves the timeout reason while a probe request is still in flight', async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
       return new Promise<Response>((_resolve, reject) => {

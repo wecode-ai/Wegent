@@ -130,6 +130,14 @@
       "types": "./src/controls/ModelSelector.tsx",
       "import": "./src/controls/ModelSelector.tsx"
     },
+    "./conversation/ConversationTranslation": {
+      "types": "./src/conversation/ConversationTranslation.tsx",
+      "import": "./src/conversation/ConversationTranslation.tsx"
+    },
+    "./conversation/SelectionActionsPopover": {
+      "types": "./src/conversation/SelectionActionsPopover.tsx",
+      "import": "./src/conversation/SelectionActionsPopover.tsx"
+    },
     "./conversation": {
       "types": "./src/conversation/index.ts",
       "import": "./src/conversation/index.ts"
@@ -217,6 +225,14 @@
     "./composer/composerMentions": {
       "types": "./src/composer/composerMentions.ts",
       "import": "./src/composer/composerMentions.ts"
+    },
+    "./composer/useComposerAttachments": {
+      "types": "./src/composer/useComposerAttachments.ts",
+      "import": "./src/composer/useComposerAttachments.ts"
+    },
+    "./composer/useComposerTransfers": {
+      "types": "./src/composer/useComposerTransfers.ts",
+      "import": "./src/composer/useComposerTransfers.ts"
     },
     "./composer": {
       "types": "./src/composer/index.ts",

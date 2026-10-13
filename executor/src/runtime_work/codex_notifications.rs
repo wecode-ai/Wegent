@@ -18,6 +18,7 @@ pub(crate) struct CodexNotification<'a> {
 pub(crate) fn codex_notification(message: &Value) -> CodexNotification<'_> {
     if let Some(method) = message.get("method").and_then(Value::as_str) {
         let params = message.get("params").unwrap_or(message);
+        debug_codex_item_notification(method, params);
         if matches!(method, "item/started" | "item/completed")
             && notification_item_type(params) == "subagentactivity"
         {
@@ -53,6 +54,22 @@ pub(crate) fn codex_notification(message: &Value) -> CodexNotification<'_> {
         .unwrap_or_default()
         .to_owned();
     CodexNotification { method, params }
+}
+
+fn debug_codex_item_notification(method: &str, params: &Value) {
+    if !runtime_work_debug_enabled() || !matches!(method, "item/started" | "item/completed") {
+        return;
+    }
+    let item = params.get("item").unwrap_or(params);
+    let fields = item
+        .as_object()
+        .map(|object| object.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    eprintln!(
+        "[runtime-work] Codex item lifecycle method={method} type={} status={} fields={fields:?}",
+        item_type(item),
+        super::util::string_field(item, "status").unwrap_or_default(),
+    );
 }
 
 pub(crate) fn debug_ignored_codex_notification(message: &Value, method: &str, params: &Value) {

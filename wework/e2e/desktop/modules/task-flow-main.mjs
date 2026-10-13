@@ -2037,6 +2037,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       if (shouldRunPluginSegment('core-dsh-plugin-management')) {
         phase = 'core-dsh-plugin-management'
         await verifyCoreDshPluginManagement({
+          appBinary,
+          appEnvironment: activeAppEnvironment,
           control,
           pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
           restartDesktopApp,
@@ -3626,6 +3628,18 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       }
       await verifyEnvironmentPanelScrollStability(control)
+      const previousWindowSize = JSON.parse(
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 1024, height: 720 }),
+        })
+      )
+      try {
+        await verifyEnvironmentPanelScrollStability(control, 'environment-panel-scroll-narrow')
+      } finally {
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify(previousWindowSize),
+        })
+      }
       if (shouldStopAfterDesktopCheckpoint('environment-panel-scroll')) {
         console.log(`Wework desktop environment-panel-scroll E2E passed. Evidence: ${resultDir}`)
         return
@@ -3739,6 +3753,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       await control.command('click', filePanelLinkSelector)
       await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      // The tab mounts before its lazy file panel; wait for the panel's path before asserting it.
+      await control.command('waitFor', '[data-testid="workspace-file-path"]', {
+        text: join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       assert.equal(

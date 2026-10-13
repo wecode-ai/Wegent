@@ -527,10 +527,12 @@ export class ComponentUpdateManager {
           ? { sha256, response: executor.workbenchSchema }
           : undefined
       ),
+      this.resolveCodexBinary(paths.codex),
     ])
-    const [composition, compatibility] = preparations
+    const [composition, compatibility, codex] = preparations
     if (composition.status === 'rejected') throw composition.reason
     if (compatibility.status === 'rejected') throw compatibility.reason
+    if (codex.status === 'rejected') throw codex.reason
     fingerprints.weworkCorePlugins = createHash('sha256')
       .update(fingerprints.weworkCorePlugins)
       .update('\0')
@@ -541,7 +543,7 @@ export class ComponentUpdateManager {
       weworkCorePlugins: composition.value,
       bundledPlugins: paths.bundledPlugins,
       executor: paths.executor,
-      codex: await this.resolveCodexBinary(paths.codex),
+      codex: codex.value,
       dws: paths.dws,
       contentSha256: fingerprints,
     }

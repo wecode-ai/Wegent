@@ -395,8 +395,7 @@ pub(crate) fn remove_restored_transcript(
     workspace_path: &Path,
     thread_id: &str,
 ) -> Result<bool, String> {
-    let restored_root = executor_home().join("restored-workspaces");
-    if workspace_path.parent() != Some(restored_root.as_path()) {
+    if !is_managed_restored_workspace(workspace_path) {
         return Ok(false);
     }
     let codex_home = wework_codex_home();
@@ -438,6 +437,11 @@ pub(crate) fn remove_restored_transcript(
     }
     cleanup(workspace_path);
     Ok(true)
+}
+
+pub(crate) fn is_managed_restored_workspace(workspace_path: &Path) -> bool {
+    let restored_root = executor_home().join("restored-workspaces");
+    workspace_path.parent() == Some(restored_root.as_path())
 }
 
 fn encryption_aad(transcript_id: &str, sequence: u64, format: &str) -> Vec<u8> {

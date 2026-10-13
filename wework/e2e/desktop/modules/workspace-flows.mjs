@@ -29,6 +29,15 @@ const SHARED_COLLABORATION_PLATFORM_TEST_ID = 'collaboration-platform-root'
 const LOCAL_COLLABORATION_WORKSPACE_ID = 'wework-local-workspace'
 export const COLLABORATION_SIDEBAR_SELECTOR = '[data-testid="collaboration-platform-sidebar"]'
 
+export async function selectProjectView(control, contentSelector, view) {
+  const compactSelector = `${contentSelector} [data-testid="collaboration-project-view-select"]`
+  if (Number(await control.command('getElementCount', compactSelector, { visible: true }))) {
+    await control.command('select', compactSelector, { value: view })
+  } else {
+    await control.command('click', `${contentSelector} [data-testid="collaboration-tab-${view}"]`)
+  }
+}
+
 export function inCollaborationSidebar(selector, contentSelector = '') {
   const sidebarSelector = `${COLLABORATION_SIDEBAR_SELECTOR} ${selector}`
   return contentSelector ? `${contentSelector} ${sidebarSelector}` : sidebarSelector
@@ -165,6 +174,10 @@ export async function initializeFirstProjectExecutionEnvironment(
     { timeoutMs }
   )
   await control.command(
+    'scrollIntoView',
+    `${contentSelector} [data-testid="collaboration-project-execution-environment-completion-status"]`
+  )
+  await control.command(
     'waitFor',
     `${contentSelector} [data-testid="collaboration-project-execution-environment-completion-status"]`,
     { text: '环境已初始化', timeoutMs }
@@ -252,10 +265,14 @@ export async function createLocalCollaborationProject(control, contentSelector, 
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-board"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await control.command(
+    'waitFor',
+    `${contentSelector} [data-testid="collaboration-tab-board"], ${contentSelector} [data-testid="collaboration-project-view-select"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
 }
 
 export async function completeLocalCollaborationFolderImport(control, projectName) {
@@ -688,7 +705,7 @@ async function verifyWorkspaceIssueCreation(control) {
     boardContentSelector,
     DEFAULT_STEP_TIMEOUT_MS
   )
-  await control.command('click', `${boardContentSelector} [data-testid="collaboration-tab-board"]`)
+  await selectProjectView(control, boardContentSelector, 'board')
 
   const createIssueSelector = `${boardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${boardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
@@ -1178,6 +1195,9 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  // The open action is revealed by card hover and may be outside a narrow board viewport.
+  await control.command('scrollIntoView', `${boardCardSelector} [data-testid="${openTaskTestId}"]`)
+  await control.command('hover', boardCardSelector)
   await control.command('waitFor', `[data-testid="${openTaskTestId}"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1359,10 +1379,7 @@ async function verifyExistingTaskBoardAssociation(
     activeBoardContentSelector,
     DEFAULT_STEP_TIMEOUT_MS
   )
-  await control.command(
-    'click',
-    `${activeBoardContentSelector} [data-testid="collaboration-tab-board"]`
-  )
+  await selectProjectView(control, activeBoardContentSelector, 'board')
   await control.command(
     'waitFor',
     `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`,

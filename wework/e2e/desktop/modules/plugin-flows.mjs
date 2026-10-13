@@ -1,4 +1,5 @@
 import { matchesBundledMarketplaceConfig } from './marketplace-config.mjs'
+import { packagedPluginResourceHashes } from './packaged-plugin-resource-integrity.mjs'
 
 import {
   assertMentionRenderedAsToken,
@@ -150,6 +151,8 @@ async function createCoreDshPluginFixture(root) {
 }
 
 async function verifyCoreDshPluginManagement({
+  appBinary,
+  appEnvironment,
   control,
   pluginRoot,
   restartDesktopApp,
@@ -185,6 +188,15 @@ async function verifyCoreDshPluginManagement({
     })
   }
   const manifest = async () => JSON.parse(await readFile(manifestPath, 'utf8'))
+  const packagedHashes = await packagedPluginResourceHashes(appBinary, appEnvironment)
+  const assertPackagedResourcesUnchanged = async operation => {
+    const hashes = await packagedPluginResourceHashes(appBinary, appEnvironment)
+    await writeFile(
+      join(userDataDirectory, `core-plugin-${operation}-resources.json`),
+      `${JSON.stringify({ before: packagedHashes, after: hashes }, null, 2)}\n`
+    )
+    assert.deepEqual(hashes, packagedHashes, `Core plugin ${operation} changed packaged resources`)
+  }
 
   await openManager()
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
@@ -207,6 +219,7 @@ async function verifyCoreDshPluginManagement({
   })
   assert.equal((await manifest()).dependencies['dsh-core-e2e-plugin'] !== undefined, true)
   assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), true)
+  await assertPackagedResourcesUnchanged('install')
 
   await control.command('click', '[data-testid="core-dsh-plugin-toggle-dsh-core-e2e-plugin"]')
   await waitForSnapshot(
@@ -251,6 +264,7 @@ async function verifyCoreDshPluginManagement({
   )
   assert.equal((await manifest()).dependencies['dsh-core-e2e-plugin'], undefined)
   assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
+  await assertPackagedResourcesUnchanged('uninstall')
 
   await restartDesktopApp()
   await openManager()

@@ -1450,6 +1450,7 @@ export function createDesktopScenario({
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
     appEnvironment: {
       WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
+      WEGENT_RUNTIME_WORK_DEBUG: '1',
     },
 
     async handleHttp(request, response, url) {

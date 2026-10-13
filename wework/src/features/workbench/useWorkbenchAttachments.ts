@@ -1,7 +1,7 @@
 import {
   useComposerAttachments,
   type ComposerAttachmentsOptions,
-} from '@wegent/collaboration/composer'
+} from '@wegent/collaboration/composer/useComposerAttachments'
 import { uploadAttachment, deleteAttachment } from '@/api/attachments'
 import { track } from '@/telemetry/client'
 const onAction = (action: 'upload' | 'delete' | 'failed') => {

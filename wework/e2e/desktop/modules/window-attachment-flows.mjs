@@ -470,6 +470,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     })
     await control.command('click', '[data-testid="runtime-task-close-confirm-button"]')
     await waitForLogPattern(desktopWindowLogPath(app.pid), /windowWillClose:/)
+    await waitForWindowVisibility(control, { mainVisible: false })
     assert.equal(processIsAlive(app.pid), true, 'Closing to tray terminated the Wework process')
     assert.equal(
       processIsAlive(executorProcessId),
@@ -487,30 +488,23 @@ async function verifyBackgroundTaskWindowLifecycle({
       assertionIds: backgroundAssertionIds,
     })
 
-    await reactivateMacApplication(appIdentifier, appBundlePath)
-    await withTimeout(
-      control.awaitReadyAfter(readyCountBeforeClose),
-      WORKBENCH_READY_TIMEOUT_MS,
-      'The reopened Wework WebView did not reconnect to the desktop controller'
+    // Isolated Electron ignores external activation until an explicit host restore.
+    await control.command('restoreMainWindow', 'body')
+    await waitForWindowVisibility(control, { mainVisible: true })
+    assert.equal(
+      control.readyCount,
+      readyCountBeforeClose,
+      'Reopening from the tray recreated the preserved WebView'
     )
-    assert.notEqual(
+    assert.equal(
       control.ready?.clientId,
       controlClientIdBeforeClose,
-      'The reopened WebView reused the closed control client identity'
+      'Reopening from the tray replaced the preserved control client identity'
     )
-    const reopenedTaskWait = control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+    await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    const staleClientPoll = await fetch(
-      `${control.controlUrl}/commands?clientId=${encodeURIComponent(controlClientIdBeforeClose)}`
-    )
-    assert.equal(
-      staleClientPoll.status,
-      204,
-      'A closed WebView control client was able to steal a replacement WebView command'
-    )
-    await reopenedTaskWait
     const readyEvidenceAfterReopen = await waitForExecutorRuntimeEvidence(control, executorLogPath)
     assert.deepEqual(
       readyEvidenceAfterReopen.processIds,
@@ -756,6 +750,9 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
 
   setPhase('turn-navigation-virtualized-anchor')
+  await control.command('setLocalStorageItem', 'body', {
+    value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
+  })
   control.setScenario('turn_navigation')
   for (let index = 0; index < TURN_NAVIGATION_REGRESSION_TURN_COUNT; index += 1) {
     const turnNumber = index + 1
@@ -1439,12 +1436,31 @@ async function verifyAttachmentOnlySidebarLifecycle({
     })
     await reactivateMacApplication(appIdentifier, appBundlePath)
     const readyCountBeforeReload = control.readyCount
+    const clientIdBeforeReload = control.ready?.clientId
+    assert.ok(clientIdBeforeReload, 'The WebView did not register before reload')
     await control.command('reloadMainWindow', 'body')
     await withTimeout(
       control.awaitReadyAfter(readyCountBeforeReload),
       WORKBENCH_READY_TIMEOUT_MS,
       'The reloaded Wework WebView did not reconnect during attachment-only verification'
     )
+    assert.notEqual(
+      control.ready?.clientId,
+      clientIdBeforeReload,
+      'Reloading the WebView reused the previous document control client'
+    )
+    const currentClientWait = control.command('waitFor', `[data-testid="${firstTaskRow}"]`, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    const staleClientPoll = await fetch(
+      `${control.controlUrl}/commands?clientId=${encodeURIComponent(clientIdBeforeReload)}`
+    )
+    assert.equal(
+      staleClientPoll.status,
+      204,
+      'A reloaded WebView control client stole a replacement document command'
+    )
+    await currentClientWait
     await control.command('restoreMainWindow', 'body')
   } else {
     await control.command('navigate', '/')

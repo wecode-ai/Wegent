@@ -417,10 +417,12 @@ app.on('web-contents-created', (_event, contents) => {
       isMainFrame,
     })
   })
-  contents.on('console-message', (_event, _level, message) => {
-    void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
-      console.warn('[Wework] Failed to write runtime diagnostics', error)
-    })
+  contents.on('console-message', details => {
+    void runtimeDiagnosticsLog
+      .record(contents.id, details.message, details.sourceId)
+      .catch(error => {
+        console.warn('[Wework] Failed to write runtime diagnostics', error)
+      })
   })
 })
 const executorHome =
@@ -759,6 +761,10 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
         return {
           modules: resources.length,
           bytes: resources.reduce((total, entry) => total + entry.decodedBodySize, 0),
+          assets: resources.map(entry => ({
+            path: new URL(entry.name).pathname,
+            bytes: entry.decodedBodySize,
+          })),
           slowest: resources.sort((left, right) => right.duration - left.duration)
             .slice(0, 5).map(entry => ({
               path: new URL(entry.name).pathname,

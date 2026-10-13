@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react'
-import { SelectionActionsPopover as SharedSelectionActionsPopover } from '@wegent/collaboration/conversation'
+import { SelectionActionsPopover as SharedSelectionActionsPopover } from '@wegent/collaboration/conversation/SelectionActionsPopover'
 import { DesktopConversationTranslation } from './DesktopConversationTranslation'
 
 export function SelectionActionsPopover(
@@ -12,4 +12,4 @@ export function SelectionActionsPopover(
   )
 }
 
-export type { SelectionActionsPosition } from '@wegent/collaboration/conversation'
+export type { SelectionActionsPosition } from '@wegent/collaboration/conversation/SelectionActionsPopover'

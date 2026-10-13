@@ -209,9 +209,19 @@ async function waitForHttp(
       if (signal.aborted) break
       lastError = error
     }
-    await abortableDelay(LOCAL_READINESS_RETRY_INTERVAL_MS, signal)
+    try {
+      await abortableDelay(LOCAL_READINESS_RETRY_INTERVAL_MS, signal)
+    } catch (error) {
+      if (!signal.aborted) throw error
+    }
   }
-  if (signal.reason instanceof Error) throw signal.reason
+  if (signal.reason instanceof Error) {
+    throw new Error(signal.reason.message, {
+      cause: new Error(`DSH endpoint readiness failed: ${new URL(url).pathname}`, {
+        cause: lastError,
+      }),
+    })
+  }
   throw new Error(`DSH did not become reachable at ${url}`, {
     cause: signal.reason ?? lastError,
   })

@@ -1294,7 +1294,10 @@ async function visibleModelOptionId(control, targetOptionIds, providerId) {
       `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
     ]
     for (const targetSelector of targetSelectors) {
-      await control.command('scrollIntoView', targetSelector).catch(() => undefined)
+      // Both picker views stay mounted; scrolling a hidden option scrolls the clipped menu itself.
+      await control
+        .command('scrollIntoView', targetSelector, { visible: true })
+        .catch(() => undefined)
       const visibleCount = await control
         .command('getElementCount', targetSelector, { visible: true })
         .then(value => Number(value))
@@ -1408,8 +1411,21 @@ async function ensureModelOptionVisible(
     }
   }
 
+  const diagnostics = []
+  for (const selector of [
+    '[data-testid="model-selector-menu"]',
+    '[data-testid="model-advanced-toggle"]',
+    ...targetOptionIds.map(
+      testId => `[data-testid="${testId}"]${modelProviderSelector(expectedProviderId)}`
+    ),
+  ]) {
+    diagnostics.push({
+      selector,
+      metrics: await control.command('getElementMetrics', selector).catch(error => String(error)),
+    })
+  }
   throw new Error(
-    `Model options ${targetOptionIds.join(', ')} did not become visible${expectedProviderId ? ` for provider ${expectedProviderId}` : ''}`
+    `Model options ${targetOptionIds.join(', ')} did not become visible${expectedProviderId ? ` for provider ${expectedProviderId}` : ''}; diagnostics=${JSON.stringify(diagnostics)}`
   )
 }
 

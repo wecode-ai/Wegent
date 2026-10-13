@@ -25,7 +25,7 @@ The main window loads its own initial dependencies. Load the popout page on
 demand and import service functions, translators, and small components through
 specific collaboration package modules so optional collaboration pages stay
 out of the initial bundle. Component composition and read-only Executor
-compatibility verification run concurrently, but both must complete before
+compatibility verification and Codex file validation run concurrently, but all must complete before
 startup paths are returned. Node and CLI preparation also overlap component
 preparation. Home migration still runs after compatibility verification.
 
@@ -52,6 +52,16 @@ because their serialization differs from JSON double-quoted strings. Minimal Lin
 include standalone Socket.IO and TOML parser bundles so test containers do not
 require a local `node_modules` directory.
 
+Closing to the tray retains the main WebView and its control client. Only a real
+reload should create a new client and reject responses from the previous client.
+After a file tab appears, tests wait for the lazy file panel to display its path
+before verifying encoded link resolution. Model tests scroll only rendered
+lists: scrolling the hidden advanced list can move its entry button off screen.
+Environment summary scroll verification covers both wide docked and narrow
+floating layouts, preserving position and the corresponding viewport assertions.
+DSH readiness timeouts retain the failed endpoint path and last HTTP error
+without printing authentication query parameters.
+
 Explicitly disallow automatic downgrades after selecting the stable or beta
 Electron update channel, preventing older releases from downloading and showing
 restart prompts in the running app. Drawer animation E2E sets
@@ -62,3 +72,5 @@ The memory E2E compares the same task and terminal interface before and after
 rendering. Markdown prerenders at most one actual scroll viewport while retaining
 indivisible long code blocks and synchronous rendering during rapid scrolling.
 Do not increase budgets, skip assertions, or rerun failures to hide defects.
+
+Windows Git workspace clones explicitly enable `core.longpaths`; native Windows CI covers real repositories beyond the legacy path limit. Runtime work indexes still use atomic replacement, with bounded waiting only for Windows sharing conflicts. Permanent persistence failures propagate to transcript restore and acknowledgement callers. New restore state is published and the previous conversation directory is cleaned only after the index is durable.

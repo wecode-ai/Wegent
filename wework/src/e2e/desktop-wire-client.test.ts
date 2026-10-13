@@ -19,6 +19,8 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
     await cp(join(weworkDir, 'e2e/desktop'), join(directory, 'wework/e2e/desktop'), {
       recursive: true,
     })
+    const marketplaceSource = String.raw`D:\Wework\bundled-marketplaces\wework-personal`
+    const marketplaceConfig = `[marketplaces.wework-personal]\nsource_type = "local"\nsource = '${marketplaceSource}'`
     const { stdout } = await execute(
       process.execPath,
       [
@@ -31,11 +33,14 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
           import { createRequire } from 'node:module'
           import { main } from './wework/e2e/desktop/modules/task-flow-main.mjs'
           import { verifyTerminalWireCompatibility } from './wework/e2e/desktop/modules/terminal-compatibility-flows.mjs'
+          import { matchesBundledMarketplaceConfig } from './wework/e2e/desktop/modules/marketplace-config.mjs'
 
           const require = createRequire(import.meta.url)
           assert.throws(() => require.resolve('socket.io-client'), { code: 'MODULE_NOT_FOUND' })
+          assert.throws(() => require.resolve('smol-toml'), { code: 'MODULE_NOT_FOUND' })
           assert.equal(typeof main, 'function')
           assert.equal(typeof verifyTerminalWireCompatibility, 'function')
+          assert.equal(matchesBundledMarketplaceConfig(${JSON.stringify(marketplaceConfig)}, ${JSON.stringify(marketplaceSource)}), true)
           const { io } = require(process.env.WEWORK_E2E_SOCKET_IO_CLIENT)
           process.env.WEWORK_E2E_SOCKET_IO_CLIENT += '.missing'
           await assert.rejects(verifyTerminalWireCompatibility({}, {}), { code: 'MODULE_NOT_FOUND' })
@@ -66,6 +71,7 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
           ...process.env,
           NODE_PATH: '',
           WEWORK_E2E_SOCKET_IO_CLIENT: join(bundleDir, 'socket.io-client.cjs'),
+          WEWORK_E2E_TOML_PARSER: join(bundleDir, 'smol-toml.cjs'),
         },
       }
     )
