@@ -1093,10 +1093,13 @@ class RealCloudEnvironment {
       codexHome,
       logFile: `duplicate-app-executor-${process.pid}-runtime.log`,
     })
+    assert.ok(appDevice.app_device_id, 'The real App registration must expose its IPC address')
+    env.WEGENT_APP_IPC_DEVICE_ID = appDevice.app_device_id
     const executor = spawn(this.executorBinary, [], {
       cwd: weworkDir,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // App mode owns a real IPC stdio connection and exits when its input closes.
+      stdio: ['pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     })
     this.generatedRemoteExecutors.push(executor)
@@ -1126,6 +1129,8 @@ class RealCloudEnvironment {
       2,
       'The real app Executors did not receive independent record-scoped routes'
     )
+    assert.equal(new Set(matching.map(device => device.runtime_instance_id)).size, 2)
+    assert.ok(matching.every(device => device.app_device_id === appDevice.app_device_id))
     return appDevice
   }
 
