@@ -1,5 +1,5 @@
 import './host/process-output-bootstrap.js'
-import { logStartupStep } from './host/startup-step.js'
+import { logStartupStep, runSynchronousStartupStep } from './host/startup-step.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 import { installDshBrowserSession } from './host/dsh-browser-session.js'
@@ -173,14 +173,28 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
 } & BrandRuntimeMetadata
 logStartupStep('package-metadata-read', 'completed')
 logStartupStep('environment-isolation', 'started')
-if (packageMetadata.weworkProductName?.trim()) app.setName(packageMetadata.weworkProductName.trim())
-const packagedApplication = isEffectivePackagedApplication(app.isPackaged, process.env)
-isolateDevelopmentEnvironment(process.env, {
-  packaged: packagedApplication,
-  packageRoot,
-  appData: app.getPath('appData'),
-  homeDirectory: process.env.HOME?.trim() || app.getPath('home'),
+runSynchronousStartupStep('application-name-set', () => {
+  if (packageMetadata.weworkProductName?.trim())
+    app.setName(packageMetadata.weworkProductName.trim())
 })
+const packagedApplication = runSynchronousStartupStep('application-packaging-mode-read', () =>
+  isEffectivePackagedApplication(app.isPackaged, process.env)
+)
+runSynchronousStartupStep('development-environment-isolate', () =>
+  isolateDevelopmentEnvironment(process.env, {
+    packaged: packagedApplication,
+    packageRoot,
+    get appData() {
+      return runSynchronousStartupStep('development-app-data-read', () => app.getPath('appData'))
+    },
+    get homeDirectory() {
+      return (
+        process.env.HOME?.trim() ||
+        runSynchronousStartupStep('development-home-read', () => app.getPath('home'))
+      )
+    },
+  })
+)
 logStartupStep('environment-isolation', 'completed')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-preload.cjs')

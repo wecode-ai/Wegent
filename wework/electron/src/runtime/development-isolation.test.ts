@@ -25,6 +25,60 @@ describe('development data isolation', () => {
     }
   }
 
+  test.each([
+    [true, {}],
+    [false, { VITE_WEWORK_E2E: 'true', WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1' }],
+    [false, { WEWORK_INSTANCE_MODE: 'core-dsh-plugin-development' }],
+  ])(
+    'does not resolve native paths for an independently managed instance (%#)',
+    (packaged, seed) => {
+      const environment: NodeJS.ProcessEnv = { ...seed }
+      isolateDevelopmentEnvironment(environment, {
+        packaged,
+        packageRoot: options().packageRoot,
+        get appData(): string {
+          throw new Error('Native appData is unavailable')
+        },
+        get homeDirectory(): string {
+          throw new Error('Native home is unavailable')
+        },
+      })
+      expect(environment).toEqual(seed)
+    }
+  )
+
+  test('resolves each development path once and preserves lookup failures', () => {
+    const reads: string[] = []
+    const environment: NodeJS.ProcessEnv = {}
+    isolateDevelopmentEnvironment(environment, {
+      ...options(),
+      get appData() {
+        reads.push('appData')
+        return options().appData
+      },
+      get homeDirectory() {
+        reads.push('home')
+        return options().homeDirectory
+      },
+    })
+    expect(reads).toEqual(['appData', 'home'])
+    expect(environment.WEGENT_WORKBENCH_HOME).toBe(
+      join(options().homeDirectory, '.wegent', 'development', 'workbench')
+    )
+    const failure = new Error('Native appData is unavailable')
+    expect(() =>
+      isolateDevelopmentEnvironment(
+        {},
+        {
+          ...options(),
+          get appData(): string {
+            throw failure
+          },
+        }
+      )
+    ).toThrow(failure)
+  })
+
   test('overrides inherited release paths and clears parent execution identity', () => {
     const release = join(fixture, 'release')
     const environment: NodeJS.ProcessEnv = {

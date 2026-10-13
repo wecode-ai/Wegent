@@ -15,3 +15,16 @@ export function logStartupStep(
     ...details,
   })
 }
+import { startupExceptionKind } from './startup-exception-monitor.js'
+
+export function runSynchronousStartupStep<Result>(step: string, operation: () => Result): Result {
+  logStartupStep(step, 'started')
+  try {
+    const result = operation()
+    logStartupStep(step, 'completed')
+    return result
+  } catch (error) {
+    logStartupStep(step, 'failed', { errorKind: startupExceptionKind(error) })
+    throw error
+  }
+}

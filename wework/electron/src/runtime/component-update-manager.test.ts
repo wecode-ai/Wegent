@@ -349,6 +349,115 @@ describe('ComponentUpdateManager', () => {
     expect(await readFile((await restarted.prepareStartup()).executor, 'utf8')).toBe('executor-v2')
   })
 
+  test('reports the blocked download phase without publishing an incomplete stage', async () => {
+    const fixture = await createFixture()
+    const update = await createExecutorUpdate(fixture.root, 'phase-update')
+    const events: Record<string, unknown>[] = []
+    let releaseHeaders!: () => void
+    const headers = new Promise<void>(resolve => {
+      releaseHeaders = resolve
+    })
+    let body!: ReadableStreamDefaultController<Uint8Array>
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        body = controller
+      },
+    })
+    const fetch = componentFetch(update.manifest, update.assetName, update.archive)
+    const manager = new ComponentUpdateManager({
+      resourcesRoot: fixture.resources,
+      dataDirectory: fixture.data,
+      updateBaseUrl,
+      currentAppVersion: appVersion,
+      platform: 'darwin',
+      arch: 'arm64',
+      log: event => events.push(event),
+      fetch: async (...args) => {
+        if (String(args[0]).endsWith(update.assetName)) {
+          await headers
+          return new Response(stream)
+        }
+        return fetch(...args)
+      },
+    })
+    const steps = () =>
+      events.filter(event => event.event === 'component-stage-step' && event.id === 'executor')
+    let finished = false
+    const stage = manager.stageAvailableUpdate().then(value => {
+      finished = true
+      return value
+    })
+    try {
+      await vi.waitFor(() =>
+        expect(steps().at(-1)).toMatchObject({ step: 'download-headers', status: 'started' })
+      )
+      expect(finished).toBe(false)
+      releaseHeaders()
+      await vi.waitFor(() =>
+        expect(steps().at(-1)).toMatchObject({ step: 'download-body', status: 'started' })
+      )
+      expect(finished).toBe(false)
+      await expect(
+        readFile(join(fixture.data, 'managed-components', 'state.json'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      releaseHeaders()
+      body.enqueue(update.archive)
+      body.close()
+      await stage
+    }
+    expect(await stage).toBe(true)
+    expect(
+      steps()
+        .filter(event => event.status === 'completed')
+        .map(event => event.step)
+    ).toEqual([
+      'download-headers',
+      'download-body',
+      'archive-verification',
+      'archive-extraction',
+      'content-verification',
+      'publish',
+    ])
+    for (const event of steps().filter(event => event.status === 'completed')) {
+      expect(event.durationMs).toBeGreaterThanOrEqual(0)
+    }
+    expect(JSON.stringify(events)).not.toContain(updateBaseUrl)
+  })
+
+  test('reports the failed verification phase and preserves its original rejection', async () => {
+    const fixture = await createFixture()
+    const update = await createExecutorUpdate(fixture.root, 'phase-bad-checksum')
+    update.manifest.components.executor.contentSha256 = '0'.repeat(64)
+    const events: Record<string, unknown>[] = []
+    const manager = new ComponentUpdateManager({
+      resourcesRoot: fixture.resources,
+      dataDirectory: fixture.data,
+      updateBaseUrl,
+      currentAppVersion: appVersion,
+      platform: 'darwin',
+      arch: 'arm64',
+      fetch: componentFetch(update.manifest, update.assetName, update.archive),
+      log: event => events.push(event),
+    })
+    await expect(manager.stageAvailableUpdate()).rejects.toThrow(
+      'Extracted component checksum mismatch: executor'
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'component-stage-step',
+        id: 'executor',
+        step: 'content-verification',
+        status: 'failed',
+      })
+    )
+    expect(events.some(event => event.step === 'publish')).toBe(false)
+    expect(JSON.stringify(events)).not.toContain('Extracted component checksum mismatch')
+    await expect(
+      readFile(join(fixture.data, 'managed-components', 'state.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   test('downloads an update while an unchanged Core snapshot is still preparing', async () => {
     const fixture = await createFixture()
     const update = await createExecutorUpdate(fixture.root, 'executor-overlap')

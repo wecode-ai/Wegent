@@ -352,10 +352,12 @@ export class ComponentUpdateManager {
             const effectiveComponent = effective?.[id]
             const reusesCurrent = reusesCurrentContent(id)
             if (reusesCurrent && !effectiveComponent) {
-              stagedComponents[id] = await cachePackagedComponent(
-                this.componentRoot(id, ''),
-                component.version,
-                reusablePaths[id]
+              stagedComponents[id] = await this.componentStageStep(id, 'packaged-snapshot', () =>
+                cachePackagedComponent(
+                  this.componentRoot(id, ''),
+                  component.version,
+                  reusablePaths[id]
+                )
               )
               this.log({ event: 'component-reused', id, reason: 'packaged-snapshot' })
               return
@@ -762,44 +764,93 @@ export class ComponentUpdateManager {
     await rm(archive, { force: true })
     await rm(temporary, { recursive: true, force: true })
     try {
-      const response = await this.fetch(component.downloadUrl, { cache: 'no-store', signal })
-      if (!response.ok || !response.body) {
-        throw new ComponentDownloadHttpError(id, response.status)
-      }
-      await pipeline(
-        Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
-        new Transform({
-          transform(chunk: Buffer, _encoding, callback) {
-            onBytes(chunk.length)
-            callback(null, chunk)
-          },
-        }),
-        createWriteStream(archive, { mode: 0o600 }),
-        { signal }
+      const response = await this.componentStageStep(id, 'download-headers', async () => {
+        const fetched = await this.fetch(component.downloadUrl, { cache: 'no-store', signal })
+        if (!fetched.ok || !fetched.body) {
+          throw new ComponentDownloadHttpError(id, fetched.status)
+        }
+        return fetched
+      })
+      await this.componentStageStep(id, 'download-body', () =>
+        pipeline(
+          Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
+          new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+              onBytes(chunk.length)
+              callback(null, chunk)
+            },
+          }),
+          createWriteStream(archive, { mode: 0o600 }),
+          { signal }
+        )
       )
-      const archiveMetadata = await stat(archive)
-      if (archiveMetadata.size !== component.archiveBytes) {
-        throw new Error(`Component archive size mismatch: ${id}`)
-      }
-      if ((await sha256(archive)) !== component.archiveSha256) {
-        throw new Error(`Component archive checksum mismatch: ${id}`)
-      }
-      await mkdir(temporary, { recursive: true, mode: 0o700 })
-      const { x } = await import('tar')
-      await x({ cwd: temporary, file: archive, gzip: true, strict: true })
-      if (
-        !(await componentMatches(
-          component.entryPath === '.' ? temporary : join(temporary, component.entryPath),
-          component.contentSha256
-        ))
-      ) {
-        throw new Error(`Extracted component checksum mismatch: ${id}`)
-      }
-      await rm(target, { recursive: true, force: true })
-      await rename(temporary, target)
+      await this.componentStageStep(id, 'archive-verification', async () => {
+        const archiveMetadata = await stat(archive)
+        if (archiveMetadata.size !== component.archiveBytes) {
+          throw new Error(`Component archive size mismatch: ${id}`)
+        }
+        if ((await sha256(archive)) !== component.archiveSha256) {
+          throw new Error(`Component archive checksum mismatch: ${id}`)
+        }
+      })
+      await this.componentStageStep(id, 'archive-extraction', async () => {
+        await mkdir(temporary, { recursive: true, mode: 0o700 })
+        const { x } = await import('tar')
+        await x({ cwd: temporary, file: archive, gzip: true, strict: true })
+      })
+      await this.componentStageStep(id, 'content-verification', async () => {
+        if (
+          !(await componentMatches(
+            component.entryPath === '.' ? temporary : join(temporary, component.entryPath),
+            component.contentSha256
+          ))
+        ) {
+          throw new Error(`Extracted component checksum mismatch: ${id}`)
+        }
+      })
+      await this.componentStageStep(id, 'publish', async () => {
+        await rm(target, { recursive: true, force: true })
+        await rename(temporary, target)
+      })
     } finally {
       await rm(archive, { force: true })
       await rm(temporary, { recursive: true, force: true })
+    }
+  }
+
+  private async componentStageStep<T>(
+    id: ManagedComponentId,
+    step:
+      | 'packaged-snapshot'
+      | 'download-headers'
+      | 'download-body'
+      | 'archive-verification'
+      | 'archive-extraction'
+      | 'content-verification'
+      | 'publish',
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const started = performance.now()
+    this.log({ event: 'component-stage-step', id, step, status: 'started' })
+    try {
+      const result = await operation()
+      this.log({
+        event: 'component-stage-step',
+        id,
+        step,
+        status: 'completed',
+        durationMs: performance.now() - started,
+      })
+      return result
+    } catch (error) {
+      this.log({
+        event: 'component-stage-step',
+        id,
+        step,
+        status: 'failed',
+        durationMs: performance.now() - started,
+      })
+      throw error
     }
   }
 

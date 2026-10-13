@@ -180,8 +180,20 @@ Windows 偏好状态等待与 Core JS 加载重叠，缺少 host 请求到达和
 
 component-update 的首个 Core 进程报告固定 `core_profile_summarize_failed`，清理脚本误报为时钟缺失；该进程原始 profile 已按隐私规则删除，具体无效输入尚无证据。诊断传播保留摘要生成阶段与固定验证原因，未知原因和真正时钟缺失继续硬失败，不修改采样或有效性门槛。最早的输出 bootstrap 仅在 CPU 诊断开启时记录固定阶段，复用已有启动计时器；此标记用于区分早期依赖执行区间，不代表启动性能已修复。
 
-本轮 Windows 原生兼容步骤使用与原失败相同的 Git `2.55.0.windows.5`，四项长路径测试全部通过，无失败或忽略：原文件生命周期、251/256/261 元数据几何、linked-source 与相对指针及 HEAD/common-dir 隔离、无效元数据拒绝。真实桌面第 9 组仍需独立核对。
+本轮 Windows 原生兼容步骤使用与原失败相同的 Git `2.55.0.windows.5`，四项长路径测试全部通过，无失败或忽略：原文件生命周期、251/256/261 元数据几何、linked-source 与相对指针及 HEAD/common-dir 隔离、无效元数据拒绝。真实桌面第 9 组随后通过，详见下一节。
 
 `host-renderer-storage-initialize` 复用偏好读取的宿主响应计时，只在 CPU 诊断开启时记录；`readDurationMs` 包含存储队列等待、读取或首次种子写入，`durationMs` 截止响应实际写完，均不能直接视为纯 I/O。共享计时避免复制处理路径，原结果、串行化和异常传播不变，58 项能力测试通过。
 
 归档库不再由三个运行时模块提前导入，仅在实际归档读取或解包时加载。目录链接、已验证缓存、下载大小与哈希校验和原解包操作保持原顺序，51 项运行时与更新测试通过。这项删除不证明任何平台已达到启动预算。
+
+### `4ad7e26f2` Windows 桌面结果与后续定位
+
+[Windows 第 9 组](https://github.com/wecode-ai/Wegent/actions/runs/38443244153/job/115471069197) 原 collaboration-worktree-policy 及全部七项通过；第 10 组七项和第 13 组三项均通过。Windows 全部十九组已结束，实际失败仅第 14、16、19 组；Linux 全部 Core 组通过。
+
+[Windows 第 19 组](https://github.com/wecode-ai/Wegent/actions/runs/38443244153/job/115471068936) 严格冷启动为 8810 毫秒，仍未达标。配置阶段 1786 毫秒，Core 至端点就绪 3793 毫秒，页面加载 1216 毫秒，加载完成至界面就绪 1622 毫秒。schema 查询 1086 毫秒、CLI 安装 858 毫秒和插件 composition 923 毫秒彼此并行，不能相加；原独立校验保留。CPU 摘要完整、缺失为零、Prune 通过。
+
+[第 14 组](https://github.com/wecode-ai/Wegent/actions/runs/38443244153/job/115471069089) component-update 未完成暂存，日志在需要下载约 25.19MB 归档后没有完成事件；同组原生窗口、存储恢复与外部导入通过。现有下载和未变更组件快照已经并行，无法从旧制品区分传输、解包和校验卡点。固定组件 ID 和阶段计时覆盖响应头、传输、归档校验、解包、内容校验、发布和快照，不记录 URL 或异常消息，36 项聚焦测试通过，原 E2E 预算、错误传播和成功条件保持不变；此诊断尚不是行为修复。
+
+[第 16 组](https://github.com/wecode-ai/Wegent/actions/runs/38443244153/job/115471069209) workbench-mode 仍在连接前失败；其他五项通过。主模块进入为 231 毫秒，包元数据读取完成 232 毫秒，环境隔离随后开始，未记录完成或实例锁。主入口提前读取原生 appData 路径，而独立受控、打包和插件开发实例随后跳过隔离，不使用该值；现删除其提前读取，仅在实际开发隔离需要时读取一次。此删除不证明旧故障就是该调用造成。
+
+[官方 Electron ESM 入口](https://github.com/electron/electron/blob/v44.7.0/lib/browser/init.ts#L176-L183) 直接发出 `uncaughtException`，不会触发 Node 的 `uncaughtExceptionMonitor`，因此原进程存活且 Monitor 没有输出不能排除入口抛错。同步阶段记录固定异常类别后原样抛出，不增加普通异常监听器或改变默认 GUI 处理。隔离与启动相关 29 项测试、类型和 lint 通过；仍需下一轮 Windows 原场景验证。
