@@ -18,6 +18,7 @@ mod model_key;
 mod protocol;
 mod registry;
 
+pub(crate) use model_key::ModelKeyExchanger;
 pub(crate) use protocol::{
     DecisionModel, DecisionProxyErrorBody, DecisionProxyErrorPayload, DecisionRequest,
     DecisionStatusResponse, DECISION_PROXY_PROTOCOL_VERSION,
@@ -255,10 +256,13 @@ pub(crate) struct DecisionProxyState {
 }
 
 impl DecisionProxyState {
-    pub(crate) fn new(config: Arc<DecisionProxyConfig>) -> Self {
+    /// The exchanger is passed in because the traded key must stay cached for
+    /// the whole process: a state rebuilt per request would trade the login
+    /// token again on every decision request.
+    pub(crate) fn new(config: Arc<DecisionProxyConfig>, model_key: Arc<ModelKeyExchanger>) -> Self {
         Self {
             config,
-            model_key: Arc::new(model_key::ModelKeyExchanger::new()),
+            model_key,
             timeout: UPSTREAM_TIMEOUT,
         }
     }
@@ -266,7 +270,10 @@ impl DecisionProxyState {
 
 impl<R> FromRef<AppState<R>> for DecisionProxyState {
     fn from_ref(state: &AppState<R>) -> Self {
-        Self::new(Arc::clone(&state.decision_proxy))
+        Self::new(
+            Arc::clone(&state.decision_proxy),
+            Arc::clone(&state.decision_model_key),
+        )
     }
 }
 
@@ -859,6 +866,34 @@ mod tests {
         assert!(!safe.contains("secret"));
         assert!(!safe.contains("x=1"));
     }
+
+    #[derive(Clone)]
+    struct NoopRunner;
+
+    impl crate::server::TaskRunner for NoopRunner {
+        type SubmitFuture = std::future::Ready<crate::server::RunnerResult>;
+
+        fn submit(&self, _request: crate::protocol::ExecutionRequest) -> Self::SubmitFuture {
+            std::future::ready(crate::server::RunnerResult {
+                status: crate::protocol::TaskStatus::Failed,
+                message: Some("noop runner".to_owned()),
+            })
+        }
+    }
+
+    /// The served router extracts `DecisionProxyState` from `AppState` for every
+    /// request. Building a fresh exchanger there would trade the login token on
+    /// every decision request instead of reusing the cached credential.
+    #[tokio::test]
+    async fn every_request_shares_one_model_key_cache() {
+        let state = crate::server::AppState::new(NoopRunner);
+        let first: DecisionProxyState = FromRef::from_ref(&state);
+        let second: DecisionProxyState = FromRef::from_ref(&state);
+        assert!(
+            Arc::ptr_eq(&first.model_key, &second.model_key),
+            "each request must reuse the process-wide model key cache"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1114,7 +1149,10 @@ mod http_tests {
     }
 
     fn app(config: DecisionProxyConfig, timeout: Duration) -> Router {
-        let mut state = DecisionProxyState::new(Arc::new(config));
+        let mut state = DecisionProxyState::new(
+            Arc::new(config),
+            Arc::new(model_key::ModelKeyExchanger::new()),
+        );
         state.timeout = timeout;
         routes::<DecisionProxyState>().with_state(state)
     }

@@ -10,6 +10,7 @@
 //! in memory only: the key is never written to disk, to a log line, or to a
 //! Smart App response.
 
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -44,6 +45,16 @@ pub(crate) struct ModelKeyExchanger {
     cached: Mutex<Option<CachedModelKey>>,
     key_ttl: Duration,
     timeout: Duration,
+}
+
+/// Renders without the cached key: this type is reachable from `AppState`,
+/// which derives `Debug`, and a credential must never reach a log line.
+impl fmt::Debug for ModelKeyExchanger {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModelKeyExchanger")
+            .finish_non_exhaustive()
+    }
 }
 
 impl ModelKeyExchanger {
