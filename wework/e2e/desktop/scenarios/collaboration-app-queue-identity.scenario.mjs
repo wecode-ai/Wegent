@@ -127,7 +127,7 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
       } while (Date.now() < deadline)
       assert.equal(executions.items.length, 1, 'One assignment created multiple executions')
       assert.equal(executions.items[0].status, 'completed', JSON.stringify(executions.items))
-      assert.equal(executions.items[0].runtime_device_id, app.execution_target_id)
+      assert.equal(executions.items[0].runtimeDeviceId, app.execution_target_id)
       assert.equal(modelRequests.length, 1, 'The duplicate App also executed the assigned Issue')
     },
     diagnostics() {
