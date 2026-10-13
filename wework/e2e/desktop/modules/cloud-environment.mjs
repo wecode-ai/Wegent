@@ -859,6 +859,28 @@ class RealCloudEnvironment {
     )
 
     const configured = await this.device(CLOUD_DEVICE_ID)
+    if (configured?.cloud_config?.sandboxId !== MANAGED_CLOUD_SANDBOX_ID) {
+      const identityRows = await this.queryDatabase(
+        `SELECT name,
+           JSON_EXTRACT(json, '$.spec.cloudConfig') AS cloud_config,
+           JSON_EXTRACT(json, '$.spec.deviceType') AS device_type,
+           JSON_EXTRACT(json, '$.spec.isDefault') AS is_default,
+           JSON_TYPE(JSON_EXTRACT(json, '$.spec.isDefault')) AS is_default_type
+         FROM kinds WHERE kind = 'Device' AND name = %s`,
+        [CLOUD_DEVICE_ID]
+      )
+      console.log(
+        '[e2e] Managed cloud identity diagnostics:',
+        JSON.stringify({
+          identityRows,
+          configured: {
+            device_type: configured?.device_type,
+            cloud_config: configured?.cloud_config,
+            is_default: configured?.is_default,
+          },
+        })
+      )
+    }
     assert.equal(
       configured?.cloud_config?.sandboxId,
       MANAGED_CLOUD_SANDBOX_ID,
