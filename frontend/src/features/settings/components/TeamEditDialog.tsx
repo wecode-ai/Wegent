@@ -24,7 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { AlertCircle, AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle, Loader2 } from 'lucide-react'
 import { createAgentResourceName } from '@wegent/collaboration'
 
 import type { SkillRefMeta } from '@/apis/bots'
@@ -422,6 +422,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
+  const modeChangedRef = useRef(false)
   const previousResetDepsRef = useRef<{
     open: boolean
     formTeamId: number | null
@@ -472,8 +473,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return map
   }, [editingTeam, unsavedPrompts])
 
-  const isNonSoloTeam = !!formTeam && mode !== 'solo'
-  const useSimpleEditor = !isNonSoloTeam
+  const useSimpleEditor = mode === 'solo'
 
   const selectedSimpleShell = useMemo(
     () =>
@@ -544,7 +544,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Reset form when dialog opens
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      previousResetDepsRef.current = null
+      return
+    }
 
     const previous = previousResetDepsRef.current
     const current = {
@@ -554,12 +557,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     previousResetDepsRef.current = current
     const isNewFormSession = !previous?.open || previous.formTeamId !== current.formTeamId
 
-    const onlyNewTeamBotsChanged =
-      !formTeam && previous?.open === current.open && previous?.formTeamId === current.formTeamId
-
-    if (onlyNewTeamBotsChanged) {
+    // Catalog refreshes must not undo a mode switch or its new member selection.
+    if (!isNewFormSession && (!formTeam || modeChangedRef.current)) {
       return
     }
+    if (isNewFormSession) modeChangedRef.current = false
 
     if (formTeam) {
       if (isNewFormSession) {
@@ -747,7 +749,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Update bot selection when bots change
   useEffect(() => {
-    if (!open || !formTeam) return
+    if (!open || !formTeam || modeChangedRef.current) return
 
     const ids = formTeam.bots
       .filter(b => filteredBots.some((bot: Bot) => bot.id === b.bot_id))
@@ -852,7 +854,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Execute mode change with reset
   const executeModeChange = useCallback((newMode: TeamMode) => {
+    modeChangedRef.current = true
     setMode(newMode)
+    if (newMode !== 'solo') {
+      setBindMode(current => (current.length > 0 ? current : DEFAULT_NEW_AGENT_BIND_MODE))
+    }
     setSelectedBotKeys([])
     setLeaderBotId(null)
     setUnsavedPrompts({})
@@ -1391,6 +1397,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     setMarketplaceExampleConversations(examples)
   }
 
+  const collaborationModeSelector = (
+    <TeamModeSelector mode={mode} onModeChange={handleModeChange} disabled={saving} />
+  )
+
   return (
     <>
       <Dialog open={open} onOpenChange={open => !open && onClose()}>
@@ -1438,6 +1448,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   </div>
                 )}
                 <SimpleTeamEditForm
+                  collaborationModeSelector={collaborationModeSelector}
                   name={name}
                   setName={setName}
                   isEditing={isEditing}
@@ -1507,13 +1518,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               </>
             ) : (
               <>
-                {isNonSoloTeam && (
-                  <div className="flex items-start gap-2 rounded-md border border-border bg-surface p-3 text-sm text-text-secondary">
-                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                    <span>{t('settings:team.simple.non_solo_notice')}</span>
-                  </div>
-                )}
-
                 {/* Basic Info Section */}
                 <TeamBasicInfoForm
                   name={name}
@@ -1544,8 +1548,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   </div>
                 )}
 
-                {/* Mode Selection Section */}
-                <TeamModeSelector mode={mode} onModeChange={handleModeChange} />
+                {collaborationModeSelector}
 
                 {/* Mode-specific Editor Section */}
                 <TeamModeEditor
