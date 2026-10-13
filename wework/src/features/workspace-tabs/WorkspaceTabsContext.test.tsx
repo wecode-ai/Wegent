@@ -181,6 +181,7 @@ function RoutingHarness({
 describe('WorkspaceTabsProvider routing', () => {
   beforeEach(() => {
     localStorage.clear()
+    delete window.__WEWORK_RUNTIME_CONFIG__
     sessionStorage.clear()
     preferencesApi.get.mockReset().mockResolvedValue(defaultAppPreferences)
     preferencesApi.update.mockReset().mockResolvedValue(defaultAppPreferences)
@@ -201,6 +202,7 @@ describe('WorkspaceTabsProvider routing', () => {
   })
 
   test('accepts a returned tab, preserves its identity and acknowledges after navigation', () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron', desktopWindowLabel: 'main' }
     render(<RoutingHarness />)
     const key = `${WORKSPACE_TAB_RETURN_PREFIX}test`
     const tab = {
@@ -222,6 +224,7 @@ describe('WorkspaceTabsProvider routing', () => {
   })
 
   test('returns fixed-tab ownership to main before acknowledging it', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron', desktopWindowLabel: 'main' }
     preferencesApi.get.mockResolvedValue({
       ...defaultAppPreferences,
       fixedWorkspaceTabs: [
@@ -259,6 +262,7 @@ describe('WorkspaceTabsProvider routing', () => {
   })
 
   test('rejects a failed preference update without accepting the fixed tab', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron', desktopWindowLabel: 'main' }
     preferencesApi.update.mockRejectedValue(new Error('Preferences failed'))
     render(<RoutingHarness />)
     const key = `${WORKSPACE_TAB_RETURN_PREFIX}failed`

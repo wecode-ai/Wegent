@@ -32,7 +32,7 @@ import {
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import { projectSpaceRouteRequestsDefaultProject } from '@/features/todo/projectSpaceRoute'
 import { writeSettingsReturnPath } from './settingsReturnPath'
-import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import { fixedWorkspaceTabPreference, saveFixedWorkspaceTabs } from './fixedWorkspaceTabs'
@@ -378,7 +378,7 @@ export function WorkspaceTabsProvider({
   const stateRef = useRef(state)
 
   useEffect(() => {
-    if (getDesktopWindowLabel() !== 'main') return
+    if (!isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
     const receive = (event: StorageEvent) => {
       if (!event.key?.startsWith(WORKSPACE_TAB_RETURN_PREFIX) || !event.newValue) return
       let tab: unknown
