@@ -200,6 +200,7 @@ class UserMcpOAuthService:
             "nonce": nonce,
             "binding": binding,
             "code_verifier": verifier,
+            "resource": resource_url,
             "token_endpoint": metadata["token_endpoint"],
             "redirect_uri": settings.MCP_OAUTH_REDIRECT_URI,
             "client_id": client_id,
@@ -219,6 +220,9 @@ class UserMcpOAuthService:
                 "client_id": client_id,
                 "redirect_uri": settings.MCP_OAUTH_REDIRECT_URI,
                 "scope": metadata.get("scope") or "",
+                # RFC 8707 resource indicator: DingTalk requires the authorize
+                # request to name the protected MCP server it grants access to.
+                "resource": resource_url,
                 "state": state,
                 "code_challenge": _pkce_challenge(verifier),
                 "code_challenge_method": "S256",
@@ -668,6 +672,7 @@ class UserMcpOAuthService:
                     "code": code,
                     "redirect_uri": str(session["redirect_uri"]),
                     "code_verifier": str(session["code_verifier"]),
+                    "resource": str(session["resource"]),
                 },
             )
             response.raise_for_status()
