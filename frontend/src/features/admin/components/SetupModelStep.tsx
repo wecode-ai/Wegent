@@ -69,6 +69,7 @@ export function convertAdminModelToInitialData(model: AdminPublicModel): ModelIn
     contextWindow: modelConfig?.context_window as number | undefined,
     maxOutputTokens: modelConfig?.max_output_tokens as number | undefined,
     costIndex: typeof spec?.costIndex === 'string' ? spec.costIndex : undefined,
+    capability: typeof spec?.capability === 'string' ? spec.capability : undefined,
     modelCapabilities: getModelCapabilitiesFromSpec({
       modelCapabilities: spec?.modelCapabilities,
       modelConfig,

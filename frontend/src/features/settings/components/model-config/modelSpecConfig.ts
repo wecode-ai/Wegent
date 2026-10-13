@@ -12,6 +12,7 @@ const FORM_MANAGED_SPEC_KEYS = new Set([
   'modelGroup',
   'modelSubGroup',
   'costIndex',
+  'capability',
   'ttsConfig',
   'sttConfig',
   'embeddingConfig',

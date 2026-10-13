@@ -312,6 +312,10 @@ class ModelSpec(BaseModel):
         coerce_numbers_to_str=True,
         description="Relative model usage cost. A value of 1 represents the baseline cost.",
     )
+    capability: Optional[str] = Field(
+        None,
+        description="Human-readable summary of the model's capabilities and suitable tasks.",
+    )
 
     # Legacy top-level token limits. New configurations should use the
     # snake_case fields in modelConfig.

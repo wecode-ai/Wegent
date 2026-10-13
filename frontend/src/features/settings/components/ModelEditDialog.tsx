@@ -98,6 +98,7 @@ export interface ModelFormData {
   contextWindow?: number
   maxOutputTokens?: number
   costIndex?: string
+  capability?: string
   // Type-specific configs
   ttsVoice?: string
   ttsSpeed?: number
@@ -140,6 +141,7 @@ export interface ModelInitialData {
   contextWindow?: number
   maxOutputTokens?: number
   costIndex?: string
+  capability?: string
   // Type-specific configs
   ttsConfig?: TTSConfig
   sttConfig?: STTConfig
@@ -328,6 +330,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             contextWindow: model.spec.modelConfig?.context_window,
             maxOutputTokens: model.spec.modelConfig?.max_output_tokens,
             costIndex: model.spec.costIndex,
+            capability: model.spec.capability,
             ttsConfig: model.spec.ttsConfig,
             sttConfig: model.spec.sttConfig,
             embeddingConfig: model.spec.embeddingConfig,
@@ -362,6 +365,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [modelIdName, setModelIdName] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [modelGroup, setModelGroup] = useState('')
+  const [capability, setCapability] = useState('')
   const [modelSubGroup, setModelSubGroup] = useState('')
   const [modelCategoryType, setModelCategoryType] = useState<ModelCategoryType>('llm')
   const [providerType, setProviderType] = useState<string>('openai')
@@ -466,6 +470,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setModelIdName(effectiveInitialData.name || '')
         setDisplayName(effectiveInitialData.displayName || '')
         setModelGroup(effectiveInitialData.modelGroup || '')
+        setCapability(effectiveInitialData.capability || '')
         setModelSubGroup(effectiveInitialData.modelSubGroup || '')
         // Set model category type
         const categoryType = effectiveInitialData.modelCategoryType || 'llm'
@@ -632,6 +637,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setSelectedVisionSidecarKey('')
         setUnresolvedVisionSidecar(null)
         setCostIndex(undefined)
+        setCapability('')
         // Reset video capabilities
         setCapRatios([])
         setCapResolutions([])
@@ -1313,6 +1319,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       ...(modelCategoryType === 'video' && { protocol: providerType }),
       ...(modelCategoryType === 'image' && { protocol: providerType }),
       ...(modelCategoryType === 'llm' && costIndex && { costIndex }),
+      ...(capability.trim() && { capability: capability.trim() }),
       ...(modelGroup.trim() && { modelGroup: modelGroup.trim() }),
       ...(modelSubGroup.trim() && { modelSubGroup: modelSubGroup.trim() }),
       ...(ttsConfig && { ttsConfig }),
@@ -1355,6 +1362,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       typeof modelConfig.max_output_tokens === 'number' ? modelConfig.max_output_tokens : undefined
     )
     setCostIndex(typeof spec.costIndex === 'string' ? spec.costIndex : undefined)
+    setCapability(typeof spec.capability === 'string' ? spec.capability : '')
     setModelGroup(typeof spec.modelGroup === 'string' ? spec.modelGroup : '')
     setModelSubGroup(typeof spec.modelSubGroup === 'string' ? spec.modelSubGroup : '')
 
@@ -1628,6 +1636,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         contextWindow,
         maxOutputTokens,
         costIndex,
+        capability: capability.trim() || undefined,
         ttsVoice,
         ttsSpeed,
         ttsOutputFormat,
@@ -1894,6 +1903,21 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
           {editingMode === 'form' && (
             <>
+              <div className="space-y-2">
+                <Label htmlFor="modelCapability" className="text-sm font-medium">
+                  {t('common:models.capability')}
+                </Label>
+                <Textarea
+                  id="modelCapability"
+                  data-testid="model-capability-input"
+                  value={capability}
+                  onChange={e => setCapability(e.target.value)}
+                  placeholder={t('common:models.capability_placeholder')}
+                  className="bg-base"
+                  rows={2}
+                />
+                <p className="text-xs text-text-muted">{t('common:models.capability_hint')}</p>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="modelCategoryType" className="text-sm font-medium">
                   {t('common:models.model_category_type')} <span className="text-red-400">*</span>

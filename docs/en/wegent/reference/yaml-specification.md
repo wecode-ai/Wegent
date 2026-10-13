@@ -199,6 +199,7 @@ spec:
   allowedUsers: ["alice", "bob"]
   modelGroup: "Primary"
   modelSubGroup: "Fast"
+  capability: "Fast responses for everyday questions and simple tasks"
   modelConfig:
     env:
       ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
@@ -218,6 +219,7 @@ spec:
 | `spec.allowedUsersEnabled`            | boolean | No       | Explicit switch for whitelist-only mode; when `true`, access is governed strictly by `allowedUsers`, and an empty list denies everyone. When `false`/absent, the model is a normal public model and `allowedUsers` is ignored. |
 | `spec.modelGroup`                     | string  | No       | First-level display group used by model selectors                                                                                                                                                                              |
 | `spec.modelSubGroup`                  | string  | No       | Second-level display group under `spec.modelGroup`                                                                                                                                                                             |
+| `spec.capability`                     | string  | No       | Summary of capabilities and suitable tasks shown below the model name. Omit or leave empty to show only the name; selectors do not display the real model ID.                                                                  |
 | `spec.modelConfig`                    | object  | Yes      | Model configuration object                                                                                                                                                                                                     |
 | `spec.modelConfig.env`                | object  | Yes      | Environment variables configuration                                                                                                                                                                                            |
 | `spec.modelConfig.ui`                 | object  | No       | Wework model-picker presentation, default-model, and reasoning-effort configuration.                                                                                                                                           |

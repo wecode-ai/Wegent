@@ -196,6 +196,7 @@ spec:
   allowedUsers: ["alice", "bob"]
   modelGroup: "主分组"
   modelSubGroup: "快速"
+  capability: "响应快，适合日常问答和简单任务"
   modelConfig:
     env:
       ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
@@ -215,6 +216,7 @@ spec:
 | `spec.allowedUsersEnabled`            | boolean | 否   | 白名单模式显式开关；设为 `true` 时严格按 `allowedUsers` 控制，名单为空则所有用户不可用；为 `false`/缺省时是普通公共模型，`allowedUsers` 被忽略 |
 | `spec.modelGroup`                     | string  | 否   | 模型选择器使用的一级展示分组                                                                                                                   |
 | `spec.modelSubGroup`                  | string  | 否   | `spec.modelGroup` 下的二级展示分组                                                                                                             |
+| `spec.capability`                     | string  | 否   | 模型名称下展示的能力与适用场景说明；省略或留空时只显示名称，不显示真实模型 ID                                                                  |
 | `spec.modelConfig`                    | object  | 是   | 模型配置对象                                                                                                                                   |
 | `spec.modelConfig.env`                | object  | 是   | 环境变量配置                                                                                                                                   |
 | `spec.modelConfig.ui`                 | object  | 否   | Wework 模型选择器展示、默认模型和推理强度配置。                                                                                                |
