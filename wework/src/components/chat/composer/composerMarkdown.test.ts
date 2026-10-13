@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
+import { Mark } from 'prosemirror-model'
 import { EditorState } from 'prosemirror-state'
 import { createComposerDocument, serializeComposerDocument } from './composerProseMirrorModel'
 import {
@@ -10,6 +11,21 @@ const markdownTable =
   '| 项目 | 说明 | 示例 |\n| :--- | --- | ---: |\n| 中文 | **重点** | `a\\|b` |\n| 空单元格 | | |'
 
 describe('composer Markdown', () => {
+  test('serializes long nested formatting without quadratic span scans', () => {
+    const count = 256
+    const markdown = `**${Array.from({ length: count }, (_, index) =>
+      index % 2 ? '*inner*' : 'outer'
+    ).join(' ')}**`
+    const doc = createComposerDocument(markdown)
+    const scans = vi.spyOn(Mark.prototype, 'isInSet')
+    try {
+      expect(serializeComposerDocument(doc)).toBe(markdown)
+      expect(scans.mock.calls.length).toBeLessThan(count * 10)
+    } finally {
+      scans.mockRestore()
+    }
+  })
+
   test.each(['哈哈哈哈', 'more text', '科技汉江红果发就开始\n科技海峰卡说红果看'])(
     'keeps appended text outside an existing URL: %s',
     suffix => {
