@@ -308,11 +308,6 @@ export function RentSubscriptionDialog({
               disabled={modelsLoading}
               dataTestId="rent-subscription-model-select"
               getModelKey={model => `${model.type}-${model.namespace}-${model.name}`}
-              renderModelMeta={model =>
-                model.provider ? (
-                  <span className="block truncate text-xs text-text-muted">{model.provider}</span>
-                ) : null
-              }
             />
           </div>
 

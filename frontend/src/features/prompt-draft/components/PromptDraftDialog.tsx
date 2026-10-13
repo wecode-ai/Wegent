@@ -468,13 +468,6 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
                   placeholder={t('promptDraft.modelPlaceholder')}
                   dataTestId="prompt-draft-grouped-model-select"
                   getModelKey={item => `${item.type}-${item.namespace}-${item.name}`}
-                  renderModelMeta={item =>
-                    item.provider ? (
-                      <span className="block truncate text-xs text-text-muted">
-                        {item.provider}
-                      </span>
-                    ) : null
-                  }
                 />
               </div>
             </div>

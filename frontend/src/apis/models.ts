@@ -193,6 +193,7 @@ export interface ModelSpecConfig {
   isVisible?: boolean
   isWeworkAvailable?: boolean
   costIndex?: string
+  capability?: string | Record<string, unknown>
   modelType?: ModelCategoryType
   modelGroup?: string
   modelSubGroup?: string
@@ -283,6 +284,7 @@ export interface UnifiedModel {
   contextWindow?: number | null
   maxOutputTokens?: number | null
   costIndex?: string | null
+  capability?: string | null
   modelCapabilities?: ModelCapabilities | null
   created_at?: string | null
   updated_at?: string | null

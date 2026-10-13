@@ -8,6 +8,7 @@ import { GET } from '@/app/runtime-config/route'
 import {
   clearRuntimeConfigCache,
   fetchRuntimeConfig,
+  getRuntimeConfigSync,
   getPublicApiBaseUrl,
 } from '@/lib/runtime-config'
 
@@ -113,6 +114,35 @@ describe('runtime config caching', () => {
         delete process.env.NEXT_PUBLIC_WEWORK_CODE_URL
       } else {
         process.env.NEXT_PUBLIC_WEWORK_CODE_URL = previousPublicUrl
+      }
+    }
+  })
+
+  test.each([
+    [undefined, ''],
+    ['', ''],
+    ['   ', ''],
+    [' https://example.com/model-guide ', 'https://example.com/model-guide'],
+  ])('exposes the optional model selection guide URL for %p', async (value, expected) => {
+    const previous = process.env.WEGENT_MODEL_SELECTION_GUIDE_URL
+
+    try {
+      if (value === undefined) {
+        delete process.env.WEGENT_MODEL_SELECTION_GUIDE_URL
+      } else {
+        process.env.WEGENT_MODEL_SELECTION_GUIDE_URL = value
+      }
+      const config = await (await GET()).json()
+      expect(config.modelSelectionGuideUrl).toBe(expected)
+
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => config })
+      await fetchRuntimeConfig()
+      expect(getRuntimeConfigSync().modelSelectionGuideUrl).toBe(expected)
+    } finally {
+      if (previous === undefined) {
+        delete process.env.WEGENT_MODEL_SELECTION_GUIDE_URL
+      } else {
+        process.env.WEGENT_MODEL_SELECTION_GUIDE_URL = previous
       }
     }
   })

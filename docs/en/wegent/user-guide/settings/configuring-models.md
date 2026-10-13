@@ -139,6 +139,12 @@ Base URL: (optional, for proxy services)
 
 Optional grouping fields are saved on the Model `spec` as `modelGroup` and `modelSubGroup`. They control how large model lists are organized in selectors, while search still matches model names, display names, and group names. Leaving either field empty places the model in the default ungrouped or uncategorized bucket.
 
+The optional **Capability description** field is saved as `spec.capability` and describes strengths and suitable tasks below the model name. Long descriptions wrap automatically. Empty descriptions show only the name. Real model IDs remain available through model details instead of appearing in the selection list.
+
+Set `WEGENT_MODEL_SELECTION_GUIDE_URL` in the frontend service environment (`frontend/.env.local` for local development or the root `.env` for Docker Compose) to display a **How to choose a model** link below model selectors. The Chinese interface displays “如何选择模型？”. The link opens in a new tab. It is hidden when the variable is unset or empty, and does not require rebuilding the frontend.
+
+Published models store publication metadata in `spec.capability`; their summary uses its `description` field. Editing or clearing the summary preserves publication status, version, and installation permissions. Other models can use a text-valued `spec.capability` directly.
+
 **For Embedding Models:**
 
 ```
