@@ -20,7 +20,7 @@ const modelDiagnosticCounts = new Map<string, number>()
 export interface DshExecutorDescription {
   protocol_version: number
   device_id: string
-  runtime_instance_id?: string
+  runtime_instance_id: string
   version?: string
   capabilities: string[]
   renderer_methods: string[]
@@ -85,6 +85,15 @@ export async function describeDshExecutor(): Promise<DshExecutorDescription> {
     throw new DshExecutorTransportError(
       'protocol_mismatch',
       'DSH executor returned an invalid protocol description'
+    )
+  }
+  if (
+    typeof body.executor.runtime_instance_id !== 'string' ||
+    !body.executor.runtime_instance_id.trim()
+  ) {
+    throw new DshExecutorTransportError(
+      'protocol_mismatch',
+      'DSH executor returned a missing or invalid Runtime identity'
     )
   }
   return body.executor

@@ -63,6 +63,16 @@ function savedProviders() {
 }
 
 describe('Provider settings page', () => {
+  test('connection testing is available only inside the model editor', async () => {
+    const user = await openEditor()
+    expect(screen.queryByTestId('provider-test-relay')).toBeNull()
+    expect(screen.getByTestId('provider-editor-test')).toBeDisabled()
+    await user.click(screen.getByTestId('provider-model-add'))
+    const input = document.querySelector('[data-testid^="provider-model-id-"]')!
+    await user.type(input, 'upstream-a')
+    expect(screen.getByTestId('provider-editor-test')).toBeEnabled()
+    expect(savedProviders()).toBeUndefined()
+  })
   test.each(['success', 'failure'])(
     'waits for a superseding catalog refresh before completing a deletion: %s',
     async outcome => {
@@ -294,6 +304,9 @@ describe('Provider settings page', () => {
     await user.click(model.getByTestId('local-model-reasoning-level-high'))
     await user.click(model.getByTestId('local-model-parallel-tools-select'))
     await user.type(context, '128000')
+    const output = model.getByTestId('local-model-max-output-tokens-input')
+    expect(output).toBeVisible()
+    await user.type(output, '16000')
     expect(
       (model.getByTestId('local-model-base-instructions-input') as HTMLTextAreaElement).value
     ).toContain('# Working with the user')
@@ -324,6 +337,7 @@ describe('Provider settings page', () => {
     await waitFor(() => expect(savedProviders()).toBeDefined())
     const saved = savedProviders()[0].models[0]
     expect(saved.context_window).toBe(128000)
+    expect(saved.max_output_tokens).toBe(16000)
     expect(saved.catalog_entry.context_window).toBe(128000)
     expect(saved.catalog_entry.max_context_window).toBe(128000)
     expect(saved.catalog_entry.input_modalities).toContain('image')

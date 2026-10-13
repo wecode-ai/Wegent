@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import type { DeviceInfo } from '@/types/api'
-import { createWorkbenchDeviceResolver, mergeDeviceLists } from './workbench-device'
+import {
+  createWorkbenchDeviceResolver,
+  mergeDeviceLists,
+  workbenchDevicesShareRuntimeIdentity,
+} from './workbench-device'
 
 const device = (overrides: Partial<DeviceInfo>): DeviceInfo => ({
   id: 1,
@@ -13,6 +17,17 @@ const device = (overrides: Partial<DeviceInfo>): DeviceInfo => ({
 })
 
 describe('device identity resolution', () => {
+  test('does not infer a known runtime identity from an address on a record without an identity', () => {
+    const known = device({ device_id: 'shared-address', runtime_instance_id: 'runtime' })
+    const unknown = device({ device_id: 'shared-address' })
+    expect(workbenchDevicesShareRuntimeIdentity(known, unknown)).toBe(false)
+    expect(workbenchDevicesShareRuntimeIdentity(unknown, known)).toBe(false)
+    expect(mergeDeviceLists([known], [unknown])).toHaveLength(2)
+    expect(() => createWorkbenchDeviceResolver([known, unknown]).resolve('shared-address')).toThrow(
+      'ambiguous-executor-identity:shared-address'
+    )
+  })
+
   test('keeps equality independent of the selected connection when the persisted runtime is known', () => {
     const remote = device({ device_id: 'relay', runtime_instance_id: 'runtime' })
     const local = device({

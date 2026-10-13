@@ -48,6 +48,10 @@ export function ProviderModelFields({
         codexToolCompatibility={model.codex_tool_compatibility ?? 'native'}
         onCodexToolCompatibilityChange={value => onChange({ codex_tool_compatibility: value })}
         contextWindow={model.context_window?.toString() ?? ''}
+        maxOutputTokens={model.max_output_tokens?.toString() ?? ''}
+        onMaxOutputTokensChange={value =>
+          onChange({ max_output_tokens: value ? Number(value) : undefined })
+        }
         onContextWindowChange={value => {
           const context_window = value ? Number(value) : undefined
           onChange({

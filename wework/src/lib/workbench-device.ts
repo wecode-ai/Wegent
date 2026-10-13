@@ -177,7 +177,7 @@ export function mergeDeviceLists(
     let insertionIndex = merged.length
     let index = 0
     while (index < merged.length) {
-      if (!devicesShareRuntimeIdentity(merged[index], candidate)) {
+      if (!workbenchDevicesShareRuntimeIdentity(merged[index], candidate)) {
         index += 1
         continue
       }
@@ -231,13 +231,12 @@ function deviceRecordPriority(device: DeviceInfo): number {
   return 3
 }
 
-function devicesShareRuntimeIdentity(left: DeviceInfo, right: DeviceInfo): boolean {
-  if (
-    left.runtime_instance_id &&
-    right.runtime_instance_id &&
-    left.runtime_instance_id !== right.runtime_instance_id
-  )
-    return false
+export function workbenchDevicesShareRuntimeIdentity(left: DeviceInfo, right: DeviceInfo): boolean {
+  if (left.runtime_instance_id || right.runtime_instance_id) {
+    return Boolean(
+      left.runtime_instance_id && left.runtime_instance_id === right.runtime_instance_id
+    )
+  }
   const leftIds = new Set(getWorkbenchDeviceIds(left))
   if (leftIds.size === 0) return false
   for (const candidate of getWorkbenchDeviceIds(right)) {
@@ -294,7 +293,9 @@ export function createWorkbenchDeviceResolver(devices: DeviceInfo[]): WorkbenchD
   const aliases = new Map<string, Set<DeviceInfo>>()
   const canonical = mergeDeviceLists(devices, [])
   for (const source of [...canonical, ...devices]) {
-    const device = canonical.find(candidate => devicesShareRuntimeIdentity(candidate, source))!
+    const device = canonical.find(candidate =>
+      workbenchDevicesShareRuntimeIdentity(candidate, source)
+    )!
     for (const alias of getWorkbenchDeviceIds(source)) {
       const matches = aliases.get(alias) ?? new Set<DeviceInfo>()
       matches.add(device)

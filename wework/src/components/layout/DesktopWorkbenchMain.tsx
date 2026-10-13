@@ -357,7 +357,6 @@ function hasResolvedExecutionAddress(
   )
 }
 
-const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
 const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
   'a',
@@ -1773,6 +1772,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const browserStatesRef = useRef(browserStates)
   const smartAppDevelopmentPreviewRequestsRef = useRef(new Map<RightWorkspaceBrowserTab, number>())
   const localHarnessModelApiRef = useRef(services.localHarnessModelApi)
+  const localDecisionRouterApiRef = useRef(services.localDecisionRouterApi)
   const recentBrowserPopupRequestsRef = useRef(new Map<string, number>())
   useEffect(() => {
     browserStatesRef.current = browserStates
@@ -1780,6 +1780,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   useEffect(() => {
     localHarnessModelApiRef.current = services.localHarnessModelApi
   }, [services.localHarnessModelApi])
+  useEffect(() => {
+    localDecisionRouterApiRef.current = services.localDecisionRouterApi
+  }, [services.localDecisionRouterApi])
   const updateBrowserState = useCallback(
     (tab: RightWorkspaceBrowserTab, update: Partial<RightWorkspaceBrowserState>) => {
       setBrowserStates(current => {
@@ -2057,9 +2060,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? '100%'
     : `calc(100% - ${rightSplitChatWidth}px)`
   const rightPanelShellWidth = displayedRightPanelOpen ? rightPanelWidth : '0px'
-  const rightPanelTabBarRightOffset = '0px'
+  // Reserve each 32px control, the 4px gaps, and the 8px trailing inset.
+  const rightTitlebarActionsWidth = displayedRightPanelOpen ? '7rem' : '5rem'
   const rightPanelTabBarWidth = displayedRightPanelOpen
-    ? `calc(${rightPanelWidth} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
+    ? `calc(${rightPanelWidth} - ${rightTitlebarActionsWidth})`
     : '0px'
   const temporaryChatAvailable = !activeLocalHarnessSession
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
@@ -3467,12 +3471,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               installation,
               modelOptions,
               services.localHarnessModelApi,
-              missingWebUrlMessage
+              missingWebUrlMessage,
+              services.localDecisionRouterApi
             )
           : await startHarnessAppDevelopmentRuntime({
               installation,
               modelOptions,
               localHarnessModelApi: services.localHarnessModelApi,
+              localDecisionRouterApi: services.localDecisionRouterApi,
               missingWebUrlMessage,
             })
         if (
@@ -3481,7 +3487,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ) {
           await stopHarnessAppDevelopmentRuntime(
             installationId,
-            services.localHarnessModelApi
+            services.localHarnessModelApi,
+            services.localDecisionRouterApi
           ).catch(error => {
             console.error('Failed to stop closed Smart app development preview:', error)
           })
@@ -3540,6 +3547,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       closeSmartAppDevelopmentPreviewBrowser,
       defaultEmbeddedBrowserLabel,
       getHarnessModelOptions,
+      services.localDecisionRouterApi,
       services.localHarnessModelApi,
       t,
       updateBrowserState,
@@ -3572,7 +3580,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })
       try {
         if (installation.state === 'running') {
-          await stopHarnessAppDevelopmentRuntime(installationId, services.localHarnessModelApi)
+          await stopHarnessAppDevelopmentRuntime(
+            installationId,
+            services.localHarnessModelApi,
+            services.localDecisionRouterApi
+          )
         }
         await harnessAppsApi.addPlugin(installationId, pluginSpec)
         await loadSmartAppDevelopmentPreview(tab, installationId, false)
@@ -3593,6 +3605,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       closeSmartAppDevelopmentPreviewBrowser,
       loadSmartAppDevelopmentPreview,
+      services.localDecisionRouterApi,
       services.localHarnessModelApi,
       t,
       updateBrowserState,
@@ -3659,7 +3672,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       installationIds.forEach(installationId => {
         void stopHarnessAppDevelopmentRuntime(
           installationId,
-          localHarnessModelApiRef.current
+          localHarnessModelApiRef.current,
+          localDecisionRouterApiRef.current
         ).catch(error => {
           console.error('Failed to stop Smart app development runtime during disposal:', error)
         })
@@ -3716,7 +3730,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       installationIds.forEach(installationId => {
         void stopHarnessAppDevelopmentRuntime(
           installationId,
-          localHarnessModelApiRef.current
+          localHarnessModelApiRef.current,
+          localDecisionRouterApiRef.current
         ).catch(error => {
           console.error('Failed to stop Smart app runtime with its workspace tab:', error)
         })
@@ -4001,7 +4016,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       )
       void stopHarnessAppDevelopmentRuntime(
         browserState.developmentPreview.installationId,
-        services.localHarnessModelApi
+        services.localHarnessModelApi,
+        services.localDecisionRouterApi
       ).catch(error => {
         console.error('Failed to stop closed Smart app development preview:', error)
       })
@@ -4975,7 +4991,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
-          width: `calc(${rightPanelTabBarWidth} + ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`,
+          width: `calc(${rightPanelTabBarWidth} + ${rightTitlebarActionsWidth})`,
         }}
       />
       <div
@@ -4989,7 +5005,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
-          right: COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE,
+          right: rightTitlebarActionsWidth,
           width: rightPanelTabBarWidth,
         }}
       >
@@ -5008,7 +5024,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         )}
         style={{
           right: '0px',
-          width: COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE,
+          width: rightTitlebarActionsWidth,
         }}
       >
         {topRightActions}
