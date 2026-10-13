@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEventHandler } from 'react'
 import type { ProjectCreateMode } from '@/components/chat/ChatInput'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -34,7 +34,6 @@ import {
   useDesktopSidebarCollapsed,
   useDesktopSidebarToggleRequest,
 } from './useDesktopSidebarCollapsed'
-import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   useWorkbenchShellEventHandlers,
@@ -42,9 +41,6 @@ import {
 } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
-import { TaskBoardView } from '@/features/todo/TaskBoardView'
-import { WeworkCollaborationPlatform } from '@/features/todo/WeworkCollaborationPlatform'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { projectSpaceApis, projectSpaceRef } from '@/features/todo/projectSpaceSelection'
@@ -100,6 +96,25 @@ import {
 } from '@/components/topnav/TitlebarActionsPortal'
 import { GlobalFeedbackButton } from '@/features/feedback/GlobalFeedbackButton'
 import { TaskBoardCreateButton } from '@/features/todo/TaskBoardActions'
+
+const ConnectionsSettingsPage = lazy(() =>
+  import('@/components/settings/ConnectionsSettingsPage').then(module => ({
+    default: module.ConnectionsSettingsPage,
+  }))
+)
+const CloudTodoWorkspace = lazy(() =>
+  import('@/features/todo/CloudTodoWorkspace').then(module => ({
+    default: module.CloudTodoWorkspace,
+  }))
+)
+const TaskBoardView = lazy(() =>
+  import('@/features/todo/TaskBoardView').then(module => ({ default: module.TaskBoardView }))
+)
+const WeworkCollaborationPlatform = lazy(() =>
+  import('@/features/todo/WeworkCollaborationPlatform').then(module => ({
+    default: module.WeworkCollaborationPlatform,
+  }))
+)
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -1157,20 +1172,22 @@ export function DesktopWorkbenchLayout({
           </>
         )}
         {settingsOpen && (
-          <ConnectionsSettingsPage
-            autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
-            services={services}
-            devices={state.devices}
-            onOpenRuntimeTask={onOpenRuntimeTask}
-            onRefreshWorkLists={refreshWorkLists}
-            onBack={() => {
-              const returnPath = readSettingsReturnPath() ?? settingsReturnPathRef.current
-              setSettingsOpen(false)
-              setAutoOpenAddCloudDeviceDialog(false)
-              setCurrentPath(routePathname(returnPath))
-              navigateTo(returnPath)
-            }}
-          />
+          <Suspense fallback={null}>
+            <ConnectionsSettingsPage
+              autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+              services={services}
+              devices={state.devices}
+              onOpenRuntimeTask={onOpenRuntimeTask}
+              onRefreshWorkLists={refreshWorkLists}
+              onBack={() => {
+                const returnPath = readSettingsReturnPath() ?? settingsReturnPathRef.current
+                setSettingsOpen(false)
+                setAutoOpenAddCloudDeviceDialog(false)
+                setCurrentPath(routePathname(returnPath))
+                navigateTo(returnPath)
+              }}
+            />
+          </Suspense>
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
           {taskBoardOpen && routeActive && !settingsOpen ? (
@@ -1191,116 +1208,151 @@ export function DesktopWorkbenchLayout({
               data-testid="task-view-board-transition"
               className="task-view-board-enter flex min-h-0 min-w-0 flex-1"
             >
-              <TaskBoardView
-                runtimeWork={state.runtimeWork}
-                runtimeTaskLifecycle={runtimeTaskLifecycle}
-                unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
-                onCreateTask={startNewChatOutsideHarness}
-                projectSpaceApis={availableProjectSpaceApis}
-                onArchiveRuntimeTasks={onArchiveChatConversations}
-                onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
-                onOpenRuntimeTask={address => {
-                  void openRuntimeTaskOutsideHarness(address)
-                }}
-              />
+              <Suspense fallback={null}>
+                <TaskBoardView
+                  runtimeWork={state.runtimeWork}
+                  runtimeTaskLifecycle={runtimeTaskLifecycle}
+                  unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
+                  onCreateTask={startNewChatOutsideHarness}
+                  projectSpaceApis={availableProjectSpaceApis}
+                  onArchiveRuntimeTasks={onArchiveChatConversations}
+                  onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
+                  onOpenRuntimeTask={address => {
+                    void openRuntimeTaskOutsideHarness(address)
+                  }}
+                />
+              </Suspense>
             </div>
           ) : null}
           {routeWorkItemsOpen &&
             (workItemUser && workItemServicesReady ? (
               routedDefaultWorkItemsOpen ? (
-                <CloudTodoWorkspace
-                  user={workItemUser}
-                  localProjects={localTodoProjects}
-                  runtimeWork={state.runtimeWork}
-                  runtimeTaskLifecycle={runtimeTaskLifecycle}
-                  services={services}
-                  embedded
-                  embeddedTitle="project"
-                  startupActive={routeActive}
-                  workspaceActive={routeActive && routeWorkItemsOpen && !settingsOpen}
-                  onOpenRuntimeTask={openProjectSpaceRuntimeTask}
-                  onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
-                  onArchiveRuntimeTasks={onArchiveChatConversations}
-                  onOpenSettings={options => openSettings(options)}
-                  onLogout={onLogout}
-                  activeProjectRef={
-                    ownedWorkspaceTab?.kind === 'board'
-                      ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
-                      : undefined
-                  }
-                  defaultProjectRequested
-                  focusedItemId={
-                    ownedWorkspaceTab?.kind === 'board'
-                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
-                      : undefined
-                  }
-                  onFocusedItemHandled={() => {
-                    if (
-                      !workspaceTabs ||
-                      ownedWorkspaceTab?.kind !== 'board' ||
-                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
-                    ) {
-                      return
+                <Suspense fallback={null}>
+                  <CloudTodoWorkspace
+                    user={workItemUser}
+                    localProjects={localTodoProjects}
+                    runtimeWork={state.runtimeWork}
+                    runtimeTaskLifecycle={runtimeTaskLifecycle}
+                    services={services}
+                    embedded
+                    embeddedTitle="project"
+                    startupActive={routeActive}
+                    workspaceActive={routeActive && routeWorkItemsOpen && !settingsOpen}
+                    onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                    onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
+                    onArchiveRuntimeTasks={onArchiveChatConversations}
+                    onOpenSettings={options => openSettings(options)}
+                    onLogout={onLogout}
+                    activeProjectRef={
+                      ownedWorkspaceTab?.kind === 'board'
+                        ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
+                        : undefined
                     }
-                    workspaceTabs.updateActiveTab({
-                      contentRoute: defaultProjectSpaceContentRoute(),
-                    })
-                  }}
-                  onActiveProjectChange={project => {
-                    if (
-                      !workspaceTabs ||
-                      ownedWorkspaceTab?.kind !== 'board' ||
-                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id ||
-                      !project
-                    ) {
-                      return
+                    defaultProjectRequested
+                    focusedItemId={
+                      ownedWorkspaceTab?.kind === 'board'
+                        ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
+                        : undefined
                     }
-                    workspaceTabs.updateActiveTab({
-                      title: project.name,
-                      contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
-                    })
-                  }}
-                />
+                    onFocusedItemHandled={() => {
+                      if (
+                        !workspaceTabs ||
+                        ownedWorkspaceTab?.kind !== 'board' ||
+                        workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                      ) {
+                        return
+                      }
+                      workspaceTabs.updateActiveTab({
+                        contentRoute: defaultProjectSpaceContentRoute(),
+                      })
+                    }}
+                    onActiveProjectChange={project => {
+                      if (
+                        !workspaceTabs ||
+                        ownedWorkspaceTab?.kind !== 'board' ||
+                        workspaceTabs.activeTabId !== ownedWorkspaceTab.id ||
+                        !project
+                      ) {
+                        return
+                      }
+                      workspaceTabs.updateActiveTab({
+                        title: project.name,
+                        contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
+                      })
+                    }}
+                  />
+                </Suspense>
               ) : (
-                <WeworkCollaborationPlatform
-                  user={workItemUser}
-                  devices={state.devices}
-                  localProjects={localTodoProjects}
-                  runtimeWork={state.runtimeWork}
-                  runtimeTaskLifecycle={runtimeTaskLifecycle}
-                  services={services}
-                  startupActive={routeActive && routeWorkItemsOpen}
-                  onOpenRuntimeTask={openProjectSpaceRuntimeTask}
-                  onArchiveRuntimeTasks={onArchiveChatConversations}
-                  onCancelRuntimeTask={onCancelRuntimeTask}
-                  sendRuntimePaneMessage={sendRuntimePaneMessage}
-                  onOpenSettings={options => openSettings(options)}
-                  onLogout={onLogout}
-                  renderLocalProjectImporter={({ mode, projects, onClose, onCreated }) =>
-                    mode === 'existing' ? (
-                      <ExistingLocalProjectImportDialog
-                        open
-                        projects={projects}
-                        onClose={onClose}
-                        onImport={async project => {
-                          const runtimeProject = state.runtimeWork?.projects.find(
-                            projectWork => runtimeProjectUiId(projectWork.project) === project.id
-                          )
-                          if (runtimeProject) {
-                            const roots = Array.from(
-                              new Set([
-                                ...(runtimeProject.project.roots ?? []).map(root => root.path),
-                                ...runtimeProject.deviceWorkspaces
-                                  .filter(workspace => workspace.workspaceKind !== 'chat')
-                                  .map(workspace => workspace.workspacePath),
-                              ])
-                            ).filter(Boolean)
-                            const deviceId =
-                              runtimeProject.project.stateDeviceId?.trim() ||
-                              runtimeProject.deviceWorkspaces.find(
-                                workspace => workspace.workspaceKind !== 'chat'
-                              )?.deviceId
-                            if (!deviceId || roots.length === 0) {
+                <Suspense fallback={null}>
+                  <WeworkCollaborationPlatform
+                    user={workItemUser}
+                    devices={state.devices}
+                    localProjects={localTodoProjects}
+                    runtimeWork={state.runtimeWork}
+                    runtimeTaskLifecycle={runtimeTaskLifecycle}
+                    services={services}
+                    startupActive={routeActive && routeWorkItemsOpen}
+                    onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                    onArchiveRuntimeTasks={onArchiveChatConversations}
+                    onCancelRuntimeTask={onCancelRuntimeTask}
+                    sendRuntimePaneMessage={sendRuntimePaneMessage}
+                    onOpenSettings={options => openSettings(options)}
+                    onLogout={onLogout}
+                    renderLocalProjectImporter={({ mode, projects, onClose, onCreated }) =>
+                      mode === 'existing' ? (
+                        <ExistingLocalProjectImportDialog
+                          open
+                          projects={projects}
+                          onClose={onClose}
+                          onImport={async project => {
+                            const runtimeProject = state.runtimeWork?.projects.find(
+                              projectWork => runtimeProjectUiId(projectWork.project) === project.id
+                            )
+                            if (runtimeProject) {
+                              const roots = Array.from(
+                                new Set([
+                                  ...(runtimeProject.project.roots ?? []).map(root => root.path),
+                                  ...runtimeProject.deviceWorkspaces
+                                    .filter(workspace => workspace.workspaceKind !== 'chat')
+                                    .map(workspace => workspace.workspacePath),
+                                ])
+                              ).filter(Boolean)
+                              const deviceId =
+                                runtimeProject.project.stateDeviceId?.trim() ||
+                                runtimeProject.deviceWorkspaces.find(
+                                  workspace => workspace.workspaceKind !== 'chat'
+                                )?.deviceId
+                              if (!deviceId || roots.length === 0) {
+                                throw new Error(
+                                  t(
+                                    'workbench.local_project_workspace_unavailable',
+                                    '本地项目缺少可用的设备或工作目录'
+                                  )
+                                )
+                              }
+                              await onUpdateLocalRuntimeProject({
+                                deviceId,
+                                projectKey: runtimeProject.project.key,
+                                name: runtimeProject.project.name,
+                                roots,
+                                defaultProjectSpace:
+                                  runtimeProject.project.defaultProjectSpace ?? null,
+                                aiSettings: runtimeProject.project.aiSettings ?? null,
+                              })
+                              await onCreated(
+                                runtimeProject.project.key,
+                                runtimeProject.project.name,
+                                roots
+                              )
+                              return
+                            }
+
+                            const deviceId = project.config?.execution?.deviceId
+                            const workspacePath =
+                              project.config?.workspace?.source === 'local_path'
+                                ? project.config.workspace.localPath
+                                : null
+                            if (!deviceId || !workspacePath) {
                               throw new Error(
                                 t(
                                   'workbench.local_project_workspace_unavailable',
@@ -1308,146 +1360,119 @@ export function DesktopWorkbenchLayout({
                                 )
                               )
                             }
-                            await onUpdateLocalRuntimeProject({
+                            const created = await onCreateLocalRuntimeProject({
                               deviceId,
-                              projectKey: runtimeProject.project.key,
-                              name: runtimeProject.project.name,
+                              name: project.name,
+                              roots: [workspacePath],
+                            })
+                            await onCreated(created.runtimeProjectKey, project.name, [
+                              workspacePath,
+                            ])
+                          }}
+                        />
+                      ) : (
+                        <StandaloneFolderProjectDialog
+                          key="collaboration-local-project-importer"
+                          open
+                          mode="existing"
+                          preferNativeLocalPicker={shouldUseNativeProjectDirectoryPicker()}
+                          devices={state.devices.filter(
+                            device => device.device_type === 'local' || device.device_type === 'app'
+                          )}
+                          preferredDeviceId={
+                            state.standaloneDeviceId ??
+                            state.user?.preferences?.default_execution_target
+                          }
+                          onClose={onClose}
+                          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+                          onListDeviceDirectories={onListDeviceDirectories}
+                          onCreateDeviceDirectory={onCreateDeviceDirectory}
+                          onOpenStandaloneWorkspace={async (
+                            deviceId,
+                            workspacePath,
+                            name,
+                            projectRoots
+                          ) => {
+                            const roots = projectRoots?.length ? projectRoots : [workspacePath]
+                            const created = await onCreateLocalRuntimeProject({
+                              deviceId,
+                              name:
+                                name?.trim() ||
+                                workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ||
+                                'Project',
                               roots,
-                              defaultProjectSpace:
-                                runtimeProject.project.defaultProjectSpace ?? null,
-                              aiSettings: runtimeProject.project.aiSettings ?? null,
                             })
                             await onCreated(
-                              runtimeProject.project.key,
-                              runtimeProject.project.name,
+                              created.runtimeProjectKey,
+                              name?.trim() ||
+                                workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ||
+                                'Project',
                               roots
                             )
-                            return
-                          }
-
-                          const deviceId = project.config?.execution?.deviceId
-                          const workspacePath =
-                            project.config?.workspace?.source === 'local_path'
-                              ? project.config.workspace.localPath
-                              : null
-                          if (!deviceId || !workspacePath) {
-                            throw new Error(
-                              t(
-                                'workbench.local_project_workspace_unavailable',
-                                '本地项目缺少可用的设备或工作目录'
-                              )
-                            )
-                          }
-                          const created = await onCreateLocalRuntimeProject({
-                            deviceId,
-                            name: project.name,
-                            roots: [workspacePath],
-                          })
-                          await onCreated(created.runtimeProjectKey, project.name, [workspacePath])
-                        }}
-                      />
-                    ) : (
-                      <StandaloneFolderProjectDialog
-                        key="collaboration-local-project-importer"
-                        open
-                        mode="existing"
-                        preferNativeLocalPicker={shouldUseNativeProjectDirectoryPicker()}
-                        devices={state.devices.filter(
-                          device => device.device_type === 'local' || device.device_type === 'app'
-                        )}
-                        preferredDeviceId={
-                          state.standaloneDeviceId ??
-                          state.user?.preferences?.default_execution_target
-                        }
-                        onClose={onClose}
-                        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-                        onListDeviceDirectories={onListDeviceDirectories}
-                        onCreateDeviceDirectory={onCreateDeviceDirectory}
-                        onOpenStandaloneWorkspace={async (
-                          deviceId,
-                          workspacePath,
-                          name,
-                          projectRoots
-                        ) => {
-                          const roots = projectRoots?.length ? projectRoots : [workspacePath]
-                          const created = await onCreateLocalRuntimeProject({
-                            deviceId,
-                            name:
-                              name?.trim() ||
-                              workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ||
-                              'Project',
-                            roots,
-                          })
-                          await onCreated(
-                            created.runtimeProjectKey,
-                            name?.trim() ||
-                              workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ||
-                              'Project',
-                            roots
-                          )
-                        }}
-                        onRefreshDevices={onRefreshDevices}
-                      />
-                    )
-                  }
-                  activeProjectRef={
-                    ownedWorkspaceTab?.kind === 'board'
-                      ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
-                      : undefined
-                  }
-                  defaultProjectRequested={
-                    ownedWorkspaceTab?.kind === 'board' &&
-                    projectSpaceRouteRequestsDefaultProject(ownedWorkspaceTab.contentRoute)
-                  }
-                  focusedItemId={
-                    ownedWorkspaceTab?.kind === 'board'
-                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
-                      : undefined
-                  }
-                  focusedCommentId={
-                    ownedWorkspaceTab?.kind === 'board'
-                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'commentId')
-                      : undefined
-                  }
-                  focusedCommentRequestKey={
-                    ownedWorkspaceTab?.kind === 'board'
-                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'focusRequest')
-                      : undefined
-                  }
-                  onFocusedItemHandled={() => {
-                    if (
-                      !workspaceTabs ||
-                      ownedWorkspaceTab?.kind !== 'board' ||
-                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
-                    ) {
-                      return
+                          }}
+                          onRefreshDevices={onRefreshDevices}
+                        />
+                      )
                     }
-                    const projectRef = projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
-                    workspaceTabs.updateActiveTab({
-                      contentRoute: projectRef ? projectSpaceContentRoute(projectRef) : '/todo',
-                    })
-                  }}
-                  onActiveProjectChange={project => {
-                    if (
-                      !workspaceTabs ||
-                      ownedWorkspaceTab?.kind !== 'board' ||
-                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
-                    ) {
-                      return
+                    activeProjectRef={
+                      ownedWorkspaceTab?.kind === 'board'
+                        ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
+                        : undefined
                     }
-                    if (!project) {
+                    defaultProjectRequested={
+                      ownedWorkspaceTab?.kind === 'board' &&
+                      projectSpaceRouteRequestsDefaultProject(ownedWorkspaceTab.contentRoute)
+                    }
+                    focusedItemId={
+                      ownedWorkspaceTab?.kind === 'board'
+                        ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
+                        : undefined
+                    }
+                    focusedCommentId={
+                      ownedWorkspaceTab?.kind === 'board'
+                        ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'commentId')
+                        : undefined
+                    }
+                    focusedCommentRequestKey={
+                      ownedWorkspaceTab?.kind === 'board'
+                        ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'focusRequest')
+                        : undefined
+                    }
+                    onFocusedItemHandled={() => {
+                      if (
+                        !workspaceTabs ||
+                        ownedWorkspaceTab?.kind !== 'board' ||
+                        workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                      ) {
+                        return
+                      }
+                      const projectRef = projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
                       workspaceTabs.updateActiveTab({
-                        title: t('workbench.workspace_tab_board', '协作 (Beta)'),
-                        contentRoute: '/todo',
+                        contentRoute: projectRef ? projectSpaceContentRoute(projectRef) : '/todo',
                       })
-                      return
-                    }
-                    workspaceTabs.updateActiveTab({
-                      title: project.name,
-                      contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
-                    })
-                  }}
-                />
+                    }}
+                    onActiveProjectChange={project => {
+                      if (
+                        !workspaceTabs ||
+                        ownedWorkspaceTab?.kind !== 'board' ||
+                        workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                      ) {
+                        return
+                      }
+                      if (!project) {
+                        workspaceTabs.updateActiveTab({
+                          title: t('workbench.workspace_tab_board', '协作 (Beta)'),
+                          contentRoute: '/todo',
+                        })
+                        return
+                      }
+                      workspaceTabs.updateActiveTab({
+                        title: project.name,
+                        contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
+                      })
+                    }}
+                  />
+                </Suspense>
               )
             ) : (
               <div

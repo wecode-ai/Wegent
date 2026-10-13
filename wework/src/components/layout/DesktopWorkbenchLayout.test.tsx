@@ -1917,7 +1917,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
-  test('opens a newly added board tab in the collaboration platform', () => {
+  test('opens a newly added board tab in the collaboration platform', async () => {
     deliveryApiMock.available = true
     const boardTab = {
       id: 'board-new',
@@ -1958,11 +1958,11 @@ describe('DesktopWorkbenchLayout', () => {
       </WorkspaceTabsContext.Provider>
     )
 
-    expect(screen.getByTestId('wework-collaboration-platform')).toBeInTheDocument()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeInTheDocument()
     expect(screen.getByTestId('collaboration-platform-root')).toBeInTheDocument()
   })
 
-  test('routes a retained My Tasks board to the dedicated work-items surface', () => {
+  test('routes a retained My Tasks board to the dedicated work-items surface', async () => {
     deliveryApiMock.available = true
     deliveryApiMock.listCloudProjects.mockResolvedValue({
       items: [
@@ -2023,7 +2023,10 @@ describe('DesktopWorkbenchLayout', () => {
       </WorkspaceTabsContext.Provider>
     )
 
-    expect(screen.getByTestId('cloud-todo-workspace')).toHaveAttribute('data-embedded', 'true')
+    expect(await screen.findByTestId('cloud-todo-workspace')).toHaveAttribute(
+      'data-embedded',
+      'true'
+    )
     expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
   })
 

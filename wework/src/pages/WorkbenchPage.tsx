@@ -1,6 +1,5 @@
-import { useEffect, useMemo } from 'react'
+import { lazy, Suspense, useEffect, useMemo } from 'react'
 import { DesktopWorkbenchLayout } from '@/components/layout/DesktopWorkbenchLayout'
-import { MobileWorkbenchLayout } from '@/components/layout/MobileWorkbenchLayout'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { isElectronRuntime } from '@/lib/runtime-environment'
@@ -11,6 +10,12 @@ import { syncTrayMenuState } from '@/desktop/trayNavigation'
 import { useRuntimeTaskRouteRestoration } from '@/features/workbench/useRuntimeTaskRouteRestoration'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
+
+const MobileWorkbenchLayout = lazy(() =>
+  import('@/components/layout/MobileWorkbenchLayout').then(module => ({
+    default: module.MobileWorkbenchLayout,
+  }))
+)
 
 interface WorkbenchPageProps {
   routeActive?: boolean
@@ -83,7 +88,9 @@ function WorkbenchPageLayout({
 }: WorkbenchPageLayoutProps) {
   const isMobileViewport = useIsMobile()
   return shouldUseMobileWorkbenchLayout({ isMobileViewport, isDesktop }) ? (
-    <MobileWorkbenchLayout />
+    <Suspense fallback={null}>
+      <MobileWorkbenchLayout />
+    </Suspense>
   ) : (
     <DesktopWorkbenchLayout routeActive={routeActive} surfaceKind={surfaceKind} />
   )

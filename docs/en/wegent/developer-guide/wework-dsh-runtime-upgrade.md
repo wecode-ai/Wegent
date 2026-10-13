@@ -96,6 +96,8 @@ Core profile preparation overlaps host bridge startup after the Executor schema 
 
 The active task surface loads registered Home modules alongside the Core app module, sharing module and stylesheet promises. Hidden tasks and project boards do not request Home modules. Loading errors propagate to page error handling, and startup readiness still waits for the actual page to finish.
 
+The initial task surface does not statically load project boards, task boards, connection settings, or the mobile layout. Load these modules only when their branches are displayed, preserving board styles and interactions. Mobile browsers still use the mobile layout; narrow Electron windows retain the desktop layout. Loading placeholders do not report startup readiness.
+
 Feedback and Smart app archive libraries load only when compression or extraction is requested. Main-window initialization no longer loads unused archive dependencies; archive contents and security validation remain intact.
 
 The CI-covered `harness-apps` scenario uses an isolated client cache and verifies that startup does not download the legacy runtime. The first legacy Smart app downloads one archive. Marketplace, imported, and directory installations must each report the manifest-required `0.1.0-rc.8`, matching the cached runtime identity and actual DSH package version. Later instances reuse that archive while retaining the original stop, reopen, and page-state assertions.
