@@ -337,6 +337,15 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/features/workbench/runtimeConversationCache* | \
+      wework/src/components/layout/useWorkbenchPaneSession* | \
+      wework/src/features/workbench/WorkbenchProvider* | \
+      wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator*)
+      select_target "core:goal-state-sync"
+      ;;
+  esac
+
+  case "$path" in
     wework/src/components/chat/composer/Drawing* | \
       wework/src/components/chat/composer/useComposerDrawing* | \
       wework/src/components/chat/composer/drawing-canvas.css | \
