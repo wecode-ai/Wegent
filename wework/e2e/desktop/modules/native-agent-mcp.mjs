@@ -135,9 +135,10 @@ export async function verifyNativeAgentMcp({
     .slice(0, 8)}`
   const workspace = join(home, '.wegent', 'workspace', repositoryKey)
   await writeFile(join(source, 'README.md'), 'synthetic workspace repository\n')
+  await writeFile(join(source, '.gitattributes'), 'README.md text eol=lf\n')
   for (const args of [
     ['init'],
-    ['add', 'README.md'],
+    ['add', 'README.md', '.gitattributes'],
     [
       '-c',
       'user.name=Workspace Test',
