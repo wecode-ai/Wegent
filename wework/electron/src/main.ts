@@ -23,7 +23,6 @@ import {
   type Session,
   type WebContents,
 } from 'electron'
-import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -181,7 +180,6 @@ const isolatedSurfacePolicies = loadTrustedIsolatedSurfacePolicies(
   resolve(packageRoot, 'dist/isolated-surfaces.json')
 )
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
-const { autoUpdater } = electronUpdater
 const execFileAsync = promisify(execFile)
 const keepE2EWindowInBackground = keepDesktopE2EInBackground(process.env, process.platform)
 const updateBaseUrl =
@@ -444,25 +442,32 @@ const logRetention = new LogRetentionService({
   directories: runtimeLogDirectories,
   onResult: reportLogCleanup,
 })
-autoUpdater.logger = appUpdateLogger
-const appUpdates = new AppUpdateService({
-  updater: autoUpdater,
-  currentVersion: () => app.getVersion(),
-  isPackaged: () => packagedApplication,
-  log: event => appUpdateLogger.info(event),
-  prepareUpdate: async (version, channel, onProgress) => {
-    if (!componentUpdates) throw new Error('Component update manager is not initialized.')
-    await componentUpdates.stageUpdateForApp(version, channel, false, onProgress)
-  },
-  prepareInstall: async () => {
-    await prepareApplicationShutdown()
-    await appUpdateLogger
-      .flush()
-      .catch(error =>
-        console.error('[app-update] failed to flush updater log before installation', error)
-      )
-  },
-  updateBaseUrl,
+let appUpdates: AppUpdateService | null = null
+const prepareAppUpdateService = createSingleFlight(async () => {
+  if (appUpdates) return appUpdates
+  const { default: electronUpdater } = await import('electron-updater')
+  const { autoUpdater } = electronUpdater
+  autoUpdater.logger = appUpdateLogger
+  appUpdates = new AppUpdateService({
+    updater: autoUpdater,
+    currentVersion: () => app.getVersion(),
+    isPackaged: () => packagedApplication,
+    log: event => appUpdateLogger.info(event),
+    prepareUpdate: async (version, channel, onProgress) => {
+      if (!componentUpdates) throw new Error('Component update manager is not initialized.')
+      await componentUpdates.stageUpdateForApp(version, channel, false, onProgress)
+    },
+    prepareInstall: async () => {
+      await prepareApplicationShutdown()
+      await appUpdateLogger
+        .flush()
+        .catch(error =>
+          console.error('[app-update] failed to flush updater log before installation', error)
+        )
+    },
+    updateBaseUrl,
+  })
+  return appUpdates
 })
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
 
@@ -1567,6 +1572,7 @@ function downloadsDirectory(): string {
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
+  const updatesPreparation = Promise.allSettled([prepareAppUpdateService()])
   const [modeResult, environmentResult] = await Promise.allSettled([
     (async () => {
       logStartupStep('workbench-mode-initialize', 'started')
@@ -1695,6 +1701,8 @@ async function configureDesktopRuntime(): Promise<void> {
         : undefined,
     })
   }
+  const [updatesResult] = await updatesPreparation
+  if (updatesResult.status === 'rejected') throw updatesResult.reason
   desktopRuntime = new DesktopRuntime({
     environment,
     authenticateBrowserSession: (url, _cookie, setCookies) =>
@@ -1755,7 +1763,7 @@ async function configureDesktopRuntime(): Promise<void> {
                   validate: sourceRoot => pluginDevelopment!.validate(sourceRoot),
                 }
               : null,
-          appUpdates,
+          appUpdates: updatesResult.value,
           browserAnnotations,
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,

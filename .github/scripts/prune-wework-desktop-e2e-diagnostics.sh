@@ -8,6 +8,9 @@ if [[ ! -d "$diagnostics_root" ]]; then
   exit 0
 fi
 
+# Raw V8 profiles contain local paths and function names; only safe summaries are uploaded.
+find "$diagnostics_root" -type f -name '*.cpuprofile' -delete
+
 find "$diagnostics_root" \
   -mindepth 2 \
   -maxdepth 2 \

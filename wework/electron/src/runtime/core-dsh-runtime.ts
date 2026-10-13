@@ -178,6 +178,9 @@ export async function prepareCoreDshRuntime(
     onStartupStep: options.onStartupStep,
   })
   options.onStartupStep?.('core-dsh-profile-prepare', 'completed')
+  if (options.environment.WEWORK_E2E_CORE_CPU_PROFILE === '1') {
+    await mkdir(join(dshHome, '.cpu-profile'), { recursive: true, mode: 0o700 })
+  }
   return {
     command: nodeCommand,
     entry: runtime.entry,
@@ -211,6 +214,9 @@ export function createCoreDshLaunch(runtime: PreparedCoreDshRuntime, port: numbe
   return {
     ...runtime,
     args: runtimeNodeArgs(runtime.environment, [
+      ...(runtime.environment.WEWORK_E2E_CORE_CPU_PROFILE === '1'
+        ? ['--cpu-prof', `--cpu-prof-dir=${join(runtime.dshHome, '.cpu-profile')}`]
+        : []),
       runtime.entry,
       '--profile',
       PROFILE_NAME,

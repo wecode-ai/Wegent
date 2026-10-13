@@ -3,6 +3,7 @@ import {
   lstat,
   mkdir,
   readFile,
+  readdir,
   realpath,
   rm,
   stat,
@@ -11,6 +12,8 @@ import {
 } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { describe, expect, test, vi } from 'vitest'
 import { parse } from 'yaml'
 import {
@@ -442,6 +445,45 @@ describe('core DSH runtime', () => {
       readFile(join(profileModules, 'dsh-ui-outputs', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
     await root.remove()
+  })
+
+  test('profiles only an explicitly enabled isolated Core process with native V8 output', async () => {
+    const root = await temporaryDirectory('core-dsh-cpu-profile-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const options = {
+      runtimeRoot: runtime.root,
+      dataDirectory: join(root.path, 'data'),
+      environment: { WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot },
+    }
+    const prepared = await prepareCoreDshRuntime(options)
+    const privateDirectory = join(prepared.dshHome, '.cpu-profile')
+    await expect(lstat(privateDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+    const defaultLaunch = createCoreDshLaunch(prepared, 3080)
+    for (const enabled of [undefined, '', '0', 'true']) {
+      expect(
+        createCoreDshLaunch(
+          {
+            ...prepared,
+            environment: { ...prepared.environment, WEWORK_E2E_CORE_CPU_PROFILE: enabled },
+          },
+          3080
+        ).args
+      ).toEqual(defaultLaunch.args)
+    }
+    const profiled = await prepareCoreDshRuntime({
+      ...options,
+      environment: { ...options.environment, WEWORK_E2E_CORE_CPU_PROFILE: '1' },
+    })
+    const entry = join(root.path, 'profile-fixture.mjs')
+    await writeFile(entry, 'await new Promise(resolve => setTimeout(resolve, 10))\n')
+    const launch = createCoreDshLaunch({ ...profiled, entry }, 3080)
+    expect(launch.args.slice(0, 2)).toEqual(['--cpu-prof', `--cpu-prof-dir=${privateDirectory}`])
+    await promisify(execFile)(process.execPath, launch.args)
+    const files = await readdir(privateDirectory)
+    expect(files).toHaveLength(1)
+    const profile = JSON.parse(await readFile(join(privateDirectory, files[0]), 'utf8'))
+    expect(profile.nodes.length).toBeGreaterThan(0)
+    expect(profile.samples.length).toBeGreaterThan(0)
   })
 
   test('resolves configured and bundled Wework application web roots', async () => {

@@ -99,3 +99,7 @@ The active task surface loads registered Home modules alongside the Core app mod
 Feedback and Smart app archive libraries load only when compression or extraction is requested. Main-window initialization no longer loads unused archive dependencies; archive contents and security validation remain intact.
 
 The CI-covered `harness-apps` scenario uses an isolated client cache and verifies that startup does not download the legacy runtime. The first legacy Smart app downloads one archive. Marketplace, imported, and directory installations must each report the manifest-required `0.1.0-rc.8`, matching the cached runtime identity and actual DSH package version. Later instances reuse that archive while retaining the original stop, reopen, and page-state assertions.
+
+The app updater prepares alongside runtime configuration and finishes before host capabilities are registered, reusing one service instance. Initialization errors still prevent startup instead of hiding update failures.
+
+Core CPU diagnostics require explicit `WEWORK_E2E_CORE_CPU_PROFILE=1`; default formal performance measurements are unaffected. Raw V8 profiles remain in local isolated directories and are removed before diagnostic uploads. `scripts/summarize-core-cpu-profile.mjs` reports cumulative samples only for fixed module and operation allowlists, without private paths or functions. Results describe the captured process lifecycle rather than precise startup phases; profiling runs cannot replace strict startup verification with the default configuration.
