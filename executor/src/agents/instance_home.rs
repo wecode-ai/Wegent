@@ -175,6 +175,7 @@ fn legacy_home_at(root: &Path, request: &ExecutionRequest) -> PathBuf {
         .as_array()
         .and_then(|bots| bots.first())
         .unwrap_or(&request.bot);
+    // Preserve the original URL hash only to locate the earliest Home layout.
     let owner = json!([
         request_backend(request).and_then(|url| backend_identity(url).ok()),
         request_user_id(request),
@@ -261,7 +262,6 @@ fn legacy_identity(request: &ExecutionRequest) -> Result<Value, String> {
         .and_then(|bots| bots.first())
         .unwrap_or(&request.bot);
     Ok(json!({
-        "backend_url": backend_identity(request_backend(request).ok_or("Agent backend identity is missing")?)?,
         "user_id": request_user_id(request).ok_or("Agent user identity is missing")?,
         "team_id": request.extra.get("team_id").and_then(positive_id),
         "bot_id": bot.get("id").and_then(positive_id),
@@ -292,23 +292,7 @@ fn marker_matches(marker: &Value, identity: &Value) -> bool {
     })
 }
 
-fn validate_agent_identity(marker: &Value, request: &ExecutionRequest) -> Result<(), String> {
-    let identity = match marker["schema_version"].as_u64() {
-        Some(4) => {
-            let mut identity = request_identity(request)?;
-            identity.as_object_mut().unwrap().remove("user_name");
-            identity
-        }
-        Some(5) => legacy_identity(request)?,
-        _ => return Err("Unsupported agent Home identity format".to_owned()),
-    };
-    if !marker_matches(marker, &identity) {
-        return Err("Agent Home identity does not match the execution".to_owned());
-    }
-    Ok(())
-}
-
-/// Upgrade expanded task records only after checking their original Home binding.
+/// Compact expanded records while preserving their task and directory bindings.
 fn read_task_record(home: &Path, task_id: &str, agent: &Value) -> Result<Value, String> {
     let value = read_marker(&task_binding(home, task_id)?)?;
     if value["task_id"].as_str() != Some(task_id) {
@@ -321,11 +305,6 @@ fn read_task_record(home: &Path, task_id: &str, agent: &Value) -> Result<Value, 
         return Err("Compact task binding requires the upgraded agent identity".to_owned());
     }
     if !compact {
-        for key in ["backend_url", "user_id", "team_id", "bot_id", "shell_type"] {
-            if agent.get(key).is_none() || value.get(key) != agent.get(key) {
-                return Err("Agent task binding is inconsistent".to_owned());
-            }
-        }
         let identity: ExecutionRequest =
             serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
         let expected = if identity.user_name.is_some() {
@@ -339,13 +318,6 @@ fn read_task_record(home: &Path, task_id: &str, agent: &Value) -> Result<Value, 
         };
         if !home.ends_with(expected) {
             return Err("Agent task binding does not match its directory".to_owned());
-        }
-        if agent["schema_version"] == 4 {
-            for key in ["team_owner", "team_namespace", "team_name"] {
-                if value.get(key) != agent.get(key) {
-                    return Err("Agent task binding is inconsistent".to_owned());
-                }
-            }
         }
     }
     if !value["migrated_session"].is_null() && !value["migrated_session"].is_object() {
@@ -423,9 +395,6 @@ fn acquire_at(request: &ExecutionRequest, root: &Path, home: &Path) -> Result<Ho
         .map_err(|error| error.to_string())?
         .then(|| read_marker(&marker))
         .transpose()?;
-    if let Some(existing) = &existing {
-        validate_agent_identity(existing, request)?;
-    }
     let binding = task_binding(home, &request.task_id)?;
     reject_symlink_ancestors(&binding, root)?;
     let task = if binding.try_exists().map_err(|error| error.to_string())? {
@@ -543,7 +512,6 @@ pub(super) fn migrated_codex_rollout(
 ) -> Option<PathBuf> {
     let home = request_home(request)?;
     let agent = read_marker(&home.join("agent.json")).ok()?;
-    validate_agent_identity(&agent, request).ok()?;
     let marker = read_task_record(&home, &request.task_id, &agent).ok()?;
     let session = marker.get("migrated_session")?;
     if session.get("id")?.as_str()? != thread_id {
@@ -560,16 +528,11 @@ pub(super) fn migrated_codex_rollout(
     Some(home.join(relative))
 }
 
-/// A task number alone is not an identity across accounts or backends.
-pub(crate) fn task_skills_directory(
-    task_id: &str,
-    backend_url: &str,
-    user_id: &str,
-) -> Result<PathBuf, String> {
+/// Resolve task Skills using the authenticated account and recorded task binding.
+pub(crate) fn task_skills_directory(task_id: &str, user_id: &str) -> Result<PathBuf, String> {
     task_skills_directory_at(
         &crate::services::workbench::workbench_root()?,
         task_id,
-        backend_url,
         user_id,
     )
 }
@@ -577,10 +540,8 @@ pub(crate) fn task_skills_directory(
 pub(crate) fn task_skills_directory_at(
     root: &Path,
     task_id: &str,
-    backend_url: &str,
     user_id: &str,
 ) -> Result<PathBuf, String> {
-    let backend_url = backend_identity(backend_url)?;
     let user_id = positive_id(&json!(user_id)).ok_or("Agent user identity is missing")?;
     let agents = root.join("agents");
     reject_symlink_ancestors(&agents, root)?;
@@ -594,9 +555,7 @@ pub(crate) fn task_skills_directory_at(
         if !matches!(agent_marker["schema_version"].as_u64(), Some(4 | 5)) {
             continue;
         }
-        if agent_marker["backend_url"].as_str() != Some(backend_url.as_str())
-            || agent_marker["user_id"].as_str() != Some(user_id.as_str())
-        {
+        if agent_marker["user_id"].as_str() != Some(user_id.as_str()) {
             continue;
         }
         if agent_marker["schema_version"] == 4 {
