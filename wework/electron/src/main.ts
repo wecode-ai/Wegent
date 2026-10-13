@@ -1768,10 +1768,10 @@ async function configureDesktopRuntime(): Promise<void> {
           pendingSchemes,
           openScheme: openSchemeInMainWindow,
           updatePreferences: updateDesktopPreferences,
-          onPreferencesGetStartupStep:
+          onStorageStartupStep:
             process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1'
-              ? (status, durationMs, readDurationMs) =>
-                  logStartupStep('host-preferences-get', status, {
+              ? (step, status, durationMs, readDurationMs) =>
+                  logStartupStep(step, status, {
                     ...(durationMs === undefined ? {} : { durationMs }),
                     ...(readDurationMs === undefined ? {} : { readDurationMs }),
                   })

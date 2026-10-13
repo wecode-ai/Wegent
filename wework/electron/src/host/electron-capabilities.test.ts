@@ -319,7 +319,10 @@ function createIsolatedClipboardRouter(
   smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> },
   services?: Partial<ElectronDesktopServices>,
   browser?: Pick<EmbeddedBrowserManager, 'state' | 'setBounds'>,
-  preferences?: { read: () => Promise<Record<string, unknown>> }
+  preferences?: { read: () => Promise<Record<string, unknown>> },
+  rendererStorage?: {
+    initialize: (entries: Record<string, string>) => Promise<Record<string, unknown>>
+  }
 ) {
   const notificationNavigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
   const targetWindow = {
@@ -337,7 +340,7 @@ function createIsolatedClipboardRouter(
     }),
     () => (smartApps ?? null) as never,
     (preferences ?? {}) as never,
-    {} as never,
+    (rendererStorage ?? {}) as never,
     (browser ?? {}) as never,
     {} as never,
     {
@@ -367,7 +370,25 @@ function createIsolatedClipboardRouter(
   return { router, targetWindow, notificationNavigation }
 }
 
-describe('preferences.get startup diagnostics', () => {
+describe.each([
+  ['preferences.get', 'host-preferences-get'],
+  ['rendererStorage.initialize', 'host-renderer-storage-initialize'],
+] as const)('%s startup diagnostics', (capability, step) => {
+  const params = capability === 'rendererStorage.initialize' ? { entries: { theme: 'dark' } } : {}
+  function storageRouter(
+    read: () => Promise<Record<string, unknown>>,
+    trace?: ElectronDesktopServices['onStorageStartupStep']
+  ) {
+    return createIsolatedClipboardRouter(
+      true,
+      undefined,
+      undefined,
+      { onStorageStartupStep: trace },
+      undefined,
+      { read },
+      { initialize: read }
+    )
+  }
   test('records host receipt and waits for response completion after the original read', async () => {
     let resolveRead!: (value: Record<string, unknown>) => void
     const read = vi.fn(
@@ -377,40 +398,31 @@ describe('preferences.get startup diagnostics', () => {
         })
     )
     const trace = vi.fn()
-    const { router } = createIsolatedClipboardRouter(
-      true,
-      undefined,
-      undefined,
-      {
-        onPreferencesGetStartupStep: trace,
-      },
-      undefined,
-      { read }
-    )
+    const { router } = storageRouter(read, trace)
     const completions: Array<() => void | Promise<void>> = []
     const now = vi
       .spyOn(performance, 'now')
       .mockReturnValueOnce(100)
       .mockReturnValueOnce(125)
       .mockReturnValueOnce(180)
-    const request = router.invoke(
-      WEWORK_APP_PRINCIPAL,
-      'preferences.get',
-      {},
-      {
-        onResponseSent: completion => completions.push(completion),
-      }
-    )
-    expect(trace).toHaveBeenCalledWith('started')
+    const request = router.invoke(WEWORK_APP_PRINCIPAL, capability, params, {
+      onResponseSent: completion => completions.push(completion),
+    })
+    expect(trace).toHaveBeenCalledWith(step, 'started')
     expect(read).toHaveBeenCalledTimes(1)
+    if (capability === 'rendererStorage.initialize') {
+      expect(read).toHaveBeenCalledWith(params.entries)
+    } else {
+      expect(read).toHaveBeenCalledWith()
+    }
     const preferences = { privateCredential: 'must-not-be-logged' }
     resolveRead(preferences)
     expect(await request).toBe(preferences)
     expect(trace).toHaveBeenCalledTimes(1)
     expect(completions).toHaveLength(1)
     await completions[0]()
-    expect(trace).toHaveBeenCalledWith('completed', 80, 25)
-    const [, durationMs, readDurationMs] = trace.mock.calls[1]
+    expect(trace).toHaveBeenCalledWith(step, 'completed', 80, 25)
+    const [, , durationMs, readDurationMs] = trace.mock.calls[1]
     expect(durationMs).toBeGreaterThanOrEqual(readDurationMs)
     expect(readDurationMs).toBeGreaterThanOrEqual(0)
     expect(JSON.stringify(trace.mock.calls)).not.toContain('must-not-be-logged')
@@ -420,36 +432,23 @@ describe('preferences.get startup diagnostics', () => {
   test('records a fixed failure without changing the original read error', async () => {
     const error = new Error('private preferences path and credentials')
     const trace = vi.fn()
-    const { router } = createIsolatedClipboardRouter(
-      true,
-      undefined,
-      undefined,
-      {
-        onPreferencesGetStartupStep: trace,
-      },
-      undefined,
-      { read: vi.fn().mockRejectedValue(error) }
-    )
-    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.get', {})).rejects.toBe(error)
-    expect(trace.mock.calls).toEqual([['started'], ['failed', expect.any(Number)]])
+    const { router } = storageRouter(vi.fn().mockRejectedValue(error), trace)
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, capability, params)).rejects.toBe(error)
+    expect(trace.mock.calls).toEqual([
+      [step, 'started'],
+      [step, 'failed', expect.any(Number)],
+    ])
     expect(JSON.stringify(trace.mock.calls)).not.toContain(error.message)
   })
 
   test('preserves the normal uninstrumented read and original result', async () => {
     const preferences = { theme: 'dark' }
     const read = vi.fn().mockResolvedValue(preferences)
-    const { router } = createIsolatedClipboardRouter(
-      true,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { read }
-    )
+    const { router } = storageRouter(read)
     const onResponseSent = vi.fn()
-    expect(
-      await router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.get', {}, { onResponseSent })
-    ).toBe(preferences)
+    expect(await router.invoke(WEWORK_APP_PRINCIPAL, capability, params, { onResponseSent })).toBe(
+      preferences
+    )
     expect(read).toHaveBeenCalledTimes(1)
     expect(onResponseSent).not.toHaveBeenCalled()
   })

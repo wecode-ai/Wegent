@@ -22,6 +22,7 @@ import {
   HostCapabilityError,
   HostCapabilityRouter,
   type HostCapability,
+  type HostInvocationContext,
 } from './capability-router.js'
 import type { RendererHealthSnapshot } from './renderer-health.js'
 import type { SmartAppManager } from './smart-app-manager.js'
@@ -127,11 +128,7 @@ export interface ElectronDesktopServices {
   openScheme: (url: string) => void
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
-  onPreferencesGetStartupStep?: (
-    status: 'started' | 'completed' | 'failed',
-    durationMs?: number,
-    readDurationMs?: number
-  ) => void
+  onStorageStartupStep?: StorageStartupStep
   weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
@@ -838,25 +835,14 @@ export function createElectronCapabilityRouter(
       desktopServices
     )
   })
-  router.register('preferences.get', (_params, context) => {
-    const trace = desktopServices.onPreferencesGetStartupStep
-    if (!trace) return preferences.read()
-    const startedAt = performance.now()
-    trace('started')
-    return preferences.read().then(
-      value => {
-        const readDurationMs = Math.round(performance.now() - startedAt)
-        context.deferUntilResponseSent(() => {
-          trace('completed', Math.round(performance.now() - startedAt), readDurationMs)
-        })
-        return value
-      },
-      error => {
-        trace('failed', Math.round(performance.now() - startedAt))
-        throw error
-      }
+  router.register('preferences.get', (_params, context) =>
+    traceStorageResponse(
+      () => preferences.read(),
+      context,
+      desktopServices.onStorageStartupStep,
+      'host-preferences-get'
     )
-  })
+  )
   router.register('preferences.update', async params => {
     const patch = params.patch
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
@@ -904,7 +890,7 @@ export function createElectronCapabilityRouter(
         : {}),
     })
   })
-  registerRendererStorageCapabilities(router, rendererStorage)
+  registerRendererStorageCapabilities(router, rendererStorage, desktopServices.onStorageStartupStep)
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
   registerPluginDevelopmentCapabilities(router, desktopServices)
@@ -1114,13 +1100,51 @@ export function createElectronCapabilityRouter(
   return router
 }
 
+type StorageStartupStep = (
+  step: 'host-preferences-get' | 'host-renderer-storage-initialize',
+  status: 'started' | 'completed' | 'failed',
+  durationMs?: number,
+  readDurationMs?: number
+) => void
+
+function traceStorageResponse<Result>(
+  operation: () => Promise<Result>,
+  context: HostInvocationContext,
+  trace: StorageStartupStep | undefined,
+  step: Parameters<StorageStartupStep>[0]
+): Promise<Result> {
+  if (!trace) return operation()
+  const startedAt = performance.now()
+  trace(step, 'started')
+  return operation().then(
+    value => {
+      const readDurationMs = Math.round(performance.now() - startedAt)
+      context.deferUntilResponseSent(() => {
+        trace(step, 'completed', Math.round(performance.now() - startedAt), readDurationMs)
+      })
+      return value
+    },
+    error => {
+      trace(step, 'failed', Math.round(performance.now() - startedAt))
+      throw error
+    }
+  )
+}
+
 export function registerRendererStorageCapabilities(
   router: HostCapabilityRouter,
-  rendererStorage: RendererStorageStore
+  rendererStorage: RendererStorageStore,
+  trace?: StorageStartupStep
 ): void {
-  router.register('rendererStorage.initialize', params =>
-    rendererStorage.initialize(stringRecordParam(params, 'entries'))
-  )
+  router.register('rendererStorage.initialize', (params, context) => {
+    const entries = stringRecordParam(params, 'entries')
+    return traceStorageResponse(
+      () => rendererStorage.initialize(entries),
+      context,
+      trace,
+      'host-renderer-storage-initialize'
+    )
+  })
   router.register('rendererStorage.update', async params => {
     await rendererStorage.update({
       clear: requiredBooleanParam(params, 'clear'),

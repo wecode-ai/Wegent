@@ -5,7 +5,6 @@ import { basename, join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import semver from 'semver'
-import { extract } from 'tar'
 import { cloudFetch } from '../host/cloud-http.js'
 import { publishImmutableDirectory } from './immutable-directory.js'
 
@@ -167,6 +166,7 @@ async function downloadRuntime(
 
 async function extractArchive(archive: string, destination: string): Promise<void> {
   try {
+    const { extract } = await import('tar')
     await extract({ cwd: destination, file: archive, strict: true })
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)

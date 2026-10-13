@@ -3,7 +3,6 @@ import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promi
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import semver from 'semver'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
-import * as tar from 'tar'
 import {
   selectBundledDshRuntimeMatching,
   CORE_DSH_VERSION,
@@ -270,6 +269,7 @@ export async function materializeManifestPackages(
     throw new Error(`Smart app install package is missing: ${manifest.entry.installPackage}`)
   }
   const archives = await packageArchives(root)
+  const { x } = await import('tar')
   const paths: string[] = []
   for (const descriptor of [...descriptors].sort(
     (left, right) =>
@@ -280,7 +280,7 @@ export async function materializeManifestPackages(
     const destination = join(root, descriptor.path)
     await rm(destination, { recursive: true, force: true })
     await mkdir(destination, { recursive: true, mode: 0o700 })
-    await tar.x({ file: archive, cwd: destination, strip: 1 })
+    await x({ file: archive, cwd: destination, strip: 1 })
     paths.push(destination)
   }
   if (!(await isDirectory(installPackage))) {
@@ -303,7 +303,8 @@ async function packageArchives(root: string): Promise<Map<string, string>> {
 
 async function npmArchiveName(path: string): Promise<string> {
   let packageName: string | null = null
-  await tar.t({
+  const { t } = await import('tar')
+  await t({
     file: path,
     onReadEntry: entry => {
       if (entry.path !== 'package/package.json') return
