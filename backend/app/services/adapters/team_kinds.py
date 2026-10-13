@@ -59,7 +59,6 @@ from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 from app.services.team_access_policy import TEAM_USE_ROLE, team_usage_summary
 from app.stores.tasks import task_store
-from shared.models.db.kind import utc_now_naive
 from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
@@ -1525,7 +1524,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode="json")
-        team.updated_at = utc_now_naive()
         flag_modified(team, "json")
 
         db.commit()
