@@ -24,7 +24,7 @@
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// `users` column list rendered by `db.query(User)` (SQLAlchemy labels every
 /// column `users_<name>`).
@@ -57,8 +57,11 @@ pub const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
 /// Re-export of the team-union query functions for the teams modules'
 /// existing `repo::` call sites.
 pub use super::team_union::{
-    AccessibleTeamsQuery, TeamListFilter, accessible_default_team, accessible_teams, kinds_by_refs,
-    public_kinds_by_names, team_count, user_by_id, users_by_ids,
+    AccessibleTeamsQuery, TeamListFilter, accessible_default_team, accessible_teams,
+    latest_distinct_team_rows, team_count,
+};
+pub use super::team_union_lookups::{
+    kinds_by_refs, public_kinds_by_names, user_by_id, users_by_ids,
 };
 
 /// `namespace` column list rendered by `db.query(Namespace)`.
@@ -158,7 +161,7 @@ pub struct UserSummaryRow {
     #[allow(dead_code)]
     pub users_email: Option<String>,
     #[allow(dead_code)]
-    pub users_git_info: brz_mysql::Json<crate::json_compat::OpaqueJson>,
+    pub users_git_info: brz_mysql::Json<brz_json::OpaqueJson>,
     #[allow(dead_code)]
     pub users_is_active: i8,
     #[allow(dead_code)]

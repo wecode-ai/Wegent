@@ -265,6 +265,35 @@ describe('pluginMarketplaceCache', () => {
     expect(window.localStorage.getItem('wework.plugins.marketplaceCache.v2')).toBeNull()
   })
 
+  test('preserves local marketplace routing after a cold start', () => {
+    const key = 'local-marketplace-routing'
+    const marketplacePath = '/tmp/github-marketplace/.agents/plugins/marketplace.json'
+    setPluginMarketplaceCache(
+      {
+        cacheKey: key,
+        marketplaceItems: [
+          item({
+            id: 'github@openai-official',
+            name: 'github',
+            manifest: { marketplaceId: 'openai-official', marketplacePath },
+          }),
+        ],
+        installedPlugins: [],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        deviceId: 'device-1',
+        fetchedAt: Date.now(),
+      },
+      { persistImmediately: true }
+    )
+
+    resetPluginMarketplaceCacheMemory()
+    expect(getPluginMarketplaceCache(key)?.marketplaceItems[0]?.manifest).toEqual({
+      marketplaceId: 'openai-official',
+      marketplacePath,
+    })
+  })
+
   test('keeps full logos in memory but strips oversized data URLs from durable storage', () => {
     const key = pluginMarketplaceCacheKey('http://api', 'token-logos')
     const logo = `data:image/png;base64,${'A'.repeat(5000)}`

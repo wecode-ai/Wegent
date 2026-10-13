@@ -99,7 +99,7 @@ mod tests {
     }
 
     fn user_row(role: &str) -> crate::auth::UserRow {
-        use crate::json_compat::OpaqueJson;
+        use brz_json::OpaqueJson;
         crate::auth::UserRow {
             id: 1,
             user_name: "example-user".to_string(),

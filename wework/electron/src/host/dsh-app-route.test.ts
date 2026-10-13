@@ -16,4 +16,15 @@ describe('resolveDshAppRoute', () => {
       resolveDshAppRoute('http://127.0.0.1:8000/?old=value#section', 'system-drag').toString()
     ).toBe('http://127.0.0.1:8000/wework/app/system-drag')
   })
+
+  test('preserves content query and hash when routing through the Wework app', () => {
+    expect(
+      resolveDshAppRoute(
+        'http://127.0.0.1:8000/?old=value#stale',
+        '/todo?projectId=project-1&workspaceTab=board-1#activity'
+      ).toString()
+    ).toBe(
+      'http://127.0.0.1:8000/wework/app/todo?projectId=project-1&workspaceTab=board-1#activity'
+    )
+  })
 })

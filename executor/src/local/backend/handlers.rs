@@ -9,6 +9,19 @@ where
     T: LocalBackendTransport,
     R: TaskRunner,
 {
+    pub(super) fn connection_closed_handler(&self) -> ConnectionClosedHandler {
+        let connection_status = Arc::clone(&self.connection_status);
+        let connection_epoch = Arc::clone(&self.connection_epoch);
+        Arc::new(move || {
+            {
+                let mut epoch = connection_epoch.lock().expect("connection epoch lock");
+                *epoch = epoch.wrapping_add(1);
+                connection_status.store(false, Ordering::Release);
+            }
+            write_executor_log_line("local backend connection closed; reconnect requested");
+        })
+    }
+
     pub(super) fn task_handler(&self) -> EventHandler {
         let runner = self.runner.clone();
         let config = Arc::clone(&self.client.config);

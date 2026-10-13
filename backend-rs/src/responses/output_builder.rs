@@ -372,7 +372,7 @@ pub struct ResponseObject {
     pub model: String,
     pub output: Vec<OutputItem>,
     pub pending_user_input: Option<bool>,
-    pub pending_user_input_payload: Option<Box<serde_json::value::RawValue>>,
+    pub pending_user_input_payload: Option<brz_json::RawJson>,
     pub previous_response_id: Option<String>,
 }
 
@@ -454,7 +454,7 @@ pub fn task_to_response_object(
     let error = if wegent_status == "FAILED" {
         status
             .and_then(|status| status.error_message.as_ref())
-            .and_then(crate::json_compat::OpaqueJson::project::<String>)
+            .and_then(brz_json::OpaqueJson::project::<String>)
             .filter(|message| !message.is_empty())
             .map(|message| ResponseError {
                 code: "task_failed".to_string(),
@@ -488,7 +488,7 @@ fn task_created_at_unix(task: &TaskRow) -> Option<i64> {
         .status
         .as_ref()
         .and_then(|status| status.created_at.as_ref())
-        .and_then(crate::json_compat::OpaqueJson::project::<String>)
+        .and_then(brz_json::OpaqueJson::project::<String>)
         && let Some(naive) = parse_naive_datetime(&created_at)
     {
         return Some(naive_and_shanghai_to_unix(&naive));

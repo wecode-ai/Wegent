@@ -25,7 +25,7 @@ use anyhow::{Context as _, Result};
 use brz_http::{Client, Endpoint};
 use serde::Serialize;
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// `settings.EXECUTOR_MANAGER_URL`'s source default (`app/core/config.py`).
 pub const DEFAULT_EXECUTOR_MANAGER_URL: &str = "http://localhost:8001";
@@ -36,6 +36,8 @@ const GET_SANDBOX_TIMEOUT: Duration = Duration::from_secs(30);
 const SANDBOX_MUTATION_TIMEOUT: Duration = Duration::from_secs(180);
 /// `delete_executor_task_sync`'s requests timeout.
 const DELETE_EXECUTOR_TIMEOUT: Duration = Duration::from_secs(30);
+/// `ArchiveService._call_executor_restore`'s httpx timeout.
+const EXECUTOR_RESTORE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// `_ExecutorRuntimeClient.get_sandbox`'s result: the source's
 /// `(payload, error)` pair collapsed to the branches `delete_task` reads.
@@ -62,6 +64,16 @@ struct CleanupByTaskRequest {
 struct ExecutorDeleteRequest<'a> {
     executor_name: &'a str,
     executor_namespace: &'a str,
+}
+
+/// `ArchiveService._call_executor_restore`'s request body.
+#[derive(Serialize)]
+struct ExecutorRestoreRequest<'a> {
+    task_id: i64,
+    download_url: &'a str,
+    executor_name: &'a str,
+    executor_namespace: &'a str,
+    runtime_type: &'a str,
 }
 
 /// The retained executor-manager client and its resolved base URL.
@@ -202,5 +214,44 @@ impl ExecutorManager {
         } else {
             anyhow::bail!("executor delete returned HTTP {status}")
         }
+    }
+
+    /// `ArchiveService._call_executor_restore`: `POST
+    /// {base}/executor-manager/executor/restore` with a 120s timeout. The
+    /// source returns the decoded JSON body, or `None` on any transport error,
+    /// non-2xx status, or undecodable body.
+    pub async fn restore_workspace(
+        &self,
+        task_id: i64,
+        download_url: &str,
+        executor_name: &str,
+        executor_namespace: &str,
+        runtime_type: &str,
+    ) -> Option<serde_json::Value> {
+        let endpoint = self
+            .client
+            .endpoint_named(
+                format!("{}/executor-manager/executor/restore", self.base),
+                "http://executor-manager/executor-manager/executor/restore",
+            )
+            .ok()?;
+        let body = ExecutorRestoreRequest {
+            task_id,
+            download_url,
+            executor_name,
+            executor_namespace,
+            runtime_type,
+        };
+        let response = endpoint
+            .post()
+            .json(&body)
+            .timeout(EXECUTOR_RESTORE_TIMEOUT)
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        response.json::<serde_json::Value>().await.ok()
     }
 }

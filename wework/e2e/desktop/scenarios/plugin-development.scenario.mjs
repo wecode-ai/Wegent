@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { bundledPluginUpgradeFixture } from '../modules/bundled-plugin-upgrades.mjs'
 import { execFile } from 'node:child_process'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -66,8 +67,26 @@ export async function createDesktopScenario({
   resultDir,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
+  executorHome,
 }) {
   const developerPluginVersion = await readBundledPluginVersion('wework-plugin-developer')
+  const upgradeFixture = bundledPluginUpgradeFixture(
+    join(executorHome, 'codex'),
+    await Promise.all(
+      ['wework-space', 'smart-app-builder', 'wework-plugin-developer'].map(async name => ({
+        name,
+        version: await readBundledPluginVersion(name),
+        sourcePath:
+          name === 'wework-plugin-developer'
+            ? resolve(scenarioDirectory, '../../../dsh/plugin-developer/codex-plugin')
+            : resolve(
+                scenarioDirectory,
+                '../../../resources/bundled-plugins/wework-personal/plugins',
+                name
+              ),
+      }))
+    )
+  )
   const pluginRoot = join(resultDir, 'plugin-development-project')
   const controlRegistry = join(resultDir, 'desktop-control-instances')
   await mkdir(pluginRoot, { recursive: true })
@@ -84,6 +103,9 @@ export async function createDesktopScenario({
   const websiteUrl = `http://127.0.0.1:${websiteAddress.port}/`
 
   return {
+    async prepareApp() {
+      await upgradeFixture.prepare()
+    },
     appEnvironment: {
       WEWORK_E2E_OPEN_DIALOG_PATH: pluginRoot,
       WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
@@ -91,6 +113,8 @@ export async function createDesktopScenario({
     },
 
     async verify(control) {
+      await upgradeFixture.verify(control)
+      await upgradeFixture.verifyUninstall(control)
       await control.command('waitFor', '[data-testid="plugins-button"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })

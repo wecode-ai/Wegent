@@ -11,7 +11,7 @@
 //! download endpoint then applies its share-token/browser fallbacks.
 use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Json};
 use chrono::NaiveDateTime;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};

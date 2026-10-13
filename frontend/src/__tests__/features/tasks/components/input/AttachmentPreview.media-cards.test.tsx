@@ -67,11 +67,8 @@ describe('AttachmentPreview sent media cards', () => {
   it('renders a fixed-size video card and opens the unified player on click', async () => {
     render(<AttachmentPreview attachment={attachment({})} compact />)
 
-    await waitFor(() => {
-      expect(getAttachmentPlayback).toHaveBeenCalledWith(1, undefined)
-    })
-
-    const card = screen.getByTestId('sent-video-card-1')
+    const card = await screen.findByTestId('sent-video-card-1')
+    expect(getAttachmentPlayback).toHaveBeenCalledWith(1, undefined)
     expect(card).toHaveClass('h-14', 'w-14')
     expect(screen.getByTestId('sent-video-attachment-1')).toHaveAttribute(
       'src',

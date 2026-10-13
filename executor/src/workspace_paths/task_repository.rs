@@ -22,7 +22,9 @@ pub(crate) struct TaskRepository {
 
 impl TaskRepository {
     pub fn path(&self) -> PathBuf {
-        workspace_root().join(&self.key)
+        self.key
+            .split('/')
+            .fold(workspace_root(), |path, part| path.join(part))
     }
 
     pub(crate) fn validate(&self) -> Result<(), String> {

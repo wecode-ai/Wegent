@@ -131,6 +131,8 @@ flowchart LR
 
 ## 4. 数据归属与身份
 
+受管云端插件的本地物化记录通过 `cloudPluginId` 和 `cloudInstalledPluginId` 关联目录与账号安装意图。仅刷新本地清单时也必须保留云端安装 ID，更新和设置请求使用该 ID；`name@marketplace` 只用于本地运行面。只有个人原件（`origin=created` 或 `source.type=local`）使用个人发布身份合并路径。
+
 | 数据                                   | 位置                                               | 事实语义                   |
 | -------------------------------------- | -------------------------------------------------- | -------------------------- |
 | Plugin、Release、Publication Request   | MySQL                                              | 云端控制面和发布状态       |
@@ -158,6 +160,8 @@ flowchart LR
 `catalog_namespace` 由服务端生成，客户端不可任意传入。展示 slug 可以相同，因此 `personal/42:foo` 与 `enterprise:foo` 可以同时存在。企业 Plugin 通过 `origin_plugin_id` 和发布 revision 追溯个人来源，但不继承个人 ACL、所有权或可变状态。
 
 运行时市场映射保持：`personal -> wework-personal`、`workspace -> wegent`、`public -> wework`。该映射只用于受管安装记录；不能用展示名或 slug 跨命名空间合并身份。
+
+插件目录和安装清单的持久缓存共用精简 manifest 逻辑，必须保留 `marketplaceId` 与 `marketplacePath`。冷启动后的本地目录插件仍通过本地路径读取和安装，不能因为缓存丢失路径而变成要求 ChatGPT 登录的远程目录请求。
 
 ### 4.2 ER 模型
 

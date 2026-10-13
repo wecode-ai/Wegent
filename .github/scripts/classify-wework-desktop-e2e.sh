@@ -6,6 +6,7 @@ core_segments=(
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
+  collaboration-issue-task-discovery
   collaboration-issue-archive
   collaboration-first-use
   collaboration-worktree-policy
@@ -14,6 +15,7 @@ core_segments=(
   collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
   collaboration-remote-group-coordinate
+  collaboration-remote-group-planning-details
   collaboration-human-round-resume
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
@@ -50,6 +52,7 @@ core_segments=(
   codex-invalid-launch-cwd
   running-conversation-history
   running-plan-history
+  running-sidebar-state
   codex-notification-isolation
   executor-stream-recovery
   model-overload-recovery
@@ -64,12 +67,15 @@ core_segments=(
   tray-lifecycle
   conversation-state
   send-key-preference
+  reply-predictions
+  model-settings
   system-proxy
   system-pac
   environment-panel-scroll
   temporary-chat
   workspace-attachments
   rendering-extensions
+  background-terminals
   change-request-status
   claude-runtime
   local-file-preview
@@ -157,22 +163,22 @@ cloud_shards=(
 core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation
+  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
-  rendering-extensions,transcript-sync
+  rendering-extensions,transcript-sync,background-terminals
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
-  local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
+  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate
+  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details
 )
 
 validate_core_shards() {
@@ -314,6 +320,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
   select_target "core:collaboration-remote-group-coordinate"
+  select_target "core:collaboration-remote-group-planning-details"
   select_target "core:collaboration-human-round-resume"
   select_target "core:collaboration-local-group-cancellation"
 }
@@ -422,10 +429,15 @@ classify_wework_path() {
       wework/e2e/desktop/modules/native-agent-mcp.mjs | \
       wework/e2e/desktop/modules/workbench-home-migration.mjs | \
       wework/e2e/desktop/modules/workbench-schema-compatibility.mjs | \
+      wework/e2e/desktop/modules/workbench-desktop-startup.mjs | \
+      wework/e2e/desktop/modules/workbench-component-publication.mjs | \
+      wework/electron/src/runtime/immutable-directory* | \
       wework/electron/src/runtime/workbench-environment* | \
       wework/electron/src/runtime/development-isolation* | \
       wework/electron/src/runtime/workbench-executor-schema* | \
+      wework/electron/src/runtime/workbench-codex-migration* | \
       wework/electron/src/runtime/workbench-migration-lock* | \
+      wework/electron/src/runtime/workbench-desktop-startup* | \
       wework/electron/src/runtime/workbench-home-migration* | \
       wework/electron/src/runtime/workbench-mode* | \
       wework/src/features/workbench-mode/*)
@@ -450,6 +462,11 @@ classify_wework_path() {
     # Plugin development verifies the installed Codex guide, generated local
     # project, conditional conversation sidebar, isolated Wework, and HMR.
     wework/dsh/plugin-developer/* | \
+      wework/e2e/desktop/modules/bundled-plugin-upgrades.mjs | \
+      executor/src/local/plugin_cache.rs | \
+      executor/src/runtime_work/handler/plugin_install.rs | \
+      wework/src/desktop/localExecutor* | \
+      wework/src/components/plugins/BundledPluginUpdateNotice* | \
       wework/e2e/desktop/scenarios/plugin-development.scenario.mjs | \
       wework/electron/src/runtime/plugin-development-manager* | \
       wework/resources/bundled-plugins/wework-personal/plugins/wework-plugin-developer/* | \
@@ -462,6 +479,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx ]]; then
         select_target "core:temporary-chat"
+        select_target "core:background-terminals"
       fi
       return
       ;;
@@ -618,6 +636,10 @@ classify_wework_path() {
       select_target "core:collaboration-shared-core"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-task-discovery.scenario.mjs)
+      select_target "core:collaboration-issue-task-discovery"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs)
       select_target "core:collaboration-issue-archive"
       return
@@ -648,6 +670,11 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-remote-group-coordinate.scenario.mjs)
       select_target "core:collaboration-remote-group-coordinate"
+      select_target "core:collaboration-remote-group-planning-details"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-remote-group-planning-details.scenario.mjs)
+      select_target "core:collaboration-remote-group-planning-details"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-human-round-resume.scenario.mjs)
@@ -754,6 +781,10 @@ classify_wework_path() {
         "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:project-ai-settings"
       fi
+      if [[ "$path" == wework/src/api/local/localServices* || \
+        "$path" == wework/src/api/hybrid/hybridServices* ]]; then
+        select_target "core:background-terminals"
+      fi
       if [[ "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:send-key-preference"
       fi
@@ -775,6 +806,7 @@ classify_wework_path() {
     wework/src/features/workbench/runtimeTaskLifecycle/*)
       select_target "core:supervisor-lifecycle"
       select_target "core:resilience"
+      select_target "core:running-sidebar-state"
       return
       ;;
 
@@ -807,6 +839,7 @@ classify_wework_path() {
       wework/src/components/layout/DesktopWorkbenchLayout.test.tsx)
       select_target "core:environment-panel-scroll"
       if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
+        select_target "core:background-terminals"
         select_target "core:temporary-chat"
         select_target "core:cloud-context-resilience"
         select_target "core:task-board-association"
@@ -816,8 +849,7 @@ classify_wework_path() {
 
     # Right-workspace temporary chats have an independently bootstrapped
     # ephemeral-thread scenario.
-    wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx | \
-      wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
+    wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
       wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
       select_target "core:temporary-chat"
       return
@@ -893,6 +925,15 @@ classify_wework_path() {
       return
       ;;
 
+    wework/src/components/layout/BackgroundTerminalsSummary* | \
+      wework/src/components/layout/backgroundTerminals* | \
+      wework/src/components/layout/workspace-panels/BackgroundTerminalPanel* | \
+      wework/src/api/runtimeBackgroundTerminals.ts | \
+      wework/e2e/desktop/scenarios/background-terminals.scenario.mjs)
+      select_target "core:background-terminals"
+      return
+      ;;
+
     # Local PTY-backed coding harnesses have dedicated desktop scenarios.
     wework/electron/src/host/local-terminal* | \
       wework/src/lib/local-harness* | \
@@ -962,6 +1003,18 @@ classify_wework_path() {
       wework/src/types/gitCredentials.ts | \
       wework/e2e/desktop/scenarios/change-request-status.scenario.mjs)
       select_target "core:change-request-status"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/model-settings.scenario.mjs | \
+      wework/src/components/settings/ProviderSettingsSection* | \
+      wework/src/components/settings/ProviderEditor* | \
+      wework/src/components/settings/ProviderModelFields* | \
+      wework/src/components/settings/ModelSettingsPage* | \
+      wework/src/features/model-settings/provider*)
+      select_target "core:model-settings"
+      select_target "core:codex-account-login"
+      select_target "core:model-routing"
       return
       ;;
 

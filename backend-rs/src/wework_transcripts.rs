@@ -2,22 +2,36 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Wework transcript listing for `GET /api/wework-transcripts` and the
-//! per-user segment key for
-//! `GET /api/wework-transcripts/{transcript_id}/encryption-key`.
+//! Wework transcript listing for `GET /api/wework-transcripts`, the per-user
+//! segment key for
+//! `GET /api/wework-transcripts/{transcript_id}/encryption-key`, and the
+//! archive download for
+//! `GET /api/wework-transcripts/{transcript_id}/archives/{archive_id}/download`.
 //!
 //! Mirrors `app.api.endpoints.wework_transcripts` (router prefix
 //! `/wework-transcripts`, mounted under the app prefix `/api`):
 //! authenticate the bearer token, then list the user's transcripts ordered by
 //! `updated_at` descending while loading each transcript's retained archives
 //! ordered by `to_sequence`, or resolve one transcript for the requesting user
-//! before returning that user's encryption key. The listing response follows
-//! the `TranscriptListResponse` pydantic model with `by_alias=True` so fields
+//! before returning that user's encryption key. The download handler resolves
+//! the transcript, then the archive row for that transcript, applies the
+//! retained-archive floor check, and streams the archive object from the
+//! configured object store. The listing response follows the
+//! `TranscriptListResponse` pydantic model with `by_alias=True` so fields
 //! render in camelCase; the key response renders the source
 //! `TranscriptEncryptionKeyResponse` fields unchanged.
 //! Column aliases (`wework_transcripts_<column>`,
 //! `wework_transcript_archives_<column>`) mirror the source SQLAlchemy
 //! labeled rendering so the prepared statements match the recorded exchanges.
+//!
+//! The source `turns` route
+//! (`GET /api/wework-transcripts/{transcript_id}/turns`,
+//! `app/api/endpoints/wework_transcripts.py:205`) allows only `GET`, so the
+//! recorded `POST /api/wework-transcripts/*/turns` group is a method mismatch:
+//! FastAPI answers it with `405 {"detail":"Method Not Allowed"}` plus
+//! `Allow: GET`. The recorded group only exercises `POST`, so the target owns
+//! that method and reproduces the source framework response.
+use brz_http_server::{Binary, HttpResponse};
 use brz_mysql::FromMysqlRow;
 use serde::Deserialize;
 #[cfg(test)]
@@ -25,11 +39,12 @@ use serde_json::{Value, json};
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use crate::wework_transcript_archive_storage::{self, ArchiveReadError};
 
 /// `EPOCH_TIME` (`app.models.wework_transcript`): the sentinel naive datetime
 /// that means "no value" for `writer_lease_expires_at` and `archived_at`.
 /// The source uses `datetime(1970, 1, 1)`.
-const EPOCH_TIME: chrono::NaiveDateTime = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
+pub(crate) const EPOCH_TIME: chrono::NaiveDateTime = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
     .unwrap()
     .and_hms_opt(0, 0, 0)
     .unwrap();
@@ -54,33 +69,35 @@ fn default_include_archived() -> bool {
 /// column list. The result columns carry the `wework_transcripts_<column>`
 /// aliases, so every field is renamed.
 #[derive(Debug, FromMysqlRow)]
-struct TranscriptRow {
+pub(crate) struct TranscriptRow {
     #[mysql(rename = "wework_transcripts_id")]
-    id: i64,
+    pub(crate) id: i64,
     #[mysql(rename = "wework_transcripts_transcript_id")]
-    transcript_id: String,
+    pub(crate) transcript_id: String,
     #[mysql(rename = "wework_transcripts_parent_transcript_id")]
-    parent_transcript_id: String,
+    pub(crate) parent_transcript_id: String,
     #[mysql(rename = "wework_transcripts_forked_at_sequence")]
-    forked_at_sequence: i64,
+    pub(crate) forked_at_sequence: i64,
     #[mysql(rename = "wework_transcripts_title")]
-    title: String,
+    pub(crate) title: String,
     #[mysql(rename = "wework_transcripts_state")]
-    state: String,
+    pub(crate) state: String,
     #[mysql(rename = "wework_transcripts_current_sequence")]
-    current_sequence: i64,
+    pub(crate) current_sequence: i64,
     #[mysql(rename = "wework_transcripts_archived_through_sequence")]
-    archived_through_sequence: i64,
+    pub(crate) archived_through_sequence: i64,
     #[mysql(rename = "wework_transcripts_writer_client_id")]
-    writer_client_id: String,
+    pub(crate) writer_client_id: String,
+    #[mysql(rename = "wework_transcripts_writer_fencing_token")]
+    pub(crate) writer_fencing_token: i64,
     #[mysql(rename = "wework_transcripts_writer_lease_expires_at")]
-    writer_lease_expires_at: chrono::NaiveDateTime,
+    pub(crate) writer_lease_expires_at: chrono::NaiveDateTime,
     #[mysql(rename = "wework_transcripts_archived_at")]
-    archived_at: chrono::NaiveDateTime,
+    pub(crate) archived_at: chrono::NaiveDateTime,
     #[mysql(rename = "wework_transcripts_created_at")]
-    created_at: chrono::NaiveDateTime,
+    pub(crate) created_at: chrono::NaiveDateTime,
     #[mysql(rename = "wework_transcripts_updated_at")]
-    updated_at: chrono::NaiveDateTime,
+    pub(crate) updated_at: chrono::NaiveDateTime,
 }
 
 /// One `wework_transcript_archives` row, selected with the full labeled
@@ -94,6 +111,8 @@ struct ArchiveRow {
     from_sequence: i64,
     #[mysql(rename = "wework_transcript_archives_to_sequence")]
     to_sequence: i64,
+    #[mysql(rename = "wework_transcript_archives_storage_key")]
+    storage_key: String,
     #[mysql(rename = "wework_transcript_archives_sha256")]
     sha256: String,
     #[mysql(rename = "wework_transcript_archives_size_bytes")]
@@ -159,7 +178,7 @@ const TRANSCRIPTS_QUERY_ACTIVE_ONLY: &str = "SELECT wework_transcripts.id AS wew
 /// `transcript_id`, with the source `query.first()`'s `LIMIT 1`. Recorded
 /// exchanges render both filters as row values, so the projection mirrors the
 /// listing query and the conditions stay separate AND branches.
-const TRANSCRIPT_BY_ID_QUERY: &str = "SELECT wework_transcripts.id AS wework_transcripts_id, \
+pub(crate) const TRANSCRIPT_BY_ID_QUERY: &str = "SELECT wework_transcripts.id AS wework_transcripts_id, \
      wework_transcripts.user_id AS wework_transcripts_user_id, \
      wework_transcripts.transcript_id AS wework_transcripts_transcript_id, \
      wework_transcripts.parent_transcript_id AS wework_transcripts_parent_transcript_id, \
@@ -208,11 +227,27 @@ const ARCHIVES_QUERY: &str = "SELECT wework_transcript_archives.id AS wework_tra
      WHERE wework_transcript_archives.transcript_db_id = ? AND wework_transcript_archives.to_sequence >= ? \
      ORDER BY wework_transcript_archives.to_sequence";
 
+/// The single-archive lookup (`wework_transcript_service.get_archive`): the
+/// full labeled projection filtered by the archive `id` and the transcript's
+/// database id, with the source `query.first()`'s `LIMIT 1` and no ordering.
+const ARCHIVE_BY_ID_QUERY: &str = "SELECT wework_transcript_archives.id AS wework_transcript_archives_id, \
+     wework_transcript_archives.transcript_db_id AS wework_transcript_archives_transcript_db_id, \
+     wework_transcript_archives.from_sequence AS wework_transcript_archives_from_sequence, \
+     wework_transcript_archives.to_sequence AS wework_transcript_archives_to_sequence, \
+     wework_transcript_archives.storage_key AS wework_transcript_archives_storage_key, \
+     wework_transcript_archives.sha256 AS wework_transcript_archives_sha256, \
+     wework_transcript_archives.size_bytes AS wework_transcript_archives_size_bytes, \
+     wework_transcript_archives.format AS wework_transcript_archives_format, \
+     wework_transcript_archives.created_at AS wework_transcript_archives_created_at \
+     FROM wework_transcript_archives \
+     WHERE wework_transcript_archives.id = ? AND wework_transcript_archives.transcript_db_id = ? \
+     LIMIT 1";
+
 /// Pydantic v2 naive-datetime serialization: `YYYY-MM-DDTHH:MM:SS` plus
 /// fractional seconds (microseconds) when nonzero. The source `TranscriptResponse`
 /// model serializes `created_at`, `updated_at` as naive datetimes and
 /// `writer_lease_expires_at`, `archived_at` as `Optional[datetime]`.
-fn format_datetime(value: &chrono::NaiveDateTime) -> String {
+pub(crate) fn format_datetime(value: &chrono::NaiveDateTime) -> String {
     let base = value.format("%Y-%m-%dT%H:%M:%S").to_string();
     if value.and_utc().timestamp_subsec_nanos() == 0 {
         base
@@ -350,6 +385,33 @@ async fn transcripts_list(
     Ok(TranscriptListResponse { items })
 }
 
+/// POST /api/wework-transcripts/{transcript_id}/turns: the source route
+/// (`app/api/endpoints/wework_transcripts.py:205`) allows only `GET`, so
+/// FastAPI answers `POST` with `405 {"detail":"Method Not Allowed"}` plus
+/// `Allow: GET` before authentication runs. The recorded group exercises this
+/// method, so the target owns the `POST` request and reproduces the source
+/// framework response; `config/routes.toml` selects it for the Rust listener.
+#[brz_http_server::post(
+    "/api/wework-transcripts/:transcript_id/turns",
+    access = public
+)]
+async fn turns_method_not_allowed(transcript_id: &str) -> Result<(), FastApiError> {
+    // The source rejects the method before it resolves the path parameter.
+    let _ = transcript_id;
+    Err(turns_method_not_allowed_error())
+}
+
+/// The source framework's `405` body and `Allow` header for the `turns` path.
+/// The `Allow` value is the source route's only method (`GET`), not the target
+/// router's method set.
+fn turns_method_not_allowed_error() -> FastApiError {
+    FastApiError::detail(
+        brz_http_server::StatusCode::METHOD_NOT_ALLOWED,
+        "Method Not Allowed",
+    )
+    .with_header("allow", "GET")
+}
+
 /// `TranscriptEncryptionKeyResponse` (`app.schemas.wework_transcript`):
 /// `algorithm` is the source `KEY_ALGORITHM` constant and `key` is the
 /// requesting user's derived segment key. The model declares no aliases, so
@@ -405,6 +467,98 @@ async fn encryption_key_response(
     })
 }
 
+/// GET /api/wework-transcripts/{transcript_id}/archives/{archive_id}/download:
+/// the archive download free function, injecting the process-lifetime
+/// application state.
+#[brz_http_server::get("/api/wework-transcripts/:transcript_id/archives/:archive_id/download")]
+async fn download_transcript_archive(
+    #[inject(state)] state: &AppState,
+    transcript_id: &str,
+    archive_id: i64,
+    #[auth] user: crate::auth::SessionUser,
+) -> Result<HttpResponse<Binary>, FastApiError> {
+    download_archive(state, user.id, transcript_id, archive_id).await
+}
+
+/// Handler body for
+/// `GET /api/wework-transcripts/{transcript_id}/archives/{archive_id}/download`:
+/// `_translate` resolves the transcript for the requesting user, then
+/// `wework_transcript_service.get_archive` (archive id + transcript database id
+/// with the retained-archive floor), then
+/// `wework_transcript_storage.stream(archive.storage_key)`. A missing transcript
+/// is 404 `transcript_not_found`; a missing or pruned archive, or an absent
+/// stored object, is 404 `archive_not_found`; an unavailable store is 503
+/// `transcript_storage_unavailable`. The success body streams the object with
+/// `application/octet-stream` and `archive.size_bytes` as its length.
+async fn download_archive(
+    state: &AppState,
+    user_id: i32,
+    transcript_id: &str,
+    archive_id: i64,
+) -> Result<HttpResponse<Binary>, FastApiError> {
+    let transcript: Option<TranscriptRow> = match state
+        .mysql
+        .fetch_optional(TRANSCRIPT_BY_ID_QUERY, (user_id, transcript_id))
+        .await
+    {
+        Ok(row) => row,
+        Err(error) => {
+            tracing::error!(%error, "wework_transcripts database dependency failure");
+            return Err(internal_error());
+        }
+    };
+    let Some(transcript) = transcript else {
+        return Err(transcript_not_found());
+    };
+
+    let archive: Option<ArchiveRow> = match state
+        .mysql
+        .fetch_optional(ARCHIVE_BY_ID_QUERY, (archive_id, transcript.id))
+        .await
+    {
+        Ok(row) => row,
+        Err(error) => {
+            tracing::error!(%error, "wework_transcript_archives database dependency failure");
+            return Err(internal_error());
+        }
+    };
+    let Some(archive) = archive else {
+        return Err(archive_not_found());
+    };
+
+    let floor = match retained_archive_floor(&state.mysql, transcript.id).await {
+        Ok(floor) => floor,
+        Err(error) => {
+            tracing::error!(%error, "wework_transcript_archives database dependency failure");
+            return Err(internal_error());
+        }
+    };
+    if archive.to_sequence < floor {
+        return Err(archive_not_found());
+    }
+
+    let Some(config) = wework_transcript_archive_storage::config_from_env() else {
+        return Err(storage_unavailable());
+    };
+    let bytes = match wework_transcript_archive_storage::read_object(
+        &state.attachment_http,
+        &config,
+        &archive.storage_key,
+    )
+    .await
+    {
+        Ok(bytes) => bytes,
+        Err(ArchiveReadError::NotFound) => return Err(archive_not_found()),
+        Err(ArchiveReadError::Unavailable) => return Err(storage_unavailable()),
+    };
+
+    // `StreamingResponse(media_type="application/octet-stream",
+    // headers={"Content-Length": str(archive.size_bytes)})`: the source streams
+    // the object with the archived size as the declared length. `Binary`
+    // carries the exact object bytes and derives the same `Content-Length`.
+    Ok(HttpResponse::new(Binary::new(bytes)))
+}
+
 /// `settings.WEWORK_TRANSCRIPT_ENCRYPTION_KEY or settings.SECRET_KEY`:
 /// the configured master secret the per-user key derives from. The source
 /// `or` treats an unset (empty) encryption key as absent and then uses the JWT
@@ -415,14 +569,55 @@ fn configured_master_key(state: &AppState) -> String {
 }
 
 /// `WeworkTranscriptError` rendered by `_translate`:
+/// `{"detail": {"code", "message"}}` with the error's status code. Shared by
+/// every handler in the wework-transcripts group.
+pub(crate) fn transcript_error(
+    status: brz_http_server::StatusCode,
+    code: &'static str,
+    message: &'static str,
+) -> FastApiError {
+    FastApiError::json_body(
+        status,
+        TranscriptErrorResponse {
+            detail: TranscriptErrorBody { code, message },
+        },
+    )
+}
+
+/// `wework_transcript_service.get_transcript`'s missing-row error:
 /// `404 {"detail": {"code": "transcript_not_found", "message": ...}}`.
-fn transcript_not_found() -> FastApiError {
+pub(crate) fn transcript_not_found() -> FastApiError {
+    transcript_error(
+        brz_http_server::StatusCode::NOT_FOUND,
+        "transcript_not_found",
+        "Wework transcript not found",
+    )
+}
+
+/// `WeworkTranscriptError("archive_not_found", ...)` rendered by `_translate`:
+/// `404 {"detail": {"code": "archive_not_found", "message": ...}}`. Raised both
+/// for a missing/pruned archive row and for a missing stored object.
+fn archive_not_found() -> FastApiError {
     FastApiError::json_body(
         brz_http_server::StatusCode::NOT_FOUND,
         TranscriptErrorResponse {
             detail: TranscriptErrorBody {
-                code: "transcript_not_found",
-                message: "Wework transcript not found",
+                code: "archive_not_found",
+                message: "Wework transcript segment not found",
+            },
+        },
+    )
+}
+
+/// `WeworkTranscriptStorageError` rendered by `_translate`:
+/// `503 {"detail": {"code": "transcript_storage_unavailable", "message": ...}}`.
+fn storage_unavailable() -> FastApiError {
+    FastApiError::json_body(
+        brz_http_server::StatusCode::SERVICE_UNAVAILABLE,
+        TranscriptErrorResponse {
+            detail: TranscriptErrorBody {
+                code: "transcript_storage_unavailable",
+                message: "Wework transcript object storage is unavailable",
             },
         },
     )
@@ -457,8 +652,9 @@ async fn retained_archive_floor<M: brz_mysql::Mysql>(
         .unwrap_or(0))
 }
 
-/// Source `python_exception_handler` 500 response shape.
-fn internal_error() -> FastApiError {
+/// Source `python_exception_handler` 500 response shape. Shared by every
+/// handler in the wework-transcripts group.
+pub(crate) fn internal_error() -> FastApiError {
     FastApiError::detail(
         brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
         serde_json::json!({"error_code": 500, "detail": "Internal server error"}).to_string(),
@@ -489,6 +685,7 @@ mod tests {
             current_sequence: 10,
             archived_through_sequence: 0,
             writer_client_id: String::new(),
+            writer_fencing_token: 0,
             writer_lease_expires_at: EPOCH_TIME,
             archived_at: EPOCH_TIME,
             created_at: NaiveDate::from_ymd_opt(2026, 9, 10)
@@ -561,6 +758,7 @@ mod tests {
             id: 1,
             from_sequence: 0,
             to_sequence: 5,
+            storage_key: "users/1/transcripts/abc/0-1.tgz.aes256gcm".to_string(),
             sha256: "abc123".to_string(),
             size_bytes: 1024,
             format: "jsonl.zst".to_string(),
@@ -644,6 +842,112 @@ mod tests {
             json!({
                 "code": "transcript_not_found",
                 "message": "Wework transcript not found",
+            })
+        );
+    }
+
+    #[test]
+    fn turns_post_error_is_the_source_method_not_allowed_body() {
+        let error = turns_method_not_allowed_error();
+        assert_eq!(
+            error.status(),
+            brz_http_server::StatusCode::METHOD_NOT_ALLOWED
+        );
+        let detail: Value = serde_json::from_str(&error.validation_detail()).unwrap();
+        assert_eq!(detail, json!("Method Not Allowed"));
+    }
+
+    // A dedicated test group (separate from the crate's real `http_apis`
+    // group) so the probe's route does not collide with the real handler.
+    mod probe {
+        brz_http_server::registry!(group = turns_probe, dependencies());
+    }
+
+    #[brz_http_server::post(
+        "/api/wework-transcripts/:transcript_id/turns",
+        group = probe::turns_probe,
+        access = public
+    )]
+    async fn probe_turns_post(transcript_id: &str) -> Result<(), FastApiError> {
+        let _ = transcript_id;
+        Err(turns_method_not_allowed_error())
+    }
+
+    /// Drives the registered route over a real socket so the status, `Allow`
+    /// header, and body are asserted exactly as the runtime renders them.
+    #[tokio::test]
+    async fn turns_post_renders_405_with_allow_get_over_http() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let handler =
+            brz_http_server::handlers!(; group = probe::turns_probe).expect("probe router");
+        let server = brz_http_server::Server::bind("127.0.0.1:0".parse().unwrap(), handler)
+            .await
+            .expect("bind test server");
+        let address = server.local_addr().expect("local address");
+        let serve = tokio::spawn(async move {
+            let _ = server.serve_until(std::future::pending::<()>()).await;
+        });
+        let mut client = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("connect");
+        client
+            .write_all(
+                b"POST /api/wework-transcripts/runtime-1/turns HTTP/1.1\r\n\
+                  Host: localhost\r\nConnection: close\r\n\r\n",
+            )
+            .await
+            .expect("send");
+        let mut raw = Vec::new();
+        client.read_to_end(&mut raw).await.expect("read");
+        serve.abort();
+        let raw = String::from_utf8_lossy(&raw);
+        assert!(raw.starts_with("HTTP/1.1 405"), "{raw}");
+        assert!(raw.contains("allow: GET"), "{raw}");
+        assert!(raw.contains(r#"{"detail":"Method Not Allowed"}"#), "{raw}");
+    }
+
+    #[test]
+    fn archive_by_id_query_filters_the_archive_and_transcript_with_limit_one() {
+        let expected_tail = "WHERE wework_transcript_archives.id = ? \
+             AND wework_transcript_archives.transcript_db_id = ? \
+             LIMIT 1";
+        assert!(ARCHIVE_BY_ID_QUERY.trim().ends_with(expected_tail.trim()));
+        // `get_archive`'s `query.first()` has no ordering.
+        assert!(!ARCHIVE_BY_ID_QUERY.contains("ORDER BY"));
+        // The projection is the same labeled column list as the retained query.
+        assert_eq!(
+            ARCHIVE_BY_ID_QUERY.split(" FROM ").next().unwrap(),
+            ARCHIVES_QUERY.split(" FROM ").next().unwrap()
+        );
+    }
+
+    #[test]
+    fn missing_archive_renders_the_translate_error_body() {
+        let error = archive_not_found();
+        assert_eq!(error.status(), brz_http_server::StatusCode::NOT_FOUND);
+        let detail: Value = serde_json::from_str(&error.validation_detail()).unwrap();
+        assert_eq!(
+            detail,
+            json!({
+                "code": "archive_not_found",
+                "message": "Wework transcript segment not found",
+            })
+        );
+    }
+
+    #[test]
+    fn unavailable_storage_renders_the_translate_error_body() {
+        let error = storage_unavailable();
+        assert_eq!(
+            error.status(),
+            brz_http_server::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let detail: Value = serde_json::from_str(&error.validation_detail()).unwrap();
+        assert_eq!(
+            detail,
+            json!({
+                "code": "transcript_storage_unavailable",
+                "message": "Wework transcript object storage is unavailable",
             })
         );
     }

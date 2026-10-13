@@ -892,11 +892,13 @@ impl RuntimeWorkRpcHandler {
             .count();
         let force = bool_field(&payload, "force").unwrap_or(false);
         let if_idle = bool_field(&payload, "ifIdle").unwrap_or(false);
-        if active_task_count > 0 && if_idle && !force {
+        let background_terminal_count = self.background_terminal_count();
+        if (active_task_count > 0 || background_terminal_count > 0) && if_idle && !force {
             return Ok(json!({
                 "restarted": false,
                 "requiresConfirmation": true,
                 "activeTaskCount": active_task_count,
+                "backgroundTerminalCount": background_terminal_count,
                 "pendingRequestCount": 0,
             }));
         }

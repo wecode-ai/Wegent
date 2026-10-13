@@ -154,6 +154,235 @@ fn plugin_archive_retains_original_manifest_without_runtime_cache_changes() {
     assert!(publish_plugin_archive(root.path(), &bytes, None).is_ok());
 }
 
+fn plugin_fixture(root: &Path) -> PublishedPackage {
+    publish_plugin_archive(
+        root,
+        &zip(&[
+            ("plugin/.claude-plugin/plugin.json", "{\"name\":\"demo\"}"),
+            (
+                "plugin/scripts/auth_provider.py",
+                "print('verified source')",
+            ),
+            ("plugin/README.md", "verified documentation"),
+        ]),
+        None,
+    )
+    .unwrap()
+}
+
+fn add_legacy_bytecode(package: &PublishedPackage) {
+    let cache = package.path.join("scripts/__pycache__/nested");
+    fs::create_dir_all(&cache).unwrap();
+    fs::write(cache.join("auth_provider.cpython-312.pyc"), "old bytecode").unwrap();
+    fs::write(package.path.join("scripts/legacy.pyc"), "old bytecode").unwrap();
+}
+
+#[test]
+fn published_plugin_removes_generated_bytecode_before_verification() {
+    let root = tempfile::tempdir().unwrap();
+    let package = plugin_fixture(root.path());
+    let record_path = root
+        .path()
+        .join("shared/metadata")
+        .join(format!("plugins-{}.json", &package.archive_hash[7..]));
+    let record = fs::read(&record_path).unwrap();
+    add_legacy_bytecode(&package);
+
+    let verified =
+        verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).unwrap();
+
+    assert_eq!(verified.path, package.path);
+    assert!(!package.path.join("scripts/__pycache__").exists());
+    assert!(!package.path.join("scripts/legacy.pyc").exists());
+    assert_eq!(fs::read(record_path).unwrap(), record);
+    assert_eq!(
+        fs::read_to_string(package.path.join("scripts/auth_provider.py")).unwrap(),
+        "print('verified source')"
+    );
+    assert_eq!(
+        fs::read_to_string(package.path.join("README.md")).unwrap(),
+        "verified documentation"
+    );
+}
+
+#[test]
+fn legacy_bytecode_does_not_hide_modified_plugin_sources() {
+    let root = tempfile::tempdir().unwrap();
+    let package = plugin_fixture(root.path());
+    add_legacy_bytecode(&package);
+    fs::write(package.path.join("scripts/auth_provider.py"), "modified").unwrap();
+
+    let result = verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash);
+
+    assert!(result.unwrap_err().contains("integrity check failed"));
+    assert!(package.path.join("scripts/legacy.pyc").exists());
+    assert!(package.path.join("scripts/__pycache__").exists());
+}
+
+#[test]
+fn published_plugin_keeps_bytecode_already_in_the_verified_archive() {
+    let root = tempfile::tempdir().unwrap();
+    let bytes = zip(&[
+        ("plugin/.claude-plugin/plugin.json", "{\"name\":\"demo\"}"),
+        ("plugin/scripts/precompiled.pyc", "verified bytecode"),
+    ]);
+    let package = publish_plugin_archive(root.path(), &bytes, None).unwrap();
+
+    verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(package.path.join("scripts/precompiled.pyc")).unwrap(),
+        "verified bytecode"
+    );
+}
+
+fn compiled_plugin_fixture(root: &Path) -> PublishedPackage {
+    publish_plugin_archive(
+        root,
+        &zip(&[
+            ("plugin/.claude-plugin/plugin.json", "{\"name\":\"demo\"}"),
+            ("plugin/scripts/precompiled.pyc", "verified bytecode"),
+            (
+                "plugin/scripts/__pycache__/canonical.pyc",
+                "verified cache bytecode",
+            ),
+        ]),
+        None,
+    )
+    .unwrap()
+}
+
+#[test]
+fn legacy_cache_recovery_preserves_all_published_bytecode_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let package = compiled_plugin_fixture(root.path());
+    add_legacy_bytecode(&package);
+
+    verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(package.path.join("scripts/precompiled.pyc")).unwrap(),
+        "verified bytecode"
+    );
+    assert_eq!(
+        fs::read_to_string(package.path.join("scripts/__pycache__/canonical.pyc")).unwrap(),
+        "verified cache bytecode"
+    );
+    assert!(!package.path.join("scripts/legacy.pyc").exists());
+    assert!(!package.path.join("scripts/__pycache__/nested").exists());
+}
+
+#[test]
+fn legacy_records_never_delete_ambiguous_bytecode_or_caches() {
+    let root = tempfile::tempdir().unwrap();
+    let package = compiled_plugin_fixture(root.path());
+    let record_path = root
+        .path()
+        .join("shared/metadata")
+        .join(format!("plugins-{}.json", &package.archive_hash[7..]));
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record
+        .as_object_mut()
+        .unwrap()
+        .remove("published_bytecode_paths");
+    fs::write(&record_path, record.to_string()).unwrap();
+    add_legacy_bytecode(&package);
+
+    let result = verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash);
+
+    assert!(result.unwrap_err().contains("integrity check failed"));
+    assert!(package.path.join("scripts/legacy.pyc").exists());
+    assert!(package.path.join("scripts/__pycache__/nested").exists());
+    assert_eq!(
+        fs::read_to_string(package.path.join("scripts/precompiled.pyc")).unwrap(),
+        "verified bytecode"
+    );
+    assert_eq!(
+        fs::read_to_string(package.path.join("scripts/__pycache__/canonical.pyc")).unwrap(),
+        "verified cache bytecode"
+    );
+}
+
+#[test]
+fn legacy_records_recover_only_when_the_original_hash_proves_cache_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    let package = plugin_fixture(root.path());
+    let record_path = root
+        .path()
+        .join("shared/metadata")
+        .join(format!("plugins-{}.json", &package.archive_hash[7..]));
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record
+        .as_object_mut()
+        .unwrap()
+        .remove("published_bytecode_paths");
+    fs::write(&record_path, record.to_string()).unwrap();
+    let record_bytes = fs::read(&record_path).unwrap();
+    add_legacy_bytecode(&package);
+
+    verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).unwrap();
+
+    assert_eq!(fs::read(&record_path).unwrap(), record_bytes);
+    assert!(!package.path.join("scripts/legacy.pyc").exists());
+    assert!(!package.path.join("scripts/__pycache__").exists());
+}
+
+#[test]
+fn concurrent_verifiers_recover_a_package_with_legacy_bytecode() {
+    let root = tempfile::tempdir().unwrap();
+    let package = plugin_fixture(root.path());
+    add_legacy_bytecode(&package);
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let handles = (0..4)
+        .map(|_| {
+            let root = root.path().to_owned();
+            let hash = package.archive_hash.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                verify_published_package(&root, PackageKind::Plugin, &hash)
+                    .unwrap()
+                    .path
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for handle in handles {
+        assert_eq!(handle.join().unwrap(), package.path);
+    }
+    assert!(!package.path.join("scripts/__pycache__").exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn bytecode_cache_symlinks_are_rejected_without_touching_their_targets() {
+    for name in [
+        "scripts/__pycache__",
+        "scripts/legacy.pyc",
+        "scripts/__pycache__/auth_provider.pyc",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let package = plugin_fixture(root.path());
+        let outside = root.path().join("outside");
+        fs::write(&outside, "must remain unchanged").unwrap();
+        let link = package.path.join(name);
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+        let result =
+            verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash);
+
+        assert!(result.unwrap_err().contains("symbolic links"));
+        assert!(link.is_symlink());
+        assert_eq!(
+            fs::read_to_string(outside).unwrap(),
+            "must remain unchanged"
+        );
+    }
+}
+
 #[test]
 #[cfg(unix)]
 fn relative_links_switch_without_mutating_previous_package() {
@@ -220,8 +449,7 @@ fn windows_replaces_an_existing_directory_link_under_an_idle_caller() {
     fs::create_dir_all(&second).unwrap();
     fs::write(first.join("SKILL.md"), "old").unwrap();
     fs::write(second.join("SKILL.md"), "new").unwrap();
-    std::os::windows::fs::symlink_dir(&first, &target)
-        .expect("Windows test requires Developer Mode or symlink privileges");
+    crate::directory_link::create(&first, &target).unwrap();
     link_package(&second, &target).unwrap();
     assert_eq!(fs::read_to_string(target.join("SKILL.md")).unwrap(), "new");
     assert_eq!(fs::read_to_string(first.join("SKILL.md")).unwrap(), "old");

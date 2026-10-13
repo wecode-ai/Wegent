@@ -12862,7 +12862,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('preserves bottom terminal state when switching runtime tasks', async () => {
-    const { localDevice, propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const { localDevice, propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture(2)
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
     localPathExistsMock.mockResolvedValue(true)

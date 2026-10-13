@@ -19,14 +19,13 @@
 use std::collections::BTreeMap;
 
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
-use serde::de::{MapAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
-use crate::json_compat::{JsonProjection, OpaqueJson};
 use crate::models_unified::models::{ModelInfo, extract_model_info, is_public_model_visible};
 use crate::state::AppState;
+use brz_json::{JsonProjection, OpaqueJson};
 
 /// `settings.ERROR_MODEL_RECOMMENDATIONS` (`app.core.config`).
 const ERROR_MODEL_RECOMMENDATIONS_ENV: &str = "ERROR_MODEL_RECOMMENDATIONS";
@@ -106,47 +105,18 @@ struct RecommendationEntry {
     models: Vec<RecommendedModel>,
 }
 
-/// An insertion-ordered JSON object. Python dicts keep their insertion order,
-/// so both the parsed configuration and the rendered `data` object preserve it.
-#[derive(Debug)]
-struct OrderedMap<V>(Vec<(String, V)>);
-
-impl<'de, V: Deserialize<'de>> Deserialize<'de> for OrderedMap<V> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct OrderedMapVisitor<V>(std::marker::PhantomData<V>);
-        impl<'de, V: Deserialize<'de>> Visitor<'de> for OrderedMapVisitor<V> {
-            type Value = OrderedMap<V>;
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a JSON object")
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<OrderedMap<V>, A::Error> {
-                let mut entries = Vec::new();
-                while let Some((key, value)) = map.next_entry::<String, V>()? {
-                    entries.push((key, value));
-                }
-                Ok(OrderedMap(entries))
-            }
-        }
-        deserializer.deserialize_map(OrderedMapVisitor(std::marker::PhantomData))
-    }
-}
-
-impl<V: Serialize> Serialize for OrderedMap<V> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_map(self.0.iter().map(|(key, value)| (key.as_str(), value)))
-    }
-}
+use brz_json::Object;
 
 /// `{"data": {...}}` (`get_error_recommendations`).
 #[derive(Debug, Serialize)]
 struct ErrorRecommendationsResponse {
-    data: OrderedMap<RecommendationEntry>,
+    data: Object<RecommendationEntry>,
 }
 
 impl ErrorRecommendationsResponse {
     fn empty() -> Self {
         Self {
-            data: OrderedMap(Vec::new()),
+            data: Object::new(),
         }
     }
 }
@@ -199,10 +169,9 @@ fn load_config(raw: Option<&str>) -> Vec<(String, RecommendationEntryInput)> {
         return Vec::new();
     };
     document
-        .project::<OrderedMap<JsonProjection<RecommendationEntryInput>>>()
+        .project::<Object<JsonProjection<RecommendationEntryInput>>>()
         .map(|entries| {
             entries
-                .0
                 .into_iter()
                 .filter_map(|(error_type, entry)| entry.value.map(|entry| (error_type, entry)))
                 .collect()
@@ -215,8 +184,8 @@ fn load_config(raw: Option<&str>) -> Vec<(String, RecommendationEntryInput)> {
 fn build_response(
     config: Vec<(String, RecommendationEntryInput)>,
     public_by_name: &BTreeMap<String, RecommendedModel>,
-) -> OrderedMap<RecommendationEntry> {
-    let entries = config
+) -> Object<RecommendationEntry> {
+    config
         .into_iter()
         .map(|(error_type, input)| {
             let description = input
@@ -238,8 +207,7 @@ fn build_response(
                 },
             )
         })
-        .collect();
-    OrderedMap(entries)
+        .collect()
 }
 
 /// `PublicModelService.get_models`: visible, active public models ordered
@@ -390,7 +358,7 @@ mod tests {
         // `x` is absent from the public models, so it renders nothing; the
         // non-string elements have already been dropped by the projection.
         let data = build_response(config, &public);
-        let (_, entry) = &data.0[0];
+        let (_, entry) = data.iter().next().unwrap();
         assert!(entry.models.is_empty());
         assert_eq!(entry.description.to_value(), serde_json::json!(""));
     }
@@ -459,7 +427,7 @@ mod tests {
             "{\"e\":{\"description\":\"d\",\"models\":[\"c\",\"missing\",\"a\"]}}",
         ));
         let data = build_response(config, &public);
-        let (error_type, entry) = &data.0[0];
+        let (error_type, entry) = data.iter().next().unwrap();
         assert_eq!(error_type, "e");
         assert_eq!(entry.description.to_value(), serde_json::json!("d"));
         // The unmatched name is dropped; the matched names keep config order.
@@ -495,7 +463,7 @@ mod tests {
         let mysql = KindQueryCapture::default();
         for raw in [None, Some(""), Some("not json")] {
             let response = error_recommendations(&mysql, &user(), raw).await.unwrap();
-            assert!(response.data.0.is_empty());
+            assert!(response.data.is_empty());
         }
         assert!(
             mysql.queries().is_empty(),
@@ -513,7 +481,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(response.data.0.len(), 1);
+        assert_eq!(response.data.len(), 1);
         let queries = mysql.queries();
         assert_eq!(queries.len(), 1);
         assert!(queries[0].sql.contains("FROM kinds"));

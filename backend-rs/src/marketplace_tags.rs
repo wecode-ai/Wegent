@@ -14,7 +14,7 @@
 //! catalog with `version = 0`; a stored item that fails `MarketplaceTagItem`
 //! validation renders the source `python_exception_handler` 500.
 use crate::http_compat::FastApiError;
-use crate::json_compat::{JsonProjection, OpaqueJson};
+use brz_json::{JsonProjection, OpaqueJson};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 

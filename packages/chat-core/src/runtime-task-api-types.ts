@@ -213,7 +213,7 @@ export interface RuntimeGuidanceResponse {
 
 export type RuntimeGoalExecutionStatus = 'running' | 'recovering' | 'needsAttention'
 
-export type RuntimeTaskInteractionStatus = 'waitingForUserInput'
+export type RuntimeTaskInteractionStatus = 'waitingForUserInput' | 'awaitingUserReply'
 
 export interface RuntimeGoalCreateInput {
   objective: string

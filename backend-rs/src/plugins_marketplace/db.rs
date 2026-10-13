@@ -14,7 +14,7 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 pub use brz_mysql::Mysql as MysqlCapability;
 use chrono::NaiveDateTime;
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// One `users` row, as used by marketplace listing and authentication.
 ///
@@ -57,7 +57,7 @@ pub struct UserRow {
 }
 
 /// One `plugins` row.
-#[derive(Debug, FromMysqlRow)]
+#[derive(Debug, Clone, FromMysqlRow)]
 pub struct PluginRow {
     #[mysql(rename = "plugins_id")]
     pub id: i64,
@@ -114,7 +114,7 @@ pub struct PluginRow {
 }
 
 /// One `plugin_releases` row.
-#[derive(Debug, FromMysqlRow)]
+#[derive(Debug, Clone, FromMysqlRow)]
 pub struct PluginReleaseRow {
     #[mysql(rename = "plugin_releases_id")]
     pub id: i64,
@@ -317,7 +317,7 @@ const USER_COLUMNS: &str = "users.id AS users_id, users.user_name AS users_user_
      users_role, users.auth_source AS users_auth_source, users.preferences AS \
      users_preferences, users.created_at AS users_created_at, users.updated_at AS \
      users_updated_at";
-const PLUGIN_COLUMNS: &str = "plugins.id AS plugins_id, plugins.catalog_namespace AS \
+pub(crate) const PLUGIN_COLUMNS: &str = "plugins.id AS plugins_id, plugins.catalog_namespace AS \
      plugins_catalog_namespace, plugins.slug AS plugins_slug, plugins.name AS plugins_name, \
      plugins.display_name AS plugins_display_name, plugins.summary AS plugins_summary, \
      plugins.description_md AS plugins_description_md, plugins.listing_type AS \
@@ -331,7 +331,7 @@ const PLUGIN_COLUMNS: &str = "plugins.id AS plugins_id, plugins.catalog_namespac
      plugins.featured_rank AS plugins_featured_rank, plugins.created_at AS \
      plugins_created_at, plugins.updated_at AS plugins_updated_at, plugins.published_at AS \
      plugins_published_at";
-const RELEASE_COLUMNS: &str = "plugin_releases.id AS plugin_releases_id, \
+pub(crate) const RELEASE_COLUMNS: &str = "plugin_releases.id AS plugin_releases_id, \
      plugin_releases.plugin_id AS plugin_releases_plugin_id, plugin_releases.version AS \
      plugin_releases_version, plugin_releases.manifest_json AS plugin_releases_manifest_json, \
      plugin_releases.interface_json AS plugin_releases_interface_json, \
@@ -345,11 +345,11 @@ const RELEASE_COLUMNS: &str = "plugin_releases.id AS plugin_releases_id, \
      plugin_releases_publication_revision_id, plugin_releases.source_commit_sha AS \
      plugin_releases_source_commit_sha, plugin_releases.created_at AS \
      plugin_releases_created_at, plugin_releases.published_at AS plugin_releases_published_at";
-const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+pub(crate) const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
      kinds.kind AS kinds_kind, kinds.name AS kinds_name, kinds.namespace AS kinds_namespace, \
      kinds.json AS kinds_json, kinds.is_active AS kinds_is_active, kinds.created_at AS \
      kinds_created_at, kinds.updated_at AS kinds_updated_at";
-const GRANT_COLUMNS: &str = "resource_members.id AS resource_members_id, \
+pub(crate) const GRANT_COLUMNS: &str = "resource_members.id AS resource_members_id, \
      resource_members.resource_type AS resource_members_resource_type, \
      resource_members.resource_id AS resource_members_resource_id, \
      resource_members.entity_type AS resource_members_entity_type, resource_members.entity_id \
@@ -365,7 +365,7 @@ const GRANT_COLUMNS: &str = "resource_members.id AS resource_members_id, \
      resource_members_requested_at, resource_members.created_at AS \
      resource_members_created_at, resource_members.updated_at AS resource_members_updated_at";
 const NAMESPACE_COLUMNS: &str = "namespace.id AS namespace_id, namespace.name AS namespace_name";
-const DEVICE_COLUMNS: &str = "plugin_device_installations.id AS \
+pub(crate) const DEVICE_COLUMNS: &str = "plugin_device_installations.id AS \
      plugin_device_installations_id, plugin_device_installations.installed_kind_id AS \
      plugin_device_installations_installed_kind_id, plugin_device_installations.user_id AS \
      plugin_device_installations_user_id, plugin_device_installations.device_id AS \

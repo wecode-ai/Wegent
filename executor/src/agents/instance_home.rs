@@ -16,16 +16,7 @@ use crate::protocol::{AgentKind, ExecutionRequest};
 mod session;
 pub(crate) use session::validate_session;
 
-#[derive(Debug)]
-pub(super) struct HomeLease(fs::File);
-
-impl Drop for HomeLease {
-    fn drop(&mut self) {
-        // Closing alone leaves flock held if a concurrent fork inherited the
-        // open file description. The execution's lifetime owns this lease.
-        let _ = FileExt::unlock(&self.0);
-    }
-}
+pub(super) use crate::file_lease::FileLease as HomeLease;
 
 /// Backend Bot requests use the executing user's named agent Home.
 /// Shell-only requests retain the application's managed native Home.

@@ -12,7 +12,7 @@
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlValue, MysqlValueWriter};
 use chrono::NaiveDateTime;
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 use super::query::ListParams;
 

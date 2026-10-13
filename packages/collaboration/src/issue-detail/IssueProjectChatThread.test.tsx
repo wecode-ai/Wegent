@@ -4,7 +4,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectChatClient, ProjectChatMessage } from "@wegent/chat-core";
 import { createCollaborationTranslator } from "../i18n";
-import { groupIssueActivityThreads } from "./IssueActivityThread";
+import {
+  groupIssueActivityThreads,
+  groupIssueTimelineThreads,
+} from "./IssueActivityThread";
 import { IssueProjectChatThread } from "./IssueProjectChatThread";
 import { IssueActivityMarkdown } from "./IssueActivityMarkdown";
 import { IssueChatMessage } from "./IssueChatMessage";
@@ -77,6 +80,77 @@ describe("shared Issue threads", () => {
       { root: message, replies: [reply] },
       { root: latest, replies: [] },
     ]);
+  });
+
+  it("places comment-triggered execution separately and keeps replies with their addressed card", () => {
+    const discussion: ProjectChatMessage = {
+      ...message,
+      messageId: "discussion",
+      sender: { type: "user", id: "user", name: "User" },
+    };
+    const execution: ProjectChatMessage = {
+      ...message,
+      messageId: "execution",
+      rootMessageId: discussion.messageId,
+      replyToMessageId: discussion.messageId,
+      sequenceNumber: 2,
+    };
+    const reply = {
+      ...discussion,
+      messageId: "reply",
+      rootMessageId: discussion.messageId,
+      replyToMessageId: execution.messageId,
+      sequenceNumber: 3,
+    };
+    const continuation = {
+      ...execution,
+      messageId: "continuation",
+      replyToMessageId: reply.messageId,
+      sequenceNumber: 4,
+    };
+    expect(
+      groupIssueTimelineThreads([continuation, reply, execution, discussion]),
+    ).toEqual([
+      {
+        root: discussion,
+        replies: [execution, reply, continuation],
+        displayReplies: [],
+      },
+      { root: execution, replies: [reply, continuation] },
+    ]);
+    expect(groupIssueActivityThreads([discussion, execution])).toEqual([
+      { root: discussion, replies: [execution] },
+    ]);
+    act(() =>
+      root.render(
+        <>
+          {groupIssueTimelineThreads([discussion, execution]).map((thread) => (
+            <IssueProjectChatThread
+              key={thread.root.messageId}
+              thread={thread}
+              canComment={false}
+              send={vi.fn()}
+              translate={translate}
+              executions={[]}
+            />
+          ))}
+        </>,
+      ),
+    );
+    const discussionCard = container.querySelector(
+      '[data-testid="collaboration-chat-card-discussion"]',
+    )!;
+    expect(
+      discussionCard.querySelector(
+        '[data-testid="collaboration-chat-message-execution"]',
+      ),
+    ).toBeNull();
+    expect(discussionCard.querySelector(".task-detail-run-events")).toBeNull();
+    expect(
+      container.querySelectorAll(
+        '[data-testid="collaboration-chat-message-execution"]',
+      ),
+    ).toHaveLength(1);
   });
 
   it("renders Markdown, bot avatar, reply row and distinct execution event status", () => {

@@ -315,7 +315,7 @@ fn converts_the_recorded_running_task() {
     let task = TaskRow {
         id: 12_232_067_055_387,
         user_id: 1001,
-        json: brz_mysql::Json(crate::json_compat::OpaqueJson::from(task_json())),
+        json: brz_mysql::Json(brz_json::OpaqueJson::from(task_json())),
         created_at: None,
     };
     let response = task_to_response_object(&task, "example#example-team", &[], None);
@@ -346,7 +346,7 @@ fn failed_task_with_message_builds_error() {
     let task = TaskRow {
         id: 1,
         user_id: 1,
-        json: brz_mysql::Json(crate::json_compat::OpaqueJson::from(serde_json::json!({
+        json: brz_mysql::Json(brz_json::OpaqueJson::from(serde_json::json!({
             "status": {"status": "FAILED", "errorMessage": "boom"}
         }))),
         created_at: None,

@@ -202,6 +202,25 @@ pub(crate) fn append_unique_transcript_messages(
     }
 }
 
+pub(crate) fn visit_transcript_blocks_mut(message: &mut Value, mut visit: impl FnMut(&mut Value)) {
+    for key in ["blocks", "runtimeItems"] {
+        let Some(items) = message.get_mut(key).and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for item in items {
+            let block = if key == "runtimeItems" {
+                let Some(block) = item.get_mut("block") else {
+                    continue;
+                };
+                block
+            } else {
+                item
+            };
+            visit(block);
+        }
+    }
+}
+
 pub(crate) fn merge_assistant_transcript_message(existing: &Value, mut incoming: Value) -> Value {
     if existing.get("role").and_then(Value::as_str) != Some("assistant")
         || incoming.get("role").and_then(Value::as_str) != Some("assistant")

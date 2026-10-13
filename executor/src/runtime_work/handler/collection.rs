@@ -1160,7 +1160,11 @@ impl RuntimeWorkRpcHandler {
             if status != "running" {
                 link.completed_at = Some(link.updated_at);
                 link.status = status.to_owned();
-                link.interaction_status = None;
+                if status != "done"
+                    || link.interaction_status.as_deref() != Some(INTERACTION_AWAITING_USER_REPLY)
+                {
+                    link.interaction_status = None;
+                }
             }
             apply_local_execution_state(link, status == "running", None);
             if link.thread_id.is_some() {

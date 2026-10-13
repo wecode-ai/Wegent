@@ -35,8 +35,8 @@ use serde::Serialize;
 
 use crate::config::env_or_dotenv;
 use crate::http_compat::FastApiError;
-use crate::json_compat::OpaqueJson;
 use crate::state::AppState;
+use brz_json::OpaqueJson;
 
 use crate::knowledge_documents_content::access::{
     KnowledgeBase, knowledge_base_access, knowledge_base_record,

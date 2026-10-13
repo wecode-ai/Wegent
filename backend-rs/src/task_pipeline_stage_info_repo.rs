@@ -5,8 +5,8 @@
 //! SQL row loads for `GET /api/tasks/{task_id}/pipeline-stage-info`,
 //! mirroring the source SQLAlchemy renderings token for token: the full
 //! labeled projections and the configured logical task table.
-use crate::json_compat::OpaqueJson;
 use crate::task_store::TaskStore;
+use brz_json::OpaqueJson;
 use brz_mysql::{MysqlResult, MysqlRow};
 
 /// A `tasks` row: `user_id` and the opaque CRD `json` document.

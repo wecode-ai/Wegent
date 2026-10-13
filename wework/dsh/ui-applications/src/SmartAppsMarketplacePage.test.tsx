@@ -19,6 +19,7 @@ const stopInstalled = vi.fn()
 const updateInstalled = vi.fn()
 const exportToDownloads = vi.fn()
 const exportPackage = vi.fn()
+const verifyInstallation = vi.fn()
 const uploadPackage = vi.fn()
 const addPlugin = vi.fn()
 const createDirectory = vi.fn()
@@ -96,6 +97,7 @@ vi.mock('@/api/local/harnessApps', () => ({
     update: (id: string, updates: unknown) => updateInstalled(id, updates),
     exportToDownloads: (id: string) => exportToDownloads(id),
     export: (id: string) => exportPackage(id),
+    verify: (id: string) => verifyInstallation(id),
     upload: (path: string, url: string) => uploadPackage(path, url),
     addPlugin: (id: string, spec: string) => addPlugin(id, spec),
     createDirectory: (input: unknown) => createDirectory(input),
@@ -194,6 +196,7 @@ describe('SmartAppsMarketplacePage', () => {
     queueSmartAppDevelopmentPreview.mockReset()
     ensureBundledPluginInstalled.mockReset().mockResolvedValue(undefined)
     listInstalled.mockReset().mockResolvedValue([])
+    verifyInstallation.mockReset().mockResolvedValue({ status: 'passed', issues: [] })
     deleteInstalled.mockReset().mockResolvedValue(undefined)
     stopInstalled.mockReset().mockResolvedValue(undefined)
     updateInstalled.mockReset()
@@ -479,6 +482,19 @@ describe('SmartAppsMarketplacePage', () => {
     expect(screen.getByTestId('smart-app-export-success')).toHaveTextContent(
       '发布包已导出到下载目录。'
     )
+  })
+
+  test('offers formal verification for linked projects before export', async () => {
+    const linked = { ...importedInstallation, source: 'linked' as const }
+    listInstalled.mockResolvedValue([linked])
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+    fireEvent.click(await screen.findByTestId(`smart-app-actions-${linked.id}`))
+    fireEvent.pointerDown(screen.getByTestId(`smart-app-verify-${linked.id}`))
+    await waitFor(() => expect(verifyInstallation).toHaveBeenCalledWith(linked.id))
+    expect(await screen.findByTestId('smart-app-export-success')).toHaveTextContent(
+      '工作台验证通过'
+    )
+    expect(exportToDownloads).not.toHaveBeenCalled()
   })
 
   test('keeps the card available when installation package export fails', async () => {

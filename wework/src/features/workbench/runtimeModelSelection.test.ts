@@ -3,6 +3,36 @@ import { defaultNewChatModelSelection, selectedModelExecutionFields } from './ru
 import type { UnifiedModel } from '@/types/api'
 
 describe('runtimeModelSelection', () => {
+  test.each(['standard', 'passthrough'] as const)(
+    'propagates cloud reasoning defaults and %s request mode with selected overrides',
+    mode => {
+      const model: UnifiedModel = {
+        name: 'moonshot-kimi-k3-responses',
+        type: 'public',
+        namespace: 'default',
+        resourceUserId: 0,
+        config: {
+          protocol: 'openai-responses',
+          reasoning: { effort: 'high', summary: 'detailed' },
+          codex_request_mode: mode,
+          native_tool_search: true,
+        },
+      }
+      const defaults = selectedModelExecutionFields(model, {}).modelOptions
+      expect(defaults).toMatchObject({
+        reasoning: 'high',
+        summary: 'detailed',
+        weworkCloudModelCodexRequestMode: mode,
+        weworkCloudModelNativeToolSearch: String(mode === 'passthrough'),
+        weworkCloudModelNativeNamespaceTools: String(mode === 'passthrough'),
+      })
+      expect(selectedModelExecutionFields(model, { reasoning: 'low' }).modelOptions).toMatchObject({
+        reasoning: 'low',
+        summary: 'detailed',
+      })
+    }
+  )
+
   test('sends default collaboration mode when plan mode is not selected', () => {
     expect(selectedModelExecutionFields(null, {})).toEqual({
       modelOptions: { collaborationMode: 'default' },

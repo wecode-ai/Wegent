@@ -160,6 +160,7 @@ pub mod http_error {
         status: StatusCode,
         detail: String,
         challenge: bool,
+        unhandled: bool,
     }
 
     impl HttpError {
@@ -168,6 +169,7 @@ pub mod http_error {
                 status,
                 detail: detail.into(),
                 challenge: false,
+                unhandled: false,
             }
         }
 
@@ -187,12 +189,25 @@ pub mod http_error {
             Self::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
         }
 
+        /// 500 `{"error_code": 500, "detail": "Internal server error"}`: the
+        /// application's `python_exception_handler` body for an exception the
+        /// route does not convert into an `HTTPException`.
+        pub fn internal_unhandled() -> Self {
+            Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                detail: String::new(),
+                challenge: false,
+                unhandled: true,
+            }
+        }
+
         /// 401 Unauthorized with the source-compatible WWW-Authenticate header.
         pub fn unauthorized(detail: &str) -> Self {
             Self {
                 status: StatusCode::UNAUTHORIZED,
                 detail: detail.to_string(),
                 challenge: true,
+                unhandled: false,
             }
         }
 
@@ -203,6 +218,7 @@ pub mod http_error {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
                 detail: error.validation_detail(),
                 challenge: false,
+                unhandled: false,
             }
         }
 
@@ -215,15 +231,28 @@ pub mod http_error {
 
     impl From<HttpError> for crate::http_compat::FastApiError {
         fn from(error: HttpError) -> Self {
+            if error.unhandled {
+                return crate::http_compat::FastApiError::unhandled();
+            }
             crate::http_compat::FastApiError::detail(error.status, error.detail)
         }
     }
 
     impl IntoHttpError for HttpError {
         fn into_http_error(self, arena: &EphemeralBytesArena) -> Response {
-            let mut response = crate::http_compat::FastApiError::detail(self.status, self.detail)
-                .into_http_error(arena);
-            if self.challenge {
+            let Self {
+                status,
+                detail,
+                challenge,
+                unhandled,
+            } = self;
+            let error = if unhandled {
+                crate::http_compat::FastApiError::unhandled()
+            } else {
+                crate::http_compat::FastApiError::detail(status, detail)
+            };
+            let mut response = error.into_http_error(arena);
+            if challenge {
                 let mut block = arena.alloc("www-authenticate: Bearer\r\n".len());
                 block.extend_from_slice(b"www-authenticate: Bearer\r\n");
                 if let Ok(header) = brz_http_server::HeaderBlock::new(block.freeze()) {

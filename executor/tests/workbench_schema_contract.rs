@@ -9,7 +9,31 @@ fn codex_migration_check_is_read_only_and_returns_no_config_or_credentials() {
     let temporary = tempfile::tempdir().unwrap();
     let home = temporary.path().join("codex home");
     let unused_home = temporary.path().join("must-not-initialize");
-    std::fs::create_dir(&home).unwrap();
+    for initialize in [false, true] {
+        if initialize {
+            std::fs::create_dir(&home).unwrap();
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
+            .args([
+                "--workbench-codex-migration-check",
+                home.to_str().unwrap(),
+                "--version",
+            ])
+            .env("HOME", &unused_home)
+            .env("WEGENT_EXECUTOR_HOME", &unused_home)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["codex_home_migration"], 1);
+        assert_eq!(response["allowed"], true);
+        assert!(!unused_home.exists());
+        assert_eq!(home.exists(), initialize);
+        if initialize {
+            assert_eq!(std::fs::read_dir(&home).unwrap().count(), 0);
+        }
+    }
     // A directory instead of a file proves the checker never opens auth.json.
     std::fs::create_dir(home.join("auth.json")).unwrap();
     for (config, allowed) in [
