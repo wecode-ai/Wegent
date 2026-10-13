@@ -11,8 +11,8 @@
 //!
 //! The upstream credential is not configured; it is traded at request time. The
 //! Executor sends the current Wework login token to the Wegent backend and
-//! receives the Wecode model API key that `copilot.weibo.com` accepts, which it
-//! keeps in memory only.
+//! receives the Wecode model API key the decision upstream accepts, and keeps
+//! it in memory only.
 
 mod model_key;
 mod protocol;
@@ -53,12 +53,6 @@ pub(crate) const LOCAL_AUTHORIZATION_VALUE: &str = "wework-local-router";
 
 /// Upstream path that decision requests are always forwarded to.
 pub(crate) const UPSTREAM_PATH: &str = "/v1/decisions";
-
-/// Hosts allowed for the decision upstream.
-///
-/// The upstream is fixed by trusted configuration; this list is defense in
-/// depth against a mis-edited deployment value.
-const ALLOWED_UPSTREAM_HOSTS: &[&str] = &["copilot.weibo.com"];
 
 const ENV_UPSTREAM_URL: &str = "WEWORK_DECISION_PROXY_UPSTREAM_URL";
 const ENV_DEFAULT_MODEL: &str = "WEWORK_DECISION_PROXY_DEFAULT_MODEL";
@@ -198,14 +192,17 @@ pub(crate) fn config_from_env_or_unconfigured() -> Arc<DecisionProxyConfig> {
     }
 }
 
+/// Validates the deployment-supplied decision upstream.
+///
+/// The host is not pinned in code: the deployment owns the upstream address and
+/// the repository must not carry an internal hostname. What is enforced here is
+/// the shape a decision endpoint must have, so a mis-edited value cannot turn
+/// the route into a proxy for an arbitrary path or an insecure scheme.
 fn parse_upstream_url(raw: &str) -> Result<Url, DecisionProxyConfigError> {
     let invalid = || DecisionProxyConfigError::new("invalid_upstream_url");
     let url = Url::parse(raw.trim()).map_err(|_| invalid())?;
-    let host_allowed = url
-        .host_str()
-        .is_some_and(|host| ALLOWED_UPSTREAM_HOSTS.contains(&host));
     if url.scheme() != "https"
-        || !host_allowed
+        || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
@@ -745,7 +742,7 @@ mod tests {
 
     use super::*;
 
-    const VALID_UPSTREAM: &str = "https://copilot.weibo.com/v1/decisions";
+    const VALID_UPSTREAM: &str = "https://decision-upstream.example.com/v1/decisions";
 
     fn config_from(
         entries: &[(&str, &str)],
@@ -791,15 +788,14 @@ mod tests {
     #[test]
     fn upstream_must_be_a_plain_https_decisions_url() {
         for upstream in [
-            "http://copilot.weibo.com/v1/decisions",
-            "ftp://copilot.weibo.com/v1/decisions",
-            "https://user:secret@copilot.weibo.com/v1/decisions",
-            "https://copilot.weibo.com/v1/decisions?x=1",
-            "https://copilot.weibo.com/v1/decisions#fragment",
-            "https://copilot.weibo.com/v1/decisions/",
-            "https://copilot.weibo.com/v1/other",
-            "https://copilot.weibo.com/",
-            "https://evil.example.com/v1/decisions",
+            "http://decision-upstream.example.com/v1/decisions",
+            "ftp://decision-upstream.example.com/v1/decisions",
+            "https://user:secret@decision-upstream.example.com/v1/decisions",
+            "https://decision-upstream.example.com/v1/decisions?x=1",
+            "https://decision-upstream.example.com/v1/decisions#fragment",
+            "https://decision-upstream.example.com/v1/decisions/",
+            "https://decision-upstream.example.com/v1/other",
+            "https://decision-upstream.example.com/",
             "not-a-url",
         ] {
             let error = config_from(&upstream_entries(upstream)).expect_err(upstream);
@@ -808,6 +804,17 @@ mod tests {
                 "invalid_upstream_url",
                 "upstream={upstream}"
             );
+        }
+    }
+
+    #[test]
+    fn any_https_host_is_accepted_because_the_deployment_owns_the_upstream() {
+        for upstream in [
+            "https://decision-upstream.example.com/v1/decisions",
+            "https://decisions-eu.example.net:8443/v1/decisions",
+        ] {
+            let settings = enabled_settings(&upstream_entries(upstream));
+            assert_eq!(settings.upstream_url.as_str(), upstream);
         }
     }
 
@@ -846,13 +853,13 @@ mod tests {
     #[test]
     fn config_error_display_never_leaks_the_upstream_value() {
         let error = config_from(&upstream_entries(
-            "https://user:secret@copilot.weibo.com/v1/decisions",
+            "https://user:secret@decision-upstream.example.com/v1/decisions",
         ))
         .expect_err("invalid upstream");
         let text = error.to_string();
         assert!(!text.contains("secret"), "error leaked a value: {text}");
         assert!(
-            !text.contains("copilot.weibo.com"),
+            !text.contains("decision-upstream.example.com"),
             "error leaked a value: {text}"
         );
     }
@@ -1571,7 +1578,7 @@ mod http_tests {
                 "debug": {"secret": true},
                 "trace": "internal",
                 "authorization": "Bearer leaked",
-                "upstream_request": {"url": "https://copilot.weibo.com"},
+                "upstream_request": {"url": "https://decision-upstream.example.com"},
             }),
         ))
         .await;

@@ -6842,7 +6842,7 @@ fn decision_proxy_handler(
 fn decision_proxy_config() -> crate::server::local_decision_proxy::DecisionProxyConfig {
     crate::server::local_decision_proxy::DecisionProxyConfig::Enabled(
         crate::server::local_decision_proxy::DecisionProxySettings {
-            upstream_url: url::Url::parse("https://copilot.weibo.com/v1/decisions")
+            upstream_url: url::Url::parse("https://decision-upstream.example.com/v1/decisions")
                 .expect("upstream url"),
             default_model: "model-a".to_owned(),
             models: vec![crate::server::local_decision_proxy::DecisionModel {
@@ -6921,7 +6921,12 @@ async fn decision_proxy_register_returns_a_loopback_launch() {
     assert_eq!(launch["protocolVersion"], 1);
 
     let serialized = launch.to_string();
-    for leaked in ["copilot.weibo.com", "model-a", "apiKey", "upstream"] {
+    for leaked in [
+        "decision-upstream.example.com",
+        "model-a",
+        "apiKey",
+        "upstream",
+    ] {
         assert!(!serialized.contains(leaked), "launch leaked {leaked}");
     }
 }

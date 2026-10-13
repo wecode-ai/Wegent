@@ -4,11 +4,10 @@
 
 //! Wecode model API key exchange for the decision router.
 //!
-//! The decision upstream (`copilot.weibo.com`) accepts a Wecode model API key
-//! and rejects the Wework login token. The Executor therefore trades the
-//! current login token for that key at the Wegent backend and keeps the result
-//! in memory only: the key is never written to disk, to a log line, or to a
-//! Smart App response.
+//! The decision upstream accepts a Wecode model API key and rejects the Wework
+//! login token. The Executor therefore trades the current login token for that
+//! key at the Wegent backend and keeps the result in memory only: the key is
+//! never written to disk, to a log line, or to a Smart App response.
 
 use std::fmt;
 use std::time::{Duration, Instant};
