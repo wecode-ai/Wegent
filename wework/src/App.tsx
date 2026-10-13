@@ -1,3 +1,4 @@
+import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
 import {
   NotificationTaskSourceBridge,
@@ -832,6 +833,17 @@ function AppShell() {
   const isPopoutWindow = isPopoutWindowRuntime()
   const currentWindowLabel = isElectron ? getDesktopWindowLabel() : null
   const isMainWindow = currentWindowLabel === 'main'
+  const appGateCompletedRef = useRef(false)
+  useEffect(() => {
+    if (!isMainWindow || appGateCompletedRef.current) return
+    const preferencesLoaded = appPreferences?.loaded === true
+    const completed = !isLoading && preferencesLoaded
+    markDesktopStartupPhase('app-gate', completed ? 'completed' : 'waiting', {
+      authLoading: isLoading,
+      preferencesLoaded,
+    })
+    appGateCompletedRef.current = completed
+  }, [appPreferences?.loaded, isLoading, isMainWindow])
   const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
   const cloudApiBaseUrl = cloudConnection.apiBaseUrl
   const cloudToken = cloudConnection.token
