@@ -318,7 +318,8 @@ function createIsolatedClipboardRouter(
   popoutHost?: Partial<ElectronE2EHost>,
   smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> },
   services?: Partial<ElectronDesktopServices>,
-  browser?: Pick<EmbeddedBrowserManager, 'state' | 'setBounds'>
+  browser?: Pick<EmbeddedBrowserManager, 'state' | 'setBounds'>,
+  preferences?: { read: () => Promise<Record<string, unknown>> }
 ) {
   const notificationNavigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
   const targetWindow = {
@@ -335,7 +336,7 @@ function createIsolatedClipboardRouter(
       updatedAt: '2026-09-12T00:00:00.000Z',
     }),
     () => (smartApps ?? null) as never,
-    {} as never,
+    (preferences ?? {}) as never,
     {} as never,
     (browser ?? {}) as never,
     {} as never,
@@ -365,6 +366,94 @@ function createIsolatedClipboardRouter(
   )
   return { router, targetWindow, notificationNavigation }
 }
+
+describe('preferences.get startup diagnostics', () => {
+  test('records host receipt and waits for response completion after the original read', async () => {
+    let resolveRead!: (value: Record<string, unknown>) => void
+    const read = vi.fn(
+      () =>
+        new Promise<Record<string, unknown>>(resolve => {
+          resolveRead = resolve
+        })
+    )
+    const trace = vi.fn()
+    const { router } = createIsolatedClipboardRouter(
+      true,
+      undefined,
+      undefined,
+      {
+        onPreferencesGetStartupStep: trace,
+      },
+      undefined,
+      { read }
+    )
+    const completions: Array<() => void | Promise<void>> = []
+    const now = vi
+      .spyOn(performance, 'now')
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(125)
+      .mockReturnValueOnce(180)
+    const request = router.invoke(
+      WEWORK_APP_PRINCIPAL,
+      'preferences.get',
+      {},
+      {
+        onResponseSent: completion => completions.push(completion),
+      }
+    )
+    expect(trace).toHaveBeenCalledWith('started')
+    expect(read).toHaveBeenCalledTimes(1)
+    const preferences = { privateCredential: 'must-not-be-logged' }
+    resolveRead(preferences)
+    expect(await request).toBe(preferences)
+    expect(trace).toHaveBeenCalledTimes(1)
+    expect(completions).toHaveLength(1)
+    await completions[0]()
+    expect(trace).toHaveBeenCalledWith('completed', 80, 25)
+    const [, durationMs, readDurationMs] = trace.mock.calls[1]
+    expect(durationMs).toBeGreaterThanOrEqual(readDurationMs)
+    expect(readDurationMs).toBeGreaterThanOrEqual(0)
+    expect(JSON.stringify(trace.mock.calls)).not.toContain('must-not-be-logged')
+    now.mockRestore()
+  })
+
+  test('records a fixed failure without changing the original read error', async () => {
+    const error = new Error('private preferences path and credentials')
+    const trace = vi.fn()
+    const { router } = createIsolatedClipboardRouter(
+      true,
+      undefined,
+      undefined,
+      {
+        onPreferencesGetStartupStep: trace,
+      },
+      undefined,
+      { read: vi.fn().mockRejectedValue(error) }
+    )
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.get', {})).rejects.toBe(error)
+    expect(trace.mock.calls).toEqual([['started'], ['failed', expect.any(Number)]])
+    expect(JSON.stringify(trace.mock.calls)).not.toContain(error.message)
+  })
+
+  test('preserves the normal uninstrumented read and original result', async () => {
+    const preferences = { theme: 'dark' }
+    const read = vi.fn().mockResolvedValue(preferences)
+    const { router } = createIsolatedClipboardRouter(
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { read }
+    )
+    const onResponseSent = vi.fn()
+    expect(
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.get', {}, { onResponseSent })
+    ).toBe(preferences)
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(onResponseSent).not.toHaveBeenCalled()
+  })
+})
 
 describe('Core DSH runtime capabilities', () => {
   test('publishes persisted preferences to every subscribed window', async () => {

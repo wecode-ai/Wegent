@@ -1785,6 +1785,14 @@ async function configureDesktopRuntime(): Promise<void> {
           pendingSchemes,
           openScheme: openSchemeInMainWindow,
           updatePreferences: updateDesktopPreferences,
+          onPreferencesGetStartupStep:
+            process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1'
+              ? (status, durationMs, readDurationMs) =>
+                  logStartupStep('host-preferences-get', status, {
+                    ...(durationMs === undefined ? {} : { durationMs }),
+                    ...(readDurationMs === undefined ? {} : { readDurationMs }),
+                  })
+              : undefined,
           weworkSyncRequest: async request => {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)

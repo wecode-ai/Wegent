@@ -127,6 +127,11 @@ export interface ElectronDesktopServices {
   openScheme: (url: string) => void
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
+  onPreferencesGetStartupStep?: (
+    status: 'started' | 'completed' | 'failed',
+    durationMs?: number,
+    readDurationMs?: number
+  ) => void
   weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
@@ -833,7 +838,25 @@ export function createElectronCapabilityRouter(
       desktopServices
     )
   })
-  router.register('preferences.get', () => preferences.read())
+  router.register('preferences.get', (_params, context) => {
+    const trace = desktopServices.onPreferencesGetStartupStep
+    if (!trace) return preferences.read()
+    const startedAt = performance.now()
+    trace('started')
+    return preferences.read().then(
+      value => {
+        const readDurationMs = Math.round(performance.now() - startedAt)
+        context.deferUntilResponseSent(() => {
+          trace('completed', Math.round(performance.now() - startedAt), readDurationMs)
+        })
+        return value
+      },
+      error => {
+        trace('failed', Math.round(performance.now() - startedAt))
+        throw error
+      }
+    )
+  })
   router.register('preferences.update', async params => {
     const patch = params.patch
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
