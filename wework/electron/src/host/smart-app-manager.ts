@@ -30,10 +30,7 @@ import {
 import { SmartAppVerifier, type SmartAppPackResult } from './smart-app-verifier.js'
 import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 import { ensureDirectory } from './ensure-directory.js'
-import {
-  decideDecisionModelGrant,
-  type SmartAppCapabilitySource,
-} from './smart-app-capability-policy.js'
+import { decideDecisionModelGrant } from './smart-app-capability-policy.js'
 
 export interface SmartAppInstallation {
   id: string
@@ -758,22 +755,18 @@ export class SmartAppManager {
    * whether the stored record changed.
    */
   private syncGrantedCapabilities(installation: SmartAppInstallation): boolean {
-    const decisionModel = decideDecisionModelGrant({
-      manifest: installation.manifest,
-      source: installation.source as SmartAppCapabilitySource,
-      smartAppId: installation.smartAppId ?? null,
-      environment: this.options.environment,
-    })
+    const decisionModel = decideDecisionModelGrant(installation.manifest)
     if (installation.grantedCapabilities?.decisionModel === decisionModel) return false
     installation.grantedCapabilities = { decisionModel }
     return true
   }
 
   /**
-   * Validates the renderer-supplied decision route and re-checks the grant.
+   * Validates the renderer-supplied decision route.
    *
-   * A grant is recomputed from trusted configuration instead of trusting the
-   * stored record, so a tampered `installations.json` cannot widen access.
+   * Every installation is authorized, so the only precondition is the manifest
+   * declaration the Smart App made; the route description still has to match
+   * the local router's path, token, and protocol shape.
    */
   private authorizeDecisionRoute(
     installation: SmartAppInstallation,
@@ -782,13 +775,7 @@ export class SmartAppManager {
   ): { baseUrl: string; protocolVersion: 1 } | null {
     const requested = typeof decisionBaseUrl === 'string' ? decisionBaseUrl.trim() : ''
     if (!requested) return null
-    const granted = decideDecisionModelGrant({
-      manifest: installation.manifest,
-      source: installation.source as SmartAppCapabilitySource,
-      smartAppId: installation.smartAppId ?? null,
-      environment: this.options.environment,
-    })
-    if (!granted) {
+    if (!decideDecisionModelGrant(installation.manifest)) {
       throw new Error('Smart app is not authorized to use the Wework decision router')
     }
     if (decisionProtocolVersion !== DECISION_ROUTER_PROTOCOL_VERSION) {

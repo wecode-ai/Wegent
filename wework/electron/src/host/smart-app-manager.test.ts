@@ -418,16 +418,14 @@ describe('SmartAppManager', () => {
     )
   })
 
-  test('grants the decision capability to a linked project only behind the dev switch', async () => {
+  test('grants the decision capability from the manifest declaration alone', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-capability-'))
     roots.push(root)
     const parent = join(root, 'projects')
     await mkdir(parent)
 
-    const linked = createManager(root, undefined, {
-      WEWORK_DECISION_PROXY_ALLOW_LINKED_APPS: 'true',
-    })
-    const installation = await linked.createDirectory({
+    const manager = createManager(root)
+    const installation = await manager.createDirectory({
       parentPath: parent,
       name: 'decision-linked',
       displayName: 'Decision Linked',
@@ -441,101 +439,68 @@ describe('SmartAppManager', () => {
     manifest.capabilities = { decisionModel: true }
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 
-    await expect(linked.list()).resolves.toContainEqual(
+    await expect(manager.list()).resolves.toContainEqual(
       expect.objectContaining({
         id: installation.id,
         grantedCapabilities: { decisionModel: true },
       })
     )
 
-    // The same linked project on a build without the development switch stays denied.
-    const denied = createManager(root)
-    await expect(denied.list()).resolves.toContainEqual(
+    // Neither a build-time allowlist nor a development switch takes part.
+    const otherBuild = createManager(root, undefined, {
+      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[]',
+      WEWORK_DECISION_PROXY_ALLOW_LINKED_APPS: 'false',
+    })
+    await expect(otherBuild.list()).resolves.toContainEqual(
       expect.objectContaining({
         id: installation.id,
-        grantedCapabilities: { decisionModel: false },
+        grantedCapabilities: { decisionModel: true },
       })
     )
   })
 
-  test('grants the decision capability to allowlisted marketplace releases only', async () => {
+  test('grants a zip-imported install that declares the capability', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-market-capability-'))
     roots.push(root)
     const archivePath = await createSmartAppArchive(root, {
       ...validManifest(),
       capabilities: { decisionModel: true },
     })
-    const allowlisted = createManager(root, undefined, {
-      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[42]',
-    })
-    const preview = await allowlisted.preview(archivePath)
+    const manager = createManager(root)
+    const preview = await manager.preview(archivePath)
 
-    const installation = await allowlisted.install({
+    const installation = await manager.install({
       archivePath,
       expectedSha256: preview.sha256,
-      smartAppId: 42,
-      releaseId: 1,
     })
 
     expect(installation).toMatchObject({
-      id: 'market-42',
-      source: 'market',
+      source: 'managed',
       grantedCapabilities: { decisionModel: true },
     })
-
-    const otherBuild = createManager(root, undefined, {
-      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[99]',
-    })
-    await expect(otherBuild.list()).resolves.toContainEqual(
-      expect.objectContaining({
-        id: 'market-42',
-        grantedCapabilities: { decisionModel: false },
-      })
-    )
   })
 
   test('never grants a capability the manifest does not request', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-no-request-'))
     roots.push(root)
     const withoutRequest = await createSmartAppArchive(root, validManifest())
-    const managedRequest = await createSmartAppArchive(root, {
-      ...validManifest(),
-      capabilities: { decisionModel: true },
-    })
-    const manager = createManager(root, undefined, {
-      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[42]',
-      WEWORK_DECISION_PROXY_ALLOW_LINKED_APPS: 'true',
-    })
+    const manager = createManager(root)
 
-    const silentPreview = await manager.preview(withoutRequest)
+    const preview = await manager.preview(withoutRequest)
     const silent = await manager.install({
       archivePath: withoutRequest,
-      expectedSha256: silentPreview.sha256,
+      expectedSha256: preview.sha256,
       smartAppId: 42,
       releaseId: 1,
     })
     expect(silent.grantedCapabilities).toEqual({ decisionModel: false })
-
-    // A managed install is never treated as a trusted marketplace release.
-    const managedPreview = await manager.preview(managedRequest)
-    const managed = await manager.install({
-      archivePath: managedRequest,
-      expectedSha256: managedPreview.sha256,
-    })
-    expect(managed.grantedCapabilities).toEqual({ decisionModel: false })
   })
 
-  test('refuses a decision route for an installation without the grant', async () => {
+  test('refuses a decision route when the manifest never requested the capability', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-unauthorized-'))
     roots.push(root)
-    const archivePath = await createSmartAppArchive(root, {
-      ...validManifest(),
-      capabilities: { decisionModel: true },
-    })
-    // The manifest requests the capability, but this build's allowlist excludes it.
-    const manager = createManager(root, undefined, {
-      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[99]',
-    })
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const manager = createManager(root)
     const preview = await manager.preview(archivePath)
     const installation = await manager.install({
       archivePath,
@@ -561,9 +526,7 @@ describe('SmartAppManager', () => {
       ...validManifest(),
       capabilities: { decisionModel: true },
     })
-    const manager = createManager(root, undefined, {
-      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[42]',
-    })
+    const manager = createManager(root)
     const preview = await manager.preview(archivePath)
     const installation = await manager.install({
       archivePath,
@@ -603,9 +566,7 @@ describe('SmartAppManager', () => {
       ...validManifest(),
       capabilities: { decisionModel: true },
     })
-    const manager = createManager(root, undefined, {
-      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[42]',
-    })
+    const manager = createManager(root)
     const preview = await manager.preview(archivePath)
     const installation = await manager.install({
       archivePath,
@@ -630,9 +591,7 @@ describe('SmartAppManager', () => {
       ...validManifest(),
       capabilities: { decisionModel: true },
     })
-    const manager = createManager(root, undefined, {
-      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[42]',
-    })
+    const manager = createManager(root)
     const preview = await manager.preview(archivePath)
     const installation = await manager.install({
       archivePath,

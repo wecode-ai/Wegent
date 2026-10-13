@@ -6726,9 +6726,7 @@ fn decision_proxy_handler(
     .with_decision_proxy_config(Arc::new(config))
 }
 
-fn decision_proxy_config(
-    credential: crate::server::local_decision_proxy::DecisionCredentialMode,
-) -> crate::server::local_decision_proxy::DecisionProxyConfig {
+fn decision_proxy_config() -> crate::server::local_decision_proxy::DecisionProxyConfig {
     crate::server::local_decision_proxy::DecisionProxyConfig::Enabled(
         crate::server::local_decision_proxy::DecisionProxySettings {
             upstream_url: url::Url::parse("https://copilot.weibo.com/v1/decisions")
@@ -6738,15 +6736,15 @@ fn decision_proxy_config(
                 id: "model-a".to_owned(),
                 display_name: "Model A".to_owned(),
             }],
-            credential,
         },
     )
 }
 
 #[tokio::test]
 async fn decision_proxy_register_requires_a_scope() {
-    let handler =
-        decision_proxy_handler(crate::server::local_decision_proxy::DecisionProxyConfig::Disabled);
+    let handler = decision_proxy_handler(
+        crate::server::local_decision_proxy::DecisionProxyConfig::Unconfigured,
+    );
     for payload in [json!({}), json!({"scope": "   "}), json!({"scope": 7})] {
         let error = handler
             .dispatch("runtime.decision_proxy.register", payload.clone())
@@ -6758,8 +6756,9 @@ async fn decision_proxy_register_requires_a_scope() {
 
 #[tokio::test]
 async fn decision_proxy_register_reports_a_disabled_router() {
-    let handler =
-        decision_proxy_handler(crate::server::local_decision_proxy::DecisionProxyConfig::Disabled);
+    let handler = decision_proxy_handler(
+        crate::server::local_decision_proxy::DecisionProxyConfig::Unconfigured,
+    );
     let error = handler
         .register_decision_proxy_at(
             json!({"scope": "smart-app:install-1:abc"}),
@@ -6771,9 +6770,7 @@ async fn decision_proxy_register_reports_a_disabled_router() {
 
 #[tokio::test]
 async fn decision_proxy_register_rejects_client_supplied_configuration() {
-    let handler = decision_proxy_handler(decision_proxy_config(
-        crate::server::local_decision_proxy::DecisionCredentialMode::Static,
-    ));
+    let handler = decision_proxy_handler(decision_proxy_config());
     for field in [
         "upstream",
         "upstreamUrl",
@@ -6795,9 +6792,7 @@ async fn decision_proxy_register_rejects_client_supplied_configuration() {
 
 #[tokio::test]
 async fn decision_proxy_register_returns_a_loopback_launch() {
-    let handler = decision_proxy_handler(decision_proxy_config(
-        crate::server::local_decision_proxy::DecisionCredentialMode::Static,
-    ));
+    let handler = decision_proxy_handler(decision_proxy_config());
     let launch = handler
         .register_decision_proxy_at(
             json!({"scope": "smart-app:install-2:launch"}),
@@ -6820,9 +6815,7 @@ async fn decision_proxy_register_returns_a_loopback_launch() {
 
 #[tokio::test]
 async fn decision_proxy_register_needs_a_running_http_server() {
-    let handler = decision_proxy_handler(decision_proxy_config(
-        crate::server::local_decision_proxy::DecisionCredentialMode::Static,
-    ));
+    let handler = decision_proxy_handler(decision_proxy_config());
     let error = handler
         .dispatch(
             "runtime.decision_proxy.register",
@@ -6834,10 +6827,8 @@ async fn decision_proxy_register_needs_a_running_http_server() {
 }
 
 #[tokio::test]
-async fn login_registration_binds_the_shared_connection_snapshot() {
-    let handler = decision_proxy_handler(decision_proxy_config(
-        crate::server::local_decision_proxy::DecisionCredentialMode::Login,
-    ));
+async fn registration_binds_the_shared_connection_snapshot() {
+    let handler = decision_proxy_handler(decision_proxy_config());
     let launch = handler
         .register_decision_proxy_at(
             json!({"scope": "smart-app:install-4:login"}),
@@ -6847,37 +6838,17 @@ async fn login_registration_binds_the_shared_connection_snapshot() {
     let token = launch["token"].as_str().expect("token").to_owned();
     let route =
         crate::server::local_decision_proxy::lookup_route(&token).expect("registered route");
-    let snapshot = route.login_snapshot().expect("login snapshot");
+    let snapshot = route.snapshot();
     assert!(
         Arc::ptr_eq(&snapshot, &handler.backend_connection),
-        "login routes must share the handler connection snapshot"
+        "routes must share the handler connection snapshot"
     );
     crate::server::local_decision_proxy::unregister(&token);
 }
 
 #[tokio::test]
-async fn static_registration_holds_no_connection_snapshot() {
-    let handler = decision_proxy_handler(decision_proxy_config(
-        crate::server::local_decision_proxy::DecisionCredentialMode::Static,
-    ));
-    let launch = handler
-        .register_decision_proxy_at(
-            json!({"scope": "smart-app:install-5:static"}),
-            "http://127.0.0.1:4567",
-        )
-        .expect("registration should succeed");
-    let token = launch["token"].as_str().expect("token").to_owned();
-    let route =
-        crate::server::local_decision_proxy::lookup_route(&token).expect("registered route");
-    assert!(route.login_snapshot().is_none());
-    crate::server::local_decision_proxy::unregister(&token);
-}
-
-#[tokio::test]
 async fn decision_proxy_unregister_is_idempotent() {
-    let handler = decision_proxy_handler(decision_proxy_config(
-        crate::server::local_decision_proxy::DecisionCredentialMode::Static,
-    ));
+    let handler = decision_proxy_handler(decision_proxy_config());
     let error = handler
         .dispatch("runtime.decision_proxy.unregister", json!({}))
         .await

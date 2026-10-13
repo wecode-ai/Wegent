@@ -6,9 +6,7 @@ use super::codex_config::optional_proxy_url;
 use super::*;
 use ignore::WalkBuilder;
 
-use crate::server::local_decision_proxy::{
-    DecisionCredentialMode, DecisionCredentialSource, DECISION_PROXY_PROTOCOL_VERSION,
-};
+use crate::server::local_decision_proxy::DECISION_PROXY_PROTOCOL_VERSION;
 
 const WORKSPACE_SEARCH_RESULT_LIMIT: usize = 50;
 /// Base path shared with the Executor HTTP router.
@@ -824,27 +822,21 @@ impl RuntimeWorkRpcHandler {
         let scope = string_field(&payload, "scope")
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| AppIpcError::new("invalid_request", "scope is required"))?;
-        let Some(settings) = self.decision_proxy.settings() else {
+        if self.decision_proxy.settings().is_none() {
             return Err(AppIpcError::new(
                 "decision_router_disabled",
-                "decision router is disabled",
+                "decision router is not configured",
             ));
-        };
+        }
         let Some(loopback) = loopback else {
             return Err(AppIpcError::new(
                 "runtime_unavailable",
                 "Executor HTTP server is not available",
             ));
         };
-        // [REV-D3] `login` binds the route to the shared connection snapshot;
-        // `static` reads the platform credential when a request is forwarded.
-        let credential = match settings.credential {
-            DecisionCredentialMode::Static => DecisionCredentialSource::Static,
-            DecisionCredentialMode::Login => {
-                DecisionCredentialSource::Login(Arc::clone(&self.backend_connection))
-            }
-        };
-        let token = local_decision_proxy::register(&scope, credential);
+        // The route holds the shared connection snapshot; the request path
+        // trades the current login token for the upstream credential.
+        let token = local_decision_proxy::register(&scope, Arc::clone(&self.backend_connection));
         Ok(json!({
             "token": token,
             "baseUrl": format!("{loopback}{DECISION_PROXY_ROUTE_PREFIX}/{token}"),

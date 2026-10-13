@@ -905,7 +905,7 @@ impl RuntimeWorkRpcHandler {
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
             hook_service: HookService::from_env(),
             backend_connection: Arc::new(Mutex::new(None)),
-            decision_proxy: local_decision_proxy::config_from_env_or_disabled(),
+            decision_proxy: local_decision_proxy::config_from_env_or_unconfigured(),
         };
         for (local_task_id, turn) in handler
             .active_goal_turns

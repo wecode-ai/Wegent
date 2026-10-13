@@ -6,8 +6,9 @@
 //!
 //! A route is a capability: the opaque token in the URL is the only thing a
 //! Smart App needs in order to call the decision upstream. The registry never
-//! copies a credential out of its owner: `login` routes hold the shared
-//! `ConnectionConfig` snapshot, `static` routes hold nothing at all.
+//! copies a credential out of its owner: every route holds the shared
+//! `ConnectionConfig` snapshot and lets the request path resolve the upstream
+//! credential from the current login state.
 //!
 //! None of the types here derive `Debug`, because a `ConnectionConfig` happens
 //! to render its tokens through `Debug`.
@@ -29,37 +30,25 @@ const ROUTE_MAX_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const TOKEN_PREFIX: &str = "decision-";
 const TOKEN_RANDOM_BYTES: usize = 32;
 
-/// Where a route reads its upstream credential from.
-#[derive(Clone)]
-pub(crate) enum DecisionCredentialSource {
-    /// Read the platform credential from Executor-controlled configuration when
-    /// the request is forwarded.
-    Static,
-    /// Follow the current Wework login snapshot.
-    Login(Arc<Mutex<Option<ConnectionConfig>>>),
-}
-
 /// Everything a request needs after a successful lookup.
 ///
 /// The registry lock is released before any network work starts.
 #[derive(Clone)]
 pub(crate) struct DecisionRouteHandle {
     pub scope: String,
-    pub credential: DecisionCredentialSource,
+    pub snapshot: Arc<Mutex<Option<ConnectionConfig>>>,
 }
 
 impl DecisionRouteHandle {
-    pub(crate) fn login_snapshot(&self) -> Option<Arc<Mutex<Option<ConnectionConfig>>>> {
-        match &self.credential {
-            DecisionCredentialSource::Login(snapshot) => Some(Arc::clone(snapshot)),
-            DecisionCredentialSource::Static => None,
-        }
+    /// The live connection snapshot the route reads its credential from.
+    pub(crate) fn snapshot(&self) -> Arc<Mutex<Option<ConnectionConfig>>> {
+        Arc::clone(&self.snapshot)
     }
 }
 
 struct DecisionRouteBinding {
     scope: String,
-    credential: DecisionCredentialSource,
+    snapshot: Arc<Mutex<Option<ConnectionConfig>>>,
     created_at: Instant,
     last_used: Instant,
     active_references: usize,
@@ -75,7 +64,7 @@ impl DecisionRouteRegistry {
     pub(crate) fn register(
         &mut self,
         scope: &str,
-        credential: DecisionCredentialSource,
+        snapshot: Arc<Mutex<Option<ConnectionConfig>>>,
         now: Instant,
     ) -> String {
         self.prune(now);
@@ -91,14 +80,14 @@ impl DecisionRouteRegistry {
             Some(binding) => {
                 binding.active_references += 1;
                 binding.last_used = now;
-                binding.credential = credential;
+                binding.snapshot = snapshot;
             }
             None => {
                 self.routes.insert(
                     token.clone(),
                     DecisionRouteBinding {
                         scope: scope.to_owned(),
-                        credential,
+                        snapshot,
                         created_at: now,
                         last_used: now,
                         active_references: 1,
@@ -135,7 +124,7 @@ impl DecisionRouteRegistry {
         binding.last_used = now;
         Some(DecisionRouteHandle {
             scope: binding.scope.clone(),
-            credential: binding.credential.clone(),
+            snapshot: Arc::clone(&binding.snapshot),
         })
     }
 
@@ -174,14 +163,14 @@ fn registry() -> &'static Mutex<DecisionRouteRegistry> {
 ///
 /// Registering the same scope again only adds a reference, so the Smart App can
 /// be restarted without invalidating a token an in-flight request still uses.
-pub(crate) fn register(scope: &str, credential: DecisionCredentialSource) -> String {
+pub(crate) fn register(scope: &str, snapshot: Arc<Mutex<Option<ConnectionConfig>>>) -> String {
     let now = Instant::now();
     let (token, reused, active_registrations) = {
         let mut registry = registry()
             .lock()
             .expect("decision proxy registry should not be poisoned");
         let reused = registry.tokens_by_scope.contains_key(scope);
-        let token = registry.register(scope, credential, now);
+        let token = registry.register(scope, snapshot, now);
         (token, reused, registry.routes.len())
     };
     log_executor_event(
@@ -280,16 +269,20 @@ mod tests {
         }
     }
 
+    fn snapshot(auth_token: &str) -> Arc<Mutex<Option<ConnectionConfig>>> {
+        Arc::new(Mutex::new(Some(connection(auth_token))))
+    }
+
     #[test]
     fn register_returns_a_prefixed_token_with_32_bytes_of_entropy() {
         let mut registry = DecisionRouteRegistry::default();
         let now = Instant::now();
-        let token = registry.register("scope-a", DecisionCredentialSource::Static, now);
+        let token = registry.register("scope-a", snapshot("token-a"), now);
         let suffix = token.strip_prefix("decision-").expect("token prefix");
         assert_eq!(suffix.len(), 64);
         assert!(suffix.chars().all(|value| value.is_ascii_hexdigit()));
 
-        let other = registry.register("scope-b", DecisionCredentialSource::Static, now);
+        let other = registry.register("scope-b", snapshot("token-b"), now);
         assert_ne!(token, other);
     }
 
@@ -297,8 +290,8 @@ mod tests {
     fn same_scope_reuses_the_token_and_counts_references() {
         let mut registry = DecisionRouteRegistry::default();
         let now = Instant::now();
-        let first = registry.register("scope-a", DecisionCredentialSource::Static, now);
-        let second = registry.register("scope-a", DecisionCredentialSource::Static, now);
+        let first = registry.register("scope-a", snapshot("token-a"), now);
+        let second = registry.register("scope-a", snapshot("token-a"), now);
         assert_eq!(first, second);
         assert_eq!(registry.active_references(&first), Some(2));
     }
@@ -307,8 +300,8 @@ mod tests {
     fn unregister_releases_references_then_kills_the_route() {
         let mut registry = DecisionRouteRegistry::default();
         let now = Instant::now();
-        let token = registry.register("scope-a", DecisionCredentialSource::Static, now);
-        registry.register("scope-a", DecisionCredentialSource::Static, now);
+        let token = registry.register("scope-a", snapshot("token-a"), now);
+        registry.register("scope-a", snapshot("token-a"), now);
 
         registry.unregister(&token, now);
         assert_eq!(registry.active_references(&token), Some(1));
@@ -333,9 +326,9 @@ mod tests {
     fn a_released_scope_registers_with_a_fresh_token() {
         let mut registry = DecisionRouteRegistry::default();
         let now = Instant::now();
-        let first = registry.register("scope-a", DecisionCredentialSource::Static, now);
+        let first = registry.register("scope-a", snapshot("token-a"), now);
         registry.unregister(&first, now);
-        let second = registry.register("scope-a", DecisionCredentialSource::Static, now);
+        let second = registry.register("scope-a", snapshot("token-a"), now);
         assert_ne!(
             first, second,
             "a token that has been released must never be handed out again"
@@ -346,8 +339,8 @@ mod tests {
     fn idle_routes_are_pruned_but_live_routes_survive() {
         let mut registry = DecisionRouteRegistry::default();
         let now = Instant::now();
-        let live = registry.register("scope-live", DecisionCredentialSource::Static, now);
-        let released = registry.register("scope-released", DecisionCredentialSource::Static, now);
+        let live = registry.register("scope-live", snapshot("token-a"), now);
+        let released = registry.register("scope-released", snapshot("token-b"), now);
         registry.unregister(&released, now);
 
         let later = now + ROUTE_IDLE_TTL + Duration::from_secs(1);
@@ -363,50 +356,28 @@ mod tests {
     fn routes_expire_at_the_absolute_cap() {
         let mut registry = DecisionRouteRegistry::default();
         let now = Instant::now();
-        let token = registry.register("scope-a", DecisionCredentialSource::Static, now);
+        let token = registry.register("scope-a", snapshot("token-a"), now);
         registry.prune(now + ROUTE_MAX_TTL + Duration::from_secs(1));
         assert!(registry.lookup(&token, now).is_none());
     }
 
     #[test]
-    fn login_binding_follows_the_shared_snapshot() {
+    fn routes_follow_the_shared_connection_snapshot() {
         let mut registry = DecisionRouteRegistry::default();
         let now = Instant::now();
         let snapshot = Arc::new(Mutex::new(Some(connection("old-token"))));
-        let token = registry.register(
-            "scope-a",
-            DecisionCredentialSource::Login(Arc::clone(&snapshot)),
-            now,
-        );
+        let token = registry.register("scope-a", Arc::clone(&snapshot), now);
 
         *snapshot.lock().expect("snapshot lock") = Some(connection("new-token"));
         let handle = registry.lookup(&token, now).expect("route");
         let current = handle
-            .login_snapshot()
-            .expect("login snapshot")
+            .snapshot()
             .lock()
             .expect("snapshot lock")
             .clone()
             .expect("connection");
         assert_eq!(current.auth_token, "new-token");
-        assert!(registry
-            .lookup(&token, now)
-            .unwrap()
-            .login_snapshot()
-            .is_some());
-    }
-
-    #[test]
-    fn static_binding_never_exposes_a_login_snapshot() {
-        let mut registry = DecisionRouteRegistry::default();
-        let now = Instant::now();
-        let token = registry.register("scope-a", DecisionCredentialSource::Static, now);
-        let handle = registry.lookup(&token, now).expect("route");
-        assert!(handle.login_snapshot().is_none());
-        assert!(matches!(
-            handle.credential,
-            DecisionCredentialSource::Static
-        ));
+        assert!(Arc::ptr_eq(&handle.snapshot(), &snapshot));
     }
 
     #[test]

@@ -4,15 +4,17 @@
 
 //! Executor-owned configuration for the Wework decision router.
 //!
-//! The decision upstream, the model catalogue, and the upstream credential are
-//! trusted Executor configuration. A Smart App may read the catalogue from
-//! `GET .../status` and name one of the allowlisted models in a request, but it
-//! can never move the upstream, widen the allowlist, or see the credential.
+//! The decision upstream and the model catalogue are trusted Executor
+//! configuration. A Smart App may read the catalogue from `GET .../status` and
+//! name any model in a request, but it can never move the upstream or see a
+//! credential.
+//!
+//! The upstream credential is not configured; it is traded at request time. The
+//! Executor sends the current Wework login token to the Wegent backend and
+//! receives the Wecode model API key that `copilot.weibo.com` accepts, which it
+//! keeps in memory only.
 
-// The routing work that consumes these types lands in follow-up changes; until
-// then the module is intentionally unreferenced.
-#![allow(dead_code, unused_imports)]
-
+mod model_key;
 mod protocol;
 mod registry;
 
@@ -20,10 +22,11 @@ pub(crate) use protocol::{
     DecisionModel, DecisionProxyErrorBody, DecisionProxyErrorPayload, DecisionRequest,
     DecisionStatusResponse, DECISION_PROXY_PROTOCOL_VERSION,
 };
-pub(crate) use registry::{lookup as lookup_route, register, unregister, DecisionCredentialSource};
+#[cfg(test)]
+pub(crate) use registry::lookup as lookup_route;
+pub(crate) use registry::{register, unregister};
 
 use std::{
-    collections::HashSet,
     env, fmt,
     sync::Arc,
     time::{Duration, Instant},
@@ -56,44 +59,28 @@ pub(crate) const UPSTREAM_PATH: &str = "/v1/decisions";
 /// depth against a mis-edited deployment value.
 const ALLOWED_UPSTREAM_HOSTS: &[&str] = &["copilot.weibo.com"];
 
-const ENV_ENABLED: &str = "WEWORK_DECISION_PROXY_ENABLED";
 const ENV_UPSTREAM_URL: &str = "WEWORK_DECISION_PROXY_UPSTREAM_URL";
 const ENV_DEFAULT_MODEL: &str = "WEWORK_DECISION_PROXY_DEFAULT_MODEL";
-const ENV_ALLOWED_MODELS_JSON: &str = "WEWORK_DECISION_PROXY_ALLOWED_MODELS_JSON";
-const ENV_CREDENTIAL: &str = "WEWORK_DECISION_PROXY_CREDENTIAL";
-const ENV_STATIC_CREDENTIAL: &str = "WEWORK_DECISION_PROXY_API_KEY";
-
-/// Where the upstream credential comes from.
-///
-/// [REV-D3] The first version defaults to [`Self::Static`]: the platform
-/// decision credential belongs to `copilot.weibo.com` and is unrelated to the
-/// Wework user session token used for the Wegent backend.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DecisionCredentialMode {
-    /// Executor-controlled platform credential, read per request.
-    Static,
-    /// Current Wework login snapshot (`ConnectionConfig.auth_token`).
-    Login,
-}
 
 /// Parsed, validated decision proxy configuration.
 ///
-/// Disabled and enabled configurations are different shapes rather than one
+/// The router has no on/off switch: its routes are always mounted, so the only
+/// two states are "this deployment supplied a usable upstream" and "it did
+/// not". Unconfigured and configured are different shapes rather than one
 /// struct with an optional upstream, so handlers cannot fall back to a
 /// half-configured upstream.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum DecisionProxyConfig {
-    Disabled,
+    Unconfigured,
     Enabled(DecisionProxySettings),
 }
 
-/// Trusted settings used once the decision proxy is enabled.
+/// Trusted settings once a deployment has supplied a usable upstream.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DecisionProxySettings {
     pub upstream_url: Url,
     pub default_model: String,
     pub models: Vec<DecisionModel>,
-    pub credential: DecisionCredentialMode,
 }
 
 /// Static, client-safe reason for a rejected configuration.
@@ -133,15 +120,10 @@ impl DecisionProxyConfig {
         Self::from_lookup(|name| env::var(name).ok())
     }
 
-    /// Whether route registration and HTTP handling are open.
-    pub(crate) const fn enabled(&self) -> bool {
-        matches!(self, Self::Enabled(_))
-    }
-
-    /// Registered settings, or `None` while the proxy is disabled.
+    /// Registered settings, or `None` while the deployment has no usable upstream.
     pub(crate) fn settings(&self) -> Option<&DecisionProxySettings> {
         match self {
-            Self::Disabled => None,
+            Self::Unconfigured => None,
             Self::Enabled(settings) => Some(settings),
         }
     }
@@ -150,11 +132,6 @@ impl DecisionProxyConfig {
     where
         F: Fn(&str) -> Option<String>,
     {
-        let enabled = lookup(ENV_ENABLED).is_some_and(|value| is_truthy_flag(&value));
-        if !enabled {
-            return Ok(Self::Disabled);
-        }
-
         let upstream = lookup(ENV_UPSTREAM_URL)
             .ok_or_else(|| DecisionProxyConfigError::new("missing_upstream_url"))?;
         let upstream_url = parse_upstream_url(&upstream)?;
@@ -164,56 +141,47 @@ impl DecisionProxyConfig {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| DecisionProxyConfigError::new("missing_default_model"))?;
 
-        let models = parse_allowed_models(lookup(ENV_ALLOWED_MODELS_JSON).as_deref())?;
-        if !models.iter().any(|model| model.id == default_model) {
-            return Err(DecisionProxyConfigError::new("default_model_not_allowed"));
-        }
-
-        let credential = parse_credential_mode(lookup(ENV_CREDENTIAL).as_deref())?;
+        // There is no model allowlist: whatever model name the deployment
+        // configured is the one the router advertises and forwards verbatim.
+        let models = vec![DecisionModel {
+            id: default_model.clone(),
+            display_name: default_model.clone(),
+        }];
 
         Ok(Self::Enabled(DecisionProxySettings {
             upstream_url,
             default_model,
             models,
-            credential,
         }))
     }
-}
-
-/// Reads the platform decision credential used by [`DecisionCredentialMode::Static`].
-///
-/// Returns `None` when the deployment has not provided one, so callers answer
-/// `credential_unavailable` instead of calling the upstream unauthenticated.
-pub(crate) fn static_credential_from_env() -> Option<String> {
-    env::var(ENV_STATIC_CREDENTIAL)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
 }
 
 /// Logs the startup summary. Tokens, the upstream URL, and the model catalogue
 /// contents stay out of the log.
 pub(crate) fn log_config_summary(config: &DecisionProxyConfig) {
     match config {
-        DecisionProxyConfig::Disabled => {
-            log_executor_event("decision_proxy.config", &[("enabled", "false".to_owned())])
-        }
+        DecisionProxyConfig::Unconfigured => log_executor_event(
+            "decision_proxy.config",
+            &[("configured", "false".to_owned())],
+        ),
         DecisionProxyConfig::Enabled(settings) => log_executor_event(
             "decision_proxy.config",
             &[
-                ("enabled", "true".to_owned()),
-                ("model_count", settings.models.len().to_string()),
+                ("configured", "true".to_owned()),
+                ("default_model", settings.default_model.clone()),
                 ("upstream_host", safe_url(&settings.upstream_url)),
             ],
         ),
     }
 }
 
-/// Resolves the startup configuration, failing closed when it is invalid.
+/// Resolves the startup configuration.
 ///
-/// An operator mistake must not turn the Executor into an open upstream proxy,
-/// so an unusable configuration is reported and treated as "disabled".
-pub(crate) fn config_from_env_or_disabled() -> Arc<DecisionProxyConfig> {
+/// The routes stay mounted either way. An operator mistake must not turn the
+/// Executor into an open upstream proxy, but it must not make the route
+/// disappear either, so an unusable configuration is reported and answered
+/// with a static error by the handlers.
+pub(crate) fn config_from_env_or_unconfigured() -> Arc<DecisionProxyConfig> {
     match DecisionProxyConfig::from_env() {
         Ok(config) => {
             log_config_summary(&config);
@@ -224,28 +192,8 @@ pub(crate) fn config_from_env_or_disabled() -> Arc<DecisionProxyConfig> {
                 "decision_proxy.config_rejected",
                 &[("reason", error.reason().to_owned())],
             );
-            Arc::new(DecisionProxyConfig::Disabled)
+            Arc::new(DecisionProxyConfig::Unconfigured)
         }
-    }
-}
-
-fn is_truthy_flag(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "on"
-    )
-}
-
-fn parse_credential_mode(
-    raw: Option<&str>,
-) -> Result<DecisionCredentialMode, DecisionProxyConfigError> {
-    match raw.map(str::trim) {
-        None | Some("") => Ok(DecisionCredentialMode::Static),
-        Some(value) => match value.to_ascii_lowercase().as_str() {
-            "static" => Ok(DecisionCredentialMode::Static),
-            "login" => Ok(DecisionCredentialMode::Login),
-            _ => Err(DecisionProxyConfigError::new("invalid_credential_mode")),
-        },
     }
 }
 
@@ -266,28 +214,6 @@ fn parse_upstream_url(raw: &str) -> Result<Url, DecisionProxyConfigError> {
         return Err(invalid());
     }
     Ok(url)
-}
-
-fn parse_allowed_models(raw: Option<&str>) -> Result<Vec<DecisionModel>, DecisionProxyConfigError> {
-    let invalid = || DecisionProxyConfigError::new("invalid_allowed_models");
-    let ids: Vec<String> = serde_json::from_str(raw.ok_or_else(invalid)?).map_err(|_| invalid())?;
-    if ids.is_empty() {
-        return Err(invalid());
-    }
-
-    let mut seen = HashSet::with_capacity(ids.len());
-    let mut models = Vec::with_capacity(ids.len());
-    for id in ids {
-        let id = id.trim().to_owned();
-        if id.is_empty() || !seen.insert(id.clone()) {
-            return Err(invalid());
-        }
-        models.push(DecisionModel {
-            display_name: id.clone(),
-            id,
-        });
-    }
-    Ok(models)
 }
 
 /// Renders `scheme://host[:port]/path` so log lines never carry credentials,
@@ -317,8 +243,6 @@ pub(crate) const STATUS_ROUTE: &str = "/v1/decision-router/{token}/status";
 /// `POST` route for decision requests.
 pub(crate) const DECISIONS_ROUTE: &str = "/v1/decision-router/{token}/v1/decisions";
 
-type StaticCredentialFn = Arc<dyn Fn() -> Option<String> + Send + Sync>;
-
 /// State shared by the decision routes.
 ///
 /// The configuration comes from Executor-controlled input, never from the
@@ -326,7 +250,7 @@ type StaticCredentialFn = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 #[derive(Clone)]
 pub(crate) struct DecisionProxyState {
     config: Arc<DecisionProxyConfig>,
-    static_credential: StaticCredentialFn,
+    model_key: Arc<model_key::ModelKeyExchanger>,
     timeout: Duration,
 }
 
@@ -334,7 +258,7 @@ impl DecisionProxyState {
     pub(crate) fn new(config: Arc<DecisionProxyConfig>) -> Self {
         Self {
             config,
-            static_credential: Arc::new(static_credential_from_env),
+            model_key: Arc::new(model_key::ModelKeyExchanger::new()),
             timeout: UPSTREAM_TIMEOUT,
         }
     }
@@ -373,7 +297,7 @@ async fn handle_status(
         );
     }
     let Some(settings) = state.config.settings() else {
-        return router_disabled();
+        return router_unconfigured();
     };
     if registry::lookup(&token).is_none() {
         return route_not_found();
@@ -407,7 +331,7 @@ async fn handle_decisions(
         );
     }
     let Some(settings) = state.config.settings() else {
-        return router_disabled();
+        return router_unconfigured();
     };
     let Some(route) = registry::lookup(&token) else {
         return route_not_found();
@@ -443,46 +367,64 @@ async fn handle_decisions(
             };
         }
     };
-    if let Some(response) = validate_request(settings, &request, &request_id) {
+    if let Some(response) = validate_request(&request, &request_id) {
         return response;
     }
-    let credential = match resolve_credential(&state, &route) {
-        Some(credential) => credential,
-        None => {
-            return error_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "credential_unavailable",
-                "decision credential is currently unavailable",
-                true,
-                request_id,
-            )
-        }
-    };
-    forward_to_upstream(&state, settings, &request, credential, &request_id, &route).await
+    let started = Instant::now();
+    let response = forward_with_credential(&state, settings, &request, &request_id, &route).await;
+    log_request(&request_id, &route, &request, response.status(), started);
+    response
 }
 
-/// Shape checks the proxy owns: allowlist, `state` presence, `questions`.
-/// `Some` carries the response to send when the request must be rejected.
-fn validate_request(
+/// Forwards one request, trading the login token for the upstream credential
+/// first.
+///
+/// A key the upstream rejects is dropped and traded once more: a key can be
+/// revoked or rotated server-side while it is still cached locally.
+async fn forward_with_credential(
+    state: &DecisionProxyState,
     settings: &DecisionProxySettings,
     request: &DecisionRequest,
     request_id: &str,
-) -> Option<Response> {
+    route: &registry::DecisionRouteHandle,
+) -> Response {
+    let Some(credential) = resolve_credential(state, route).await else {
+        return credential_unavailable(request_id);
+    };
+    let (response, rejected) =
+        forward_to_upstream(state, settings, request, credential, request_id).await;
+    if !rejected {
+        return response;
+    }
+    state.model_key.invalidate().await;
+    let Some(credential) = resolve_credential(state, route).await else {
+        return response;
+    };
+    let (retried, _) = forward_to_upstream(state, settings, request, credential, request_id).await;
+    retried
+}
+
+fn credential_unavailable(request_id: &str) -> Response {
+    error_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "credential_unavailable",
+        "decision credential is currently unavailable",
+        true,
+        request_id.to_owned(),
+    )
+}
+
+/// Shape checks the proxy owns: model identifier shape, `state` presence, and
+/// `questions`. The model name itself is forwarded verbatim; the router keeps
+/// no allowlist. `Some` carries the response to send when the request must be
+/// rejected.
+fn validate_request(request: &DecisionRequest, request_id: &str) -> Option<Response> {
     let model = request.model.trim();
     if !is_valid_model(model) {
         return Some(error_response(
             StatusCode::BAD_REQUEST,
             "invalid_model",
             "model must be a non-empty model identifier",
-            false,
-            request_id.to_owned(),
-        ));
-    }
-    if !settings.models.iter().any(|entry| entry.id == model) {
-        return Some(error_response(
-            StatusCode::BAD_REQUEST,
-            "unsupported_model",
-            "model is not available on this route",
             false,
             request_id.to_owned(),
         ));
@@ -513,33 +455,39 @@ fn validate_request(
     None
 }
 
-/// Reads the credential for this request without holding the registry lock.
-fn resolve_credential(
+/// Reads the login state for this request without holding the registry lock.
+///
+/// The snapshot guard is dropped before the exchange awaits, because holding a
+/// `std` mutex guard across an await point would make the handler future
+/// non-`Send`.
+async fn resolve_credential(
     state: &DecisionProxyState,
     route: &registry::DecisionRouteHandle,
 ) -> Option<String> {
-    match &route.credential {
-        DecisionCredentialSource::Static => (state.static_credential)(),
-        DecisionCredentialSource::Login(snapshot) => {
-            let current = {
-                let guard = snapshot.lock().ok()?;
-                guard
-                    .as_ref()
-                    .map(|connection| connection.auth_token.trim().to_owned())
-            };
-            current.filter(|value| !value.is_empty())
-        }
-    }
+    let (backend_url, login_token) = {
+        let snapshot = route.snapshot();
+        let guard = snapshot.lock().ok()?;
+        let connection = guard.as_ref()?;
+        (
+            connection.backend_url.trim().to_owned(),
+            connection.auth_token.trim().to_owned(),
+        )
+    };
+    state.model_key.key_for(&backend_url, &login_token).await
 }
 
+/// Sends one request upstream.
+///
+/// The second element of the tuple is `true` only when the upstream answered
+/// `401`: the credential was rejected, so the caller may trade a fresh key and
+/// retry once. Everything else is final.
 async fn forward_to_upstream(
     state: &DecisionProxyState,
     settings: &DecisionProxySettings,
     request: &DecisionRequest,
     credential: String,
     request_id: &str,
-    route: &registry::DecisionRouteHandle,
-) -> Response {
+) -> (Response, bool) {
     let payload = json!({
         "model": request.model.trim(),
         "state": request.state,
@@ -548,16 +496,18 @@ async fn forward_to_upstream(
     let client = match reqwest::Client::builder().timeout(state.timeout).build() {
         Ok(client) => client,
         Err(_) => {
-            return error_response(
-                StatusCode::BAD_GATEWAY,
-                "upstream_invalid_response",
-                "decision upstream response is unusable",
+            return (
+                error_response(
+                    StatusCode::BAD_GATEWAY,
+                    "upstream_invalid_response",
+                    "decision upstream response is unusable",
+                    false,
+                    request_id.to_owned(),
+                ),
                 false,
-                request_id.to_owned(),
             )
         }
     };
-    let started = Instant::now();
     // Only Executor-chosen headers travel upstream: no cookie, origin,
     // referer, forwarded, or client-supplied authorization.
     let outcome = client
@@ -571,33 +521,51 @@ async fn forward_to_upstream(
         .await;
 
     let response = match outcome {
-        Err(error) if error.is_timeout() => error_response(
-            StatusCode::GATEWAY_TIMEOUT,
-            "upstream_timeout",
-            "decision upstream timed out",
-            true,
-            request_id.to_owned(),
+        Err(error) if error.is_timeout() => (
+            error_response(
+                StatusCode::GATEWAY_TIMEOUT,
+                "upstream_timeout",
+                "decision upstream timed out",
+                true,
+                request_id.to_owned(),
+            ),
+            false,
         ),
-        Err(_) => error_response(
-            StatusCode::BAD_GATEWAY,
-            "upstream_rejected",
-            "decision upstream is unavailable",
-            true,
-            request_id.to_owned(),
-        ),
-        Ok(response) => match upstream_response_body(response, request_id).await {
-            Ok(Some(body)) => (StatusCode::OK, Json(body)).into_response(),
-            Ok(None) => error_response(
+        Err(_) => (
+            error_response(
                 StatusCode::BAD_GATEWAY,
-                "upstream_invalid_response",
-                "decision upstream response is unusable",
+                "upstream_rejected",
+                "decision upstream is unavailable",
+                true,
+                request_id.to_owned(),
+            ),
+            false,
+        ),
+        Ok(response) if response.status() == StatusCode::UNAUTHORIZED => (
+            error_response(
+                StatusCode::BAD_GATEWAY,
+                "upstream_rejected",
+                "decision upstream rejected the credential",
                 false,
                 request_id.to_owned(),
             ),
-            Err(response) => response,
-        },
+            true,
+        ),
+        Ok(response) => (
+            match upstream_response_body(response, request_id).await {
+                Ok(Some(body)) => (StatusCode::OK, Json(body)).into_response(),
+                Ok(None) => error_response(
+                    StatusCode::BAD_GATEWAY,
+                    "upstream_invalid_response",
+                    "decision upstream response is unusable",
+                    false,
+                    request_id.to_owned(),
+                ),
+                Err(response) => response,
+            },
+            false,
+        ),
     };
-    log_request(request_id, route, request, response.status(), started);
     response
 }
 
@@ -722,11 +690,15 @@ fn new_request_id() -> String {
     format!("local_req_{suffix}")
 }
 
-fn router_disabled() -> Response {
+/// Answers when the deployment has no usable upstream configuration.
+///
+/// The wire code stays `decision_router_disabled` for the Smart App client
+/// contract; the router itself no longer has an on/off switch.
+fn router_unconfigured() -> Response {
     error_response(
         StatusCode::SERVICE_UNAVAILABLE,
         "decision_router_disabled",
-        "decision router is disabled",
+        "decision router is not configured",
         false,
         new_request_id(),
     )
@@ -781,51 +753,31 @@ mod tests {
     fn enabled_settings(entries: &[(&str, &str)]) -> DecisionProxySettings {
         match config_from(entries).expect("config must be valid") {
             DecisionProxyConfig::Enabled(settings) => settings,
-            DecisionProxyConfig::Disabled => panic!("expected an enabled config"),
+            DecisionProxyConfig::Unconfigured => panic!("expected a configured router"),
         }
     }
 
-    fn upstream_entries(upstream: &str) -> [(&str, &str); 4] {
-        [
-            (ENV_ENABLED, "true"),
-            (ENV_UPSTREAM_URL, upstream),
-            (ENV_DEFAULT_MODEL, "model-a"),
-            (ENV_ALLOWED_MODELS_JSON, r#"["model-a"]"#),
-        ]
+    fn upstream_entries(upstream: &str) -> [(&str, &str); 2] {
+        [(ENV_UPSTREAM_URL, upstream), (ENV_DEFAULT_MODEL, "model-a")]
     }
 
-    fn model_entries<'a>(allowed: &'a str, default: &'a str) -> [(&'a str, &'a str); 4] {
+    fn model_entries(default: &str) -> [(&str, &str); 2] {
         [
-            (ENV_ENABLED, "true"),
             (ENV_UPSTREAM_URL, VALID_UPSTREAM),
             (ENV_DEFAULT_MODEL, default),
-            (ENV_ALLOWED_MODELS_JSON, allowed),
         ]
     }
 
     #[test]
-    fn flag_absent_or_false_disables_the_proxy() {
-        assert_eq!(
-            config_from(&[]).expect("empty environment is valid"),
-            DecisionProxyConfig::Disabled
-        );
-        for value in ["false", "0", "no", "off", "  FALSE "] {
-            assert_eq!(
-                config_from(&[(ENV_ENABLED, value)]).expect("false flag is valid"),
-                DecisionProxyConfig::Disabled,
-                "value={value}"
-            );
-        }
+    fn empty_environment_is_unconfigured_rather_than_disabled() {
+        let error = config_from(&[]).expect_err("upstream is required");
+        assert_eq!(error.reason(), "missing_upstream_url");
     }
 
     #[test]
     fn enabled_without_upstream_is_invalid() {
-        let error = config_from(&[
-            (ENV_ENABLED, "true"),
-            (ENV_DEFAULT_MODEL, "model-a"),
-            (ENV_ALLOWED_MODELS_JSON, r#"["model-a"]"#),
-        ])
-        .expect_err("upstream is required when enabled");
+        let error = config_from(&[(ENV_DEFAULT_MODEL, "model-a")])
+            .expect_err("upstream is required when enabled");
         assert_eq!(error.reason(), "missing_upstream_url");
     }
 
@@ -855,152 +807,33 @@ mod tests {
     #[test]
     fn default_model_must_be_present_and_non_blank() {
         for default in ["", "   "] {
-            let error = config_from(&model_entries(r#"["model-a"]"#, default))
-                .expect_err("blank default model");
+            let error = config_from(&model_entries(default)).expect_err("blank default model");
             assert_eq!(
                 error.reason(),
                 "missing_default_model",
                 "default={default:?}"
             );
         }
-        let error = config_from(&[
-            (ENV_ENABLED, "true"),
-            (ENV_UPSTREAM_URL, VALID_UPSTREAM),
-            (ENV_ALLOWED_MODELS_JSON, r#"["model-a"]"#),
-        ])
-        .expect_err("missing default model");
+        let error =
+            config_from(&[(ENV_UPSTREAM_URL, VALID_UPSTREAM)]).expect_err("missing default model");
         assert_eq!(error.reason(), "missing_default_model");
     }
 
     #[test]
-    fn allowed_models_must_be_a_json_string_array() {
-        for allowed in [
-            r#""model-a""#,
-            r#"{"model-a": true}"#,
-            r#"["model-a", 1]"#,
-            r#"[["model-a"]]"#,
-            "not json",
-        ] {
-            let error = config_from(&model_entries(allowed, "model-a")).expect_err(allowed);
-            assert_eq!(
-                error.reason(),
-                "invalid_allowed_models",
-                "allowed={allowed}"
-            );
-        }
-        let error = config_from(&[
-            (ENV_ENABLED, "true"),
-            (ENV_UPSTREAM_URL, VALID_UPSTREAM),
-            (ENV_DEFAULT_MODEL, "model-a"),
-        ])
-        .expect_err("missing allowed models");
-        assert_eq!(error.reason(), "invalid_allowed_models");
-    }
-
-    #[test]
-    fn allowed_models_must_be_non_empty_unique_and_non_blank() {
-        for allowed in [
-            r#"[]"#,
-            r#"[""]"#,
-            r#"["   "]"#,
-            r#"["model-a", "model-a"]"#,
-            r#"["model-a", " model-a "]"#,
-        ] {
-            let error = config_from(&model_entries(allowed, "model-a")).expect_err(allowed);
-            assert_eq!(
-                error.reason(),
-                "invalid_allowed_models",
-                "allowed={allowed}"
-            );
-        }
-    }
-
-    #[test]
-    fn default_model_must_be_allowed() {
-        let error = config_from(&model_entries(r#"["model-a", "model-b"]"#, "model-z"))
-            .expect_err("default model must be allowlisted");
-        assert_eq!(error.reason(), "default_model_not_allowed");
-    }
-
-    #[test]
     fn valid_config_parses_into_stable_settings() {
-        let entries = model_entries(r#"["model-a", "model-b"]"#, "model-a");
+        let entries = model_entries("model-a");
         let first = enabled_settings(&entries);
         let second = enabled_settings(&entries);
         assert_eq!(first, second);
         assert_eq!(first.upstream_url.as_str(), VALID_UPSTREAM);
         assert_eq!(first.default_model, "model-a");
-        assert_eq!(first.credential, DecisionCredentialMode::Static);
         assert_eq!(
             first.models,
-            vec![
-                DecisionModel {
-                    id: "model-a".to_owned(),
-                    display_name: "model-a".to_owned(),
-                },
-                DecisionModel {
-                    id: "model-b".to_owned(),
-                    display_name: "model-b".to_owned(),
-                },
-            ]
+            vec![DecisionModel {
+                id: "model-a".to_owned(),
+                display_name: "model-a".to_owned(),
+            }]
         );
-    }
-
-    #[test]
-    fn credential_mode_defaults_to_static_and_accepts_login() {
-        let default = enabled_settings(&model_entries(r#"["model-a"]"#, "model-a"));
-        assert_eq!(default.credential, DecisionCredentialMode::Static);
-
-        for (value, expected) in [
-            ("static", DecisionCredentialMode::Static),
-            ("STATIC", DecisionCredentialMode::Static),
-            ("login", DecisionCredentialMode::Login),
-            (" Login ", DecisionCredentialMode::Login),
-        ] {
-            let entries = [
-                (ENV_ENABLED, "true"),
-                (ENV_UPSTREAM_URL, VALID_UPSTREAM),
-                (ENV_DEFAULT_MODEL, "model-a"),
-                (ENV_ALLOWED_MODELS_JSON, r#"["model-a"]"#),
-                (ENV_CREDENTIAL, value),
-            ];
-            assert_eq!(
-                enabled_settings(&entries).credential,
-                expected,
-                "value={value}"
-            );
-        }
-    }
-
-    #[test]
-    fn unknown_credential_mode_is_invalid() {
-        let entries = [
-            (ENV_ENABLED, "true"),
-            (ENV_UPSTREAM_URL, VALID_UPSTREAM),
-            (ENV_DEFAULT_MODEL, "model-a"),
-            (ENV_ALLOWED_MODELS_JSON, r#"["model-a"]"#),
-            (ENV_CREDENTIAL, "keychain"),
-        ];
-        assert_eq!(
-            config_from(&entries)
-                .expect_err("unknown credential mode")
-                .reason(),
-            "invalid_credential_mode"
-        );
-    }
-
-    #[test]
-    fn enabled_flag_accepts_documented_truthy_values() {
-        for value in ["true", "TRUE", "1", "yes", "on", "  On  "] {
-            let entries = [
-                (ENV_ENABLED, value),
-                (ENV_UPSTREAM_URL, VALID_UPSTREAM),
-                (ENV_DEFAULT_MODEL, "model-a"),
-                (ENV_ALLOWED_MODELS_JSON, r#"["model-a"]"#),
-            ];
-            let settings = enabled_settings(&entries);
-            assert_eq!(settings.default_model, "model-a", "value={value}");
-        }
     }
 
     #[test]
@@ -1045,7 +878,11 @@ mod http_tests {
     use super::*;
     use crate::config::device::ConnectionConfig;
 
-    const STATIC_CREDENTIAL: &str = "test-upstream-credential";
+    /// Credential the fake backend hands out, and what the fake upstream must see.
+    const EXCHANGED_KEY: &str = "sk-wecode-test-key";
+    /// Login token the routes carry in their connection snapshot.
+    const LOGIN_TOKEN: &str = "weework-login-token";
+    const EXCHANGE_PATH: &str = "/api/internal/apikey/wegent-model-key";
     const MAX_TEST_BODY_BYTES: usize = 4 * 1024 * 1024;
 
     #[derive(Clone, Default)]
@@ -1079,13 +916,49 @@ mod http_tests {
         }
     }
 
+    /// Response script: the last entry repeats, so one entry means "always".
+    #[derive(Clone)]
+    struct Script {
+        responses: Vec<ScriptedResponse>,
+    }
+
+    impl From<ScriptedResponse> for Script {
+        fn from(response: ScriptedResponse) -> Self {
+            Self {
+                responses: vec![response],
+            }
+        }
+    }
+
+    impl Script {
+        fn sequence(responses: Vec<ScriptedResponse>) -> Self {
+            assert!(
+                !responses.is_empty(),
+                "a script needs at least one response"
+            );
+            Self { responses }
+        }
+
+        fn at(&self, served: usize) -> ScriptedResponse {
+            self.responses[served.min(self.responses.len() - 1)].clone()
+        }
+    }
+
+    fn exchange_response(api_key: &str) -> ScriptedResponse {
+        ScriptedResponse::json(200, json!({"api_key": api_key}))
+    }
+
     struct UpstreamShared {
         requests: Mutex<Vec<RecordedRequest>>,
-        script: Mutex<ScriptedResponse>,
+        script: Mutex<Script>,
+        key_requests: Mutex<Vec<RecordedRequest>>,
+        key_script: Mutex<Script>,
     }
 
     struct FakeUpstream {
         url: Url,
+        /// Backend origin the route snapshot points at.
+        backend_url: String,
         shared: Arc<UpstreamShared>,
     }
 
@@ -1114,12 +987,43 @@ mod http_tests {
                 .find(|(key, _)| key.eq_ignore_ascii_case(name))
                 .map(|(_, value)| value)
         }
+
+        fn key_requests(&self) -> Vec<RecordedRequest> {
+            self.shared
+                .key_requests
+                .lock()
+                .expect("key requests lock")
+                .clone()
+        }
+
+        fn last_key_authorization(&self) -> Option<String> {
+            self.key_requests()
+                .into_iter()
+                .next_back()
+                .and_then(|request| {
+                    request
+                        .headers
+                        .into_iter()
+                        .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                        .map(|(_, value)| value)
+                })
+        }
     }
 
-    async fn start_upstream(script: ScriptedResponse) -> FakeUpstream {
+    async fn start_upstream(script: impl Into<Script>) -> FakeUpstream {
+        start_backend(
+            script.into(),
+            Script::from(exchange_response(EXCHANGED_KEY)),
+        )
+        .await
+    }
+
+    async fn start_backend(script: Script, key_script: Script) -> FakeUpstream {
         let shared = Arc::new(UpstreamShared {
             requests: Mutex::new(Vec::new()),
             script: Mutex::new(script),
+            key_requests: Mutex::new(Vec::new()),
+            key_script: Mutex::new(key_script),
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -1127,12 +1031,14 @@ mod http_tests {
         let address = listener.local_addr().expect("upstream address");
         let router = Router::new()
             .route("/v1/decisions", post(fake_upstream))
+            .route(EXCHANGE_PATH, post(fake_model_key))
             .with_state(Arc::clone(&shared));
         tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
         });
         FakeUpstream {
             url: Url::parse(&format!("http://{address}/v1/decisions")).expect("upstream url"),
+            backend_url: format!("http://{address}"),
             shared,
         }
     }
@@ -1142,26 +1048,46 @@ mod http_tests {
         headers: HeaderMap,
         body: axum::body::Bytes,
     ) -> Response {
-        let scripted = shared.script.lock().expect("script lock").clone();
+        let served = record(&shared.requests, headers, || {
+            serde_json::from_slice(&body).unwrap_or(Value::Null)
+        });
+        scripted_response(&shared.script, served).await
+    }
+
+    async fn fake_model_key(
+        State(shared): State<Arc<UpstreamShared>>,
+        headers: HeaderMap,
+    ) -> Response {
+        let served = record(&shared.key_requests, headers, Value::default);
+        scripted_response(&shared.key_script, served).await
+    }
+
+    fn record(
+        log: &Mutex<Vec<RecordedRequest>>,
+        headers: HeaderMap,
+        body: impl FnOnce() -> Value,
+    ) -> usize {
+        let mut entries = log.lock().expect("requests lock");
+        entries.push(RecordedRequest {
+            headers: headers
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.as_str().to_owned(),
+                        value.to_str().unwrap_or_default().to_owned(),
+                    )
+                })
+                .collect(),
+            body: body(),
+        });
+        entries.len() - 1
+    }
+
+    async fn scripted_response(script: &Mutex<Script>, served: usize) -> Response {
+        let scripted = script.lock().expect("script lock").at(served);
         if !scripted.delay.is_zero() {
             tokio::time::sleep(scripted.delay).await;
         }
-        shared
-            .requests
-            .lock()
-            .expect("requests lock")
-            .push(RecordedRequest {
-                headers: headers
-                    .iter()
-                    .map(|(name, value)| {
-                        (
-                            name.as_str().to_owned(),
-                            value.to_str().unwrap_or_default().to_owned(),
-                        )
-                    })
-                    .collect(),
-                body: serde_json::from_slice(&body).unwrap_or(Value::Null),
-            });
         (
             StatusCode::from_u16(scripted.status).expect("status"),
             [(header::CONTENT_TYPE, "application/json")],
@@ -1184,15 +1110,33 @@ mod http_tests {
                     display_name: "model-b".to_owned(),
                 },
             ],
-            credential: DecisionCredentialMode::Static,
         }
     }
 
     fn app(config: DecisionProxyConfig, timeout: Duration) -> Router {
         let mut state = DecisionProxyState::new(Arc::new(config));
-        state.static_credential = Arc::new(|| Some(STATIC_CREDENTIAL.to_owned()));
         state.timeout = timeout;
         routes::<DecisionProxyState>().with_state(state)
+    }
+
+    fn connection_snapshot(
+        backend_url: &str,
+        login_token: &str,
+    ) -> Arc<Mutex<Option<ConnectionConfig>>> {
+        Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: backend_url.to_owned(),
+            socket_url: String::new(),
+            auth_token: login_token.to_owned(),
+            runtime_auth_token: String::new(),
+        })))
+    }
+
+    /// Registers a route bound to `upstream`'s fake backend and login token.
+    fn register_route(upstream: &FakeUpstream, scope: &str) -> String {
+        register(
+            scope,
+            connection_snapshot(&upstream.backend_url, LOGIN_TOKEN),
+        )
     }
 
     fn enabled_app(upstream: &FakeUpstream) -> Router {
@@ -1265,8 +1209,8 @@ mod http_tests {
     }
 
     #[tokio::test]
-    async fn disabled_router_answers_503_on_both_routes() {
-        let app = app(DecisionProxyConfig::Disabled, UPSTREAM_TIMEOUT);
+    async fn unconfigured_router_answers_503_on_both_routes() {
+        let app = app(DecisionProxyConfig::Unconfigured, UPSTREAM_TIMEOUT);
         let (status, body) = send(
             app.clone(),
             status_request("decision-unknown", Some(&local_marker())),
@@ -1292,7 +1236,7 @@ mod http_tests {
     #[tokio::test]
     async fn local_marker_is_required() {
         let upstream = start_upstream(ScriptedResponse::json(200, json!({}))).await;
-        let token = register("http-tests-marker", DecisionCredentialSource::Static);
+        let token = register_route(&upstream, "http-tests-marker");
         let app = enabled_app(&upstream);
 
         for authorization in [None, Some("Bearer wrong"), Some("Basic abc")] {
@@ -1318,7 +1262,7 @@ mod http_tests {
     #[tokio::test]
     async fn status_lists_only_the_configured_catalogue() {
         let upstream = start_upstream(ScriptedResponse::json(200, json!({}))).await;
-        let token = register("http-tests-status", DecisionCredentialSource::Static);
+        let token = register_route(&upstream, "http-tests-status");
         let (status, body) = send(
             enabled_app(&upstream),
             status_request(&token, Some(&local_marker())),
@@ -1338,18 +1282,24 @@ mod http_tests {
         );
         let serialized = body.to_string();
         assert!(!serialized.contains(&upstream.url.to_string()));
-        assert!(!serialized.contains(STATIC_CREDENTIAL));
+        assert!(!serialized.contains(EXCHANGED_KEY));
+        assert!(!serialized.contains(LOGIN_TOKEN));
         assert_eq!(
             upstream.requests().len(),
             0,
             "status must not call upstream"
+        );
+        assert_eq!(
+            upstream.key_requests().len(),
+            0,
+            "status must not trade the login token"
         );
     }
 
     #[tokio::test]
     async fn request_validation_rejects_bad_shapes() {
         let upstream = start_upstream(ScriptedResponse::json(200, json!({}))).await;
-        let token = register("http-tests-validation", DecisionCredentialSource::Static);
+        let token = register_route(&upstream, "http-tests-validation");
 
         let cases = [
             (
@@ -1381,17 +1331,6 @@ mod http_tests {
                 })),
                 StatusCode::BAD_REQUEST,
                 "invalid_model",
-            ),
-            (
-                "unknown model",
-                Some("application/json"),
-                json_body(json!({
-                    "model": "model-z",
-                    "state": {},
-                    "questions": {"q": {}},
-                })),
-                StatusCode::BAD_REQUEST,
-                "unsupported_model",
             ),
             (
                 "null state",
@@ -1461,7 +1400,7 @@ mod http_tests {
     #[tokio::test]
     async fn oversized_body_is_rejected_locally() {
         let upstream = start_upstream(ScriptedResponse::json(200, json!({}))).await;
-        let token = register("http-tests-oversized", DecisionCredentialSource::Static);
+        let token = register_route(&upstream, "http-tests-oversized");
         let oversized = "x".repeat(MAX_REQUEST_BYTES + 1);
         let (status, _) = send(
             enabled_app(&upstream),
@@ -1482,7 +1421,7 @@ mod http_tests {
         for content_type in ["application/json", "application/json; charset=utf-8"] {
             let upstream =
                 start_upstream(ScriptedResponse::json(200, json!({"answers": {}}))).await;
-            let token = register("http-tests-content-type", DecisionCredentialSource::Static);
+            let token = register_route(&upstream, "http-tests-content-type");
             let (status, _) = send(
                 enabled_app(&upstream),
                 decision_request(
@@ -1501,7 +1440,7 @@ mod http_tests {
     async fn upstream_receives_the_request_verbatim_and_no_client_headers() {
         let upstream =
             start_upstream(ScriptedResponse::json(200, json!({"answers": {"q": {}}}))).await;
-        let token = register("http-tests-forward", DecisionCredentialSource::Static);
+        let token = register_route(&upstream, "http-tests-forward");
         let body = json!({
             "model": "model-a",
             "state": "plain string state",
@@ -1545,7 +1484,7 @@ mod http_tests {
         }
         assert_eq!(
             upstream.header("authorization").as_deref(),
-            Some(format!("Bearer {STATIC_CREDENTIAL}").as_str())
+            Some(format!("Bearer {EXCHANGED_KEY}").as_str())
         );
         let forwarded_request_id = upstream.header("x-request-id").unwrap_or_default();
         assert!(
@@ -1553,6 +1492,32 @@ mod http_tests {
             "the Executor must mint its own request id, got {forwarded_request_id}"
         );
         assert_ne!(forwarded_request_id, "client-supplied");
+    }
+
+    #[tokio::test]
+    async fn the_router_forwards_any_model_name_verbatim() {
+        let upstream =
+            start_upstream(ScriptedResponse::json(200, json!({"answers": {"q": {}}}))).await;
+        let token = register_route(&upstream, "http-tests-any-model");
+        let body = json!({
+            "model": "team-owned-model-2026",
+            "state": "plain string state",
+            "questions": {"q": {}},
+        });
+
+        let (status, _) = send(
+            enabled_app(&upstream),
+            decision_request(
+                &token,
+                Some(&local_marker()),
+                Some("application/json"),
+                json_body(body.clone()),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(upstream.only_request().body, body);
     }
 
     #[tokio::test]
@@ -1572,7 +1537,7 @@ mod http_tests {
             }),
         ))
         .await;
-        let token = register("http-tests-whitelist", DecisionCredentialSource::Static);
+        let token = register_route(&upstream, "http-tests-whitelist");
         let (status, payload) = send(
             enabled_app(&upstream),
             decision_request(
@@ -1608,7 +1573,7 @@ mod http_tests {
         for (upstream_status, expected_status, expected_code, retryable) in cases {
             let upstream =
                 start_upstream(ScriptedResponse::raw(upstream_status, "upstream failure")).await;
-            let token = register("http-tests-status-map", DecisionCredentialSource::Static);
+            let token = register_route(&upstream, "http-tests-status-map");
             let (status, payload) = send(
                 enabled_app(&upstream),
                 decision_request(
@@ -1640,7 +1605,7 @@ mod http_tests {
     #[tokio::test]
     async fn success_without_json_maps_to_502() {
         let upstream = start_upstream(ScriptedResponse::raw(200, "<html>not json</html>")).await;
-        let token = register("http-tests-bad-json", DecisionCredentialSource::Static);
+        let token = register_route(&upstream, "http-tests-bad-json");
         let (status, payload) = send(
             enabled_app(&upstream),
             decision_request(
@@ -1660,7 +1625,7 @@ mod http_tests {
         let mut scripted = ScriptedResponse::json(200, json!({"answers": {}}));
         scripted.delay = Duration::from_millis(400);
         let upstream = start_upstream(scripted).await;
-        let token = register("http-tests-timeout", DecisionCredentialSource::Static);
+        let token = register_route(&upstream, "http-tests-timeout");
         let app = app(
             DecisionProxyConfig::Enabled(settings(&upstream.url)),
             Duration::from_millis(20),
@@ -1687,7 +1652,7 @@ mod http_tests {
             "upstream body with credential test-upstream-credential",
         ))
         .await;
-        let token = register("http-tests-leak", DecisionCredentialSource::Static);
+        let token = register_route(&upstream, "http-tests-leak");
         let (status, payload) = send(
             enabled_app(&upstream),
             decision_request(
@@ -1701,7 +1666,8 @@ mod http_tests {
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         let serialized = payload.to_string();
         for needle in [
-            STATIC_CREDENTIAL,
+            EXCHANGED_KEY,
+            LOGIN_TOKEN,
             "upstream body",
             upstream.url.as_str(),
             "127.0.0.1",
@@ -1712,16 +1678,136 @@ mod http_tests {
     }
 
     #[tokio::test]
-    async fn missing_static_credential_answers_503() {
+    async fn login_token_is_traded_for_the_upstream_credential() {
         let upstream = start_upstream(ScriptedResponse::json(200, json!({"answers": {}}))).await;
-        let token = register("http-tests-credential", DecisionCredentialSource::Static);
-        let mut state = DecisionProxyState::new(Arc::new(DecisionProxyConfig::Enabled(settings(
-            &upstream.url,
-        ))));
-        state.static_credential = Arc::new(|| None);
-        let app = routes::<DecisionProxyState>().with_state(state);
+        let token = register_route(&upstream, "http-tests-trade");
+        let (status, _) = send(
+            enabled_app(&upstream),
+            decision_request(
+                &token,
+                Some(&local_marker()),
+                Some("application/json"),
+                json_body(valid_body()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            upstream.last_key_authorization().as_deref(),
+            Some(format!("Bearer {LOGIN_TOKEN}").as_str()),
+            "the exchange must present the current login token"
+        );
+        assert_eq!(upstream.key_requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_exchanged_key_is_cached_between_requests() {
+        let upstream = start_upstream(ScriptedResponse::json(200, json!({"answers": {}}))).await;
+        let token = register_route(&upstream, "http-tests-key-cache");
+        let app = enabled_app(&upstream);
+        for _ in 0..3 {
+            let (status, _) = send(
+                app.clone(),
+                decision_request(
+                    &token,
+                    Some(&local_marker()),
+                    Some("application/json"),
+                    json_body(valid_body()),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        assert_eq!(
+            upstream.key_requests().len(),
+            1,
+            "the traded key must be reused instead of traded again per request"
+        );
+        assert_eq!(
+            upstream.header("authorization").as_deref(),
+            Some(format!("Bearer {EXCHANGED_KEY}").as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn upstream_401_drops_the_key_and_retries_once() {
+        let upstream = start_backend(
+            Script::sequence(vec![
+                ScriptedResponse::raw(401, "unauthorized"),
+                ScriptedResponse::json(200, json!({"answers": {}})),
+            ]),
+            Script::sequence(vec![
+                exchange_response("sk-wecode-stale"),
+                exchange_response("sk-wecode-fresh"),
+            ]),
+        )
+        .await;
+        let token = register_route(&upstream, "http-tests-rekey");
+        let (status, _) = send(
+            enabled_app(&upstream),
+            decision_request(
+                &token,
+                Some(&local_marker()),
+                Some("application/json"),
+                json_body(valid_body()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let authorizations = upstream
+            .requests()
+            .into_iter()
+            .filter_map(|request| {
+                request
+                    .headers
+                    .into_iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                    .map(|(_, value)| value)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            authorizations,
+            vec![
+                "Bearer sk-wecode-stale".to_owned(),
+                "Bearer sk-wecode-fresh".to_owned(),
+            ],
+            "the retry must carry a freshly traded key"
+        );
+        assert_eq!(upstream.key_requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn persistent_upstream_401_is_reported_after_one_retry() {
+        let upstream = start_upstream(ScriptedResponse::raw(401, "unauthorized")).await;
+        let token = register_route(&upstream, "http-tests-rekey-failed");
         let (status, payload) = send(
-            app,
+            enabled_app(&upstream),
+            decision_request(
+                &token,
+                Some(&local_marker()),
+                Some("application/json"),
+                json_body(valid_body()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(error_code(&payload), "upstream_rejected");
+        assert_eq!(
+            (upstream.requests().len(), upstream.key_requests().len()),
+            (2, 2)
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_exchange_answers_503_without_calling_upstream() {
+        let upstream = start_backend(
+            Script::from(ScriptedResponse::json(200, json!({"answers": {}}))),
+            Script::from(ScriptedResponse::json(500, json!({"detail": "boom"}))),
+        )
+        .await;
+        let token = register_route(&upstream, "http-tests-credential");
+        let (status, payload) = send(
+            enabled_app(&upstream),
             decision_request(
                 &token,
                 Some(&local_marker()),
@@ -1739,10 +1825,7 @@ mod http_tests {
     async fn login_routes_follow_the_live_snapshot() {
         let upstream = start_upstream(ScriptedResponse::json(200, json!({"answers": {}}))).await;
         let snapshot = Arc::new(Mutex::new(None::<ConnectionConfig>));
-        let token = register(
-            "http-tests-login",
-            DecisionCredentialSource::Login(Arc::clone(&snapshot)),
-        );
+        let token = register("http-tests-login", Arc::clone(&snapshot));
         let app = app(
             DecisionProxyConfig::Enabled(settings(&upstream.url)),
             UPSTREAM_TIMEOUT,
@@ -1760,9 +1843,14 @@ mod http_tests {
         .await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(error_code(&payload), "credential_unavailable");
+        assert_eq!(
+            upstream.key_requests().len(),
+            0,
+            "no login token means no exchange"
+        );
 
         *snapshot.lock().expect("snapshot lock") = Some(ConnectionConfig {
-            backend_url: String::new(),
+            backend_url: upstream.backend_url.clone(),
             socket_url: String::new(),
             auth_token: "first-token".to_owned(),
             runtime_auth_token: String::new(),
@@ -1780,11 +1868,15 @@ mod http_tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             upstream.header("authorization").as_deref(),
+            Some(format!("Bearer {EXCHANGED_KEY}").as_str())
+        );
+        assert_eq!(
+            upstream.last_key_authorization().as_deref(),
             Some("Bearer first-token")
         );
 
         *snapshot.lock().expect("snapshot lock") = Some(ConnectionConfig {
-            backend_url: String::new(),
+            backend_url: upstream.backend_url.clone(),
             socket_url: String::new(),
             auth_token: "rotated-token".to_owned(),
             runtime_auth_token: String::new(),
@@ -1801,16 +1893,20 @@ mod http_tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
-            upstream.header("authorization").as_deref(),
+            upstream.last_key_authorization().as_deref(),
             Some("Bearer rotated-token"),
-            "each request must read the current snapshot"
+            "a new login token must be traded again instead of reusing the cache"
+        );
+        assert_eq!(
+            upstream.header("authorization").as_deref(),
+            Some(format!("Bearer {EXCHANGED_KEY}").as_str())
         );
     }
 
     #[tokio::test]
     async fn released_route_stops_authenticating() {
         let upstream = start_upstream(ScriptedResponse::json(200, json!({"answers": {}}))).await;
-        let token = register("http-tests-release", DecisionCredentialSource::Static);
+        let token = register_route(&upstream, "http-tests-release");
         let app = enabled_app(&upstream);
         let (status, _) = send(
             app.clone(),

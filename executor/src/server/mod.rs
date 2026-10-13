@@ -96,7 +96,7 @@ impl<R> AppState<R> {
         Self {
             runner,
             runtime_heartbeat: None,
-            decision_proxy: local_decision_proxy::config_from_env_or_disabled(),
+            decision_proxy: local_decision_proxy::config_from_env_or_unconfigured(),
         }
     }
 
