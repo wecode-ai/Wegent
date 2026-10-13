@@ -20,7 +20,13 @@ fn team_item(
     preloaded: &Preloaded,
     config: &[(&'static str, String, String)],
 ) -> Value {
-    crate::json_contract_tests::serialized(super::team_item(team, preloaded, config)).unwrap()
+    crate::json_contract_tests::serialized(super::team_item(
+        team,
+        preloaded,
+        config,
+        team.team_user_id,
+    ))
+    .unwrap()
 }
 fn bot_summary(bot: &KindRow, user_id: i64, preloaded: &Preloaded) -> Value {
     crate::json_contract_tests::serialized(super::bot_summary(bot, user_id, preloaded)).unwrap()
@@ -84,6 +90,7 @@ fn default_for_modes_matches_identity() {
         team_updated_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
         share_status: 0,
         context_user_id: 0,
+        restricted_guest_access: 0,
         access_source: "native".to_string(),
     };
     let preloaded = Preloaded {
@@ -126,6 +133,7 @@ fn own_team_share_status_from_labels() {
         team_updated_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
         share_status: 0,
         context_user_id: 5,
+        restricted_guest_access: 0,
         access_source: "native".to_string(),
     };
     let preloaded = Preloaded {
@@ -173,6 +181,7 @@ fn display_config_drops_undeclared_keys() {
         team_updated_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
         share_status: 0,
         context_user_id: 5,
+        restricted_guest_access: 0,
         access_source: "native".to_string(),
     };
 
