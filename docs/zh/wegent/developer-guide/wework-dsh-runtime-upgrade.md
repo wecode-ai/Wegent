@@ -211,3 +211,13 @@ component-update 的首个 Core 进程报告固定 `core_profile_summarize_faile
 [V8 Inspector 的时间序列编码](https://github.com/v8/v8/blob/main/src/inspector/v8-profiler-agent-impl.cc#L103-L113) 直接输出相邻样本时间戳之差；[DevTools 的解码](https://github.com/ChromeDevTools/devtools-frontend/blob/main/front_end/models/cpu_profile/CPUProfileDataModel.ts#L131-L141) 恢复累计时间戳，再[按时间稳定排序样本与对应时间戳](https://github.com/ChromeDevTools/devtools-frontend/blob/main/front_end/models/cpu_profile/CPUProfileDataModel.ts#L240-L261)。摘要现在按这一语义处理有效时钟内的乱序样本，而非直接拒绝所有负 delta。所有样本保留原节点身份；有限数、节点与帧、profile 时钟、累计时间戳边界及启动 marker 均严格校验，原 marker 截止和总时间计算不变。首个 delta 为 `-1` 仍硬失败，超出结束时钟输出固定 `core_profile_sample_outside_clock`，不钳制、删除样本或放宽启动预算。
 
 受控回归先复现原实现四项失败，再验证乱序节点归属、同时间戳稳定性、marker 跨界截取、总时间、不变的原输入及非法越界。26 项摘要测试通过；真实 ARM 原场景仍需后续 CI 验证。
+
+### `703c1196e` 启动实测与宿主管道读取
+
+[Linux Core19](https://github.com/wecode-ai/Wegent/actions/runs/38451605915/job/115486337893) 严格冷启动为 6524 毫秒，断言失败，后续兼容流程未执行。配置为 1113 毫秒、Core 启动到端点就绪 2739 毫秒、页面加载 1138 毫秒、页面加载完成到 surface-ready 1194 毫秒。renderer storage 恢复约 643 毫秒，宿主操作和实际响应写出只占约 10 毫秒。早期 bootstrap 到主模块为 22 毫秒。该结果不能归因于纯宿主存储 I/O，也不能由不同 CI 机器墙钟差证明代码回退。
+
+[正式 ARM](https://github.com/wecode-ai/Wegent/actions/runs/38451602677/job/115483778017) 严格冷启动为 11802 毫秒，原 release、component-update、app-update 三流程通过。Core 启动到端点就绪 4004 毫秒，页面加载 1657 毫秒，后续 surface-ready 2355 毫秒。renderer storage 恢复约 1119 毫秒，宿主操作和实际响应写出约 10 毫秒；bootstrap 到主模块为 76 毫秒。跨平台 `<5s` 仍未达标，不预热、不扣时间、不放宽预算。
+
+宿主管道原来用 `fs.createReadStream` 读取常驻继承 FD，阻塞文件读取会占用 Node 文件线程池。真实子进程在单线程池中复现握手写入排队死锁；新输入使用与 [Node 标准 PIPE/TCP stdin](https://github.com/nodejs/node/blob/v24.1.0/lib/internal/bootstrap/switches/is_main_thread.js) 相同的事件驱动 Socket，删除常驻文件读取。写入仍使用原 `autoClose=false` 文件流；输入按继承 FD 复用，活跃客户端 ref，停止/错误后 unref，关闭自己的 readline 和监听器，不关闭外部 FD。
+
+相同真实子进程回归在原实现失败、新实现通过：不加 IPC 或其他保活句柄，两代客户端分别完成原 token/principal 握手、完整 79KB 响应，监听器恢复原数量、输入不被停止操作销毁，最后自然退出。Node 与 Electron 44.7.0 的 Node 模式各七项测试通过，无 GUI 或遗留子进程。四条受控阻塞读取另复现文件流响应等待约 255 毫秒、事件输入约 1 毫秒。这证明线程池争用机制，不能证明 CI 恢复等待全部源于此，也不能替代下一轮 Windows 继承 FD 和严格启动验证。
