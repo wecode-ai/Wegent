@@ -1,4 +1,4 @@
-import { spawn } from 'node-pty'
+import { createRequire } from 'node:module'
 import { streamTerminalEvents } from './sse-events.js'
 import { TerminalRuntime, TerminalRuntimeError } from './terminal-runtime.js'
 
@@ -7,9 +7,12 @@ export const inject = ['webServer']
 
 const BASE_PATH = '/wework/terminal/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
+const require = createRequire(import.meta.url)
 
 export function apply(ctx) {
-  const runtime = new TerminalRuntime({ spawn })
+  const runtime = new TerminalRuntime({
+    spawn: (...args) => require('node-pty').spawn(...args),
+  })
   ctx.effect(() => () => runtime.dispose(), 'wework-terminal-runtime: PTY registry')
   register(ctx, BASE_PATH, (req, res) => describe(req, res, runtime))
   register(ctx, `${BASE_PATH}/rpc`, (req, res) => rpc(req, res, runtime))
