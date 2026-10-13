@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { issueDraftFromText } from '@wegent/collaboration'
@@ -485,6 +485,9 @@ describe('IssueComposer', () => {
 
     await userEvent.type(screen.getByTestId('workspace-issue-input'), '自动生成的标题')
     await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+    await act(async () => {
+      await vi.dynamicImportSettled()
+    })
 
     expect(screen.getByTestId('workspace-issue-composer-panel')).toHaveClass(
       'fixed',

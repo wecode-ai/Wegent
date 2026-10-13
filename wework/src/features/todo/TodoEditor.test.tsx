@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@/i18n'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
@@ -139,7 +139,6 @@ describe('TodoEditor external item sync', () => {
   })
 
   it('keeps compact Issue properties unlabeled and explains the current status in a tooltip', async () => {
-    const user = userEvent.setup()
     render(
       <TodoEditor
         mode="edit"
@@ -160,11 +159,18 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('agent-1')
     expect(screen.getByRole('button', { name: '时间范围' })).toHaveTextContent('添加日期')
 
-    await user.hover(screen.getByTestId('cloud-todo-detail-status').parentElement!)
-
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      '状态：进行中。表示 Issue 当前所处的处理阶段。'
-    )
+    vi.useFakeTimers()
+    try {
+      fireEvent.pointerOver(screen.getByTestId('cloud-todo-detail-status').parentElement!)
+      act(() => {
+        vi.advanceTimersByTime(700)
+      })
+      expect(screen.getByRole('tooltip')).toHaveTextContent(
+        '状态：进行中。表示 Issue 当前所处的处理阶段。'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('opens the due date picker from the bottom property row and saves the date', async () => {

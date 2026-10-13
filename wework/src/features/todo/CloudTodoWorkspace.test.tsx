@@ -1,7 +1,7 @@
 import type { DndContextProps, DragCancelEvent, DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest'
 import '@/i18n'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -2771,6 +2771,32 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('ignores a task address that resolves after reopening the task panel', async () => {
+    const startedAt = performance.now()
+    let completedStage = 'none'
+    let pendingStage: string | null = 'render'
+    let stageStartedAt = startedAt
+    onTestFailed(() => {
+      try {
+        console.error(
+          '[unit][task-panel-reopen]',
+          JSON.stringify({
+            completedStage,
+            pendingStage,
+            elapsedMs: Math.round(performance.now() - startedAt),
+            pendingElapsedMs: Math.round(performance.now() - stageStartedAt),
+          })
+        )
+      } catch {
+        // Diagnostics must not replace the original test failure.
+      }
+    })
+    const runStage = async (name: string, operation: () => Promise<unknown>) => {
+      pendingStage = name
+      stageStartedAt = performance.now()
+      await operation()
+      completedStage = name
+      pendingStage = null
+    }
     const workbenchServices = services()
     const user = userEvent.setup()
     let resolveBinding: (() => void) | null = null
@@ -2789,16 +2815,30 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    await screen.findByTestId('cloud-todo-card-WEG-1')
-    await openIssueFromBoard()
-    await user.click(screen.getByTestId('cloud-todo-create-task'))
-    await user.click(screen.getByTestId('mock-create-runtime-task'))
-    await waitFor(() => expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledTimes(1))
+    completedStage = 'render'
+    await runStage('board-ready', () => screen.findByTestId('cloud-todo-card-WEG-1'))
+    await runStage('issue-open', () => openIssueFromBoard())
+    await runStage('task-panel-open', () =>
+      user.click(screen.getByTestId('cloud-todo-create-task'))
+    )
+    await runStage('runtime-create-click', () =>
+      user.click(screen.getByTestId('mock-create-runtime-task'))
+    )
+    await runStage('binding-pending', () =>
+      waitFor(() => expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledTimes(1))
+    )
 
-    await user.click(screen.getByTestId('ai-chat-modal-close'))
+    await runStage('task-panel-close', () => user.click(screen.getByTestId('ai-chat-modal-close')))
+    pendingStage = 'closed-panel-assertion'
+    stageStartedAt = performance.now()
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
-    await openIssueFromBoard()
-    await user.click(screen.getByTestId('cloud-todo-create-task'))
+    completedStage = pendingStage
+    await runStage('issue-reopen', () => openIssueFromBoard())
+    await runStage('task-panel-reopen', () =>
+      user.click(screen.getByTestId('cloud-todo-create-task'))
+    )
+    pendingStage = 'reopened-panel-assertions'
+    stageStartedAt = performance.now()
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
       'data-conversation-open',
       'true'
@@ -2808,22 +2848,31 @@ describe('CloudTodoWorkspace', () => {
       'runtime-created'
     )
 
-    await act(async () => {
-      resolveBinding?.()
-      await binding
-    })
+    completedStage = pendingStage
+    await runStage('binding-resolve', () =>
+      act(async () => {
+        resolveBinding?.()
+        await binding
+      })
+    )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute(
-        'data-runtime-task-id',
-        'runtime-created'
+    await runStage('stale-address-assertion', () =>
+      waitFor(() =>
+        expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute(
+          'data-runtime-task-id',
+          'runtime-created'
+        )
       )
     )
+    pendingStage = 'final-panel-assertions'
+    stageStartedAt = performance.now()
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
       'data-conversation-open',
       'true'
     )
+    completedStage = pendingStage
+    pendingStage = null
   })
 
   it('preserves the selected model when a new runtime task becomes the task conversation', async () => {
