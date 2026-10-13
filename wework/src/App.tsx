@@ -151,6 +151,7 @@ import { getDshApps, resolveDshApp, type WeworkDshApp } from '@/features/dsh-run
 import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { useDshTaskHomeModules } from '@/features/dsh-runtime/useDshTaskHomeModules'
 import { dshWorkspaceTabIdFromPath } from '@/features/dsh-runtime/dshWorkspaceTabs'
 import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
@@ -370,6 +371,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
     harnessAppStartupOwner.pending
   const nativeWorkbenchActive =
     nativeWorkbenchRoute && !iframe && !auxiliaryActive && !harnessAppLaunchActive
+  useDshTaskHomeModules(active && nativeWorkbenchActive && inferredNativeKind === 'task')
   const unavailableRouteActive =
     !nativeWorkbenchActive &&
     !iframe &&

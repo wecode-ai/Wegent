@@ -18,7 +18,7 @@ test('persists task diagnostics from separate renderer surfaces without recordin
           status: 'completed',
           navigationTimeMs: 103,
           durationMs: 42,
-          modulePath: './pages/home/index',
+          modulePath: 'plugins/wework-ui-home-developer.js',
           authLoading: false,
           preferencesLoaded: true,
           details: 'private-startup-details',
@@ -26,6 +26,20 @@ test('persists task diagnostics from separate renderer surfaces without recordin
           url: 'http://127.0.0.1/?token=private-startup-token',
           taskId: 'unrelated-startup-task',
         })
+    )
+    await log.record(
+      1,
+      '[startup][renderer-phase] ' +
+        JSON.stringify({
+          phase: 'core-app-module-import',
+          status: 'started',
+          modulePath: 'plugins/wework-ui-core-apps.js',
+        })
+    )
+    await log.record(
+      1,
+      '[startup][renderer-phase] ' +
+        JSON.stringify({ modulePath: 'custom.js?token=private-module-token' })
     )
     await log.record(
       1,
@@ -64,6 +78,9 @@ test('persists task diagnostics from separate renderer surfaces without recordin
     expect(contents).toContain('"waiting":false')
     expect(contents).not.toContain('unrelated console output')
     expect(contents).toContain('[startup][renderer-phase]')
+    expect(contents).toContain('"phase":"core-app-module-import"')
+    expect(contents).toContain('"modulePath":"plugins/wework-ui-core-apps.js"')
+    expect(contents).not.toContain('private-module-token')
     expect(contents).toContain('"durationMs":42')
     expect(contents).toContain('"preferencesLoaded":true')
     expect(contents).not.toContain('private-startup')

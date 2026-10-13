@@ -3,13 +3,17 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 type DesktopStartupPhase =
   | 'app-gate'
   | 'home-module-import'
+  | 'core-app-module-import'
   | 'task-bootstrap'
   | 'devices-request'
   | 'task-list-request'
 
 interface DesktopStartupPhaseDetails {
   durationMs?: number
-  modulePath?: 'plugins/wework-ui-home-developer.js' | 'plugins/wework-ui-home-focus.js'
+  modulePath?:
+    | 'plugins/wework-ui-core-apps.js'
+    | 'plugins/wework-ui-home-developer.js'
+    | 'plugins/wework-ui-home-focus.js'
   authLoading?: boolean
   preferencesLoaded?: boolean
 }

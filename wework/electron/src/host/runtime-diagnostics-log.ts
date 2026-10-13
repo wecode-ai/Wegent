@@ -2,6 +2,11 @@ import { RotatingLog } from '../runtime/rotating-log.js'
 
 const PREFIX = '[Wework] Runtime task create diagnostic '
 const STARTUP_PREFIX = '[startup][renderer-phase] '
+const STARTUP_MODULES = new Set([
+  'plugins/wework-ui-core-apps.js',
+  'plugins/wework-ui-home-developer.js',
+  'plugins/wework-ui-home-focus.js',
+])
 const STARTUP_FIELDS = new Set([
   'phase',
   'status',
@@ -92,6 +97,7 @@ function safeStreamDiagnostic(message: string): string | null {
     const fields = Object.entries(details).filter(
       ([key, value]) =>
         allowedFields.has(key) &&
+        (!startup || key !== 'modulePath' || STARTUP_MODULES.has(String(value))) &&
         (typeof value === 'string' ||
           typeof value === 'number' ||
           typeof value === 'boolean' ||

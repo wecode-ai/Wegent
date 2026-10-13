@@ -58,25 +58,27 @@ describe('desktop startup phase diagnostics', () => {
     expect(info).toHaveBeenCalledTimes(1)
   })
 
-  test('records one import interval while preserving the shared promise and loaded cache', async () => {
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
-    const modulePath = 'plugins/wework-ui-home-developer.js'
-    let resolve!: (value: unknown) => void
-    const value = { home: true }
-    window.__WEWORK_DSH_UI_MODULES__ = {
-      [modulePath]: () =>
-        new Promise(done => {
-          resolve = done
-        }),
+  test.each(['plugins/wework-ui-home-developer.js', 'plugins/wework-ui-core-apps.js'])(
+    'records one import interval for %s while preserving its shared promise and loaded cache',
+    async modulePath => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      let resolve!: (value: unknown) => void
+      const value = { home: true }
+      window.__WEWORK_DSH_UI_MODULES__ = {
+        [modulePath]: () =>
+          new Promise(done => {
+            resolve = done
+          }),
+      }
+      const first = importDshUiModule(modulePath)
+      expect(importDshUiModule(modulePath)).toBe(first)
+      expect(getLoadedDshUiModule(modulePath)).toBeNull()
+      resolve(value)
+      await expect(first).resolves.toBe(value)
+      expect(getLoadedDshUiModule(modulePath)).toBe(value)
+      expect(recordedPhases(info).map(({ status }) => status)).toEqual(['started', 'completed'])
     }
-    const first = importDshUiModule(modulePath)
-    expect(importDshUiModule(modulePath)).toBe(first)
-    expect(getLoadedDshUiModule(modulePath)).toBeNull()
-    resolve(value)
-    await expect(first).resolves.toBe(value)
-    expect(getLoadedDshUiModule(modulePath)).toBe(value)
-    expect(recordedPhases(info).map(({ status }) => status)).toEqual(['started', 'completed'])
-  })
+  )
 
   test('preserves failed imports without recording error contents or custom module paths', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
