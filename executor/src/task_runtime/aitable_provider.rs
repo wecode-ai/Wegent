@@ -49,7 +49,7 @@ impl AITableProvider {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn set_binary(&mut self, binary: PathBuf) {
         self.dws_binary = binary;
     }

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
+import { create } from 'tar'
 
 import { collectHarnessRuntimeReleaseAssets } from './collect-harness-runtime-release-assets.mjs'
 
@@ -81,4 +82,41 @@ test('rejects corrupted runtime archives before publishing them', async () => {
       ],
     })
   ).rejects.toThrow('Harness Runtime asset does not match its descriptor')
+})
+
+test('collects bundled archives from a Core component without requiring on-demand archives', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-harness-component-assets-'))
+  roots.push(root)
+  const input = join(root, 'input')
+  const component = join(root, 'component')
+  const output = join(root, 'output')
+  await mkdir(input)
+  await mkdir(component)
+  const assetName = 'harness-runtime-linux-x64-dsh-0.2.0-rc.2-fingerprint.tar.gz'
+  const asset = Buffer.from('bundled runtime')
+  await writeFile(join(component, assetName), asset)
+  const descriptor = {
+    assetName,
+    archiveBytes: asset.length,
+    archiveSha256: createHash('sha256').update(asset).digest('hex'),
+  }
+  await writeFile(
+    join(component, 'runtimes.json'),
+    JSON.stringify({
+      runtimes: [descriptor, { bundled: false, assetName: 'on-demand-not-packaged.tar.gz' }],
+    })
+  )
+  await create(
+    {
+      cwd: component,
+      file: join(input, 'WeworkComponent_coreDsh_linux_x64_hash.tar.gz'),
+      gzip: true,
+    },
+    ['runtimes.json', assetName]
+  )
+  await collectHarnessRuntimeReleaseAssets(input, output)
+  await expect(readFile(join(output, assetName))).resolves.toEqual(asset)
+  await expect(readFile(join(output, 'on-demand-not-packaged.tar.gz'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  })
 })

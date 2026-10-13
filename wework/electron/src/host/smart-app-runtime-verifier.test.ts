@@ -155,7 +155,7 @@ describe('verifySmartAppRuntime', () => {
       prepareLaunch: async options => {
         const path = `${options.dataDirectory}/harness-apps/instances/verification/.credentials.yaml`
         credentials = await readFile(path, 'utf8')
-        credentialsMode = (await stat(path)).mode & 0o777
+        credentialsMode = (await stat(path)).mode & (process.platform === 'win32' ? 0o600 : 0o777)
         return launch(options.dataDirectory, options.port)
       },
     })

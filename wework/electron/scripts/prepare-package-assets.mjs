@@ -263,10 +263,20 @@ function run(command, args, cwd, environment = process.env) {
       env: environment,
       stdio: 'inherit',
     })
+    const label = `${command} ${args.join(' ')}`
+    console.log(`Package asset process started: ${label} (pid ${child.pid})`)
     child.once('error', reject)
-    child.once('exit', code => {
-      if (code === 0) resolvePromise()
-      else reject(new Error(`${command} exited with code ${code ?? 'unknown'}`))
+    child.once('exit', (code, signal) => {
+      if (code === 0) {
+        console.log(`Package asset process completed: ${label} (pid ${child.pid})`)
+        resolvePromise()
+      } else {
+        reject(
+          new Error(
+            `${label} (pid ${child.pid}) exited with ${signal || `code ${code ?? 'unknown'}`}`
+          )
+        )
+      }
     })
   })
 }

@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, readdir, readlink } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative as relativePath, resolve } from 'node:path'
+import { dirname, isAbsolute, join, posix, relative as relativePath, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import { createFileOperationQueue } from './file-operation-queue.js'
+import { createFileOperationQueue } from './file-operation-queue.ts'
 
 export async function hashComponentPath(path: string): Promise<string> {
   const metadata = await lstat(path)
@@ -39,7 +39,7 @@ async function hashTree(
     entries
       .sort((left, right) => left.name.localeCompare(right.name))
       .map(async entry => {
-        const child = join(relative, entry.name)
+        const child = posix.join(relative, entry.name)
         if (entry.isDirectory()) {
           return `directory:${child}\0${await hashTree(root, child, hashFile)}\0`
         } else if (entry.isFile()) {
@@ -66,3 +66,5 @@ export async function fileSha256(path: string): Promise<string> {
   await pipeline(createReadStream(path), hash)
   return hash.digest('hex')
 }
+
+export { fileSha256 as sha256 }

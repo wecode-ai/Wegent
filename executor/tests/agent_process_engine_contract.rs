@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(unix)]
+
 use std::{
     fs,
     io::{Cursor, Write},

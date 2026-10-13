@@ -11,7 +11,7 @@ import {
 } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { parse } from 'yaml'
 import {
   CORE_DSH_VERSION,
@@ -23,6 +23,11 @@ import {
   selectCoreDshRuntime,
 } from './core-dsh-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, chmod: vi.fn(actual.chmod) }
+})
 
 async function prepareCoreDshLaunch(
   options: Parameters<typeof prepareCoreDshRuntime>[0] & { port: number }
@@ -884,7 +889,9 @@ describe('core DSH runtime', () => {
       port: 3081,
     })
 
-    expect((await stat(helperPath)).mode & 0o777).toBe(0o755)
+    expect(chmod).toHaveBeenCalledWith(helperPath, 0o755)
+    if (process.platform !== 'win32') expect((await stat(helperPath)).mode & 0o777).toBe(0o755)
+    expect(await readFile(helperPath, 'utf8')).toBe('helper')
     await root.remove()
   })
 

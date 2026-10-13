@@ -350,11 +350,11 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
     let root =
         temp_runtime_work_index_path("cancelled-worktree-cleanup").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -425,7 +425,7 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
 async fn archive_waits_for_runtime_stopped_ack_before_marking_task_archived() {
     let root = temp_runtime_work_index_path("archive-stopped-ack").with_extension("directory");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
     handler.upsert_local_task(RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -473,11 +473,11 @@ async fn terminal_completion_after_stop_timeout_unblocks_archive_retry() {
     let root =
         temp_runtime_work_index_path("archive-stop-timeout-retry").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -627,11 +627,11 @@ async fn runtime_terminal_cancellation_settles_execution_after_stop_request_time
     let root =
         temp_runtime_work_index_path("stopped-turn-final-consistency").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -687,11 +687,11 @@ async fn unarchive_restores_managed_worktree_before_reactivating_task() {
     let root =
         temp_runtime_work_index_path("unarchive-worktree-restore").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -740,11 +740,11 @@ async fn unarchive_restore_failure_is_an_action_failure_and_keeps_task_archived(
     let root =
         temp_runtime_work_index_path("unarchive-worktree-failure").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let worktree_state_path = root.join("runtime-work/worktrees.json");
+    let managed_root = root.join("workspace").join("worktrees");
+    let worktree_state_path = root.join("runtime-work").join("worktrees.json");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
     handler.worktrees = WorktreeManager::new(worktree_state_path.clone());
     handler
         .worktrees
@@ -860,11 +860,11 @@ fn worktree_restore_helper_keeps_the_async_runtime_responsive() {
 async fn automatic_prune_removes_old_archived_worktree_and_preserves_snapshot() {
     let root = temp_runtime_work_index_path("automatic-worktree-prune").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -912,11 +912,11 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
     let root =
         temp_runtime_work_index_path("restart-worktree-reconciliation").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let state_path = root.join("runtime-work/worktrees.json");
+    let managed_root = root.join("workspace").join("worktrees");
+    let state_path = root.join("runtime-work").join("worktrees.json");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
     handler.worktrees = WorktreeManager::new(state_path.clone());
     handler
         .worktrees
@@ -933,7 +933,7 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
     state["records"]
         .as_object_mut()
         .unwrap()
-        .get_mut(&record.path)
+        .get_mut(&record.path.replace('\\', "/"))
         .expect("prepared record should be persisted")["state"] = json!("preparing");
     fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
     let mut link =
@@ -975,12 +975,12 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
 async fn restart_reconciliation_leaves_active_history_unchanged() {
     let root = temp_runtime_work_index_path("restart-active-worktree").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
-    let index_path = root.join("runtime-work/index.json");
+    let index_path = root.join("runtime-work").join("index.json");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -1023,13 +1023,13 @@ async fn restart_reconciliation_leaves_active_history_unchanged() {
 async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
     let root = temp_runtime_work_index_path("restart-queued-worktree").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let index_path = root.join("runtime-work/index.json");
-    let queue_path = root.join("runtime-work/turn-queue.json");
+    let managed_root = root.join("workspace").join("worktrees");
+    let index_path = root.join("runtime-work").join("index.json");
+    let queue_path = root.join("runtime-work").join("turn-queue.json");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler.turn_queue_path = Arc::new(queue_path.clone());
     handler
         .worktrees
@@ -1150,6 +1150,9 @@ fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf
         .clear();
     (handler, root)
 }
+
+#[path = "background_terminal_tests.rs"]
+mod background_terminal_tests;
 
 #[test]
 fn applies_backend_connection_from_the_shared_snapshot() {
@@ -2581,7 +2584,7 @@ fn side_source_waits_for_the_running_source_turn_before_forking() {
         .block_on(async {
             let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
             // Keep the source index private even when other handlers use default storage.
-            handler.store = RuntimeWorkStore::new(root.path().join("source/index.json"));
+            handler.store = RuntimeWorkStore::new(root.path().join("source").join("index.json"));
             let mut source = RuntimeTaskLink::new_pending(
                 "source-task".to_owned(),
                 root.path().join("project").to_string_lossy().into_owned(),
@@ -6547,15 +6550,15 @@ fn thread_read_repairs_legacy_activity_time_pollution() {
 fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
     let root =
         temp_runtime_work_index_path("archived-cleanup-managed-root").with_extension("directory");
-    let managed_root = root.join("workspace/worktrees");
-    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    let managed_root = root.join("workspace").join("worktrees");
+    let manager = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     manager
         .update_settings(WorktreeSettingsPatch {
             worktree_root: Some(managed_root.display().to_string()),
             ..WorktreeSettingsPatch::default()
         })
         .unwrap();
-    let worktree_path = managed_root.join("task-1/Wegent");
+    let worktree_path = managed_root.join("task-1").join("Wegent");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         worktree_path.display().to_string(),
@@ -6580,9 +6583,9 @@ fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
         .collect::<Vec<_>>();
 
     assert!(target_paths.contains(&worktree_path.display().to_string()));
-    assert!(target_paths.contains(
-        &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
-    ));
+    assert!(target_paths.contains(&normalize_workspace_path(
+        "/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png"
+    )));
     let _ = fs::remove_dir_all(root);
 }
 
@@ -6663,7 +6666,7 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
     );
     let root =
         temp_runtime_work_index_path("archived-cleanup-regular-root").with_extension("directory");
-    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    let manager = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     let link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/Users/me/project".to_owned(),
@@ -6680,7 +6683,9 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
     assert!(target_paths.contains(
         &temp
             .path()
-            .join("workspace/task-1/attachments")
+            .join("workspace")
+            .join("task-1")
+            .join("attachments")
             .to_string_lossy()
             .to_string()
     ));
@@ -6688,8 +6693,23 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
         path.ends_with("/workspace/attachments/runtime/task-1")
             || path.ends_with("\\workspace\\attachments\\runtime\\task-1")
     }));
-    assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
-    assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
+    let project = PathBuf::from(normalize_workspace_path("/Users/me/project"));
+    assert!(target_paths
+        .iter()
+        .any(|path| normalize_workspace_path(path)
+            == normalize_workspace_path(
+                &project
+                    .join(".wegent")
+                    .join("attachments")
+                    .join("task-1")
+                    .to_string_lossy()
+            )));
+    assert!(target_paths.contains(
+        &project
+            .join("task-1:executor:attachments")
+            .to_string_lossy()
+            .to_string()
+    ));
     let _ = fs::remove_dir_all(root);
 }
 

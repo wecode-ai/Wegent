@@ -23,6 +23,13 @@ afterEach(async () => {
 })
 
 describe('hashComponentPath', () => {
+  test('rejects absolute symbolic links even when their target is internal', async () => {
+    const root = await temporaryDirectory()
+    await writeFile(join(root, 'target'), 'content')
+    await symlink(join(root, 'target'), join(root, 'link'))
+    await expect(hashComponentPath(root)).rejects.toThrow('Component symlink escapes its root')
+  })
+
   test('hashes a file by its bytes', async () => {
     const root = await temporaryDirectory()
     const path = join(root, 'component.bin')

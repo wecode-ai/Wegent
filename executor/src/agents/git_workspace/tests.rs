@@ -135,7 +135,7 @@ fn unified_workspace_clones_reuses_and_exposes_the_same_logical_tree() {
         let identity =
             crate::repository_identity::RepositoryIdentity::from_url(source.to_str().unwrap())
                 .unwrap();
-        let expected = home.join(".wegent/workspace").join(identity.key(8));
+        let expected = home.join(".wegent").join("workspace").join(identity.key(8));
         let prepared = prepare_git_workspace(request.clone()).await.unwrap();
         assert_eq!(
             prepared.project_workspace_path.as_deref(),
@@ -183,8 +183,14 @@ fn unified_workspace_clones_reuses_and_exposes_the_same_logical_tree() {
 
 #[test]
 fn reads_multiple_execution_repositories_and_primary_workspace() {
+    let environment_root = std::path::absolute("/workspace/environments/project-1").unwrap();
     let mut request = ExecutionRequest {
-        project_workspace_path: Some("/workspace/environments/project-1/wegent".to_owned()),
+        project_workspace_path: Some(
+            environment_root
+                .join("wegent")
+                .to_string_lossy()
+                .into_owned(),
+        ),
         ..ExecutionRequest::default()
     };
     request.extra.insert(
@@ -218,7 +224,7 @@ fn reads_multiple_execution_repositories_and_primary_workspace() {
     assert_eq!(repositories[1].path, PathBuf::from("deps/sdk"));
     assert_eq!(
         resolve_environment_root(&request, &repositories),
-        PathBuf::from("/workspace/environments/project-1")
+        environment_root
     );
 }
 

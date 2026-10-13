@@ -10,6 +10,17 @@ pub fn check(home: &Path) -> Result<(), String> {
     if !home.is_absolute() {
         return Err("Codex migration requires an absolute Home".to_owned());
     }
+    // An uninitialized Home has no stored credentials or Home-bound identity.
+    // Do not apply Windows credential defaults before any data exists.
+    match fs::read_dir(home) {
+        Ok(mut entries) => match entries.next() {
+            None => return Ok(()),
+            Some(Ok(_)) => {}
+            Some(Err(_)) => return Err("Cannot inspect Codex Home metadata".to_owned()),
+        },
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("Cannot inspect Codex Home metadata".to_owned()),
+    }
     let content = match fs::read_to_string(home.join("config.toml")) {
         Ok(content) => content,
         Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
@@ -117,10 +128,13 @@ mod tests {
     fn reads_only_configuration_and_leaves_home_untouched() {
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("codex");
-        assert_eq!(check(&home).is_ok(), !cfg!(windows));
+        assert!(check(&home).is_ok());
         assert!(!home.exists());
         fs::create_dir(&home).unwrap();
+        assert!(check(&home).is_ok());
+        assert_eq!(fs::read_dir(&home).unwrap().count(), 0);
         fs::create_dir(home.join("auth.json")).unwrap();
+        assert_eq!(check(&home).is_ok(), !cfg!(windows));
         fs::write(
             home.join("config.toml"),
             "cli_auth_credentials_store = 'file'\n[features]\nsecret_auth_storage = false",

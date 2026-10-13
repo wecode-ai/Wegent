@@ -40,6 +40,7 @@ describe('buildAiVerifyEnvironment', () => {
         ELECTRON_RUN_AS_NODE: '1',
         WEWORK_APP_HOT_RELOAD: '1',
         WEWORK_COMPONENT_RESOURCES_ROOT: '/tmp/foreign-components',
+        WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: '/tmp/personal-desktop-instances',
         WEWORK_DEV_DOCK_TITLE: 'Parent task · 1234',
         WEWORK_DEV_INSTANCE_LABEL: '123456',
         WEWORK_DEV_TITLE: 'Parent task',

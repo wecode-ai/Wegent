@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import semver from 'semver'
 import { extract } from 'tar'
 import { cloudFetch } from '../host/cloud-http.js'
+import { publishImmutableDirectory } from './immutable-directory.js'
 
 interface RuntimeDescriptor {
   dshVersion: string
@@ -111,7 +112,6 @@ async function materializeRuntime(
   const archive = downloaded
     ? join(cacheRoot, `${runtime.sourceFingerprint}.tar.gz`)
     : join(resourceRoot, runtime.assetName)
-  const temporary = `${target}.${process.pid}.tmp`
   try {
     if (downloaded) await downloadRuntime(archive, runtime, fetchImpl, downloadBaseUrl)
     const metadata = await stat(archive)
@@ -123,16 +123,17 @@ async function materializeRuntime(
     if (sha256 !== runtime.archiveSha256) {
       throw new Error(`Bundled DSH runtime checksum mismatch: ${runtime.assetName}`)
     }
-    await rm(temporary, { recursive: true, force: true })
-    await mkdir(temporary, { recursive: true, mode: 0o700 })
-    await extractArchive(archive, temporary)
-    if (!(await runtimeMatches(temporary, runtime))) {
-      throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
-    }
-    await rm(target, { recursive: true, force: true })
-    await rename(temporary, target)
+    await publishImmutableDirectory(
+      target,
+      async content => {
+        await extractArchive(archive, content)
+        if (!(await runtimeMatches(content, runtime))) {
+          throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
+        }
+      },
+      path => runtimeMatches(path, runtime)
+    )
   } finally {
-    await rm(temporary, { recursive: true, force: true })
     if (downloaded) await rm(archive, { force: true })
   }
 }

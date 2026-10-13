@@ -56,6 +56,7 @@ pub async fn execute_command_hook<T: Serialize>(
         Ok(child) => child,
         Err(error) => return failed_outcome(error.to_string()),
     };
+    #[cfg(unix)]
     let child_id = child.id();
     let write_result = match child.stdin.take() {
         Some(mut child_stdin) => child_stdin.write_all(&stdin).await,
@@ -187,16 +188,7 @@ fn executable_command(program: PathBuf) -> Command {
 fn shell_command(script: &str) -> Command {
     #[cfg(windows)]
     {
-        let mut command = Command::new("cmd");
-        command.args(["/S", "/C"]);
-        // cmd /S strips the first and last quote of the command line, so
-        // wrapping the script in quotes preserves inner quoting such as
-        // resolved plugin binary paths that contain spaces. Passing the script
-        // as a raw argument also prevents Rust from escaping those inner
-        // quotes into backslash forms that cmd does not understand.
-        command.raw_arg(format!("\"{}\"", script));
-        crate::process::hide_windows_console(&mut command);
-        command
+        crate::process::windows_shell_command(script)
     }
     #[cfg(not(windows))]
     {
@@ -218,7 +210,15 @@ fn filtered_environment() -> BTreeMap<String, String> {
         "TMP",
     ];
     std::env::vars()
-        .filter(|(key, _)| ALLOWED.contains(&key.as_str()))
+        .filter(|(key, _)| {
+            ALLOWED.iter().any(|allowed| {
+                if cfg!(windows) {
+                    key.eq_ignore_ascii_case(allowed)
+                } else {
+                    key == allowed
+                }
+            })
+        })
         .collect()
 }
 
@@ -270,6 +270,8 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
+    #[cfg(windows)]
+    use base64::Engine;
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -287,6 +289,18 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    fn windows_command(script: &str) -> String {
+        let bytes = script
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        format!(
+            "powershell.exe -NoProfile -EncodedCommand {}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        )
+    }
+
     #[tokio::test]
     async fn writes_json_and_closes_stdin() {
         let directory = tempdir().unwrap();
@@ -298,14 +312,22 @@ mod tests {
         .unwrap();
         #[cfg(unix)]
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let hook = config("./reader.sh".to_owned());
+        #[cfg(windows)]
+        let hook = CommandHookConfig {
+            command_windows: Some(windows_command(
+                "[Console]::Out.Write('{\"received\":' + [Console]::In.ReadToEnd() + '}')",
+            )),
+            ..hook
+        };
         let outcome = execute_command_hook(
-            &config("./reader.sh".to_owned()),
+            &hook,
             directory.path(),
             directory.path(),
             &json!({"ok": true}),
         )
         .await;
-        assert_eq!(outcome.exit_code, Some(0));
+        assert_eq!(outcome.exit_code, Some(0), "{outcome:?}");
         assert!(outcome.response.is_some());
         assert!(outcome.stdout.contains("\"ok\":true"));
     }
@@ -314,10 +336,14 @@ mod tests {
     async fn times_out() {
         let directory = tempdir().unwrap();
         let mut hook = config("sleep 2".to_owned());
+        #[cfg(windows)]
+        {
+            hook.command_windows = Some(windows_command("Start-Sleep -Seconds 2"));
+        }
         hook.timeout = 1;
         let outcome =
             execute_command_hook(&hook, directory.path(), directory.path(), &json!({})).await;
-        assert!(outcome.timed_out);
+        assert!(outcome.timed_out, "{outcome:?}");
     }
 
     #[test]

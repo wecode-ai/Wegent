@@ -275,6 +275,10 @@ fn map_codex_notification(
     );
 }
 
+#[cfg(test)]
+#[path = "background_terminal_tests.rs"]
+mod background_terminal_tests;
+
 struct EventEmitContext<'a> {
     event_tx: &'a Option<broadcast::Sender<Value>>,
     device_id: &'a str,
@@ -466,6 +470,26 @@ impl CodexNotificationEventMapper {
                     &notification.method,
                     notification.params,
                 );
+            }
+            "item/commandExecution/terminalInteraction" => {
+                let params = notification.params;
+                if let Some(item_id) = string_field(params, "itemId") {
+                    emit_response_event(
+                        event_tx,
+                        device_id,
+                        "response.block.updated",
+                        local_task_id,
+                        request,
+                        json!({
+                            "block_id": item_id,
+                            "updates": {"render_payload": {
+                                "kind": "command_execution",
+                                "processId": params.get("processId"),
+                                "stdin": params.get("stdin"),
+                            }},
+                        }),
+                    );
+                }
             }
             "item/plan/delta" => {
                 self.emit_plan_delta(
@@ -1614,6 +1638,9 @@ impl CodexNotificationEventMapper {
     }
 
     fn subagent_parent_block_id(&self, params: &Value) -> Option<String> {
+        if !self.is_subagent_delta(params) {
+            return None;
+        }
         if let Some(item_id) = notification_item_id(params) {
             if let Some(parent_id) = self.subagent_parent_ids.get(&item_id) {
                 return Some(parent_id.clone());
@@ -1862,7 +1889,7 @@ fn limit_tool_output_delta(delta: &str) -> String {
     truncate_utf8(delta, MAX_TOOL_OUTPUT_DELTA_BYTES)
 }
 
-fn push_limited_tool_output(content: &mut String, delta: &str) {
+pub(super) fn push_limited_tool_output(content: &mut String, delta: &str) {
     content.push_str(delta);
     if content.len() <= MAX_TOOL_OUTPUT_BUFFER_BYTES {
         return;

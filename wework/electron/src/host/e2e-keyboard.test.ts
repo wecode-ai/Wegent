@@ -107,6 +107,8 @@ describe('isolated native keyboard verification', () => {
     ['Control+B', 'B', ['control']],
     ['Meta+Alt+B', 'B', ['meta', 'alt']],
     ['Control+Shift+M', 'M', ['control', 'shift']],
+    ['Shift+PageUp', 'PageUp', ['shift']],
+    ['Shift+PageDown', 'PageDown', ['shift']],
   ])('sends native shortcut %s without inserting a character', async (key, keyCode, modifiers) => {
     const { view, contents, focusWindow } = fixture()
     await sendE2EKey(contents, key as string, focusWindow, environment)

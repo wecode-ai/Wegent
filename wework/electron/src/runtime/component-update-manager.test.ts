@@ -1,5 +1,17 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readlink,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -86,6 +98,43 @@ describe('ComponentUpdateManager', () => {
       sha256: update.manifest.components.executor.contentSha256,
       response: schema,
     })
+  })
+
+  test('publishes complete plugin content and shares concurrent initialization', async () => {
+    const fixture = await createFixture()
+    const manager = createManager(fixture, async () => new Response(null, { status: 404 }))
+    const [first, concurrent] = await Promise.all([
+      createManager(fixture, async () => new Response(null, { status: 404 })).prepareStartup(),
+      manager.prepareStartup(),
+    ])
+    expect(concurrent.weworkCorePlugins).toBe(first.weworkCorePlugins)
+    expect((await lstat(first.weworkCorePlugins)).isSymbolicLink()).toBe(true)
+    const content = await readlink(first.weworkCorePlugins)
+    expect(await readFile(join(content, 'wework-app', 'web', 'code.js'), 'utf8')).toBe(
+      'plugin code'
+    )
+    expect(await readFile(join(content, 'wework-app', 'web', 'vendor', 'static.js'), 'utf8')).toBe(
+      'stable static'
+    )
+    const cache = dirname(first.weworkCorePlugins)
+    const before = await readdir(cache)
+    const restarted = createManager(fixture, async () => new Response(null, { status: 404 }))
+    expect((await restarted.prepareStartup()).weworkCorePlugins).toBe(first.weworkCorePlugins)
+    expect(await readdir(cache)).toEqual(before)
+  })
+
+  test('removes incomplete composition without publishing a cache entry', async () => {
+    const fixture = await createFixture()
+    await rm(join(fixture.resources, 'wework-app-static', 'wasm'), { recursive: true })
+    const manager = createManager(fixture, async () => new Response(null, { status: 404 }))
+    await expect(manager.prepareStartup()).rejects.toThrow()
+    expect(
+      await readdir(join(fixture.data, 'managed-components', 'composed', 'wework-core-plugins'))
+    ).toEqual([])
+    await mkdir(join(fixture.resources, 'wework-app-static', 'wasm'))
+    expect((await stat((await manager.prepareStartup()).weworkCorePlugins)).isDirectory()).toBe(
+      true
+    )
   })
 
   test('rejects an incompatible packaged executor instead of returning startup paths', async () => {
@@ -255,7 +304,9 @@ describe('ComponentUpdateManager', () => {
     const activated = await manager.prepareStartup()
     expect(await readFile(activated.executor, 'utf8')).toBe('executor-v2')
     expect(activated.contentSha256.executor).toBe(update.manifest.components.executor.contentSha256)
-    expect((await stat(activated.executor)).mode & 0o111).not.toBe(0)
+    if (process.platform !== 'win32') {
+      expect((await stat(activated.executor)).mode & 0o111).not.toBe(0)
+    }
     await manager.confirmStartup()
 
     const restarted = createManager(fixture, fetch)

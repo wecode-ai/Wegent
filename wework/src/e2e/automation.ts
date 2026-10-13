@@ -1876,6 +1876,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'restartLocalCodexAppServerIfIdle':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.codex.app_server.restart', { ifIdle: true })
+      )
     case 'setLocalRuntimeMaxConcurrentTasks':
       return JSON.stringify(
         await requestLocalExecutor('runtime.settings.update', {

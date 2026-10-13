@@ -1,6 +1,6 @@
 import { constants } from 'node:fs'
 import { chmod, copyFile, lstat, mkdir, readdir, readlink, symlink } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import { createFileOperationQueue } from './file-operation-queue.js'
 import {
   hashComponentFileContents,
@@ -36,10 +36,10 @@ export async function copyComponentTree(
     const entries = await run(() => readdir(from, { withFileTypes: true }))
     const results = await Promise.allSettled(
       entries
-        .filter(entry => !excluded.has(join(relative, entry.name)))
+        .filter(entry => !excluded.has(posix.join(relative, entry.name)))
         .sort((left, right) => left.name.localeCompare(right.name))
         .map(async entry => {
-          const child = join(relative, entry.name)
+          const child = posix.join(relative, entry.name)
           const sourcePath = join(from, entry.name)
           const targetPath = join(to, entry.name)
           if (entry.isDirectory()) {

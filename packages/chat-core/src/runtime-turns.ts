@@ -1,4 +1,5 @@
 import { processingBlocks } from "./runtime-turn-helpers";
+import { commandExecutionPayload } from "./command-execution";
 import type { RuntimePaneMessageAction } from "./runtime-conversation";
 
 import { getLatestThinkingContent } from "./workbench-message-reducer";
@@ -311,6 +312,10 @@ export function reduceRuntimeConversationTurns(
           ...turn,
           items,
           ...(action.updates.status !== undefined &&
+            !(
+              previousBlock?.type === "block" &&
+              commandExecutionPayload(previousBlock.block)
+            ) &&
             !isTerminalProcessingBlockStatus(action.updates.status) && {
               status: "streaming" as const,
               completedAt: undefined,

@@ -24,13 +24,10 @@ const RUNTIME_SHUTDOWN_BUDGET: Duration = Duration::from_secs(2);
 const WATCHDOG_EXIT_GRACE: Duration = Duration::from_secs(3);
 
 #[cfg(any(target_os = "macos", test))]
-const OPEN_FILES_SOFT_LIMIT: libc::rlim_t = 65_536;
+const OPEN_FILES_SOFT_LIMIT: u64 = 65_536;
 
 #[cfg(any(target_os = "macos", test))]
-fn open_files_soft_limit_target(
-    hard_limit: libc::rlim_t,
-    kernel_limit: Option<libc::rlim_t>,
-) -> libc::rlim_t {
+fn open_files_soft_limit_target(hard_limit: u64, kernel_limit: Option<u64>) -> u64 {
     let target = OPEN_FILES_SOFT_LIMIT.min(hard_limit);
     kernel_limit.map_or(target, |limit| target.min(limit))
 }
@@ -140,7 +137,12 @@ fn main() {
         let result = env::args()
             .nth(2)
             .ok_or_else(|| "Missing migration lock resources".to_owned())
-            .and_then(|resources| wegent_executor::local::workbench_lock::run(&resources));
+            .and_then(|resources| {
+                wegent_executor::local::workbench_lock::run(
+                    &resources,
+                    env::args().any(|argument| argument == "--workbench-lock-wait"),
+                )
+            });
         if let Err(error) = result {
             eprintln!("{error}");
             std::process::exit(1);
@@ -285,7 +287,7 @@ mod tests {
     #[test]
     fn open_files_target_uses_configured_limit_when_supported() {
         assert_eq!(
-            open_files_soft_limit_target(libc::RLIM_INFINITY, Some(245_760)),
+            open_files_soft_limit_target(u64::MAX, Some(245_760)),
             OPEN_FILES_SOFT_LIMIT
         );
     }
@@ -297,9 +299,6 @@ mod tests {
 
     #[test]
     fn open_files_target_respects_macos_kernel_limit() {
-        assert_eq!(
-            open_files_soft_limit_target(libc::RLIM_INFINITY, Some(24_576)),
-            24_576
-        );
+        assert_eq!(open_files_soft_limit_target(u64::MAX, Some(24_576)), 24_576);
     }
 }

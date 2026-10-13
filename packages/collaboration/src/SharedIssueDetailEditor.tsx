@@ -1,4 +1,5 @@
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
+import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import * as Popover from "@radix-ui/react-popover";
 import {
   useCallback,
@@ -1784,17 +1785,20 @@ export function TodoEditor(props: TodoEditorProps) {
         {
           getAssigneeTarget: issueAssigneeTarget,
           update: (source, values) =>
-            editorPort.issues.update(source.id, {
-              version: source.version,
-              title: values.title.trim(),
-              description: values.description,
-              status: values.status,
-              priority: values.priority,
-              parent_id: values.parentId || null,
-              start_at: startAt,
-              due_at: dueAt,
-              tags: values.tags,
-            }),
+            persistIssueDetailFields(
+              source,
+              {
+                title: values.title.trim(),
+                description: values.description,
+                status: values.status,
+                priority: values.priority,
+                parent_id: values.parentId || null,
+                start_at: startAt,
+                due_at: dueAt,
+                tags: values.tags,
+              },
+              editorPort.issues,
+            ),
           clearAssignment: (source) =>
             editorPort.issues.update(source.id, {
               version: source.version,

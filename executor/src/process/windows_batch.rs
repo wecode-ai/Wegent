@@ -20,6 +20,15 @@ use std::{
 
 const WINDOWS_EXECUTABLE_EXTENSIONS: [&str; 4] = ["exe", "cmd", "bat", "com"];
 
+pub(crate) fn shell_command(script: &str) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("cmd.exe");
+    command.args(["/D", "/S", "/C"]);
+    // cmd strips the outer quotes; raw_arg preserves quotes inside the script.
+    command.raw_arg(format!("\"{}\"", script));
+    super::hide_windows_console(&mut command);
+    command
+}
+
 /// Resolves a bare program name through PATH using Windows executable
 /// extensions. Returning the concrete batch path lets the caller inspect and
 /// unwrap node-style shims before invoking `CreateProcess`.
