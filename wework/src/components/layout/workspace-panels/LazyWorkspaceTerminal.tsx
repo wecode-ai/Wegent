@@ -7,6 +7,9 @@ const LocalTerminal = lazy(() =>
 const RemoteTerminalContent = lazy(() =>
   import('./RemoteTerminal').then(module => ({ default: module.RemoteTerminal }))
 )
+const BackgroundTerminalContent = lazy(() =>
+  import('./BackgroundTerminalPanel').then(module => ({ default: module.BackgroundTerminalPanel }))
+)
 
 function TerminalLoading() {
   const { t } = useTranslation('common')
@@ -32,6 +35,14 @@ export function RemoteTerminal(props: ComponentProps<typeof RemoteTerminalConten
   return (
     <Suspense fallback={<TerminalLoading />}>
       <RemoteTerminalContent {...props} />
+    </Suspense>
+  )
+}
+
+export function BackgroundTerminalPanel(props: ComponentProps<typeof BackgroundTerminalContent>) {
+  return (
+    <Suspense fallback={<TerminalLoading />}>
+      <BackgroundTerminalContent {...props} />
     </Suspense>
   )
 }
