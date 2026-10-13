@@ -70,6 +70,29 @@ connector 与外部账号。当前无新增物理表或 DDL 迁移。
 避免请求早期建立的 `REPEATABLE READ` 快照遗漏并发登记或交接状态；用户锁同时
 刷新 ORM 中已加载的启用状态。真实 MySQL 8.0 的相关竞态验收已通过。
 
+### 自动同步记录与历史清理
+
+自动同步使用 `plugin-auth` namespace 下的 `ConnectorMigration`，按用户、插件来源、
+connector 和逻辑设备复用同一数据库行，包括已经消费的记录。下一轮同步覆盖该行，
+重新生成一次性意图 ID 和有效期；尚未消费且绑定、插件及认证定义仍有效的意图继续复用。
+记录数量不会随后台检查次数增长，插件重装也复用同来源的记录。显式用户授权意图保持独立。
+该调整只涉及 Backend，无需修改客户端协议或执行 DDL 迁移。
+
+部署所有 Backend 实例后，可在 `backend` 目录清理旧版本积累的自动同步历史：
+
+```bash
+# 默认只读预览，可用 --user-id 限定用户。
+uv run python scripts/compact_plugin_auth_migrations.py
+# 每批默认最多删除 1000 条，保留每组最新记录。
+uv run python scripts/compact_plugin_auth_migrations.py --apply
+```
+
+清理保留尚未过期的在途意图、手动授权意图和 `ConnectorTransfer` 交接记录。
+旧的在途意图过期后可再次执行清理。验证时按同一用户、插件来源、connector 和设备
+观察 `id`、`created_at` 保持不变，后续同步更新 `name`、`updated_at` 和消费状态；
+查询不要只筛选 `is_active=true`。本机凭据未变化时，`ConnectorConnection` 的 revision
+仍可保持不变。
+
 ## 自动连接与退出
 
 页面不展示账号迁移、设备授权或自动连接开关，只保留插件原有的本机登录流程。

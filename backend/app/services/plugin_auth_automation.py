@@ -1,7 +1,5 @@
 """Reconcile account-owned plugin authentication on registered native devices."""
 
-import time
-
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -14,10 +12,7 @@ from app.services.plugin_account_connections import (
     PluginAccountConnectionService,
     plugin_account_connection_service,
 )
-from app.services.plugin_auth_migrations import (
-    MIGRATION_KIND,
-    PluginAuthMigrationService,
-)
+from app.services.plugin_auth_migrations import PluginAuthMigrationService
 from shared.telemetry.decorators import trace_sync
 
 POLICY_KIND = "ConnectorAuthPolicy"
@@ -130,38 +125,6 @@ class PluginAuthAutomationService:
         disconnected = any(row.json["spec"]["status"] == "disconnected" for row in rows)
         logical, binding = self.connections._device_binding(db, user_id, device_id)
         fresh_login = local_login_pending(db, user_id, source, slug, logical, binding)
-        rows = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.namespace == CONNECTION_NAMESPACE,
-                Kind.kind == MIGRATION_KIND,
-                Kind.is_active.is_(True),
-                Kind.json["spec"]["automatic"].as_boolean().is_(True),
-                Kind.json["spec"]["device_id"].as_string() == logical,
-                Kind.json["spec"]["installed_plugin_id"].as_integer() == plugin.id,
-                Kind.json["spec"]["connector_slug"].as_string() == slug,
-            )
-            .all()
-        )
-        for row in rows:
-            spec = row.json["spec"]
-            if (
-                spec["expires_at"] > time.time()
-                and spec["binding"] == binding
-                and spec["auth_definition"] == connector["accountAuth"]
-            ):
-                if fresh_login and not spec.get("local_login"):
-                    row.json = {"spec": {**spec, "local_login": True}}
-                if disconnected and not (fresh_login or spec.get("local_login")):
-                    continue
-                return {
-                    "id": row.name,
-                    "installed_plugin_id": plugin.id,
-                    "connector_slug": slug,
-                }
-            # Expired intents contain only public metadata and cannot be reused.
-            db.delete(row)
         if disconnected and not fresh_login:
             return None
         intent = self.migrations.create(
@@ -173,17 +136,9 @@ class PluginAuthAutomationService:
                 connector_slug=slug,
                 expected_revision=0,
             ),
+            automatic=True,
+            local_login=fresh_login,
         )
-        row = self.migrations._query(db, user_id, intent.id).first()
-        if row is not None:
-            row.json = {
-                "spec": {
-                    **row.json["spec"],
-                    "automatic": True,
-                    "local_login": fresh_login,
-                }
-            }
-        db.flush()
         return {
             "id": intent.id,
             "installed_plugin_id": plugin.id,
