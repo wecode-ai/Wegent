@@ -293,6 +293,7 @@ const harnessAppTabMocks = vi.hoisted(() => ({
   unregister: vi.fn(),
   takeProxyToken: vi.fn(),
   takeContextToken: vi.fn(),
+  takeDecisionToken: vi.fn(),
 }))
 const dshExtensionMocks = vi.hoisted(() => ({
   bindConversationController: vi.fn(() => vi.fn()),
@@ -378,6 +379,7 @@ vi.mock('@/features/harness-apps/harnessAppTabs', async importOriginal => {
     unregisterHarnessAppTab: harnessAppTabMocks.unregister,
     takeHarnessAppProxyToken: harnessAppTabMocks.takeProxyToken,
     takeHarnessAppContextToken: harnessAppTabMocks.takeContextToken,
+    takeHarnessAppDecisionToken: harnessAppTabMocks.takeDecisionToken,
   }
 })
 
@@ -988,6 +990,7 @@ describe('DesktopWorkbenchLayout', () => {
     embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockClear()
     harnessAppTabMocks.takeProxyToken.mockResolvedValue(null)
     harnessAppTabMocks.takeContextToken.mockResolvedValue(null)
+    harnessAppTabMocks.takeDecisionToken.mockResolvedValue(null)
     unregisterHarnessProxyMock.mockResolvedValue(undefined)
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
     automationMocks.useNativeDirectoryPicker = true
@@ -13088,7 +13091,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-browser-url-input')).not.toBeInTheDocument()
     expect(screen.getByTestId('smart-app-development-preview-add-plugins')).toBeEnabled()
     expect(screen.getByTestId('smart-app-development-preview-refresh')).toBeEnabled()
-    expect(harnessAppMocks.start).toHaveBeenCalledWith(installed.id, null)
+    expect(harnessAppMocks.start).toHaveBeenCalledWith({
+      installationId: installed.id,
+      modelBaseUrl: null,
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: null,
+      decisionProtocolVersion: null,
+    })
     expect(
       screen.getByTestId('smart-app-development-preview-verification-unverified')
     ).toHaveTextContent('尚未验证')

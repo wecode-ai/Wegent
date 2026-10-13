@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -19,6 +19,7 @@ pub(crate) mod codex_model_catalog;
 mod codex_responses_proxy_transform;
 mod config;
 pub(crate) mod harness_context;
+pub(crate) mod local_decision_proxy;
 pub(crate) mod local_model_proxy;
 
 use axum::{
@@ -87,6 +88,10 @@ impl RunnerResult {
 pub struct AppState<R> {
     runner: R,
     runtime_heartbeat: Option<RuntimeHeartbeatController>,
+    decision_proxy: Arc<local_decision_proxy::DecisionProxyConfig>,
+    /// Shared for the life of the process so the exchanged credential cache and
+    /// the pooled upstream client survive per-request state construction.
+    decision_runtime: Arc<local_decision_proxy::DecisionProxyRuntime>,
 }
 
 impl<R> AppState<R> {
@@ -94,6 +99,8 @@ impl<R> AppState<R> {
         Self {
             runner,
             runtime_heartbeat: None,
+            decision_proxy: local_decision_proxy::config_from_env_or_unconfigured(),
+            decision_runtime: Arc::new(local_decision_proxy::DecisionProxyRuntime::new()),
         }
     }
 
@@ -175,6 +182,7 @@ where
         .route("/api/archive", post(archive_workspace))
         .route("/api/runtime/prepare", post(prepare_runtime_workspace))
         .route("/api/restore", post(restore_workspace))
+        .merge(local_decision_proxy::routes::<AppState<R>>())
         .with_state(state)
 }
 

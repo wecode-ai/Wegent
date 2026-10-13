@@ -2257,6 +2257,7 @@
     "smart_apps_model_change_failed": "修改智能工作台模型失败。",
     "smart_apps_model_unavailable": "智能工作台配置的模型不可用。",
     "smart_apps_model_proxy_unavailable": "智能工作台模型代理不可用。",
+    "smart_apps_decision_router_unavailable": "智能工作台决策路由不可用。",
     "smart_apps_missing_web_url": "智能工作台没有返回可用地址。",
     "smart_apps_launch_failed": "智能工作台启动失败。",
     "smart_apps_load_failed": "智能工作台加载失败。",

@@ -1225,6 +1225,197 @@ describe('createLocalAppServices', () => {
     expect(JSON.stringify(contextCall)).not.toContain('provider-secret')
   })
 
+  test('registers a decision route through the local Executor with the caller scope', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.decision_proxy.register') {
+        return {
+          token: 'decision-route-token',
+          baseUrl: 'http://127.0.0.1:1234/v1/decision-router/decision-route-token',
+          protocolVersion: 1,
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const launch = await services.localDecisionRouterApi?.resolveLaunch('smart-app:42')
+
+    expect(request).toHaveBeenCalledWith('runtime.decision_proxy.register', {
+      scope: 'smart-app:42',
+    })
+    expect(launch).toEqual({
+      token: 'decision-route-token',
+      baseUrl: 'http://127.0.0.1:1234/v1/decision-router/decision-route-token',
+      protocolVersion: 1,
+    })
+    const registerCall = request.mock.calls.find(
+      ([method]) => method === 'runtime.decision_proxy.register'
+    )
+    expect(Object.keys((registerCall?.[1] as Record<string, unknown>) ?? {})).toEqual(['scope'])
+  })
+
+  test('generates an isolated decision scope when the caller omits one', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.decision_proxy.register') {
+        return {
+          token: 'decision-route-token',
+          baseUrl: 'http://127.0.0.1:1234/v1/decision-router/decision-route-token',
+          protocolVersion: 1,
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.localDecisionRouterApi?.resolveLaunch()
+    await services.localDecisionRouterApi?.resolveLaunch('   ')
+
+    const scopes = request.mock.calls
+      .filter(([method]) => method === 'runtime.decision_proxy.register')
+      .map(([, params]) => (params as { scope: string }).scope)
+    expect(scopes).toHaveLength(2)
+    expect(scopes[0]).toMatch(/^decision:[0-9a-f-]{36}$/)
+    expect(scopes[1]).toMatch(/^decision:[0-9a-f-]{36}$/)
+    expect(scopes[0]).not.toBe(scopes[1])
+  })
+
+  test('rejects a decision route reply that is not a loopback v1 route', async () => {
+    const makeServices = (registration: unknown) =>
+      createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({
+          running: true,
+          ready: true,
+          deviceId: 'local-device',
+        }),
+        request: vi
+          .fn()
+          .mockImplementation(async (method: string) =>
+            method === 'runtime.decision_proxy.register' ? registration : {}
+          ),
+        subscribe: vi.fn(),
+      })
+
+    const resolved = makeServices({
+      token: 'decision-route-token',
+      baseUrl: 'https://decision.example.com/v1/decision-router/decision-route-token',
+      protocolVersion: 1,
+    })
+    await expect(resolved.localDecisionRouterApi?.resolveLaunch('s')).rejects.toThrow(
+      /loopback address/
+    )
+
+    const linkLocal = makeServices({
+      token: 'decision-route-token',
+      baseUrl: 'http://169.254.169.254/v1/decision-router/decision-route-token',
+      protocolVersion: 1,
+    })
+    await expect(linkLocal.localDecisionRouterApi?.resolveLaunch('s')).rejects.toThrow(
+      /loopback address/
+    )
+
+    const withCredentials = makeServices({
+      token: 'decision-route-token',
+      baseUrl: 'http://user:secret@127.0.0.1:1234/v1/decision-router/decision-route-token',
+      protocolVersion: 1,
+    })
+    await expect(withCredentials.localDecisionRouterApi?.resolveLaunch('s')).rejects.toThrow(
+      /loopback address/
+    )
+
+    const unsupportedVersion = makeServices({
+      token: 'decision-route-token',
+      baseUrl: 'http://127.0.0.1:1234/v1/decision-router/decision-route-token',
+      protocolVersion: 2,
+    })
+    await expect(unsupportedVersion.localDecisionRouterApi?.resolveLaunch('s')).rejects.toThrow(
+      /protocol version/
+    )
+
+    const missingToken = makeServices({
+      token: '',
+      baseUrl: 'http://127.0.0.1:1234/v1/decision-router/decision-route-token',
+      protocolVersion: 1,
+    })
+    await expect(missingToken.localDecisionRouterApi?.resolveLaunch('s')).rejects.toThrow(
+      /route token/
+    )
+  })
+
+  test('unregisters a decision route', async () => {
+    const request = vi.fn().mockResolvedValue({})
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.localDecisionRouterApi?.unregister('decision-route-token')
+
+    expect(request).toHaveBeenCalledWith('runtime.decision_proxy.unregister', {
+      token: 'decision-route-token',
+    })
+  })
+
+  test('never forwards cloud credentials to the decision registration RPC', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.decision_proxy.register') {
+        return {
+          token: 'decision-route-token',
+          baseUrl: 'http://127.0.0.1:1234/v1/decision-router/decision-route-token',
+          protocolVersion: 1,
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn(),
+      user: {
+        id: 9,
+        user_name: 'hongyu9',
+        email: 'hongyu9@example.com',
+      },
+      cloudModelGateway: {
+        baseUrl: 'https://api.example.com/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-token',
+      },
+    })
+
+    await services.localDecisionRouterApi?.resolveLaunch('smart-app:42')
+
+    const registerCall = request.mock.calls.find(
+      ([method]) => method === 'runtime.decision_proxy.register'
+    )
+    expect(registerCall?.[1]).toEqual({ scope: 'smart-app:42' })
+    expect(JSON.stringify(registerCall)).not.toContain('cloud-token')
+    expect(JSON.stringify(registerCall)).not.toContain('hongyu9')
+  })
+
   test('does not expose a custom model until its catalog restart is applied', async () => {
     saveLocalModelConfig({
       id: 'pending-model',
