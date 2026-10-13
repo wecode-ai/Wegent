@@ -713,3 +713,203 @@ test('attributes empty URL samples only to their nearest closed known stack ance
   expect(profile).toEqual(before)
   expect(JSON.stringify(summary)).not.toMatch(/private|token|function|file:/)
 })
+
+test.each([
+  'materializedNativeBinaryPath',
+  'cachedFileMatches',
+  'packageVersionForNativeBinary',
+  'sha256',
+  'loadPrebuild',
+  'loadEntry',
+])('attributes a closed native loader function only within the exact package: %s', functionName => {
+  for (const url of [
+    'file:///private/token/node_modules/node-addon-native-custom-loader/lib/index.js',
+    'D:\\private\\token\\node_modules\\node-addon-native-custom-loader\\lib\\index.js',
+    'file:///private/token/node_modules/.pnpm/node-addon-native-custom-loader@0.1.6/node_modules/node-addon-native-custom-loader/lib/index.js',
+  ]) {
+    const profile = {
+      startTime: 1000,
+      endTime: 3000,
+      nodes: [{ id: 1, callFrame: { url, functionName, lineNumber: 123, columnNumber: 456 } }],
+      samples: [1],
+      timeDeltas: [2000],
+    }
+    const before = structuredClone(profile)
+    const summary = summarizeCoreCpuProfile(profile, 2000)
+    expect(summary.nativeLoaderOperations).toEqual([
+      { name: functionName, samples: 1, sampledMs: 1 },
+    ])
+    expect(summary.modules).toEqual([{ name: 'other', samples: 1, sampledMs: 1 }])
+    expect(summary.moduleDetails).toEqual([
+      { name: 'node-addon-native-custom-loader', samples: 1, sampledMs: 1 },
+    ])
+    expect(summary.scope).toBe('startup-to-endpoint')
+    expect(summary.samples).toBe(1)
+    expect(summary.durationMs).toBe(1)
+    expect(profile).toEqual(before)
+    expect(JSON.stringify(summary)).not.toMatch(
+      /private|token|file:|lineNumber|columnNumber|[A-Z]:\\/
+    )
+  }
+})
+
+test('uses the nearest known native loader ancestor once, including native child frames', () => {
+  const url = 'file:///private/token/node_modules/node-addon-native-custom-loader/lib/index.js'
+  const profile = {
+    startTime: 1000,
+    endTime: 6000,
+    nodes: [
+      { id: 1, children: [2, 6], callFrame: { url, functionName: 'loadPrebuild' } },
+      { id: 2, children: [3, 5], callFrame: { url, functionName: 'materializedNativeBinaryPath' } },
+      { id: 3, children: [4], callFrame: { url, functionName: 'sha256' } },
+      { id: 4, callFrame: { url: '', functionName: 'private-native-function' } },
+      { id: 5, callFrame: { url: '', functionName: 'readFileUtf8' } },
+      { id: 6, callFrame: { url: '', functionName: 'private-native-require' } },
+    ],
+    samples: [4, 5, 6],
+    timeDeltas: [1000, 2000, 2000],
+  }
+  const before = structuredClone(profile)
+  const summary = summarizeCoreCpuProfile(profile, 5000)
+  expect(summary.nativeLoaderOperations).toEqual([
+    { name: 'materializedNativeBinaryPath', samples: 1, sampledMs: 2 },
+    { name: 'sha256', samples: 1, sampledMs: 1 },
+    { name: 'loadPrebuild', samples: 1, sampledMs: 1 },
+  ])
+  expect(summary.modules).toEqual([
+    { name: 'other', samples: 2, sampledMs: 2 },
+    { name: 'native:readFileUtf8', samples: 1, sampledMs: 2 },
+  ])
+  expect(summary.samples).toBe(3)
+  expect(summary.durationMs).toBe(4)
+  expect(profile).toEqual(before)
+  expect(JSON.stringify(summary)).not.toMatch(/private|token|file:|require/)
+})
+
+test.each([
+  'file:///private/token/node_modules/private-package/lib/index.js',
+  'D:\\private\\token\\node_modules\\node-addon-native-custom-loader-private\\lib\\index.js',
+])('does not attribute same-named functions outside the native loader package: %s', url => {
+  const summary = summarizeCoreCpuProfile({
+    startTime: 1000,
+    endTime: 3000,
+    nodes: [{ id: 1, callFrame: { url, functionName: 'materializedNativeBinaryPath' } }],
+    samples: [1],
+    timeDeltas: [2000],
+  })
+  expect(summary.nativeLoaderOperations).toEqual([])
+  expect(JSON.stringify(summary)).not.toMatch(/private|token|materializedNativeBinaryPath|file:/)
+})
+
+test.each(['', 'private-function-token'])(
+  'keeps unknown native loader function names private (%s)',
+  functionName => {
+    const summary = summarizeCoreCpuProfile({
+      startTime: 1000,
+      endTime: 3000,
+      nodes: [
+        {
+          id: 1,
+          callFrame: {
+            url: 'file:///private/token/node_modules/node-addon-native-custom-loader/lib/index.js',
+            functionName,
+          },
+        },
+      ],
+      samples: [1],
+      timeDeltas: [2000],
+    })
+    expect(summary.nativeLoaderOperations).toEqual([
+      { name: 'unattributed-native-loader-operation', samples: 1, sampledMs: 2 },
+    ])
+    expect(JSON.stringify(summary)).not.toMatch(/private|token|file:/)
+  }
+)
+
+test('classifies shared immutable nodes once per summary without visiting unused frames', () => {
+  let urlReads = 0
+  const profile = {
+    startTime: 1000,
+    endTime: 4000,
+    nodes: [
+      {
+        id: 1,
+        children: [3],
+        callFrame: {
+          functionName: 'loadPrebuild',
+          get url() {
+            urlReads += 1
+            return 'file:///private/token/node_modules/node-addon-native-custom-loader/lib/index.js'
+          },
+        },
+      },
+      {
+        id: 2,
+        get callFrame() {
+          throw new Error('An unused frame must not be classified')
+        },
+      },
+      { id: 3, callFrame: { functionName: 'private-child', url: '' } },
+    ],
+    samples: [3, 3, 3],
+    timeDeltas: [1000, 1000, 1000],
+  }
+  summarizeCoreCpuProfile({ ...profile, samples: [3], timeDeltas: [3000] })
+  const singleSampleReads = urlReads
+  expect(singleSampleReads).toBeGreaterThan(0)
+  urlReads = 0
+  const first = summarizeCoreCpuProfile(profile)
+  expect(urlReads).toBe(singleSampleReads)
+  expect(first.nativeLoaderOperations).toEqual([{ name: 'loadPrebuild', samples: 3, sampledMs: 3 }])
+  urlReads = 0
+  expect(summarizeCoreCpuProfile(profile)).toEqual(first)
+  expect(urlReads).toBe(singleSampleReads)
+})
+
+test.each([undefined, 1500])(
+  'rejects missing sampled frames before classification, including beyond the marker (%s)',
+  marker => {
+    const profile = {
+      startTime: 1000,
+      endTime: 3000,
+      nodes: [
+        {
+          id: 1,
+          callFrame: {
+            get url() {
+              throw new Error('Classification must not run before sample validation')
+            },
+          },
+        },
+        { id: 2 },
+      ],
+      samples: [1, 2],
+      timeDeltas: [1000, 1000],
+    }
+    expect(() => summarizeCoreCpuProfile(profile, marker)).toThrow(
+      expect.objectContaining({ code: 'core_profile_missing_sample_frame' })
+    )
+  }
+)
+
+test('preserves missing-frame tolerance for unsampled ancestors', () => {
+  const summary = summarizeCoreCpuProfile({
+    startTime: 1000,
+    endTime: 3000,
+    nodes: [
+      { id: 1, children: [2] },
+      {
+        id: 2,
+        callFrame: {
+          functionName: 'loadPrebuild',
+          url: 'file:///private/token/node_modules/node-addon-native-custom-loader/lib/index.js',
+        },
+      },
+    ],
+    samples: [2],
+    timeDeltas: [2000],
+  })
+  expect(summary.nativeLoaderOperations).toEqual([{ name: 'loadPrebuild', samples: 1, sampledMs: 2 }])
+  expect(summary.samples).toBe(1)
+  expect(summary.durationMs).toBe(2)
+})

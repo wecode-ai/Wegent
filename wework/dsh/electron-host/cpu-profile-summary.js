@@ -51,6 +51,14 @@ const bootOperations = new Set([
   'mountRootInclude',
   'auditStartupEntries',
 ])
+const nativeLoaderOperations = new Set([
+  'materializedNativeBinaryPath',
+  'cachedFileMatches',
+  'packageVersionForNativeBinary',
+  'sha256',
+  'loadPrebuild',
+  'loadEntry',
+])
 const additionalPackages = [
   '@deepseek-ai/cosmokit',
   '@deepseek-ai/cordis-plugin-group',
@@ -132,8 +140,7 @@ const publicPackageGroups = new Set([
   ...hostPlugins.map(([name]) => name),
 ])
 
-function detailedModuleGroup(frame) {
-  const group = moduleGroup(frame)
+function detailedModuleGroup(frame, group = moduleGroup(frame)) {
   if (group !== 'other' && group !== 'node-other') return group
   const url = typeof frame.url === 'string' ? frame.url.replaceAll('\\', '/') : ''
   for (const name of additionalPackages) {
@@ -181,6 +188,22 @@ function rows(groups) {
     .sort((left, right) => right.sampledMs - left.sampledMs)
 }
 
+function createNodeClassifier() {
+  const groups = new Map()
+  const details = new Map()
+  const group = (node, frame) => {
+    if (!groups.has(node.id)) groups.set(node.id, moduleGroup(frame))
+    return groups.get(node.id)
+  }
+  const detail = (node, frame) => {
+    if (!details.has(node.id)) {
+      details.set(node.id, detailedModuleGroup(frame, group(node, frame)))
+    }
+    return details.get(node.id)
+  }
+  return { group, detail }
+}
+
 function recordAncestors(
   node,
   nodes,
@@ -188,19 +211,30 @@ function recordAncestors(
   delta,
   operations,
   loaderAncestors,
-  emptyUrlAncestors
+  emptyUrlAncestors,
+  nativeLoaderSamples,
+  classifier
 ) {
   const visited = new Set()
   let bootRecorded = false
   let loaderRecorded = false
-  const isEmptyUrl = detailedModuleGroup(node.callFrame) === 'unattributed-empty-url'
+  const isEmptyUrl = classifier.detail(node, node.callFrame) === 'unattributed-empty-url'
   let emptyUrlRecorded = !isEmptyUrl
+  let nativeLoaderSeen = false
+  let nativeLoaderRecorded = false
   while (node && !visited.has(node.id)) {
     visited.add(node.id)
     const frame = node.callFrame ?? {}
-    const group = moduleGroup(frame)
+    const group = classifier.group(node, frame)
+    const detail = classifier.detail(node, frame)
+    if (detail === 'node-addon-native-custom-loader') {
+      nativeLoaderSeen = true
+      if (!nativeLoaderRecorded && nativeLoaderOperations.has(frame.functionName)) {
+        addSample(nativeLoaderSamples, frame.functionName, delta)
+        nativeLoaderRecorded = true
+      }
+    }
     if (!emptyUrlRecorded) {
-      const detail = detailedModuleGroup(frame)
       if (publicPackageGroups.has(detail) || loaderGroups.has(detail)) {
         addSample(emptyUrlAncestors, detail, delta)
         emptyUrlRecorded = true
@@ -218,11 +252,14 @@ function recordAncestors(
       addSample(operations, frame.functionName, delta)
       bootRecorded = true
     }
-    if (loaderRecorded && bootRecorded && emptyUrlRecorded) break
+    if (loaderRecorded && bootRecorded && emptyUrlRecorded && nativeLoaderRecorded) break
     node = nodes.get(parents.get(node.id))
   }
   if (!emptyUrlRecorded) {
     addSample(emptyUrlAncestors, 'unattributed-no-known-ancestor', delta)
+  }
+  if (nativeLoaderSeen && !nativeLoaderRecorded) {
+    addSample(nativeLoaderSamples, 'unattributed-native-loader-operation', delta)
   }
 }
 
@@ -276,6 +313,8 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
   const moduleDetails = new Map()
   const loaderAncestors = new Map()
   const emptyUrlAncestors = new Map()
+  const nativeLoaderSamples = new Map()
+  const classifier = createNodeClassifier()
   let sampleTime = profile.startTime
   let capturedSamples = 0
   for (const { node, timestamp } of orderedProfileSamples(profile, nodes)) {
@@ -286,8 +325,8 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
     sampleTime = timestamp
     if (capturedDelta === 0) continue
     capturedSamples += 1
-    addSample(modules, moduleGroup(node.callFrame), capturedDelta)
-    const detail = detailedModuleGroup(node.callFrame)
+    addSample(modules, classifier.group(node, node.callFrame), capturedDelta)
+    const detail = classifier.detail(node, node.callFrame)
     addSample(moduleDetails, detail, capturedDelta)
     recordAncestors(
       node,
@@ -296,7 +335,9 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
       capturedDelta,
       operations,
       loaderAncestors,
-      emptyUrlAncestors
+      emptyUrlAncestors,
+      nativeLoaderSamples,
+      classifier
     )
   }
   return {
@@ -308,5 +349,6 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
     moduleDetails: rows(moduleDetails),
     nearestLoaderAncestors: rows(loaderAncestors),
     emptyUrlAncestors: rows(emptyUrlAncestors),
+    nativeLoaderOperations: rows(nativeLoaderSamples),
   }
 }

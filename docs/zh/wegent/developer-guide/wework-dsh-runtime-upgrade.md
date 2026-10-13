@@ -297,3 +297,5 @@ ARM renderer 存储恢复约 1874 毫秒：响应头等待 1006 毫秒、响应�
 [Windows 第 19 组](https://github.com/wecode-ai/Wegent/actions/runs/38470348069/job/115563197342) 严格冷启动 8623 毫秒失败，后续旧版阶段未执行；配置 1153 毫秒、Core 4071 毫秒、页面 1260 毫秒、加载后就绪 1786 毫秒。CPU 摘要一份对应一个端点、零缺失、Prune 通过。node-addon-native-custom-loader 为最大已知模块采样类别，约 1029 毫秒；官方 app-boot 经 node-addon-require-builtin 调用真实 profile 模块解析与 native 加载，缓存物化及完整性校验有明确合同，尚无 Wework 重复调用证据。不能据采样权重删除官方校验或宣称具体优化收益。
 
 [Windows 第 16 组](https://github.com/wecode-ai/Wegent/actions/runs/38470348069/job/115563197171) 五场景通过，plugin-development 等待缓存 manifest 超时。真实链路为 bundled marketplace 初始化成功，随后 idle 环境重启的 reconciliation 因 taskkill 退出 128 失败，默认安装未执行；缺失 manifest 是继发结果。代码已具备任务终止工具失败后 child.try_wait 确认退出逻辑，旧日志没有实际 child 状态和原生错误类别，不能将任意 128 当作已退出成功。新增仅记录固定 stderr 类别、字节数和 exited/running/check-failed，原 stderr 不输出，进程树终止及原退出门槛不变。11 项生命周期与 4 项终止/诊断测试、格式、Clippy 通过；真实原生失败原因仍须下一轮取证，尚未证明行为已修。
+
+进一步细分 native loader 采样仅使用官方包边界内六个固定操作名；记录最近祖先上下文，不等于 native require 的独占 CPU，不输出动态函数或路径。分类缓存仅在单次摘要内按实际访问节点懒求值，避免每个 sample 重复执行路径分类，保留原摘要字段与样本校验。49 节点、12 层共享祖先、2400 samples 的交替基准中，既有实现约 19.9 毫秒，增加分类但未缓存约 73.5 毫秒，缓存后约 2.4 毫秒，既有字段逐项相同。这只证明摘要计算开销下降，不替代严格冷启动结果；新的细分数据须下一轮 CI 验证。
