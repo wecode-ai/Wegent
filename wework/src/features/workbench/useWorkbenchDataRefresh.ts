@@ -445,24 +445,6 @@ export function useWorkbenchDataRefresh({
               controller.signal
             )
           : Promise.resolve(undefined)
-        void devicesRequest.then(result => {
-          markDesktopStartupPhase(
-            'devices-request',
-            result.status === 'fulfilled' ? 'completed' : 'failed',
-            {
-              durationMs: Math.round(nowMs() - startedAt),
-            }
-          )
-        })
-        void runtimeWorkRequest.then(result => {
-          markDesktopStartupPhase(
-            'task-list-request',
-            result.status === 'fulfilled' ? 'completed' : 'failed',
-            {
-              durationMs: Math.round(nowMs() - runtimeWorkStartedAt),
-            }
-          )
-        })
         const devicesResult = await devicesRequest
 
         if (
@@ -635,6 +617,24 @@ export function useWorkbenchDataRefresh({
         'runtimeWork',
         executorClient.runtime.listRuntimeWork({ preferCached: true })
       )
+      void devicesRequest.then(result => {
+        markDesktopStartupPhase(
+          'devices-request',
+          result.status === 'fulfilled' ? 'completed' : 'failed',
+          {
+            durationMs: Math.round(nowMs() - startedAt),
+          }
+        )
+      })
+      void runtimeWorkRequest.then(result => {
+        markDesktopStartupPhase(
+          'task-list-request',
+          result.status === 'fulfilled' ? 'completed' : 'failed',
+          {
+            durationMs: Math.round(nowMs() - runtimeWorkStartedAt),
+          }
+        )
+      })
       const devicesResult = await devicesRequest
       logModelLoading(traceId, 'bootstrap.devices_finished', {
         elapsedMs: Math.round(nowMs() - startedAt),
