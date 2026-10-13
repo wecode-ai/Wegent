@@ -40,6 +40,7 @@ const MODEL_FIELDS = new Set([
   'api_format',
   'request_path',
   'context_window',
+  'max_output_tokens',
   'tool_profile',
   'codex_tool_compatibility',
   'web_search_mode',
@@ -131,11 +132,20 @@ function validateModel(value: unknown, path: string, provider: ModelProvider): P
   optionalEnum(item, 'codex_tool_compatibility', ['native', 'standard'], path)
   optionalEnum(item, 'web_search_mode', ['disabled', 'cached', 'live'], path)
   validatePath(item.request_path, `${path}.request_path`)
+  for (const field of ['context_window', 'max_output_tokens']) {
+    if (
+      item[field] !== undefined &&
+      (!Number.isSafeInteger(item[field]) || (item[field] as number) <= 0)
+    ) {
+      fail(`${path}.${field}`, 'expected a positive integer')
+    }
+  }
   if (
-    item.context_window !== undefined &&
-    (!Number.isSafeInteger(item.context_window) || (item.context_window as number) <= 0)
+    typeof item.context_window === 'number' &&
+    typeof item.max_output_tokens === 'number' &&
+    item.max_output_tokens >= item.context_window
   ) {
-    fail(`${path}.context_window`, 'expected a positive integer')
+    fail(`${path}.max_output_tokens`, 'must be less than context_window')
   }
   if (item.catalog_entry !== undefined) record(item.catalog_entry, `${path}.catalog_entry`)
   if (
