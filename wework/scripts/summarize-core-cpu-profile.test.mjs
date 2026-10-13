@@ -3,6 +3,7 @@ import { execFile, spawn } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, expect, test } from 'vitest'
 import { summarizeCoreCpuProfile } from './summarize-core-cpu-profile.mjs'
@@ -111,7 +112,7 @@ test('clips the boundary interval and excludes all subsequent runtime samples', 
 test('writes safe startup samples before forced termination of a preloaded real Node process', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-cpu-bootstrap-'))
   roots.push(root)
-  const bootstrap = new URL('../dsh/electron-host/cpu-profile-bootstrap.js', import.meta.url).href
+  const bootstrap = pathToFileURL(resolve('dsh/electron-host/cpu-profile-bootstrap.js')).href
   const dshHome = join(root, 'session/electron-user-data/dsh-core')
   const logsRoot = join(dshHome, '../logs')
   const child = spawn(
