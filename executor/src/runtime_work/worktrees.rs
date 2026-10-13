@@ -1097,7 +1097,7 @@ fn add_git_worktree(source: &Path, target: &Path, git_ref: Option<&str>) -> Resu
 
 fn worktree_git_command() -> Command {
     let mut command = Command::new("git");
-    // Git must enable long paths before discovering newly created worktree metadata.
+    // Long paths remain necessary for checked-out files and Git objects.
     #[cfg(windows)]
     command.args(["-c", "core.longpaths=true"]);
     crate::process::hide_windows_console(&mut command);
@@ -1173,7 +1173,13 @@ fn git_common_dir_command(git_common_dir: &Path) -> Result<Command, String> {
         .arg("--git-dir")
         .arg(name)
         .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE");
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR");
+    #[cfg(windows)]
+    command.env(
+        "GIT_COMMON_DIR",
+        strip_windows_verbatim_prefix(git_common_dir),
+    );
     Ok(command)
 }
 
@@ -1186,11 +1192,29 @@ fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Resu
         .arg(path)
         .args(args);
     command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
+    #[cfg(windows)]
+    configure_git_common_dir(&mut command, path)?;
     if let Some(envs) = envs {
         command.envs(envs.iter().copied());
     }
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output)
+}
+
+#[cfg(any(windows, test))]
+fn configure_git_common_dir(command: &mut Command, path: &Path) -> Result<(), String> {
+    command.env_remove("GIT_COMMON_DIR");
+    for ancestor in path.ancestors() {
+        let Some((_, common_dir)) = super::response::git_directories_at_workspace(ancestor)? else {
+            continue;
+        };
+        // Windows Git reads commondir before repository config enables long paths.
+        // Rust resolves that pointer first; HEAD and index still belong to Git's gitdir.
+        let common_dir = fs::canonicalize(common_dir).map_err(|error| error.to_string())?;
+        command.env("GIT_COMMON_DIR", strip_windows_verbatim_prefix(&common_dir));
+        break;
+    }
+    Ok(())
 }
 
 fn command_result(output: std::process::Output) -> Result<String, String> {
@@ -2627,6 +2651,125 @@ mod tests {
 
     #[test]
     fn manages_worktrees_beyond_the_windows_legacy_path_limit() {
+        verify_long_path_worktree_lifecycle(210);
+    }
+
+    #[test]
+    fn manages_worktrees_beyond_the_windows_legacy_path_limit_during_common_dir_discovery() {
+        verify_long_path_worktree_lifecycle(226);
+    }
+
+    #[test]
+    fn manages_worktrees_beyond_the_windows_legacy_path_limit_common_dir_contract() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let other = root.path().join("other");
+        initialize_repository(&source);
+        initialize_repository(&other);
+        let base_head = git_output(&source, &["rev-parse", "HEAD"], None).unwrap();
+        let linked = root.path().join("linked");
+        add_git_worktree(&source, &linked, None).unwrap();
+        fs::write(linked.join("tracked.txt"), "linked\n").unwrap();
+        git_output(&linked, &["add", "."], None).unwrap();
+        git_output(&linked, &["commit", "-m", "linked"], None).unwrap();
+        let linked_head = git_output(&linked, &["rev-parse", "HEAD"], None).unwrap();
+        assert_ne!(linked_head, base_head);
+        // Exercise both relative pointers without changing the worktree's identity.
+        fs::write(
+            linked.join(".git"),
+            "gitdir: ../source/.git/worktrees/linked\n",
+        )
+        .unwrap();
+        let nested = linked.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        let mut command = worktree_git_command();
+        command.arg("-C").arg(&nested).args(["rev-parse", "HEAD"]);
+        command.env("GIT_COMMON_DIR", other.join(".git"));
+        configure_git_common_dir(&mut command, &nested).unwrap();
+        assert_eq!(
+            command_result(command.output().unwrap()).unwrap(),
+            linked_head
+        );
+
+        let manager = WorktreeManager::new(root.path().join("registry.json"));
+        manager
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(root.path().join("managed").display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .unwrap();
+        let record = manager
+            .prepare(&linked, "nested-source", None, false)
+            .unwrap();
+        let target = PathBuf::from(&record.path);
+        assert_eq!(
+            git_output(&target, &["rev-parse", "HEAD"], None).unwrap(),
+            linked_head
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("tracked.txt")).unwrap(),
+            "linked\n"
+        );
+        assert_eq!(
+            git_common_dir(&target).unwrap(),
+            git_common_dir(&source).unwrap()
+        );
+        assert_eq!(
+            git_output(&source, &["rev-parse", "HEAD"], None).unwrap(),
+            base_head
+        );
+        assert_eq!(manager.list(&[]).unwrap().len(), 1);
+        manager.delete(&target, false).unwrap();
+        assert!(other.join(".git").is_dir());
+        assert_eq!(
+            git_output(&linked, &["rev-parse", "HEAD"], None).unwrap(),
+            linked_head
+        );
+    }
+
+    #[test]
+    fn manages_worktrees_beyond_the_windows_legacy_path_limit_rejects_invalid_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        initialize_repository(root.path());
+        let nested = root.path().join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        for pointer in ["invalid", "gitdir: \n"] {
+            fs::write(nested.join(".git"), pointer).unwrap();
+            assert!(configure_git_common_dir(&mut Command::new("git"), &nested).is_err());
+        }
+        let git_dir = root.path().join("metadata");
+        fs::create_dir_all(&git_dir).unwrap();
+        fs::write(nested.join(".git"), "gitdir: ../metadata\n").unwrap();
+        fs::write(git_dir.join("commondir"), "\n").unwrap();
+        assert!(configure_git_common_dir(&mut Command::new("git"), &nested).is_err());
+        fs::remove_file(git_dir.join("commondir")).unwrap();
+        fs::create_dir(git_dir.join("commondir")).unwrap();
+        assert!(configure_git_common_dir(&mut Command::new("git"), &nested).is_err());
+        #[cfg(unix)]
+        {
+            fs::remove_dir(git_dir.join("commondir")).unwrap();
+            std::os::unix::fs::symlink("missing", git_dir.join("commondir")).unwrap();
+            assert!(configure_git_common_dir(&mut Command::new("git"), &nested).is_err());
+            fs::remove_file(nested.join(".git")).unwrap();
+            std::os::unix::fs::symlink("missing", nested.join(".git")).unwrap();
+            assert!(configure_git_common_dir(&mut Command::new("git"), &nested).is_err());
+            fs::remove_file(nested.join(".git")).unwrap();
+            std::os::unix::fs::symlink("../.git", nested.join(".git")).unwrap();
+            let mut command = Command::new("git");
+            configure_git_common_dir(&mut command, &nested).unwrap();
+            let common_dir = fs::canonicalize(root.path().join(".git")).unwrap();
+            assert_eq!(
+                command
+                    .get_envs()
+                    .find(|(key, _)| *key == "GIT_COMMON_DIR")
+                    .unwrap()
+                    .1,
+                Some(strip_windows_verbatim_prefix(&common_dir).as_os_str())
+            );
+        }
+    }
+
+    fn verify_long_path_worktree_lifecycle(expected_source_length: usize) {
         let root = tempfile::tempdir().unwrap();
         // Git resolves temporary-directory aliases before reading its initial config.
         let mut nested = strip_windows_verbatim_prefix(&fs::canonicalize(root.path()).unwrap());
@@ -2637,12 +2780,15 @@ mod tests {
                 .encode_utf16()
                 .count()
         };
-        while source_length(&nested) < 209 {
-            let remaining = 210 - source_length(&nested);
+        while source_length(&nested) < expected_source_length - 1 {
+            let remaining = expected_source_length - source_length(&nested);
             nested = nested.join("e".repeat((remaining - 1).min(100)));
         }
         let source = nested.join("environment/workspace");
-        assert_eq!(source.to_string_lossy().encode_utf16().count(), 210);
+        assert_eq!(
+            source.to_string_lossy().encode_utf16().count(),
+            expected_source_length
+        );
         fs::create_dir_all(&source).unwrap();
         let source = strip_windows_verbatim_prefix(&fs::canonicalize(&source).unwrap());
         assert!(
@@ -2677,16 +2823,37 @@ mod tests {
         fs::write(source.join(&long_file), "long base\n").unwrap();
         git_output(&source, &["add", "."], None).unwrap();
         git_output(&source, &["commit", "-m", "base"], None).unwrap();
-        for discovery_file in ["HEAD", "commondir", "config.worktree"] {
-            assert!(
-                source
-                    .join(".git/worktrees/workspace")
-                    .join(discovery_file)
+        let metadata = source.join(".git/worktrees/workspace");
+        assert!(
+            metadata
+                .join("HEAD")
+                .to_string_lossy()
+                .encode_utf16()
+                .count()
+                < 260
+        );
+        if expected_source_length == 226 {
+            assert_eq!(metadata.to_string_lossy().encode_utf16().count(), 251);
+            assert_eq!(
+                metadata
+                    .join("commondir")
                     .to_string_lossy()
                     .encode_utf16()
-                    .count()
-                    < 260
+                    .count(),
+                261
             );
+        } else {
+            for discovery_file in ["HEAD", "commondir", "config.worktree"] {
+                assert!(
+                    source
+                        .join(".git/worktrees/workspace")
+                        .join(discovery_file)
+                        .to_string_lossy()
+                        .encode_utf16()
+                        .count()
+                        < 260
+                );
+            }
         }
         let blob = git_output(
             &source,
