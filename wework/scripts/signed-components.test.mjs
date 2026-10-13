@@ -1,10 +1,52 @@
-import { mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import { reuseSignedComponent } from '../electron/scripts/prepare-signed-components.mjs'
+import { executeMacOsCodesign } from './lib/deepseek-harness-signing.mjs'
 
 const roots = []
+
+test('never publishes a signed cache when the timestamp service remains unavailable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-signing-failed-'))
+  roots.push(root)
+  const source = join(root, 'executor')
+  const cacheRoot = join(root, 'cache')
+  await writeFile(source, 'unsigned executor')
+  await mkdir(cacheRoot)
+  const error = Object.assign(new Error('codesign failed'), {
+    stderr: `${source}: The timestamp service is not available.`,
+  })
+  const execute = vi.fn().mockRejectedValue(error)
+  const verify = vi.fn()
+  await expect(
+    reuseSignedComponent({
+      source,
+      cacheRoot,
+      identity: 'certificate',
+      policy: {},
+      sign: file =>
+        executeMacOsCodesign(['--sign', 'certificate', '--timestamp', file], {
+          execute,
+          sleepImpl: vi.fn().mockResolvedValue(undefined),
+          logger: vi.fn(),
+        }),
+      verify,
+    })
+  ).rejects.toBe(error)
+  expect(execute).toHaveBeenCalledTimes(3)
+  expect(verify).not.toHaveBeenCalled()
+  expect(await readdir(cacheRoot)).toEqual([])
+})
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })

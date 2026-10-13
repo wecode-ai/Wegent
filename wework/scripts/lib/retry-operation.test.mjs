@@ -2,6 +2,16 @@ import { describe, expect, test, vi } from 'vitest'
 import { retryOperation } from './retry-operation.mjs'
 
 describe('retryOperation', () => {
+  test('propagates a non-retryable error without sleeping', async () => {
+    const error = new Error('permission denied')
+    const operation = vi.fn().mockRejectedValue(error)
+    const sleepImpl = vi.fn()
+    await expect(retryOperation(operation, { shouldRetry: () => false, sleepImpl })).rejects.toBe(
+      error
+    )
+    expect(operation).toHaveBeenCalledOnce()
+    expect(sleepImpl).not.toHaveBeenCalled()
+  })
   test('retries failures with linear backoff until the operation succeeds', async () => {
     const operation = vi
       .fn()

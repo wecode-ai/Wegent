@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
+import { executeMacOsCodesign } from '../../scripts/lib/deepseek-harness-signing.mjs'
 
 const execute = promisify(execFile)
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -88,7 +89,9 @@ export async function prepareSignedComponents(environment = process.env) {
       policy,
       sign: async source => {
         for (const file of await machOFiles(source)) {
-          await execute('codesign', signedComponentCodesignArguments(identity, file))
+          await executeMacOsCodesign(signedComponentCodesignArguments(identity, file), {
+            execute,
+          })
         }
       },
       verify: async source => {
