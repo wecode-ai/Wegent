@@ -518,12 +518,14 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: |
+          $compatibilityExitCode = 0
           cargo test --locked --release --manifest-path executor/Cargo.toml --lib process_environment::tests::windows_registry
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
           cargo test --locked --release --manifest-path executor/Cargo.toml --lib agents::git_workspace::tests::clones_execution_repositories_beyond_the_windows_legacy_path_limit
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
           cargo test --locked --release --manifest-path executor/Cargo.toml --lib runtime_work::store::tests
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
+          exit $compatibilityExitCode
 
       - name: Build Rust Backend Windows E2E gateway
         shell: pwsh

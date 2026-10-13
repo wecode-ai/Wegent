@@ -433,17 +433,21 @@ async fn reclones_a_workspace_left_behind_by_an_interrupted_clone() {
 #[cfg(windows)]
 #[tokio::test]
 async fn clones_execution_repositories_beyond_the_windows_legacy_path_limit() {
+    use std::os::windows::ffi::OsStrExt;
+
     let directory = tempfile::tempdir().unwrap();
     let source = create_local_repository(directory.path(), "source", "payload.txt", "payload");
-    let target = directory
-        .path()
-        .join("environment".repeat(12))
-        .join("repository".repeat(12));
+    let parent = directory.path().join("environment");
+    let parent_length = parent.as_os_str().encode_wide().count();
+    // Git supports long files, but its Windows current-directory buffer is still MAX_PATH.
+    let target = parent.join("r".repeat(230_usize.checked_sub(parent_length + 1).unwrap()));
+    assert!(target.as_os_str().encode_wide().count() < 260);
     assert!(
         target
             .join(".git/hooks/fsmonitor-watchman.sample")
             .as_os_str()
-            .len()
+            .encode_wide()
+            .count()
             > 260
     );
 
