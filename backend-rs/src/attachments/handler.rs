@@ -101,14 +101,34 @@ fn is_image_context(context: &SubtaskContextRow) -> bool {
         && IMAGE_EXTENSIONS.contains(&extension.as_str())
 }
 
+/// `download_purpose = "preview" if purpose == "preview" else "download"`:
+/// the session method's access-purpose override (`only 'preview' is
+/// honoured`).
+fn session_download_purpose(purpose: Option<&str>) -> DownloadPurpose {
+    if purpose == Some("preview") {
+        DownloadPurpose::Preview
+    } else {
+        DownloadPurpose::Download
+    }
+}
+
+/// `disposition=("inline" if download_purpose in ("playback", "preview") else
+/// "attachment")`.
+fn attachment_disposition(download_purpose: DownloadPurpose) -> &'static str {
+    match download_purpose {
+        DownloadPurpose::Playback | DownloadPurpose::Preview => "inline",
+        DownloadPurpose::Download | DownloadPurpose::Share => "attachment",
+    }
+}
+
 /// Handler body for `GET /api/attachments/{attachment_id}/download`.
 ///
 /// The source authenticates the request with, in order, a
 /// `download_token` query parameter (method 1), a `share_token` query
 /// parameter (method 2), the bearer session JWT (method 3), or the
-/// anonymous browser redirect (method 4). Methods 1 and 3 are implemented;
-/// a request carrying neither falls through to the source's non-browser
-/// outcome, `401 Authentication required`.
+/// anonymous browser redirect (method 4). Methods 1-3 are implemented; a
+/// request carrying none falls through to the source's non-browser outcome,
+/// `401 Authentication required`.
 ///
 /// The resolved purpose selects both the file disposition
 /// (`playback`/`preview` stream inline, everything else attaches) and the
@@ -117,6 +137,8 @@ pub(super) async fn download_attachment(
     state: &Arc<AppState>,
     attachment_id: i64,
     download_token: Option<&str>,
+    share_token: Option<&str>,
+    purpose: Option<&str>,
     user: Option<&UserRow>,
 ) -> Result<AttachmentDownload, crate::http_compat::FastApiError> {
     // The source tests `if download_token:` first, so an empty parameter is
@@ -141,27 +163,53 @@ pub(super) async fn download_attachment(
                     return Err(internal_error());
                 }
             };
-            let context = get_attachment_context(state, attachment_id, &resolved.user).await?;
+            let context =
+                get_attachment_context(state, attachment_id, resolved.user.users_id).await?;
             (context, resolved.purpose)
         }
-        // Method 3: the bearer session JWT (`get_current_user_optional`).
-        None => {
-            let Some(user) = user else {
-                // No authentication provided: the source falls back to share
-                // tokens and browser redirects; without either, 401.
-                return Err(error_response(
-                    StatusCode::UNAUTHORIZED,
-                    "Authentication required",
-                ));
-            };
-            let context = get_attachment_context(state, attachment_id, user).await?;
-            (context, DownloadPurpose::Download)
-        }
+        // Method 2: the public shared-task share token. The access check owns
+        // the task/subtask/owner chain; a granted viewer then re-reads the
+        // context directly (`get_context_optional`, no `_ensure_attachment_access`).
+        None => match share_token.filter(|token| !token.is_empty()) {
+            Some(token) => {
+                let has_access =
+                    super::share_token::validate_share_token_access(state, attachment_id, token)
+                        .await?;
+                if !has_access {
+                    return Err(attachment_not_found());
+                }
+                let context =
+                    match context_store::get_context_optional(&state.mysql, attachment_id).await {
+                        Ok(context) => context,
+                        Err(error) => {
+                            tracing::error!(%error, "attachment share context lookup failed");
+                            return Err(internal_error());
+                        }
+                    };
+                let Some(context) = context else {
+                    return Err(attachment_not_found());
+                };
+                (context, DownloadPurpose::Share)
+            }
+            // Method 3: the bearer session JWT (`get_current_user_optional`).
+            None => {
+                let Some(user) = user else {
+                    // No authentication provided: the source falls back to
+                    // the anonymous browser redirect; without it, 401.
+                    return Err(error_response(
+                        StatusCode::UNAUTHORIZED,
+                        "Authentication required",
+                    ));
+                };
+                let context = get_attachment_context(state, attachment_id, user.users_id).await?;
+                // `download_purpose = "preview" if purpose == "preview" else
+                // "download"`: only the session method honours the override.
+                let download_purpose = session_download_purpose(purpose);
+                (context, download_purpose)
+            }
+        },
     };
-    let disposition = match download_purpose {
-        DownloadPurpose::Playback => "inline",
-        DownloadPurpose::Download => "attachment",
-    };
+    let disposition = attachment_disposition(download_purpose);
 
     // `_require_attachment_download_allowed(db, context, download_purpose)`:
     // the knowledge-document policy probe (`knowledge_documents` by
@@ -170,11 +218,15 @@ pub(super) async fn download_attachment(
     let policy_purpose = match download_purpose {
         DownloadPurpose::Playback => super::download_policy::Purpose::Playback,
         DownloadPurpose::Download => super::download_policy::Purpose::Download,
+        DownloadPurpose::Share => super::download_policy::Purpose::Share,
+        DownloadPurpose::Preview => super::download_policy::Purpose::Preview,
     };
+    let file_extension = context.file_extension();
     match super::download_policy::require_attachment_download_allowed(
         &state.mysql,
         attachment_id,
         &context.mime_type(),
+        Some(&file_extension),
         policy_purpose,
     )
     .await
@@ -272,10 +324,13 @@ pub(super) async fn download_attachment(
 /// (`context_service.get_context_optional`), require the `attachment`
 /// context type, and run `_ensure_attachment_access`; every failure is the
 /// source's 404 `Attachment not found`.
-async fn get_attachment_context(
+///
+/// The JWT-authenticated download endpoint and the attachment playback
+/// endpoint share this resolution.
+pub(super) async fn get_attachment_context(
     state: &Arc<AppState>,
     attachment_id: i64,
-    user: &UserRow,
+    user_id: i32,
 ) -> Result<SubtaskContextRow, crate::http_compat::FastApiError> {
     let context = match context_store::get_context_optional(&state.mysql, attachment_id).await {
         Ok(context) => context,
@@ -294,7 +349,7 @@ async fn get_attachment_context(
         &*state.task_store,
         &state.mysql,
         &context,
-        user,
+        user_id,
     )
     .await
     {
@@ -325,31 +380,15 @@ fn storage_failure() -> crate::http_compat::FastApiError {
     )
 }
 
-fn internal_error() -> crate::http_compat::FastApiError {
+pub(super) fn internal_error() -> crate::http_compat::FastApiError {
     error_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
 }
 
 /// `get_storage_backend` configuration for the `minio`/`s3` backends
 /// (`ATTACHMENT_S3_*`); `None` when not configured, leaving the `mysql`
-/// backend in effect. Like every source `settings.*` read, the values come
-/// from the process environment or the source-compatible `/app/.env` dotenv
-/// file (`app/core/config.py` `Settings`, `env_file=".env"`).
+/// backend in effect.
 fn minio_config_from_env() -> Option<MinioConfig> {
-    let endpoint = crate::config::env_or_dotenv("ATTACHMENT_S3_ENDPOINT").unwrap_or_default();
-    let access_key = crate::config::env_or_dotenv("ATTACHMENT_S3_ACCESS_KEY").unwrap_or_default();
-    let secret_key = crate::config::env_or_dotenv("ATTACHMENT_S3_SECRET_KEY").unwrap_or_default();
-    if endpoint.is_empty() || access_key.is_empty() || secret_key.is_empty() {
-        return None;
-    }
-    Some(MinioConfig {
-        endpoint,
-        access_key,
-        secret_key,
-        bucket: crate::config::env_or_dotenv("ATTACHMENT_S3_BUCKET")
-            .unwrap_or_else(|| "attachments".to_string()),
-        region: crate::config::env_or_dotenv("ATTACHMENT_S3_REGION")
-            .unwrap_or_else(|| "us-east-1".to_string()),
-    })
+    MinioConfig::from_env()
 }
 
 #[cfg(test)]
@@ -414,5 +453,37 @@ mod tests {
         assert!(is_latin1("\u{e9}"));
         assert!(!is_latin1("\u{100}"));
         assert!(!is_latin1("示例"));
+    }
+
+    #[test]
+    fn session_purpose_honours_only_the_exact_preview_override() {
+        assert_eq!(
+            session_download_purpose(Some("preview")),
+            DownloadPurpose::Preview
+        );
+        assert_eq!(
+            session_download_purpose(Some("playback")),
+            DownloadPurpose::Download
+        );
+        assert_eq!(
+            session_download_purpose(Some("PREVIEW")),
+            DownloadPurpose::Download
+        );
+        assert_eq!(
+            session_download_purpose(Some("")),
+            DownloadPurpose::Download
+        );
+        assert_eq!(session_download_purpose(None), DownloadPurpose::Download);
+    }
+
+    #[test]
+    fn preview_streams_inline_like_playback() {
+        assert_eq!(attachment_disposition(DownloadPurpose::Preview), "inline");
+        assert_eq!(attachment_disposition(DownloadPurpose::Playback), "inline");
+        assert_eq!(
+            attachment_disposition(DownloadPurpose::Download),
+            "attachment"
+        );
+        assert_eq!(attachment_disposition(DownloadPurpose::Share), "attachment");
     }
 }

@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// `SUPPORTED_PROVIDERS`.
 const SUPPORTED_PROVIDERS: [&str; 5] = ["github", "gitlab", "gitee", "gitea", "gerrit"];

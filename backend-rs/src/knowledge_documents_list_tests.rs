@@ -198,28 +198,103 @@ fn processing_error_invalid_payloads_are_hidden() {
 #[test]
 fn params_defaults_match_source() {
     let params =
-        parse_params(Some("210837"), None, None, None, None, None, None, None).expect("valid");
+        parse_params(210837, None, None, None, None, None, None, None, None).expect("valid");
     assert_eq!(params.knowledge_base_id, 210837);
     assert_eq!(params.sort_by, "createdAt");
     assert_eq!(params.sort_order, "desc");
     assert_eq!(params.limit, 50);
     assert_eq!(params.offset, 0);
     assert!(!params.include_subfolders);
-    assert!(parse_params(None, None, None, None, None, None, None, None).is_err());
-    assert!(parse_params(Some("abc"), None, None, None, None, None, None, None).is_err());
+    assert!(params.origin.is_none());
     assert!(
         parse_params(
-            Some("1"),
+            1,
             None,
             None,
             None,
             Some("bogus".to_string()),
             None,
             None,
+            None,
             None
         )
         .is_err()
     );
-    assert!(parse_params(Some("1"), None, None, None, None, None, Some("0"), None).is_err());
-    assert!(parse_params(Some("1"), Some("-1"), None, None, None, None, None, None).is_err());
+    assert!(parse_params(1, None, None, None, None, None, None, Some("0"), None).is_err());
+    assert!(parse_params(1, Some("-1"), None, None, None, None, None, None, None).is_err());
+    assert!(
+        parse_params(
+            1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("bogus".to_string()),
+            None,
+            None
+        )
+        .is_err()
+    );
+    assert_eq!(
+        parse_params(
+            1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("generated".to_string()),
+            None,
+            None
+        )
+        .unwrap()
+        .origin
+        .as_deref(),
+        Some("generated")
+    );
+}
+
+#[test]
+fn knowledge_base_id_sources_validate_like_fastapi() {
+    // The path endpoint requires a parsable id (`loc: ["path", ...]`).
+    assert_eq!(parse_knowledge_base_id_path("236829").unwrap(), 236829);
+    let error = parse_knowledge_base_id_path("abc").unwrap_err();
+    assert_eq!(
+        error.validation_detail(),
+        r#"[{"type":"int_parsing","loc":["path","knowledge_base_id"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"abc"}]"#
+    );
+    // The open endpoint requires the query parameter (`loc: ["query", ...]`).
+    assert_eq!(
+        parse_knowledge_base_id_query(Some("210837")).unwrap(),
+        210837
+    );
+    assert!(parse_knowledge_base_id_query(None).is_err());
+    assert!(parse_knowledge_base_id_query(Some("abc")).is_err());
+}
+
+#[test]
+fn list_response_field_order_matches_schema() {
+    let response = KnowledgeDocumentListResponse {
+        total: 3,
+        returned_count: 1,
+        limit: 500,
+        offset: 0,
+        has_more: true,
+        items: vec![build_item(
+            doc_row(flat_splitter(), StoredSourceConfig::default(), "success", 1),
+            Some("zhaoliu".to_string()),
+        )],
+    };
+    let body = serde_json::to_string(&response).unwrap();
+    assert!(body.starts_with(
+        r#"{"total":3,"returned_count":1,"limit":500,"offset":0,"has_more":true,"items":[{"id":1"#
+    ));
+    assert!(body.ends_with(r#""updated_at":"2026-09-02T07:47:06"}]}"#));
+}
+
+#[test]
+fn false_like_escape_matches_source() {
+    assert_eq!(escape_sql_like("a%b_c\\d"), "a\\%b\\_c\\\\d");
+    assert_eq!(mysql_string_literal("a\\%b"), "'a\\\\%b'");
 }

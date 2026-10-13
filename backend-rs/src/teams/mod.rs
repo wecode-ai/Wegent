@@ -16,6 +16,7 @@ pub mod recent_teams;
 pub mod team_conversion;
 pub mod team_skills;
 pub mod team_union;
+pub mod team_union_lookups;
 pub mod teams_repository;
 
 mod handler;

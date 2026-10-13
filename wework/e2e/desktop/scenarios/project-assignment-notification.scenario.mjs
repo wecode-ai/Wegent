@@ -608,6 +608,7 @@ export function createDesktopScenario({
         REMOTE_DOCKER_DEVICE_ID,
         'remote'
       )
+      const currentApp = await cloudEnvironment.waitForConnectedAppDevice()
       assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
       await configureFirstProjectExecutionEnvironment(
         control,
@@ -695,8 +696,8 @@ export function createDesktopScenario({
       runtimeTaskId = binding.task_id
       assert.equal(
         binding.device_id,
-        remoteDevice.device_id,
-        'AI assistance must use the prepared remote environment, not Local Executor'
+        currentApp.app_device_id ?? currentApp.device_id,
+        'Human AI assistance must run on the current computer even when the project environment is remote'
       )
       assert.equal(binding.assignment_id, notification.payload.assignmentId)
       assert.equal(binding.task_title, ISSUE)
@@ -739,7 +740,7 @@ export function createDesktopScenario({
 
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
       assert.equal(binding.modelSelection?.modelName, MODEL)
-      // Change the new-chat default without sending, then reopen the bound remote
+      // Change the new-chat default without sending, then reopen the bound personal
       // task through the Issue drawer. Its model must come from the binding.
       await control.command('click', '[data-testid="cloud-todo-create-task"]', { visible: true })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, taskPanel)
@@ -762,7 +763,7 @@ export function createDesktopScenario({
           DEFAULT_MODEL_LABEL
         ),
         false,
-        'The bound remote task inherited the unrelated new-chat default'
+        'The bound personal task inherited the unrelated new-chat default'
       )
       await captureScreenshot(control, 'assignment-04-bound-task-model-preserved.png', CONTENT)
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })

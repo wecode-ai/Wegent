@@ -1,4 +1,5 @@
 import { constants } from 'node:fs'
+import { basename, normalize, resolve } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 
 import { prepareDesktopE2EBuild, resolvePackagedDesktopE2EBuild } from './desktop-e2e-build.mjs'
@@ -31,7 +32,10 @@ describe('resolvePackagedDesktopE2EBuild', () => {
       },
     ],
   ])('resolves the packaged binaries for $platform-$arch', (runtime, expected) => {
-    expect(resolvePackagedDesktopE2EBuild('/repo/wework', runtime)).toEqual(expected)
+    expect(resolvePackagedDesktopE2EBuild('/repo/wework', runtime)).toEqual({
+      appBinary: normalize(expected.appBinary),
+      executorBinary: normalize(expected.executorBinary),
+    })
   })
 })
 
@@ -49,10 +53,12 @@ describe('prepareDesktopE2EBuild', () => {
         weworkDir: '/repo/wework',
       })
     ).resolves.toEqual({
-      appBinary:
-        '/repo/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork',
-      executorBinary:
-        '/repo/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor',
+      appBinary: normalize(
+        '/repo/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork'
+      ),
+      executorBinary: normalize(
+        '/repo/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor'
+      ),
     })
     expect(runBuild).toHaveBeenCalledOnce()
     expect(checkAccess).toHaveBeenCalledTimes(2)
@@ -74,8 +80,8 @@ describe('prepareDesktopE2EBuild', () => {
         weworkDir: '/repo/wework',
       })
     ).resolves.toEqual({
-      appBinary: '/tmp/WeWork',
-      executorBinary: '/tmp/wegent-executor',
+      appBinary: resolve('/tmp/WeWork'),
+      executorBinary: resolve('/tmp/wegent-executor'),
     })
     expect(runBuild).not.toHaveBeenCalled()
     expect(checkAccess).toHaveBeenCalledTimes(2)
@@ -93,7 +99,7 @@ describe('prepareDesktopE2EBuild', () => {
 
   test('fails when the build command does not produce an executable application', async () => {
     const checkAccess = vi.fn(async path => {
-      if (path.endsWith('/WeWork')) throw new Error('missing')
+      if (basename(path) === 'WeWork') throw new Error('missing')
     })
 
     await expect(
@@ -105,7 +111,7 @@ describe('prepareDesktopE2EBuild', () => {
         weworkDir: '/repo/wework',
       })
     ).rejects.toThrow(
-      'Wework desktop E2E application is not executable: /repo/wework/electron/release/WeWork-linux-x64/WeWork'
+      `Wework desktop E2E application is not executable: ${normalize('/repo/wework/electron/release/WeWork-linux-x64/WeWork')}`
     )
   })
 })

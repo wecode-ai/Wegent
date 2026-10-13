@@ -33,7 +33,11 @@
 //!    Starlette `Response.init_headers` charset rule.
 //!
 //! The download-token, share-token, and anonymous-browser-redirect methods
-//! share steps 2-8; the recorded case uses the JWT method.
+//! share steps 2-8. The JWT method is the recorded path; the download-token
+//! credential lives in `download_token.rs`, and the share-token method
+//! (`share_token.rs`) authenticates a public shared-task viewer through the
+//! `SHARE_TOKEN_AES_*` AES token before the same context/policy/storage
+//! pipeline.
 //!
 //! `GET /api/attachments/download/shared` (`public_download_attachment`)
 //! is the public share-link variant: a signed token in the `token` query
@@ -51,7 +55,10 @@ pub mod executor_download;
 pub mod external_media;
 pub mod handler;
 pub mod minio_client;
+pub mod playback;
 pub mod public_link;
 pub mod s3_signing;
+pub mod share_token;
 pub mod shared_download;
 pub mod storage;
+pub mod upload;

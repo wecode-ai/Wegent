@@ -24,6 +24,7 @@ import type {
   createLocalProjectChatAgentApi,
 } from '@/api/local/localDelivery'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import type { RuntimeBackgroundTerminalsApi } from '@/api/runtimeBackgroundTerminals'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
@@ -178,7 +179,7 @@ export interface WorkbenchServices {
   projectSpaceApis?: ProjectSpaceApis
   projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
-  runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
+  runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi> & Partial<RuntimeBackgroundTerminalsApi>
   /** Backend-free execution ports for locally owned projects in a connected workbench. */
   localExecutionServices?: Pick<WorkbenchServices, 'runtimeWorkApi' | 'deviceApi'>
   composerCatalogApi?: Pick<ReturnType<typeof createRuntimeComposerApi>, 'readCatalog'>

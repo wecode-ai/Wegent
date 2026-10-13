@@ -3555,13 +3555,7 @@ describe('CloudTodoWorkspace', () => {
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
         version: 1,
-        title: item.title,
-        description: item.description,
-        priority: item.priority,
-        status: item.status,
         parent_id: 'WEG-2',
-        start_at: null,
-        due_at: null,
         tags: [],
       })
     )
@@ -4987,12 +4981,6 @@ describe('CloudTodoWorkspace', () => {
       expect(workbenchServices.deliveryApi?.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
         version: 1,
         title: 'Updated TODO',
-        description: 'Use the shared workspace',
-        parent_id: null,
-        priority: 'high',
-        status: 'in_progress',
-        start_at: null,
-        due_at: null,
         tags: [],
       })
     )

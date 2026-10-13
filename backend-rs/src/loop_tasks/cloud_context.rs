@@ -86,9 +86,10 @@ async fn cloud_context(
         visibility: &visibility,
         provider_is_local: project_task_provider(&project) == "local",
         created_by_user_id: project.created_by_user_id,
+        default_issue_security: project_default_issue_security(&project),
     };
     let loop_item = match item_row {
-        Some(item) => Some(response_values(state, &item, current_user, &facts).await?),
+        Some(item) => Some(response_values(state, &item, current_user, &facts, None).await?),
         None => None,
     };
 
@@ -101,9 +102,13 @@ async fn cloud_context(
         task_id: binding.task_id.clone(),
         task_title: normalize_empty_text(binding.task_title.as_deref()),
         backend_task_id: normalize_backend_task_id(binding.backend_task_id),
-        model_selection: binding.model_selection(),
+        model_selection: None,
         workflow_node_id: binding.workflow_node_id(),
-        change_requests: binding.change_requests(),
+        human_assignment_id: None,
+        dispatch_id: None,
+        dispatch_round_id: None,
+        assignment_id: None,
+        change_requests: Vec::new(),
         linked_by_user_id: binding.linked_by_user_id,
         linked_at: datetime_value(binding.linked_at),
         unlinked_at: match binding.unlinked_at {
@@ -166,10 +171,36 @@ fn project_task_provider(project: &cloud_projects::ProjectListRow) -> String {
         .to_string()
 }
 
+/// `default_issue_security(project)` (`app.services.loop_items.access`):
+/// `related` only when the project metadata sets it, otherwise `open`.
+fn project_default_issue_security(project: &cloud_projects::ProjectListRow) -> &'static str {
+    if project
+        .metadata
+        .as_ref()
+        .and_then(|json| json.0.value.as_ref())
+        .and_then(|metadata| metadata.default_issue_security.as_deref())
+        == Some("related")
+    {
+        "related"
+    } else {
+        "open"
+    }
+}
+
 /// `CloudTaskContextResponse` body: the binding fields plus the project and
-/// (optional) loop item. Field declaration order follows the source pydantic
-/// model (`LoopItemTaskBindingResponse` then the `CloudTaskContextResponse`
-/// extras).
+/// (optional) loop item.
+///
+/// The source builds this from `{**binding.__dict__, "workflow_node_id":
+/// binding.workflow_node_id, ...}` (`find_runtime_task_cloud_context`). A
+/// SQLAlchemy instance `__dict__` carries only mapped columns (keyed by
+/// attribute name, so the `metadata_json` column is ignored by the pydantic
+/// model) plus `workflow_node_id`, which the source injects explicitly from its
+/// property. Every other `LoopItemTaskBindingResponse` field therefore takes
+/// its pydantic default: `modelSelection`, `human_assignment_id`, `dispatch_id`,
+/// `dispatch_round_id`, and `assignment_id` are always `null`, and
+/// `change_requests` is always `[]` — even when the binding metadata defines
+/// them. Field declaration order follows the source pydantic model
+/// (`LoopItemTaskBindingResponse` then the `CloudTaskContextResponse` extras).
 #[derive(Debug, Serialize)]
 struct CloudTaskContextBody {
     id: String,
@@ -183,6 +214,10 @@ struct CloudTaskContextBody {
     #[serde(rename = "modelSelection")]
     model_selection: Option<serde_json::Value>,
     workflow_node_id: Option<String>,
+    human_assignment_id: Option<String>,
+    dispatch_id: Option<String>,
+    dispatch_round_id: Option<String>,
+    assignment_id: Option<String>,
     change_requests: Vec<serde_json::Value>,
     linked_by_user_id: i32,
     linked_at: Option<String>,
@@ -268,5 +303,67 @@ mod tests {
         };
         assert_eq!(project_visibility(&project), "private");
         assert_eq!(project_task_provider(&project), "local");
+    }
+
+    /// The source builds the response from `{**binding.__dict__, ...}`, so only
+    /// `workflow_node_id` is injected from a binding property. `modelSelection`,
+    /// the dispatch/assignment ids, and `change_requests` must render their
+    /// pydantic defaults (`null` / `[]`) even when the binding metadata defines
+    /// a `model_selection` object, and the defaulted fields must still be
+    /// present in the body.
+    #[test]
+    fn metadata_backed_fields_render_the_source_defaults() {
+        let project = cloud_projects::ProjectListRow {
+            id: "1".to_string(),
+            public_id: None,
+            project_key: None,
+            name: None,
+            description: None,
+            created_by_user_id: 0,
+            status: "active".to_string(),
+            version: 1,
+            created_at: None,
+            updated_at: None,
+            metadata: None,
+        };
+        let body = CloudTaskContextBody {
+            id: "1".to_string(),
+            cloud_project_id: "2".to_string(),
+            loop_item_id: None,
+            task_user_id: 52,
+            device_id: "d".to_string(),
+            task_id: "t".to_string(),
+            task_title: None,
+            backend_task_id: None,
+            model_selection: None,
+            workflow_node_id: Some("node-1".to_string()),
+            human_assignment_id: None,
+            dispatch_id: None,
+            dispatch_round_id: None,
+            assignment_id: None,
+            change_requests: Vec::new(),
+            linked_by_user_id: 52,
+            linked_at: Some("2026-10-12T03:41:20".to_string()),
+            unlinked_at: None,
+            project: ProjectProjection::from_body(cloud_projects::CloudProjectBody::from_project(
+                &project, 52, "qindi", "Owner",
+            )),
+            loop_item: None,
+        };
+
+        let value = serde_json::to_value(&body).expect("body serializes");
+        assert!(value.get("modelSelection").is_some());
+        assert!(value["modelSelection"].is_null());
+        assert_eq!(value["workflow_node_id"], serde_json::json!("node-1"));
+        assert_eq!(value["change_requests"], serde_json::json!([]));
+        for key in [
+            "human_assignment_id",
+            "dispatch_id",
+            "dispatch_round_id",
+            "assignment_id",
+        ] {
+            assert!(value.get(key).is_some(), "{key} must be present");
+            assert!(value[key].is_null(), "{key} must be null");
+        }
     }
 }

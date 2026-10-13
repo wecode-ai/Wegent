@@ -13,8 +13,8 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::json_compat::OpaqueJson;
 use brz_http::{Client, Endpoint};
+use brz_json::OpaqueJson;
 
 use crate::config::OidcConfig;
 
@@ -158,6 +158,43 @@ impl OidcService {
         if let Ok(mut cache) = self.metadata.lock() {
             *cache = Some(metadata);
         }
+    }
+
+    /// Builds the provider authorization URL, mirroring
+    /// `app/services/oidc.py::get_authorization_url`.
+    ///
+    /// The metadata is fetched (and cached) first; a missing
+    /// `authorization_endpoint` raises the source's
+    /// `HTTPException(502, "Missing authorization_endpoint in OIDC metadata")`.
+    /// The query string uses the source's `urlencode` (`quote_plus`) encoding
+    /// in the source dict's insertion order.
+    pub async fn get_authorization_url(
+        &self,
+        config: &OidcConfig,
+        state: &str,
+        nonce: &str,
+    ) -> Result<String, OidcError> {
+        let metadata = self.get_metadata().await?.to_value();
+        let authorization_endpoint = metadata
+            .get("authorization_endpoint")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                OidcError::MetadataField(
+                    "Missing authorization_endpoint in OIDC metadata".to_string(),
+                )
+            })?;
+        let params = [
+            ("response_type", "code"),
+            ("client_id", config.client_id.as_str()),
+            ("redirect_uri", config.redirect_uri.as_str()),
+            ("scope", "openid email profile"),
+            ("state", state),
+            ("nonce", nonce),
+        ];
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(params)
+            .finish();
+        Ok(format!("{authorization_endpoint}?{query}"))
     }
 
     /// Exchange an authorization code at the provider's token endpoint.

@@ -8,15 +8,19 @@
 //! `app/services/chat/compaction_checkpoint.py:resolve_history_subtasks`,
 //! including fork-aware lineage resolution
 //! (`app/services/task_fork_history.py`).
-use crate::json_compat::{python_json_value, raw_json};
+use crate::json_compat::python_json_value;
 use brz_http_server::Query as HttpQuery;
+use brz_json::raw_json;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
 use crate::attachment_block as blocks;
+use crate::attachments::context_store::python_media_scalar;
+use crate::attachments::external_media::ExternalMediaReference;
 use crate::chat_repository::{ChatHistoryRepository, SubtaskContextRow, SubtaskRow, TaskForkSpec};
 use crate::internal_auth::http_error::HttpError;
+use crate::state::AppState;
 
 /// Query parameters of the history endpoint.
 #[derive(Debug, Default, Deserialize)]
@@ -47,8 +51,8 @@ const CANCELLED_ASSISTANT_CONTEXT_NOTE: &str =
 #[serde(untagged)]
 pub enum MessageContent {
     Text(String),
-    Blocks(Vec<Box<serde_json::value::RawValue>>),
-    Raw(Box<serde_json::value::RawValue>),
+    Blocks(Vec<brz_json::RawJson>),
+    Raw(brz_json::RawJson),
 }
 
 fn opaque_blocks(blocks: Vec<Value>) -> MessageContent {
@@ -61,14 +65,14 @@ pub struct Message {
     pub id: String,
     pub role: String,
     pub content: MessageContent,
-    pub name: Option<Box<serde_json::value::RawValue>>,
-    pub tool_call_id: Option<Box<serde_json::value::RawValue>>,
-    pub tool_calls: Option<Box<serde_json::value::RawValue>>,
-    pub reasoning_content: Option<Box<serde_json::value::RawValue>>,
+    pub name: Option<brz_json::RawJson>,
+    pub tool_call_id: Option<brz_json::RawJson>,
+    pub tool_calls: Option<brz_json::RawJson>,
+    pub reasoning_content: Option<brz_json::RawJson>,
     pub created_at: Option<String>,
-    pub loaded_skills: Option<Box<serde_json::value::RawValue>>,
-    pub model_info: Option<Box<serde_json::value::RawValue>>,
-    pub metadata: Option<Box<serde_json::value::RawValue>>,
+    pub loaded_skills: Option<brz_json::RawJson>,
+    pub model_info: Option<brz_json::RawJson>,
+    pub metadata: Option<brz_json::RawJson>,
 }
 
 #[derive(serde::Serialize)]
@@ -336,6 +340,23 @@ fn build_document_text_prefix(
 /// reference is surfaced as a trailing `{"fid": ...}` line. The name and mime
 /// type fall back to `video` and `video/mp4` when the context omits them.
 fn build_video_history_metadata_text(context: &SubtaskContextRow) -> String {
+    let header = video_metadata_header(context);
+    // `json.dumps({"fid": fid})` when `type_data["fid"]` is truthy.
+    match context
+        .type_data
+        .as_ref()
+        .and_then(|json| json.0.get("fid"))
+    {
+        Some(fid) if !json_falsy(fid) => {
+            format!("{header}\n{{\"fid\": {}}}\n", python_json_value(fid))
+        }
+        _ => format!("{header}\n"),
+    }
+}
+
+/// `build_video_attachment_header`: the shared `[Video Attachment: ...]`
+/// header with its name/mime fallbacks and no URL or sandbox segment.
+fn video_metadata_header(context: &SubtaskContextRow) -> String {
     let filename = {
         let original = context.original_filename();
         if !original.is_empty() {
@@ -354,27 +375,46 @@ fn build_video_history_metadata_text(context: &SubtaskContextRow) -> String {
             mime_type
         }
     };
-    let header = format!(
+    format!(
         "[Video Attachment: {filename} | ID: {} | Type: {mime_type} | Size: {}]",
         context.id,
         blocks::format_file_size(context.file_size()),
-    );
-    // `json.dumps({"fid": fid})` when `type_data["fid"]` is truthy.
-    match context
-        .type_data
-        .as_ref()
-        .and_then(|json| json.0.get("fid"))
-    {
-        Some(fid) if !json_falsy(fid) => {
-            format!("{header}\n{{\"fid\": {}}}\n", python_json_value(fid))
+    )
+}
+
+/// The reference name/value pair of `build_video_metadata_text`'s trailing
+/// `json.dumps` line (`resolve_external_attachment_reference`). `None` when
+/// the attachment carries no reference at all — the source raises
+/// `VideoAttachmentResolutionError` there.
+fn video_metadata_reference(context: &SubtaskContextRow) -> Option<(String, String)> {
+    let type_data = context.type_data.as_ref().map(|json| &json.0)?;
+    // `_stored_media_reference` first: a persisted upload id wins over `fid`.
+    for key in ["weibo_video_upload", "weibo_audio_upload"] {
+        if let Some(media_id) = type_data
+            .get(key)
+            .and_then(|upload| upload.get("media_id"))
+            .filter(|value| !json_falsy(value))
+        {
+            return Some(("media_id".to_string(), python_media_scalar(media_id)));
         }
-        _ => format!("{header}\n"),
     }
+    if let Some(media_id) = type_data
+        .get("video_metadata")
+        .and_then(|video| video.get("media_id"))
+        .filter(|value| !json_falsy(value))
+    {
+        return Some(("media_id".to_string(), python_media_scalar(media_id)));
+    }
+    type_data
+        .get("fid")
+        .filter(|value| !json_falsy(value))
+        .map(|fid| ("fid".to_string(), python_media_scalar(fid)))
 }
 
 /// Convert one subtask into response messages (`subtask_to_messages`).
 #[allow(clippy::too_many_arguments)]
 async fn subtask_to_messages(
+    app: &AppState,
     repository: &ChatHistoryRepository<'_>,
     subtask: &SubtaskRow,
     is_group_chat: bool,
@@ -407,6 +447,7 @@ async fn subtask_to_messages(
             .map_err(HttpError::internal)?;
 
         let content = build_user_message_content(
+            app,
             contexts,
             &text_content,
             extra_blocks,
@@ -416,7 +457,8 @@ async fn subtask_to_messages(
             inject_max_chars,
             subtask.task_id,
             subtask.id,
-        );
+        )
+        .await?;
         return Ok(vec![Message {
             id: subtask.id.to_string(),
             role: "user".to_string(),
@@ -437,14 +479,7 @@ async fn subtask_to_messages(
 
 /// Python truthiness of a JSON value (`if not content`).
 fn json_falsy(value: &Value) -> bool {
-    match value {
-        Value::Null | Value::Bool(false) => true,
-        Value::Bool(true) => false,
-        Value::Number(number) => number.as_f64() == Some(0.0),
-        Value::String(text) => text.is_empty(),
-        Value::Array(items) => items.is_empty(),
-        Value::Object(map) => map.is_empty(),
-    }
+    !brz_json::adapters::python_truthy(value)
 }
 
 /// Python truthiness of an optional JSON field; an absent field is falsy.
@@ -458,7 +493,7 @@ fn raw_content(value: &Value) -> MessageContent {
 }
 
 /// Optional raw JSON field: an explicit `null` is absent (`MessageResponse`).
-fn optional_raw(value: Option<&Value>) -> Option<Box<serde_json::value::RawValue>> {
+fn optional_raw(value: Option<&Value>) -> Option<brz_json::RawJson> {
     value.filter(|value| !value.is_null()).map(raw_json)
 }
 
@@ -628,7 +663,8 @@ fn format_datetime(datetime: chrono::NaiveDateTime) -> String {
 /// attachment contexts with image/video/document handling and knowledge-base
 /// contexts with direct-injection loading.
 #[allow(clippy::too_many_arguments)]
-fn build_user_message_content(
+async fn build_user_message_content(
+    app: &AppState,
     contexts: Vec<SubtaskContextRow>,
     text_content: &str,
     extra_blocks: Vec<Value>,
@@ -638,14 +674,14 @@ fn build_user_message_content(
     inject_max_chars: usize,
     task_id: i64,
     subtask_id: i64,
-) -> MessageContent {
+) -> Result<MessageContent, HttpError> {
     if contexts.is_empty() {
         if extra_blocks.is_empty() {
-            return MessageContent::Text(text_content.to_string());
+            return Ok(MessageContent::Text(text_content.to_string()));
         }
         let mut blocks = vec![json!({"type": "text", "text": text_content})];
         blocks.extend(extra_blocks);
-        return opaque_blocks(blocks);
+        return Ok(opaque_blocks(blocks));
     }
 
     let attachments: Vec<&SubtaskContextRow> = contexts
@@ -661,6 +697,7 @@ fn build_user_message_content(
     let video_extensions = ["mp4", "avi", "mkv", "mov", "flv", "wmv"];
 
     let mut vision_parts: Vec<Value> = Vec::new();
+    let mut video_parts: Vec<Value> = Vec::new();
     let mut attachment_text_parts: Vec<String> = Vec::new();
 
     for context in &attachments {
@@ -697,10 +734,65 @@ fn build_user_message_content(
                 "image_url": {"url": format!("data:{};base64,{}", mime_type, context.image_base64.clone().unwrap_or_default())},
             }));
         } else if video_extensions.contains(&extension.as_str()) {
-            // Metadata-only video history shape (`build_video_history_metadata_text`).
-            // The model-readable `supports_video` branch needs the dedicated
-            // media-resolution path, which this topology does not exercise.
-            attachment_text_parts.push(build_video_history_metadata_text(context));
+            if !supports_video {
+                // Metadata-only video history shape
+                // (`build_video_history_metadata_text`).
+                attachment_text_parts.push(build_video_history_metadata_text(context));
+                continue;
+            }
+            // `build_video_content_from_attachment`: the resolver chain must
+            // produce a playback URL, else the source's
+            // `VideoAttachmentResolutionError` escapes unhandled.
+            let Some((reference_name, reference_value)) = video_metadata_reference(context) else {
+                tracing::error!(
+                    attachment_id = context.id,
+                    "video attachment is missing a media reference"
+                );
+                return Err(HttpError::internal_unhandled());
+            };
+            let reference = ExternalMediaReference::from_type_data(
+                context.type_data.as_ref().map(|json| &json.0),
+                &context.mime_type(),
+            );
+            let url = match app
+                .external_playback
+                .resolve_playback_url(&reference, i64::from(context.user_id))
+                .await
+            {
+                // `payload is None` only occurs for a non-video context; skip
+                // with the source's warning.
+                Ok(None) => {
+                    tracing::warn!(
+                        attachment_id = context.id,
+                        "history video payload resolved to None"
+                    );
+                    continue;
+                }
+                Ok(Some(playback)) => playback.url,
+                Err(error) => {
+                    // The source's uncaught `ValueError` reaches the
+                    // application's `python_exception_handler`.
+                    tracing::error!(
+                        status = %error.status(),
+                        attachment_id = context.id,
+                        "chat-history video playback resolution failed"
+                    );
+                    return Err(HttpError::internal_unhandled());
+                }
+            };
+            video_parts.push(json!({
+                "type": "input_video",
+                "video_url": url,
+                "mime_type": context.mime_type(),
+            }));
+            // `video_text = f"{payload.metadata_text}\n"`: the header plus the
+            // `json.dumps({reference.name: reference.value})` line.
+            attachment_text_parts.push(format!(
+                "{}\n{{\"{}\": {}}}\n",
+                video_metadata_header(context),
+                reference_name,
+                reference_value,
+            ));
         } else if let Some(prefix) = build_document_text_prefix(context, inject_max_chars) {
             attachment_text_parts.push(prefix);
         }
@@ -714,7 +806,6 @@ fn build_user_message_content(
 
     let mut kb_text_parts: Vec<String> = Vec::new();
     let mut current_kb_length = 0_usize;
-    let _ = supports_video;
 
     for kb_ctx in &kb_contexts {
         if remaining_space == 0 {
@@ -784,28 +875,34 @@ fn build_user_message_content(
         }));
     }
 
+    // `[context blocks..., image blocks..., video blocks..., user_msg_block,
+    // extra blocks]` — the realtime preprocessing order the history response
+    // keeps.
     if !extra_blocks.is_empty() {
         let mut all = context_blocks;
         all.extend(vision_parts);
+        all.extend(video_parts);
         all.push(json!({"type": "text", "text": text_content}));
         all.extend(extra_blocks);
-        return opaque_blocks(all);
+        return Ok(opaque_blocks(all));
     }
 
     if !context_blocks.is_empty() {
         let mut all = context_blocks;
         all.extend(vision_parts);
+        all.extend(video_parts);
         all.push(json!({"type": "text", "text": text_content}));
-        return opaque_blocks(all);
+        return Ok(opaque_blocks(all));
     }
 
-    if !vision_parts.is_empty() {
+    if !vision_parts.is_empty() || !video_parts.is_empty() {
         let mut all = vision_parts;
+        all.extend(video_parts);
         all.push(json!({"type": "text", "text": text_content}));
-        return opaque_blocks(all);
+        return Ok(opaque_blocks(all));
     }
 
-    MessageContent::Text(text_content.to_string())
+    Ok(MessageContent::Text(text_content.to_string()))
 }
 
 /// Handler body for `GET /api/internal/chat/history/{session_id}`, exposed
@@ -814,7 +911,7 @@ fn build_user_message_content(
 /// The source declares the query model with defaults for every field, so an
 /// absent query string is valid and decodes to `HistoryQuery::default()`.
 pub async fn get_chat_history_value(
-    app: &crate::state::AppState,
+    app: &AppState,
     session_id: &str,
     query: &HttpQuery<HistoryQuery>,
 ) -> Result<HistoryResponse, crate::http_compat::FastApiError> {
@@ -824,7 +921,7 @@ pub async fn get_chat_history_value(
 }
 
 async fn chat_history(
-    app: &crate::state::AppState,
+    app: &AppState,
     session_id: &str,
     query: &HistoryQuery,
 ) -> Result<HistoryResponse, HttpError> {
@@ -832,7 +929,7 @@ async fn chat_history(
 }
 
 async fn get_chat_history_inner(
-    app: &crate::state::AppState,
+    app: &AppState,
     session_id: &str,
     query: &HistoryQuery,
 ) -> Result<HistoryResponse, HttpError> {
@@ -863,6 +960,7 @@ async fn get_chat_history_inner(
     let mut messages: Vec<Message> = Vec::new();
     for item in &subtasks {
         let subtask_messages = subtask_to_messages(
+            app,
             &repository,
             &item.subtask,
             query.is_group_chat,

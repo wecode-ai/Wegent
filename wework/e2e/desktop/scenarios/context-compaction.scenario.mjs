@@ -255,124 +255,156 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
-      await createLocalProject(control, workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs)
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', COMPOSER_SELECTOR, { value: INITIAL_PROMPT })
-      await control.command(
-        'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
-        {
-          enabled: true,
+      try {
+        await createLocalProject(control, workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs)
+        await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+        await control.command('fill', COMPOSER_SELECTOR, { value: INITIAL_PROMPT })
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+          {
+            enabled: true,
+            timeoutMs: uiTimeoutMs,
+          }
+        )
+        await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: INITIAL_COMPLETION,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        await control.command('waitFor', '[data-testid="context-usage-button"]', {
           timeoutMs: uiTimeoutMs,
+        })
+        await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
+        const initialSession = currentSessionContext(initialRequest)
+        assert.equal(initialSession.api_conversation_supported, true)
+        await captureScreenshot(control, 'context-compaction-01-ready.png', 'body')
+
+        await control.command('click', '[data-testid="context-usage-button"]')
+        await control.command('waitFor', '[data-testid="confirm-compact-context-button"]', {
+          timeoutMs: uiTimeoutMs,
+        })
+        await captureScreenshot(control, 'context-compaction-02-confirm.png', 'body')
+        await control.command('click', '[data-testid="confirm-compact-context-button"]')
+
+        await waitForDisabled(control, '[data-testid="context-usage-button"]', uiTimeoutMs)
+        await control.command('waitFor', '[data-testid="context-compaction-indicator"]', {
+          text: '正在自动压缩上下文',
+          timeoutMs: uiTimeoutMs,
+        })
+        let compactionStartTimeout
+        try {
+          await Promise.race([
+            compactionStarted,
+            new Promise((_, reject) => {
+              compactionStartTimeout = setTimeout(
+                () => reject(new Error('Compaction model request did not start')),
+                modelResponseTimeoutMs
+              )
+            }),
+          ])
+        } finally {
+          clearTimeout(compactionStartTimeout)
         }
-      )
-      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: INITIAL_COMPLETION,
-        timeoutMs: modelResponseTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="context-usage-button"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
-      const initialSession = currentSessionContext(initialRequest)
-      assert.equal(initialSession.api_conversation_supported, true)
-      await captureScreenshot(control, 'context-compaction-01-ready.png', 'body')
+        assert.equal(
+          compactionRequests,
+          1,
+          'The first compact click did not start one model request'
+        )
+        const restart = JSON.parse(
+          await control.command('restartLocalCodexAppServerIfIdle', 'body')
+        )
+        assert.equal(restart.restarted, false, 'An idle restart interrupted the active compaction')
+        assert.ok(restart.activeTaskCount >= 1, 'The compaction was not tracked as an active turn')
+        const compacting = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        assert.equal(
+          compacting.pane?.status?.isBusy,
+          true,
+          'A previous completion snapshot cleared the pending compaction lifecycle'
+        )
+        assert.equal(
+          Number(
+            await control.command('getElementCount', '[data-testid="context-compaction-indicator"]')
+          ),
+          1,
+          'The running context compaction indicator was duplicated'
+        )
 
-      await control.command('click', '[data-testid="context-usage-button"]')
-      await control.command('waitFor', '[data-testid="confirm-compact-context-button"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureScreenshot(control, 'context-compaction-02-confirm.png', 'body')
-      await control.command('click', '[data-testid="confirm-compact-context-button"]')
+        await captureScreenshot(control, 'context-compaction-03-running.png', 'body')
+        releaseCompaction()
+        await control.command('waitFor', '[data-testid="context-compaction-indicator"]', {
+          text: '上下文已自动压缩',
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        assert.match(
+          await control.command('getText', '[data-testid="context-compaction-indicator"]'),
+          /上下文已自动压缩|Context compacted/
+        )
+        assert.equal(compactionRequests, 1, 'Context compaction was submitted more than once')
+        assert.equal(
+          Number(
+            await control.command('getElementCount', '[data-testid="context-compaction-indicator"]')
+          ),
+          1,
+          'The completed context compaction indicator was duplicated'
+        )
+        await captureScreenshot(control, 'context-compaction-04-completed.png', 'body')
 
-      await waitForDisabled(control, '[data-testid="context-usage-button"]', uiTimeoutMs)
-      await control.command('waitFor', '[data-testid="context-compaction-indicator"]', {
-        text: '正在自动压缩上下文',
-        timeoutMs: uiTimeoutMs,
-      })
-      await compactionStarted
-      assert.equal(compactionRequests, 1, 'The first compact click did not start one model request')
-      assert.equal(
-        Number(
-          await control.command('getElementCount', '[data-testid="context-compaction-indicator"]')
-        ),
-        1,
-        'The running context compaction indicator was duplicated'
-      )
+        await control.command('fill', COMPOSER_SELECTOR, { value: FOLLOW_UP_PROMPT })
+        await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: FOLLOW_UP_COMPLETION,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        assert.equal(
+          followUpSawCompactedContext,
+          true,
+          'The follow-up model request did not contain the compacted context summary'
+        )
+        const followUpSession = currentSessionContext(followUpRequest)
+        assert.equal(followUpSession.conversation_id, initialSession.conversation_id)
+        assert.notEqual(followUpSession.response_id, initialSession.response_id)
+        await captureScreenshot(control, 'context-compaction-05-follow-up-verified.png', 'body')
+        await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
+        // Run the interrupted-compaction coverage first: it asserts on the
+        // compaction indicators of the whole transcript, so every phase before
+        // it must leave the transcript in the state that checkpoint already
+        // established.
+        await interrupted.verify(control)
 
-      await captureScreenshot(control, 'context-compaction-03-running.png', 'body')
-      releaseCompaction()
-      await control.command('waitFor', '[data-testid="context-compaction-indicator"]', {
-        text: '上下文已自动压缩',
-        timeoutMs: modelResponseTimeoutMs,
-      })
-      assert.match(
-        await control.command('getText', '[data-testid="context-compaction-indicator"]'),
-        /上下文已自动压缩|Context compacted/
-      )
-      assert.equal(compactionRequests, 1, 'Context compaction was submitted more than once')
-      assert.equal(
-        Number(
-          await control.command('getElementCount', '[data-testid="context-compaction-indicator"]')
-        ),
-        1,
-        'The completed context compaction indicator was duplicated'
-      )
-      await captureScreenshot(control, 'context-compaction-04-completed.png', 'body')
-
-      await control.command('fill', COMPOSER_SELECTOR, { value: FOLLOW_UP_PROMPT })
-      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: FOLLOW_UP_COMPLETION,
-        timeoutMs: modelResponseTimeoutMs,
-      })
-      assert.equal(
-        followUpSawCompactedContext,
-        true,
-        'The follow-up model request did not contain the compacted context summary'
-      )
-      const followUpSession = currentSessionContext(followUpRequest)
-      assert.equal(followUpSession.conversation_id, initialSession.conversation_id)
-      assert.notEqual(followUpSession.response_id, initialSession.response_id)
-      await captureScreenshot(control, 'context-compaction-05-follow-up-verified.png', 'body')
-      await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
-      // Run the interrupted-compaction coverage first: it asserts on the
-      // compaction indicators of the whole transcript, so every phase before
-      // it must leave the transcript in the state that checkpoint already
-      // established.
-      await interrupted.verify(control)
-
-      // A compaction turn the provider rejects must surface its own failure
-      // instead of staying silent until the app-IPC deadline reports a timeout.
-      rejectCompaction = true
-      const rejectedStartedAt = Date.now()
-      await control.command('click', '[data-testid="context-usage-button"]')
-      await control.command('waitFor', '[data-testid="confirm-compact-context-button"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="confirm-compact-context-button"]')
-      const rejectedErrorTitleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-title"]`
-      await control.command('waitFor', rejectedErrorTitleSelector, {
-        timeoutMs: modelResponseTimeoutMs,
-      })
-      const rejectedCompactionElapsedMs = Date.now() - rejectedStartedAt
-      assert.ok(
-        rejectedCompactionRequests >= 1,
-        'The rejected compaction never reached the model service'
-      )
-      assert.ok(
-        rejectedCompactionElapsedMs < REJECTED_COMPACTION_TIMEOUT_MS,
-        `The rejected compaction reported after ${rejectedCompactionElapsedMs}ms`
-      )
-      const rejectedErrorTitle = await control.command('getText', rejectedErrorTitleSelector)
-      assert.doesNotMatch(
-        rejectedErrorTitle,
-        /超时|timed out/u,
-        'The rejected compaction was reported as a transport timeout'
-      )
-      await captureScreenshot(control, 'context-compaction-06-rejected.png', 'body')
-      rejectCompaction = false
+        // A compaction turn the provider rejects must surface its own failure
+        // instead of staying silent until the app-IPC deadline reports a timeout.
+        rejectCompaction = true
+        const rejectedStartedAt = Date.now()
+        await control.command('click', '[data-testid="context-usage-button"]')
+        await control.command('waitFor', '[data-testid="confirm-compact-context-button"]', {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('click', '[data-testid="confirm-compact-context-button"]')
+        const rejectedErrorTitleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-title"]`
+        await control.command('waitFor', rejectedErrorTitleSelector, {
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        const rejectedCompactionElapsedMs = Date.now() - rejectedStartedAt
+        assert.ok(
+          rejectedCompactionRequests >= 1,
+          'The rejected compaction never reached the model service'
+        )
+        assert.ok(
+          rejectedCompactionElapsedMs < REJECTED_COMPACTION_TIMEOUT_MS,
+          `The rejected compaction reported after ${rejectedCompactionElapsedMs}ms`
+        )
+        const rejectedErrorTitle = await control.command('getText', rejectedErrorTitleSelector)
+        assert.doesNotMatch(
+          rejectedErrorTitle,
+          /超时|timed out/u,
+          'The rejected compaction was reported as a transport timeout'
+        )
+        await captureScreenshot(control, 'context-compaction-06-rejected.png', 'body')
+        rejectCompaction = false
+      } finally {
+        releaseCompaction()
+      }
     },
 
     diagnostics() {

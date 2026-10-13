@@ -909,7 +909,7 @@ function hasRuntimeTaskBranchWarning(task: RuntimeTaskSummary): boolean {
 }
 
 function isRuntimeTaskWaiting(task: RuntimeTaskSummary): boolean {
-  if (task.interactionStatus === 'waitingForUserInput') return true
+  if (task.interactionStatus) return true
   const status = task.status?.trim().toLowerCase() ?? ''
   return ['waiting', 'approval', 'input', 'attention', 'blocked'].some(value =>
     status.includes(value)

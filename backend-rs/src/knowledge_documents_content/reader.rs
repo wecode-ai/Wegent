@@ -10,7 +10,7 @@
 //! `DocumentReadService.read_documents` (full SQLAlchemy-labeled
 //! projections; scalar filters inlined as literals matching the recorded
 //! COM_QUERY text).
-use crate::json_compat::JsonProjection;
+use brz_json::JsonProjection;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 #[cfg(test)]
 use serde_json::Value;
@@ -97,7 +97,7 @@ pub struct DocumentRow {
     #[allow(dead_code)]
     pub knowledge_documents_index_generation: i64,
     #[allow(dead_code)]
-    pub knowledge_documents_splitter_config: Option<Json<crate::json_compat::OpaqueJson>>,
+    pub knowledge_documents_splitter_config: Option<Json<brz_json::OpaqueJson>>,
     pub knowledge_documents_source_type: String,
     knowledge_documents_source_config: Option<Json<JsonProjection<SourceConfig>>>,
     #[allow(dead_code)]
@@ -105,9 +105,9 @@ pub struct DocumentRow {
     #[allow(dead_code)]
     pub knowledge_documents_folder_id: i64,
     #[allow(dead_code)]
-    pub knowledge_documents_summary: Option<Json<crate::json_compat::OpaqueJson>>,
+    pub knowledge_documents_summary: Option<Json<brz_json::OpaqueJson>>,
     #[allow(dead_code)]
-    pub knowledge_documents_chunks: Option<Json<crate::json_compat::OpaqueJson>>,
+    pub knowledge_documents_chunks: Option<Json<brz_json::OpaqueJson>>,
     #[allow(dead_code)]
     pub knowledge_documents_created_at: Option<chrono::NaiveDateTime>,
     #[allow(dead_code)]
@@ -211,6 +211,31 @@ where
     // document. The content read itself never consumes it.
     external_sources_by_document_ids(mysql, &[document_id]).await?;
     Ok(document)
+}
+
+/// The KB-scoped document load of the knowledge-bases detail endpoint
+/// (`db.query(KnowledgeDocument).filter(id == doc_id, kind_id == kb_id).first()`),
+/// followed by the same `selectin` external-source load.
+pub async fn document_by_id_and_kind<M>(
+    mysql: &M,
+    document_id: i64,
+    kind_id: i64,
+) -> MysqlResult<Option<DocumentRow>>
+where
+    M: Mysql,
+{
+    let row: Option<DocumentRow> = mysql
+        .fetch_optional(
+            &format!(
+                "SELECT {DOCUMENT_COLUMNS} \nFROM knowledge_documents \n\
+                 WHERE knowledge_documents.id = {document_id} \
+                 AND knowledge_documents.kind_id = {kind_id} \n LIMIT 1"
+            ),
+            (),
+        )
+        .await?;
+    external_sources_by_document_ids(mysql, &[document_id]).await?;
+    Ok(row)
 }
 
 /// `DocumentReadService._load_documents`

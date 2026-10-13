@@ -41,7 +41,6 @@ from app.schemas.base_role import BaseRole
 from app.schemas.delivery import (
     ArchivedLoopItemPageResponse,
     ArchivedLoopItemResponse,
-    CloudTaskContextResponse,
     DeliveryAssetAccessResponse,
     DeliveryAssetResponse,
     DeliveryCreate,
@@ -351,35 +350,36 @@ def find_runtime_task_loop_item(
     return _loop_item_response(db, item, current_user)
 
 
-@router.get("/runtime-tasks/cloud-context", response_model=CloudTaskContextResponse)
-def find_runtime_task_cloud_context(
-    device_id: str = Query(min_length=1),
-    task_id: str = Query(min_length=1),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> CloudTaskContextResponse:
-    binding, project, item = loop_item_service.find_cloud_context(
-        db, current_user.id, device_id, task_id
-    )
-    return CloudTaskContextResponse.model_validate(
-        {
-            **binding.__dict__,
-            "workflow_node_id": binding.workflow_node_id,
-            "project": {
-                **project.__dict__,
-                "current_user_id": current_user.id,
-                "current_user_name": current_user.user_name,
-                "access_role": cloud_project_service.access(
-                    db, project.id, current_user.id
-                ).role,
-            },
-            "loop_item": (
-                loop_item_service.response_values(db, item, current_user.id)
-                if item is not None
-                else None
-            ),
-        }
-    )
+# Migrated to Rust; cutover is configured in backend-rs/config/routes.toml.
+# @router.get("/runtime-tasks/cloud-context", response_model=CloudTaskContextResponse)
+# def find_runtime_task_cloud_context(
+#     device_id: str = Query(min_length=1),
+#     task_id: str = Query(min_length=1),
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_user),
+# ) -> CloudTaskContextResponse:
+#     binding, project, item = loop_item_service.find_cloud_context(
+#         db, current_user.id, device_id, task_id
+#     )
+#     return CloudTaskContextResponse.model_validate(
+#         {
+#             **binding.__dict__,
+#             "workflow_node_id": binding.workflow_node_id,
+#             "project": {
+#                 **project.__dict__,
+#                 "current_user_id": current_user.id,
+#                 "current_user_name": current_user.user_name,
+#                 "access_role": cloud_project_service.access(
+#                     db, project.id, current_user.id
+#                 ).role,
+#             },
+#             "loop_item": (
+#                 loop_item_service.response_values(db, item, current_user.id)
+#                 if item is not None
+#                 else None
+#             ),
+#         }
+#     )
 
 
 @router.post(

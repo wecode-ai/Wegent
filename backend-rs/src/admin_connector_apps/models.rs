@@ -9,7 +9,7 @@
 //! the object matches pydantic's key order and wire names.
 use serde::Serialize;
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// `ConnectorAppAdminResponse`.
 #[derive(Debug, Serialize)]

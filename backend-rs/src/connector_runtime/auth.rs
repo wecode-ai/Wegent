@@ -12,7 +12,7 @@
 
 use brz_http_server::StatusCode;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 use crate::apps_installed::db::{self, UserRow};
 use crate::http_compat::FastApiError;
@@ -98,12 +98,13 @@ impl brz_http_server::Authenticator<ConnectorUser> for crate::auth::AppAuthentic
     }
 }
 
-/// `aud` required by the connector-runtime audience check.
-const CONNECTOR_AUDIENCE: &str = "wegent-connector-runtime";
+/// `aud` required by the connector-runtime audience check. Shared with the
+/// token issuer so the minted and verified contracts cannot drift.
+pub(crate) const CONNECTOR_AUDIENCE: &str = "wegent-connector-runtime";
 /// `scope` required by the connector-runtime token.
-const CONNECTOR_SCOPE: &str = "connectors:invoke";
+pub(crate) const CONNECTOR_SCOPE: &str = "connectors:invoke";
 /// `token_type` required by the connector-runtime token.
-const CONNECTOR_TOKEN_TYPE: &str = "connector";
+pub(crate) const CONNECTOR_TOKEN_TYPE: &str = "connector";
 
 /// `get_connector_runtime_user`: resolve the caller from a connector token.
 pub(crate) async fn authenticate(
@@ -120,13 +121,13 @@ pub(crate) async fn authenticate(
     let Some(claims) = verify_connector_token(token, key, &state.jwt_algorithm) else {
         return Err(error("Invalid connector token"));
     };
-    if claims.token_type.0.as_deref() != Some(CONNECTOR_TOKEN_TYPE)
+    if claims.token_type.as_deref() != Some(CONNECTOR_TOKEN_TYPE)
         || claims.audience() != Some(CONNECTOR_AUDIENCE)
-        || claims.scope.0.as_deref() != Some(CONNECTOR_SCOPE)
+        || claims.scope.as_deref() != Some(CONNECTOR_SCOPE)
     {
         return Err(error("Invalid connector token scope"));
     }
-    let (Some(user_id), Some(user_name)) = (claims.user_id.0, claims.sub.0.as_deref()) else {
+    let (Some(user_id), Some(user_name)) = (claims.user_id, claims.sub.as_deref()) else {
         // `isinstance(user_id, int)` failure and a lookup with an absent
         // username both leave the caller without an active user row.
         return Err(error("Connector user unavailable"));
@@ -157,14 +158,14 @@ fn connector_token(authorization: Option<&str>) -> Option<&str> {
 /// default (`None`) instead of failing the whole token.
 #[derive(Debug, Deserialize)]
 struct ConnectorClaims {
-    #[serde(default)]
-    sub: Claim<String>,
-    #[serde(default)]
-    user_id: Claim<i64>,
-    #[serde(default)]
-    token_type: Claim<String>,
-    #[serde(default)]
-    scope: Claim<String>,
+    #[serde(default, deserialize_with = "brz_json::adapters::try_decode")]
+    sub: Option<String>,
+    #[serde(default, deserialize_with = "brz_json::adapters::try_decode")]
+    user_id: Option<i64>,
+    #[serde(default, deserialize_with = "brz_json::adapters::try_decode")]
+    token_type: Option<String>,
+    #[serde(default, deserialize_with = "brz_json::adapters::try_decode")]
+    scope: Option<String>,
     #[serde(default)]
     aud: Option<Audience>,
 }
@@ -176,29 +177,6 @@ struct ConnectorClaims {
 enum Audience {
     Single(String),
     Multiple(Vec<String>),
-}
-
-/// A claim read like `claims.get(key)` in the source: a value of the expected
-/// JSON type is kept and every other shape (including `null`) reads as absent.
-#[derive(Debug, Default)]
-struct Claim<T>(Option<T>);
-
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for Claim<T> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Input<T> {
-            Typed(T),
-            Other(serde::de::IgnoredAny),
-        }
-        Ok(match Input::deserialize(deserializer)? {
-            Input::Typed(value) => Self(Some(value)),
-            Input::Other(_) => Self(None),
-        })
-    }
 }
 
 impl ConnectorClaims {
@@ -295,10 +273,10 @@ mod tests {
     fn accepts_a_connector_token() {
         let token = make_token(TEST_KEY, &connector_claims(future_exp()));
         let claims = verify_with(TEST_KEY, "HS256", &token).expect("token verifies");
-        assert_eq!(claims.sub.0.as_deref(), Some("junshu"));
-        assert_eq!(claims.user_id.0, Some(83));
-        assert_eq!(claims.token_type.0.as_deref(), Some("connector"));
-        assert_eq!(claims.scope.0.as_deref(), Some("connectors:invoke"));
+        assert_eq!(claims.sub.as_deref(), Some("junshu"));
+        assert_eq!(claims.user_id, Some(83));
+        assert_eq!(claims.token_type.as_deref(), Some("connector"));
+        assert_eq!(claims.scope.as_deref(), Some("connectors:invoke"));
         assert_eq!(claims.audience(), Some(CONNECTOR_AUDIENCE));
     }
 
@@ -364,10 +342,10 @@ mod tests {
         let claims: ConnectorClaims =
             serde_json::from_str(r#"{"sub":123,"user_id":"83","token_type":null,"scope":["a"]}"#)
                 .expect("tolerant claim decoding never fails");
-        assert_eq!(claims.sub.0, None);
-        assert_eq!(claims.user_id.0, None);
-        assert_eq!(claims.token_type.0, None);
-        assert_eq!(claims.scope.0, None);
+        assert_eq!(claims.sub, None);
+        assert_eq!(claims.user_id, None);
+        assert_eq!(claims.token_type, None);
+        assert_eq!(claims.scope, None);
     }
 
     #[test]

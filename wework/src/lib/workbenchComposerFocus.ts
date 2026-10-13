@@ -1,4 +1,5 @@
 export const WORKBENCH_NEW_CHAT_FOCUS_EVENT = 'wework:focus-new-chat-composer'
+export const WORKBENCH_NEW_CHAT_STARTED_EVENT = 'wework:new-chat-started'
 export const WORKBENCH_COMPOSER_FOCUS_EVENT = 'wework:focus-composer'
 
 export interface WorkbenchComposerFocusDetail {
@@ -47,6 +48,7 @@ export function focusTerminalUnlessComposerFocusRequested(
 }
 
 export function requestNewChatComposerFocus() {
+  window.dispatchEvent(new Event(WORKBENCH_NEW_CHAT_STARTED_EVENT))
   window.requestAnimationFrame(() => {
     window.dispatchEvent(new Event(WORKBENCH_NEW_CHAT_FOCUS_EVENT))
   })

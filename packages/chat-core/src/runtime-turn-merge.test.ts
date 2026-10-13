@@ -63,3 +63,34 @@ describe('runtime question history reconciliation for both hosts', () => {
     expect(merged(question('request-1', accepted), snapshot)).toMatchObject({ status: 'error' })
   })
 })
+
+it('keeps live command output when a transcript read races with a later output event', () => {
+  const command = (
+    output: string,
+    status = 'inProgress',
+  ): RuntimeConversationTurn => ({
+    id: 'turn-1',
+    status: 'done',
+    items: [
+      {
+        id: 'command-1',
+        type: 'block',
+        block: {
+          id: 'command-1',
+          type: 'tool',
+          toolName: 'bash',
+          status: status === 'inProgress' ? 'streaming' : 'done',
+          createdAt: 1,
+          renderPayload: { kind: 'command_execution', status },
+          toolOutput: output,
+        },
+      },
+    ],
+  })
+  expect(
+    merged(command('tick-4\ntick-5\n'), command('tick-4\n')),
+  ).toMatchObject({ toolOutput: 'tick-4\ntick-5\n' })
+  expect(
+    merged(command('tick-4\ntick-5\n'), command('authoritative', 'completed')),
+  ).toMatchObject({ toolOutput: 'authoritative', status: 'done' })
+})

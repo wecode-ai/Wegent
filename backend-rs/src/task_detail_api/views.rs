@@ -6,11 +6,12 @@
 //! projection, the team/bot dictionaries, and the subtask/context
 //! serialization.
 use crate::json_compat::OptionalOpaqueJsonExt;
-use crate::json_compat::{JsonProjection, OpaqueJson, raw_json, raw_null};
+use brz_json::RawJson;
+use brz_json::{JsonProjection, OpaqueJson, raw_json, raw_null};
 use serde::Deserialize;
 #[cfg(test)]
 use serde_json::Map;
-use serde_json::{Value, json, value::RawValue};
+use serde_json::{Value, json};
 
 use super::assembly::{
     extract_display_prompt, iso_timestamp, sanitize_client_payload, shell_type_of,
@@ -436,7 +437,7 @@ pub(crate) async fn build_team_response(
                 )
                 .await?;
             if let Some(shell_type) = shell.as_ref().and_then(shell_type_of) {
-                agent_type = serde_json::value::to_raw_value(&match shell_type {
+                agent_type = brz_json::to_raw_value(&match shell_type {
                     "Agno" => "agno".to_owned(),
                     "ClaudeCode" => "claude".to_owned(),
                     "Dify" => "dify".to_owned(),
@@ -455,7 +456,7 @@ fn team_response(
     team_crd: &crate::crd::CrdDocument,
     spec: &TeamViewSpec,
     bots: Vec<TeamBotResponse>,
-    agent_type: Box<RawValue>,
+    agent_type: RawJson,
 ) -> TeamResponse {
     let bind_modes = spec
         .bind_mode
@@ -728,7 +729,7 @@ struct ContextTypeData {
     parent_id: Option<OpaqueJson>,
 }
 
-fn context_field(field: &Option<OpaqueJson>, enabled: bool) -> Box<RawValue> {
+fn context_field(field: &Option<OpaqueJson>, enabled: bool) -> RawJson {
     if enabled {
         field.raw_or(())
     } else {

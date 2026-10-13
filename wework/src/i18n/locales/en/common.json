@@ -4043,7 +4043,12 @@
     "runner_catalog_codex_catalog_unavailable": "Unable to read Codex models. Check the environment’s Codex account and configuration.",
     "runner_catalog_claude_provider_required": "The custom Claude service needs a provider ID.",
     "runner_catalog_claude_catalog_invalid": "The Claude model configuration is invalid.",
-    "runner_catalog_claude_catalog_unreadable": "Unable to read the environment’s Claude model configuration."
+    "runner_catalog_claude_catalog_unreadable": "Unable to read the environment’s Claude model configuration.",
+    "background_processes": "Background processes",
+    "background_terminal": "Background terminal",
+    "background_terminals_stop_all": "Stop all background terminals",
+    "background_terminals_stop_error": "Unable to stop background terminals",
+    "background_terminal_no_output": "No output yet"
   },
   "delivery": {
     "action": "Deliver",

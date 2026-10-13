@@ -1580,7 +1580,7 @@ describe('Wework collaboration workspace API', () => {
   })
 
   it.each([false, true])(
-    'uses the project environment only for human AI assistance and retains the Issue reference (human work: %s)',
+    'keeps personal tasks on the current computer and retains the Issue reference (human work: %s)',
     async humanWork => {
       const project = {
         id: 'local-environment-project',
@@ -1678,16 +1678,19 @@ describe('Wework collaboration workspace API', () => {
         }
       }
 
+      expect(detail.props.conversation?.props.initialTaskRequest).not.toHaveProperty('deviceId')
+      expect(detail.props.conversation?.props.initialTaskRequest).not.toHaveProperty(
+        'workspacePath'
+      )
       if (humanWork) {
         expect(detail.props.conversation?.props.initialTaskRequest).toMatchObject({
-          deviceId: 'prepared-device',
-          workspacePath: '/workspace/prepared-project',
+          origin: {
+            humanAssignmentId: 'human-assignment',
+            dispatchId: 'direct-human:assignment',
+            roundId: 'direct',
+            assignmentId: 'assignment',
+          },
         })
-      } else {
-        expect(detail.props.conversation?.props.initialTaskRequest).not.toHaveProperty('deviceId')
-        expect(detail.props.conversation?.props.initialTaskRequest).not.toHaveProperty(
-          'workspacePath'
-        )
       }
       expect(detail.props.conversation?.props.initialTaskInput).toContain(
         '[$#1 · Use the prepared environment](wework-issue://local-environment-project/ISSUE-ENV)'

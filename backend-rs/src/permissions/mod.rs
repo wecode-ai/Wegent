@@ -8,7 +8,13 @@ use brz_mysql::MysqlResult;
 use brz_redis::Redis;
 use std::{collections::BTreeMap, sync::Arc};
 
+mod group_roles;
 mod namespace;
+
+pub use group_roles::{
+    GroupRoleEntry, accessible_namespace_ids, effective_roles_in_groups,
+    iter_user_groups_with_roles, list_resources_by_entity_match, organization_names, user_groups,
+};
 
 /// The operation requesting an entity match. Providers may refresh identities
 /// for downloads while using cached membership for document reads.
@@ -30,6 +36,23 @@ pub trait EntityResolver<R: Redis>: Send + Sync {
         entity_ids: &[String],
         purpose: ResolutionPurpose,
     ) -> MysqlResult<Vec<String>>;
+
+    /// `IExternalEntityResolver.get_resource_ids_by_entity`: the ids of
+    /// `resource_type` the user can reach through this entity type's bindings.
+    /// The source declares this abstract and every resolver implements it.
+    ///
+    /// `mysql` is supplied by the caller because not every resolver owns a
+    /// connection (the ERP resolver holds only a provider); `registry` is passed
+    /// for resolvers that delegate to the other entity types.
+    async fn get_resource_ids_by_entity(
+        &self,
+        registry: &EntityResolvers<R>,
+        mysql: &brz_mysql::MysqlService,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_type: &str,
+        resource_type: &str,
+    ) -> MysqlResult<Vec<i64>>;
 }
 
 /// A registry scoped to one application. Unknown entity types grant no roles.
@@ -105,6 +128,33 @@ impl<R: Redis> EntityResolvers<R> {
             Some(resolver) => {
                 resolver
                     .match_bindings(&nested, redis, user_id, entity_ids, purpose)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// `IExternalEntityResolver.get_resource_ids_by_entity` for one entity
+    /// type; an unregistered type grants nothing.
+    pub async fn resource_ids_by_entity(
+        &self,
+        mysql: &brz_mysql::MysqlService,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_type: &str,
+        resource_type: &str,
+    ) -> MysqlResult<Vec<i64>> {
+        match self.resolvers.get(entity_type) {
+            Some(resolver) => {
+                resolver
+                    .get_resource_ids_by_entity(
+                        self,
+                        mysql,
+                        redis,
+                        user_id,
+                        entity_type,
+                        resource_type,
+                    )
                     .await
             }
             None => Ok(Vec::new()),

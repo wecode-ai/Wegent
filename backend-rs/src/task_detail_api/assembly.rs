@@ -11,10 +11,11 @@
 //! (task_detail_helpers.py).
 use crate::crd::{CrdDocument, reference_parts};
 use crate::json_compat::OptionalOpaqueJsonExt;
-use crate::json_compat::{JsonProjection, OpaqueJson, raw_json, raw_null};
+use brz_json::RawJson;
+use brz_json::{JsonProjection, OpaqueJson, raw_json, raw_null};
+use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
-use serde_json::{Value, value::RawValue};
 
 use super::models::{
     SubtaskAgentConfig, SubtaskBotResponse, SubtaskResponse, TaskDetailResponse, TeamResponse,
@@ -246,7 +247,7 @@ pub(crate) async fn build_task_detail(
     let typed_spec = task_crd.spec.as_ref();
     let mut git_url = String::new();
     let mut git_repo = String::new();
-    let mut git_repo_id = serde_json::value::to_raw_value(&0).unwrap();
+    let mut git_repo_id = brz_json::to_raw_value(&0).unwrap();
     let mut git_domain = String::new();
     let mut branch_name = String::new();
     if let Some((name, namespace)) =
@@ -501,8 +502,7 @@ pub(crate) async fn build_task_detail(
             user_id: bot.user_id,
             name: bot.name.clone(),
             shell_type,
-            agent_config: serde_json::value::to_raw_value(&agent_config)
-                .expect("agent config serializes"),
+            agent_config: brz_json::to_raw_value(&agent_config).expect("agent config serializes"),
             is_active: bot.is_active != 0,
             created_at: iso_timestamp(bot.created_at),
             updated_at: iso_timestamp(bot.updated_at),
@@ -556,7 +556,7 @@ async fn refresh_result_urls(
     state: &AppState,
     body: &mut TaskDetailResponse,
 ) -> anyhow::Result<()> {
-    let mut results: Vec<&mut Box<RawValue>> = Vec::with_capacity(body.subtasks.len() + 1);
+    let mut results: Vec<&mut RawJson> = Vec::with_capacity(body.subtasks.len() + 1);
     results.push(&mut body.result);
     for subtask in body.subtasks.iter_mut() {
         results.push(&mut subtask.result);
@@ -575,7 +575,7 @@ async fn refresh_result_urls(
 struct TaskDetailParts {
     git_url: String,
     git_repo: String,
-    git_repo_id: Box<RawValue>,
+    git_repo_id: RawJson,
     git_domain: String,
     branch_name: String,
     detail_user: Option<CachedUserResponse>,
@@ -638,7 +638,7 @@ fn task_detail_response(task: &TaskRow, user_id: i64, parts: TaskDetailParts) ->
                 .unwrap_or_else(|| "frontend".into()),
             progress: status
                 .map(|status| status.progress.raw_or(0))
-                .unwrap_or_else(|| serde_json::value::to_raw_value(&0).unwrap()),
+                .unwrap_or_else(|| brz_json::to_raw_value(&0).unwrap()),
             // `convert_to_task_dict` returns `task_crd.status.result` verbatim:
             // only subtask results pass through `sanitize_client_payload`
             // (`convert_subtasks_to_dict`).
@@ -647,7 +647,7 @@ fn task_detail_response(task: &TaskRow, user_id: i64, parts: TaskDetailParts) ->
                 .unwrap_or_else(raw_null),
             error_message: status
                 .map(|status| status.error_message.raw_or(""))
-                .unwrap_or_else(|| serde_json::value::to_raw_value("").unwrap()),
+                .unwrap_or_else(|| brz_json::to_raw_value("").unwrap()),
             created_at: status
                 .map(|status| status.created_at.raw_or(()))
                 .unwrap_or_else(raw_null),

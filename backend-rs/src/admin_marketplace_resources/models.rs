@@ -18,7 +18,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::json_compat::JsonField;
+use brz_json::FieldState as _;
 
 /// `KIND_BY_RESOURCE_TYPE` (`app.api.endpoints.admin.marketplace`): the public
 /// resource type to its CRD Kind.
@@ -77,30 +77,33 @@ pub struct ExampleConversation {
 
 /// The `kinds.json` members the listing reads (`payload`, treated as an object
 /// by `JsonProjection`).
+#[brz_json::model]
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct KindPayload {
-    pub metadata: JsonField<KindMetadata>,
-    pub spec: JsonField<KindSpec>,
+    #[json(presence, lenient)]
+    pub metadata: KindMetadata,
+    #[json(presence, lenient)]
+    pub spec: KindSpec,
 }
 
 impl KindPayload {
     /// `payload.get("metadata", {})` when it is a mapping.
     #[must_use]
     pub fn metadata(&self) -> Option<&KindMetadata> {
-        self.metadata.value.as_ref()
+        self.metadata.value()
     }
 
     /// `payload.get("spec", {})` when it is a mapping.
     #[must_use]
     pub fn spec(&self) -> Option<&KindSpec> {
-        self.spec.value.as_ref()
+        self.spec.value()
     }
 
     /// `spec.get("capability", {})` when `spec` is a mapping and it is one.
     #[must_use]
     pub fn capability(&self) -> Option<&Capability> {
-        self.spec().and_then(|spec| spec.capability.value.as_ref())
+        self.spec().and_then(|spec| spec.capability.value())
     }
 
     /// `_marketplace_config(source)`: `spec.capability.marketplace` when the
@@ -108,57 +111,73 @@ impl KindPayload {
     #[must_use]
     pub fn marketplace(&self) -> Option<&MarketplaceConfig> {
         self.capability()
-            .and_then(|capability| capability.marketplace.value.as_ref())
+            .and_then(|capability| capability.marketplace.value())
     }
 }
 
 /// `kinds.json.metadata`.
+#[brz_json::model]
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct KindMetadata {
     #[serde(rename = "displayName")]
-    pub display_name: JsonField<JsonScalar>,
+    #[json(presence, lenient)]
+    pub display_name: JsonScalar,
 }
 
 /// `kinds.json.spec`.
+#[brz_json::model]
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct KindSpec {
     #[serde(rename = "displayName")]
-    pub display_name: JsonField<JsonScalar>,
-    pub description: JsonField<JsonScalar>,
-    pub capability: JsonField<Capability>,
+    #[json(presence, lenient)]
+    pub display_name: JsonScalar,
+    #[json(presence, lenient)]
+    pub description: JsonScalar,
+    #[json(presence, lenient)]
+    pub capability: Capability,
 }
 
 /// `kinds.json.spec.capability`.
+#[brz_json::model]
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Capability {
     #[serde(rename = "displayName")]
-    pub display_name: JsonField<JsonScalar>,
-    pub description: JsonField<JsonScalar>,
-    pub marketplace: JsonField<MarketplaceConfig>,
+    #[json(presence, lenient)]
+    pub display_name: JsonScalar,
+    #[json(presence, lenient)]
+    pub description: JsonScalar,
+    #[json(presence, lenient)]
+    pub marketplace: MarketplaceConfig,
 }
 
 /// `kinds.json.spec.capability.marketplace`.
+#[brz_json::model]
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct MarketplaceConfig {
     #[serde(rename = "recommendationScore")]
-    pub recommendation_score: JsonField<JsonScalar>,
+    #[json(presence, lenient)]
+    pub recommendation_score: JsonScalar,
     /// Presence is kept so a stored value of the wrong type can be reported
     /// the way the source's `list[MarketplaceExampleConversation]` field
     /// rejects it, while an absent member keeps the `[]` default.
     #[serde(rename = "exampleConversations")]
-    pub example_conversations: JsonField<Vec<ConversationInput>>,
+    #[json(presence, lenient)]
+    pub example_conversations: Vec<ConversationInput>,
 }
 
 /// One stored `exampleConversations` entry.
+#[brz_json::model]
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct ConversationInput {
-    pub title: JsonField<JsonScalar>,
-    pub url: JsonField<JsonScalar>,
+    #[json(presence, lenient)]
+    pub title: JsonScalar,
+    #[json(presence, lenient)]
+    pub url: JsonScalar,
 }
 
 /// A JSON scalar as the legacy CRD documents store it.

@@ -13,6 +13,7 @@ interface Journal extends EntryMigration {
   device: string
   inode: string
   directory: boolean
+  completed?: true
 }
 
 function stat(path: string): fs.BigIntStats | undefined {
@@ -48,7 +49,8 @@ function readJournal(options: EntryMigration): Journal | undefined {
     typeof journal.device !== 'string' ||
     typeof journal.inode !== 'string' ||
     !/^\d+$/.test(journal.device) ||
-    !/^\d+$/.test(journal.inode)
+    !/^\d+$/.test(journal.inode) ||
+    (journal.completed !== undefined && journal.completed !== true)
   )
     throw new Error('Invalid application data migration journal')
   return journal
@@ -58,11 +60,26 @@ function bridge(options: EntryMigration, directory: boolean): void {
   fs.symlinkSync(options.target, options.source, directory ? 'junction' : 'file')
 }
 
+function complete(journal: Journal): void {
+  if (journal.directory || journal.completed) return
+  const temporary = `${journal.journal}.${randomUUID()}.tmp`
+  fs.writeFileSync(temporary, JSON.stringify({ ...journal, completed: true }), {
+    flag: 'wx',
+    mode: 0o600,
+  })
+  fs.renameSync(temporary, journal.journal)
+}
+
 // Recover only the missing alias before Electron creates its single-instance files.
 // symlink is exclusive: concurrent startup cannot overwrite an existing entry.
 export function recoverWorkbenchDataBridge(options: EntryMigration): void {
   const journal = readJournal(options)
-  if (!journal || stat(options.source) || !owns(options.target, journal)) return
+  if (
+    !journal ||
+    stat(options.source) ||
+    (!owns(options.target, journal) && !(journal.completed && !journal.directory))
+  )
+    return
   try {
     bridge(options, journal.directory)
   } catch (error) {
@@ -158,8 +175,15 @@ export function migrateWorkbenchDataEntry(options: EntryMigration): void {
     ) {
       // A completed bridge identifies its destination even when st_dev changes after a remount.
       // Keep the directory inode check; files may be atomically replaced or removed by SQLite.
+      complete(journal)
       return
     }
+  }
+  // SQLite may remove both an old sidecar alias and its migrated destination after use.
+  // Only a previously published file bridge can be recreated without the initial inode.
+  if (!original && journal.completed && !journal.directory) {
+    bridge(options, false)
+    return
   }
   if (original) {
     if (!owns(source, journal) || stat(target)) {
@@ -175,4 +199,5 @@ export function migrateWorkbenchDataEntry(options: EntryMigration): void {
   }
   if (!owns(target, journal)) throw new Error('Application data migration target identity changed')
   bridge(options, journal.directory)
+  complete(journal)
 }

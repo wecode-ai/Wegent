@@ -26,6 +26,13 @@ pub struct AppState {
     /// `_stream_external_attachment`: the registered external media playback
     /// resolvers and their relay. The public default resolves nothing.
     pub external_media: Arc<dyn crate::attachments::external_media::ExternalMediaRelay>,
+    /// `POST /api/attachments/upload`'s application-owned storage backend and
+    /// best-effort source image upload. The public default
+    /// keeps bytes in `subtask_contexts.binary_data` and uploads no image.
+    pub attachment_upload: Arc<dyn crate::attachments::upload::AttachmentUploadBackend>,
+    /// `resolve_external_attachment_playback` for the chat-history video
+    /// blocks. The public default resolves nothing.
+    pub external_playback: Arc<dyn crate::attachments::external_media::ExternalPlaybackResolver>,
     pub document_download_policy: Arc<dyn crate::knowledge_download_policy::DocumentDownloadPolicy>,
     /// Task and subtask row reads. The public default reads the single
     /// `tasks` / `subtasks` tables; an application whose deployment resolves
@@ -50,6 +57,10 @@ pub struct AppState {
     /// Storage-object HTTP client for the attachment download path
     /// (`MinIOStorageBackend`); shares no state with the OIDC client.
     pub attachment_http: brz_http::Client,
+    /// `GET /api/utils/url-metadata`'s page-fetch client
+    /// (`app.services.url_metadata.fetch_url_metadata`): a process-lifetime
+    /// redirect-following client with the source's 5-second timeout.
+    pub url_metadata_http: brz_http::Client,
     /// Optional employee directory. The public default returns no external
     /// employee identities or department memberships.
     pub erp: std::sync::Arc<dyn ErpProvider + Send + Sync>,
@@ -81,4 +92,20 @@ pub struct AppState {
     /// startup from `SITES_API_BASE_URL` / `SITES_API_TOKEN`; a missing base
     /// URL is rendered per request as the `503 sites_not_available` body.
     pub sites: crate::sites::SitesClient,
+    /// `resolve_llm_proxy_provider_api_key`: the LLM proxy gateway's provider
+    /// credential resolution. The public default returns the processed Model
+    /// CRD value; an application whose Model CRDs carry user-scoped
+    /// placeholders registers its own resolver before route construction.
+    pub llm_proxy_credentials: Arc<dyn crate::llm_proxy::LlmProxyCredentials>,
+    /// `gitlab_provider_patch._resolve_tokens_for_user`: stored `"***"` GitLab
+    /// tokens for `GET /api/git/repositories`. The public default keeps the
+    /// stored value.
+    pub repository_tokens: Arc<dyn crate::repository_tokens::RepositoryTokenResolver>,
+    /// `GET /api/git/repositories` aggregation: the retained provider HTTP
+    /// client, the domain cache adapter, and the background full-fetch worker.
+    pub git_repositories: crate::git_repositories::GitRepositoriesService,
+    /// `create_response`'s background execution dispatch: one process-owned
+    /// worker built at startup so the fire-and-forget executor/chat-shell
+    /// dispatch is initialization-owned rather than a request-owned task.
+    pub responses_dispatch: std::sync::Arc<crate::responses::dispatch::ResponsesDispatch>,
 }

@@ -31,7 +31,7 @@ pub(crate) struct UserRow {
     #[allow(dead_code)] // selected to match the source column list
     pub users_email: Option<String>,
     #[allow(dead_code)] // selected to match the source column list
-    pub users_git_info: Json<crate::json_compat::OpaqueJson>,
+    pub users_git_info: Json<brz_json::OpaqueJson>,
     pub users_is_active: i8,
     #[allow(dead_code)] // selected to match the source column list
     pub users_role: String,
