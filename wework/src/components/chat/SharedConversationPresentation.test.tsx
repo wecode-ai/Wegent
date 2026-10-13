@@ -1,3 +1,4 @@
+import { renderLazy } from '@/test/render-lazy'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { CodeCommentContext } from '@wegent/chat-core/code-comment'
@@ -121,7 +122,7 @@ describe('shared conversation presentation without desktop providers', () => {
     }
     const retry = vi.fn()
     const copyText = vi.fn().mockResolvedValue(undefined)
-    render(
+    await renderLazy(
       <Scope>
         <MarkdownServicesProvider value={{ ...browserMarkdownServices, copyText }}>
           <AssistantMessage

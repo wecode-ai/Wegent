@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import {
@@ -57,7 +58,7 @@ const asyncReply: WorkbenchMessage = {
   createdAt: '2026-09-17T00:00:02Z',
 }
 
-function renderList(overrides: Partial<MessageListProps> = {}) {
+async function renderList(overrides: Partial<MessageListProps> = {}) {
   const onEditLastUserMessage = vi.fn().mockResolvedValue(true)
   const props: MessageListProps = {
     messages: [userMessage, assistantMessage],
@@ -68,7 +69,7 @@ function renderList(overrides: Partial<MessageListProps> = {}) {
     canEditLastUserMessage: true,
     ...overrides,
   }
-  render(
+  await renderLazy(
     <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
       <MessageList {...props} />
     </ConversationTranslationProvider>
@@ -85,8 +86,8 @@ function editMessage() {
 }
 
 describe('full shared message list in a browser host', () => {
-  test('cancels message editing with Escape when no autocomplete menu is open', () => {
-    const { onEditLastUserMessage } = renderList()
+  test('cancels message editing with Escape when no autocomplete menu is open', async () => {
+    const { onEditLastUserMessage } = await renderList()
     const editor = editMessage()
     expect(editor).toHaveAttribute('contenteditable', 'true')
     fireEvent.keyDown(editor, { key: 'Escape' })
@@ -96,7 +97,7 @@ describe('full shared message list in a browser host', () => {
   })
 
   test('does not submit an IME confirmation and submits the edited value after key release', async () => {
-    const { onEditLastUserMessage } = renderList()
+    const { onEditLastUserMessage } = await renderList()
     const editor = editMessage()
     act(() => {
       editor.value = '修改后的问题'
@@ -118,7 +119,7 @@ describe('full shared message list in a browser host', () => {
 
   test('keeps a rejected edit available with its Markdown and current draft', async () => {
     const save = vi.fn().mockResolvedValue(false)
-    renderList({ onEditLastUserMessage: save })
+    await renderList({ onEditLastUserMessage: save })
     const editor = editMessage()
     act(() => {
       editor.value = '**Updated** prompt'
@@ -135,7 +136,7 @@ describe('full shared message list in a browser host', () => {
       referenceEntries: [{ path: '/workspace/src', isDirectory: true }],
       attachmentFiles: [],
     })
-    renderList({
+    await renderList({
       userMessageServices: {
         images: { identity: image => String(image.id), load: vi.fn(), download: vi.fn() },
         transfers: { hasPathTransfer: () => true, resolveTransfer },
@@ -153,8 +154,8 @@ describe('full shared message list in a browser host', () => {
     expect(resolveTransfer).toHaveBeenCalledWith(clipboardData, 'clipboard')
   })
 
-  test('preserves reference identity while disabling absent file actions', () => {
-    renderList({
+  test('preserves reference identity while disabling absent file actions', async () => {
+    await renderList({
       messages: [{ ...userMessage, content: '[$spec](file://%2Fworkspace%2Fspec.md)' }],
     })
     const reference = screen.getByTestId('sent-file-token-spec')
@@ -164,15 +165,15 @@ describe('full shared message list in a browser host', () => {
     expect(reference).toHaveTextContent('spec')
   })
 
-  test('shows what a non-blocking answer replied to', () => {
-    renderList({ messages: [asyncQuestion, asyncReply] })
+  test('shows what a non-blocking answer replied to', async () => {
+    await renderList({ messages: [asyncQuestion, asyncReply] })
     const reply = within(screen.getByTestId('user-message-question-reply'))
     const answered = ['晴天还是雨天?', '晴天', '早上还是晚上?', '早上', '猫还是狗?', '猫']
     answered.forEach(text => expect(reply.getByText(text)).toBeInTheDocument())
   })
 
-  test('renders an ordinary user message without a question reference', () => {
-    renderList()
+  test('renders an ordinary user message without a question reference', async () => {
+    await renderList()
     expect(screen.queryByTestId('user-message-question-reply')).not.toBeInTheDocument()
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('Original prompt')
   })

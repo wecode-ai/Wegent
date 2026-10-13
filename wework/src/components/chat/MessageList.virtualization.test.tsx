@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { MessageList } from './MessageList'
 import {
@@ -133,11 +134,11 @@ describe('MessageList desktop virtualization', () => {
     vi.unstubAllGlobals()
   })
 
-  test('uses the unified virtual layout for short conversations', () => {
+  test('uses the unified virtual layout for short conversations', async () => {
     const intersectionObserver = vi.fn()
     vi.stubGlobal('IntersectionObserver', intersectionObserver)
 
-    render(
+    await renderLazy(
       <MessageList
         messages={buildMessages(5, 'short')}
         scrollElementRef={{ current: createScrollElement(1_000) }}
@@ -163,9 +164,9 @@ describe('MessageList desktop virtualization', () => {
     expect(intersectionObserver).not.toHaveBeenCalled()
   })
 
-  test('records ordinary historical row measurements with native results and size deltas', () => {
+  test('records ordinary historical row measurements with native results and size deltas', async () => {
     diagnosticsState.enabled = true
-    render(
+    await renderLazy(
       <MessageList
         messages={buildMessages(3, 'private-history')}
         scrollElementRef={{ current: createScrollElement(200) }}
@@ -225,8 +226,8 @@ describe('MessageList desktop virtualization', () => {
     expect(JSON.stringify(measurements)).not.toContain('user-1')
   })
 
-  test('leaves native measurement unchanged without diagnostic layout reads when disabled', () => {
-    render(
+  test('leaves native measurement unchanged without diagnostic layout reads when disabled', async () => {
+    await renderLazy(
       <MessageList
         messages={buildMessages(1, 'diagnostics-disabled')}
         scrollElementRef={{ current: createScrollElement(200) }}
@@ -251,7 +252,7 @@ describe('MessageList desktop virtualization', () => {
 
   test.each([0, 2523.78])(
     'measures rich historical Markdown while scrolling using actual row height %s',
-    rowHeight => {
+    async rowHeight => {
       diagnosticsState.enabled = true
       virtualizerMeasurementState.isScrolling = true
       virtualizerMeasurementState.cachedSize = 1313
@@ -278,7 +279,7 @@ describe('MessageList desktop virtualization', () => {
         content: '**Rich historical content.** '.repeat(200),
       }
 
-      render(
+      await renderLazy(
         <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(800) }} />
       )
 
@@ -328,7 +329,7 @@ describe('MessageList desktop virtualization', () => {
         role: 'assistant',
         content: '**Rich historical content.** '.repeat(200),
       }
-      render(
+      await renderLazy(
         <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(800) }} />
       )
       const row = screen.getByTestId('message-assistant').closest<HTMLElement>('[data-index]')!
@@ -367,7 +368,7 @@ describe('MessageList desktop virtualization', () => {
     }
   )
 
-  test('records the committed virtual range before the scroll owner compensates it', () => {
+  test('records the committed virtual range before the scroll owner compensates it', async () => {
     diagnosticsState.enabled = true
     const scrollElement = createScrollElement(200)
     scrollElement.scrollTop = 40
@@ -386,7 +387,7 @@ describe('MessageList desktop virtualization', () => {
       )
       scrollElement.scrollTop = 80
     })
-    render(
+    await renderLazy(
       <MessageList
         messages={buildMessages(20, 'range-diagnostic')}
         scrollElementRef={{ current: scrollElement }}
@@ -396,7 +397,7 @@ describe('MessageList desktop virtualization', () => {
     expect(onVirtualLayoutChange).toHaveBeenCalledOnce()
   })
 
-  test('adapts the virtualizer to the desktop bottom-origin scroller', () => {
+  test('adapts the virtualizer to the desktop bottom-origin scroller', async () => {
     const scrollElement = createScrollElement(200)
     const messages = buildMessages(20, 'bottom-origin')
     messages[19] = {
@@ -414,7 +415,7 @@ describe('MessageList desktop virtualization', () => {
     })
     scrollElement.scrollTo = scrollTo
 
-    render(
+    await renderLazy(
       <MessageList messages={messages} scrollElementRef={{ current: scrollElement }} bottomOrigin />
     )
 
@@ -468,7 +469,7 @@ describe('MessageList desktop virtualization', () => {
     expect(scrollElement.scrollTop).toBe(-160)
 
     useVirtualizerMock.mockClear()
-    render(
+    await renderLazy(
       <MessageList
         messages={messages}
         scrollElementRef={{ current: scrollElement }}
@@ -544,11 +545,11 @@ describe('MessageList desktop virtualization', () => {
     expect(onOffset).toHaveBeenLastCalledWith(9_800, false)
   })
 
-  test('normalizes a restored bottom-origin distance in the task-switch layout commit', () => {
+  test('normalizes a restored bottom-origin distance in the task-switch layout commit', async () => {
     const scrollElement = createScrollElement(200)
     scrollElement.scrollTop = -178
 
-    render(
+    await renderLazy(
       <MessageList
         conversationKey="restored-bottom-origin"
         messages={buildMessages(20, 'restored-bottom-origin')}
@@ -561,7 +562,7 @@ describe('MessageList desktop virtualization', () => {
     expect(scrollElement.scrollTop).toBe(-72)
   })
 
-  test('notifies the scroll owner in the commit that changes the virtual list height', () => {
+  test('notifies the scroll owner in the commit that changes the virtual list height', async () => {
     const messages = buildMessages(20, 'layout')
     const scrollElementRef = { current: createScrollElement(200) }
     const heights: string[] = []
@@ -569,7 +570,7 @@ describe('MessageList desktop virtualization', () => {
       const list = screen.getByText('layout message 19').closest('[data-index]')?.parentElement
       heights.push(list?.style.height ?? '')
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <MessageList
         messages={messages}
         scrollElementRef={scrollElementRef}
@@ -592,7 +593,7 @@ describe('MessageList desktop virtualization', () => {
     expect(heights).toEqual(['10000px', '10040px'])
   })
 
-  test('notifies the scroll owner when inverse row measurements preserve total height', () => {
+  test('notifies the scroll owner when inverse row measurements preserve total height', async () => {
     const messages = buildMessages(20, 'layout')
     const scrollElementRef = { current: createScrollElement(200) }
     const positions: string[] = []
@@ -601,7 +602,7 @@ describe('MessageList desktop virtualization', () => {
       expect(row.parentElement).toHaveStyle({ height: '10000px' })
       positions.push(row.style.transform)
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <MessageList
         messages={messages}
         scrollElementRef={scrollElementRef}
@@ -624,8 +625,8 @@ describe('MessageList desktop virtualization', () => {
     expect(positions).toEqual(['translateY(2280px)', 'translateY(2320px)'])
   })
 
-  test('keeps only the end-anchored overscan range mounted for long conversations', () => {
-    render(
+  test('keeps only the end-anchored overscan range mounted for long conversations', async () => {
+    await renderLazy(
       <MessageList
         messages={buildMessages(100, 'long')}
         scrollElementRef={{ current: createScrollElement(200) }}
@@ -638,8 +639,8 @@ describe('MessageList desktop virtualization', () => {
     expect(screen.getAllByTestId('message-user')).toHaveLength(2)
   })
 
-  test('keeps a forced navigation target in the virtual range', () => {
-    render(
+  test('keeps a forced navigation target in the virtual range', async () => {
+    await renderLazy(
       <MessageList
         messages={buildMessages(100, 'navigation')}
         scrollElementRef={{ current: createScrollElement(200) }}
@@ -651,7 +652,7 @@ describe('MessageList desktop virtualization', () => {
     expect(screen.getByText('navigation message 99')).toBeInTheDocument()
   })
 
-  test('keeps an active streaming message mounted outside the visible range', () => {
+  test('keeps an active streaming message mounted outside the visible range', async () => {
     const messages = buildMessages(100, 'streaming')
     messages[80] = {
       ...messages[80],
@@ -659,7 +660,7 @@ describe('MessageList desktop virtualization', () => {
       status: 'streaming',
     }
 
-    render(
+    await renderLazy(
       <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(200) }} />
     )
 
@@ -667,7 +668,7 @@ describe('MessageList desktop virtualization', () => {
     expect(screen.getByText('streaming message 99')).toBeInTheDocument()
   })
 
-  test('lets the last streaming message use its normal measurement path', () => {
+  test('lets the last streaming message use its normal measurement path', async () => {
     const messages = buildMessages(100, 'last-streaming')
     messages[99] = {
       ...messages[99],
@@ -675,7 +676,7 @@ describe('MessageList desktop virtualization', () => {
       status: 'streaming',
     }
 
-    render(
+    await renderLazy(
       <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(200) }} />
     )
 
@@ -688,7 +689,7 @@ describe('MessageList desktop virtualization', () => {
     ).toBe(true)
   })
 
-  test('follows the end when a user and streaming assistant are appended', () => {
+  test('follows the end when a user and streaming assistant are appended', async () => {
     const messages = buildMessages(100, 'appended-user')
     const latestUserMessage = {
       ...buildMessages(1, 'latest-user')[0],
@@ -700,7 +701,7 @@ describe('MessageList desktop virtualization', () => {
       role: 'assistant' as const,
       status: 'streaming' as const,
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(200) }} />
     )
 
@@ -719,13 +720,13 @@ describe('MessageList desktop virtualization', () => {
     )
   })
 
-  test('reconfigures the virtualizer when end anchoring is released', () => {
+  test('reconfigures the virtualizer when end anchoring is released', async () => {
     const messages = buildMessages(100, 'anchor-switch')
     const props = {
       messages,
       scrollElementRef: { current: createScrollElement(200) },
     }
-    const view = render(<MessageList {...props} virtualAnchorToEnd />)
+    const view = await renderLazy(<MessageList {...props} virtualAnchorToEnd />)
 
     expect(useVirtualizerMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -744,12 +745,12 @@ describe('MessageList desktop virtualization', () => {
     )
   })
 
-  test('reconfigures the virtualizer when the scroll origin changes', () => {
+  test('reconfigures the virtualizer when the scroll origin changes', async () => {
     const props = {
       messages: buildMessages(20, 'origin-switch'),
       scrollElementRef: { current: createScrollElement(200) },
     }
-    const view = render(<MessageList {...props} />)
+    const view = await renderLazy(<MessageList {...props} />)
 
     expect(useVirtualizerMock).toHaveBeenLastCalledWith(
       expect.not.objectContaining({
@@ -783,7 +784,7 @@ describe('MessageList desktop virtualization', () => {
         messages: [messages[0], guidanceMessage, messages[2]],
         scrollElementRef: { current: createScrollElement(200) },
       }
-      const view = render(<MessageList {...props} />)
+      const view = await renderLazy(<MessageList {...props} />)
       const guidanceRow = screen.getByText('mid-turn-guidance message 0').closest('[data-index]')
       expect(guidanceRow).not.toBeNull()
       vi.spyOn(guidanceRow!, 'getBoundingClientRect').mockReturnValue({
@@ -821,7 +822,7 @@ describe('MessageList desktop virtualization', () => {
     }
   )
 
-  test('deduplicates a streaming message that is also a forced navigation target', () => {
+  test('deduplicates a streaming message that is also a forced navigation target', async () => {
     const messages = buildMessages(100, 'streaming-navigation')
     messages[80] = {
       ...messages[80],
@@ -829,7 +830,7 @@ describe('MessageList desktop virtualization', () => {
       status: 'streaming',
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={messages}
         scrollElementRef={{ current: createScrollElement(200) }}
@@ -855,7 +856,7 @@ describe('MessageList desktop virtualization', () => {
         messages,
         scrollElementRef: { current: createScrollElement(200) },
       }
-      const view = render(<MessageList {...props} />)
+      const view = await renderLazy(<MessageList {...props} />)
       const row = screen.getByText('streaming-resize message 80').closest('[data-index]')
       expect(row).not.toBeNull()
       vi.spyOn(row!, 'getBoundingClientRect').mockReturnValue({
@@ -887,14 +888,14 @@ describe('MessageList desktop virtualization', () => {
     }
   )
 
-  test('restores and persists the TanStack measurement snapshot', () => {
+  test('restores and persists the TanStack measurement snapshot', async () => {
     const messages = buildMessages(20, 'measured')
     const props = {
       conversationKey: 'measured-conversation',
       messages,
       scrollElementRef: { current: createScrollElement(200) },
     }
-    const firstRender = render(<MessageList {...props} />)
+    const firstRender = await renderLazy(<MessageList {...props} />)
     firstRender.unmount()
 
     expect(getConversationVirtualMeasurements('measured-conversation')).toEqual([
@@ -902,7 +903,7 @@ describe('MessageList desktop virtualization', () => {
     ])
 
     useVirtualizerMock.mockClear()
-    render(<MessageList {...props} />)
+    await renderLazy(<MessageList {...props} />)
 
     expect(useVirtualizerMock).toHaveBeenCalledWith(
       expect.objectContaining({

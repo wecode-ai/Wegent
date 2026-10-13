@@ -1,3 +1,4 @@
+import { renderLazy } from '@/test/render-lazy'
 import '@/i18n'
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -173,8 +174,8 @@ describe('ToolBlockItem', () => {
     expect(screen.getByRole('button')).toHaveClass('min-h-8')
   })
 
-  test('renders streaming process text directly in the timeline', () => {
-    render(<ToolBlockItem block={streamingTextBlock} />)
+  test('renders streaming process text directly in the timeline', async () => {
+    await renderLazy(<ToolBlockItem block={streamingTextBlock} />)
 
     const block = screen.getByTestId('process-text-block')
 
@@ -186,8 +187,8 @@ describe('ToolBlockItem', () => {
     expect(screen.queryByTestId('process-text-toggle-button')).not.toBeInTheDocument()
   })
 
-  test('renders completed process text without folding it', () => {
-    render(<ToolBlockItem block={{ ...streamingTextBlock, status: 'done' }} />)
+  test('renders completed process text without folding it', async () => {
+    await renderLazy(<ToolBlockItem block={{ ...streamingTextBlock, status: 'done' }} />)
 
     expect(screen.queryByTestId('process-text-toggle-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('process-text-block')).toHaveTextContent(

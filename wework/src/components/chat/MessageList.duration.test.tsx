@@ -1,4 +1,5 @@
-import { act, render, screen } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { act, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   mergeRuntimeConversationTurns,
@@ -14,7 +15,7 @@ import '@/i18n'
 afterEach(() => vi.useRealTimers())
 
 describe('MessageList processing duration', () => {
-  test('keeps a failed turn duration after native history removes transient processing blocks', () => {
+  test('keeps a failed turn duration after native history removes transient processing blocks', async () => {
     vi.useFakeTimers()
     const start = Date.parse('2026-09-17T00:00:00Z')
     vi.setSystemTime(start + 5000)
@@ -27,7 +28,7 @@ describe('MessageList processing duration', () => {
       error: 'upstream unavailable',
       items: [],
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />
     )
     expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
@@ -37,7 +38,7 @@ describe('MessageList processing duration', () => {
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
   })
 
-  test('shows turn elapsed time when a completed turn has timestamps but no duration', () => {
+  test('shows turn elapsed time when a completed turn has timestamps but no duration', async () => {
     const startedAt = Date.parse('2026-09-17T00:00:00Z')
     const turn: RuntimeConversationTurn = {
       id: 'timestamped-turn',
@@ -65,12 +66,14 @@ describe('MessageList processing duration', () => {
       ],
     }
 
-    render(<MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />)
+    await renderLazy(
+      <MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />
+    )
 
     expect(screen.getByTestId('final-processing-toggle')).toHaveTextContent('用时 12分钟 23秒')
   })
 
-  test('labels the processing toggle when a completed turn has no timing data', () => {
+  test('labels the processing toggle when a completed turn has no timing data', async () => {
     const turn: RuntimeConversationTurn = {
       id: 'untimed-turn',
       status: 'done',
@@ -95,12 +98,14 @@ describe('MessageList processing duration', () => {
       ],
     }
 
-    render(<MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />)
+    await renderLazy(
+      <MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />
+    )
 
     expect(screen.getByTestId('final-processing-toggle')).toHaveTextContent('已处理')
   })
 
-  test('uses the completion timestamp of a hidden thinking block', () => {
+  test('uses the completion timestamp of a hidden thinking block', async () => {
     vi.useFakeTimers()
     const start = Date.parse('2026-09-17T00:00:00Z')
     const message: WorkbenchMessage = {
@@ -120,7 +125,7 @@ describe('MessageList processing duration', () => {
         },
       ],
     }
-    render(<MessageList messages={[message]} />)
+    await renderLazy(<MessageList messages={[message]} />)
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
     act(() => vi.advanceTimersByTime(10000))
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
@@ -128,7 +133,7 @@ describe('MessageList processing duration', () => {
 
   test.each(['done', 'failed', 'cancelled'] as const)(
     'preserves a %s turn duration when transcript timestamps lose millisecond precision',
-    status => {
+    async status => {
       vi.useFakeTimers()
       const start = Date.parse('2026-09-17T02:18:14.982Z')
       const end = Date.parse('2026-09-17T02:18:32.300Z')
@@ -164,7 +169,7 @@ describe('MessageList processing duration', () => {
           },
         ],
       }
-      const first = render(
+      const first = await renderLazy(
         <MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />
       )
       const selector =
@@ -188,7 +193,9 @@ describe('MessageList processing duration', () => {
         ),
       }
       const merged = mergeRuntimeConversationTurns([turn], [snapshot])
-      const restored = render(<MessageList messages={projectRuntimeConversationTurns(merged)} />)
+      const restored = await renderLazy(
+        <MessageList messages={projectRuntimeConversationTurns(merged)} />
+      )
       restored.rerender(
         <MessageList messages={projectRuntimeConversationTurns(merged)} turns={merged} />
       )
@@ -208,7 +215,7 @@ describe('MessageList processing duration', () => {
 
   test.each(['failed', 'done', 'cancelled'] as const)(
     'freezes a %s turn despite a tool retaining its streaming status',
-    status => {
+    async status => {
       vi.useFakeTimers()
       const start = Date.parse('2026-09-17T00:00:00Z')
       vi.setSystemTime(start)
@@ -227,7 +234,7 @@ describe('MessageList processing duration', () => {
           createdAt: start,
         },
       })
-      const first = render(
+      const first = await renderLazy(
         <MessageList messages={projectRuntimeConversationTurns(turns)} turns={turns} />
       )
       act(() => vi.advanceTimersByTime(5000))
@@ -274,12 +281,12 @@ describe('MessageList processing duration', () => {
       act(() => vi.advanceTimersByTime(10000))
       expectFrozenDuration()
       first.unmount()
-      render(<MessageList messages={messages} turns={turns} />)
+      await renderLazy(<MessageList messages={messages} turns={turns} />)
       expectFrozenDuration()
     }
   )
 
-  test('restores the stopped and resumed durations from their own turn completion timestamps', () => {
+  test('restores the stopped and resumed durations from their own turn completion timestamps', async () => {
     const start = Date.parse('2026-09-16T15:41:32.813Z')
     const resumedStart = start + 17_000
     const transcript: RuntimeTranscriptTurn[] = [
@@ -327,15 +334,15 @@ describe('MessageList processing duration', () => {
     })
     const turns = runtimeTranscriptTurnsToConversationTurns(transcript)
     const messages = projectRuntimeConversationTurns(turns)
-    const first = render(<MessageList messages={messages} turns={turns} />)
+    const first = await renderLazy(<MessageList messages={messages} turns={turns} />)
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('13s')
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 1分钟 12秒')
     first.unmount()
-    render(<MessageList messages={messages} turns={turns} />)
+    await renderLazy(<MessageList messages={messages} turns={turns} />)
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 1分钟 12秒')
   })
 
-  test('keeps timing a running tool when visible text has already arrived', () => {
+  test('keeps timing a running tool when visible text has already arrived', async () => {
     vi.useFakeTimers()
     const start = Date.parse('2026-09-16T10:00:00Z')
     vi.setSystemTime(start + 3000)
@@ -356,7 +363,7 @@ describe('MessageList processing duration', () => {
         },
       ],
     }
-    render(
+    await renderLazy(
       <MessageList
         messages={[message]}
         turns={[
@@ -374,7 +381,7 @@ describe('MessageList processing duration', () => {
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
   })
 
-  test('keeps timing through final answer streaming and freezes only when the turn completes', () => {
+  test('keeps timing through final answer streaming and freezes only when the turn completes', async () => {
     vi.useFakeTimers()
     const start = Date.parse('2026-09-16T10:00:00Z')
     vi.setSystemTime(start + 5000)
@@ -414,7 +421,7 @@ describe('MessageList processing duration', () => {
       ],
     }
     const pendingMessages = projectRuntimeConversationTurns([turn])
-    const { rerender } = render(<MessageList messages={pendingMessages} turns={[turn]} />)
+    const { rerender } = await renderLazy(<MessageList messages={pendingMessages} turns={[turn]} />)
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
     act(() => vi.advanceTimersByTime(3000))
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 8秒')
