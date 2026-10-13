@@ -255,7 +255,7 @@
       "prompt_placeholder": "例如：你是一名产品分析助手，负责分析需求、识别风险并给出建议。",
       "prompt_help": "描述它的角色、任务、限制和回答方式。",
       "advanced_title": "高级配置",
-      "advanced_description": "智能体描述、使用入口、编码仓库和交互文案",
+      "advanced_description": "协作模式、使用入口和交互设置",
       "agent_description_label": "智能体描述",
       "agent_description_placeholder": "简要描述这个智能体",
       "name_required": "请输入智能体名称",
