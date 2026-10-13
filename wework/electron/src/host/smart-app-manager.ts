@@ -1,4 +1,3 @@
-import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -798,6 +797,7 @@ async function fileSha256(path: string): Promise<string> {
 }
 
 async function archiveDirectory(source: string, destination: string): Promise<void> {
+  const { ZipArchive } = await import('archiver')
   await new Promise<void>((resolvePromise, reject) => {
     const output = createWriteStream(destination, { mode: 0o600 })
     const archive = new ZipArchive({ zlib: { level: 9 } })

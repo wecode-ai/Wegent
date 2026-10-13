@@ -1,10 +1,8 @@
-import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { cp } from 'node:fs/promises'
 import { mkdir, readFile, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
-import extractZip from 'extract-zip'
 import semver from 'semver'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationIssue } from './smart-app-verification-types.js'
@@ -95,6 +93,7 @@ export async function extractSmartAppArchive(
   destination: string,
   options: SmartAppPackageValidationOptions = {}
 ): Promise<void> {
+  const { default: extractZip } = await import('extract-zip')
   const metadata = await stat(archivePath)
   const maxArchiveBytes = options.maxArchiveBytes ?? MAX_SMART_APP_ARCHIVE_BYTES
   if (metadata.size > maxArchiveBytes) {
@@ -169,6 +168,7 @@ export async function archiveSmartAppDelivery(
   directoryPath: string,
   destinationPath: string
 ): Promise<void> {
+  const { ZipArchive } = await import('archiver')
   const root = await requiredSmartAppDirectory(directoryPath, 'Smart app project')
   const files = await listSmartAppDeliveryFiles(root)
   await new Promise<void>((resolvePromise, reject) => {

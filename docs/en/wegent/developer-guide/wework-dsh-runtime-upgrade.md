@@ -95,3 +95,5 @@ Formal release assets use the same cache-path resolver as the runtime archive pr
 Core profile preparation overlaps host bridge startup after the Executor schema compatibility gate. Native processes start only after the bridge environment is ready. Cancellation and shutdown await in-flight preparation, restarts prepare fresh state, and Smart app runtimes retain their bridge environment.
 
 The active task surface loads registered Home modules alongside the Core app module, sharing module and stylesheet promises. Hidden tasks and project boards do not request Home modules. Loading errors propagate to page error handling, and startup readiness still waits for the actual page to finish.
+
+Feedback and Smart app archive libraries load only when compression or extraction is requested. Main-window initialization no longer loads unused archive dependencies; archive contents and security validation remain intact.
