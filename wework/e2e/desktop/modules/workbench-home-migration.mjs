@@ -248,7 +248,7 @@ export function createWorkbenchHomeMigrationScenario({
       assert.ok(!seedConfig.includes('mcp_oauth_credentials_store'))
       await writeFile(
         configPath,
-        `${seedConfig}\n[mcp_servers.migration-http]\nurl = "https://example.invalid/mcp"\nenabled = false\n`
+        `mcp_oauth_credentials_store = "file"\n${seedConfig}\n[mcp_servers.migration-http]\nurl = "https://example.invalid/mcp"\nenabled = false\n`
       )
       const authPath = join(seedCodexHome, 'auth.json')
       const auth = await lstat(authPath, { bigint: true })

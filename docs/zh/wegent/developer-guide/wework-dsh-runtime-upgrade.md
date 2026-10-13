@@ -221,3 +221,9 @@ component-update 的首个 Core 进程报告固定 `core_profile_summarize_faile
 宿主管道原来用 `fs.createReadStream` 读取常驻继承 FD，阻塞文件读取会占用 Node 文件线程池。真实子进程在单线程池中复现握手写入排队死锁；新输入使用与 [Node 标准 PIPE/TCP stdin](https://github.com/nodejs/node/blob/v24.1.0/lib/internal/bootstrap/switches/is_main_thread.js) 相同的事件驱动 Socket，删除常驻文件读取。写入仍使用原 `autoClose=false` 文件流；输入按继承 FD 复用，活跃客户端 ref，停止/错误后 unref，关闭自己的 readline 和监听器，不关闭外部 FD。
 
 相同真实子进程回归在原实现失败、新实现通过：不加 IPC 或其他保活句柄，两代客户端分别完成原 token/principal 握手、完整 79KB 响应，监听器恢复原数量、输入不被停止操作销毁，最后自然退出。Node 与 Electron 44.7.0 的 Node 模式各七项测试通过，无 GUI 或遗留子进程。四条受控阻塞读取另复现文件流响应等待约 255 毫秒、事件输入约 1 毫秒。这证明线程池争用机制，不能证明 CI 恢复等待全部源于此，也不能替代下一轮 Windows 继承 FD 和严格启动验证。
+
+### `703c1196e` Windows 场景前置条件
+
+[第 15 组](https://github.com/wecode-ai/Wegent/actions/runs/38451605915/job/115500677051) 的 `running-sidebar-state` mock 只处理 Responses，但场景未选择模型。两次真实请求使用 `kimi-k3` 的 `/v1/chat/completions`，用户消息正确包含该场景的 FIRST 标记，却落入通用 initial handler 的 TASK_PROMPT 断言。场景现在在首次发送前调用既有 `selectE2EModel`，为其 Responses mock 选择匹配模型；侧栏运行状态、迟到快照和虚拟化断言不变。
+
+[第 16 组](https://github.com/wecode-ai/Wegent/actions/runs/38451605915/job/115500676931) 其余五场景通过，`workbench-mode` 在 835 毫秒启动失败，原因为 Home 迁移凭据保护拒绝。该 fixture 明确未设置 MCP 凭据存储模式，而 Windows 默认启用加密存储，`auto` 模式会被现有保护判为绑定 Home。隔离 fixture 现在在 TOML 根部显式设置 `mcp_oauth_credentials_store = "file"`，保留原合成认证、真实原生会话、数据库、文件身份、链接与恢复验证。真实 Executor 的受控元数据探针确认开启加密特性时，原隐式模式被拒绝、显式文件模式允许；产品保护与原超时均未修改。两处 fixture 的语法、格式及 lint 检查通过，完整 Windows 场景须在下一轮 CI 验证。
