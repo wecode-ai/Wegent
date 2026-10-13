@@ -32,8 +32,8 @@ export interface WorkbenchAppManifest {
     path?: string
   }>
   /**
-   * Capability requests. A request is not a grant: Wework decides separately
-   * whether the installation is trusted enough to receive the capability.
+   * Capability requests. Declaring one here grants it: Wework does not gate
+   * these on install provenance, and the Smart App decides when to use them.
    */
   capabilities?: {
     decisionModel?: boolean

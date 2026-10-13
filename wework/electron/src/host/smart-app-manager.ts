@@ -47,8 +47,9 @@ export interface SmartAppInstallation {
   releaseId?: number | null
   source: 'managed' | 'linked' | 'market'
   /**
-   * Capabilities Wework has authorized for this installation. A manifest
-   * request is only granted when the install provenance is trusted.
+   * Capabilities Wework has authorized for this installation. Declaring the
+   * capability in the manifest is the whole contract: install provenance
+   * (managed / linked / market) does not gate it.
    */
   grantedCapabilities: {
     decisionModel: boolean
