@@ -784,6 +784,8 @@ class RealCloudEnvironment {
       DEVICE_SESSION_GATEWAY_PORT: '0',
     }
     for (const key of [
+      'WORKSPACE_ROOT',
+      'WEGENT_WORKSPACE_ROOT',
       'WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED',
       'WEGENT_WORKBENCH_HOME',
       'WEGENT_CAPABILITIES_HOME',
