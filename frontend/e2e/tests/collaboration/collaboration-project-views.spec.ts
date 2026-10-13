@@ -113,11 +113,15 @@ for (const view of ['calendar', 'gantt'] as const) {
         await page.mouse.move(box!.x + 30, box!.y + 20)
         await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
         await expect(page.getByTestId(`cloud-todo-card-unread-${issueId}`)).toHaveCount(0)
+        // Release outside the original card so cancelling cannot produce a card click.
+        await page.mouse.move(box!.x + 30, box!.y - 10)
         await page.keyboard.press('Escape')
       } finally {
         await page.mouse.up()
       }
       await expect(page.getByTestId('project-board-drag-overlay')).toHaveCount(0)
+      await expect(page.getByTestId('collaboration-issue-detail')).toHaveCount(0)
+      await expect(page).toHaveURL(path)
 
       await page.getByTestId(`collaboration-${view}-tab`).click()
       await expect(page).toHaveURL(`${path}?view=${view}`)
