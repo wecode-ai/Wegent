@@ -1,5 +1,8 @@
 import { matchesBundledMarketplaceConfig } from './marketplace-config.mjs'
-import { packagedPluginResourceHashes } from './packaged-plugin-resource-integrity.mjs'
+import {
+  componentResourceChanges,
+  packagedPluginResourceSnapshot,
+} from './packaged-plugin-resource-integrity.mjs'
 
 import {
   assertMentionRenderedAsToken,
@@ -188,12 +191,20 @@ async function verifyCoreDshPluginManagement({
     })
   }
   const manifest = async () => JSON.parse(await readFile(manifestPath, 'utf8'))
-  const packagedHashes = await packagedPluginResourceHashes(appBinary, appEnvironment)
+  const packagedSnapshot = await packagedPluginResourceSnapshot(appBinary, appEnvironment)
+  const packagedHashes = packagedSnapshot.hashes
   const assertPackagedResourcesUnchanged = async operation => {
-    const hashes = await packagedPluginResourceHashes(appBinary, appEnvironment)
+    const snapshot = await packagedPluginResourceSnapshot(appBinary, appEnvironment)
+    const hashes = snapshot.hashes
+    const changes = Object.fromEntries(
+      Object.keys(packagedHashes).map(id => [
+        id,
+        componentResourceChanges(packagedSnapshot.inventories[id], snapshot.inventories[id]),
+      ])
+    )
     await writeFile(
       join(userDataDirectory, `core-plugin-${operation}-resources.json`),
-      `${JSON.stringify({ before: packagedHashes, after: hashes }, null, 2)}\n`
+      `${JSON.stringify({ before: packagedHashes, after: hashes, changes }, null, 2)}\n`
     )
     assert.deepEqual(hashes, packagedHashes, `Core plugin ${operation} changed packaged resources`)
   }
