@@ -81,3 +81,5 @@ indivisible long code blocks and synchronous rendering during rapid scrolling.
 Do not increase budgets, skip assertions, or rerun failures to hide defects.
 
 Windows Git workspace clones explicitly enable `core.longpaths`; native Windows CI covers real repositories beyond the legacy path limit. Runtime work indexes still use atomic replacement, with bounded waiting only for Windows sharing conflicts. Permanent persistence failures propagate to transcript restore and acknowledgement callers. New restore state is published and the previous conversation directory is cleaned only after the index is durable.
+
+The existing macOS verification guard requests user activity and retains display and idle-sleep assertions for the test lifetime, releasing them on exit. An AC-only system-sleep assertion does not prevent battery-powered DarkWake from returning to maintenance sleep. The guard changes neither system settings nor scenario deadlines or performance budgets.

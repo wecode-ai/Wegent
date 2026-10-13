@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process'
 
 export function keepVerificationHostAwake() {
   if (process.platform !== 'darwin') return
-  const awake = spawn('/usr/bin/caffeinate', ['-is', '-w', String(process.pid)], {
+  // Request a full user wake, then hold the display and idle assertions on battery too.
+  const awake = spawn('/usr/bin/caffeinate', ['-disu', '-w', String(process.pid)], {
     stdio: 'ignore',
   })
   awake.once('error', error => {

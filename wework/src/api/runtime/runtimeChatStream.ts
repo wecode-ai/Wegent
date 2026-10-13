@@ -260,14 +260,17 @@ function logRuntimeChatTerminalEvent(
   subscriptionCount: number
 ): void {
   const payload = asRecord(event.payload)
-  console.info('[Wework] Runtime chat stream terminal event received', {
-    event: event.event,
-    taskId: stringField(payload, 'taskId') ?? null,
-    subtaskId: stringField(payload, 'subtaskId') ?? null,
-    deviceId: stringField(payload, 'deviceId') ?? null,
-    subscriptionCount,
-    matchedSubscriptionCount,
-  })
+  console.info(
+    '[Wework] Runtime chat stream terminal event received ' +
+      JSON.stringify({
+        event: event.event,
+        taskId: stringField(payload, 'taskId') ?? null,
+        subtaskId: stringField(payload, 'subtaskId') ?? null,
+        deviceId: stringField(payload, 'deviceId') ?? null,
+        subscriptionCount,
+        matchedSubscriptionCount,
+      })
+  )
 }
 
 function isBatchableRuntimeStreamEvent(event: LocalExecutorEvent): boolean {
@@ -531,11 +534,14 @@ function logRuntimeChatStreamSubscription(
   details: Record<string, unknown>
 ): void {
   if (!isRuntimeChatStreamDebugEnabled()) return
-  console.debug('[Wework] Runtime chat stream subscription', {
-    action,
-    subscriptionId,
-    ...details,
-  })
+  console.debug(
+    '[Wework] Runtime chat stream subscription ' +
+      JSON.stringify({
+        action,
+        subscriptionId,
+        ...details,
+      })
+  )
 }
 
 function logRuntimeChatStreamNativeSubscription(
@@ -543,11 +549,14 @@ function logRuntimeChatStreamNativeSubscription(
   details: Record<string, unknown> = {}
 ): void {
   if (!isRuntimeChatStreamDebugEnabled()) return
-  console.debug('[Wework] Runtime chat stream native subscription', {
-    action,
-    activeSubscriptions: activeRuntimeChatStreamSubscriptions,
-    ...details,
-  })
+  console.debug(
+    '[Wework] Runtime chat stream native subscription ' +
+      JSON.stringify({
+        action,
+        activeSubscriptions: activeRuntimeChatStreamSubscriptions,
+        ...details,
+      })
+  )
 }
 
 function logRuntimeChatStreamEvent(
@@ -561,23 +570,26 @@ function logRuntimeChatStreamEvent(
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)
   const contentDelta = stringField(updates, 'contentDelta') ?? stringField(updates, 'content_delta')
-  console.debug('[Wework] Runtime chat stream event', {
-    subscriptionId,
-    activeSubscriptions: activeRuntimeChatStreamSubscriptions,
-    sequence: event.sequence,
-    event: event.event,
-    mapped: isMappedResponseApiEvent(event.event),
-    eventCount,
-    textDeltaCount,
-    taskId: stringField(payload, 'taskId'),
-    subtaskId: stringField(payload, 'subtaskId'),
-    deviceId: stringField(payload, 'deviceId'),
-    deltaLength: typeof data.delta === 'string' ? data.delta.length : undefined,
-    offset: typeof data.offset === 'number' ? data.offset : undefined,
-    blockId: stringField(data, 'blockId') ?? stringField(data, 'block_id'),
-    contentDeltaLength: contentDelta?.length,
-    contentDeltaFingerprint: contentDelta ? textFingerprint(contentDelta) : undefined,
-  })
+  console.debug(
+    '[Wework] Runtime chat stream event ' +
+      JSON.stringify({
+        subscriptionId,
+        activeSubscriptions: activeRuntimeChatStreamSubscriptions,
+        sequence: event.sequence,
+        event: event.event,
+        mapped: isMappedResponseApiEvent(event.event),
+        eventCount,
+        textDeltaCount,
+        taskId: stringField(payload, 'taskId'),
+        subtaskId: stringField(payload, 'subtaskId'),
+        deviceId: stringField(payload, 'deviceId'),
+        deltaLength: typeof data.delta === 'string' ? data.delta.length : undefined,
+        offset: typeof data.offset === 'number' ? data.offset : undefined,
+        blockId: stringField(data, 'blockId') ?? stringField(data, 'block_id'),
+        contentDeltaLength: contentDelta?.length,
+        contentDeltaFingerprint: contentDelta ? textFingerprint(contentDelta) : undefined,
+      })
+  )
 }
 
 function logRuntimeChatStreamNativeEvent(
@@ -596,19 +608,24 @@ function logRuntimeChatStreamNativeEvent(
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)
   const contentDelta = stringField(updates, 'contentDelta') ?? stringField(updates, 'content_delta')
-  console.debug('[Wework] Runtime chat stream native event', {
-    sequence: event.sequence,
-    event: event.event,
-    taskId: stringField(payload, 'taskId'),
-    subtaskId: stringField(payload, 'subtaskId'),
-    deviceId: stringField(payload, 'deviceId'),
-    blockId: stringField(data, 'blockId') ?? stringField(data, 'block_id'),
-    contentDeltaLength: contentDelta?.length,
-    contentDeltaFingerprint: contentDelta ? textFingerprint(contentDelta) : undefined,
-    matchingSubscriptionIds: subscriptions
-      .filter(([, subscription]) => isLocalExecutorEventInScope(event, subscription.handlers.scope))
-      .map(([subscriptionId]) => subscriptionId),
-  })
+  console.debug(
+    '[Wework] Runtime chat stream native event ' +
+      JSON.stringify({
+        sequence: event.sequence,
+        event: event.event,
+        taskId: stringField(payload, 'taskId'),
+        subtaskId: stringField(payload, 'subtaskId'),
+        deviceId: stringField(payload, 'deviceId'),
+        blockId: stringField(data, 'blockId') ?? stringField(data, 'block_id'),
+        contentDeltaLength: contentDelta?.length,
+        contentDeltaFingerprint: contentDelta ? textFingerprint(contentDelta) : undefined,
+        matchingSubscriptionIds: subscriptions
+          .filter(([, subscription]) =>
+            isLocalExecutorEventInScope(event, subscription.handlers.scope)
+          )
+          .map(([subscriptionId]) => subscriptionId),
+      })
+  )
 }
 
 function textFingerprint(value: string): string {

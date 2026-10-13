@@ -406,18 +406,21 @@ describe('createRuntimeChatStream', () => {
 
     const cleanupWithoutDebug = stream.subscribe({ onChatChunk: vi.fn() })
     cleanupWithoutDebug()
-    expect(consoleDebug).not.toHaveBeenCalledWith(
-      '[Wework] Runtime chat stream subscription',
-      expect.anything()
-    )
+    expect(consoleDebug).not.toHaveBeenCalled()
 
     setRuntimeChatStreamDebugEnabled(true)
     const cleanupWithDebug = stream.subscribe({ onChatChunk: vi.fn() })
     cleanupWithDebug()
 
-    expect(consoleDebug).toHaveBeenCalledWith(
-      '[Wework] Runtime chat stream subscription',
-      expect.objectContaining({ action: 'subscribed' })
+    const prefix = '[Wework] Runtime chat stream subscription '
+    const entries = consoleDebug.mock.calls.map(([message]) =>
+      JSON.parse(String(message).slice(prefix.length))
+    )
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: 'subscribed' }),
+        expect.objectContaining({ action: 'unsubscribed' }),
+      ])
     )
 
     consoleDebug.mockRestore()
@@ -451,8 +454,10 @@ describe('createRuntimeChatStream', () => {
       deviceId: 'local-device',
       result: { value: 'complete' },
     })
-    expect(consoleInfo).toHaveBeenCalledWith(
-      '[Wework] Runtime chat stream terminal event received',
+    const terminalPrefix = '[Wework] Runtime chat stream terminal event received '
+    const terminalEntry = String(consoleInfo.mock.calls[0][0])
+    expect(terminalEntry.startsWith(terminalPrefix)).toBe(true)
+    expect(JSON.parse(terminalEntry.slice(terminalPrefix.length))).toEqual(
       expect.objectContaining({
         event: 'response.completed',
         taskId: 'task-1',
