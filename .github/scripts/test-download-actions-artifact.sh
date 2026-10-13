@@ -20,14 +20,21 @@ case "$url" in
     if [[ "$TEST_CASE" == "queued" && ! -f "$TEST_TEMP_DIR/producer-seen" ]]; then
       touch "$TEST_TEMP_DIR/producer-seen"
       printf '{"workflow_runs":[]}'
+    elif [[ "$TEST_CASE" == "merge-group" ]]; then
+      printf '{"workflow_runs":[{"id":101,"head_sha":"target","event":"merge_group","status":"completed"},{"id":42,"head_sha":"target","event":"pull_request","status":"completed"},{"id":100,"head_sha":"target","event":"push","status":"completed"}]}'
+    elif [[ "$TEST_CASE" == "producer-running" ]]; then
+      printf '{"workflow_runs":[{"id":42,"head_sha":"target","event":"pull_request","status":"in_progress"}]}'
     elif [[ "$TEST_CASE" == "wrong-sha" ]]; then
       printf '{"workflow_runs":[{"id":99,"head_sha":"wrong","event":"pull_request","status":"completed"}]}'
     else
       printf '{"workflow_runs":[{"id":99,"head_sha":"wrong","event":"pull_request","status":"completed"},{"id":42,"head_sha":"target","event":"pull_request","status":"completed"},{"id":100,"head_sha":"target","event":"push","status":"completed"}]}'
     fi
     ;;
-  */runs/7/artifacts*|*/runs/42/artifacts*)
-    if [[ "$TEST_CASE" == "missing" ]]; then
+  */runs/7/artifacts*|*/runs/42/artifacts*|*/runs/101/artifacts*)
+    if [[ "$TEST_CASE" == "producer-running" && ! -f "$TEST_TEMP_DIR/artifact-delivery-seen" ]]; then
+      touch "$TEST_TEMP_DIR/artifact-delivery-seen"
+      printf '{"artifacts":[]}'
+    elif [[ "$TEST_CASE" == "missing" ]]; then
       printf '{"artifacts":[]}'
     elif [[ "$TEST_CASE" == "duplicate" ]]; then
       printf '{"artifacts":[{"id":201,"name":"executor-e2e-binary"},{"id":202,"name":"executor-e2e-binary"}]}'
@@ -71,6 +78,15 @@ fi
 TEST_CASE=queued ACTIONS_ARTIFACT_WAIT_SECONDS=5 \
   "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/queued-run"
 cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/queued-run/wegent-executor"
+
+TEST_CASE=producer-running ACTIONS_ARTIFACT_WAIT_SECONDS=5 \
+  "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/producer-running"
+cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/producer-running/wegent-executor"
+
+TEST_CASE=merge-group GITHUB_EVENT_NAME=merge_group \
+  "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/merge-group"
+cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/merge-group/wegent-executor"
+grep -Fq '/runs/101/artifacts' "$temp_dir/requests"
 
 for failure_case in wrong-sha missing duplicate; do
   export TEST_CASE="$failure_case"

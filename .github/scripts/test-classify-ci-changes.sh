@@ -1356,18 +1356,17 @@ if ! grep -Fq -- '--shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}' \
   exit 1
 fi
 
-# Fork pull requests cannot pull the executor E2E image from GHCR: the Wework
-# desktop build downloads executor-e2e-binary from this job instead, so the
-# job must also run when a fork PR selects desktop E2E without platform_e2e.
+# Desktop PR builds consume the producer binary artifact for the same commit.
+# The producer must run for desktop-only changes on both repository and fork PRs.
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
 if ! grep -Fq '.github/scripts/classify-wework-desktop-e2e.sh' \
   "$platform_e2e_workflow" ||
   ! grep -Fq 'wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}' \
     "$platform_e2e_workflow" ||
-  ! grep -Fq "needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository" \
+  ! grep -Fq "needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true'" \
   "$platform_e2e_workflow"; then
-  printf 'e2e-tests.yml must build the executor E2E runtime for fork desktop E2E PRs\n' >&2
+  printf 'e2e-tests.yml must build the executor E2E runtime for desktop-only PRs\n' >&2
   exit 1
 fi
 

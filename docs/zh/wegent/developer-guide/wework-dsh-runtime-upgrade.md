@@ -62,3 +62,5 @@ Windows Git workspace 克隆显式启用 `core.longpaths`，新回归在 Windows
 macOS 桌面验证通过现有 `caffeinate` 守护请求用户活动，并在测试期间保留显示和空闲休眠断言；退出测试即释放。仅使用 AC 生效的系统休眠断言不能避免电池环境从 DarkWake 回到维护睡眠。该验证守护不修改系统设置，也不改变用例的原有超时和性能预算。
 
 macOS 正式包验证首先执行 `dsh-runtime-upgrade`，保留冷启动和重启均小于 5 秒的原断言，并使用保持签名与公证的正式包。临时 ad-hoc 包触发的系统安全扫描须记录为未通过，不能通过预热或扣除扫描时间将它视为达标。
+
+桌面 PR 与 Merge Queue 构建使用同一提交、同一事件的 Executor 二进制产物；打包可与生产者构建并行，不依赖 OCI 标签在短等待窗口内完成发布。fork 的 Backend Rust 继续从源码构建，其它路径保留现有 OCI 缓存。

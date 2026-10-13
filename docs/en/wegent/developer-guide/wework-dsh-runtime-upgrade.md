@@ -85,3 +85,5 @@ Windows Git workspace clones explicitly enable `core.longpaths`; native Windows 
 The existing macOS verification guard requests user activity and retains display and idle-sleep assertions for the test lifetime, releasing them on exit. An AC-only system-sleep assertion does not prevent battery-powered DarkWake from returning to maintenance sleep. The guard changes neither system settings nor scenario deadlines or performance budgets.
 
 Formal macOS package verification runs `dsh-runtime-upgrade` first, preserving both strict five-second cold-start and restart assertions against the signed and notarized package. System security scans of temporary ad-hoc packages remain failed measurements; warming the app or subtracting scan time cannot turn them into a passing result.
+
+Desktop PR and Merge Queue builds consume the Executor binary artifact for the same commit and event. Packaging can overlap the producer build without requiring its OCI tag to publish within the short registry wait window. Fork Backend Rust builds remain source builds; other paths retain the existing OCI cache.

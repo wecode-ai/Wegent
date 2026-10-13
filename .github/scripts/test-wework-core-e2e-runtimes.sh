@@ -12,19 +12,26 @@ ruby -ryaml -e '
   artifact = step.fetch("env").fetch("EXECUTOR_ARTIFACT")
   workflow = YAML.safe_load(File.read(ARGV[1]))
   publish = workflow.fetch("jobs").fetch("build-backend-rs-e2e-runtime").fetch("steps").find { |s| s["name"] == "Publish content-addressed Backend Rust E2E image" }.fetch("if")
-  [["pull_request", "fork/Wegent", true, false],
-   ["pull_request", "wecode-ai/Wegent", false, true],
-   ["workflow_dispatch", "", false, true]].each do |event, head, expected_source, expected_publish|
+  producer = workflow.fetch("jobs").fetch("build-executor-e2e-runtime").fetch("if")
+  [["pull_request", "fork/Wegent", true, true, false],
+   ["pull_request", "wecode-ai/Wegent", false, true, true],
+   ["merge_group", "", false, true, true],
+   ["workflow_dispatch", "", false, false, true],
+   ["schedule", "", false, false, true]].each do |event, head, expected_source, expected_artifact, expected_publish|
     values = {"github.event_name" => event, "github.event.pull_request.head.repo.full_name" => head,
-              "github.repository" => "wecode-ai/Wegent", "steps.image-check.outputs.exists" => "false"}
+              "github.repository" => "wecode-ai/Wegent", "steps.image-check.outputs.exists" => "false",
+              "github.event.pull_request.draft" => false,
+              "needs.changes.outputs.platform_e2e" => "false",
+              "needs.changes.outputs.wework_desktop_e2e" => "true"}
     evaluate = lambda do |expression|
       expression = expression.gsub(/\$\{\{|\}\}/, "")
       values.each { |key, value| expression = expression.gsub(key, value.inspect) }
       eval(expression)
     end
     raise "wrong runtime source for #{event}/#{head}" unless evaluate.call(source) == expected_source
-    raise "wrong Executor artifact source for #{event}/#{head}" unless evaluate.call(artifact) == expected_source
+    raise "wrong Executor artifact source for #{event}/#{head}" unless evaluate.call(artifact) == expected_artifact
     raise "wrong package publication for #{event}/#{head}" unless evaluate.call(publish) == expected_publish
+    raise "desktop runtime producer missing for #{event}/#{head}" unless evaluate.call(producer)
   end
 ' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml"
 ruby -ryaml -e '
@@ -90,7 +97,8 @@ run_case() {
   local mode="$1" failure="$2" expected="$3"
   local logout_failure="${4:-false}"
   local artifact_failure="${5:-false}"
-  local repo="$temp_dir/repo-$mode-$failure-$logout_failure-$artifact_failure"
+  local artifact_mode="${6:-$mode}"
+  local repo="$temp_dir/repo-$mode-$failure-$logout_failure-$artifact_failure-$artifact_mode"
   mkdir -p "$repo/.github/scripts" "$repo/docker-config"
   printf '{"auths":{"ghcr.io":{"auth":"synthetic-credential"}}}\n' > "$repo/docker-config/config.json"
   touch "$repo/log"
@@ -115,15 +123,17 @@ test "$ACTIONS_ARTIFACT_WAIT_SECONDS" = 1500
 test "$1" = executor-e2e-binary
 echo artifact >> "$TEST_LOG"
 [[ "${FAIL_ARTIFACT:-false}" != true ]] || exit 1
+sleep 0.2
 mkdir -p "$2"
 printf '#!/bin/sh\nexit 0\n' > "$2/wegent-executor"
+echo artifact-ready >> "$TEST_LOG"
 EOF
   chmod +x "$repo/.github/scripts/restore-oci-runtime-binary.sh"
   chmod +x "$repo/.github/scripts/download-actions-artifact.sh"
   local status=0
   (cd "$repo"; PATH="$temp_dir/bin:$PATH" TEST_LOG="$repo/log" \
     BUILD_RUNTIMES_FROM_SOURCE="$mode" FAIL_CARGO="$failure" \
-    EXECUTOR_ARTIFACT="$mode" EXECUTOR_HEAD_SHA=synthetic-head-sha \
+    EXECUTOR_ARTIFACT="$artifact_mode" EXECUTOR_HEAD_SHA=synthetic-head-sha \
     FAIL_ARTIFACT="$artifact_failure" \
     DOCKER_CONFIG="$repo/docker-config" FAIL_LOGOUT="$logout_failure" \
     GITHUB_TOKEN=synthetic-read-token EXECUTOR_IMAGE=executor \
@@ -145,16 +155,24 @@ EOF
       test ! -f "$repo/docker-config/config.json"
       test "$(grep -c cargo "$repo/log")" -eq 1
     fi
-    test "$(grep -c artifact "$repo/log")" -eq 1
+    test "$(grep -c '^artifact$' "$repo/log")" -eq 1
   else
     if grep -q logout "$repo/log"; then return 1; fi
     if grep -q cargo "$repo/log"; then return 1; fi
-    test "$(grep -c oci "$repo/log")" -eq 2
+    if [[ "$artifact_mode" == true ]]; then
+      test "$(grep -c oci "$repo/log")" -eq 1
+      test "$(grep -c '^artifact$' "$repo/log")" -eq 1
+      test "$(grep -n '^package$' "$repo/log" | cut -d: -f1)" -lt "$(grep -n '^artifact-ready$' "$repo/log" | cut -d: -f1)"
+    else
+      test "$(grep -c oci "$repo/log")" -eq 2
+    fi
   fi
 }
 
 run_case true false success
 run_case false false success
+# Same-repository PR and merge queue builds overlap packaging with artifact delivery.
+run_case false false success false false true
 run_case true true failure
 run_case true false failure true
 run_case true false failure false true
