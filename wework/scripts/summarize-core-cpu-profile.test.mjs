@@ -109,6 +109,61 @@ test('clips the boundary interval and excludes all subsequent runtime samples', 
   }
 })
 
+test('details known packages and builtins while preserving broad totals and safe loader ancestry', () => {
+  const profile = {
+    startTime: 1000,
+    endTime: 9000,
+    nodes: [
+      {
+        id: 1,
+        children: [2, 3, 4, 5],
+        callFrame: { url: 'node:internal/modules/esm/module_job', functionName: 'private-token' },
+      },
+      {
+        id: 2,
+        callFrame: {
+          url: 'file:///private/token/node_modules/@deepseek-ai/cosmokit/lib/index.js',
+          functionName: 'private-token',
+        },
+      },
+      {
+        id: 3,
+        callFrame: {
+          url: 'file:///private/token/managed-components/core-plugins/hash/wework-executor-runtime/index.js',
+          functionName: 'private-token',
+        },
+      },
+      { id: 4, callFrame: { url: 'node:internal/fs/utils', functionName: 'private-token' } },
+      {
+        id: 5,
+        callFrame: {
+          url: 'file:///private/token/node_modules/private-package/auth.js?secret=token',
+          functionName: 'private-token',
+        },
+      },
+    ],
+    samples: [2, 3, 4, 5],
+    timeDeltas: [1000, 2000, 3000, 1000],
+  }
+  const summary = summarizeCoreCpuProfile(profile, 7500)
+  expect(summary.modules).toEqual([
+    { name: 'other', samples: 3, sampledMs: 3.5 },
+    { name: 'node-other', samples: 1, sampledMs: 3 },
+  ])
+  expect(summary.moduleDetails).toEqual([
+    { name: 'node-fs', samples: 1, sampledMs: 3 },
+    { name: '@wegent/dsh-executor-runtime', samples: 1, sampledMs: 2 },
+    { name: '@deepseek-ai/cosmokit', samples: 1, sampledMs: 1 },
+    { name: 'other', samples: 1, sampledMs: 0.5 },
+  ])
+  expect(summary.nearestLoaderAncestors).toEqual([
+    { name: 'node-esm-loader', samples: 4, sampledMs: 6.5 },
+  ])
+  expect(JSON.stringify(summary)).not.toMatch(
+    /private-token|private-package|secret=|private\/token|file:\/\//
+  )
+})
+
 test('writes safe startup samples before forced termination of a preloaded real Node process', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-cpu-bootstrap-'))
   roots.push(root)

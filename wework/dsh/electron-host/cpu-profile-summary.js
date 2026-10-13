@@ -33,6 +33,70 @@ const bootOperations = new Set([
   'mountRootInclude',
   'auditStartupEntries',
 ])
+const additionalPackages = [
+  '@deepseek-ai/cosmokit',
+  '@deepseek-ai/cordis-plugin-group',
+  '@deepseek-ai/dsh-base',
+  '@deepseek-ai/dsh-session',
+  '@deepseek-ai/dsh-http-proxy',
+  '@deepseek-ai/dsh-cmdline',
+  '@deepseek-ai/dsh-home-paths',
+  '@deepseek-ai/dsh-launch-environment',
+  '@deepseek-ai/dsh-atomic-write',
+  'quansync',
+  'resolve.exports',
+  'commander',
+]
+const hostPlugins = [
+  ['@wegent/dsh-app-wework', 'wework-app'],
+  ['@wegent/dsh-electron-host', 'wework-electron-host'],
+  ['@wegent/dsh-browser-runtime', 'wework-browser-runtime'],
+  ['@wegent/dsh-secure-storage', 'wework-secure-storage'],
+  ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
+  ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
+  ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
+  ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
+]
+const nodeGroups = [
+  [/^node:(?:fs(?:\/|$)|internal\/fs(?:\/|$))/, 'node-fs'],
+  [/^node:(?:stream(?:\/|$)|internal\/streams(?:\/|$))/, 'node-streams'],
+  [/^node:(?:async_hooks$|internal\/async_hooks$)/, 'node-async-hooks'],
+  [/^node:(?:events$|internal\/events(?:\/|$))/, 'node-events'],
+  [/^node:(?:buffer$|internal\/buffer$)/, 'node-buffer'],
+  [/^node:(?:util(?:\/|$)|internal\/util(?:\/|$))/, 'node-util'],
+  [/^node:(?:url$|internal\/url$)/, 'node-url'],
+  [/^node:(?:vm$|internal\/vm$)/, 'node-vm'],
+  [/^node:(?:sqlite$|internal\/sqlite(?:\/|$))/, 'node-sqlite'],
+  [/^node:(?:net$|http$|https$|internal\/http(?:\/|$))/, 'node-network'],
+  [/^node:internal\/bootstrap(?:\/|$)/, 'node-bootstrap'],
+  [/^node:internal\/process(?:\/|$)/, 'node-process'],
+  [/^node:internal\/modules\/package_json_reader$/, 'node-package-json'],
+]
+const loaderGroups = new Set([
+  'node-esm-loader',
+  'node-cjs-loader',
+  '@deepseek-ai/cordis-plugin-loader',
+])
+const hostPluginGroups = hostPlugins.map(([name, directory]) => [
+  name,
+  new RegExp(`/(?:wework-core-plugins|core-plugins)(?:/[^/]+)?/${directory}/`),
+])
+
+function detailedModuleGroup(frame) {
+  const group = moduleGroup(frame)
+  if (group !== 'other' && group !== 'node-other') return group
+  const url = typeof frame.url === 'string' ? frame.url.replaceAll('\\', '/') : ''
+  for (const name of additionalPackages) {
+    if (url.includes(`/node_modules/${name}/`)) return name
+  }
+  for (const [name, pattern] of hostPluginGroups) {
+    if (url.includes(`/node_modules/${name}/`) || pattern.test(url)) return name
+  }
+  for (const [pattern, name] of nodeGroups) {
+    if (pattern.test(url)) return name
+  }
+  return group
+}
 
 function moduleGroup(frame) {
   if (frame.functionName === '(idle)') return 'idle'
@@ -59,6 +123,31 @@ function rows(groups) {
   return [...groups.values()]
     .map(row => ({ ...row, sampledMs: Math.round(row.sampledMs * 1000) / 1000 }))
     .sort((left, right) => right.sampledMs - left.sampledMs)
+}
+
+function recordAncestors(node, nodes, parents, delta, operations, loaderAncestors) {
+  const visited = new Set()
+  let bootRecorded = false
+  let loaderRecorded = false
+  while (node && !visited.has(node.id)) {
+    visited.add(node.id)
+    const frame = node.callFrame ?? {}
+    const group = moduleGroup(frame)
+    if (!loaderRecorded && loaderGroups.has(group)) {
+      addSample(loaderAncestors, group, delta)
+      loaderRecorded = true
+    }
+    if (
+      !bootRecorded &&
+      bootOperations.has(frame.functionName) &&
+      ['@deepseek-ai/dsh', '@deepseek-ai/dsh-app-boot'].includes(group)
+    ) {
+      addSample(operations, frame.functionName, delta)
+      bootRecorded = true
+    }
+    if (loaderRecorded && bootRecorded) break
+    node = nodes.get(parents.get(node.id))
+  }
 }
 
 export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
@@ -88,6 +177,8 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
   }
   const modules = new Map()
   const operations = new Map()
+  const moduleDetails = new Map()
+  const loaderAncestors = new Map()
   let sampleTime = profile.startTime
   let capturedSamples = 0
   for (const [index, id] of profile.samples.entries()) {
@@ -104,20 +195,8 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
     if (capturedDelta === 0) continue
     capturedSamples += 1
     addSample(modules, moduleGroup(node.callFrame), capturedDelta)
-    let current = node
-    const visited = new Set()
-    while (current && !visited.has(current.id)) {
-      visited.add(current.id)
-      const frame = current.callFrame
-      if (
-        bootOperations.has(frame?.functionName) &&
-        ['@deepseek-ai/dsh', '@deepseek-ai/dsh-app-boot'].includes(moduleGroup(frame))
-      ) {
-        addSample(operations, frame.functionName, capturedDelta)
-        break
-      }
-      current = nodes.get(parents.get(current.id))
-    }
+    addSample(moduleDetails, detailedModuleGroup(node.callFrame), capturedDelta)
+    recordAncestors(node, nodes, parents, capturedDelta, operations, loaderAncestors)
   }
   return {
     scope: startupEndTimeUs === undefined ? 'captured-process-lifecycle' : 'startup-to-endpoint',
@@ -125,5 +204,7 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
     samples: capturedSamples,
     modules: rows(modules),
     bootOperations: rows(operations),
+    moduleDetails: rows(moduleDetails),
+    nearestLoaderAncestors: rows(loaderAncestors),
   }
 }
