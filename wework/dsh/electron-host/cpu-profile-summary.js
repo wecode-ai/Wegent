@@ -5,6 +5,7 @@ const validationCodes = new Set([
   'core_profile_missing_sample_frame',
   'core_profile_nonfinite_delta',
   'core_profile_negative_delta',
+  'core_profile_sample_outside_clock',
 ])
 
 export function coreCpuProfileValidationCode(value) {
@@ -173,6 +174,26 @@ function recordAncestors(node, nodes, parents, delta, operations, loaderAncestor
   }
 }
 
+function orderedProfileSamples(profile, nodes) {
+  let timestamp = profile.startTime
+  const samples = profile.samples.map((id, index) => {
+    const node = nodes.get(id)
+    if (!node) throw invalidProfile('core_profile_missing_sample_node')
+    if (!node.callFrame) throw invalidProfile('core_profile_missing_sample_frame')
+    const delta = profile.timeDeltas[index]
+    if (!Number.isFinite(delta)) throw invalidProfile('core_profile_nonfinite_delta')
+    timestamp += delta
+    if (timestamp < profile.startTime) throw invalidProfile('core_profile_negative_delta')
+    if (!Number.isFinite(timestamp) || timestamp > profile.endTime) {
+      throw invalidProfile('core_profile_sample_outside_clock')
+    }
+    return { node, timestamp }
+  })
+  // CDP encodes adjacent sample timestamps, which need not arrive in time order.
+  // Match DevTools CPUProfileDataModel: reconstruct timestamps, then sort the pairs.
+  return samples.sort((left, right) => left.timestamp - right.timestamp)
+}
+
 export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
   if (
     !Array.isArray(profile?.nodes) ||
@@ -204,18 +225,12 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
   const loaderAncestors = new Map()
   let sampleTime = profile.startTime
   let capturedSamples = 0
-  for (const [index, id] of profile.samples.entries()) {
-    const delta = profile.timeDeltas[index]
-    const node = nodes.get(id)
-    if (!node) throw invalidProfile('core_profile_missing_sample_node')
-    if (!node.callFrame) throw invalidProfile('core_profile_missing_sample_frame')
-    if (!Number.isFinite(delta)) throw invalidProfile('core_profile_nonfinite_delta')
-    if (delta < 0) throw invalidProfile('core_profile_negative_delta')
+  for (const { node, timestamp } of orderedProfileSamples(profile, nodes)) {
     const capturedDelta = Math.max(
       0,
-      Math.min(sampleTime + delta, startupEndTimeUs ?? profile.endTime) - sampleTime
+      Math.min(timestamp, startupEndTimeUs ?? profile.endTime) - sampleTime
     )
-    sampleTime += delta
+    sampleTime = timestamp
     if (capturedDelta === 0) continue
     capturedSamples += 1
     addSample(modules, moduleGroup(node.callFrame), capturedDelta)

@@ -203,3 +203,11 @@ component-update 的首个 Core 进程报告固定 `core_profile_summarize_faile
 [本轮 Tests](https://github.com/wecode-ai/Wegent/actions/runs/38451605817) 两个 Wework 分片通过，但启动 Transcript 恢复单测在 `renderer.startupReady` mock 内执行的断言被产品的异常处理捕获并记录，无法使测试失败。此用例只设置了被 mock 的 Electron 标记，真实 renderer-phase 模块读取的 runtime config 仍为 browser，正确抑制了 Electron 专用阶段。
 
 修复将用例配置设为真实的 Electron/main，在 readiness 调用当刻记录 DOM 和阶段日志快照，并在测试主流程断言原来的内容可见及 surface-ready 先后关系。外置断言首先复现失败，修正 fixture 后单用例通过；四个启动/恢复用例与 17 个阶段测试全部通过。保留原正则、产品门槛与 E2E，逐用例重置配置，避免断言被吞或环境泄漏。
+
+### `703c1196e` ARM CPU 摘要的样本顺序
+
+[正式 ARM 日志](https://github.com/wecode-ai/Wegent/actions/runs/38451602677/job/115483778017) 首次给出固定原因 `core_profile_summarize_failed; core_profile_negative_delta`。原始 profile 已按隐私规则删除，无法确定负值的位置、幅度或累计时间戳是否仍在有效时钟范围内，因此不能声称本次输入必然合法或 ARM 启动已修复。
+
+[V8 Inspector 的时间序列编码](https://github.com/v8/v8/blob/main/src/inspector/v8-profiler-agent-impl.cc#L103-L113) 直接输出相邻样本时间戳之差；[DevTools 的解码](https://github.com/ChromeDevTools/devtools-frontend/blob/main/front_end/models/cpu_profile/CPUProfileDataModel.ts#L131-L141) 恢复累计时间戳，再[按时间稳定排序样本与对应时间戳](https://github.com/ChromeDevTools/devtools-frontend/blob/main/front_end/models/cpu_profile/CPUProfileDataModel.ts#L240-L261)。摘要现在按这一语义处理有效时钟内的乱序样本，而非直接拒绝所有负 delta。所有样本保留原节点身份；有限数、节点与帧、profile 时钟、累计时间戳边界及启动 marker 均严格校验，原 marker 截止和总时间计算不变。首个 delta 为 `-1` 仍硬失败，超出结束时钟输出固定 `core_profile_sample_outside_clock`，不钳制、删除样本或放宽启动预算。
+
+受控回归先复现原实现四项失败，再验证乱序节点归属、同时间戳稳定性、marker 跨界截取、总时间、不变的原输入及非法越界。26 项摘要测试通过；真实 ARM 原场景仍需后续 CI 验证。

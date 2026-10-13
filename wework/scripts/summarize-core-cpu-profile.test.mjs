@@ -57,6 +57,47 @@ test('aggregates known boot ancestry while excluding paths and arbitrary functio
   )
 })
 
+test('pairs out-of-order sample timestamps with their original nodes before clipping', () => {
+  const profile = { ...fixture(), samples: [4, 3, 4], timeDeltas: [3000, -2000, 8000] }
+  const before = structuredClone(profile)
+  const summary = summarizeCoreCpuProfile(profile, 3500)
+  expect(summary.modules).toEqual([
+    { name: 'other', samples: 1, sampledMs: 1.5 },
+    { name: 'native:readFileUtf8', samples: 1, sampledMs: 1 },
+  ])
+  expect(summary.bootOperations).toEqual([
+    { name: 'createRuntimeResolution', samples: 1, sampledMs: 1 },
+  ])
+  expect(summary.durationMs).toBe(2.5)
+  expect(summary.modules.reduce((total, row) => total + row.sampledMs, 0)).toBe(2.5)
+  expect(profile).toEqual(before)
+  expect(summarizeCoreCpuProfile(profile).modules).toEqual([
+    { name: 'other', samples: 2, sampledMs: 8 },
+    { name: 'native:readFileUtf8', samples: 1, sampledMs: 1 },
+  ])
+})
+
+test('keeps equal-timestamp samples stable and preserves the exact marker boundary', () => {
+  const profile = { ...fixture(), samples: [4, 3, 4, 3], timeDeltas: [3000, -2000, 0, 2000] }
+  const summary = summarizeCoreCpuProfile(profile, 4000)
+  expect(summary.modules).toEqual([
+    { name: 'other', samples: 1, sampledMs: 2 },
+    { name: 'native:readFileUtf8', samples: 1, sampledMs: 1 },
+  ])
+  expect(summary.samples).toBe(2)
+  expect(summary.durationMs).toBe(3)
+})
+
+test.each([
+  [[1000, -2001, 3000], 'core_profile_negative_delta'],
+  [[1000, 2000, 10000], 'core_profile_sample_outside_clock'],
+  [[Number.MAX_VALUE, Number.MAX_VALUE, 1], 'core_profile_sample_outside_clock'],
+])('rejects samples outside the real profile clock: %s', (timeDeltas, code) => {
+  expect(() => summarizeCoreCpuProfile({ ...fixture(), timeDeltas })).toThrow(
+    expect.objectContaining({ code })
+  )
+})
+
 test('retains safe summaries while the real CI diagnostics pruner removes raw profiles', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-cpu-profile-private-'))
   roots.push(root)
