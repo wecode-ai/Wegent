@@ -464,8 +464,7 @@ test.describe('Collaboration agent execution', () => {
     const displayName = 'Wegent capability agent'
     await page.goto(`/collaboration/workspaces/${workspace!.id}/projects/${projectId}`)
     await page.getByTestId('collaboration-tab-manage').click()
-    await page.getByTestId('collaboration-project-settings-participants').click()
-    await page.getByTestId('collaboration-participants-tab-agents').click()
+    await page.getByTestId('collaboration-project-settings-agents').click()
     await expect(page.getByTestId('project-agent-config')).toBeVisible()
     await page.getByTestId('project-agent-add').click()
     await page.getByTestId('project-agent-mode-create').click()

@@ -349,11 +349,6 @@ export function ModelRefSelector({
             {getTypeLabel(model.type)}
           </Badge>
         )}
-        renderModelMeta={model =>
-          model.modelId ? (
-            <span className="block truncate text-xs text-text-muted">{model.modelId}</span>
-          ) : null
-        }
       />
       {error && <span className="text-xs text-red-500">{error}</span>}
     </div>

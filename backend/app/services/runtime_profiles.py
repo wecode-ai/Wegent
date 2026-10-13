@@ -362,6 +362,11 @@ class RuntimeProfileService:
         )
         if execution is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
+        if execution.uses_runner_routing:
+            raise HTTPException(
+                422,
+                "This execution uses agent runner policies; update the execution selection instead of a legacy Runtime profile",
+            )
         if execution.executor_owner_user_id != user_id:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,

@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.schemas.dingtalk_card import AUTO_LAYOUT_PARAM, auto_layout_param
+
 logger = logging.getLogger(__name__)
 
 
@@ -241,12 +243,9 @@ class DingTalkRobotSender:
         card_param_map = {
             "title": title,
             "content": content,
-            # sys_full_json_obj is a system-level card variable: its config
-            # enables autoLayout so the card widens to fit content (wide
-            # tables no longer wrap into a narrow column).
-            "sys_full_json_obj": json.dumps(
-                {"config": {"autoLayout": True}}, ensure_ascii=False
-            ),
+            # The card widens to fit content instead of wrapping wide tables
+            # into a narrow column.
+            AUTO_LAYOUT_PARAM: auto_layout_param(),
         }
         if status:
             card_param_map["status"] = status

@@ -55,7 +55,8 @@ from app.services.skill_resolution import (
     find_skill_by_name,
     find_skill_by_ref,
 )
-from app.services.user_mcp_service import user_mcp_service
+from app.services.user_mcp_oauth import is_secure_mcp_url, user_mcp_oauth_service
+from app.services.user_mcp_service import MCP_AUTH_MODE_OAUTH, user_mcp_service
 from app.stores.tasks import subtask_store, task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
@@ -1228,6 +1229,19 @@ class TaskRequestBuilder:
         if runtime_model_config:
             return dict(runtime_model_config)
 
+        policy = (bot.json or {}).get("spec", {}).get("model_policy")
+        if policy is not None:
+            from app.schemas.runner_routing import ModelPolicy
+            from app.services.runner_cloud_models import fixed_model_config
+            from app.services.runner_routing import routing_error
+
+            selected = ModelPolicy.model_validate(policy)
+            if selected.mode != "fixed":
+                raise routing_error(
+                    "RUNNER_MODEL_REQUIRED", "Choose a model before running this agent"
+                )
+            return fixed_model_config(self.db, user_id, selected.model)
+
         from app.services.chat.config.model_resolver import (
             _process_model_config_placeholders,
             get_model_config_for_bot,
@@ -2009,6 +2023,13 @@ class TaskRequestBuilder:
                             service=service,
                         )
                     )
+                elif user:
+                    self._apply_user_mcp_oauth_header(
+                        skill_data,
+                        user=user,
+                        provider_id=provider["provider_id"],
+                        service=service,
+                    )
 
         if skill_crd.spec.tools:
             skill_data["tools"] = [
@@ -2029,6 +2050,67 @@ class TaskRequestBuilder:
                 )
 
         return skill_data
+
+    def _apply_user_mcp_oauth_header(
+        self,
+        skill_data: dict[str, Any],
+        *,
+        user: User,
+        provider_id: str,
+        service: dict[str, Any],
+    ) -> None:
+        """Attach an OAuth bearer header to an OAuth-authorized provider MCP.
+
+        Personal StreamableHttp URLs carry their own credential, so only the
+        OAuth mode needs an injected Authorization header.
+        """
+        servers = skill_data.get("mcpServers")
+        if not isinstance(servers, dict):
+            return
+        server_name = service.get("server_name")
+        server = servers.get(server_name)
+        if not isinstance(server, dict):
+            return
+
+        service_id = str(service.get("service_id") or "")
+        if (
+            user_mcp_service.get_service_auth_mode(
+                getattr(user, "preferences", None), provider_id, service_id
+            )
+            != MCP_AUTH_MODE_OAUTH
+        ):
+            return
+
+        config = user_mcp_service.get_provider_service_config(
+            getattr(user, "preferences", None), provider_id, service_id
+        )
+        if not is_secure_mcp_url(str(config.get("url") or "")):
+            logger.warning(
+                "[MCP-OAUTH] Refusing to attach an OAuth bearer header over an "
+                "insecure transport for %s/%s",
+                provider_id,
+                service_id,
+            )
+            return
+
+        access_token = user_mcp_oauth_service.ensure_access_token_sync(
+            self.db,
+            user=user,
+            provider_id=provider_id,
+            service_id=service_id,
+        )
+        if not access_token:
+            logger.warning(
+                "[MCP-OAUTH] No usable access token for %s/%s; "
+                "the provider skill will start unauthenticated",
+                provider_id,
+                service_id,
+            )
+            return
+
+        headers = dict(server.get("headers") or {})
+        headers["Authorization"] = f"Bearer {access_token}"
+        server["headers"] = headers
 
     @staticmethod
     def _build_unconfigured_provider_skill_prompt(

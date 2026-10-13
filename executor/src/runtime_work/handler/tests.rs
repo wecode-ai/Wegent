@@ -50,6 +50,9 @@ mod task_project_move_tests;
 #[path = "message_presentation_tests.rs"]
 mod message_presentation_tests;
 
+#[path = "project_preparation_tests.rs"]
+mod project_preparation_tests;
+
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
     let config = CodexRuntimeProxyConfig::default();
@@ -1252,13 +1255,15 @@ fn rewrites_loopback_gateway_when_no_connection_snapshot_exists() {
         backend_url: Some("http://backend.example.com:8000".to_owned()),
         ..ExecutionRequest::default()
     };
-    request.model_config = json!({"baseUrl": "http://127.0.0.1:8000/api/work"});
+    request.model_config = json!({
+        "baseUrl": "http://127.0.0.1:8000/api/runtime-work/llm-responses-proxy"
+    });
 
     handler.apply_backend_connection(&mut request);
 
     assert_eq!(
         request.model_config["baseUrl"],
-        json!("http://backend.example.com:8000/api/work")
+        json!("http://backend.example.com:8000/api/runtime-work/llm-responses-proxy")
     );
 }
 

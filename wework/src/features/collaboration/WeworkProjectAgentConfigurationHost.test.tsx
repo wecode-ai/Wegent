@@ -1,12 +1,64 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { RunnerEnvironment, RunnerModelIdentity } from '@wegent/collaboration'
+
 import type { createAgentResourceApi } from '@/api/agentResources'
 import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import {
   createWeworkProjectAgentConfigurationHost,
   weworkProjectAgentConfigurationHost,
 } from './WeworkProjectAgentConfigurationHost'
+
+vi.mock('@/desktop/localExecutor', () => ({
+  getKnownLocalExecutorDeviceId: () => 'local-device',
+}))
+
+const codexModel: RunnerModelIdentity = {
+  runtime: 'codex',
+  provider: 'openai',
+  model_id: 'gpt-5',
+  source: 'native',
+}
+const claudeModel: RunnerModelIdentity = {
+  runtime: 'claude_code',
+  provider: 'anthropic',
+  model_id: 'claude-sonnet',
+  source: 'native',
+}
+const modelValue = (model: RunnerModelIdentity) =>
+  JSON.stringify([model.runtime, model.provider, model.model_id])
+const runnerEnvironments: RunnerEnvironment[] = [
+  {
+    id: '1',
+    device_key: 'local-device',
+    name: 'Test runner',
+    owner_type: 'user',
+    owner_id: '1',
+    status: 'online',
+    project_authorized: true,
+    models: [codexModel, claudeModel].map(model => ({
+      ...model,
+      label: model.model_id,
+      local_model_id: model.model_id,
+      account_label: 'Runner account',
+      is_default: true,
+    })),
+  },
+]
+const runnerCatalog = () => vi.fn(async () => runnerEnvironments)
+
+async function expectProjectDefaults(prefix: string) {
+  const dialog =
+    prefix === 'wework-agent' ? 'wework-agent-resource-creator' : 'cloud-project-chat-agent-editor'
+  expect(screen.getByTestId(`${prefix}-model`)).not.toBeVisible()
+  fireEvent.click(screen.getByTestId(`${dialog}-runtime-summary`))
+  await waitFor(() => expect(screen.getByTestId(`${prefix}-environment`)).toHaveValue('1'))
+  await waitFor(() =>
+    expect(screen.getByTestId(`${prefix}-model`)).toHaveValue(modelValue(codexModel))
+  )
+  fireEvent.click(screen.getByTestId(`${dialog}-tab-basic`))
+}
 
 function setRichInputValue(testId: string, value: string) {
   const editor = screen.getByTestId(testId) as HTMLElement & { value: string }
@@ -16,6 +68,93 @@ function setRichInputValue(testId: string, value: string) {
 }
 
 describe('weworkProjectAgentConfigurationHost', () => {
+  it('preserves prompt and manual capabilities across tabs and exposes runtime conflicts on the basic tab', async () => {
+    const otherModel = { ...codexModel, model_id: 'other-model' }
+    const createAgent = vi.fn(async () => ({ id: 53, name: 'review', displayName: 'Review' }))
+    const api = {
+      listRunnerEnvironments: vi.fn(async () => [
+        ...runnerEnvironments,
+        {
+          ...runnerEnvironments[0],
+          id: '2',
+          name: 'Other runner',
+          models: [
+            {
+              ...otherModel,
+              label: 'Other model',
+              local_model_id: 'other-model',
+              account_label: 'Other account',
+              is_default: true,
+            },
+          ],
+        },
+      ]),
+      listModels: vi.fn(async () => []),
+      listSkills: vi.fn(async () => []),
+      createAgent,
+    } as unknown as ReturnType<typeof createAgentResourceApi>
+    const host = createWeworkProjectAgentConfigurationHost(api)
+    render(
+      host.renderAgentCreator!({
+        namespace: 'default',
+        onClose: vi.fn(),
+        onCreated: vi.fn(async () => undefined),
+        workspaceName: 'Personal',
+      })
+    )
+    setRichInputValue('wework-agent-system-prompt', 'Keep this draft.')
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-advanced-toggle'))
+    fireEvent.click(screen.getByTestId('wework-agent-capability-mode-manual'))
+    fireEvent.change(screen.getByTestId('wework-agent-mcp'), {
+      target: { value: '{"browser":{"command":"node"}}' },
+    })
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-runtime-summary'))
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('wework-agent-environment').querySelector('option[value="1"]')
+      ).toBeInTheDocument()
+    )
+    expect(screen.queryByTestId('wework-agent-execution-policy')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('wework-agent-environment')).toHaveValue('1'))
+    await waitFor(() =>
+      expect(screen.getByTestId('wework-agent-model')).toHaveValue(modelValue(codexModel))
+    )
+    fireEvent.change(screen.getByTestId('wework-agent-environment'), { target: { value: '2' } })
+    expect(screen.getByTestId('wework-agent-model')).toHaveValue(modelValue(codexModel))
+    expect(screen.getByTestId('wework-agent-resource-create')).toBeDisabled()
+    fireEvent.keyDown(screen.getByTestId('wework-agent-resource-creator-tab-runtime'), {
+      key: 'Home',
+    })
+    expect(screen.getByTestId('wework-agent-resource-creator-tab-basic')).toHaveFocus()
+    expect(screen.getByRole('alert')).toHaveTextContent('workbench.runner_model_conflict')
+    expect(screen.getByTestId('wework-agent-system-prompt')).toHaveValue('Keep this draft.')
+    expect(screen.getByTestId('wework-agent-capability-mode-manual')).toBeChecked()
+    expect(screen.getByTestId('wework-agent-mcp')).toHaveValue('{"browser":{"command":"node"}}')
+    fireEvent.keyDown(screen.getByTestId('wework-agent-resource-creator-tab-basic'), {
+      key: 'ArrowRight',
+    })
+    expect(screen.getByTestId('wework-agent-resource-creator-tab-runtime')).toHaveFocus()
+    fireEvent.change(screen.getByTestId('wework-agent-model'), {
+      target: { value: modelValue(otherModel) },
+    })
+    expect(screen.getByTestId('wework-agent-resource-creator-runtime-summary')).toHaveTextContent(
+      'Other runner · Other model'
+    )
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-tab-basic'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('wework-agent-resource-create'))
+    await waitFor(() =>
+      expect(createAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionPolicy: { mode: 'fixed', environment_id: '2' },
+          modelPolicy: { mode: 'fixed', model: otherModel },
+          capabilityMode: 'manual',
+          systemPrompt: 'Keep this draft.',
+          mcpServers: { browser: { command: 'node' } },
+        })
+      )
+    )
+  })
   it('renders the shared Agent form with Wework design-system controls', () => {
     const onClose = vi.fn()
     const onModeChange = vi.fn()
@@ -84,6 +223,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
 
   it('opens the resource-library form without exposing existing Agent selection', () => {
     const api = {
+      listRunnerEnvironments: runnerCatalog(),
       listModels: vi.fn(async () => []),
       listSkills: vi.fn(async () => []),
     } as unknown as ReturnType<typeof createAgentResourceApi>
@@ -103,6 +243,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
       namespace: 'workspace-alpha',
     }))
     const api = {
+      listRunnerEnvironments: runnerCatalog(),
       listModels: vi.fn(async () => [
         {
           name: 'desktop-e2e-public-model',
@@ -171,11 +312,16 @@ describe('weworkProjectAgentConfigurationHost', () => {
     )
     expect(screen.queryByTestId('wework-agent-resource-name')).not.toBeInTheDocument()
     expect(screen.queryByTestId('wework-agent-runtime')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-agent-resource-creator-tab-basic')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('wework-agent-environment')).not.toBeVisible()
     expect(screen.getByTestId('wework-agent-owner')).toHaveValue('workspace-alpha')
     fireEvent.change(screen.getByTestId('wework-agent-owner'), {
       target: { value: 'engineering' },
     })
-    expect(screen.getByText('能力：跟随运行设备')).toBeInTheDocument()
+    expect(screen.getByText('使用环境能力')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('wework-agent-resource-creator-advanced-toggle'))
     await waitFor(() =>
       expect(screen.getByTestId('wework-agent-capability-mode-follow')).toBeChecked()
@@ -191,14 +337,12 @@ describe('weworkProjectAgentConfigurationHost', () => {
     fireEvent.pointerDown(screen.getByTestId('wework-agent-system-prompt'))
     expect(screen.queryByTestId('wework-agent-plugins-picker')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('wework-agent-plugins-add'))
-    expect(screen.getByTestId('wework-agent-resource-create')).toBeDisabled()
+    expect(screen.getByTestId('wework-agent-resource-create')).toBeEnabled()
 
     fireEvent.change(screen.getByTestId('wework-agent-display-name'), {
       target: { value: 'Review Agent' },
     })
-    fireEvent.change(screen.getByTestId('wework-agent-model'), {
-      target: { value: '0' },
-    })
+    await expectProjectDefaults('wework-agent')
     expect(screen.getByTestId('wework-agent-resource-create')).toBeEnabled()
     fireEvent.click(screen.getByTestId('wework-agent-skills-add'))
     fireEvent.click(screen.getByTestId('wework-agent-skill-7'))
@@ -218,11 +362,9 @@ describe('weworkProjectAgentConfigurationHost', () => {
         namespace: 'engineering',
         capabilityMode: 'manual',
         runtime: 'Codex',
-        model: {
-          name: 'desktop-e2e-public-model',
-          type: 'public',
-          namespace: 'default',
-        },
+        executionPolicy: { mode: 'fixed', environment_id: '1' },
+        modelPolicy: { mode: 'fixed', model: codexModel },
+        model: { name: codexModel.model_id, type: 'runtime' },
         systemPrompt: 'Review the implementation.',
         skills: [
           {
@@ -255,6 +397,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
       namespace: 'default',
     }))
     const api = {
+      listRunnerEnvironments: runnerCatalog(),
       listModels: vi.fn(async () => [
         {
           name: 'desktop-e2e-public-model',
@@ -282,9 +425,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
     fireEvent.click(screen.getByTestId('wework-agent-resource-creator-advanced-toggle'))
     fireEvent.click(screen.getByTestId('wework-agent-capability-mode-manual'))
     await waitFor(() => expect(screen.getByText('Skill catalog unavailable')).toBeInTheDocument())
-    fireEvent.change(screen.getByTestId('wework-agent-model'), {
-      target: { value: '0' },
-    })
+    await expectProjectDefaults('wework-agent')
 
     expect(screen.getByTestId('wework-agent-resource-create')).toBeEnabled()
     fireEvent.click(screen.getByTestId('wework-agent-resource-create'))
@@ -293,11 +434,9 @@ describe('weworkProjectAgentConfigurationHost', () => {
       expect(createAgent).toHaveBeenCalledWith(
         expect.objectContaining({
           name: expect.stringMatching(/^agent-[a-z0-9]+-[a-z0-9]{6}$/),
-          model: {
-            name: 'desktop-e2e-public-model',
-            type: 'public',
-            namespace: 'default',
-          },
+          executionPolicy: { mode: 'fixed', environment_id: '1' },
+          modelPolicy: { mode: 'fixed', model: codexModel },
+          model: { name: codexModel.model_id, type: 'runtime' },
           skills: [],
         })
       )
@@ -314,6 +453,8 @@ describe('weworkProjectAgentConfigurationHost', () => {
       namespace: 'workspace-alpha',
       runtime: 'ClaudeCode' as const,
       shellName: 'ClaudeCode',
+      executionPolicy: { mode: 'fixed', environment_id: '1' },
+      modelPolicy: { mode: 'fixed', model: claudeModel },
       model: {
         name: 'desktop-e2e-public-model',
         type: 'public' as const,
@@ -339,6 +480,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
       namespace: 'workspace-alpha',
     }))
     const api = {
+      listRunnerEnvironments: runnerCatalog(),
       listModels: vi.fn(async () => [
         {
           name: 'desktop-e2e-public-model',
@@ -399,7 +541,9 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(screen.queryByTestId('wework-agent-runtime')).not.toBeInTheDocument()
     // The model and Skill catalogs load independently of the Agent detail, so
     // their prefill lands in a later commit than the system prompt.
-    await waitFor(() => expect(screen.getByTestId('wework-agent-model')).toHaveValue('0'))
+    await waitFor(() =>
+      expect(screen.getByTestId('wework-agent-model')).toHaveValue(modelValue(claudeModel))
+    )
     fireEvent.click(screen.getByTestId('wework-agent-resource-creator-advanced-toggle'))
     fireEvent.click(screen.getByTestId('wework-agent-skills-add'))
     await waitFor(() => expect(screen.getByTestId('wework-agent-skill-8')).toBeChecked())
@@ -440,6 +584,8 @@ describe('weworkProjectAgentConfigurationHost', () => {
     const onCreated = vi.fn(async () => undefined)
     const create = vi.fn(async () => ({ id: 'local-agent-1' }))
     const localAgentApi = {
+      listRunnerEnvironments: runnerCatalog(),
+      listModels: vi.fn(async () => []),
       list: vi.fn(async () => []),
       create,
       update: vi.fn(),
@@ -507,7 +653,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
     )
     expect(agentResourceApi.listSkills).toHaveBeenCalledOnce()
     expect(pluginApi.listPlugins).toHaveBeenCalledWith('')
-    expect(screen.queryByTestId('cloud-project-chat-agent-environment')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-chat-agent-environment')).not.toBeVisible()
     expect(screen.queryByTestId('cloud-project-chat-agent-name')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-chat-agent-mode')).not.toBeInTheDocument()
     expect(screen.queryByText('仅展示当前在线的设备')).not.toBeInTheDocument()
@@ -515,12 +661,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
     fireEvent.change(screen.getByTestId('cloud-project-chat-agent-display-name'), {
       target: { value: '本地评审' },
     })
-    await waitFor(() =>
-      expect(screen.getByTestId('cloud-project-chat-agent-model')).not.toBeDisabled()
-    )
-    fireEvent.change(screen.getByTestId('cloud-project-chat-agent-model'), {
-      target: { value: 'gpt-5' },
-    })
+    await expectProjectDefaults('cloud-project-chat-agent')
     fireEvent.click(screen.getByTestId('cloud-project-chat-agent-editor-advanced-toggle'))
     await waitFor(() =>
       expect(screen.getByTestId('cloud-project-chat-agent-capability-mode-follow')).toBeChecked()
@@ -543,6 +684,8 @@ describe('weworkProjectAgentConfigurationHost', () => {
           displayName: '本地评审',
           runtime: 'codex',
           model: 'gpt-5',
+          executionPolicy: { mode: 'fixed', environment_id: '1' },
+          modelPolicy: { mode: 'fixed', model: codexModel },
           executionMode: 'auto',
           executionEnvironment: 'local',
           executionDeviceId: null,
@@ -565,6 +708,8 @@ describe('weworkProjectAgentConfigurationHost', () => {
   it('saves an existing manual-approval agent with automatic execution', async () => {
     const agent = {
       id: 'manual-agent',
+      executionPolicy: { mode: 'fixed', environment_id: '1' },
+      modelPolicy: { mode: 'fixed', model: codexModel },
       name: 'Existing agent',
       displayName: 'Existing Agent',
       runtime: 'codex',
@@ -583,7 +728,14 @@ describe('weworkProjectAgentConfigurationHost', () => {
     const update = vi.fn(async () => agent)
     const host = createWeworkProjectAgentConfigurationHost(
       { listSkills: vi.fn(async () => []) } as never,
-      { list: vi.fn(async () => [agent]), create: vi.fn(), update, archive: vi.fn() } as never,
+      {
+        listRunnerEnvironments: runnerCatalog(),
+        listModels: vi.fn(async () => []),
+        list: vi.fn(async () => [agent]),
+        create: vi.fn(),
+        update,
+        archive: vi.fn(),
+      } as never,
       {
         listModels: vi.fn(async () => ({
           data: [{ name: 'gpt-5', displayName: 'GPT-5', type: 'public' }],
@@ -644,7 +796,14 @@ describe('weworkProjectAgentConfigurationHost', () => {
     const update = vi.fn(async () => agent)
     const host = createWeworkProjectAgentConfigurationHost(
       { listSkills: vi.fn(async () => []) } as never,
-      { list: vi.fn(async () => [agent]), create: vi.fn(), update, archive: vi.fn() } as never,
+      {
+        listRunnerEnvironments: runnerCatalog(),
+        listModels: vi.fn(async () => []),
+        list: vi.fn(async () => [agent]),
+        create: vi.fn(),
+        update,
+        archive: vi.fn(),
+      } as never,
       {
         listModels: vi.fn(async () => ({
           data: [
@@ -662,7 +821,13 @@ describe('weworkProjectAgentConfigurationHost', () => {
       })
     )
 
-    await waitFor(() => expect(screen.getByTestId('cloud-project-chat-agent-models')).toBeVisible())
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-project-chat-agent-display-name')).toHaveValue(
+        agent.displayName
+      )
+    )
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-editor-tab-runtime'))
+    expect(screen.getByTestId('cloud-project-chat-agent-models')).toBeVisible()
     expect(screen.queryByTestId('cloud-project-chat-agent-model')).not.toBeInTheDocument()
     expect(screen.queryByText('默认')).not.toBeInTheDocument()
     expect(

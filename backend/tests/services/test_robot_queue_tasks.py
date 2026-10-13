@@ -6,6 +6,9 @@ import uuid
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from sqlalchemy import event
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -137,6 +140,47 @@ def test_device_pull_claims_without_recording_unconfirmed_delivery(
         .one()
     )
     assert binding.device_id == "cloud-device"
+
+
+@pytest.mark.parametrize("claimed", [False, True])
+def test_unconfirmed_lookup_locks_only_an_existing_claim(
+    test_db: Session,
+    test_user: User,
+    claimed: bool,
+) -> None:
+    from app.services.loop_item_executions.device_pull import _unconfirmed_claim
+
+    execution = _make_execution(test_db, test_user)
+    if claimed:
+        execution.status = "claimed"
+        execution.runtime_device_id = "cloud-device"
+        execution.runtime_instance_id = "runtime-1"
+        test_db.commit()
+    statements: list[str] = []
+
+    def capture_statement(state) -> None:
+        statements.append(str(state.statement.compile(dialect=mysql.dialect())))
+
+    event.listen(test_db, "do_orm_execute", capture_statement)
+    try:
+        result = _unconfirmed_claim(
+            test_db,
+            owner_user_id=test_user.id,
+            runtime_device_id="cloud-device",
+            runtime_instance_id="runtime-1",
+            environment="cloud",
+        )
+    finally:
+        event.remove(test_db, "do_orm_execute", capture_statement)
+
+    assert (result.id if result else None) == (execution.id if claimed else None)
+    assert len(statements) == (2 if claimed else 1)
+    assert "FOR UPDATE" not in statements[0]
+    if claimed:
+        assert "FOR UPDATE" in statements[1]
+        assert "loop_item_executions.id =" in statements[1]
+    test_db.refresh(execution)
+    assert execution.status == ("claimed" if claimed else "queued")
 
 
 def test_device_pull_records_delivery_only_after_runtime_acceptance(

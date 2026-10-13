@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { WorkspaceTab } from './workspaceTabs'
-import { openWorkspaceTabWindow } from './workspaceWindow'
+import {
+  openWorkspaceTabWindow,
+  returnWorkspaceTabToMain,
+  WORKSPACE_TAB_RETURN_PREFIX,
+} from './workspaceWindow'
+import {
+  consumeWorkspaceTabTransfer,
+  publishWorkspaceTabTransferState,
+} from './workspaceTabTransfer'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: vi.fn(),
@@ -72,5 +80,48 @@ describe('openWorkspaceTabWindow', () => {
       activeTabId: tab.id,
       tabs: [{ ...tab, fixed: true }],
     })
+  })
+
+  test('waits for main window acceptance and stages the draft', async () => {
+    publishWorkspaceTabTransferState(tab.id, { draftInputByScope: { blank: 'draft' } })
+    const returning = returnWorkspaceTabToMain(tab)
+    await vi.waitFor(() => expect(localStorage.length).toBe(2))
+    const key = Object.keys(localStorage).find(key => key.startsWith(WORKSPACE_TAB_RETURN_PREFIX))!
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual(tab)
+    expect(consumeWorkspaceTabTransfer(tab.id)).toEqual({ draftInputByScope: { blank: 'draft' } })
+    localStorage.removeItem(key)
+    window.dispatchEvent(new StorageEvent('storage', { key, newValue: null }))
+    await expect(returning).resolves.toBeUndefined()
+    expect(invokeDesktopHostMock).toHaveBeenCalledWith('window.showMain')
+  })
+
+  test('cleans up an unaccepted return without dropping the source tab', async () => {
+    vi.useFakeTimers()
+    try {
+      const returning = returnWorkspaceTabToMain(tab)
+      const rejected = expect(returning).rejects.toThrow('Main window did not accept')
+      await vi.advanceTimersByTimeAsync(10_000)
+      await rejected
+      expect(localStorage.length).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('rejects a main-window error and clears the staged draft', async () => {
+    publishWorkspaceTabTransferState(tab.id, { draftInputByScope: { blank: 'draft' } })
+    const returning = returnWorkspaceTabToMain(tab)
+    const rejected = expect(returning).rejects.toThrow('Preferences failed')
+    await vi.waitFor(() => expect(localStorage.length).toBe(2))
+    const key = Object.keys(localStorage).find(key => key.startsWith(WORKSPACE_TAB_RETURN_PREFIX))!
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key,
+        newValue: JSON.stringify({ error: 'Preferences failed' }),
+      })
+    )
+    await rejected
+    expect(consumeWorkspaceTabTransfer(tab.id)).toBeNull()
+    expect(localStorage.length).toBe(0)
   })
 })

@@ -33,6 +33,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['automation-lifecycle', ['desktop-runtime-intensive']],
   ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-issue-task-discovery', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-app-queue-identity', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
@@ -50,6 +51,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'goal-state-sync': './scenarios/goal-state-sync.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
@@ -101,6 +103,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'collaboration-issue-task-discovery':
     './scenarios/collaboration-issue-task-discovery.scenario.mjs',
+  'collaboration-app-queue-identity': './scenarios/collaboration-app-queue-identity.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-dispatch':
@@ -135,6 +138,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'goal-state-sync',
   'model-settings',
   'reply-predictions',
   'collaboration-worktree-policy',
@@ -156,6 +160,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-login-proxy',
   'collaboration-shared-core',
   'collaboration-issue-task-discovery',
+  'collaboration-app-queue-identity',
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',

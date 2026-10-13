@@ -121,6 +121,8 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
             }
         ),
         status="completed",
+        runtime_device_id="manager-device",
+        runtime_task_id="codex-queue-manager",
     )
     test_db.add_all([manager, item, dispatch])
     test_db.commit()
@@ -158,6 +160,8 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
     assert comment.sender_id == manager.id
     assert comment.sender_name == "Issue manager"
     assert comment.content == "执行结果已满足验收条件，请确认。"
+    assert comment.runtime_device_id == "manager-device"
+    assert comment.runtime_task_id == "codex-queue-manager-manager-initial"
     assert comment.metadata_json == {
         "dispatch_role": "manager",
         "activity_type": "manager_status_comment",

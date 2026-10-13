@@ -106,7 +106,10 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
     test_db.commit()
     compiler = MagicMock(
         return_value=SimpleNamespace(
-            payload={"executionRequest": {"user": {"id": owner.id}, "model_config": {}}}
+            payload={
+                "executionRequest": {"user": {"id": owner.id}, "model_config": {}}
+            },
+            target=SimpleNamespace(device_id="admin-cloud"),
         )
     )
     rpc = AsyncMock(return_value={"accepted": True})
@@ -119,6 +122,9 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
     monkeypatch.setattr(
         "app.services.project_chat.comment_execution.push_project_chat_message",
         MagicMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.project_chat.service.notify_project_chat_mentions", MagicMock()
     )
     return SimpleNamespace(
         db=test_db,
@@ -476,7 +482,13 @@ async def test_new_root_preserves_real_queue_owner_and_comment_intent(scenario):
     assert execution.assigner_user_id == s.member.id
     assert execution.status == "queued"
     assert execution.automation_run_id == ""
-    assert execution.runtime_request["message"] == "Review this comment independently"
+    assert execution.runtime_request["message"].endswith(
+        "Review this comment independently"
+    )
+    assert (
+        f"cloud://projects/{s.project.id}/todos/{s.issue.id}"
+        in execution.runtime_request["message"]
+    )
     assert execution.runtime_request["modelId"] == "admin-model"
     assert (
         execution.runtime_request["origin"]["rootCommentId"]
@@ -526,6 +538,82 @@ async def test_member_reads_bound_transcript_using_original_owner(scenario, role
         timeout_seconds=30,
         allow_app_device_task_reading=True,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "requested_task", ["original-session", "original-session-manager-initial"]
+)
+async def test_group_transcript_reads_manager_session_without_changing_dispatch_identity(
+    scenario, requested_task
+):
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services.runtime_work_service import get_runtime_transcript
+
+    s = scenario
+    s.execution.execution_payload = json.dumps(
+        {
+            **s.execution.execution_intent,
+            "runtime_selection": {"executor_kind": "collaboration_group_dispatch"},
+        }
+    )
+    s.db.commit()
+    s.rpc.return_value = {
+        "taskId": "original-session-manager-initial",
+        "workspacePath": "/manager-session",
+        "runtime": "codex",
+        "messages": [
+            {"id": "planning", "role": "assistant", "content": "Planning work"}
+        ],
+        "turns": [],
+        "running": True,
+    }
+    response = await get_runtime_transcript(
+        db=s.db,
+        user_id=s.member.id,
+        address=RuntimeTranscriptRequest(
+            deviceId="admin-cloud",
+            taskId=requested_task,
+            runtimeHandle={"threadId": "unrelated-private-thread"},
+            projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+        ),
+    )
+
+    assert response.local_task_id == "original-session-manager-initial"
+    assert response.messages[0].content == "Planning work"
+    assert s.execution.runtime_task_id == "original-session"
+    assert s.rpc.call_args.kwargs["payload"] == {
+        "deviceId": "admin-cloud",
+        "taskId": "original-session-manager-initial",
+    }
+    assert s.rpc.call_args.kwargs["user_id"] == s.owner.id
+
+
+@pytest.mark.asyncio
+async def test_invalid_runtime_transcript_returns_explicit_gateway_error(scenario):
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services.runtime_work_service import get_runtime_transcript
+
+    s = scenario
+    s.rpc.return_value = {
+        "taskId": "original-session",
+        "workspacePath": "",
+        "runtime": "runtime",
+        "messages": [],
+        "turns": [],
+    }
+    with pytest.raises(HTTPException) as error:
+        await get_runtime_transcript(
+            db=s.db,
+            user_id=s.member.id,
+            address=RuntimeTranscriptRequest(
+                deviceId="admin-cloud",
+                taskId="original-session",
+                projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+            ),
+        )
+    assert error.value.status_code == 502
+    assert error.value.detail == "Runtime returned an invalid conversation response"
 
 
 @pytest.mark.asyncio
@@ -645,3 +733,113 @@ async def test_project_transcript_websocket_uses_same_authorization(
         "deviceId": "admin-cloud",
         "taskId": "original-session",
     }
+
+
+@pytest.mark.asyncio
+async def test_routed_reply_queues_offline_and_keeps_the_original_session(
+    scenario, monkeypatch
+):
+    from app.models.kind import Kind
+    from app.schemas.runner_routing import RunnerCatalog
+    from app.services.loop_item_executions.service import loop_item_execution_service
+    from app.services.runner_routing import save_catalog
+
+    db = scenario.db
+    original = db.query(LoopItemExecution).first()
+    agent = db.get(ProjectChatAgent, original.agent_id)
+    model = {"runtime": "codex", "provider": "openai", "model_id": "native-model"}
+    device = Kind(
+        kind="Device",
+        name="admin-cloud",
+        namespace="default",
+        user_id=original.executor_owner_user_id,
+        is_active=True,
+        json={"spec": {"deviceType": "cloud"}},
+    )
+    db.add(device)
+    db.flush()
+    save_catalog(
+        db,
+        device,
+        RunnerCatalog(
+            models=[{**model, "label": "Native", "local_model_id": "native-model"}]
+        ),
+    )
+    agent.metadata_json = {
+        **agent.metadata_json,
+        "execution_policy": {"mode": "project_pool"},
+        "model_policy": {"mode": "fixed", "model": model},
+    }
+    intent = original.execution_intent
+    intent["runtime_selection"] = {
+        "runner_routing": {
+            "execution_policy": {"mode": "project_pool"},
+            "model": model,
+        },
+        "resolved_environment_id": str(device.id),
+    }
+    original.execution_payload = json.dumps(intent)
+    db.get(LoopItem, original.loop_item_id).metadata_json = {
+        "runner_binding": {"environment_id": str(device.id)}
+    }
+    monkeypatch.setattr(
+        "app.services.runner_routing.project_environment_ids", lambda *_: {device.id}
+    )
+    trigger = ProjectChatMessage(
+        message_id="queued-reply",
+        client_message_id="queued-reply",
+        project_id=original.cloud_project_id,
+        task_id=original.loop_item_id,
+        sender_type="user",
+        sender_id=str(scenario.member.id),
+        sender_name="Member",
+        content="Continue",
+        message_type="text",
+        status="completed",
+        reply_to_message_id="ai-result",
+        thread_root_message_id="ai-result",
+        metadata_json={},
+    )
+    db.add(trigger)
+    db.commit()
+    rows = await execute_comment(
+        db,
+        user_id=scenario.member.id,
+        request=ProjectChatCommentExecution(
+            project_id=original.cloud_project_id,
+            task_id=original.loop_item_id,
+            trigger_message_id=trigger.message_id,
+        ),
+    )
+    queued = db.query(LoopItemExecution).order_by(LoopItemExecution.id.desc()).first()
+    assert queued.id != original.id
+    assert queued.status == "queued"
+    assert queued.runtime_task_id == original.runtime_task_id
+    assert queued.runtime_request["newSession"] is False
+    assert rows[0].status == "pending"
+    next_request = comment(scenario, text="Another offline reply")
+    followups = await execute_comment(
+        db, user_id=scenario.member.id, request=next_request
+    )
+    assert followups[0].status == "pending"
+    second = db.query(LoopItemExecution).order_by(LoopItemExecution.id.desc()).first()
+    assert second.id != queued.id
+    assert second.runtime_task_id == "original-session"
+    scenario.rpc.assert_not_awaited()
+    claimed = loop_item_execution_service.claim_next_for_device(
+        db,
+        execution_device_id=device.name,
+        owner_user_id=device.user_id,
+        environment="cloud",
+        runtime_instance_id="runner",
+    )
+    assert claimed.id == queued.id
+    assert claimed.runtime_task_id == "original-session"
+    compiled = loop_item_execution_service.build_executor_runtime_payload(
+        db,
+        execution=claimed,
+        execution_target_id=device.name,
+        executor_device_id=device.name,
+    )
+    assert compiled["executionRequest"]["new_session"] is False
+    assert compiled["runtimeAction"] == "send"

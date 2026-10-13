@@ -1,4 +1,4 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { StrictMode } from 'react'
 import { openExternalUrl } from '@/lib/external-links'
@@ -183,7 +183,14 @@ describe('RemoteTerminal', () => {
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Unmount and release deferred terminal resources before restoring their mocks.
+    cleanup()
+    if (vi.isFakeTimers()) {
+      await vi.advanceTimersByTimeAsync(0)
+    } else {
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0))
+    }
     vi.useRealTimers()
     requestAnimationFrameSpy.mockRestore()
     consoleErrorSpy.mockRestore()

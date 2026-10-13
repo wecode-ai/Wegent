@@ -26,7 +26,12 @@ export function RuntimeConfigurationProvider({
   api?: SharedWorkspaceApi | null;
   project?: Pick<
     CollaborationProject,
-    "id" | "workspace_id" | "access_role" | "version" | "execution_environment"
+    | "id"
+    | "workspace_id"
+    | "project_store"
+    | "access_role"
+    | "version"
+    | "execution_environment"
   > | null;
   locale: string;
   children: ReactNode;

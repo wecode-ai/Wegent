@@ -851,6 +851,7 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
     matches!(
         key,
         "message"
+            | "collaborationMemberRuntimeProfiles"
             | "messages"
             | "userMessagePresentations"
             | "cachedMessage"

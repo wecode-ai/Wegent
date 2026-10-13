@@ -80,7 +80,11 @@ describe('createLocalAppServices', () => {
     }
   })
 
-  test('snapshots complete agent and collaboration runtimes when assigning a local Issue', async () => {
+  test.each([
+    { prepared: true, source: undefined },
+    { prepared: false, source: 'native' },
+    { prepared: false, source: undefined },
+  ])('snapshots local assignment runtimes with %j', async ({ prepared, source }) => {
     const group = {
       id: 'group-1',
       workspace_id: 'local',
@@ -135,7 +139,7 @@ describe('createLocalAppServices', () => {
           fingerprint: 'diagnostics-v1',
           devices: {
             'local-device': {
-              status: 'ready',
+              status: prepared ? 'ready' : 'authorized',
               workspace_path: '/workspace/diagnostics',
               prepared_at: '2026-09-26T00:00:00Z',
               error: '',
@@ -178,7 +182,7 @@ describe('createLocalAppServices', () => {
       model: 'gpt-5.6-sol',
       model_type: 'runtime',
       model_namespace: 'default',
-      allowed_models: allowedModels,
+      allowed_models: prepared ? allowedModels : allowedModels?.slice(0, 1),
       system_prompt: `${name} developer instructions`,
       additional_skills: [
         { name: `${id}-skill`, namespace: 'default', isPublic: false, skillId: 1 },
@@ -189,12 +193,40 @@ describe('createLocalAppServices', () => {
       execution_mode: 'auto',
       workspace_policy: 'project',
       plugins: [],
+      ...(!prepared && id === 'worker'
+        ? {
+            execution_policy: { mode: 'fixed', environment_id: 'local-device' },
+            model_policy: {
+              mode: 'fixed',
+              model: {
+                runtime: 'codex',
+                provider: 'openai',
+                model_id: 'gpt-5.6-sol',
+                ...(source ? { source } : {}),
+              },
+            },
+          }
+        : {}),
       version: 1,
     })
     const updates: Array<Record<string, unknown>> = []
     const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'projects.list') return [project]
       if (method === 'todos.get') return task
+      if (method === 'runtime.runner.catalog') {
+        return {
+          runtimes: ['codex'],
+          models: [
+            {
+              runtime: 'codex',
+              provider: 'openai',
+              model_id: 'gpt-5.6-sol',
+              local_model_id: 'gpt-5.6-sol',
+              account_label: 'Local account',
+            },
+          ],
+        }
+      }
       if (method === 'chat_agents.list') {
         return params?.project_id === 'project-1'
           ? [
@@ -216,6 +248,7 @@ describe('createLocalAppServices', () => {
       ready: true,
       deviceId: 'local-device',
     }
+    const listCloudModels = vi.fn().mockRejectedValue(new Error('Cloud unavailable'))
     const services = createLocalAppServices({
       available: vi.fn().mockResolvedValue(localStatus),
       ensure: vi.fn().mockResolvedValue({
@@ -226,6 +259,7 @@ describe('createLocalAppServices', () => {
       request,
       subscribe: vi.fn().mockResolvedValue(vi.fn()),
       user: AUTHENTICATED_CLOUD_USER,
+      listCloudModels,
     })
 
     await services.deliveryApi!.assignLoopItem('project-1', 'LOCAL-1', {
@@ -259,13 +293,29 @@ describe('createLocalAppServices', () => {
         executionRequest: {
           task_title: 'Inspect CPU',
           system_prompt: 'Worker developer instructions',
-          project_workspace_path: '/workspace/diagnostics',
-          runtime_workspace_roots: ['/workspace/diagnostics'],
+          ...(prepared
+            ? {
+                project_workspace_path: '/workspace/diagnostics',
+                runtime_workspace_roots: ['/workspace/diagnostics'],
+              }
+            : {}),
           bot: [{ id: 'worker', mcp_servers: { evidence: { command: 'worker-mcp' } } }],
           skill_names: ['worker-skill'],
         },
       },
     })
+    expect(listCloudModels).not.toHaveBeenCalled()
+    if (!prepared) {
+      expect(updates[0]).toMatchObject({
+        execution_payload: {
+          standaloneChatWorkspace: true,
+          runnerRouting: {
+            environment_id: 'local-device',
+            model: { ...(source ? { source } : {}), model_id: 'gpt-5.6-sol' },
+          },
+        },
+      })
+    }
     expect(updates[1]).toMatchObject({
       assignee_group_id: 'group-1',
       execution_payload: {
@@ -330,12 +380,16 @@ describe('createLocalAppServices', () => {
             executionRequest: { model_config: { model_id: 'gpt-5.6-sol' } },
           },
         },
-        {
-          modelId: 'gpt-5.6-luna',
-          runtimePayload: {
-            executionRequest: { model_config: { model_id: 'gpt-5.6-luna' } },
-          },
-        },
+        ...(prepared
+          ? [
+              {
+                modelId: 'gpt-5.6-luna',
+                runtimePayload: {
+                  executionRequest: { model_config: { model_id: 'gpt-5.6-luna' } },
+                },
+              },
+            ]
+          : []),
       ],
     })
     expect(updates[2]).toMatchObject({
@@ -4982,6 +5036,53 @@ describe('createLocalAppServices', () => {
       })
     )
   })
+
+  test.each(['openai-responses', 'openai-chat-completions', 'anthropic-messages'])(
+    'routes Claude cloud models through the protocol bridge for %s',
+    async upstreamApiFormat => {
+      const request = vi.fn().mockResolvedValue({ accepted: true })
+      const services = createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+        request,
+        subscribe: vi.fn(),
+        cloudModelGateway: {
+          baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+          apiKey: 'cloud-login-token',
+        },
+      })
+      await services.runtimeWorkApi?.createRuntimeTask({
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'claude-cloud',
+        runtime: 'claude_code',
+        message: 'hello',
+        modelId: 'shared-model',
+        modelType: 'user',
+        modelOptions: {
+          weworkCloudModelNamespace: 'team',
+          weworkCloudModelResourceUserId: '42',
+          weworkCloudModelUpstreamApiFormat: upstreamApiFormat,
+        },
+      })
+      const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+      expect(payload.executionRequest.model_config).toEqual(
+        expect.objectContaining({
+          model_id: 'shared-model',
+          upstream_api_format: upstreamApiFormat,
+          base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+          api_key: 'cloud-login-token',
+          default_headers: {
+            'X-Wegent-Model-Type': 'user',
+            'X-Wegent-Model-Namespace': 'team',
+            'X-Wegent-Model-User-Id': '42',
+            'X-Wegent-Upstream-Header-wecode-executor': 'claudecode',
+            'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
+          },
+        })
+      )
+      expect(payload.executionRequest.model_config).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
+    }
+  )
 
   test('passes native Responses tool capabilities to the executor', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })

@@ -1236,6 +1236,19 @@ class DeviceNamespace(socketio.AsyncNamespace):
         Returns:
             Result from the event handler
         """
+        if event not in {"connect", "disconnect"}:
+            session = await self.get_session(sid)
+            if session.get("auth_type") == "workspace_runner":
+                from app.services.workspaces.runner_registration import (
+                    verify_runner_connection,
+                )
+
+                identity = await run_sync_in_executor(
+                    verify_runner_connection, session["auth_token"]
+                )
+                if identity is None:
+                    await self.disconnect(sid)
+                    return {"error": "Runner credential revoked"}
         return await self._execute_handler(event, sid, *args)
 
     async def _execute_handler(self, event: str, sid: str, *args):
@@ -1405,7 +1418,17 @@ class DeviceNamespace(socketio.AsyncNamespace):
         auth_type = ""
         token_exp = None
 
-        if is_api_key(token):
+        if token.startswith("wgr-"):
+            from app.services.workspaces.runner_registration import (
+                verify_runner_connection,
+            )
+
+            identity = await run_sync_in_executor(verify_runner_connection, token)
+            if identity is None:
+                raise ConnectionRefusedError("Invalid or revoked runner credential")
+            user_id, user_name = identity
+            auth_type = "workspace_runner"
+        elif is_api_key(token):
             # API Key authentication - run in executor to avoid blocking event loop
             auth_type = "api_key"
             try:
@@ -1610,6 +1633,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not user_id:
             return {"error": "Not authenticated"}
 
+        if session.get("auth_type") == "workspace_runner" and (
+            payload.device_id != session["user_name"]
+            or payload.device_type != DeviceType.LOCAL
+        ):
+            return {"error": "Runner credential is scoped to its registered device"}
+
         runtime_transfer_host = _normalize_runtime_transfer_host(
             payload.runtime_transfer_host or payload.client_ip
         )
@@ -1719,7 +1748,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
         session["runtime_transfer_port"] = runtime_transfer_port
         session["runtime_instance_id"] = payload.runtime_instance_id
         session["device_type"] = payload.device_type.value
-        session["execution_target_id"] = payload.app_device_id or payload.device_id
+        session["execution_target_id"] = (
+            route_id
+            if payload.device_type == DeviceType.APP
+            else payload.app_device_id or payload.device_id
+        )
         session["registered"] = True
 
         device_room = f"device:{user_id}:{route_id}"
@@ -2263,6 +2296,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
         return await run_sync_in_executor(
             partial(
                 pull_execution,
+                runner_catalog=(
+                    data.get("runner_catalog") if isinstance(data, dict) else None
+                ),
                 owner_user_id=int(user_id),
                 execution_target_id=str(execution_target_id),
                 runtime_device_id=str(runtime_device_id),

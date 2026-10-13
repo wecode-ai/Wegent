@@ -149,6 +149,24 @@ describe("shared PC card reply dispatch", () => {
     );
     expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
   });
+  it("reports a missing self-managed session instead of silently saving an AI reply", async () => {
+    const { input, runtime, client } = setup();
+    const result = await dispatchTaskCardReply({
+      ...input,
+      selfManagedExecution: true,
+      card: { root: { ...run, runtimeAddress: undefined }, replies: [] },
+    });
+    expect(result).toEqual({
+      ok: false,
+      persisted: true,
+      error: "Start failed",
+    });
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({ mentions: [] }),
+    );
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
+    expect(runtime.sendRuntimePaneMessage).not.toHaveBeenCalled();
+  });
   it("reports whether the reply was saved when the runtime rejects continuation", async () => {
     const { input, runtime, client } = setup();
     runtime.sendRuntimePaneMessage.mockImplementationOnce(

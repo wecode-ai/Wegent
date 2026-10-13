@@ -94,9 +94,13 @@ def create_project(test_db: Session, user: User) -> CloudProject:
     return project
 
 
+@pytest.mark.parametrize("routed", [False, True])
 def test_compiled_bot_config_follow_device_keeps_identity_without_ghost_capabilities(
     mocker,
+    routed,
 ) -> None:
+    from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy
+
     row = ProjectChatAgent(
         id="native-follow-device",
         cloud_project_id=1,
@@ -135,9 +139,29 @@ def test_compiled_bot_config_follow_device_keeps_identity_without_ghost_capabili
         return_value=SimpleNamespace(
             spec=SimpleNamespace(
                 capability_mode="follow_device",
+                routing_configuration_required=False,
+                execution_policy=(
+                    ExecutionPolicy(mode="project_pool") if routed else None
+                ),
+                model_policy=(
+                    ModelPolicy(
+                        mode="fixed",
+                        model={
+                            "runtime": "claude_code",
+                            "provider": "anthropic",
+                            "model_id": "native-model",
+                        },
+                    )
+                    if routed
+                    else None
+                ),
                 ghostRef=SimpleNamespace(namespace="default", name="custom-ghost"),
                 shellRef=SimpleNamespace(namespace="default", name="ClaudeCode"),
-                modelRef=None,
+                modelRef=(
+                    SimpleNamespace(namespace="default", name="private-model")
+                    if routed
+                    else None
+                ),
             )
         ),
     )
@@ -160,13 +184,18 @@ def test_compiled_bot_config_follow_device_keeps_identity_without_ghost_capabili
         "app.services.project_chat.service.merge_ghost_capabilities",
         return_value=MergedGhostCapabilities(),
     )
-    mocker.patch(
+    resolve_model = mocker.patch(
         "app.services.chat.config.model_resolver.resolve_model_name_for_bot",
         return_value="claude-test",
     )
 
     result = compiled_bot_config(mocker.Mock(), row, execution_user_id=7)
 
+    if routed:
+        resolve_model.assert_not_called()
+        assert result["model"] == "native-model"
+        assert result["model_type"] == "runtime"
+        assert result["model_options"] == {}
     merge_capabilities.assert_called_once_with([])
     assert result["runtime"] == "claude_code"
     assert result["system_prompt"] == (
@@ -287,8 +316,9 @@ def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
 
 
 @pytest.mark.parametrize("environment", ["local", "cloud"])
+@pytest.mark.parametrize("is_comment", [False, True])
 def test_project_agent_without_code_project_can_save_and_build_execution(
-    test_db: Session, test_user: User, environment: str
+    test_db: Session, test_user: User, environment: str, is_comment: bool
 ) -> None:
     from app.models.resource_member import MemberStatus, ResourceMember
     from app.models.share_link import ResourceType
@@ -349,7 +379,14 @@ def test_project_agent_without_code_project_can_save_and_build_execution(
             priority="medium",
         ),
         cloud_project_id=str(project.id),
-        origin_context={},
+        origin_context=(
+            {
+                "comment_trigger_message_id": "comment-1",
+                "comment_prompt": "Review the result from this comment",
+            }
+            if is_comment
+            else {}
+        ),
         execution_device_id=device_id,
     )
     assert request.cloud_project_id == str(project.id)
@@ -358,6 +395,12 @@ def test_project_agent_without_code_project_can_save_and_build_execution(
     assert request.project_id is None
     assert request.device_workspace_id is None
     assert request.runtime_project_key is None
+    assert (
+        f"cloud://projects/{project.id}/todos/issue-workspace-regression"
+        in request.message
+    )
+    if is_comment:
+        assert request.message.endswith("Review the result from this comment")
 
 
 def test_legacy_cloud_project_binding_requires_rebind_when_not_unique(

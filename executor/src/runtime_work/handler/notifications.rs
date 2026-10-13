@@ -35,11 +35,10 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         status: &str,
     ) {
-        let active = self
-            .active_codex_transcript_items
-            .lock()
-            .ok()
-            .and_then(|mut items| items.remove(local_task_id));
+        let mut active_items = self.active_codex_transcript_items.lock().ok();
+        let active = active_items
+            .as_mut()
+            .and_then(|items| items.remove(local_task_id));
         let Some(active) = active.filter(|active| !active.items.is_empty()) else {
             return;
         };
@@ -76,6 +75,7 @@ impl RuntimeWorkRpcHandler {
             );
             link.updated_at = link.updated_at.max(completed_at);
         });
+        drop(active_items);
     }
 
     pub(super) fn persist_completed_codex_turn_from_notification(
@@ -99,16 +99,13 @@ impl RuntimeWorkRpcHandler {
             return;
         };
         // Completion notifications can omit items already delivered through the stream.
-        let active = self
-            .active_codex_transcript_items
-            .lock()
-            .ok()
-            .and_then(|items| {
-                items
-                    .get(local_task_id)
-                    .filter(|active| active.turn_id == turn_id)
-                    .cloned()
-            });
+        let mut active_items = self.active_codex_transcript_items.lock().ok();
+        let active = active_items.as_ref().and_then(|items| {
+            items
+                .get(local_task_id)
+                .filter(|active| active.turn_id == turn_id)
+                .cloned()
+        });
         if let Some(active) = active.filter(|active| !active.items.is_empty()) {
             let completed_items = turn
                 .get("items")
@@ -148,13 +145,14 @@ impl RuntimeWorkRpcHandler {
                 link.updated_at = link.updated_at.max(completed_at);
             });
         }
-        if let Ok(mut active_items) = self.active_codex_transcript_items.lock() {
+        if let Some(active_items) = active_items.as_mut() {
             if let Some(active) = active_items.get_mut(local_task_id) {
                 if active.turn_id == turn_id {
                     active.items.clear();
                 }
             }
         }
+        drop(active_items);
     }
 
     pub(super) fn record_active_codex_transcript_item(
@@ -506,11 +504,25 @@ impl RuntimeWorkRpcHandler {
         let completed_command_turn = active_turn.is_none()
             && command_notification
             && notification_turn_id.as_deref().is_some_and(|turn_id| {
-                self.local_task_link(&local_task_id).is_some_and(|link| {
-                    completed_transcript_messages(&link).iter().any(|message| {
-                        string_field(message, "subtaskId").as_deref() == Some(turn_id)
+                let streamed =
+                    self.active_codex_transcript_items
+                        .lock()
+                        .ok()
+                        .is_some_and(|items| {
+                            items.get(&local_task_id).is_some_and(|active| {
+                                active.turn_id == turn_id
+                                    && active
+                                        .items
+                                        .iter()
+                                        .any(|item| item_type(item) == "commandexecution")
+                            })
+                        });
+                streamed
+                    || self.local_task_link(&local_task_id).is_some_and(|link| {
+                        completed_transcript_messages(&link).iter().any(|message| {
+                            string_field(message, "subtaskId").as_deref() == Some(turn_id)
+                        })
                     })
-                })
             });
         let skip_active_notification =
             if self.is_active_local_task(&local_task_id) && !completed_command_turn {
@@ -994,7 +1006,7 @@ fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {
     let items = items
         .as_array_mut()
         .expect("turn items were normalized to an array");
-    for active_item in active_items {
+    for mut active_item in active_items {
         let Some(item_id) = string_field(&active_item, "id") else {
             continue;
         };
@@ -1002,6 +1014,17 @@ fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {
             .iter_mut()
             .find(|existing| string_field(existing, "id").as_deref() == Some(item_id.as_str()))
         {
+            if item_type(existing) == "commandexecution"
+                && item_type(&active_item) == "commandexecution"
+            {
+                if let Some(output) = raw_string_field(existing, "aggregatedOutput") {
+                    let incoming =
+                        raw_string_field(&active_item, "aggregatedOutput").unwrap_or_default();
+                    if output.starts_with(&incoming) {
+                        active_item["aggregatedOutput"] = Value::String(output);
+                    }
+                }
+            }
             *existing = active_item;
         } else {
             items.push(active_item);

@@ -1,14 +1,14 @@
 import type { CollaborationExecutionEnvironment, SharedWorkspaceApi } from '@wegent/collaboration'
 import { isDefaultWorkItemProject, type CloudProject } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
-import type {
-  ProjectSpaceApis,
-  ProjectSpaceDetailServices,
-} from '@/features/workbench/workbenchServices'
-import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
+import { LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
 
 function executionEnvironmentIdentity(environment: CollaborationExecutionEnvironment): string {
-  return environment.device_key?.trim() || `device:${environment.device_id ?? environment.id}`
+  return (
+    environment.app_device_id?.trim() ||
+    environment.device_key?.trim() ||
+    `device:${environment.device_id ?? environment.id}`
+  )
 }
 
 export function mergeExecutionEnvironmentResources(
@@ -49,21 +49,8 @@ export function withoutDefaultWorkItemProject(api: SharedWorkspaceApi): SharedWo
 
 export function createWeworkPlatformApi(
   cloudApi: SharedWorkspaceApi | undefined,
-  localDeliveryApi: ProjectSpaceApis['local'] | undefined,
-  userId: number,
-  userName: string,
-  userEmail: string | null,
-  localDetailServices?: ProjectSpaceDetailServices,
-  locale: 'zh-CN' | 'en' = 'zh-CN'
+  localWorkspaceApi: SharedWorkspaceApi | null
 ): SharedWorkspaceApi | null {
-  const localWorkspaceApi = createLocalWorkspaceApi(
-    localDeliveryApi,
-    userId,
-    userName,
-    userEmail,
-    localDetailServices,
-    locale
-  )
   if (!localWorkspaceApi) return cloudApi ? withoutDefaultWorkItemProject(cloudApi) : null
   const localApi = localWorkspaceApi
   if (!cloudApi?.workspaces) return withoutDefaultWorkItemProject(localApi)
@@ -437,6 +424,10 @@ export function createWeworkPlatformApi(
       },
     },
     resources: {
+      devices: {
+        ...localApi.resources?.devices,
+        ...cloudApi.resources?.devices,
+      },
       async list() {
         const localResources = localApi.resources
           ? await localApi.resources.list()
