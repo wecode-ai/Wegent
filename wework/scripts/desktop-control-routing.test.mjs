@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
 
 async function startControl(t) {
   const control = new DesktopE2EServer('/workspace')
@@ -22,6 +23,21 @@ async function post(control, route, body) {
 async function register(control, windowLabel, clientId) {
   await post(control, 'ready', { windowLabel, clientId, location: 'http://localhost/' })
 }
+
+test('delivers the runner wait budget to the renderer and preserves explicit budgets', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  for (const options of [{}, { timeoutMs: 1200 }]) {
+    const result = control.command('waitFor', 'body', options)
+    const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+    assert.equal(response.status, 200)
+    const command = await response.json()
+    assert.equal(command.timeoutMs, options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS)
+    await post(control, 'started', { id: command.id, clientId: 'main-1' })
+    await post(control, 'results', { id: command.id, clientId: 'main-1', ok: true, value: 'ready' })
+    assert.equal(await result, 'ready')
+  }
+})
 
 test('keeps main-window commands on main after the popout registers', async t => {
   const control = await startControl(t)

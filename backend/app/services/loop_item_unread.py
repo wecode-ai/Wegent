@@ -76,23 +76,34 @@ def _mysql_read_revision_expression(
     return cast(func.coalesce(extracted, str(default)), Integer)
 
 
-def _mysql_mark_read_expression(metadata: object, user_id: int) -> object:
-    """Build one atomic JSON expression that also repairs legacy metadata."""
+def _mysql_set_user_cursor(
+    metadata: object, key: str, user_id: int, value: object
+) -> object:
+    """Initialize the cursor object before atomically setting a user's value."""
 
-    read_revisions_path = f"$.{READ_REVISIONS_KEY}"
-    user_path = f'{read_revisions_path}."{user_id}"'
-    revision_path = f"$.{CONTENT_REVISION_KEY}"
-    read_revisions = func.json_extract(metadata, read_revisions_path)
-    read_revisions_object = case(
-        (func.json_type(read_revisions) == "OBJECT", read_revisions),
+    cursor_path = f"$.{key}"
+    cursors = func.json_extract(metadata, cursor_path)
+    cursor_object = case(
+        (func.json_type(cursors) == "OBJECT", cursors),
         else_=func.json_object(),
     )
     return func.json_set(
         metadata,
-        read_revisions_path,
-        read_revisions_object,
-        user_path,
-        _mysql_read_revision_expression(metadata, revision_path),
+        cursor_path,
+        cursor_object,
+        f'{cursor_path}."{user_id}"',
+        value,
+    )
+
+
+def _mysql_mark_read_expression(metadata: object, user_id: int) -> object:
+    """Build one atomic JSON expression that also repairs legacy metadata."""
+
+    return _mysql_set_user_cursor(
+        metadata,
+        READ_REVISIONS_KEY,
+        user_id,
+        _mysql_read_revision_expression(metadata, f"$.{CONTENT_REVISION_KEY}"),
     )
 
 
@@ -116,9 +127,10 @@ def mark_loop_item_read(
             existing_sequence = _mysql_read_revision_expression(
                 metadata, activity_path, 0
             )
-            next_metadata = func.json_set(
+            next_metadata = _mysql_set_user_cursor(
                 next_metadata,
-                activity_path,
+                ACTIVITY_READ_SEQUENCES_KEY,
+                user_id,
                 func.greatest(existing_sequence, activity_sequence),
             )
     else:

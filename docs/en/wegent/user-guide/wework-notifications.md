@@ -12,6 +12,8 @@ The settings button in the notification popover controls in-app, system, and IM 
 
 Task reminder read state belongs to the local task lifecycle on this device. Cloud notifications are stored in Backend and remain available after sign-in or on another device. While offline, local task reminders remain available and cloud categories show that they cannot be loaded. Cloud entries return after reconnection; a failed refresh does not erase entries already loaded.
 
+Issue cards on collaboration project boards do not show unread dots or unread background colors. Visiting a board does not clear unread notifications. Assignments, comment mentions, and execution updates appear in the notification center; Issue details continue to track which activities you have read. The Tasks board retains unread reminders for completed tasks on the current device.
+
 Human assignments offer Notify or Do not notify before saving, including assignment through board lanes and Issue creation. Assigning the same person again does not duplicate the notification. Ordinary self-assignment stays quiet; AI handing an Issue back to its user sends a notification.
 
 Delivery also attempts the recipient's connected private IM sessions. IM failures do not remove the inbox entry or change the active IM task.
