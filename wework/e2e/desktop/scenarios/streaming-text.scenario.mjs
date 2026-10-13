@@ -1433,6 +1433,11 @@ export function createDesktopScenario({
         text,
         timeoutMs: uiTimeoutMs,
       })
+      assert.equal(
+        (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(text),
+        false,
+        'The restored child process content leaked into the root conversation'
+      )
     }
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
       text: SUBAGENT_PARENT_COMPLETION,
