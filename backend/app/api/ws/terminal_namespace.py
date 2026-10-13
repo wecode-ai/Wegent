@@ -323,7 +323,7 @@ class TerminalNamespace(socketio.AsyncNamespace):
         return {"success": True}
 
     async def on_terminal_resize(self, sid: str, data: dict) -> dict:
-        """Relay terminal resize events to the owning executor socket."""
+        """Acknowledge a resize only after the owning executor applies it."""
         record, consumer_id, error = await self._authorize_attached_session(sid, data)
         if error:
             return error
@@ -332,16 +332,35 @@ class TerminalNamespace(socketio.AsyncNamespace):
         cols = _get_positive_int(data, "cols")
         if rows is None or cols is None:
             return {"error": "Invalid terminal dimensions"}
-        await get_sio().emit(
-            "terminal:resize",
-            {
-                **_control_payload(record.session_id, consumer_id),
-                "rows": rows,
-                "cols": cols,
-            },
-            to=record.socket_id,
-            namespace=DEVICE_NAMESPACE,
-        )
+        # Executor callbacks run concurrently, so queued resize and input events
+        # alone cannot guarantee that a following command sees the new PTY size.
+        try:
+            resize_result = await get_sio().call(
+                "terminal:resize",
+                {
+                    **_control_payload(record.session_id, consumer_id),
+                    "rows": rows,
+                    "cols": cols,
+                },
+                to=record.socket_id,
+                namespace=DEVICE_NAMESPACE,
+                timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[Terminal WS] Executor resize failed session=%s device=%s: %s",
+                record.session_id,
+                record.device_id,
+                exc,
+            )
+            return {"error": "Failed to resize terminal executor"}
+        if not isinstance(resize_result, dict) or not resize_result.get("success"):
+            error = (
+                resize_result.get("error")
+                if isinstance(resize_result, dict)
+                else "Invalid executor response"
+            )
+            return {"error": str(error or "Failed to resize terminal executor")}
         record_terminal_event(source="browser", event="resize")
         return {"success": True}
 

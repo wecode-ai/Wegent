@@ -114,7 +114,6 @@ jest.mock('@/hooks/useTranslation', () => ({
         'settings:team.simple.executor.simple.description': 'Chat executor.',
         'settings:team.simple.executor.simple.title': 'Simple',
         'settings:team.simple.executor.title': 'Executor',
-        'settings:team.simple.non_solo_notice': 'This agent uses advanced collaboration.',
         'common:teams.create_title': 'Create agent',
         'common:teams.description': 'Agent settings',
         'common:teams.edit_title': 'Edit agent',
@@ -461,7 +460,11 @@ describe('Simple TeamEditDialog', () => {
     )
 
     expect(await screen.findByRole('radio', { name: /complex/i })).toBeChecked()
+    expect(screen.queryByTestId('select-mode-radio-solo')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('simple-section-advanced-trigger'))
+    expect(screen.getByTestId('simple-section-advanced-content')).toContainElement(
+      screen.getByTestId('select-mode-radio-solo')
+    )
     expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
       'Custom entry points · Chat, Code, Device'
     )
@@ -1710,7 +1713,13 @@ describe('Simple TeamEditDialog', () => {
       />
     )
 
-    expect(await screen.findByText('This agent uses advanced collaboration.')).toBeInTheDocument()
-    expect(screen.getByText('Solo')).toBeInTheDocument()
+    expect(await screen.findByTestId('select-mode-radio-pipeline')).toBeChecked()
+    expect(screen.queryByTestId('simple-section-model')).not.toBeInTheDocument()
+    expect(
+      screen
+        .getByTestId('team-display-name-input')
+        .compareDocumentPosition(screen.getByTestId('select-mode-radio-pipeline')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
   })
 })

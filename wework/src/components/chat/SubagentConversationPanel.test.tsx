@@ -35,6 +35,98 @@ function createSubagent(overrides: Partial<SubagentBlock> = {}): SubagentBlock {
 }
 
 describe('SubagentConversationPanel', () => {
+  test('updates the child reasoning content in place while streaming', async () => {
+    const props = { onBack: vi.fn(), onOpenSubagent: vi.fn() }
+    const reasoning = {
+      id: 'child-reasoning',
+      subtaskId: 'turn-1',
+      type: 'thinking' as const,
+      content: 'Inspecting',
+      status: 'streaming' as const,
+      createdAt: 1770000000100,
+    }
+    const view = render(
+      <SubagentConversationPanel {...props} block={createSubagent({ children: [reasoning] })} />
+    )
+    expect(screen.getByTestId('process-thinking-block')).toHaveTextContent('Inspecting')
+
+    view.rerender(
+      <SubagentConversationPanel
+        {...props}
+        block={createSubagent({
+          children: [{ ...reasoning, content: 'Inspecting the event routing' }],
+        })}
+      />
+    )
+    expect(screen.getAllByTestId('process-thinking-block')).toHaveLength(1)
+    await waitFor(() => {
+      expect(screen.getByTestId('process-thinking-block')).toHaveTextContent(
+        'Inspecting the event routing'
+      )
+    })
+  })
+
+  test.each(['streaming', 'done'] as const)(
+    'renders child reasoning and commentary around tools while %s',
+    status => {
+      const children: NonNullable<SubagentBlock['children']> = [
+        {
+          id: 'reasoning',
+          subtaskId: 'turn-1',
+          type: 'thinking',
+          content: 'Checking the child routing',
+          status: 'done',
+          createdAt: 1770000000100,
+        },
+        {
+          id: 'commentary',
+          subtaskId: 'turn-1',
+          type: 'text',
+          content: 'Reading the runtime events',
+          status: 'done',
+          createdAt: 1770000000200,
+        },
+        {
+          id: 'tool',
+          subtaskId: 'turn-1',
+          type: 'tool',
+          toolName: 'exec_command',
+          toolInput: { command: 'rg child' },
+          status,
+          createdAt: 1770000000300,
+        },
+      ]
+      render(
+        <SubagentConversationPanel
+          block={createSubagent({ status, children })}
+          onBack={vi.fn()}
+          onOpenSubagent={vi.fn()}
+          transcriptMessages={
+            status === 'done'
+              ? [
+                  {
+                    id: 'history',
+                    role: 'assistant',
+                    content: '',
+                    status,
+                    createdAt: '2026-09-10T08:00:01.000Z',
+                    blocks: children,
+                  },
+                ]
+              : []
+          }
+        />
+      )
+      const panel = screen.getByTestId('subagent-conversation-scroll')
+      expect(panel).toHaveTextContent('Checking the child routing')
+      expect(panel).toHaveTextContent('Reading the runtime events')
+      const blocks = panel.querySelectorAll('[data-processing-block-id]')
+      expect(
+        Array.from(blocks, element => element.getAttribute('data-processing-block-id')).slice(0, 2)
+      ).toEqual(['reasoning', 'commentary'])
+    }
+  )
+
   test('renders the ChatGPT-style subagent summary inside the environment panel', () => {
     const onOpen = vi.fn()
     render(

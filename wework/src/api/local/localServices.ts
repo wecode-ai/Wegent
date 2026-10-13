@@ -136,7 +136,7 @@ import type {
 } from '@/types/automation'
 import type { WorkspaceTextFileResponse, WorkspaceTreeResponse } from '@/types/workspace-files'
 import {
-  ensureLocalExecutorAvailable,
+  getLocalExecutorStatus,
   ensureLocalExecutorStarted,
   requestLocalExecutor,
   subscribeLocalExecutorEvents,
@@ -262,6 +262,7 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
       apiFormat: config.apiFormat,
       upstreamApiFormat: config.apiFormat,
       ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
+      ...(config.maxOutputTokens ? { max_output_tokens: config.maxOutputTokens } : {}),
       ui: {
         family,
         ...(group ? { familyLabel: group } : {}),
@@ -995,6 +996,7 @@ function localRuntimeModelConfig(
       provider_name: localModel.displayName,
       display_name: localModel.displayName,
       ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
+      ...(localModel.maxOutputTokens ? { max_output_tokens: localModel.maxOutputTokens } : {}),
       web_search: localModel.webSearchMode ?? 'disabled',
       image_generation: localModel.imageGenerationEnabled === true,
       ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
@@ -3465,7 +3467,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       }))
     },
   }
-  const available = deps.available ?? deps.ensure ?? ensureLocalExecutorAvailable
+  const available = deps.available ?? deps.ensure ?? getLocalExecutorStatus
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
@@ -3629,27 +3631,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       assertCommandSuccess(response, 'Failed to list skills')
       return decodeRuntimeSkills(response.stdout)
     },
-    async listWorkspaceEntries(
-      _deviceId: string,
-      path: string,
-      workspaceRoot = path
-    ): Promise<WorkspaceTreeResponse> {
-      return listWorkspaceEntries(workspaceRoot, path)
+    async listWorkspaceEntries(_deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
+      return listWorkspaceEntries(path)
     },
     async readWorkspaceTextFile(
       _deviceId: string,
-      filePath: string,
-      workspaceRoot: string
+      filePath: string
     ): Promise<WorkspaceTextFileResponse> {
-      return readWorkspaceTextFile(workspaceRoot, filePath)
+      return readWorkspaceTextFile(filePath)
     },
-    async readWorkspaceFileChunk(
-      _deviceId: string,
-      filePath: string,
-      offset: number,
-      workspaceRoot: string
-    ) {
-      return readWorkspaceFileChunk(workspaceRoot, filePath, offset)
+    async readWorkspaceFileChunk(_deviceId: string, filePath: string, offset: number) {
+      return readWorkspaceFileChunk(filePath, offset)
     },
     async writeWorkspaceTextFile(
       deviceId: string,

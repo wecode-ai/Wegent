@@ -70,6 +70,8 @@ const SUBAGENT_WAIT_CALL_ID = 'wework-subagent-wait'
 const SUBAGENT_CHILD_TOOL_CALL_ID = 'wework-subagent-child-tool'
 const SUBAGENT_CHILD_PROMPT = 'Inspect the child event stream and report the routing result.'
 const SUBAGENT_CHILD_TOOL_MARKER = 'WEWORK_DESKTOP_E2E_SUBAGENT_TOOL'
+const SUBAGENT_CHILD_REASONING = 'WEWORK_DESKTOP_E2E_SUBAGENT_REASONING'
+const SUBAGENT_CHILD_COMMENTARY = 'WEWORK_DESKTOP_E2E_SUBAGENT_COMMENTARY'
 const SUBAGENT_CHILD_TOOL_TIMEOUT_MS = 10_000
 const SUBAGENT_CHILD_STARTUP_TIMEOUT_MS = 60_000
 const SUBAGENT_CHILD_TOOL_START = `${SUBAGENT_CHILD_TOOL_MARKER}_START`
@@ -1284,6 +1286,17 @@ export function createDesktopScenario({
       text: SUBAGENT_CHILD_TOOL_MARKER,
       timeoutMs: subagentToolRenderTimeoutMs,
     })
+    for (const text of [SUBAGENT_CHILD_REASONING, SUBAGENT_CHILD_COMMENTARY]) {
+      await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+        text,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(text),
+        false,
+        'The child process content leaked into the root conversation'
+      )
+    }
     await control.command(
       'waitFor',
       '[data-testid="subagent-conversation-scroll"] [data-testid="tool-block-duration"]',
@@ -1331,6 +1344,12 @@ export function createDesktopScenario({
       text: SUBAGENT_PARENT_COMPLETION,
       timeoutMs: uiTimeoutMs,
     })
+    for (const text of [SUBAGENT_CHILD_REASONING, SUBAGENT_CHILD_COMMENTARY]) {
+      await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+        text,
+        timeoutMs: uiTimeoutMs,
+      })
+    }
     assert.equal(
       (await control.command('getText', '[data-testid="subagent-conversation-scroll"]')).includes(
         SUBAGENT_PARENT_COMPLETION
@@ -1409,6 +1428,17 @@ export function createDesktopScenario({
       text: SUBAGENT_CHILD_PARTIAL,
       timeoutMs: uiTimeoutMs,
     })
+    for (const text of [SUBAGENT_CHILD_REASONING, SUBAGENT_CHILD_COMMENTARY]) {
+      await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+        text,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(text),
+        false,
+        'The restored child process content leaked into the root conversation'
+      )
+    }
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
       text: SUBAGENT_PARENT_COMPLETION,
       timeoutMs: uiTimeoutMs,
@@ -1488,6 +1518,11 @@ export function createDesktopScenario({
       if (isCollaborationSubagentRequest(request.headers)) {
         resolveSubagentChildRequestStarted()
         if (subagentChildStage === 'initial') {
+          const commentary = streamingEvents(
+            `${responseId}-commentary`,
+            SUBAGENT_CHILD_COMMENTARY,
+            'commentary'
+          )
           const tool = selectShellTool(
             body,
             workspacePath,
@@ -1499,6 +1534,10 @@ export function createDesktopScenario({
           response.end(
             sse([
               responseCreated(responseId),
+              ...reasoningEvents(`${responseId}-reasoning`, SUBAGENT_CHILD_REASONING, 8),
+              ...commentary.start.slice(1),
+              ...textDeltaEvents(commentary.itemId, SUBAGENT_CHILD_COMMENTARY),
+              ...commentary.finish.slice(0, -1),
               ...functionCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool.name, tool.arguments),
               responseCompleted(responseId),
             ])

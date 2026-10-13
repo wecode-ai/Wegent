@@ -14,7 +14,8 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use super::group_membership::{
-    ErpContext, accessible_authorization_namespaces, effective_roles, user_group_memberships,
+    ErpContext, GroupMembership, TEAM_USE_ROLE, accessible_authorization_namespaces,
+    effective_roles, has_permission, user_group_memberships,
 };
 use super::http_error::HttpError;
 use super::team_conversion::{TeamItem, preload_related, team_item};
@@ -156,27 +157,63 @@ pub(super) struct NamespaceContext {
     pub restricted_namespaces: Vec<String>,
 }
 
+/// Validate explicit group access before selecting any namespaces for the union.
+/// The Python endpoint checks `group_name` even for personal/all scope.
+fn select_group_namespaces(
+    scope: &str,
+    group_name: Option<&str>,
+    memberships: &[GroupMembership],
+    active_names: &[String],
+) -> Result<(Vec<String>, HashMap<String, String>), HttpError> {
+    let group_name = group_name.filter(|name| !name.is_empty());
+    if let Some(name) = group_name {
+        let roles = effective_roles(memberships, &[name.to_owned()]);
+        if name == "default"
+            || !roles
+                .get(name)
+                .is_some_and(|role| has_permission(role, TEAM_USE_ROLE))
+        {
+            return Err(HttpError::forbidden("Group access denied"));
+        }
+    }
+    let names = match (scope, group_name) {
+        ("personal", _) => Vec::new(),
+        ("group", Some(name)) => vec![name.to_owned()],
+        _ => {
+            let mut names: Vec<String> = effective_roles(memberships, active_names)
+                .into_keys()
+                .filter(|name| name != "default")
+                .collect();
+            names.sort();
+            names
+        }
+    };
+    let roles = effective_roles(memberships, &names);
+    Ok((names, roles))
+}
+
 /// Resolve the group namespaces a scope expands to, the namespace-
 /// authorization ids, and the restricted group namespaces
 /// (`_build_accessible_teams_query` prelude).
-pub(super) async fn resolve_namespace_context(
-    state: &AppState,
+pub(super) async fn resolve_namespace_context<M: brz_mysql::Mysql>(
+    mysql: &M,
+    erp: &ErpContext<'_, impl brz_redis::Redis>,
     user_id: i64,
     scope: &str,
     group_name: Option<&str>,
 ) -> Result<NamespaceContext, HttpError> {
+    // `can_use_group_teams` rejects the personal namespace without group lookups.
+    if group_name == Some("default") {
+        return Err(HttpError::forbidden("Group access denied"));
+    }
     // Resolve group namespaces by scope. `personal` queries only the default
     // namespace; `group` uses the requested group (or all the user's groups
     // when unnamed); `all` adds every group the user can access.
-    let resolved = if scope == "personal" {
+    let resolved = if scope == "personal" && group_name.is_none_or(str::is_empty) {
         None
     } else {
-        let erp = ErpContext {
-            erp: state.erp.as_ref(),
-            redis: state.redis.as_ref(),
-        };
         Some(
-            user_group_memberships(&state.mysql, &erp, user_id)
+            user_group_memberships(mysql, erp, user_id)
                 .await
                 .map_err(|error| HttpError::internal(error.to_string()))?,
         )
@@ -189,40 +226,16 @@ pub(super) async fn resolve_namespace_context(
         Some(resolved) => (resolved.memberships, resolved.active_names),
         None => (Vec::new(), Vec::new()),
     };
-    let (group_namespaces, effective) = match scope {
-        "personal" => (Vec::new(), HashMap::new()),
-        "group" => {
-            let names = match group_name {
-                Some(name) => vec![name.to_string()],
-                None => {
-                    let mut names: Vec<String> = effective_roles(&memberships, &active_names)
-                        .into_keys()
-                        .collect();
-                    names.sort();
-                    names
-                }
-            };
-            let effective = effective_roles(&memberships, &names);
-            (names, effective)
-        }
-        _ => {
-            let mut names: Vec<String> = effective_roles(&memberships, &active_names)
-                .into_keys()
-                .collect();
-            names.sort();
-            let effective = effective_roles(&memberships, &names);
-            (names, effective)
-        }
-    };
+    let (group_namespaces, effective) =
+        select_group_namespaces(scope, group_name, &memberships, &active_names)?;
 
     // Namespace ids that can activate Team namespace grants
     // (`_get_accessible_authorization_namespace_ids`): group namespaces where
     // the effective role grants team use (`TEAM_USE_ROLE`).
     let accessible_namespaces = accessible_authorization_namespaces(&group_namespaces, &effective);
-    let authorized_namespace_ids =
-        repo::namespace_ids_by_names(&state.mysql, &accessible_namespaces)
-            .await
-            .map_err(|error| HttpError::internal(error.to_string()))?;
+    let authorized_namespace_ids = repo::namespace_ids_by_names(mysql, &accessible_namespaces)
+        .await
+        .map_err(|error| HttpError::internal(error.to_string()))?;
 
     // `restricted_group_namespaces`: the group namespaces whose effective role
     // is exactly `RestrictedAnalyst`. The source builds a Python set; the IN
@@ -257,7 +270,17 @@ async fn list_user_teams(
     } = params;
     let skip = (page - 1) * limit;
 
-    let resolved = resolve_namespace_context(state, user_id, scope, group_name.as_deref()).await?;
+    let resolved = resolve_namespace_context(
+        &state.mysql,
+        &ErpContext {
+            erp: state.erp.as_ref(),
+            redis: state.redis.as_ref(),
+        },
+        user_id,
+        scope,
+        group_name.as_deref(),
+    )
+    .await?;
 
     let query = repo::AccessibleTeamsQuery {
         user_id,
@@ -305,7 +328,7 @@ async fn list_user_teams(
     let default_config = DefaultTeamsConfig::from_env().parsed();
     let items: Vec<TeamItem> = teams
         .iter()
-        .map(|team| team_item(team, &preloaded, &default_config))
+        .map(|team| team_item(team, &preloaded, &default_config, user_id))
         .collect();
 
     Ok(TeamsResponse { total, items })
@@ -386,7 +409,17 @@ async fn resolve_default_team(
     filters.push(repo::TeamListFilter::NameEquals(name.to_string()));
     filters.push(repo::TeamListFilter::NamespaceEquals(namespace.to_string()));
 
-    let resolved = resolve_namespace_context(state, user_id, "all", None).await?;
+    let resolved = resolve_namespace_context(
+        &state.mysql,
+        &ErpContext {
+            erp: state.erp.as_ref(),
+            redis: state.redis.as_ref(),
+        },
+        user_id,
+        "all",
+        None,
+    )
+    .await?;
     let query = repo::AccessibleTeamsQuery {
         user_id,
         scope: "all",
@@ -410,8 +443,11 @@ async fn resolve_default_team(
     let preloaded = preload_related(&state.mysql, user_id, &teams)
         .await
         .map_err(|error| HttpError::internal(error.to_string()))?;
-    Ok(Some(team_item(team, &preloaded, default_config)))
+    Ok(Some(team_item(team, &preloaded, default_config, user_id)))
 }
+
+#[cfg(test)]
+mod access_policy_tests;
 
 #[cfg(test)]
 mod tests {

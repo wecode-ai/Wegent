@@ -30,6 +30,17 @@ afterEach(async () => {
 })
 
 describe('Provider YAML schema', () => {
+  test('validates and retains output budgets', () => {
+    const config = parseModelConfiguration(YAML).config
+    const model = config.providers[0].models[0]
+    model.context_window = 128000
+    model.max_output_tokens = 16000
+    expect(validateModelConfiguration(config).providers[0].models[0].max_output_tokens).toBe(16000)
+    for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, 128000, 128001]) {
+      model.max_output_tokens = value
+      expect(() => validateModelConfiguration(config)).toThrow(/max_output_tokens/)
+    }
+  })
   test('accepts shared connections and per-model protocol overrides', () => {
     const config = parseModelConfiguration(YAML).config
     config.providers[0].models[1].api_format = 'anthropic-messages'
@@ -59,6 +70,30 @@ describe('Provider YAML schema', () => {
 })
 
 describe('Provider configuration file store', () => {
+  test('resolves draft credentials from its saved provider without persisting changes', async () => {
+    const store = new ModelConfigurationStore(directory, secrets)
+    const empty = await store.read()
+    const snapshot = await store.save(
+      empty.revision,
+      parseModelConfiguration(YAML).config.providers
+    )
+    const original = await readFile(join(directory, 'model.yml'), 'utf8')
+    const { api_key_configured, ...draft } = snapshot.providers[0]
+    expect(api_key_configured).toBe(true)
+    draft.base_url = 'https://draft.example/v1'
+    draft.api_key_ref = 'wework-model-key.untrusted-ref'
+    const runtime = await store.runtime(draft)
+    expect(runtime.models[0].provider).toMatchObject({
+      base_url: draft.base_url,
+      api_key: 'secret-not-for-output',
+    })
+    delete draft.api_key_ref
+    expect(
+      (await store.runtime({ ...draft, api_key: 'replacement' })).models[0].provider.api_key
+    ).toBe('replacement')
+    expect(await readFile(join(directory, 'model.yml'), 'utf8')).toBe(original)
+    expect((await store.runtime()).models[0].provider.base_url).toBe('https://relay.example/v1')
+  })
   test('creates a fresh configuration and shares one credential across models', async () => {
     const store = new ModelConfigurationStore(directory, secrets)
     const empty = await store.read()

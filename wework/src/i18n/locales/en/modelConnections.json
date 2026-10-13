@@ -6,7 +6,7 @@
   "loading": "Loading models…",
   "modelCount": "{{count}} models",
   "disabled": "Disabled",
-  "edit": "Edit endpoint",
+  "edit": "Edit",
   "delete": "Delete",
   "deleteProvider": "Delete endpoint",
   "deleteDescription": "Delete “{{name}}” and its {{count}} models? Existing conversations will remain.",
@@ -36,7 +36,6 @@
   "modelId": "Upstream model ID",
   "displayName": "Display name (optional)",
   "remove": "Remove",
-  "saveHint": "Changes apply after saving without interrupting running tasks.",
   "save": "Save",
   "discard": "Discard changes?",
   "discardDescription": "Unsaved connection and model changes will be lost.",
@@ -70,5 +69,9 @@
   "accountTitle": "Codex account",
   "viewModels": "View models",
   "manageAccount": "Manage account",
-  "enterKey": "Enter your API key"
+  "enterKey": "Enter your API key",
+  "testConnection": "Test connection",
+  "testing": "Testing…",
+  "testSuccess": "Connected",
+  "testFailed": "Failed"
 }
