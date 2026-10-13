@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Query, Session
 
-from app.models.delivery import LoopItem, loop_datetime_is_unset
+from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
@@ -25,6 +25,8 @@ from app.services.project_chat.push import push_project_chat_message
 from app.services.project_chat.runtime_binding import (
     BoundCommentSession,
     resolve_bound_comment_session,
+    resolve_collaboration_manager_session,
+    resolve_collaboration_member_session,
 )
 from app.services.project_chat.service import bot_config, project_chat_service
 from shared.telemetry.decorators import trace_async
@@ -73,7 +75,15 @@ def _thread_agent(
 def _execution(
     db: Session, request: ProjectChatCommentExecution, target: ProjectChatMessage
 ) -> LoopItemExecution | BoundCommentSession:
+    if (target.metadata_json or {}).get("dispatch_role") == "manager" and (
+        (target.metadata_json or {}).get("dispatch_id") or not target.agent_id
+    ):
+        return resolve_collaboration_manager_session(db, request, target)
     execution_id = (target.metadata_json or {}).get("execution_id")
+    if (target.metadata_json or {}).get(
+        "dispatch_role"
+    ) == "member" and not execution_id:
+        return resolve_collaboration_member_session(db, request, target)
     execution = db.get(LoopItemExecution, execution_id) if execution_id else None
     if execution is None and not execution_id:
         execution = (
@@ -134,6 +144,14 @@ def _response(
             "execution_id": execution.id,
             "executor_type": execution.executor_type,
             "run_status": "queued",
+            **(
+                {
+                    "dispatch_role": execution.runtime_origin_context["dispatch_role"],
+                    "dispatch_id": execution.runtime_origin_context.get("dispatch_id"),
+                }
+                if execution.runtime_origin_context.get("dispatch_role")
+                else {}
+            ),
         },
         status="pending",
     )
@@ -205,6 +223,11 @@ def _new_execution(
         priority=item.priority,
         automation_context={
             "runtime_subject_user_id": agent.created_by_user_id,
+            "runner_selection": (
+                request.runner_selection.model_dump()
+                if request.runner_selection
+                else None
+            ),
             "comment_trigger_message_id": trigger.message_id,
             "comment_prompt": trigger.content,
             "rootCommentId": trigger.thread_root_message_id or trigger.message_id,
@@ -335,6 +358,173 @@ async def _continue_runtime(
     return response
 
 
+def _queue_reply(
+    db: Session,
+    user_id: int,
+    request: ProjectChatCommentExecution,
+    trigger: ProjectChatMessage,
+    target: ProjectChatMessage,
+    original: LoopItemExecution | BoundCommentSession,
+    attachments: list[dict[str, Any]],
+) -> ProjectChatMessage:
+    """Keep offline replies in the same durable queue as first executions."""
+    from app.schemas.runtime_work import RuntimeTaskMaterializeRequest
+    from app.services.device.identity import resolve_owned_device_alias
+    from app.services.project_chat.service import compiled_bot_config
+    from app.services.runner_routing import active_device, issue_binding, routing_error
+
+    bound_id = issue_binding(db, request.task_id)
+    bound = active_device(db, bound_id) if bound_id else None
+    if bound is None:
+        raise routing_error(
+            "ISSUE_RUNNER_CONFIGURATION_REQUIRED",
+            "The original session's environment must be restored before replying",
+        )
+    original_device = resolve_owned_device_alias(
+        db, user_id=bound.user_id, device_id=original.runtime_device_id
+    )
+    if original_device is None or original_device.id != bound.id:
+        raise routing_error(
+            "ISSUE_RUNNER_CONFLICT",
+            "The comment session belongs to a different environment than this Issue",
+        )
+
+    agent = project_chat_service._agent_row(
+        db, project_id=request.project_id, agent_id=original.agent_id, active_only=True
+    )
+    config = compiled_bot_config(db, agent, execution_user_id=user_id)
+    selection = (
+        request.runner_selection.model_dump(exclude_none=True)
+        if request.runner_selection
+        else {}
+    )
+    if (config.get("execution_policy") or {}).get(
+        "mode"
+    ) == "user_select" and "execution_policy" not in selection:
+        selection["execution_policy"] = {
+            "mode": "fixed",
+            "environment_id": bound_id,
+        }
+    if (config.get("model_policy") or {}).get(
+        "mode"
+    ) == "user_select" and "model" not in selection:
+        selection["model"] = (
+            getattr(original, "runtime_selection", {})
+            .get("runner_routing", {})
+            .get("model")
+        )
+    if not original.runtime_request:
+        raise HTTPException(409, "The original execution configuration is unavailable")
+    group_reply = (
+        original.runtime_origin_context.get("dispatch_kind") == "collaboration_group"
+    )
+    if group_reply:
+        from app.services.collaboration_group_execution import (
+            collaboration_group_snapshot_for_dispatch,
+        )
+
+        dispatch = db.get(
+            LoopItemExecution,
+            original.runtime_origin_context.get("collaboration_dispatch_execution_id"),
+        )
+        if (
+            dispatch is None
+            or dispatch.executor_type != "collaboration_group_dispatch"
+            or dispatch.cloud_project_id != request.project_id
+            or dispatch.loop_item_id != request.task_id
+            or dispatch.runtime_origin_context.get("dispatch_id")
+            != original.runtime_origin_context.get("dispatch_id")
+        ):
+            raise HTTPException(409, "The collaboration dispatch is unavailable")
+        collaboration_group_snapshot_for_dispatch(
+            item=db.get(LoopItem, request.task_id), execution=dispatch
+        )
+    context = {
+        **(
+            {
+                **original.runtime_origin_context,
+                "runtime_subject_user_id": original.executor_owner_user_id,
+            }
+            if group_reply
+            else {}
+        ),
+        "runner_selection": selection,
+        "comment_continue_task_id": original.runtime_task_id,
+        "comment_trigger_message_id": trigger.message_id,
+        "comment_prompt": trigger.content,
+        "rootCommentId": trigger.thread_root_message_id or trigger.message_id,
+        "attachments": attachments,
+        "comment_attachment_ids": request.attachment_ids,
+        "comment_user_id": user_id,
+    }
+    from app.services.loop_item_executions.profile import wework_execution_environment
+
+    environment = getattr(
+        original, "execution_environment", None
+    ) or wework_execution_environment(
+        db,
+        user_id=original.executor_owner_user_id,
+        execution_device_id=original.runtime_device_id,
+    )
+    execution = loop_item_execution_service.create_for_assignment(
+        db,
+        loop_item_id=request.task_id,
+        cloud_project_id=request.project_id,
+        agent=agent,
+        assigner_user_id=user_id,
+        environment=environment,
+        execution_device_id=original.runtime_device_id,
+        priority=None,
+        automation_context=context,
+    )
+    execution.runtime_device_id = original.runtime_device_id
+    runtime_selection = execution.runtime_selection
+    if context.get("dispatch_role") == "manager":
+        from app.services.runner_routing import resolve_group_routing
+
+        requirements = resolve_group_routing(
+            db,
+            group=context["collaboration_group"],
+            project_id=request.project_id,
+            issue_id=request.task_id,
+            user_id=user_id,
+            selection=selection,
+        )
+        runtime_selection = {
+            **runtime_selection,
+            "group_runner_requirements": requirements,
+        }
+    intent = RuntimeTaskMaterializeRequest.model_validate(
+        original.runtime_request
+    ).model_copy(
+        update={
+            "message": trigger.content,
+            "new_session": False,
+            "device_id": original.runtime_device_id,
+            "local_task_id": original.runtime_task_id,
+            "attachment_ids": [],
+            "attachments": attachments,
+            "origin": {
+                **(original.runtime_request.get("origin") or {}),
+                **context,
+                "type": "board_comment",
+                "executionId": execution.id,
+            },
+        }
+    )
+    execution.execution_payload = (
+        loop_item_execution_service._serialize_execution_intent(
+            runtime_selection=runtime_selection,
+            origin_context=execution.runtime_origin_context,
+            runtime_request=intent.model_dump(by_alias=True, exclude_none=True),
+        )
+    )
+    response = _response(db, request, trigger, agent.id, target.sender_name, execution)
+    response.metadata_json = {**response.metadata_json, "run_status": execution.status}
+    db.commit()
+    return response
+
+
 @trace_async(tracer_name="project_chat")
 async def execute_comment(
     db: Session, *, user_id: int, request: ProjectChatCommentExecution
@@ -386,7 +576,26 @@ async def execute_comment(
             agent_id=execution.agent_id,
             active_only=True,
         )
-    response = await _continue_runtime(
-        db, request, trigger, target, execution, attachments
+    from app.services.project_chat.service import compiled_bot_config
+
+    current_agent = (
+        db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
     )
+    routed = current_agent is not None and compiled_bot_config(
+        db, current_agent, execution_user_id=user_id
+    ).get("execution_policy")
+    if (
+        routed
+        or execution.runtime_origin_context.get("dispatch_kind")
+        == "collaboration_group"
+        or isinstance(execution, LoopItemExecution)
+        and execution.uses_runner_routing
+    ):
+        response = _queue_reply(
+            db, user_id, request, trigger, target, execution, attachments
+        )
+    else:
+        response = await _continue_runtime(
+            db, request, trigger, target, execution, attachments
+        )
     return [project_chat_service.to_view(response, db=db)]

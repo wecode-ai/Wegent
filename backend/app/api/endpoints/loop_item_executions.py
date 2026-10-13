@@ -267,6 +267,7 @@ def _execution_view(
             "can_select_runtime": (
                 viewer_user_id is not None
                 and row.executor_owner_user_id == viewer_user_id
+                and not row.uses_runner_routing
                 and row.status in {"waiting_runtime", "queued"}
             ),
             "waiting_runtime_reason": (
@@ -314,7 +315,7 @@ def select_execution_runtime(
     "/{project_id}/executions",
     response_model=LoopItemExecutionListResponse,
 )
-def list_executions(
+async def list_executions(
     project_id: int,
     agent_id: Optional[str] = Query(default=None),
     assigner_user_id: Optional[int] = Query(default=None),
@@ -366,6 +367,9 @@ def list_executions(
             row["task_title"] = (item.title or item.name or "") if item else ""
             row["task_status"] = item.status if item else None
             row["task_priority"] = item.priority if item else None
+    from app.services.runner_catalog import annotate_queue
+
+    await annotate_queue(db, rows)
     return LoopItemExecutionListResponse(
         items=[LoopItemExecutionView.model_validate(row) for row in rows],
         total=len(rows),
@@ -425,7 +429,8 @@ def enqueue_execution_batch(
                 .with_for_update()
                 .all()
             )
-            if str(execution.runtime_origin_context.get("dispatch_id") or "")
+            if execution.executor_type == "collaboration_group_dispatch"
+            and str(execution.runtime_origin_context.get("dispatch_id") or "")
             == values.dispatch_id
         ),
         None,
@@ -582,13 +587,24 @@ def enqueue_execution_batch(
                 "dispatch_role": "manager",
                 "activity_type": "manager_assignment",
                 "dispatch_id": values.dispatch_id,
+                "manager_runtime_task_id": values.manager_runtime_task_id,
                 "coordination_round_id": values.round_id,
                 "dispatch_assignments": assignment_activity,
             },
             agent_id=manager.id,
+            runtime_device_id=manager_execution.runtime_device_id,
+            runtime_task_id=values.manager_runtime_task_id,
             status="completed",
         )
         db.add(assignment_message)
+        db.flush()
+        from app.services.project_chat.runtime_binding import (
+            bind_collaboration_manager_activity,
+        )
+
+        bind_collaboration_manager_activity(
+            db, dispatch=manager_execution, activity=assignment_message, item=item
+        )
         should_push_assignment = True
     db.commit()
     if should_push_assignment and assignment_message is not None:
@@ -652,6 +668,7 @@ def decide_collaboration_issue_status(
         target_status=values.target_status,
         reason=values.reason,
         comment=values.comment,
+        manager_runtime_task_id=values.manager_runtime_task_id,
     )
     return {
         "item": LoopItemResponse.model_validate(

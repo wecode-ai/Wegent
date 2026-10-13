@@ -323,7 +323,13 @@ fn merge_persisted_runtime_handle(current: &Value, persisted: Value, runtime: &s
         .cloned()
         .unwrap_or_default();
     let current = current.as_object();
-    for key in ["queuePosition", "lastError", "lastErrorCode"] {
+    // Member profiles contain materialized credentials and remain memory-only.
+    for key in [
+        "queuePosition",
+        "lastError",
+        "lastErrorCode",
+        "collaborationMemberRuntimeProfiles",
+    ] {
         if let Some(value) = current.and_then(|runtime_handle| runtime_handle.get(key)) {
             merged.insert(key.to_owned(), value.clone());
         }

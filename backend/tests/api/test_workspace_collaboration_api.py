@@ -1060,8 +1060,8 @@ def test_workspace_resources_and_project_scope_are_separate(
         headers=_auth(test_token),
         json={"device_id": offline_cloud_device.id},
     )
-    assert direct_project_environment.status_code == 201
-    assert direct_project_environment.json()["device_id"] == offline_cloud_device.id
+    assert direct_project_environment.status_code == 403
+    assert "Share the environment" in direct_project_environment.json()["detail"]
 
     removed_environment = test_client.delete(
         f"/api/v1/cloud-projects/{project_ids[0]}/execution-environments/{device.id}",

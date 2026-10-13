@@ -1,4 +1,5 @@
 import type { HttpClient } from './http'
+import type { RunnerSelection } from '@wegent/collaboration'
 import type { LocalLoopItemExecution } from './local/localDelivery'
 import type { ProjectWorkflowDefinition } from './deliveries'
 
@@ -36,6 +37,7 @@ export interface ProjectAutomationRule {
   cronExpression: string | null
   timezone: string
   executionDeviceId: string | null
+  runnerSelection?: RunnerSelection | null
   targetKind: ProjectAutomationTargetKind
   targetId: string
   targetName: string
@@ -80,6 +82,7 @@ export interface ProjectAutomationInput {
   cronExpression: string | null
   timezone: string
   executionDeviceId: string | null
+  runnerSelection?: RunnerSelection | null
   targetKind: ProjectAutomationTargetKind
   targetId: string
   enabled: boolean

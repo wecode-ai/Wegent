@@ -48,6 +48,7 @@ fn workspace_response_omits_runtime_handle_messages_from_task_list() {
         runtime_handle: json!({
             "threadId": "stale-thread",
             "modelSelection": {"model": "gpt-5.5"},
+            "collaborationMemberRuntimeProfiles": [{"credential": "memory-only"}],
             "messages": [
                 {
                     "role": "assistant",
@@ -77,6 +78,7 @@ fn workspace_response_omits_runtime_handle_messages_from_task_list() {
     assert_eq!(handle["threadId"], "thread-1");
     assert_eq!(handle["modelSelection"]["model"], "gpt-5.5");
     assert!(handle.get("messages").is_none());
+    assert!(handle.get("collaborationMemberRuntimeProfiles").is_none());
     assert!(handle.get("transcriptSnapshotPagination").is_none());
     assert!(handle.get("userMessagePresentations").is_none());
 }

@@ -1277,7 +1277,6 @@ impl Drop for CleanupGuard {
 #[cfg(test)]
 mod tests {
     use std::io::{Seek, SeekFrom, Write};
-    use std::sync::{Mutex, OnceLock};
 
     use super::*;
 
@@ -1317,11 +1316,6 @@ mod tests {
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
         );
-    }
-
-    fn environment_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
     }
 
     #[tokio::test]
@@ -1550,7 +1544,7 @@ mod tests {
 
     #[test]
     fn snapshot_and_delta_restore_native_rollout_workspace_and_state() {
-        let _guard = environment_lock();
+        let _guard = crate::test_env::lock();
         let root = tempfile::tempdir().unwrap();
         let executor_home = root.path().join("executor");
         let codex_home = executor_home.join("codex");
@@ -1805,7 +1799,7 @@ mod tests {
 
     #[test]
     fn refuses_to_remove_a_workspace_outside_the_managed_restore_directory() {
-        let _guard = environment_lock();
+        let _guard = crate::test_env::lock();
         let root = tempfile::tempdir().unwrap();
         std::env::set_var("WEGENT_EXECUTOR_HOME", root.path().join("executor"));
 

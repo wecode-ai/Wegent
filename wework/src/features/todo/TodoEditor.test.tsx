@@ -1836,10 +1836,10 @@ describe('TodoEditor create parent resolution', () => {
     expect(assignLoopItem).not.toHaveBeenCalled()
   })
 
-  it('blocks AI assignment before creation when the execution environment is not initialized', async () => {
+  it('allows AI assignment before the first automatic project preparation', async () => {
     const user = userEvent.setup()
-    const createLoopItem = vi.fn()
-    const updateLoopItem = vi.fn()
+    const createLoopItem = vi.fn(async () => ({ ...baseItem, id: 'WEG-1', version: 1 }))
+    const updateLoopItem = vi.fn(async () => ({ ...baseItem, id: 'WEG-1', version: 2 }))
     const createApi = {
       listDeliveries: vi.fn(async () => ({ items: [] })),
       listTaskBindings: vi.fn(async () => []),
@@ -1880,11 +1880,17 @@ describe('TodoEditor create parent resolution', () => {
     await user.type(screen.getByTestId('cloud-todo-title'), '交给协作小组')
 
     expect(
-      screen.getByTestId('cloud-todo-create-execution-environment-required')
-    ).toHaveTextContent('请先在项目设置中初始化环境')
-    expect(screen.getByTestId('cloud-todo-create-confirm')).toBeDisabled()
-    expect(createLoopItem).not.toHaveBeenCalled()
-    expect(updateLoopItem).not.toHaveBeenCalled()
+      screen.queryByTestId('cloud-todo-create-execution-environment-required')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-create-confirm')).toBeEnabled()
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+    await vi.waitFor(() => expect(createLoopItem).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith('WEG-1', {
+        version: 1,
+        assignee_group_id: 'group-1',
+      })
+    )
   })
 
   it('restores the assignee and notification choice before atomic creation', async () => {

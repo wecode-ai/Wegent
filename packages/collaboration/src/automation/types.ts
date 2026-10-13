@@ -57,6 +57,7 @@ export interface AutomationBackendRule {
   eventConfig: AutomationEventConfig;
   cronExpression: string | null;
   timezone: string;
+  runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
   targetKind: AutomationTargetKind;
   targetId: string;
@@ -231,6 +232,7 @@ export interface AutomationBackendInput {
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
   timezone: string;
+  runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
   targetKind: AutomationTargetKind;
   targetId: string;

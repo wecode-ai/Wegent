@@ -8,6 +8,11 @@ import type {
   UnifiedAgentSkillRef,
 } from './agentDefinition'
 import { parseAgentCapabilityMode } from '@wegent/collaboration/agent-form/types'
+import type {
+  AgentExecutionPolicy,
+  AgentModelPolicy,
+  RunnerEnvironment,
+} from '@wegent/collaboration'
 
 export type {
   UnifiedAgentCapabilityMode,
@@ -48,6 +53,8 @@ export interface AgentResourceDetail {
   skills: UnifiedAgentSkillRef[]
   plugins: UnifiedAgentPluginRef[]
   mcpServers: Record<string, unknown>
+  executionPolicy?: AgentExecutionPolicy
+  modelPolicy?: AgentModelPolicy
   capabilityMode: UnifiedAgentCapabilityMode
 }
 
@@ -66,6 +73,8 @@ interface TeamDetailBot {
   system_prompt?: string | null
   mcp_servers?: Record<string, unknown> | null
   plugins?: UnifiedAgentPluginRef[] | null
+  execution_policy?: AgentExecutionPolicy
+  model_policy?: AgentModelPolicy
   capability_mode?: string | null
   skills?: string[] | null
   skill_refs?: Record<string, BotSkillRef> | null
@@ -120,6 +129,8 @@ function botCapabilityPayload(spec: UnifiedAgentSpec): Record<string, unknown> {
   return {
     shell_name: spec.runtime,
     capability_mode: spec.capabilityMode,
+    execution_policy: spec.executionPolicy,
+    model_policy: spec.modelPolicy,
     agent_config: agentConfig(spec),
     system_prompt: spec.systemPrompt.trim(),
     mcp_servers: spec.mcpServers,
@@ -175,6 +186,11 @@ function detailCapabilityMode(bot: TeamDetailBot): UnifiedAgentCapabilityMode {
 
 export function createAgentResourceApi(client: HttpClient) {
   return {
+    listRunnerEnvironments(projectId?: string): Promise<RunnerEnvironment[]> {
+      return client.get(
+        `/v1/resources/execution-environments${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`
+      )
+    },
     listModels(): Promise<UnifiedModel[]> {
       const query = new URLSearchParams()
       query.set('include_config', 'true')
@@ -261,6 +277,8 @@ export function createAgentResourceApi(client: HttpClient) {
         plugins: bot.plugins ?? [],
         mcpServers: bot.mcp_servers ?? {},
         capabilityMode: detailCapabilityMode(bot),
+        executionPolicy: bot.execution_policy,
+        modelPolicy: bot.model_policy,
       }
     },
     /**

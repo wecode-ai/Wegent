@@ -101,33 +101,6 @@ def _execution_environment_config(
     }
 
 
-def _merge_environment_execution(
-    execution: dict[str, Any] | None,
-    environment: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Merge immutable environment preparation into the existing execution intent."""
-
-    merged = dict(execution or {})
-    repositories = environment.get("repositories")
-    if isinstance(repositories, list) and repositories:
-        workspace = (
-            dict(merged.get("workspace"))
-            if isinstance(merged.get("workspace"), dict)
-            else {}
-        )
-        workspace["repositories"] = list(repositories)
-        merged["workspace"] = workspace
-    setup_steps = environment.get("setup_steps")
-    if isinstance(setup_steps, list) and setup_steps:
-        setup = (
-            dict(merged.get("setup")) if isinstance(merged.get("setup"), dict) else {}
-        )
-        setup["steps"] = list(setup_steps)
-        setup["fingerprint"] = str(environment.get("fingerprint") or "")
-        merged["setup"] = setup
-    return merged or None
-
-
 def _apply_project_workspace_intent(
     execution: object, *, isolated: bool
 ) -> dict[str, Any] | None:
@@ -540,7 +513,12 @@ class WeworkExecutionProfile:
             execution_id=execution_id,
         )
         if origin_context.get("comment_trigger_message_id"):
-            prompt = str(origin_context["comment_prompt"])
+            prompt = build_project_robot_user_input(
+                project_id=str(project.id),
+                task_id=task_id,
+                execution_id=execution_id,
+                execution_prompt=str(origin_context["comment_prompt"]),
+            )
         title = str(
             origin_context.get("workflow_task_title")
             or getattr(task, "title", "")
@@ -655,42 +633,40 @@ class WeworkExecutionProfile:
         project_workspace_policy = environment_config["workspace_policy"]
         origin["workspacePolicy"] = workspace_policy or project_workspace_policy
         device_states = environment_config["devices"]
-        # A configured environment only runs on devices that finished preparing
-        # it; every other device stops at preflight so it never clones a fresh
-        # copy outside the prepared workspace.
         environment_configured = bool(
             environment_config["repositories"]
+            or environment_config["setup_steps"]
             or environment_config["fingerprint"]
             or device_states
         )
-        environment_workspace_path = ""
-        if environment_configured and workspace_source_task is None:
-            device_state = device_states.get(execution_device_id)
-            device_state = device_state if isinstance(device_state, dict) else {}
-            if str(device_state.get("status") or "") != "ready":
-                raise WeworkExecutionProfileError(
-                    "Project execution environment is not ready"
-                )
-            environment_workspace_path = str(device_state.get("workspace_path") or "")
-        environment_uses_worktree = bool(
-            environment_workspace_path
-            and environment_config.get("repositories")
-            and project_workspace_policy == "git_worktree"
+        device_state = device_states.get(execution_device_id) or {}
+        environment_workspace_path = (
+            str(device_state.get("workspace_path") or "")
+            if device_state.get("status") == "ready"
+            else ""
         )
         isolated_workspace = (
             workspace_source_task is None
             and project_workspace_policy == "git_worktree"
             and (
-                environment_uses_worktree
+                bool(environment_config["repositories"])
                 or (not environment_configured and has_bound_workspace)
             )
         )
-        execution = _merge_environment_execution(
-            _apply_project_workspace_intent(
-                configured_execution, isolated=isolated_workspace
-            ),
-            environment_config,
+        execution = _apply_project_workspace_intent(
+            configured_execution, isolated=isolated_workspace
         )
+        if environment_configured and workspace_source_task is None:
+            execution = dict(execution or {})
+            # The claimed runner prepares this immutable snapshot before starting
+            # a turn. Historical paths are reused only on their own installation.
+            execution["environment"] = {
+                "environmentId": f"project-{project.id}",
+                "repositories": environment_config["repositories"],
+                "setupSteps": environment_config["setup_steps"],
+                "fingerprint": environment_config["fingerprint"],
+                "workspacePath": environment_workspace_path or None,
+            }
         if workspace_source_task is not None:
             execution = None
         origin["executionEnvironment"] = environment_config
@@ -737,6 +713,7 @@ class WeworkExecutionProfile:
             origin=origin,
             standaloneChatWorkspace=(
                 not has_bound_workspace
+                and not environment_configured
                 and workspace_source_task is None
                 and not environment_workspace_path
             ),

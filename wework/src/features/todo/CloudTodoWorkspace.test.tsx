@@ -659,6 +659,8 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
   }
   const projectChatAgentApi = workbenchServices.projectChatAgentApi ?? {
     list: vi.fn(async () => []),
+    listRunnerEnvironments: vi.fn(async () => []),
+    listModels: vi.fn(async () => []),
     create: vi.fn(),
     update: vi.fn(),
   }
@@ -872,12 +874,12 @@ describe('CloudTodoWorkspace', () => {
   it.each([
     {
       actionTestId: 'cloud-todo-create-assignee-add-member',
-      selectedTabTestId: 'collaboration-participants-tab-members',
+      selectedTabTestId: 'cloud-project-settings-members',
       targetTestId: 'cloud-member-search',
     },
     {
       actionTestId: 'cloud-todo-create-assignee-add-agent',
-      selectedTabTestId: 'collaboration-participants-tab-agents',
+      selectedTabTestId: 'cloud-project-settings-agents',
       targetTestId: 'wework-agent-resource-creator',
     },
   ])('routes the create-assignee action into project settings: %j', async values => {
@@ -885,6 +887,7 @@ describe('CloudTodoWorkspace', () => {
       values.actionTestId === 'cloud-todo-create-assignee-add-agent'
         ? {
             agentResourceApi: {
+              listRunnerEnvironments: vi.fn(async () => []),
               listModels: vi.fn(async () => []),
               listSkills: vi.fn(async () => []),
               createAgent: vi.fn(),
@@ -914,8 +917,8 @@ describe('CloudTodoWorkspace', () => {
 
     expect(await screen.findByTestId('project-settings-shell')).toBeInTheDocument()
     expect(await screen.findByTestId(values.selectedTabTestId)).toHaveAttribute(
-      'aria-selected',
-      'true'
+      'aria-current',
+      'page'
     )
     const target = await screen.findByTestId(values.targetTestId)
     expect(target).toBeVisible()
@@ -2332,6 +2335,8 @@ describe('CloudTodoWorkspace', () => {
     const localServices = services()
     localServices.localProjectChatAgentApi = {
       list: vi.fn(async () => []),
+      listRunnerEnvironments: vi.fn(async () => []),
+      listModels: vi.fn(async () => []),
       create: vi.fn(),
       update: vi.fn(),
     } as never
@@ -2346,6 +2351,7 @@ describe('CloudTodoWorkspace', () => {
     const workbenchServices = {
       ...localServices,
       agentResourceApi: {
+        listRunnerEnvironments: vi.fn(async () => []),
         listModels: vi.fn(async () => []),
         listSkills: vi.fn(async () => []),
         createAgent: vi.fn(),
@@ -2399,22 +2405,22 @@ describe('CloudTodoWorkspace', () => {
             .querySelectorAll<HTMLButtonElement>('aside nav button')
         ).map(button => button.textContent)
       )
-      .toEqual(['基本信息', '协作成员', '执行环境', '自动处理'])
-    await userEvent.click(screen.getByTestId('cloud-project-settings-participants'))
-    expect(screen.getByTestId('collaboration-participants-tab-agents')).toHaveAttribute(
-      'aria-selected',
-      'true'
+      .toEqual(['基本信息', '执行环境', '自动处理', '智能体', '成员', '协作团队'])
+    await userEvent.click(screen.getByTestId('cloud-project-settings-agents'))
+    expect(screen.getByTestId('cloud-project-settings-agents')).toHaveAttribute(
+      'aria-current',
+      'page'
     )
     expect(
       [
-        'collaboration-participants-tab-agents',
-        'collaboration-participants-tab-members',
-        'collaboration-participants-tab-groups',
+        'cloud-project-settings-agents',
+        'cloud-project-settings-members',
+        'cloud-project-settings-groups',
       ].map(testId => screen.getByTestId(testId).textContent)
-    ).toEqual(['智能体', '项目成员', '协作小组'])
-    await userEvent.click(screen.getByTestId('collaboration-participants-tab-groups'))
+    ).toEqual(['智能体', '成员', '协作团队'])
+    await userEvent.click(screen.getByTestId('cloud-project-settings-groups'))
     expect(await screen.findByTestId('collaboration-group-open-create')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('collaboration-participants-tab-agents'))
+    await userEvent.click(screen.getByTestId('cloud-project-settings-agents'))
     expect(await screen.findByTestId('project-agent-config')).toBeInTheDocument()
     await userEvent.click(await screen.findByTestId('project-agent-add'))
     expect(await screen.findByTestId('cloud-project-chat-agent-editor')).toBeInTheDocument()
@@ -2500,8 +2506,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
-    await userEvent.click(screen.getByTestId('cloud-project-settings-participants'))
-    await userEvent.click(screen.getByTestId('collaboration-participants-tab-groups'))
+    await userEvent.click(screen.getByTestId('cloud-project-settings-groups'))
     await userEvent.click(await screen.findByTestId('collaboration-group-open-create'))
     expect(await screen.findByTestId('collaboration-group-form')).toBeInTheDocument()
 
@@ -4165,12 +4170,12 @@ describe('CloudTodoWorkspace', () => {
     fireEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     expect(screen.getByTestId('project-settings-shell')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '基本信息' })).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('cloud-project-settings-participants'))
-    expect(screen.getByTestId('collaboration-participants-tab-agents')).toHaveAttribute(
-      'aria-selected',
-      'true'
+    fireEvent.click(screen.getByTestId('cloud-project-settings-agents'))
+    expect(screen.getByTestId('cloud-project-settings-agents')).toHaveAttribute(
+      'aria-current',
+      'page'
     )
-    fireEvent.click(screen.getByTestId('collaboration-participants-tab-members'))
+    fireEvent.click(screen.getByTestId('cloud-project-settings-members'))
     expect(await screen.findByTestId('cloud-project-member-1')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-member-capability-heading')).toHaveTextContent(
       '职责与能力'
@@ -4239,13 +4244,12 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
-    await userEvent.click(screen.getByTestId('cloud-project-settings-participants'))
-    await userEvent.click(screen.getByTestId('collaboration-participants-tab-groups'))
-    expect(screen.getByTestId('collaboration-participants-tab-groups')).toHaveAttribute(
-      'aria-selected',
-      'true'
+    await userEvent.click(screen.getByTestId('cloud-project-settings-groups'))
+    expect(screen.getByTestId('cloud-project-settings-groups')).toHaveAttribute(
+      'aria-current',
+      'page'
     )
-    expect(screen.getByTestId('collaboration-participants-panel-groups')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-project-groups-page')).toBeInTheDocument()
     expect(screen.queryByText('项目管理者')).not.toBeInTheDocument()
     expect(screen.queryByTestId('automatic-processing')).not.toBeInTheDocument()
     await userEvent.click(await screen.findByTestId('collaboration-group-open-create'))
@@ -4273,7 +4277,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(screen.queryByText('自动化')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
-    expect(screen.getByTestId('cloud-project-settings-participants')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-settings-agents')).toBeInTheDocument()
     expect(
       screen.queryByTestId('cloud-project-settings-automatic-processing')
     ).not.toBeInTheDocument()
@@ -4326,7 +4330,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-project-manage-view')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
     expect(screen.getByTestId('cloud-project-settings-project')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-project-settings-participants')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-settings-agents')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-settings-automatic-processing')).toBeInTheDocument()
   })
 

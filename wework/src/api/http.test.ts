@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeliveryApi } from './deliveries'
 import { createDeviceApi } from './devices'
 import { ApiError, createHttpClient } from './http'
+import { registerRunnerSelectionHandler } from '@/lib/runner-selection'
 
 describe('createHttpClient', () => {
   const fetchMock = vi.fn()
@@ -15,6 +16,47 @@ describe('createHttpClient', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  test('replays a missing runner selection once without duplicate aliases', async () => {
+    const selection = { execution_policy: { mode: 'project_pool' as const } }
+    const unregister = registerRunnerSelectionHandler(async () => selection)
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        text: async () =>
+          JSON.stringify({
+            detail: {
+              error_code: 'AUTOMATION_RUNNER_REQUIRED',
+              message: 'Choose runner',
+              runner_selection_request: {
+                runtime: 'codex',
+                execution_policy: { mode: 'user_select' },
+                model_policy: { mode: 'user_select' },
+                environments: [],
+                automatic: true,
+              },
+            },
+          }),
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ version: 2 }) })
+    try {
+      const result = await createHttpClient({ baseUrl: 'https://cloud.example/api' }).patch(
+        '/automations/a',
+        {
+          version: 1,
+          runnerSelection: null,
+        }
+      )
+      expect(result).toEqual({ version: 2 })
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+        version: 1,
+        runner_selection: selection,
+      })
+    } finally {
+      unregister()
+    }
   })
 
   test('adds auth token and parses json responses', async () => {

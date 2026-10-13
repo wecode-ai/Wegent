@@ -9,6 +9,8 @@ import {
 import {
   ACTIVE_COMPOSER_SELECTOR,
   DEFAULT_STEP_TIMEOUT_MS,
+  DEFAULT_MODEL_ID,
+  MODEL_PROVIDER_ID,
   TASK_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -41,6 +43,11 @@ export async function selectProjectView(control, contentSelector, view) {
 export function inCollaborationSidebar(selector, contentSelector = '') {
   const sidebarSelector = `${COLLABORATION_SIDEBAR_SELECTOR} ${selector}`
   return contentSelector ? `${contentSelector} ${sidebarSelector}` : sidebarSelector
+}
+
+export function inProjectCreateDialog(selector = '') {
+  const dialog = '[data-testid="collaboration-project-create-dialog"]'
+  return selector ? `${dialog} ${selector}` : dialog
 }
 
 export async function selectCollaborationDomain(control, contentSelector, domain) {
@@ -102,10 +109,98 @@ export async function waitForTestIdByText(
 }
 
 export async function selectWhenOptionAvailable(control, selector, value, timeoutMs) {
-  await control.command('waitFor', `${selector} option[value="${value}"]`, {
+  await control.command('waitFor', `${selector} option[value=${JSON.stringify(value)}]`, {
     timeoutMs,
   })
   await control.command('select', selector, { value })
+}
+
+/** Native fixtures require an explicit environment; automatic routing is cloud-only. */
+export async function selectProjectRunnerModel(control, timeoutMs) {
+  const prefix = 'cloud-project-chat-agent'
+  await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'runtime', timeoutMs)
+  const environment = `[data-testid="${prefix}-environment"]`
+  const model = `[data-testid="${prefix}-model"]`
+  const identity = JSON.stringify(['codex', MODEL_PROVIDER_ID, DEFAULT_MODEL_ID])
+  await control.command(
+    'waitFor',
+    `${environment} option:checked:not([value=""]):not([value^="policy:"])`,
+    { timeoutMs }
+  )
+  await control.command('waitFor', `${model} option[value='${identity}']:checked`, { timeoutMs })
+  await control.command('select', environment, { value: 'policy:project_pool' })
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${model} option[value='${identity}']:not(:disabled)`
+      )
+    ),
+    0,
+    'Automatic environment routing must not expose native models'
+  )
+  const firstEnvironment = `${environment} option:not([value=""]):not([value^="policy:"])`
+  await control.command('waitFor', firstEnvironment, { timeoutMs })
+  const environmentId = await control.command('getAttribute', firstEnvironment, { value: 'value' })
+  assert.ok(environmentId, 'The isolated execution environment must be available')
+  await control.command('select', environment, { value: environmentId })
+  await control.command('waitFor', `${model} option[value='${identity}']`, { timeoutMs })
+  await control.command('select', model, { value: 'user_select' })
+  await control.command('waitFor', `${model} option[value="user_select"]:checked`, { timeoutMs })
+  assert.equal(
+    Number(
+      await control.command('getElementCount', `${model} option[value="user_select"]:checked`)
+    ),
+    1,
+    'The model selector must support choosing a model at run time'
+  )
+  await control.command('select', model, { value: identity })
+  await control.command('waitFor', `[data-testid="${prefix}-model-sources"]`, { timeoutMs })
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${prefix}-model-policy"]`)),
+    0,
+    'Agent creation must use one model selector without a separate policy field'
+  )
+  await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'basic', timeoutMs)
+}
+
+export async function selectAgentFormTab(control, dialogId, tab, timeoutMs) {
+  const selector = `[data-testid="${dialogId}-tab-${tab}"]`
+  await control.command('clickWhenEnabled', selector, { timeoutMs })
+  await control.command('waitFor', `${selector}[aria-selected="true"]`, { timeoutMs })
+}
+
+/** Use a stable cloud resource identity and exercise both creation tabs. */
+export async function selectCloudAgentModel(control, request, modelName, timeoutMs) {
+  const dialog = 'wework-agent-resource-creator'
+  await control.command('waitFor', `[data-testid="${dialog}-tab-basic"][aria-selected="true"]`, {
+    timeoutMs,
+  })
+  await selectAgentFormTab(control, dialog, 'runtime', timeoutMs)
+  await control.command('select', '[data-testid="wework-agent-environment"]', {
+    value: 'policy:project_pool',
+  })
+  const models = await request(
+    '/api/models/unified?include_config=false&scope=all&model_category_type=llm&client_origin=wework'
+  )
+  const model = models.data.find(item => item.name === modelName && item.type === 'public')
+  assert.ok(model, `The cloud model ${modelName} must be available to the creating user`)
+  const identity = JSON.stringify([
+    'codex',
+    'cloud',
+    model.type,
+    model.namespace,
+    model.resourceUserId,
+    model.name,
+  ])
+  const selector = '[data-testid="wework-agent-model"]'
+  await selectWhenOptionAvailable(control, selector, identity, timeoutMs)
+  await selectAgentFormTab(control, dialog, 'basic', timeoutMs)
+  const summary = await control.command('getText', `[data-testid="${dialog}-runtime-summary"]`)
+  assert.ok(
+    summary.includes(model.displayName || model.name),
+    'The basic tab must show the selected runtime model'
+  )
 }
 
 export async function openProjectAgentCreator(control, addSelector, timeoutMs) {
@@ -132,7 +227,7 @@ export async function openProjectAgentCreator(control, addSelector, timeoutMs) {
   throw new Error('The project Agent creator did not open')
 }
 
-export async function initializeFirstProjectExecutionEnvironment(
+export async function configureFirstProjectExecutionEnvironment(
   control,
   contentSelector,
   timeoutMs,
@@ -148,39 +243,86 @@ export async function initializeFirstProjectExecutionEnvironment(
     `${contentSelector} [data-testid="collaboration-project-settings-environments"]`
   )
   if (deviceId) {
-    await control.command(
-      'clickWhenEnabled',
-      `${contentSelector} [data-testid="collaboration-project-execution-environment-add"]`,
-      { timeoutMs }
+    const pickerToggle = `${contentSelector} [data-testid="collaboration-project-execution-environment-add"]`
+    const candidate = `${contentSelector} [data-testid="collaboration-project-execution-environment-candidate-${deviceId}"]`
+    await control.command('clickWhenEnabled', pickerToggle, { timeoutMs })
+    await control.command('waitFor', candidate, { visible: true, timeoutMs })
+    await control.command('click', pickerToggle)
+    await control.command('clickThenMacrotask', pickerToggle, {
+      target: `${contentSelector} [data-testid="collaboration-project-execution-environment-picker"]`,
+    })
+    assert.equal(
+      Number(await control.command('getElementCount', candidate)),
+      1,
+      'Reopening the device picker discarded the loaded candidate'
     )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${contentSelector} [data-testid="collaboration-project-execution-environment-picker-loading"]`
+        )
+      ),
+      0,
+      'Reopening the device picker replaced candidates with a loading placeholder'
+    )
+    await control.command('clickWhenEnabled', candidate, { timeoutMs })
     await control.command(
-      'clickWhenEnabled',
-      `${contentSelector} [data-testid="collaboration-project-execution-environment-candidate-${deviceId}"]`,
-      { timeoutMs }
+      'waitFor',
+      `${contentSelector} [data-testid="collaboration-project-execution-environment-${deviceId}"]`,
+      { visible: true, timeoutMs }
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${contentSelector} [data-testid="collaboration-project-execution-environments-error"]`
+        )
+      ),
+      0,
+      'The selected device was not authorized for the project'
     )
   }
-  const initializeSelector = `${contentSelector} [data-testid^="collaboration-project-execution-environment-initialize-"]`
-  await control.command('waitFor', initializeSelector, { timeoutMs })
-  await control.command('scrollIntoView', initializeSelector)
-  await control.command('waitFor', initializeSelector, { visible: true, timeoutMs })
-  const snapshot = JSON.parse(await control.command('snapshot', contentSelector))
-  const initializeTestId = snapshot.testIds.find(testId =>
-    testId.startsWith('collaboration-project-execution-environment-initialize-')
-  )
-  assert.ok(initializeTestId, 'The project has no execution environment available to initialize')
-  await control.command(
-    'clickWhenEnabled',
-    `${contentSelector} [data-testid="${initializeTestId}"]`,
-    { timeoutMs }
-  )
   await control.command(
     'scrollIntoView',
-    `${contentSelector} [data-testid="collaboration-project-execution-environment-completion-status"]`
+    `${contentSelector} [data-testid="collaboration-project-execution-environment-environments"]`
   )
   await control.command(
     'waitFor',
-    `${contentSelector} [data-testid="collaboration-project-execution-environment-completion-status"]`,
-    { text: '环境已初始化', timeoutMs }
+    `${contentSelector} [data-testid="collaboration-project-execution-environment-environments"]`,
+    { text: '在线', timeoutMs }
+  )
+  await control.command(
+    'click',
+    `${contentSelector} [data-testid="collaboration-project-settings-project"]`
+  )
+  // Reopening must expose cached runners and an enabled picker before refresh completes.
+  await control.command(
+    'clickThenMacrotask',
+    `${contentSelector} [data-testid="collaboration-project-settings-environments"]`,
+    { target: `${contentSelector} [data-testid="collaboration-project-execution-environment-add"]` }
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${contentSelector} [data-testid="collaboration-project-execution-environment-loading"]`
+      )
+    ),
+    0,
+    'Reopening execution environments replaced the cached devices with a loading placeholder'
+  )
+  assert.match(
+    await control.command(
+      'getText',
+      `${contentSelector} [data-testid="collaboration-project-execution-environment-environments"]`
+    ),
+    /在线/,
+    'Reopening execution environments lost the configured device'
+  )
+  await control.command(
+    'click',
+    `${contentSelector} [data-testid="collaboration-project-execution-environment-add"]`
   )
 }
 
@@ -700,7 +842,7 @@ async function verifyWorkspaceIssueCreation(control) {
     'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified with a deliberately long description that spans more than two lines in the Issue sidebar so collapsed overflow treatment remains visible.'
   const twoLineIssueDescription = '折叠描述第一行\n折叠描述第二行'
   await createLocalCollaborationProject(control, boardContentSelector, projectName)
-  await initializeFirstProjectExecutionEnvironment(
+  await configureFirstProjectExecutionEnvironment(
     control,
     boardContentSelector,
     DEFAULT_STEP_TIMEOUT_MS
@@ -1374,7 +1516,7 @@ async function verifyExistingTaskBoardAssociation(
   )
   const targetProjectName = 'Existing Task Target Board'
   await createLocalCollaborationProject(control, activeBoardContentSelector, targetProjectName)
-  await initializeFirstProjectExecutionEnvironment(
+  await configureFirstProjectExecutionEnvironment(
     control,
     activeBoardContentSelector,
     DEFAULT_STEP_TIMEOUT_MS

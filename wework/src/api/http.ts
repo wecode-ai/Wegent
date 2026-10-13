@@ -1,3 +1,4 @@
+import { requestRunnerSelection, runnerSelectionRequest } from '@/lib/runner-selection'
 import { removeToken } from './auth'
 import { redirectToLogin } from '@/features/auth/redirect'
 import { createRequestId } from '@/lib/request-id'
@@ -255,7 +256,8 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   async function request<T>(
     endpoint: string,
     init: RequestInit,
-    requestOptions: HttpRequestOptions = {}
+    requestOptions: HttpRequestOptions = {},
+    selectionAttempted = false
   ): Promise<T> {
     const diagnostics = await fetchWithDiagnostics(endpoint, init, {
       token: getToken(),
@@ -270,6 +272,24 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       if (response.status === 401 && redirectOnUnauthorized) {
         removeToken()
         redirectToLogin()
+      }
+      const selectionRequest = runnerSelectionRequest(error)
+      if (
+        !selectionAttempted &&
+        selectionRequest &&
+        typeof init.body === 'string' &&
+        ['POST', 'PATCH'].includes(init.method ?? '')
+      ) {
+        const selection = await requestRunnerSelection(selectionRequest)
+        const body = JSON.parse(init.body) as Record<string, unknown>
+        delete body.runnerSelection
+        delete body.runner_selection
+        return request<T>(
+          endpoint,
+          { ...init, body: JSON.stringify({ ...body, runner_selection: selection }) },
+          requestOptions,
+          true
+        )
       }
       throw error
     }

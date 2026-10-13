@@ -235,6 +235,8 @@ export function createDesktopScenario({
 }) {
   let requestCount = 0
   const connectionResets = []
+  let verificationComplete = false
+  const sockets = new Set()
   const executorLogPath = join(resultDir, 'executor.log')
   const launchWorkingDirectory = join(resultDir, 'invalid-launch-cwd')
   const modelServerPort = process.env.WEWORK_E2E_MODEL_SERVER_PORT
@@ -248,13 +250,20 @@ export function createDesktopScenario({
   return {
     attachServer(server) {
       server.on('upgrade', (request, socket, head) => {
+        sockets.add(socket)
+        socket.once('close', () => sockets.delete(socket))
+        const url = new URL(request.url ?? '/', modelServerUrl)
+        const acceptsModelRequests = ['/v1/responses', '/responses'].includes(url.pathname)
         socket.on('error', error => {
-          if (error.code !== 'ECONNRESET') throw error
-          connectionResets.push({ code: error.code, at: new Date().toISOString() })
+          if (error.code === 'ECONNRESET') {
+            connectionResets.push({ code: error.code, at: new Date().toISOString() })
+          }
+          if ((acceptsModelRequests && !verificationComplete) || error.code !== 'ECONNRESET') {
+            server.emit('error', error)
+          }
           socket.destroy()
         })
-        const url = new URL(request.url ?? '/', modelServerUrl)
-        if (!['/v1/responses', '/responses'].includes(url.pathname)) {
+        if (!acceptsModelRequests) {
           socket.destroy()
           return
         }
@@ -282,6 +291,10 @@ export function createDesktopScenario({
     modelProviderId: 'openai',
     modelId: BUILTIN_MODEL_ID,
     modelServerUrl,
+    close() {
+      for (const socket of sockets) socket.destroy()
+      sockets.clear()
+    },
 
     async verify(control) {
       if (process.platform !== 'win32') {
@@ -326,6 +339,7 @@ export function createDesktopScenario({
         'codex-invalid-launch-cwd-01-completed.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
+      verificationComplete = true
     },
 
     diagnostics() {

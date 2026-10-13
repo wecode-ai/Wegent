@@ -77,6 +77,9 @@ class TTSConfig(BaseModel):
     output_format: Optional[str] = Field("mp3", description="Output format (mp3, wav)")
 
 
+from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy, RunnerSelection
+
+
 class STTConfig(BaseModel):
     """STT-specific configuration"""
 
@@ -555,6 +558,9 @@ class BotSpec(BaseModel):
     modelRef: Optional[ModelRef] = None
     # Legacy Bots without this field keep their configured Ghost capabilities.
     capability_mode: str = "manual"
+    routing_configuration_required: bool = False
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
     secondaryModelRef: Optional[ModelRef] = Field(
         None,
         description="Secondary LLM model for auxiliary tasks. "

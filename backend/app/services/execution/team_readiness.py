@@ -74,12 +74,13 @@ def _validate_team_member(
 
     _validate_ghost(db, team=team, bot_label=bot_label, bot_crd=bot_crd)
     _validate_shell(db, team=team, bot_label=bot_label, bot_crd=bot_crd)
-    _validate_model(
-        db,
-        bot=bot,
-        bot_label=bot_label,
-        execution_user_id=execution_user_id,
-    )
+    if bot_crd.spec.execution_policy is None:
+        _validate_model(
+            db,
+            bot=bot,
+            bot_label=bot_label,
+            execution_user_id=execution_user_id,
+        )
 
 
 def _validate_ghost(

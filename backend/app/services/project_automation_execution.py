@@ -300,6 +300,7 @@ class ProjectAutomationExecution:
         target_id = str(dispatch_target.get("id") or "")
         workflow_step: str | None = None
         context = self._automation_context(db, rule, run)
+        context["runner_selection"] = dispatch_target.get("runner_selection")
         configured_device = text(dispatch_target.get("execution_device_id"))
         if configured_device:
             context["execution_device_id"] = configured_device
@@ -314,6 +315,24 @@ class ProjectAutomationExecution:
                 workflow_step=workflow_step,
                 context=context,
             )
+            return
+        if target_kind == "collaboration_group":
+            self._assign_non_robot_target(
+                db,
+                owner=owner,
+                rule=rule,
+                run=run,
+                assignee_type="group",
+                assignee_id=target_id,
+                workflow_step=None,
+                context=context,
+            )
+            execution = self._project_robot_execution_for_run(db, str(run.id))
+            run.status = "queued" if execution else "succeeded"
+            if execution is None:
+                run.completed_at = utcnow()
+            run.version += 1
+            db.commit()
             return
         if target_kind != "agent":
             raise RuntimeError("The automatic-processing target is invalid")

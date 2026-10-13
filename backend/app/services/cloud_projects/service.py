@@ -794,12 +794,10 @@ class CloudProjectService:
             resource_type=ResourceType.DEVICE.value,
             resource_id=device_id,
         )
-        owned_by_user = int(device.user_id) == user_id
-        shared_with_workspace = workspace_grant is not None
-        if not owned_by_user and not shared_with_workspace:
+        if workspace_grant is None:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                "Execution environment is not available to this Project",
+                "Share the environment with this Workspace before authorizing it for a Project",
             )
         connection_statuses = await execution_environment_statuses([device])
         grant = ResourceMember.create(

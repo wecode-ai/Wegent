@@ -7,9 +7,9 @@ import { runChecked } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   inCollaborationSidebar,
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
-  selectWhenOptionAvailable,
+  selectProjectRunnerModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import {
@@ -54,6 +54,9 @@ async function configurePolicy(control, policy) {
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
   )
+  await control.command('waitFor', scoped(`[data-testid="${PREFIX}-preparation"]:not([open])`))
+  await control.command('click', scoped(`[data-testid="${PREFIX}-preparation-toggle"]`))
+  await control.command('waitFor', scoped(`[data-testid="${PREFIX}-preparation"][open]`))
   await control.command('select', scoped(`[data-testid="${PREFIX}-workspace-policy"]`), {
     value: policy,
   })
@@ -121,21 +124,13 @@ async function createTask(control, label, timeoutMs, executionMode = 'current_wo
 
 async function addAgent(control, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
-  await control.command(
-    'click',
-    scoped('[data-testid="collaboration-project-settings-participants"]')
-  )
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-agents"]'))
+
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await openProjectAgentCreator(control, scoped('[data-testid="project-agent-add"]'), timeoutMs)
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: MARKER,
   })
-  await selectWhenOptionAvailable(
-    control,
-    '[data-testid="cloud-project-chat-agent-model"]',
-    'local-model:desktop-e2e-responses',
-    timeoutMs
-  )
+  await selectProjectRunnerModel(control, timeoutMs)
   await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]')
   await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
     visible: false,
@@ -227,7 +222,7 @@ export function createDesktopScenario({
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1280, height: 800 }),
       })
-      await initializeFirstProjectExecutionEnvironment(control, CONTENT, modelResponseTimeoutMs)
+      await configureFirstProjectExecutionEnvironment(control, CONTENT, modelResponseTimeoutMs)
       const sharedConfig = await configurePolicy(control, 'project')
       const shared = await createTask(control, 'Shared directory', modelResponseTimeoutMs)
       assert.notEqual(shared.workspaceKind, 'worktree')

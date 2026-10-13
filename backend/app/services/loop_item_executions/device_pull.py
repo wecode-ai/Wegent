@@ -146,7 +146,7 @@ def _claim_execution(
         execution_request = payload.get("executionRequest")
         if isinstance(execution_request, dict):
             execution_request["task_id"] = runtime_task_id
-            execution_request["subtask_id"] = f"{runtime_task_id}-assistant"
+            execution_request["subtask_id"] = f"{runtime_task_id}-execution-{row.id}"
 
         # Claiming and materializing a payload does not prove that the
         # Socket.IO acknowledgement reached the Executor. Keep
@@ -177,8 +177,29 @@ def pull_execution(
     runtime_device_id: str,
     runtime_instance_id: str,
     environment: str,
+    runner_catalog: dict | None = None,
 ) -> dict[str, Any]:
     """Atomically claim and materialize one execution for this Runtime."""
+
+    if runner_catalog is not None:
+        from pydantic import ValidationError
+
+        from app.schemas.runner_routing import RunnerCatalog
+        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.runner_routing import save_catalog
+
+        try:
+            report = RunnerCatalog.model_validate(runner_catalog)
+        except ValidationError:
+            return {"success": False, "error": "Invalid runner capability report"}
+        with get_db_session() as db:
+            device = resolve_owned_device_alias(
+                db, user_id=owner_user_id, device_id=execution_target_id
+            )
+            if device is None:
+                return {"success": False, "error": "Runner is no longer authorized"}
+            save_catalog(db, device, report)
+            db.commit()
 
     runtime_lock = f"robot_exec:{owner_user_id}:runtime:{runtime_instance_id}"
     with distributed_lock.acquire_context(
