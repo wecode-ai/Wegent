@@ -94,8 +94,19 @@ export async function summarizeCoreStartupProfiles(root) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     await summarizeCoreStartupProfiles(process.argv[2])
-  } catch {
-    console.error('Could not summarize Core startup CPU diagnostics')
+  } catch (error) {
+    const safeErrors = new Set([
+      'Core startup CPU endpoint log is unavailable',
+      'CPU profile startup clock is unavailable',
+      'Core startup CPU summary is invalid',
+      'Core startup CPU summary endpoint is unavailable',
+      'CPU profile process identity is unavailable',
+      'CPU profile startup marker is unavailable',
+      'Invalid CPU profile',
+      'Startup marker is outside CPU profile',
+    ])
+    const reason = safeErrors.has(error.message) ? error.message : 'Diagnostic input is unavailable'
+    console.error(`Could not summarize Core startup CPU diagnostics: ${reason}`)
     process.exitCode = 1
   }
 }

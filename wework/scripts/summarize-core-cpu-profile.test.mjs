@@ -93,6 +93,32 @@ test('retains safe summaries while the real CI diagnostics pruner removes raw pr
   expect(JSON.stringify(startup)).not.toMatch(/private-token|private\/user|secret=|file:\/\//)
 })
 
+test.each([
+  [JSON.stringify(fixture()), 'CPU profile startup marker is unavailable'],
+  ['private-token-not-json', 'Diagnostic input is unavailable'],
+])('reports a safe failure and still prunes raw profiles (case %#)', async (rawContents, reason) => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-cpu-profile-private-'))
+  roots.push(root)
+  const logs = join(root, 'session/electron-user-data/logs')
+  const privateRoot = join(root, 'session/electron-user-data/dsh-core/.cpu-profile')
+  await mkdir(logs, { recursive: true })
+  await mkdir(privateRoot, { recursive: true })
+  const raw = join(privateRoot, 'CPU.20261013.120000.10.0.001.cpuprofile')
+  await writeFile(raw, rawContents)
+  await writeFile(
+    join(logs, 'dsh-core-runtime.log'),
+    '[startup][core-dsh-endpoint] { cpuProfileEndTimeUs: 14000, cpuProfileProcessId: 10 }'
+  )
+  const result = await execute('bash', [
+    resolve('../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'),
+    root,
+  ]).catch(error => error)
+  expect(result.code).toBe(1)
+  expect(result.stderr).toContain(reason)
+  expect(result.stderr).not.toMatch(/private-token|private\/user|secret=|file:\/\//)
+  await expect(readFile(raw)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
 test('clips the boundary interval and excludes all subsequent runtime samples', () => {
   const summary = summarizeCoreCpuProfile(fixture(), 3500)
   expect(summary.scope).toBe('startup-to-endpoint')
