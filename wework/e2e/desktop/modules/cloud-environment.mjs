@@ -189,13 +189,20 @@ async function resolveBackendRsBinary() {
     'debug',
     process.platform === 'win32' ? 'wegent-backend-rs.exe' : 'wegent-backend-rs'
   )
-  if (!(await pathExists(binary))) {
-    await runChecked(
-      'cargo',
-      ['build', '--manifest-path', manifestPath, '--bin', 'wegent-backend-rs'],
-      { cwd: repoDir }
-    )
-  }
+  // Always build. The target directory is shared between worktrees and
+  // branches, so reusing an existing binary would silently serve an older
+  // gateway (for example an outdated route table or SQL filter) and fail
+  // unrelated checkpoints. Cargo is incremental, so an up-to-date build is
+  // cheap.
+  await runChecked(
+    'cargo',
+    ['build', '--manifest-path', manifestPath, '--bin', 'wegent-backend-rs'],
+    { cwd: repoDir }
+  )
+  assert.ok(
+    await pathExists(binary),
+    `Rust gateway binary was not produced by the build: ${binary}`
+  )
   return binary
 }
 async function waitForRedisReady(redis, logPath, fromOffset) {
