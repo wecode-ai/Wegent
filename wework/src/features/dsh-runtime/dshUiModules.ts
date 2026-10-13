@@ -1,4 +1,5 @@
 import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
+import { loadDshUiStylesheets } from './dshUiStylesheets'
 
 const modulePromises = new Map<string, Promise<unknown>>()
 const loadedModules = new Map<string, unknown>()
@@ -32,27 +33,32 @@ export function importDshUiModule<T>(module: string): Promise<T> {
       ? injected()
       : Promise.resolve(injected)
     : import(/* @vite-ignore */ url)
-  const loaded = loading.then(
-    value => {
-      loadedModules.set(url, value)
-      if (homeModule) {
-        markDesktopStartupPhase('home-module-import', 'completed', {
-          modulePath: homeModule,
-          durationMs: Math.round(performance.now() - startedAt),
-        })
-      }
+  const loaded = loading
+    .then(async value => {
+      await loadDshUiStylesheets(value)
       return value
-    },
-    error => {
-      if (homeModule) {
-        markDesktopStartupPhase('home-module-import', 'failed', {
-          modulePath: homeModule,
-          durationMs: Math.round(performance.now() - startedAt),
-        })
+    })
+    .then(
+      value => {
+        loadedModules.set(url, value)
+        if (homeModule) {
+          markDesktopStartupPhase('home-module-import', 'completed', {
+            modulePath: homeModule,
+            durationMs: Math.round(performance.now() - startedAt),
+          })
+        }
+        return value
+      },
+      error => {
+        if (homeModule) {
+          markDesktopStartupPhase('home-module-import', 'failed', {
+            modulePath: homeModule,
+            durationMs: Math.round(performance.now() - startedAt),
+          })
+        }
+        throw error
       }
-      throw error
-    }
-  )
+    )
   modulePromises.set(url, loaded)
   return loaded as Promise<T>
 }

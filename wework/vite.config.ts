@@ -8,6 +8,7 @@ import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
 import { excalidrawAssets } from './vite/excalidrawAssets'
 import { createInitialRendererChunk } from './vite/initialRendererChunk'
+import { attachDshUiEntryStylesheets, type DshUiOutput } from './vite/dshUiEntryStylesheets'
 
 function normalizeBackendUrl(value: string): string {
   const url = new URL(value)
@@ -80,28 +81,8 @@ function preserveDshUiEntryExports() {
         preserveEntrySignatures: 'strict' as const,
       }
     },
-    generateBundle(
-      _options: unknown,
-      bundle: Record<
-        string,
-        {
-          exports?: string[]
-          isEntry?: boolean
-          name?: string
-          type: 'asset' | 'chunk'
-        }
-      >
-    ) {
-      for (const output of Object.values(bundle)) {
-        if (
-          output.type === 'chunk' &&
-          output.isEntry &&
-          output.name?.startsWith('wework-ui-') &&
-          !output.exports?.includes('default')
-        ) {
-          throw new Error(`DSH UI entry "${output.name}" must preserve its default export`)
-        }
-      }
+    generateBundle(_options: unknown, bundle: Record<string, DshUiOutput>) {
+      attachDshUiEntryStylesheets(bundle)
     },
   }
 }
