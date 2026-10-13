@@ -426,6 +426,7 @@ classify_wework_path() {
 
     # Workbench mode covers Home migration before the managed Git/settings flow.
     wework/e2e/desktop/scenarios/workbench-mode.scenario.mjs | \
+      wework/e2e/desktop/modules/custom-model-output-budget.mjs | \
       wework/e2e/desktop/modules/native-agent-mcp.mjs | \
       wework/e2e/desktop/modules/workbench-home-migration.mjs | \
       wework/e2e/desktop/modules/workbench-schema-compatibility.mjs | \

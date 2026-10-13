@@ -3525,6 +3525,8 @@
     "local_model_api_key_placeholder": "可选",
     "local_model_api_key_replace_placeholder": "留空则保留现有 Key",
     "local_model_context_window_label": "最大上下文",
+    "local_model_max_output_tokens_label": "最大输出长度（tokens）",
+    "local_model_max_output_tokens_hint": "限制单次回复的输出 token 数，并为输出预留上下文。自动压缩阈值会据此调整；留空则使用运行时默认值。",
     "local_model_context_window_placeholder": "可选，例如 1000000",
     "local_model_context_window_hint": "用于显示剩余上下文，并帮助处理长对话。留空则自动判断。",
     "local_model_context_window_badge": "上下文：{{tokens}} tokens",

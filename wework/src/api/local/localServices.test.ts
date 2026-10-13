@@ -482,6 +482,8 @@ describe('createLocalAppServices', () => {
       group: '本地推理',
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
+      contextWindow: 128000,
+      maxOutputTokens: 16000,
       catalogReady: true,
     })
     const request = vi.fn().mockImplementation(async (method: string) => {
@@ -549,6 +551,8 @@ describe('createLocalAppServices', () => {
           displayName: 'Ollama GPT',
           modelId: 'gpt-oss:20b',
           config: expect.objectContaining({
+            model_context_window: 128000,
+            max_output_tokens: 16000,
             ui: expect.objectContaining({
               family: 'model-interface:%E6%9C%AC%E5%9C%B0%E6%8E%A8%E7%90%86',
               familyLabel: '本地推理',
@@ -3342,6 +3346,7 @@ describe('createLocalAppServices', () => {
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
       contextWindow: 128000,
+      maxOutputTokens: 16000,
       catalogReady: true,
     })
     const lmstudio = saveLocalModelConfig({
@@ -3433,6 +3438,7 @@ describe('createLocalAppServices', () => {
         responses_url: 'http://localhost:11434/v1/responses',
         api_key: 'dummy',
         model_context_window: 128000,
+        max_output_tokens: 16000,
         web_search: 'disabled',
         image_generation: false,
         codex_responses_compat_proxy: true,

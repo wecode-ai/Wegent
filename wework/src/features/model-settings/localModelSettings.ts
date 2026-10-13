@@ -27,6 +27,7 @@ export interface LocalModelConfig {
   apiKey?: string
   apiKeyConfigured?: boolean
   contextWindow?: number
+  maxOutputTokens?: number
   webSearchMode: LocalModelWebSearchMode
   imageGenerationEnabled: boolean
   visionModelConfigId?: string
@@ -62,6 +63,7 @@ export interface SaveLocalModelConfigInput {
   requestPath?: string | null
   apiKey?: string | null
   contextWindow?: number | string | null
+  maxOutputTokens?: number | string | null
   webSearchMode?: LocalModelWebSearchMode | null
   imageGenerationEnabled?: boolean | null
   visionModelConfigId?: string | null
@@ -178,6 +180,10 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
       (typeof record.contextWindow === 'number' &&
         Number.isInteger(record.contextWindow) &&
         record.contextWindow > 0)) &&
+    (record.maxOutputTokens === undefined ||
+      (typeof record.maxOutputTokens === 'number' &&
+        Number.isSafeInteger(record.maxOutputTokens) &&
+        record.maxOutputTokens > 0)) &&
     (record.webSearchMode === undefined ||
       record.webSearchMode === 'disabled' ||
       record.webSearchMode === 'cached' ||
@@ -271,6 +277,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       : legacyConfig.contextWindow
         ? { contextWindow: legacyConfig.contextWindow }
         : {}),
+    ...(legacyConfig.maxOutputTokens ? { maxOutputTokens: legacyConfig.maxOutputTokens } : {}),
     webSearchMode: migrateDeepSeekResponses
       ? 'live'
       : normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
@@ -434,10 +441,17 @@ export function normalizeLocalModelId(value: string): string {
 export function normalizeLocalModelContextWindow(
   value?: number | string | null
 ): number | undefined {
+  return normalizeLocalModelTokenLimit(value, 'Context window')
+}
+
+function normalizeLocalModelTokenLimit(
+  value: number | string | null | undefined,
+  label: string
+): number | undefined {
   if (value === undefined || value === null || value === '') return undefined
   const parsed = typeof value === 'number' ? value : Number(value)
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error('Context window must be a positive integer')
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer`)
   }
   return parsed
 }
@@ -501,6 +515,10 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const group = normalizeLocalModelGroup(input.group)
   const apiKey = input.apiKey?.trim() || undefined
   const contextWindow = normalizeLocalModelContextWindow(input.contextWindow)
+  const maxOutputTokens = normalizeLocalModelTokenLimit(input.maxOutputTokens, 'Max output tokens')
+  if (contextWindow && maxOutputTokens && maxOutputTokens >= contextWindow) {
+    throw new Error('Max output tokens must be less than context window')
+  }
   const id = input.id?.trim() || createLocalModelConfigId()
   const existing = readStoredConfigs()
   const previous = existing.find(config => config.id === id)
@@ -581,6 +599,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     apiKey,
     apiKeyConfigured: Boolean(apiKey),
     ...(contextWindow ? { contextWindow } : {}),
+    ...(maxOutputTokens ? { maxOutputTokens } : {}),
     webSearchMode,
     imageGenerationEnabled,
     ...(visionModelConfigId ? { visionModelConfigId } : {}),
