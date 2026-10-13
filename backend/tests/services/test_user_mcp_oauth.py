@@ -163,7 +163,10 @@ async def test_oauth_session_registers_client_and_stores_encrypted_tokens(
     assert query["code_challenge_method"] == ["S256"]
 
     message = await user_mcp_oauth_service.complete_callback(
-        test_db, code="provider-code", state_token=query["state"][0]
+        test_db,
+        code="provider-code",
+        state_token=query["state"][0],
+        browser_binding=f"{session['session_id']}.{session['binding']}",
     )
     result = await user_mcp_oauth_service.poll_session(
         test_db,
@@ -188,6 +191,46 @@ async def test_oauth_session_registers_client_and_stores_encrypted_tokens(
     ]["credentials"]
     assert stored["access_token"] != "dingtalk-access"
     assert stored["refresh_token"] != "dingtalk-refresh"
+
+
+@pytest.mark.asyncio
+async def test_callback_requires_the_originating_browser(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    """A forwarded authorization URL cannot be completed by another browser."""
+    _memory_cache(monkeypatch)
+    monkeypatch.setattr(settings, "MCP_OAUTH_STATE_SECRET", "state-key")
+    _configure_oauth_service(test_db, test_user)
+    monkeypatch.setattr(
+        UserMcpOAuthService, "discover", AsyncMock(return_value=_metadata())
+    )
+    httpx_mock.add_response(
+        url=REGISTRATION_URL,
+        method="POST",
+        status_code=201,
+        json={"client_id": "dingtalk-client"},
+    )
+    monkeypatch.setattr(
+        UserMcpOAuthService, "_exchange_code", AsyncMock(return_value={})
+    )
+
+    session = await user_mcp_oauth_service.create_session(
+        test_db, user=test_user, provider_id="dingtalk", service_id="ai_table"
+    )
+    state = parse_qs(urlsplit(session["authorize_url"]).query)["state"][0]
+
+    for binding in (None, f"{session['session_id']}.wrong-binding"):
+        with pytest.raises(HTTPException) as exc_info:
+            await user_mcp_oauth_service.complete_callback(
+                test_db,
+                code="provider-code",
+                state_token=state,
+                browser_binding=binding,
+            )
+        assert exc_info.value.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -226,6 +269,36 @@ async def test_oauth_poll_is_scoped_to_the_authorizing_user(
         )
 
     assert exc_info.value.status_code == 401
+
+
+def test_settings_put_switching_to_url_mode_clears_oauth_tokens(
+    test_db: Session, test_user: User
+) -> None:
+    """The settings PUT path also drops OAuth credentials on a mode switch."""
+    _configure_oauth_service(test_db, test_user)
+    saved = user_mcp_service.save_service_oauth_credentials(
+        test_user.preferences,
+        "dingtalk",
+        "ai_table",
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=123,
+    )
+
+    updated = user_mcp_service.set_provider_service_config(
+        user_mcp_service.dump_preferences(saved),
+        provider_id="dingtalk",
+        service_id="ai_table",
+        enabled=True,
+        url=RESOURCE_URL,
+        auth_mode=MCP_AUTH_MODE_URL,
+    )
+
+    credentials = user_mcp_service.get_service_oauth_credentials(
+        user_mcp_service.dump_preferences(updated), "dingtalk", "ai_table"
+    )
+    assert credentials["access_token"] == ""
+    assert credentials["refresh_token"] == ""
 
 
 def test_url_mode_clears_stored_oauth_tokens(test_db: Session, test_user: User) -> None:

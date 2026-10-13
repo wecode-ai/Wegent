@@ -963,3 +963,30 @@ class TestUserMcpOAuthHeaderInjection:
         )
 
         assert "headers" not in skill_data["mcpServers"]["dingtalk_ai_table"]
+
+    def test_insecure_resource_url_never_receives_a_bearer_header(
+        self, test_db, monkeypatch
+    ):
+        """An OAuth token is not attached to a cleartext MCP endpoint."""
+        builder = TaskRequestBuilder(test_db)
+        user = self._user(MCP_AUTH_MODE_OAUTH)
+        preferences = user_mcp_service.set_provider_service_config(
+            user.preferences,
+            provider_id="dingtalk",
+            service_id="ai_table",
+            enabled=True,
+            url="http://mcp.example.com/oauth/server/aitable",
+            auth_mode=MCP_AUTH_MODE_OAUTH,
+        )
+        user = SimpleNamespace(
+            preferences=user_mcp_service.dump_preferences(preferences), id=1
+        )
+
+        def fail(*args, **kwargs):
+            raise AssertionError("insecure transports must not request a token")
+
+        monkeypatch.setattr(user_mcp_oauth_service, "ensure_access_token_sync", fail)
+
+        skill_data = builder._build_skill_data(self._skill(), user=user)
+
+        assert "headers" not in skill_data["mcpServers"]["dingtalk_ai_table"]

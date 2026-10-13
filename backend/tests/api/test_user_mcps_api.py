@@ -151,6 +151,19 @@ class TestUserMcpsAPI:
         assert response.status_code == 400
         assert "OAuth server URL" in response.json()["detail"]
 
+    def test_rejects_unknown_auth_mode(self, user_mcps_client: TestClient):
+        """An unknown authentication mode is rejected as a client error."""
+        response = user_mcps_client.put(
+            "/api/users/me/mcps/providers/dingtalk/services/docs",
+            json={
+                "enabled": True,
+                "url": "https://mcp-gw.dingtalk.com/oauth/server/docs",
+                "auth_mode": "bogus",
+            },
+        )
+
+        assert response.status_code == 422
+
     def test_oauth_session_rejects_service_without_oauth_support(
         self, user_mcps_client: TestClient, monkeypatch
     ):

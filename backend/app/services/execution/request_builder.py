@@ -55,7 +55,7 @@ from app.services.skill_resolution import (
     find_skill_by_name,
     find_skill_by_ref,
 )
-from app.services.user_mcp_oauth import user_mcp_oauth_service
+from app.services.user_mcp_oauth import is_secure_mcp_url, user_mcp_oauth_service
 from app.services.user_mcp_service import MCP_AUTH_MODE_OAUTH, user_mcp_service
 from app.stores.tasks import subtask_store, task_store
 from shared.models import ExecutionRequest
@@ -2066,6 +2066,18 @@ class TaskRequestBuilder:
             )
             != MCP_AUTH_MODE_OAUTH
         ):
+            return
+
+        config = user_mcp_service.get_provider_service_config(
+            getattr(user, "preferences", None), provider_id, service_id
+        )
+        if not is_secure_mcp_url(str(config.get("url") or "")):
+            logger.warning(
+                "[MCP-OAUTH] Refusing to attach an OAuth bearer header over an "
+                "insecure transport for %s/%s",
+                provider_id,
+                service_id,
+            )
             return
 
         access_token = user_mcp_oauth_service.ensure_access_token_sync(

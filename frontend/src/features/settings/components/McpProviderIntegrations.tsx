@@ -292,6 +292,11 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
     const current = services.find(service => service.service_id === serviceId)
     if (!current) return
 
+    // Open the window while the click is still a user activation; the session
+    // request performs discovery and client registration before we know the URL.
+    const popup = window.open('', '_blank')
+    if (popup) popup.opener = null
+
     updateServiceState(serviceId, service => ({ ...service, connecting: true }))
     try {
       // The backend discovers metadata from the resource URL, so persist the
@@ -302,7 +307,11 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
         auth_mode: 'oauth',
       })
       const session = await userApis.createMcpProviderOAuthSession(providerId, serviceId)
-      window.open(session.authorize_url, '_blank', 'noopener,noreferrer')
+      if (popup) {
+        popup.location.replace(session.authorize_url)
+      } else {
+        window.open(session.authorize_url, '_blank', 'noopener,noreferrer')
+      }
 
       const deadline = Math.min(session.expires_at * 1000, Date.now() + 10 * 60 * 1000)
       let result = await userApis.pollMcpProviderOAuthSession(providerId, serviceId, session)
@@ -323,6 +332,7 @@ export default function McpProviderIntegrations({ providerId }: { providerId: st
       }))
       toast({ title: t(`${providerId}.oauth_connect_success`) })
     } catch (error) {
+      popup?.close()
       updateServiceState(serviceId, service => ({ ...service, connecting: false }))
       toast({
         variant: 'destructive',

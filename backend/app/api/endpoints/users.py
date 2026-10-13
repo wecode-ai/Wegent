@@ -4,7 +4,7 @@
 
 import json
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ValidationError
@@ -85,7 +85,7 @@ class MCPProviderServiceConfigRequest(BaseModel):
     url: str = ""
     # Optional so clients that predate OAuth keep the stored mode instead of
     # silently resetting an OAuth-authorized service back to a personal URL.
-    auth_mode: Optional[str] = None
+    auth_mode: Optional[Literal["url", "oauth"]] = None
 
 
 class MCPProviderServiceConfigResponse(BaseModel):

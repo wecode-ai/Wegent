@@ -4,18 +4,23 @@
 
 """OAuth endpoints for user-level provider MCP servers."""
 
+import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
 from app.models.user import User
 from app.services.mcp_provider_registry import get_mcp_provider_service
-from app.services.user_mcp_oauth import user_mcp_oauth_service
+from app.services.user_mcp_oauth import (
+    BROWSER_BINDING_COOKIE,
+    user_mcp_oauth_service,
+)
 
 router = APIRouter(tags=["mcp-oauth"])
 public_router = APIRouter(tags=["mcp-oauth"])
@@ -65,6 +70,7 @@ def _require_oauth_service(provider_id: str, service_id: str) -> None:
 async def create_mcp_oauth_session(
     provider_id: str,
     service_id: str,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> MCPOAuthSessionCreateResponse:
@@ -76,6 +82,18 @@ async def create_mcp_oauth_session(
         provider_id=provider_id,
         service_id=service_id,
     )
+    # Bind the authorization to this browser so a forwarded URL cannot be
+    # completed by another logged-in user.
+    response.set_cookie(
+        BROWSER_BINDING_COOKIE,
+        f"{session['session_id']}.{session['binding']}",
+        max_age=max(1, int(session["expires_at"]) - int(time.time())),
+        httponly=True,
+        samesite="lax",
+        secure=settings.MCP_OAUTH_REDIRECT_URI.startswith("https"),
+        path="/",
+    )
+    session.pop("binding", None)
     return MCPOAuthSessionCreateResponse(**session)
 
 
@@ -127,6 +145,7 @@ async def disconnect_mcp_oauth(
 
 @public_router.get("/mcp-oauth/callback", response_class=HTMLResponse)
 async def mcp_oauth_callback(
+    request: Request,
     state: str = Query(...),
     code: str | None = Query(default=None),
     error: str | None = Query(default=None),
@@ -138,8 +157,11 @@ async def mcp_oauth_callback(
         code=code,
         state_token=state,
         provider_error=error,
+        browser_binding=request.cookies.get(BROWSER_BINDING_COOKIE),
     )
-    return HTMLResponse(
+    html = HTMLResponse(
         "<!doctype html><html><body><p>" + message + "</p></body></html>",
         headers={"Cache-Control": "no-store"},
     )
+    html.delete_cookie(BROWSER_BINDING_COOKIE, path="/")
+    return html

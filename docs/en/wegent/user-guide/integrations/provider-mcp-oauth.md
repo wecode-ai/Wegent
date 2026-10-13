@@ -18,7 +18,7 @@ Wegent supports the second option and performs the authorization and refresh on 
 3. Choose **OAuth 2.0 authorization** under **Authentication**.
 4. Paste the OAuth URL shown on the provider page, for example `https://mcp-gw.dingtalk.com/oauth/server/aitable`.
 5. Save, then click **Connect and authorize** and finish the authorization in the opened page.
-6. When authorization completes, the card shows **Connected** with the account name. Use **Disconnect** whenever you need to authorize again.
+6. When authorization completes, the card shows **Connected**. Use **Disconnect** whenever you need to authorize again.
 
 DingTalk documents, spreadsheets, AI tables and knowledge bases are four separate service URLs and must be configured individually.
 

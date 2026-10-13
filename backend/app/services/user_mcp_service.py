@@ -337,6 +337,10 @@ class UserMCPService:
             service[MCP_CREDENTIALS_KEY] = credentials
         else:
             service.pop(MCP_CREDENTIALS_KEY, None)
+        if auth_mode == MCP_AUTH_MODE_URL:
+            # Switching to a personal URL drops stored OAuth tokens so a
+            # long-lived refresh token does not survive the mode change.
+            UserMCPService._clear_oauth_credentials(service)
 
         services[service_id] = service
         provider[MCP_SERVICES_KEY] = services
@@ -381,16 +385,7 @@ class UserMCPService:
         if auth_mode == MCP_AUTH_MODE_URL:
             # A personal StreamableHttp URL carries its own credential; stale
             # OAuth tokens must not survive the switch.
-            credentials = dict(service.get(MCP_CREDENTIALS_KEY) or {})
-            for key in (
-                MCP_ACCESS_TOKEN_KEY,
-                MCP_REFRESH_TOKEN_KEY,
-                MCP_EXPIRES_AT_KEY,
-                MCP_SCOPE_KEY,
-                MCP_ACCOUNT_KEY,
-            ):
-                credentials.pop(key, None)
-            service[MCP_CREDENTIALS_KEY] = credentials
+            UserMCPService._clear_oauth_credentials(service)
 
         return UserMCPService._set_service(prefs, provider_id, service_id, service)
 
@@ -484,6 +479,13 @@ class UserMCPService:
         """Drop stored OAuth credentials while keeping the service configured."""
         prefs = UserMCPService.load_preferences(preferences)
         service = UserMCPService._get_service(prefs, provider_id, service_id)
+        UserMCPService._clear_oauth_credentials(service)
+
+        return UserMCPService._set_service(prefs, provider_id, service_id, service)
+
+    @staticmethod
+    def _clear_oauth_credentials(service: dict[str, Any]) -> None:
+        """Remove OAuth token entries from a service's credentials."""
         credentials = dict(service.get(MCP_CREDENTIALS_KEY) or {})
         for key in (
             MCP_ACCESS_TOKEN_KEY,
@@ -493,9 +495,10 @@ class UserMCPService:
             MCP_ACCOUNT_KEY,
         ):
             credentials.pop(key, None)
-        service[MCP_CREDENTIALS_KEY] = credentials
-
-        return UserMCPService._set_service(prefs, provider_id, service_id, service)
+        if credentials:
+            service[MCP_CREDENTIALS_KEY] = credentials
+        else:
+            service.pop(MCP_CREDENTIALS_KEY, None)
 
     @staticmethod
     def _get_service(

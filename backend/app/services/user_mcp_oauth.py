@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import secrets
 import time
 import uuid
@@ -31,7 +32,12 @@ from app.core.config import settings
 from app.models.user import User
 from app.services.user_mcp_service import MCP_AUTH_MODE_OAUTH, user_mcp_service
 
+logger = logging.getLogger(__name__)
+
 SESSION_KEY_PREFIX = "user_mcp_oauth_session:"
+# Browser-binding cookie so a forwarded authorization URL cannot be completed by
+# another logged-in user.
+BROWSER_BINDING_COOKIE = "wegent_mcp_oauth_binding"
 POLL_INTERVAL_SECONDS = 2
 STATE_AUDIENCE = "wegent-mcp-oauth"
 # Refresh slightly before expiry so a long task never starts on a dead token.
@@ -69,6 +75,20 @@ def _require_secure_url(value: str, *, field: str) -> str:
         status.HTTP_400_BAD_REQUEST,
         f"MCP OAuth {field} must use https",
     )
+
+
+def is_secure_mcp_url(value: str | None) -> bool:
+    """Return whether an MCP URL may carry an OAuth bearer token."""
+    if not value:
+        return False
+    parsed = urlsplit(value.strip())
+    if parsed.scheme == "https" and parsed.hostname:
+        return True
+    return parsed.scheme == "http" and parsed.hostname in {
+        "localhost",
+        "127.0.0.1",
+        "[::1]",
+    }
 
 
 class UserMcpOAuthService:
@@ -155,6 +175,7 @@ class UserMcpOAuthService:
         session_id = str(uuid.uuid4())
         poll_token = secrets.token_urlsafe(32)
         nonce = secrets.token_urlsafe(24)
+        binding = secrets.token_urlsafe(24)
         verifier = secrets.token_urlsafe(64)
         state = jwt.encode(
             {
@@ -177,6 +198,7 @@ class UserMcpOAuthService:
             "user_id": user.id,
             "poll_token": poll_token,
             "nonce": nonce,
+            "binding": binding,
             "code_verifier": verifier,
             "token_endpoint": metadata["token_endpoint"],
             "redirect_uri": settings.MCP_OAUTH_REDIRECT_URI,
@@ -208,6 +230,7 @@ class UserMcpOAuthService:
             "authorize_url": f"{metadata['authorization_endpoint']}?{params}",
             "expires_at": now + ttl,
             "poll_interval_seconds": POLL_INTERVAL_SECONDS,
+            "binding": binding,
         }
 
     @staticmethod
@@ -262,11 +285,13 @@ class UserMcpOAuthService:
         code: str | None,
         state_token: str,
         provider_error: str | None = None,
+        browser_binding: str | None = None,
     ) -> str:
         """Complete the authorization-code exchange after the user returns."""
         claims = UserMcpOAuthService._decode_state(state_token)
         session_id = str(claims["session_id"])
         session = await UserMcpOAuthService._read_session(session_id)
+        UserMcpOAuthService._validate_browser_binding(session, browser_binding)
         UserMcpOAuthService._validate_callback_session(claims, session)
         if str(session.get("status")) != "pending":
             raise HTTPException(
@@ -402,6 +427,24 @@ class UserMcpOAuthService:
         )
 
     @staticmethod
+    def _validate_browser_binding(
+        session: dict[str, Any], browser_binding: str | None
+    ) -> None:
+        """Require the completing browser to be the one that started the flow."""
+        expected = str(session.get("binding") or "")
+        provided = (browser_binding or "").split(".", 1)[-1]
+        if (
+            not expected
+            or not provided
+            or not secrets.compare_digest(expected, provided)
+        ):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "MCP OAuth authorization must be completed in the browser "
+                "that started it",
+            )
+
+    @staticmethod
     async def provider_service_headers(
         db: Session,
         *,
@@ -416,6 +459,17 @@ class UserMcpOAuthService:
             )
             != MCP_AUTH_MODE_OAUTH
         ):
+            return {}
+        config = user_mcp_service.get_provider_service_config(
+            getattr(user, "preferences", None), provider_id, service_id
+        )
+        if not is_secure_mcp_url(str(config.get("url") or "")):
+            logger.warning(
+                "[MCP-OAUTH] Refusing to send an OAuth token over an insecure "
+                "transport for %s/%s",
+                provider_id,
+                service_id,
+            )
             return {}
         access_token = await UserMcpOAuthService.ensure_access_token(
             db, user=user, provider_id=provider_id, service_id=service_id
