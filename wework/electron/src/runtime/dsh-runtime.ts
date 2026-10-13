@@ -5,6 +5,11 @@ import { RuntimeSupervisor } from './runtime-supervisor.js'
 
 const LOCAL_READINESS_RETRY_INTERVAL_MS = 25
 
+type DshReadinessStep =
+  | 'core-dsh-auth-exchange'
+  | 'core-dsh-auth-cookie-install'
+  | 'core-dsh-endpoints-readiness'
+
 export interface DshRuntimeOptions {
   url: string
   name?: string
@@ -19,6 +24,7 @@ export interface DshRuntimeOptions {
   hostPipe?: HostPipeServer
   startTimeoutMs?: number
   authenticateBrowserSession?: (url: string, cookie: string, setCookies: string[]) => Promise<void>
+  onStartupStep?: (step: DshReadinessStep, status: 'started' | 'completed' | 'failed') => void
   onRestarted?: () => Promise<void>
 }
 
@@ -59,8 +65,10 @@ export class DshRuntime {
             while (new URL(this.runtimeUrl).port === '0') {
               await abortableDelay(LOCAL_READINESS_RETRY_INTERVAL_MS, signal)
             }
-            await waitForHttpEndpoints(runtimeProbeUrls(options, this.runtimeUrl), signal, () =>
-              this.authenticate(signal)
+            await this.readinessStep('core-dsh-endpoints-readiness', () =>
+              waitForHttpEndpoints(runtimeProbeUrls(options, this.runtimeUrl), signal, () =>
+                this.authenticate(signal)
+              )
             )
             if (this.becameReady) await options.onRestarted?.()
             this.becameReady = true
@@ -96,7 +104,9 @@ export class DshRuntime {
     )
     timeout.unref()
     try {
-      await waitForHttpEndpoints(runtimeProbeUrls(this.options), controller.signal)
+      await this.readinessStep('core-dsh-endpoints-readiness', () =>
+        waitForHttpEndpoints(runtimeProbeUrls(this.options), controller.signal)
+      )
     } finally {
       clearTimeout(timeout)
     }
@@ -158,14 +168,34 @@ export class DshRuntime {
   }
 
   private async exchangeBrowserSession(url: string, signal: AbortSignal): Promise<string> {
-    const response = await fetch(url, { signal, redirect: 'manual' })
-    const cookies = response.headers.getSetCookie()
-    if (response.status !== 303 || cookies.length === 0) {
-      throw new Error('DSH browser session authentication failed')
-    }
+    const cookies = await this.readinessStep('core-dsh-auth-exchange', async () => {
+      const response = await fetch(url, { signal, redirect: 'manual' })
+      const cookies = response.headers.getSetCookie()
+      if (response.status !== 303 || cookies.length === 0) {
+        throw new Error('DSH browser session authentication failed')
+      }
+      return cookies
+    })
     const cookie = cookies.map(value => value.split(';')[0]).join('; ')
-    await this.options.authenticateBrowserSession?.(url, cookie, cookies)
+    await this.readinessStep('core-dsh-auth-cookie-install', async () =>
+      this.options.authenticateBrowserSession?.(url, cookie, cookies)
+    )
     return cookie
+  }
+
+  private async readinessStep<Result>(
+    step: DshReadinessStep,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    this.options.onStartupStep?.(step, 'started')
+    try {
+      const result = await operation()
+      this.options.onStartupStep?.(step, 'completed')
+      return result
+    } catch (error) {
+      this.options.onStartupStep?.(step, 'failed')
+      throw error
+    }
   }
 }
 

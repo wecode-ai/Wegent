@@ -15,6 +15,17 @@ const MAX_REQUEST_BODY_BYTES = 1024 * 1024
 const MAX_EVENT_FRAME_BYTES = 16 * 1024 * 1024
 const SLOW_CONSUMER_TIMEOUT_MS = 30_000
 const TRANSCRIPT_EXPORT_TIMEOUT_MS = 10 * 60 * 1000
+let diagnosticRequestSequence = 0
+let diagnosticActiveEventStreams = 0
+
+function httpDiagnostic(phase, sequence, details = {}) {
+  if (!process.env.WEWORK_E2E_CONTROL_URL) return
+  console.info('[wework-executor-runtime] HTTP diagnostic', {
+    phase,
+    sequence,
+    ...details,
+  })
+}
 
 export async function apply(ctx) {
   const client = ExecutorRuntimeClient.fromEnvironment()
@@ -224,6 +235,8 @@ export async function handleExecutorRpc(req, res, client) {
   const startedAt = Date.now()
   let requestId = requestIdFromRequest(req)
   let method = '<invalid>'
+  const sequence = ++diagnosticRequestSequence
+  httpDiagnostic('rpc-http-received', sequence, { request_id: requestId })
   try {
     const body = await readJsonBody(req)
     if (!isRecord(body) || typeof body.method !== 'string' || !isRecord(body.params)) {
@@ -231,6 +244,7 @@ export async function handleExecutorRpc(req, res, client) {
     }
     requestId = requestId ?? requestIdFromBody(body) ?? randomUUID()
     method = body.method
+    httpDiagnostic('rpc-body-read', sequence, { request_id: requestId })
     console.info('[wework-executor-runtime] RPC request started', {
       request_id: requestId,
       method,
@@ -268,9 +282,25 @@ export async function handleExecutorEvents(
   let active = true
   let eventStream = null
   let source = null
+  const sequence = ++diagnosticRequestSequence
+  const diagnosticEnabled = Boolean(process.env.WEWORK_E2E_CONTROL_URL)
+  let diagnosticStreamActive = diagnosticEnabled
+  if (diagnosticEnabled) diagnosticActiveEventStreams += 1
+  httpDiagnostic('events-http-received', sequence, {
+    activeEventStreams: diagnosticActiveEventStreams,
+  })
+  const closeDiagnostic = () => {
+    if (!diagnosticStreamActive) return
+    diagnosticStreamActive = false
+    diagnosticActiveEventStreams -= 1
+    httpDiagnostic('events-closed', sequence, {
+      activeEventStreams: diagnosticActiveEventStreams,
+    })
+  }
   const disconnect = () => {
     if (!active) return
     active = false
+    closeDiagnostic()
     source?.destroy()
     eventStream?.stop()
   }
@@ -300,6 +330,7 @@ export async function handleExecutorEvents(
     else if (!res.writableEnded && !res.destroyed) res.end()
   } finally {
     eventStream?.stop()
+    closeDiagnostic()
     req.off('aborted', disconnect)
     res.off('close', disconnect)
     res.off('error', disconnect)

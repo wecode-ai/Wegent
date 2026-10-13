@@ -4,6 +4,10 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import {
+  collectCodexSqliteHealth,
+  observeDesktopAppProcess,
+} from './desktop-startup-diagnostics.mjs'
 import { packagedResourcesRoot } from './runtime-assets.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
@@ -1195,6 +1199,7 @@ async function main() {
   })
   const modelSwitchVerification = []
   let app
+  const applicationProcesses = []
   let appBundlePath
   let blockingNetworkProxy
   let cloudEnvironment
@@ -1440,6 +1445,7 @@ async function main() {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
+      applicationProcesses.push(observeDesktopAppProcess(child))
       await markDesktopE2EResultActive(resultDir, {
         applicationProcessId: child.pid,
         ownerProcessId: process.pid,
@@ -4509,6 +4515,22 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     testFailed = true
+    try {
+      await writeFile(
+        join(resultDir, 'desktop-startup-diagnostics.json'),
+        `${JSON.stringify(
+          {
+            applicationProcesses,
+            codexSqlite: await collectCodexSqliteHealth(codexSqliteHome),
+          },
+          null,
+          2
+        )}\n`,
+        'utf8'
+      )
+    } catch {
+      // Diagnostic collection must preserve the original scenario failure.
+    }
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,

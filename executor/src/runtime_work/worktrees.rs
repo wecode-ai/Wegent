@@ -26,7 +26,7 @@ use sha2::{Digest, Sha256};
 use super::{response::RuntimeTaskLink, store::runtime_work_dir};
 
 mod diagnostics;
-use diagnostics::measure_stage;
+use diagnostics::{log_git_worktree_failure, measure_stage};
 
 const STATE_VERSION: u64 = 5;
 const DEFAULT_KEEP_COUNT: usize = 15;
@@ -554,7 +554,17 @@ impl WorktreeManager {
                     })?;
                 }
                 measure_stage(worktree_id, "git_worktree_add", || {
-                    add_git_worktree(&source_path, path, git_ref)
+                    let result = add_git_worktree(&source_path, path, git_ref);
+                    if let Err(error) = &result {
+                        log_git_worktree_failure(
+                            worktree_id,
+                            &source_path,
+                            path,
+                            &repository.git_common_dir,
+                            error,
+                        );
+                    }
+                    result
                 })?;
                 validate_existing_worktree_identity(
                     &source_path,

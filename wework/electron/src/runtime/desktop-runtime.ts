@@ -472,6 +472,7 @@ export class DesktopRuntime {
     const runtimeOptions: DshRuntimeOptions = {
       name: 'dsh-core',
       authenticateBrowserSession: this.options.authenticateBrowserSession,
+      onStartupStep: (step, status) => this.startupStep(step, status),
       url: dshUrl,
       probeUrls: [
         `${dshUrl}/wework/electron-host/v1`,

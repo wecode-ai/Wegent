@@ -57,14 +57,18 @@ export async function initializeWorkbenchModePreference(
     options.homeDirectory,
     platform
   )
+  const search = new AbortController()
   const probeCommand =
     options.probeCommand ??
     ((command, commandEnvironment) =>
-      probeDevelopmentCommand(command, commandEnvironment, platform))
+      probeDevelopmentCommand(command, commandEnvironment, platform, search.signal))
   const hasDevelopmentCommand = await new Promise<boolean>((resolve, reject) => {
     Promise.all(
       DEVELOPMENT_COMMANDS.map(async command => {
-        if (await probeCommand(command, environment)) resolve(true)
+        if (await probeCommand(command, environment)) {
+          search.abort()
+          resolve(true)
+        }
       })
     ).then(() => resolve(false), reject)
   })
@@ -122,7 +126,8 @@ function developmentCommandEnvironment(
 export async function probeDevelopmentCommand(
   command: string,
   environment: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform
+  platform: NodeJS.Platform,
+  signal?: AbortSignal
 ): Promise<boolean> {
   const pathValue =
     environment.PATH ??
@@ -142,12 +147,14 @@ export async function probeDevelopmentCommand(
     const unquotedDirectory = directory.trim().replace(/^"(.*)"$/, '$1')
     if (!unquotedDirectory) continue
     for (const extension of extensions) {
+      if (signal?.aborted) return false
       const candidate = normalize(join(unquotedDirectory, `${command}${extension}`))
       if (platform === 'darwin' && command === 'git' && candidate === '/usr/bin/git') {
         continue
       }
       try {
         await access(candidate, platform === 'win32' ? constants.F_OK : constants.X_OK)
+        if (signal?.aborted) return false
         if ((await stat(candidate)).isFile()) return true
       } catch {
         // Continue searching the remaining PATH entries.

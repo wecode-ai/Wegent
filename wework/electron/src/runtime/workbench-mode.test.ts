@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,6 +12,11 @@ import {
   normalizeWorkbenchMode,
   probeDevelopmentCommand,
 } from './workbench-mode.js'
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, access: vi.fn(actual.access), stat: vi.fn(actual.stat) }
+})
 
 const gitPlugin = {
   name: MODE_MANAGED_GIT_PLUGIN,
@@ -98,6 +103,98 @@ describe('workbench mode runtime policy', () => {
     } finally {
       finishAbsentProbe(false)
       await initialization
+    }
+  })
+
+  test('stops remaining file searches after the first executable confirms developer mode', async () => {
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let finishAbsentAccess!: () => void
+    const absentAccess = new Promise<void>((_resolve, reject) => {
+      finishAbsentAccess = () =>
+        reject(Object.assign(new Error('Missing executable'), { code: 'ENOENT' }))
+    })
+    const accessMock = vi.mocked(access).mockImplementation(async path => {
+      if (String(path).endsWith('git.exe')) return
+      await absentAccess
+    })
+    const statMock = vi
+      .mocked(stat)
+      .mockResolvedValue({ isFile: () => true } as Awaited<ReturnType<typeof stat>>)
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({}),
+    }
+    try {
+      await expect(
+        initializeWorkbenchModePreference(preferences, {
+          environment: { PATH: 'first;second', PATHEXT: '.EXE;.CMD' },
+          homeDirectory: 'home',
+          platform: 'win32',
+        })
+      ).resolves.toBe('developer')
+      const searchesAtConfirmation = accessMock.mock.calls.length
+      expect(searchesAtConfirmation).toBe(13)
+      finishAbsentAccess()
+      await new Promise(resolve => setImmediate(resolve))
+      expect(accessMock).toHaveBeenCalledTimes(searchesAtConfirmation)
+      expect(statMock).toHaveBeenCalledTimes(1)
+      expect(preferences.update).toHaveBeenCalledTimes(1)
+    } finally {
+      finishAbsentAccess()
+      await new Promise(resolve => setImmediate(resolve))
+      accessMock.mockReset().mockImplementation(actual.access)
+      statMock.mockReset().mockImplementation(actual.stat)
+    }
+  })
+
+  test('exhausts every PATH and PATHEXT candidate when no executable is available', async () => {
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const accessMock = vi
+      .mocked(access)
+      .mockRejectedValue(Object.assign(new Error('Missing executable'), { code: 'ENOENT' }))
+    const statMock = vi.mocked(stat)
+    statMock.mockClear()
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({}),
+    }
+    try {
+      await expect(
+        initializeWorkbenchModePreference(preferences, {
+          environment: { PATH: 'first;second', PATHEXT: '.EXE;.CMD' },
+          homeDirectory: 'home',
+          platform: 'win32',
+        })
+      ).resolves.toBe('focus')
+      expect(accessMock).toHaveBeenCalledTimes(52)
+      expect(statMock).not.toHaveBeenCalled()
+      expect(preferences.update).toHaveBeenCalledWith({ workbenchMode: 'focus' })
+    } finally {
+      accessMock.mockReset().mockImplementation(actual.access)
+    }
+  })
+
+  test('does not stat a candidate when another search confirms the mode during access', async () => {
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const search = new AbortController()
+    const accessMock = vi.mocked(access).mockImplementation(async () => {
+      search.abort()
+    })
+    const statMock = vi.mocked(stat)
+    statMock.mockClear()
+    try {
+      await expect(
+        probeDevelopmentCommand(
+          'git',
+          { PATH: 'first;second', PATHEXT: '.EXE;.CMD' },
+          'win32',
+          search.signal
+        )
+      ).resolves.toBe(false)
+      expect(accessMock).toHaveBeenCalledTimes(1)
+      expect(statMock).not.toHaveBeenCalled()
+    } finally {
+      accessMock.mockReset().mockImplementation(actual.access)
     }
   })
 

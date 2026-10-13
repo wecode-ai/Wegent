@@ -196,6 +196,11 @@ export default defineConfig({
                 normalizePath(path.resolve(__dirname, 'src/main.tsx'))
               ),
             },
+            {
+              name: 'shared-icons',
+              test: /node_modules[\\/]lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/]/,
+              minShareCount: 2,
+            },
           ],
         },
         entryFileNames: chunk =>

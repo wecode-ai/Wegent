@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
+import { resolveCoreProfileCompositionAssets } from '../modules/core-profile-assets.mjs'
 
 const PROFILE_NAME = 'wework-core'
 const NATIVE_PROVIDER = '@wework-e2e/native-dsh-provider'
@@ -413,15 +414,7 @@ async function verifyWindowsProfileDirectoryLinks(userDataDirectory) {
     'web'
   )
   await assert.rejects(lstat(profileWeb), { code: 'ENOENT' })
-  const compositions = join(
-    userDataDirectory,
-    'managed-components',
-    'composed',
-    'wework-core-plugins'
-  )
-  const fingerprints = await readdir(compositions)
-  assert.equal(fingerprints.length, 1, 'A fresh release launch must publish one Core composition')
-  const assets = join(compositions, fingerprints[0], 'wework-app', 'web', 'assets')
+  const assets = await resolveCoreProfileCompositionAssets(userDataDirectory, PROFILE_NAME)
   const linkType = await captureCommand(
     'powershell.exe',
     [

@@ -1401,6 +1401,14 @@ export function createDesktopScenario({
         )
       ),
     ])
+    const environmentButton = '[data-testid="environment-info-button"]'
+    await control.command('waitFor', environmentButton, { timeoutMs: uiTimeoutMs })
+    if (
+      (await control.command('getAttribute', environmentButton, { value: 'aria-expanded' })) ===
+      'false'
+    ) {
+      await control.command('click', environmentButton)
+    }
     await control.command('waitFor', '[data-testid="environment-subagents-section"]', {
       timeoutMs: uiTimeoutMs,
     })
