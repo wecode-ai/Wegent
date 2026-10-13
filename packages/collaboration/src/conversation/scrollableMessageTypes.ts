@@ -12,7 +12,7 @@ import type {
   WorkbenchMessage,
 } from '@wegent/chat-core/runtime-conversation'
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
-import { type MessageListProps } from './MessageList'
+import type { MessageListProps } from './MessageList'
 
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'

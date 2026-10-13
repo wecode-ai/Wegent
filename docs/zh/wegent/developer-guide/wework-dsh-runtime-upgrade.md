@@ -96,3 +96,5 @@ Core CPU 诊断仅在显式设置 `WEWORK_E2E_CORE_CPU_PROFILE=1` 时启用。No
 Core profile 不再建立指向安装包 App 静态资源的冗余 `web` 链接，静态服务继续通过 `WEWORK_APP_WEB_ROOT` 使用原有组件。Windows 的 Electron Node 同步删除目录会穿透 junction；pnpm 替换旧包时会因此清空安装包资源。已有 profile 通过布局版本迁移，在重建或重置包之前仅解除旧 App `web` 链接，保留用户插件和设置；后续启动复用已有布局。pnpm 导入的文件为独立目录中的普通文件，不重新建立该 junction，插件安装、更新和卸载继续使用原有资源完整性断言验证。
 
 运行环境选择器和本地 API 通过协作包的 `agent-form/runnerRouting` 精确入口加载纯路由函数，保留环境与模型选择语义，避免首屏从包的聚合入口静态加载项目平台和 Issue 编辑器。启动就绪仍等待实际页面、模块和数据完成。
+
+共享滚动类型通过整条 `import type` 引用 `MessageListProps`，反馈诊断读取滚动几何时只加载所需代码。Markdown 解析器仍由实际会话模块加载，消息渲染条件与就绪信号保持原有语义；首屏拆包变化须通过真实启动计时独立验证。
