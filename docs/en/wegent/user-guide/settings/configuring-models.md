@@ -143,6 +143,8 @@ The optional **Capability description** field is saved as `spec.capability` and 
 
 Set `WEGENT_MODEL_SELECTION_GUIDE_URL` in the frontend service environment (`frontend/.env.local` for local development or the root `.env` for Docker Compose) to display a **How to choose a model** link below model selectors. The Chinese interface displays “如何选择模型？”. The link opens in a new tab. It is hidden when the variable is unset or empty, and does not require rebuilding the frontend.
 
+Published models store publication metadata in `spec.capability`; their summary uses its `description` field. Editing or clearing the summary preserves publication status, version, and installation permissions. Other models can use a text-valued `spec.capability` directly.
+
 **For Embedding Models:**
 
 ```

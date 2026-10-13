@@ -193,7 +193,7 @@ export interface ModelSpecConfig {
   isVisible?: boolean
   isWeworkAvailable?: boolean
   costIndex?: string
-  capability?: string
+  capability?: string | Record<string, unknown>
   modelType?: ModelCategoryType
   modelGroup?: string
   modelSubGroup?: string

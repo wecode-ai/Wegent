@@ -20,6 +20,7 @@ from app.services.model_embedding_dimension import (
     validate_embedding_dimension_declaration,
 )
 from app.services.wework_model_config import wework_model_catalog_config
+from app.utils.model_capability import get_model_capability_description
 from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 
@@ -199,7 +200,9 @@ class ModelAdapter:
                     context_window = model_crd.spec.context_window
                     max_output_tokens = model_crd.spec.max_output_tokens
                     cost_index = model_crd.spec.costIndex
-                    capability = model_crd.spec.capability
+                    capability = get_model_capability_description(
+                        model_crd.spec.capability
+                    )
                     if model_crd.spec.protocol:
                         config = {**config, "protocol": model_crd.spec.protocol}
                     if model_crd.spec.apiFormat:
@@ -244,7 +247,9 @@ class ModelAdapter:
                     model_group = spec.get("modelGroup")
                     model_sub_group = spec.get("modelSubGroup")
                     cost_index = spec.get("costIndex")
-                    capability = spec.get("capability")
+                    capability = get_model_capability_description(
+                        spec.get("capability")
+                    )
                     model_config = spec.get("modelConfig")
                     if isinstance(model_config, dict):
                         context_window = ModelSpec._model_config_token_limit(

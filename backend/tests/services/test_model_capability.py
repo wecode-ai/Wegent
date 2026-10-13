@@ -13,12 +13,18 @@ from app.services.model_aggregation_service import (
     ModelType,
     model_aggregation_service,
 )
+from app.utils.model_capability import get_model_capability_description
 
 CAPABILITY = "响应快，适合日常问答和简单任务。Fast responses for everyday tasks."
 
 
-@pytest.mark.parametrize("capability", [None, "", CAPABILITY])
-def test_model_capability_is_optional(capability: str | None) -> None:
+@pytest.mark.parametrize(
+    "capability",
+    [None, "", CAPABILITY, {"description": CAPABILITY, "publishStatus": "published"}],
+)
+def test_model_capability_is_optional(
+    capability: str | dict[str, object] | None,
+) -> None:
     payload = {"modelConfig": {"env": {"model_id": "upstream-model"}}}
     if capability is not None:
         payload["capability"] = capability
@@ -29,8 +35,8 @@ def test_model_capability_is_optional(capability: str | None) -> None:
     assert spec.model_dump()["capability"] == capability
 
 
-@pytest.mark.parametrize("capability", [123, {"text": "description"}, ["text"]])
-def test_model_capability_requires_text(capability: object) -> None:
+@pytest.mark.parametrize("capability", [123, True, ["text"]])
+def test_model_capability_rejects_unsupported_values(capability: object) -> None:
     with pytest.raises(ValidationError, match="capability"):
         ModelSpec.model_validate({"modelConfig": {}, "capability": capability})
 
@@ -38,13 +44,16 @@ def test_model_capability_requires_text(capability: object) -> None:
 @pytest.mark.parametrize(
     "model_type", [ModelType.USER, ModelType.GROUP, ModelType.PUBLIC]
 )
-@pytest.mark.parametrize("capability", [None, CAPABILITY])
+@pytest.mark.parametrize(
+    "capability",
+    [None, CAPABILITY, {"description": CAPABILITY, "publishStatus": "published"}],
+)
 def test_model_capability_reaches_catalog_and_details(
     test_db: Session,
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
     model_type: ModelType,
-    capability: str | None,
+    capability: str | dict[str, object] | None,
 ) -> None:
     namespace = "capability-group" if model_type == ModelType.GROUP else "default"
     spec = {
@@ -105,7 +114,7 @@ def test_model_capability_reaches_catalog_and_details(
     entry = next(item for item in catalog if item["name"] == model.name)
     assert entry["type"] == model_type.value
     assert entry["namespace"] == namespace
-    assert entry["capability"] == capability
+    assert entry["capability"] == get_model_capability_description(capability)
     assert entry["modelId"] == "upstream-model"
     assert details is not None
-    assert details["capability"] == capability
+    assert details["capability"] == get_model_capability_description(capability)

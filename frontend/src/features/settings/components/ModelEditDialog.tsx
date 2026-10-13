@@ -31,7 +31,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { EyeIcon, EyeSlashIcon, BeakerIcon } from '@heroicons/react/24/outline'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { getModelCapabilitiesFromSpec } from '@/lib/model-capabilities'
+import {
+  getModelCapabilitiesFromSpec,
+  getModelCapabilityDescription,
+} from '@/lib/model-capabilities'
 import {
   modelApis,
   ModelCRD,
@@ -141,7 +144,7 @@ export interface ModelInitialData {
   contextWindow?: number
   maxOutputTokens?: number
   costIndex?: string
-  capability?: string
+  capability?: ModelSpecConfig['capability']
   // Type-specific configs
   ttsConfig?: TTSConfig
   sttConfig?: STTConfig
@@ -470,7 +473,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setModelIdName(effectiveInitialData.name || '')
         setDisplayName(effectiveInitialData.displayName || '')
         setModelGroup(effectiveInitialData.modelGroup || '')
-        setCapability(effectiveInitialData.capability || '')
+        setCapability(getModelCapabilityDescription(effectiveInitialData.capability) || '')
         setModelSubGroup(effectiveInitialData.modelSubGroup || '')
         // Set model category type
         const categoryType = effectiveInitialData.modelCategoryType || 'llm'
@@ -1362,7 +1365,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       typeof modelConfig.max_output_tokens === 'number' ? modelConfig.max_output_tokens : undefined
     )
     setCostIndex(typeof spec.costIndex === 'string' ? spec.costIndex : undefined)
-    setCapability(typeof spec.capability === 'string' ? spec.capability : '')
+    setCapability(getModelCapabilityDescription(spec.capability) || '')
     setModelGroup(typeof spec.modelGroup === 'string' ? spec.modelGroup : '')
     setModelSubGroup(typeof spec.modelSubGroup === 'string' ? spec.modelSubGroup : '')
 

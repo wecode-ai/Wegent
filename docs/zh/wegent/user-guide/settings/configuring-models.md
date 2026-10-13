@@ -473,6 +473,8 @@ sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 部署时可在前端服务的环境变量（本地开发为 `frontend/.env.local`，Docker Compose 为根目录 `.env`）设置 `WEGENT_MODEL_SELECTION_GUIDE_URL`，在模型选择器底部显示“如何选择模型？”链接。英文界面显示“How to choose a model”。链接在新标签页打开；未设置或留空时不显示，无需重新构建前端。
 
+已发布到能力广场的模型会在 `spec.capability` 中保存发布信息，能力描述使用该对象的 `description` 字段。编辑或清空能力描述会保留发布状态、版本及安装权限；普通模型仍可直接使用文本形式的 `spec.capability`。
+
 **提供商配置**:
 - **提供商类型**: 选择 `OpenAI` 或 `Anthropic`
 - **模型 ID**: 从预设模型中选择或输入自定义模型 ID

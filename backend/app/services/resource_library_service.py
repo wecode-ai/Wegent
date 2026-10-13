@@ -51,6 +51,7 @@ from app.services.group_permission import (
 )
 from app.services.marketplace_tag_service import marketplace_tag_service
 from app.services.skill_binding_service import skill_binding_service
+from app.utils.model_capability import get_model_capability_description
 
 LEGACY_CAPABILITY_INSTALLATION_KIND = "CapabilityInstallation"
 RESOURCE_KIND_BY_TYPE = {
@@ -495,6 +496,10 @@ class ResourceLibraryService:
             "allowPersonalInstall": allow_personal_install,
             "allowGroupInstall": allow_group_install,
         }
+        if source.kind == "Model" and request.description is None:
+            capability["description"] = get_model_capability_description(
+                self._spec(source).get("capability")
+            )
         if source.kind != "Team":
             capability["targetGroups"] = target_groups
         if request.example_conversations and source.kind != "Team":

@@ -45,6 +45,7 @@ from app.services.runtime_codex_model import (
     is_codex_runtime_model_enabled,
 )
 from app.services.wework_model_config import wework_model_catalog_config
+from app.utils.model_capability import get_model_capability_description
 from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 logger = logging.getLogger(__name__)
@@ -328,7 +329,9 @@ class ModelAggregationService:
                 "context_window": model_crd.spec.context_window,
                 "max_output_tokens": model_crd.spec.max_output_tokens,
                 "cost_index": model_crd.spec.costIndex,
-                "capability": model_crd.spec.capability,
+                "capability": get_model_capability_description(
+                    model_crd.spec.capability
+                ),
                 "model_capabilities": model_capabilities,
             }
         except (ValueError, KeyError, AttributeError) as e:
