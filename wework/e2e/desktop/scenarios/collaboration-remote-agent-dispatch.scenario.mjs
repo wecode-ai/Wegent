@@ -589,6 +589,7 @@ export function createDesktopScenario({
   let project = null
   let issue = null
   let modelRequests = 0
+  let toolSearchRequests = 0
   let releaseModel
   let resolveModelStarted
   const modelRelease = new Promise(resolve => {
@@ -689,6 +690,10 @@ export function createDesktopScenario({
             searchCallId: `${MANUAL_READ_CALL}_SEARCH`,
             toolCallId: MANUAL_READ_CALL,
           })
+          if (selection.mode === 'search') {
+            toolSearchRequests += 1
+            assert.equal(toolSearchRequests, 1, 'The Issue tool must be discovered only once')
+          }
           writeEvents(response, responseId, selection.events)
           return true
         }
@@ -885,7 +890,12 @@ export function createDesktopScenario({
         modelResponseTimeoutMs,
         captureScreenshot
       )
-      assert.equal(modelRequests, 5, 'Manual execution and its reply did not use the Team model')
+      assert.equal(
+        modelRequests - toolSearchRequests,
+        5,
+        'Manual execution and its reply made unexpected model requests'
+      )
+      const requestsAfterReply = modelRequests
       await verifyConfiguredExecutionEnvironment(
         control,
         request,
@@ -901,13 +911,18 @@ export function createDesktopScenario({
         uiTimeoutMs,
         captureScreenshot
       )
-      assert.equal(modelRequests, 5, 'Managing a default human automation invoked the model')
+      assert.equal(
+        modelRequests,
+        requestsAfterReply,
+        'Managing a default human automation invoked the model'
+      )
     },
 
     diagnostics() {
       return {
         issueId: issue?.id ?? null,
         modelRequests,
+        toolSearchRequests,
         projectId: project?.id ?? null,
         remoteDeviceId: remoteDevice?.device_id ?? null,
       }
