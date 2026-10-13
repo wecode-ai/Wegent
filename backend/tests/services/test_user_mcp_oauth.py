@@ -5,6 +5,7 @@
 """Tests for user-level provider MCP OAuth."""
 
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
@@ -417,13 +418,30 @@ class _StubClient:
         )
 
 
-def test_ensure_access_token_sync_refreshes_expiring_token(
-    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An expiring access token is refreshed before the task starts."""
-    _configure_oauth_service(test_db, test_user)
+class _FailingClient:
+    """Stub synchronous httpx client that fails the refresh request."""
+
+    def __init__(self, response=None, error: Exception | None = None) -> None:
+        self._response = response
+        self._error = error
+
+    def __enter__(self) -> "_FailingClient":
+        return self
+
+    def __exit__(self, *args) -> bool:
+        return False
+
+    def post(self, url: str, data: dict | None = None, **kwargs):
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+
+def _configure_refreshable_service(db: Session, user: User) -> None:
+    """Seed an OAuth service whose stored access token has already expired."""
+    _configure_oauth_service(db, user)
     with_client = user_mcp_service.set_provider_oauth_client(
-        test_user.preferences,
+        user.preferences,
         "dingtalk",
         {"client_id": "dingtalk-client", "token_endpoint": TOKEN_URL},
     )
@@ -435,10 +453,17 @@ def test_ensure_access_token_sync_refreshes_expiring_token(
         refresh_token="stale-refresh",
         expires_at=1,
     )
-    test_user.preferences = user_mcp_service.dump_preferences(with_tokens)
-    test_db.add(test_user)
-    test_db.commit()
-    test_db.refresh(test_user)
+    user.preferences = user_mcp_service.dump_preferences(with_tokens)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+
+def test_ensure_access_token_sync_refreshes_expiring_token(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An expiring access token is refreshed before the task starts."""
+    _configure_refreshable_service(test_db, test_user)
 
     monkeypatch.setattr(httpx, "Client", _StubClient)
 
@@ -454,3 +479,77 @@ def test_ensure_access_token_sync_refreshes_expiring_token(
     )
     assert credentials["access_token"] == "refreshed-access"
     assert credentials["refresh_token"] == "rotated-refresh"
+
+
+def test_rejected_refresh_grant_is_reported_and_cleared(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A revoked grant is logged with its error code and dropped."""
+    _configure_refreshable_service(test_db, test_user)
+    response = httpx.Response(
+        400,
+        json={"error": "invalid_grant"},
+        request=httpx.Request("POST", TOKEN_URL),
+    )
+    monkeypatch.setattr(
+        httpx, "Client", lambda *args, **kwargs: _FailingClient(response=response)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        token = UserMcpOAuthService.ensure_access_token_sync(
+            test_db, user=test_user, provider_id="dingtalk", service_id="ai_table"
+        )
+
+    assert token == ""
+    assert "invalid_grant" in caplog.text
+    credentials = user_mcp_service.get_service_oauth_credentials(
+        test_user.preferences, "dingtalk", "ai_table"
+    )
+    assert credentials["refresh_token"] == ""
+
+
+def test_transient_refresh_failure_keeps_the_grant(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transport failure keeps the grant so the next attempt can retry."""
+    _configure_refreshable_service(test_db, test_user)
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *args, **kwargs: _FailingClient(error=httpx.ConnectError("offline")),
+    )
+
+    token = UserMcpOAuthService.ensure_access_token_sync(
+        test_db, user=test_user, provider_id="dingtalk", service_id="ai_table"
+    )
+
+    assert token == ""
+    credentials = user_mcp_service.get_service_oauth_credentials(
+        test_user.preferences, "dingtalk", "ai_table"
+    )
+    assert credentials["refresh_token"] == "stale-refresh"
+
+
+@pytest.mark.asyncio
+async def test_provider_service_headers_ask_for_reauthorization(
+    test_db: Session, test_user: User
+) -> None:
+    """An OAuth service without a usable token asks the user to reconnect."""
+    _configure_oauth_service(test_db, test_user)
+    with_client = user_mcp_service.set_provider_oauth_client(
+        test_user.preferences,
+        "dingtalk",
+        {"client_id": "dingtalk-client", "token_endpoint": TOKEN_URL},
+    )
+    test_user.preferences = user_mcp_service.dump_preferences(with_client)
+    test_db.add(test_user)
+    test_db.commit()
+    test_db.refresh(test_user)
+
+    with pytest.raises(ValueError, match="reconnect"):
+        await UserMcpOAuthService.provider_service_headers(
+            test_db, user=test_user, provider_id="dingtalk", service_id="ai_table"
+        )

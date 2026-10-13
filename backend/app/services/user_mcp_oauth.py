@@ -43,6 +43,8 @@ STATE_AUDIENCE = "wegent-mcp-oauth"
 # Refresh slightly before expiry so a long task never starts on a dead token.
 REFRESH_SKEW_SECONDS = 300
 DISCOVERY_TIMEOUT_SECONDS = 15
+# OAuth error code a provider returns when the stored grant is no longer usable.
+INVALID_GRANT_ERROR = "invalid_grant"
 
 
 def _state_secret() -> str:
@@ -342,14 +344,14 @@ class UserMcpOAuthService:
         return "Connected. You can close this window."
 
     @staticmethod
-    async def disconnect(
+    def clear_stored_credentials(
         db: Session,
         *,
         user: User,
         provider_id: str,
         service_id: str,
     ) -> None:
-        """Drop stored credentials for a provider service."""
+        """Drop stored OAuth credentials for a provider service."""
         updated = user_mcp_service.clear_service_oauth_credentials(
             user.preferences, provider_id, service_id
         )
@@ -357,6 +359,19 @@ class UserMcpOAuthService:
         db.add(user)
         db.commit()
         db.refresh(user)
+
+    @staticmethod
+    async def disconnect(
+        db: Session,
+        *,
+        user: User,
+        provider_id: str,
+        service_id: str,
+    ) -> None:
+        """Drop stored credentials after the user disconnects a service."""
+        UserMcpOAuthService.clear_stored_credentials(
+            db, user=user, provider_id=provider_id, service_id=service_id
+        )
 
     @staticmethod
     async def ensure_access_token(
@@ -383,7 +398,24 @@ class UserMcpOAuthService:
                 response.raise_for_status()
                 payload = response.json()
             UserMcpOAuthService._require_token_payload(payload)
-        except (httpx.HTTPError, ValueError):
+        except httpx.HTTPStatusError as exc:
+            UserMcpOAuthService._note_refresh_failure(
+                db,
+                user=user,
+                provider_id=provider_id,
+                service_id=service_id,
+                reason=f"HTTP {exc.response.status_code}",
+                response=exc.response,
+            )
+            return ""
+        except (httpx.HTTPError, ValueError) as exc:
+            UserMcpOAuthService._note_refresh_failure(
+                db,
+                user=user,
+                provider_id=provider_id,
+                service_id=service_id,
+                reason=type(exc).__name__,
+            )
             return ""
 
         return UserMcpOAuthService._store_tokens_from_payload(
@@ -420,7 +452,24 @@ class UserMcpOAuthService:
                 response.raise_for_status()
                 payload = response.json()
             UserMcpOAuthService._require_token_payload(payload)
-        except (httpx.HTTPError, ValueError):
+        except httpx.HTTPStatusError as exc:
+            UserMcpOAuthService._note_refresh_failure(
+                db,
+                user=user,
+                provider_id=provider_id,
+                service_id=service_id,
+                reason=f"HTTP {exc.response.status_code}",
+                response=exc.response,
+            )
+            return ""
+        except (httpx.HTTPError, ValueError) as exc:
+            UserMcpOAuthService._note_refresh_failure(
+                db,
+                user=user,
+                provider_id=provider_id,
+                service_id=service_id,
+                reason=type(exc).__name__,
+            )
             return ""
 
         return UserMcpOAuthService._store_tokens_from_payload(
@@ -485,7 +534,16 @@ class UserMcpOAuthService:
             db, user=user, provider_id=provider_id, service_id=service_id
         )
         if not access_token:
-            return {}
+            logger.warning(
+                "[MCP-OAUTH] %s/%s is authorized with OAuth but has no usable "
+                "access token; the provider request needs reauthorization",
+                provider_id,
+                service_id,
+            )
+            raise ValueError(
+                f"{provider_id} MCP authorization is no longer valid; "
+                "reconnect the service and try again"
+            )
         return {"Authorization": f"Bearer {access_token}"}
 
     @staticmethod
@@ -531,6 +589,50 @@ class UserMcpOAuthService:
             "client_id": target["client_id"],
             "refresh_token": target["refresh_token"],
         }
+
+    @staticmethod
+    def _response_oauth_error(response: httpx.Response | None) -> str:
+        """Return the OAuth error code reported by a failed token response."""
+        if response is None:
+            return ""
+        try:
+            payload = response.json()
+        except ValueError:
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        return str(payload.get("error") or "").strip()
+
+    @staticmethod
+    def _note_refresh_failure(
+        db: Session,
+        *,
+        user: User,
+        provider_id: str,
+        service_id: str,
+        reason: str,
+        response: httpx.Response | None = None,
+    ) -> None:
+        """Log a failed refresh and drop only the grants the provider rejected."""
+        error = UserMcpOAuthService._response_oauth_error(response)
+        logger.warning(
+            "[MCP-OAUTH] Token refresh failed for %s/%s (%s) error=%s",
+            provider_id,
+            service_id,
+            reason,
+            error or "unreported",
+        )
+        if error != INVALID_GRANT_ERROR:
+            return
+        UserMcpOAuthService.clear_stored_credentials(
+            db, user=user, provider_id=provider_id, service_id=service_id
+        )
+        logger.info(
+            "[MCP-OAUTH] Cleared the rejected grant for %s/%s; the service "
+            "must be authorized again",
+            provider_id,
+            service_id,
+        )
 
     @staticmethod
     def _require_token_payload(payload: Any) -> None:
