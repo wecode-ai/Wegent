@@ -261,3 +261,15 @@ component-update 的首个 Core 进程报告固定 `core_profile_summarize_faile
 [第 14 组](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115533239278) component-update 通过；实际暂存解包约 13.30 秒，未变更 Core 快照约 14.26 秒，彼此并行，43 秒是完整场景而非暂存阶段耗时。失败来自 native-window-startup 内部的启动恢复子 Electron 退出 1；原 execFile 错误未暴露具体原因，子目录错误制品又被清理。当前证据不能定位实际子进程根因，也不能归为旧组件暂存超时。后续只增加安全阶段诊断，保留原断言和预算，必须由下一轮实际错误证据继续定位。
 
 启动恢复取证新增固定阶段、验证模式和白名单错误名称/代码，失败报告复制到结果顶层，避免 compact 删除子目录后失去证据。诊断落盘仅尽力执行，失败不阻止原退出，也不替换原 exec 错误；不持久化原 stderr、错误 stack、秘密 URL 或截图。8 项聚焦 Vitest 回归覆盖真实文件写失败、错误身份及实际 compact 保留报告，类型、lint、格式检查通过。新测试位于 CI 默认收集的 scripts 目录；原 E2E 断言、预算与重启流程不改，实际 Windows 子退出原因仍待下一轮诊断。
+
+[Windows 第 15 组](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115533239076) 六个原场景全部通过，其中 running-sidebar-state 为 43 秒，为显式选择 Responses 模型的 fixture 修复提供实际闭环。
+
+[Windows 第 19 组](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115533239029) 严格冷启动仍失败，为 6887 毫秒；配置 818 毫秒、Core 到端点 3737 毫秒、页面加载 860 毫秒、加载后界面就绪 1110 毫秒。管道启动、鉴权及 renderer 实际就绪，CPU 摘要一份对应一个端点、零缺失、Prune 通过；后续旧运行时、warm 和模板阶段未执行。本次 Windows 队列初始化仅 5.2 毫秒，不能投射 Linux 的 660 毫秒耗时。宿主存储为 4 毫秒而 renderer 恢复约 513.6 毫秒，模型初始化约 83 毫秒。CPU 3586 毫秒采样窗口中的最近 loader 栈归属为 CJS 1284 毫秒、ESM 812 毫秒，未知叶帧尚不能指向具体依赖；这些是采样权重，不是模块实际 CPU 或可扣除的启动时间。当前 CI 不包含后续队列 lazy 与更细存储诊断，不能据此宣称其收益。
+
+[Windows 第 10 组](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115533239182) 七项原场景全部通过，包括 collaboration-shared-core 的实际执行会话回复，完整日志均无断言错误；后台 App 与 runtime 映射修复得到真实闭环。[第 13 组](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115533239053) 三项原场景也全部通过。
+
+Windows 第 19 组的未知 CPU 叶帧无法由已清理的原始 profile 重新归因。下一轮摘要补充已安装的官方公开依赖和内置插件固定白名单，以及空 URL 叶帧最近的已知包或 loader 祖先；它记录栈归属，不等于叶帧实际模块 CPU。未知包仍使用匿名类别，不输出文件路径、动态包名或函数名，样本、原始 profile、端点边界及有效性规则均不改。36 项聚焦测试与格式、lint 检查通过；这项诊断不能证明性能提升。
+
+[Windows 第 9 组](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115533239034) 六项通过，collaboration-local-group-coordinate 在首轮成员完成后未发起续轮。最后一次模型目录查询在 40.990 秒，46.009 秒队列领取将新续轮标为 RUNNER_MODEL_UNAVAILABLE，中间没有目录查询。源码先独立判断队列是否需要目录，再原子领取任务；两步之间成员完成可加入路由任务，导致领取时缺少目录而永久置为 waiting_runtime。
+
+删除该非原子预检查。事务内选中的实际任务需要目录时返回专用 RunnerCatalogRequired，保持 queued、版本、payload 与绑定不变；释放事务后查询目录，再原子重选并验证。真实缺模型仍按原逻辑拒绝，空队列与旧无路由任务不查询目录，取消的任务不会复活。真实 SQLite 受控旧实现复现 waiting_runtime 错误；修复后 9 项路由测试全部通过，包括新增 3 项、原真实缺模型拒绝与独立连接并发单次领取，格式检查通过。原 E2E 不改，完整续轮须下一轮 Windows CI 验证。

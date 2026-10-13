@@ -64,6 +64,20 @@ const additionalPackages = [
   'quansync',
   'resolve.exports',
   'commander',
+  '@deepseek-ai/dsh-sdk-app',
+  '@deepseek-ai/dsh-sdk-minimal',
+  '@deepseek-ai/dsh-sdk-jsonrpc-server',
+  '@deepseek-ai/dsh-package-manifest',
+  '@deepseek-ai/cordis-plugin-include',
+  '@deepseek-ai/cordis-plugin-timer',
+  '@eslint-community/regexpp',
+  'ajv',
+  'fast-uri',
+  'fast-deep-equal',
+  'json-schema-traverse',
+  'require-from-string',
+  'node-addon-require-builtin',
+  'node-addon-native-custom-loader',
 ]
 const hostPlugins = [
   ['@wegent/dsh-app-wework', 'wework-app'],
@@ -74,6 +88,18 @@ const hostPlugins = [
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
   ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
   ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
+  ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
+  ['@wegent/dsh-wework-plugin-developer', 'wework-plugin-developer'],
+  ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
+  ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
+  ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],
+  ['@wegent/dsh-ui-applications', 'wework-ui-applications'],
+  ['@wegent/dsh-ui-automations', 'wework-ui-automations'],
+  ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
+  ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
+  ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
+  ['@wegent/dsh-ui-git', 'wework-ui-git'],
+  ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
 ]
 const nodeGroups = [
   [/^node:(?:fs(?:\/|$)|internal\/fs(?:\/|$))/, 'node-fs'],
@@ -98,6 +124,12 @@ const loaderGroups = new Set([
 const hostPluginGroups = hostPlugins.map(([name, directory]) => [
   name,
   new RegExp(`/(?:wework-core-plugins|core-plugins)(?:/[^/]+)?/${directory}/`),
+])
+
+const publicPackageGroups = new Set([
+  ...packages,
+  ...additionalPackages,
+  ...hostPlugins.map(([name]) => name),
 ])
 
 function detailedModuleGroup(frame) {
@@ -149,14 +181,31 @@ function rows(groups) {
     .sort((left, right) => right.sampledMs - left.sampledMs)
 }
 
-function recordAncestors(node, nodes, parents, delta, operations, loaderAncestors) {
+function recordAncestors(
+  node,
+  nodes,
+  parents,
+  delta,
+  operations,
+  loaderAncestors,
+  emptyUrlAncestors
+) {
   const visited = new Set()
   let bootRecorded = false
   let loaderRecorded = false
+  const isEmptyUrl = detailedModuleGroup(node.callFrame) === 'unattributed-empty-url'
+  let emptyUrlRecorded = !isEmptyUrl
   while (node && !visited.has(node.id)) {
     visited.add(node.id)
     const frame = node.callFrame ?? {}
     const group = moduleGroup(frame)
+    if (!emptyUrlRecorded) {
+      const detail = detailedModuleGroup(frame)
+      if (publicPackageGroups.has(detail) || loaderGroups.has(detail)) {
+        addSample(emptyUrlAncestors, detail, delta)
+        emptyUrlRecorded = true
+      }
+    }
     if (!loaderRecorded && loaderGroups.has(group)) {
       addSample(loaderAncestors, group, delta)
       loaderRecorded = true
@@ -169,8 +218,11 @@ function recordAncestors(node, nodes, parents, delta, operations, loaderAncestor
       addSample(operations, frame.functionName, delta)
       bootRecorded = true
     }
-    if (loaderRecorded && bootRecorded) break
+    if (loaderRecorded && bootRecorded && emptyUrlRecorded) break
     node = nodes.get(parents.get(node.id))
+  }
+  if (!emptyUrlRecorded) {
+    addSample(emptyUrlAncestors, 'unattributed-no-known-ancestor', delta)
   }
 }
 
@@ -223,6 +275,7 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
   const operations = new Map()
   const moduleDetails = new Map()
   const loaderAncestors = new Map()
+  const emptyUrlAncestors = new Map()
   let sampleTime = profile.startTime
   let capturedSamples = 0
   for (const { node, timestamp } of orderedProfileSamples(profile, nodes)) {
@@ -234,8 +287,17 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
     if (capturedDelta === 0) continue
     capturedSamples += 1
     addSample(modules, moduleGroup(node.callFrame), capturedDelta)
-    addSample(moduleDetails, detailedModuleGroup(node.callFrame), capturedDelta)
-    recordAncestors(node, nodes, parents, capturedDelta, operations, loaderAncestors)
+    const detail = detailedModuleGroup(node.callFrame)
+    addSample(moduleDetails, detail, capturedDelta)
+    recordAncestors(
+      node,
+      nodes,
+      parents,
+      capturedDelta,
+      operations,
+      loaderAncestors,
+      emptyUrlAncestors
+    )
   }
   return {
     scope: startupEndTimeUs === undefined ? 'captured-process-lifecycle' : 'startup-to-endpoint',
@@ -245,5 +307,6 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
     bootOperations: rows(operations),
     moduleDetails: rows(moduleDetails),
     nearestLoaderAncestors: rows(loaderAncestors),
+    emptyUrlAncestors: rows(emptyUrlAncestors),
   }
 }

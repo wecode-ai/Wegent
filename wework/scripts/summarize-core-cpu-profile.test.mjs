@@ -610,3 +610,106 @@ test('keeps missing clocks fatal and excludes unrecognized validation reasons', 
     expect(result.stderr).not.toContain('private-token')
   }
 })
+
+test.each([
+  [
+    'file:///private/token/node_modules/@deepseek-ai/dsh-sdk-app/lib/index.js',
+    '@deepseek-ai/dsh-sdk-app',
+  ],
+  [
+    'D:\\private\\token\\node_modules\\@deepseek-ai\\dsh-sdk-jsonrpc-server\\lib\\index.js',
+    '@deepseek-ai/dsh-sdk-jsonrpc-server',
+  ],
+  [
+    'file:///private/token/node_modules/.pnpm/ajv@8.20.0/node_modules/ajv/dist/compile/index.js',
+    'ajv',
+  ],
+  [
+    'file:///private/token/managed-components/core-plugins/hash/wework-ui-core-apps/index.js',
+    '@wegent/dsh-ui-core-apps',
+  ],
+  [
+    'D:\\private\\token\\wework-core-plugins\\wework-conversation-export\\index.js',
+    '@wegent/dsh-conversation-export',
+  ],
+  [
+    'file:///private/token/node_modules/@deepseek-ai/dsh-sdk-app-private/index.js',
+    'unattributed-installed-package',
+  ],
+  ['file:///private/token/node_modules/ajv-private/index.js', 'unattributed-installed-package'],
+  [
+    'file:///private/token/core-plugins/hash/wework-ui-core-apps-private/index.js',
+    'unattributed-file-module',
+  ],
+  ['file:///private/token/node_modules/private-package/index.js', 'unattributed-installed-package'],
+])('matches only closed public package path segments: %s', (url, expected) => {
+  const profile = {
+    startTime: 1000,
+    endTime: 3000,
+    nodes: [{ id: 1, callFrame: { url, functionName: 'private-function-token' } }],
+    samples: [1],
+    timeDeltas: [2000],
+  }
+  const before = structuredClone(profile)
+  const summary = summarizeCoreCpuProfile(profile, 2000)
+  expect(summary.modules).toEqual([{ name: 'other', samples: 1, sampledMs: 1 }])
+  expect(summary.moduleDetails).toEqual([{ name: expected, samples: 1, sampledMs: 1 }])
+  expect(summary.samples).toBe(1)
+  expect(summary.durationMs).toBe(1)
+  expect(profile).toEqual(before)
+  expect(JSON.stringify(summary)).not.toMatch(/private|token|function|file:|[A-Z]:\\/)
+})
+
+test('attributes empty URL samples only to their nearest closed known stack ancestor', () => {
+  const profile = {
+    startTime: 1000,
+    endTime: 6000,
+    nodes: [
+      {
+        id: 1,
+        children: [2, 4, 6],
+        callFrame: { url: 'node:internal/modules/cjs/loader', functionName: 'private-root' },
+      },
+      {
+        id: 2,
+        children: [3],
+        callFrame: {
+          url: 'file:///private/token/node_modules/ajv/dist/index.js',
+          functionName: 'private-package-function',
+        },
+      },
+      { id: 3, callFrame: { url: '', functionName: 'private-empty-function' } },
+      {
+        id: 4,
+        children: [5],
+        callFrame: {
+          url: 'file:///private/token/node_modules/private-package/index.js',
+          functionName: 'private-function',
+        },
+      },
+      { id: 5, callFrame: { url: '', functionName: 'private-empty-function' } },
+      { id: 6, callFrame: { url: '', functionName: 'readFileUtf8' } },
+      { id: 7, callFrame: { url: '', functionName: 'private-no-parent' } },
+    ],
+    samples: [3, 5, 6, 7],
+    timeDeltas: [1000, 1000, 1000, 1000],
+  }
+  const before = structuredClone(profile)
+  const summary = summarizeCoreCpuProfile(profile, 4500)
+  expect(summary.modules).toEqual([
+    { name: 'other', samples: 3, sampledMs: 2.5 },
+    { name: 'native:readFileUtf8', samples: 1, sampledMs: 1 },
+  ])
+  expect(summary.emptyUrlAncestors).toEqual([
+    { name: 'ajv', samples: 1, sampledMs: 1 },
+    { name: 'node-cjs-loader', samples: 1, sampledMs: 1 },
+    { name: 'unattributed-no-known-ancestor', samples: 1, sampledMs: 0.5 },
+  ])
+  expect(summary.nearestLoaderAncestors).toEqual([
+    { name: 'node-cjs-loader', samples: 3, sampledMs: 3 },
+  ])
+  expect(summary.samples).toBe(4)
+  expect(summary.durationMs).toBe(3.5)
+  expect(profile).toEqual(before)
+  expect(JSON.stringify(summary)).not.toMatch(/private|token|function|file:/)
+})
