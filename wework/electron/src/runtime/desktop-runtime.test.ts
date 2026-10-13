@@ -94,7 +94,8 @@ const deviceIdentityState = vi.hoisted(() => ({
   resolve: null as ((value: string) => void) | null,
 }))
 
-vi.mock('./core-dsh-runtime.js', () => ({
+vi.mock('./core-dsh-runtime.js', async importOriginal => ({
+  ...(await importOriginal<typeof import('./core-dsh-runtime.js')>()),
   prepareCoreDshRuntime: vi.fn(() => {
     prepareState.prepareCalls += 1
     return new Promise(resolve => {
@@ -212,6 +213,68 @@ describe('DesktopRuntime lifecycle generation', () => {
       new Error('incompatible schema')
     )
     await expect(runtime.start()).rejects.toThrow('incompatible schema')
+    expect(prepareState.prepareCalls).toBe(0)
+    expect(created).toHaveLength(0)
+  })
+
+  test('prepares the profile once before startup and uses the ready bridge environment', async () => {
+    const environment = { WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime' } as NodeJS.ProcessEnv
+    const runtime = createRuntime(environment)
+    const preparation = runtime.prepare()
+    await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(1))
+    expect(created).toHaveLength(0)
+    environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = '/managed/browser-bridge.json'
+    prepareState.resolveLaunch?.({
+      command: 'node',
+      entry: 'entry.js',
+      cwd: '/managed/runtime',
+      dshHome: '/managed/home',
+      environment: { WEWORK_APP_WEB_ROOT: '/managed/web' },
+      profile: 'test',
+      version: '0.0.0',
+      sourceFingerprint: 'test',
+    })
+    await preparation
+    await runtime.start()
+    expect(prepareState.prepareCalls).toBe(1)
+    expect(createdOptions[0].env).toMatchObject({
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE: '/managed/browser-bridge.json',
+      WEWORK_APP_WEB_ROOT: '/managed/web',
+      DSH_HOME: '/managed/home',
+    })
+    await runtime.stop()
+  })
+
+  test('early preparation preserves the executor compatibility gate', async () => {
+    const runtime = createRuntime({
+      WEWORK_EXECUTOR_PATH: '/executor',
+      WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime',
+    })
+    vi.mocked(assertExecutorWorkbenchCompatibility).mockRejectedValue(
+      new Error('incompatible schema')
+    )
+    await expect(runtime.prepare()).rejects.toThrow('incompatible schema')
+    expect(prepareState.prepareCalls).toBe(0)
+    expect(created).toHaveLength(0)
+    await runtime.stop()
+  })
+
+  test('shutdown settles the pending schema gate without preparing a stopped profile', async () => {
+    const compatibility = deferred<void>()
+    vi.mocked(assertExecutorWorkbenchCompatibility).mockReturnValue(compatibility.promise)
+    const runtime = createRuntime({
+      WEWORK_EXECUTOR_PATH: '/executor',
+      WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime',
+    })
+    const preparation = runtime.prepare()
+    let stopped = false
+    const stop = runtime.stop().then(() => {
+      stopped = true
+    })
+    await flush()
+    expect(stopped).toBe(false)
+    compatibility.resolve()
+    await Promise.all([preparation, stop])
     expect(prepareState.prepareCalls).toBe(0)
     expect(created).toHaveLength(0)
   })
@@ -383,7 +446,12 @@ describe('DesktopRuntime lifecycle generation', () => {
     const start = runtime.start()
     await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(1))
 
-    await runtime.stop()
+    let stopped = false
+    const stop = runtime.stop().then(() => {
+      stopped = true
+    })
+    await flush()
+    expect(stopped).toBe(false)
     prepareState.resolveLaunch?.({
       command: 'node',
       entry: 'entry.js',
@@ -395,6 +463,7 @@ describe('DesktopRuntime lifecycle generation', () => {
       version: '0.0.0',
       sourceFingerprint: 'test',
     })
+    await stop
     await start
 
     expect(created).toHaveLength(0)

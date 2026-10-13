@@ -183,17 +183,27 @@ export async function prepareCoreDshRuntime(
     entry: runtime.entry,
     cwd: runtime.root,
     dshHome,
-    environment: {
-      ...options.environment,
-      DSH_HOME: dshHome,
-      WEWORK_APP_WEB_ROOT:
-        options.environment.WEWORK_APP_WEB_ROOT?.trim() ||
-        join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
-      WEWORK_HARNESS_API_KEY: 'wework-local-router',
-    },
+    environment: coreDshRuntimeEnvironment(
+      options.environment,
+      dshHome,
+      join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web')
+    ),
     profile: PROFILE_NAME,
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,
+  }
+}
+
+export function coreDshRuntimeEnvironment(
+  environment: NodeJS.ProcessEnv,
+  dshHome: string,
+  appWebRoot: string
+): NodeJS.ProcessEnv {
+  return {
+    ...environment,
+    DSH_HOME: dshHome,
+    WEWORK_APP_WEB_ROOT: environment.WEWORK_APP_WEB_ROOT?.trim() || appWebRoot,
+    WEWORK_HARNESS_API_KEY: 'wework-local-router',
   }
 }
 
@@ -323,6 +333,7 @@ async function prepareProfile(options: {
       ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
       : [...CORE_HOST_BUNDLES]
   ).filter(name => modeStates.get(name) !== false)
+  options.onStartupStep?.('core-dsh-profile-metadata-read', 'started')
   const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
   const currentManifestRoot = objectRecord(currentManifest)
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
@@ -339,16 +350,20 @@ async function prepareProfile(options: {
     managedDependencies
   )
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
+  options.onStartupStep?.('core-dsh-profile-metadata-read', 'completed')
   if (stampIsCurrent && removedDependencies.size === 0 && coreDependenciesAreCurrent) {
     return
   }
 
+  options.onStartupStep?.('core-dsh-user-plugin-recovery', 'started')
   const recoveredUserPlugins = await recoverInstalledDshDependencies(
     profileRoot,
     currentDependencies,
     currentBundles,
     new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
   )
+  options.onStartupStep?.('core-dsh-user-plugin-recovery', 'completed')
+  options.onStartupStep?.('core-dsh-profile-config-write', 'started')
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
   if (
     currentManifest &&
@@ -398,6 +413,7 @@ async function prepareProfile(options: {
   await writeFile(join(profileRoot, 'cordis.patch.yml'), PRODUCTION_PROFILE_PATCH, { mode: 0o600 })
   await synchronizeModePluginState(profileRoot, modeStates, managedDependencyNames)
   await ensureCoreWorkspace(workspacePath)
+  options.onStartupStep?.('core-dsh-profile-config-write', 'completed')
   const preparePlugin = createFileOperationQueue(4)
   const results = await Promise.allSettled(
     managedDependencyNames.map(packageName =>

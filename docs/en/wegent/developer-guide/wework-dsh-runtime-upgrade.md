@@ -91,3 +91,5 @@ Desktop PR and Merge Queue builds consume the Executor binary artifact for the s
 DSH UI native dynamic imports load the build-generated CSS of the entry and its static dependencies before publishing the module, sharing stylesheet loads across modules. Stylesheet failures propagate directly instead of re-importing the full collaboration package. Long drafts scroll inside the constrained editor viewport while attachments and the toolbar retain their positions.
 
 Formal release assets use the same cache-path resolver as the runtime archive producer, collecting the latest Core, latest Workbench, and on-demand legacy archives for both default caches and relative overrides while preserving Executor bytes and component content hashes.
+
+Core profile preparation overlaps host bridge startup after the Executor schema compatibility gate. Native processes start only after the bridge environment is ready. Cancellation and shutdown await in-flight preparation, restarts prepare fresh state, and Smart app runtimes retain their bridge environment.

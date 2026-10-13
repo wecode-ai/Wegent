@@ -4,6 +4,7 @@ import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schem
 import type { HostPipeServer } from '../host/host-pipe.js'
 import {
   createCoreDshLaunch,
+  coreDshRuntimeEnvironment,
   prepareCoreDshRuntime,
   type PreparedCoreDshRuntime,
 } from './core-dsh-runtime.js'
@@ -105,6 +106,11 @@ export class DesktopRuntime {
   private lifecycleGeneration = 0
   private startOperation: { generation: number; promise: Promise<void> } | null = null
   private restartOperation: { generation: number; promise: Promise<void> } | null = null
+  private preparation: {
+    generation: number
+    compatibility: Promise<void>
+    runtime: Promise<PreparedCoreDshRuntime | null>
+  } | null = null
 
   constructor(private readonly options: DesktopRuntimeOptions) {
     this.workbench = new WorkbenchRuntimeManager(
@@ -128,18 +134,54 @@ export class DesktopRuntime {
     return promise
   }
 
+  prepare(): Promise<void> {
+    return this.prepareInitialRuntime().runtime.then(() => {})
+  }
+
+  private prepareInitialRuntime() {
+    const generation = this.lifecycleGeneration
+    if (this.preparation?.generation === generation) return this.preparation
+    const compatibility = this.options.environment.WEWORK_EXECUTOR_PATH?.trim()
+      ? assertExecutorWorkbenchCompatibility(this.options.environment)
+      : Promise.resolve()
+    const runtime = compatibility.then(() => this.prepareManagedRuntime(generation))
+    this.preparation = { generation, compatibility, runtime }
+    return this.preparation
+  }
+
+  private async prepareManagedRuntime(
+    generation = this.lifecycleGeneration
+  ): Promise<PreparedCoreDshRuntime | null> {
+    if (this.lifecycleGeneration !== generation) return null
+    const environment = this.options.environment
+    if (environment.WEWORK_CORE_DSH_URL?.trim() || environment.WEWORK_CORE_DSH_COMMAND?.trim()) {
+      return null
+    }
+    const root = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
+    if (!root)
+      throw new Error('WEWORK_HARNESS_RUNTIME_ROOT is required when DSH is not externally managed')
+    const workbenchMode = await this.options.readWorkbenchMode?.()
+    if (this.lifecycleGeneration !== generation) return null
+    return prepareCoreDshRuntime({
+      runtimeRoot: root,
+      dataDirectory: this.options.dataDirectory,
+      environment,
+      workbenchMode,
+      onStartupStep: (step, status) => this.startupStep(step, status),
+    })
+  }
+
   private async performStart(generation: number): Promise<void> {
     try {
-      if (this.options.environment.WEWORK_EXECUTOR_PATH?.trim()) {
-        await assertExecutorWorkbenchCompatibility(this.options.environment)
-        if (this.lifecycleGeneration !== generation) return
-      }
+      const preparation = this.prepareInitialRuntime()
+      await preparation.compatibility
+      if (this.lifecycleGeneration !== generation) return
       const executorPreparation = this.prepareExecutor()
       const executorReady = executorPreparation.then(async executor => {
         await this.startPreparedExecutor(executor, generation)
         return executor
       })
-      const coreDshPreparation = this.prepareCoreDshLaunch(executorPreparation)
+      const coreDshPreparation = this.prepareCoreDshLaunch(executorPreparation, preparation.runtime)
       const coreDshReady = Promise.all([coreDshPreparation, executorPreparation]).then(
         async ([launch, executor]) => {
           if (this.lifecycleGeneration !== generation || !launch) return
@@ -267,6 +309,8 @@ export class DesktopRuntime {
   }
 
   async stop(): Promise<void> {
+    const preparation = this.preparation
+    this.preparation = null
     this.lifecycleGeneration += 1
     this.started = false
     const coreDsh = this.coreDsh
@@ -274,7 +318,12 @@ export class DesktopRuntime {
     this.coreDsh = null
     this.coreDshPlugins = null
     this.executor = null
-    await Promise.allSettled([this.workbench.stop(), coreDsh?.stop(), executor?.stop()])
+    await Promise.allSettled([
+      preparation?.runtime,
+      this.workbench.stop(),
+      coreDsh?.stop(),
+      executor?.stop(),
+    ])
   }
 
   private async prepareExecutor(): Promise<ManagedExecutorHandle | null> {
@@ -337,7 +386,8 @@ export class DesktopRuntime {
   }
 
   private async prepareCoreDshLaunch(
-    executorPrerequisite: Promise<unknown>
+    executorPrerequisite: Promise<unknown>,
+    preparedRuntime?: Promise<PreparedCoreDshRuntime | null>
   ): Promise<PreparedCoreDshLaunch | null> {
     this.startupStep('core-dsh-prepare', 'started')
     const generation = this.lifecycleGeneration
@@ -357,17 +407,17 @@ export class DesktopRuntime {
           'WEWORK_HARNESS_RUNTIME_ROOT is required when DSH is not externally managed'
         )
       }
-      managedRuntime = await prepareCoreDshRuntime({
-        runtimeRoot: managedRoot,
-        dataDirectory: this.options.dataDirectory,
-        environment: this.options.environment,
-        workbenchMode: await this.options.readWorkbenchMode?.(),
-        onStartupStep: (step, status) => this.startupStep(step, status),
-      })
+      managedRuntime = await (preparedRuntime ?? this.prepareManagedRuntime())
       if (this.lifecycleGeneration !== generation) return null
+      if (!managedRuntime) return null
       cwd = managedRuntime.cwd
       dshHome = managedRuntime.dshHome
-      runtimeEnvironment = managedRuntime.environment
+      runtimeEnvironment = coreDshRuntimeEnvironment(
+        this.options.environment,
+        managedRuntime.dshHome,
+        managedRuntime.environment.WEWORK_APP_WEB_ROOT as string
+      )
+      managedRuntime = { ...managedRuntime, environment: runtimeEnvironment }
       plugins = new CoreDshPluginManager({
         dshHome: managedRuntime.dshHome,
         runtimeRoot: managedRuntime.cwd,

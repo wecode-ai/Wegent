@@ -256,8 +256,10 @@ describe('core DSH runtime', () => {
     const root = await temporaryDirectory('core-dsh-profile-')
     const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
     const dataDirectory = join(root.path, 'data')
+    const startupSteps: Array<[string, string]> = []
 
     const first = await prepareCoreDshLaunch({
+      onStartupStep: (step, status) => startupSteps.push([step, status]),
       runtimeRoot: runtime.root,
       dataDirectory,
       environment: {
@@ -278,7 +280,13 @@ describe('core DSH runtime', () => {
     )
     const unchangedWorkspace = `${await readFile(workspacePath, 'utf8')}# keep-existing-workspace\n`
     await writeFile(workspacePath, unchangedWorkspace)
+    expect(startupSteps.filter(([step]) => step === 'core-dsh-user-plugin-recovery')).toEqual([
+      ['core-dsh-user-plugin-recovery', 'started'],
+      ['core-dsh-user-plugin-recovery', 'completed'],
+    ])
+    startupSteps.length = 0
     const second = await prepareCoreDshLaunch({
+      onStartupStep: (step, status) => startupSteps.push([step, status]),
       runtimeRoot: runtime.root,
       dataDirectory,
       environment: {
@@ -298,6 +306,11 @@ describe('core DSH runtime', () => {
       WEWORK_HARNESS_API_KEY: 'wework-local-router',
     })
     expect(second.args).toContain('3081')
+    expect(startupSteps.filter(([step]) => step === 'core-dsh-profile-metadata-read')).toEqual([
+      ['core-dsh-profile-metadata-read', 'started'],
+      ['core-dsh-profile-metadata-read', 'completed'],
+    ])
+    expect(startupSteps.some(([step]) => step === 'core-dsh-user-plugin-recovery')).toBe(false)
     expect(second.environment.WEWORK_APP_WEB_ROOT).toBe(
       join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web')
     )

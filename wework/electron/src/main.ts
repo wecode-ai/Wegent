@@ -1657,7 +1657,7 @@ async function configureDesktopRuntime(): Promise<void> {
     window: () => mainWindow,
     smartApps: () => smartApps,
   })
-  const [browserResult, controlResult] = await Promise.allSettled([
+  const bridgePreparations = [
     (async () => {
       logStartupStep('embedded-browser-bridge', 'started')
       const runtimeFile = await embeddedBrowserBridge.start()
@@ -1669,11 +1669,7 @@ async function configureDesktopRuntime(): Promise<void> {
       await desktopControlBridge.start()
       logStartupStep('desktop-control-bridge', 'completed')
     })(),
-  ])
-  if (browserResult.status === 'rejected') throw browserResult.reason
-  if (controlResult.status === 'rejected') throw controlResult.reason
-  environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = browserResult.value
-  Object.assign(environment, embeddedBrowserBridge.environment())
+  ] as const
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
@@ -1919,6 +1915,15 @@ async function configureDesktopRuntime(): Promise<void> {
       )
     ),
   })
+  const [browserResult, controlResult, corePreparationResult] = await Promise.allSettled([
+    ...bridgePreparations,
+    desktopRuntime.prepare(),
+  ])
+  if (browserResult.status === 'rejected') throw browserResult.reason
+  if (controlResult.status === 'rejected') throw controlResult.reason
+  if (corePreparationResult.status === 'rejected') throw corePreparationResult.reason
+  environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = browserResult.value
+  Object.assign(environment, embeddedBrowserBridge.environment())
   trayNativeStatus = new TrayNativeStatusController({
     preferences,
     codexSubscriptionActiveAtStartup: codexSubscriptionEnabled,
