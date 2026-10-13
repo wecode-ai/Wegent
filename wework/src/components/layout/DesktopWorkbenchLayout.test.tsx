@@ -1945,15 +1945,19 @@ describe('DesktopWorkbenchLayout', () => {
   test('keeps startup blocked until a selected task transcript is restored', async () => {
     startupMarkdownRenderer.enabled = true
     runtimeMocks.electron = true
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'electron',
+      desktopWindowLabel: 'main',
+    }
     const phaseLog = vi.spyOn(console, 'info')
+    const startupReadyObservations = vi.fn()
     const invoke = desktopHostMocks.invoke.getMockImplementation()
     desktopHostMocks.invoke.mockImplementation(async capability => {
       if (capability === 'renderer.startupReady') {
-        expect(screen.getByText('Restored startup answer')).toBeVisible()
-        expect(phaseLog).toHaveBeenCalledWith(
-          expect.stringMatching(
-            /^\[startup\]\[renderer-phase\] .*"phase":"surface-ready","status":"completed","navigationTimeMs":\d+/
-          )
+        startupReadyObservations(
+          screen.queryByText('Restored startup answer'),
+          phaseLog.mock.calls.slice()
         )
       }
       return invoke?.(capability)
@@ -2049,6 +2053,14 @@ describe('DesktopWorkbenchLayout', () => {
         source: 'task-list',
       })
     })
+    expect(startupReadyObservations).toHaveBeenCalledOnce()
+    const [answerAtStartupReady, phaseCallsAtStartupReady] = startupReadyObservations.mock.calls[0]
+    expect(answerAtStartupReady).toBeVisible()
+    expect(phaseCallsAtStartupReady).toContainEqual([
+      expect.stringMatching(
+        /^\[startup\]\[renderer-phase\] .*"phase":"surface-ready","status":"completed","navigationTimeMs":\d+/
+      ),
+    ])
   })
 
   test('reveals an active Harness terminal while a selected task transcript remains loading', async () => {

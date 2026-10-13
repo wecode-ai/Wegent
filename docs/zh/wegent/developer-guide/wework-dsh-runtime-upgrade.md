@@ -197,3 +197,9 @@ component-update 的首个 Core 进程报告固定 `core_profile_summarize_faile
 [第 16 组](https://github.com/wecode-ai/Wegent/actions/runs/38443244153/job/115471069209) workbench-mode 仍在连接前失败；其他五项通过。主模块进入为 231 毫秒，包元数据读取完成 232 毫秒，环境隔离随后开始，未记录完成或实例锁。主入口提前读取原生 appData 路径，而独立受控、打包和插件开发实例随后跳过隔离，不使用该值；现删除其提前读取，仅在实际开发隔离需要时读取一次。此删除不证明旧故障就是该调用造成。
 
 [官方 Electron ESM 入口](https://github.com/electron/electron/blob/v44.7.0/lib/browser/init.ts#L176-L183) 直接发出 `uncaughtException`，不会触发 Node 的 `uncaughtExceptionMonitor`，因此原进程存活且 Monitor 没有输出不能排除入口抛错。同步阶段记录固定异常类别后原样抛出，不增加普通异常监听器或改变默认 GUI 处理。隔离与启动相关 29 项测试、类型和 lint 通过；仍需下一轮 Windows 原场景验证。
+
+### `703c1196e` 单测日志审查
+
+[本轮 Tests](https://github.com/wecode-ai/Wegent/actions/runs/38451605817) 两个 Wework 分片通过，但启动 Transcript 恢复单测在 `renderer.startupReady` mock 内执行的断言被产品的异常处理捕获并记录，无法使测试失败。此用例只设置了被 mock 的 Electron 标记，真实 renderer-phase 模块读取的 runtime config 仍为 browser，正确抑制了 Electron 专用阶段。
+
+修复将用例配置设为真实的 Electron/main，在 readiness 调用当刻记录 DOM 和阶段日志快照，并在测试主流程断言原来的内容可见及 surface-ready 先后关系。外置断言首先复现失败，修正 fixture 后单用例通过；四个启动/恢复用例与 17 个阶段测试全部通过。保留原正则、产品门槛与 E2E，逐用例重置配置，避免断言被吞或环境泄漏。
