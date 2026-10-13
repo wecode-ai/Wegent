@@ -36,7 +36,7 @@ export async function copyComponentTree(
     const entries = await run(() => readdir(from, { withFileTypes: true }))
     const results = await Promise.allSettled(
       entries
-        .filter(entry => !excluded.has(posix.join(relative, entry.name)))
+        .filter(entry => !excluded.has(join(relative, entry.name)))
         .sort((left, right) => left.name.localeCompare(right.name))
         .map(async entry => {
           const child = posix.join(relative, entry.name)
