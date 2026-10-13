@@ -42,7 +42,9 @@ describe('EmbeddedBrowserBridge', () => {
       WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: `http://${identity.address}`,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: identity.token,
     })
-    expect((await stat(runtimePath)).mode & 0o777).toBe(0o600)
+    expect((await stat(runtimePath)).mode & (process.platform === 'win32' ? 0o600 : 0o777)).toBe(
+      0o600
+    )
 
     const unauthorized = await fetch(`http://${identity.address}/browser`, {
       method: 'POST',

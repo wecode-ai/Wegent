@@ -9,7 +9,7 @@ use std::path::{Component, PathBuf};
 
 /// Hold OS file locks until the desktop closes its pipe or this process exits.
 /// Persistent lock files must never be unlinked: all owners must lock the same inode.
-pub fn run(resources: &str) -> Result<(), String> {
+pub fn run(resources: &str, wait: bool) -> Result<(), String> {
     let mut paths: Vec<PathBuf> = serde_json::from_str(resources)
         .map_err(|_| "Invalid Workbench migration lock resources")?;
     if paths.is_empty()
@@ -56,8 +56,12 @@ pub fn run(resources: &str) -> Result<(), String> {
         {
             return Err("Migration lock must be a regular file".into());
         }
-        file.try_lock_exclusive()
-            .map_err(|_| "Workbench Home migration lock unavailable")?;
+        if wait {
+            file.lock_exclusive()
+        } else {
+            file.try_lock_exclusive()
+        }
+        .map_err(|_| "Workbench Home migration lock unavailable")?;
         locks.push(file);
     }
     println!("{{\"protocol_version\":1,\"locked\":true}}");

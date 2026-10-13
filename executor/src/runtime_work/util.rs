@@ -1110,7 +1110,11 @@ mod tests {
             format!("gitdir: {}\n", outer_git_dir.display()),
         )
         .expect("outer worktree git file");
-        let chat = outer_worktree.join("executor-home/Documents/Codex/chat");
+        let chat = outer_worktree
+            .join("executor-home")
+            .join("Documents")
+            .join("Codex")
+            .join("chat");
         std::fs::create_dir_all(&chat).expect("standalone chat workspace");
         let chat_path = chat.display().to_string();
 

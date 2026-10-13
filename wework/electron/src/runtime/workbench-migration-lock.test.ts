@@ -1,8 +1,18 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { executorMigrationLock } from './workbench-migration-lock.js'
+
+vi.mock('node:child_process', async importOriginal => {
+  const original = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...original,
+    // Keep real child pipes and lifecycle while launching the fixture on every platform.
+    spawn: (command: string, args: string[], options: import('node:child_process').SpawnOptions) =>
+      original.spawn(process.execPath, [command, ...args], options),
+  }
+})
 
 const directories: string[] = []
 afterEach(async () => {
@@ -14,15 +24,8 @@ async function fixture(script: (directory: string) => string) {
   const directory = await mkdtemp(join(tmpdir(), 'migration lock client '))
   directories.push(directory)
   const source = join(directory, 'fixture.cjs')
-  const binary = join(directory, 'executor')
-  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
   await writeFile(source, script(directory))
-  await writeFile(
-    binary,
-    `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ${quote(process.execPath)} ${quote(source)} "$@"\n`
-  )
-  await chmod(binary, 0o755)
-  return { directory, binary }
+  return { directory, binary: source }
 }
 
 test('holds the child pipe until release and uses exact resource file locks', async () => {
@@ -62,4 +65,26 @@ test.each([
   await expect(executorMigrationLock(binary)([join(directory, 'source')])).rejects.toThrow(
     /^Workbench Home migration lock unavailable$/
   )
+})
+
+test('desktop handoffs request blocking native locks while preserving the lock protocol', async () => {
+  const { directory, binary } = await fixture(
+    root => `
+    const fs = require('node:fs');
+    fs.writeFileSync(${JSON.stringify(join(root, 'arguments.json'))}, JSON.stringify(process.argv.slice(2)));
+    process.stdout.write('{"protocol_version":1,"locked":true}\\n');
+    process.stdin.resume();
+  `
+  )
+  const lock = await executorMigrationLock(binary, { wait: true })([join(directory, 'source')])
+  try {
+    expect(JSON.parse(await readFile(join(directory, 'arguments.json'), 'utf8'))).toEqual([
+      '--workbench-lock',
+      JSON.stringify([join(directory, '.wework-home-migration-source.lock')]),
+      '--version',
+      '--workbench-lock-wait',
+    ])
+  } finally {
+    await lock.release()
+  }
 })

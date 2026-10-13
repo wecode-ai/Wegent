@@ -424,7 +424,9 @@ mod tests {
             &[json!({"slug": "tickets", "name": "Tickets"})],
         )
         .expect("connector skill should materialize");
-        let skill_path = skills_root.join("wegent-connector-tickets/SKILL.md");
+        let skill_path = skills_root
+            .join("wegent-connector-tickets")
+            .join("SKILL.md");
         let content = fs::read_to_string(&skill_path).expect("skill should be readable");
         assert!(content.contains("tickets__"));
         assert_eq!(

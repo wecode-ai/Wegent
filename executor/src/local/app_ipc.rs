@@ -5,8 +5,6 @@
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::{collections::HashMap, future::Future, path::Path, pin::Pin, sync::Arc};
-#[cfg(windows)]
-use std::{env, path::PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};

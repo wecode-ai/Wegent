@@ -38,6 +38,7 @@ const MAX_GIT_HTTP_LOW_SPEED_LIMIT: u64 = 10 * 1_024 * 1_024;
 const DEFAULT_GIT_HTTP_LOW_SPEED_TIME_SECONDS: u64 = 60;
 const MAX_GIT_HTTP_LOW_SPEED_TIME_SECONDS: u64 = 3_600;
 const GIT_REPOSITORY_VALIDATION_TIMEOUT_SECONDS: u64 = 10;
+#[cfg(unix)]
 const GIT_CLONE_TERMINATION_GRACE_SECONDS: u64 = 1;
 
 mod managed;
@@ -588,10 +589,10 @@ async fn collect_output(reader: Option<JoinHandle<Vec<u8>>>) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-async fn terminate_git_clone(child: &mut Child, process_group_id: Option<u32>) {
+async fn terminate_git_clone(child: &mut Child, _process_group_id: Option<u32>) {
     #[cfg(unix)]
     {
-        if let Some(process_group_id) = process_group_id {
+        if let Some(process_group_id) = _process_group_id {
             unsafe {
                 let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGTERM);
             }
@@ -866,7 +867,7 @@ fn truncate_summary(value: &str, max_chars: usize) -> String {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    dirs::home_dir()
+    crate::local::command::configured_home_dir()
 }
 
 #[cfg(test)]

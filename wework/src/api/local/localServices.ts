@@ -722,7 +722,8 @@ function normalizeRuntimeTaskSummary(
   const interactionStatus =
     rawInteractionStatus === null
       ? null
-      : rawInteractionStatus === 'waitingForUserInput'
+      : rawInteractionStatus === 'waitingForUserInput' ||
+          rawInteractionStatus === 'awaitingUserReply'
         ? rawInteractionStatus
         : undefined
   const hasInteractionStatus = rawInteractionStatus === null || interactionStatus !== undefined
@@ -2728,6 +2729,21 @@ export function createRuntimeWorkApiFromIpc(
           address: normalizedAddress,
         },
         localDeviceId
+      )
+    },
+    async cleanRuntimeBackgroundTerminals(
+      address: RuntimeTaskAddress
+    ): Promise<{ success: boolean; error?: string }> {
+      const deviceId = await resolveDeviceId({ address })
+      const normalizedAddress = normalizeLocalDeviceRecord({ address }, deviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.background_terminals.clean',
+        {
+          taskId: normalizedAddress.taskId,
+          address: normalizedAddress,
+        },
+        deviceId
       )
     },
     async guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {

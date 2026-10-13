@@ -1334,47 +1334,36 @@ class ProjectChatService:
     ) -> None:
         """Apply one terminal state to the streaming AI message."""
 
-        if status_value == "completed":
-            if isinstance(content, str) and content:
-                row.content = content
-            row.status = "completed"
-            row.message_type = "text"
-            self._set_task_ai_state(
-                db,
-                row=row,
-                trigger=None,
-                agent=None,
-                status_value="completed",
-            )
-            self._advance_task_to_review(db, row)
-            return
-        if status_value == "cancelled":
-            if not row.content and isinstance(content, str) and content:
-                row.content = content
-            row.status = "cancelled"
-            row.message_type = "text"
-            self._set_task_ai_state(
-                db,
-                row=row,
-                trigger=None,
-                agent=None,
-                status_value="cancelled",
-                error=error or content,
-            )
-            self._advance_task_to_review(db, row)
-            return
-        if not row.content and isinstance(content, str) and content:
+        if (
+            (status_value == "completed" or not row.content)
+            and isinstance(content, str)
+            and content
+        ):
             row.content = content
-        row.status = "failed"
+        row.status = (
+            status_value if status_value in {"completed", "cancelled"} else "failed"
+        )
+        if row.status != "failed":
+            row.message_type = "text"
         self._set_task_ai_state(
             db,
             row=row,
             trigger=None,
             agent=None,
-            status_value="failed",
-            error=error or content,
+            status_value=row.status,
+            error=None if row.status == "completed" else error or content,
         )
         self._advance_task_to_review(db, row)
+        # DB-generated timestamps lose subsecond precision. Record the result
+        # after its status transition so the activity preserves causal order.
+        self._record_activity_timestamp(row)
+
+    @staticmethod
+    def _record_activity_timestamp(row: ProjectChatMessage) -> None:
+        row.metadata_json = {
+            **(row.metadata_json or {}),
+            "activity_at": datetime.now(UTC).isoformat(),
+        }
 
     @staticmethod
     def _project_chat_terminal_status(
@@ -1774,6 +1763,13 @@ class ProjectChatService:
             self._queue_loop_item_change(db, task)
         task.metadata_json = task_metadata
         task.version += 1
+        if (
+            status_value != "running"
+            or previous_status != "running"
+            or previous_run_id != run_id
+            or not metadata.get("activity_at")
+        ):
+            self._record_activity_timestamp(row)
         logger.debug(
             "[ProjectChat] Task AI state set: "
             "project_id=%s task_id=%s task_status=%s ai_status=%s "
@@ -1845,6 +1841,7 @@ class ProjectChatService:
         row.message_type = "text"
         row.metadata_json = {**metadata, "run_status": status_value}
         self._advance_task_to_review(db, row)
+        self._record_activity_timestamp(row)
         logger.warning(
             "[ProjectChat] Reconciled streaming AI message from loop_item AI state: "
             "project_id=%s task_id=%s message_id=%s run_status=%s",
@@ -1968,19 +1965,14 @@ class ProjectChatService:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN, "Only the sender can fail this AI response"
             )
-        row.status = "failed"
         row.message_type = "text"
-        if not row.content and request.error:
-            row.content = request.error
-        self._set_task_ai_state(
+        self._finish_activity(
             db,
-            row=row,
-            trigger=trigger,
-            agent=None,
+            row,
             status_value="failed",
+            content=request.error,
             error=request.error,
         )
-        self._advance_task_to_review(db, row)
         self._commit(db)
         db.refresh(row)
         return self.to_view(row, db=db)

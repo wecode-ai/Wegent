@@ -1,14 +1,15 @@
+import { resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { parseCliArgs, smartAppRequest, summarizeSmartAppResult } from './wework-cli.mjs'
 
 describe('wework smart-app CLI', () => {
   test('parses fixed inspect, verify, and pack requests for an absolute linked project root', () => {
     expect(smartAppRequest('inspect', { project: '/workspace/smart-app', format: 'json' })).toEqual(
-      { action: 'inspect', projectRoot: '/workspace/smart-app', format: 'json' }
+      { action: 'inspect', projectRoot: resolve('/workspace/smart-app'), format: 'json' }
     )
     expect(smartAppRequest('verify', { project: '/workspace/smart-app' })).toEqual({
       action: 'verify',
-      projectRoot: '/workspace/smart-app',
+      projectRoot: resolve('/workspace/smart-app'),
       format: 'human',
     })
     expect(
@@ -20,8 +21,8 @@ describe('wework smart-app CLI', () => {
       })
     ).toEqual({
       action: 'pack',
-      projectRoot: '/workspace/smart-app',
-      outputPath: '/workspace/release.zip',
+      projectRoot: resolve('/workspace/smart-app'),
+      outputPath: resolve('/workspace/release.zip'),
       format: 'json',
     })
   })

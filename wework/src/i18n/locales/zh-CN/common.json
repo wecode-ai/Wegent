@@ -3997,7 +3997,12 @@
     "slash_command_group_extensions": "扩展",
     "edit": "编辑",
     "delete": "删除",
-    "composer_plugins_load_error": "加载插件失败"
+    "composer_plugins_load_error": "加载插件失败",
+    "background_processes": "后台进程",
+    "background_terminal": "后台终端",
+    "background_terminals_stop_all": "停止全部后台终端",
+    "background_terminals_stop_error": "无法停止后台终端",
+    "background_terminal_no_output": "暂无输出"
   },
   "delivery": {
     "action": "交付",

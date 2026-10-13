@@ -253,7 +253,7 @@ fn recover(home: &Path) -> Result<(), String> {
         }),
     )?;
     if backup.is_symlink() {
-        fs::remove_file(&backup).map_err(|error| error.to_string())?;
+        crate::directory_link::remove(&backup).map_err(|error| error.to_string())?;
     } else if backup.exists() {
         validate_selection(&backup)?;
         fs::remove_dir_all(&backup).map_err(|error| error.to_string())?;
@@ -292,7 +292,7 @@ mod tests {
         seed(&home, root.path(), &first, "v1").activate().unwrap();
         let link = home.join("skills/sample");
         assert!(!home.join("skills").is_symlink());
-        assert!(fs::read_link(&link).unwrap().is_relative());
+        assert_eq!(fs::read_link(&link).unwrap().is_relative(), cfg!(unix));
         assert_eq!(fs::read_to_string(link.join("SKILL.md")).unwrap(), "v1");
         let reused = HomeSkillsStage::prepare(&home).unwrap();
         reused.reuse(&["sample".into()]).unwrap();

@@ -104,3 +104,22 @@ retaining the original assertions without extra timeouts or retries. Verify
 shared components, desktop editors/drawers/notifications, Web details and
 database timestamps after merging. Focused unit tests and type checks are not
 real remote-device or desktop E2E acceptance.
+
+## Issue edit conflicts during execution
+
+PR #3869 Core shard 9 failed `collaboration-local-agent-dispatch`: reopening the
+Issue showed its original title. Runtime logs show that `todos.update` returned
+`version_conflict` while execution advanced the Issue version. A displayed draft
+value does not establish that the save succeeded.
+
+Detail saves submit only edited fields. On a version conflict, read the latest
+Issue and submit once with its version only if those fields were not changed by
+another editor. Same-field conflicts, unrelated request errors, and a second
+version conflict remain failures. Unedited execution status, priority, and other
+fields cannot be overwritten by the old draft. Assignment-only changes skip the
+redundant detail write and assign against the current version.
+
+Focused regressions cover title edits concurrent with execution status changes,
+same-field conflicts, network failures, repeated conflicts, unchanged fields,
+and assignments. Existing desktop E2E save/reopen title assertions remain intact;
+CI on the fix commit supplies real integration verification.

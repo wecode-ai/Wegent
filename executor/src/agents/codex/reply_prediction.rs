@@ -214,6 +214,8 @@ fn log_prediction_usage(params: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::agents::codex::tests::environment::LaunchEnvironment;
 
     #[test]
     fn prediction_requires_the_latest_completed_turn() {
@@ -249,12 +251,14 @@ mod tests {
         _directory: tempfile::TempDir,
         client: CodexAppServerClient,
         log: PathBuf,
+        _environment: LaunchEnvironment,
     }
 
     #[cfg(unix)]
     impl Fixture {
         fn new(mode: &str) -> Self {
             use std::os::unix::fs::PermissionsExt;
+            let environment = LaunchEnvironment::new();
             let directory = tempfile::tempdir().unwrap();
             let binary = directory.path().join("codex");
             let log = directory.path().join("requests.jsonl");
@@ -300,6 +304,7 @@ done
                 _directory: directory,
                 client,
                 log,
+                _environment: environment,
             }
         }
 
@@ -313,6 +318,36 @@ done
 
         async fn stop(&self) {
             self.client.state.lock().await.process.take();
+        }
+
+        async fn cancel_running_prediction(&self) -> Result<Value, String> {
+            let (cancel, receiver) = oneshot::channel();
+            let prediction = self.predict(None, receiver);
+            tokio::pin!(prediction);
+            let started = async {
+                loop {
+                    if self.log.exists()
+                        && self
+                            .calls()
+                            .iter()
+                            .any(|call| call["method"] == "turn/start")
+                    {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            };
+            // Startup is a prerequisite; the cancellation deadline begins at send.
+            tokio::select! {
+                result = &mut prediction => panic!("Prediction ended before cancellation: {result:?}"),
+                result = timeout(Duration::from_secs(DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS), started) => {
+                    result.expect("Prediction did not reach turn/start within its startup budget");
+                }
+            }
+            cancel.send(()).unwrap();
+            timeout(Duration::from_secs(5), prediction)
+                .await
+                .expect("Prediction cancellation did not finish within five seconds")
         }
 
         async fn predict(
@@ -416,32 +451,21 @@ done
     #[tokio::test]
     async fn prediction_cancellation_interrupts_the_fork_and_releases_its_subscription() {
         let fixture = Fixture::new("hold");
-        let (cancel, receiver) = oneshot::channel();
-        let prediction = fixture.predict(None, receiver);
-        let cancel_after_start = async {
-            loop {
-                if fixture.log.exists()
-                    && fixture
-                        .calls()
-                        .iter()
-                        .any(|call| call["method"] == "turn/start")
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            cancel.send(()).unwrap();
-        };
-        let (result, _) = timeout(Duration::from_secs(5), async {
-            tokio::join!(prediction, cancel_after_start)
-        })
-        .await
-        .unwrap();
+        let result = fixture.cancel_running_prediction().await;
         assert_eq!(result.unwrap_err(), CODEX_APP_SERVER_TURN_CANCELLED);
         assert!(fixture
             .calls()
             .iter()
             .any(|call| call["method"] == "thread/unsubscribe"));
+        let interrupt = fixture
+            .calls()
+            .into_iter()
+            .find(|call| call["method"] == "turn/interrupt")
+            .unwrap();
+        assert_eq!(
+            interrupt["params"],
+            json!({"threadId": "prediction", "turnId": "prediction-turn"})
+        );
         fixture.stop().await;
     }
 }
