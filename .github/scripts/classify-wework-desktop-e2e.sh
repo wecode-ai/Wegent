@@ -47,6 +47,7 @@ core_segments=(
   drawing-attachment
   window-lifecycle
   goal-lifecycle
+  goal-state-sync
   supervisor-lifecycle
   resilience
   runtime-task-queue
@@ -166,7 +167,7 @@ core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
   temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings
-  goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
+  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
@@ -338,6 +339,15 @@ select_all_desktop_suites() {
 
 classify_wework_path() {
   local path="$1"
+
+  case "$path" in
+    wework/src/features/workbench/runtimeConversationCache* | \
+      wework/src/components/layout/useWorkbenchPaneSession* | \
+      wework/src/features/workbench/WorkbenchProvider* | \
+      wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator*)
+      select_target "core:goal-state-sync"
+      ;;
+  esac
 
   case "$path" in
     wework/src/components/chat/composer/Drawing* | \
@@ -607,6 +617,12 @@ classify_wework_path() {
       select_target "core:window-lifecycle"
       select_target "core:tray-lifecycle"
       select_target "core:native-window-chrome"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs | \
+      wework/src/features/workbench/runtimeTaskLifecycle/goalSynchronization*)
+      select_target "core:goal-state-sync"
       return
       ;;
 

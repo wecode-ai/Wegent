@@ -43,6 +43,7 @@ export function McpProviderConfigDialog({
     ReturnType<typeof userApis.getMcpProviderService>
   > | null>(null)
   const [draftUrl, setDraftUrl] = useState('')
+  const [authMode, setAuthMode] = useState<'url' | 'oauth'>('url')
 
   const resolvedServiceName = useMemo(() => {
     const translated = t(`${providerId}.services.${serviceId}.default_name`)
@@ -65,6 +66,7 @@ export function McpProviderConfigDialog({
         const config = await userApis.getMcpProviderService(providerId, serviceId)
         setService(config)
         setDraftUrl(config.url)
+        setAuthMode(config.auth_mode ?? 'url')
       } catch {
         toast({
           variant: 'destructive',
@@ -84,6 +86,7 @@ export function McpProviderConfigDialog({
       await userApis.updateMcpProviderService(providerId, serviceId, {
         enabled: true,
         url: draftUrl,
+        auth_mode: authMode,
       })
 
       toast({

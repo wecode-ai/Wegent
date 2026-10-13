@@ -36,29 +36,34 @@ def _unconfirmed_claim(
     runtime_instance_id: str,
     environment: str,
 ) -> LoopItemExecution | None:
-    """Return work reserved by this Runtime but not yet acknowledged."""
+    """Return work reserved by this Runtime but not yet acknowledged.
 
-    query = (
-        db.query(LoopItemExecution)
-        .filter(
-            LoopItemExecution.executor_owner_user_id == owner_user_id,
-            LoopItemExecution.runtime_device_id == runtime_device_id,
-            LoopItemExecution.runtime_instance_id == runtime_instance_id,
-            LoopItemExecution.execution_environment == environment,
-            LoopItemExecution.status == "claimed",
-            loop_datetime_is_unset(LoopItemExecution.start_requested_at),
-        )
-        .order_by(LoopItemExecution.claimed_at.asc(), LoopItemExecution.id.asc())
+    Probe without locks before locking an existing claim by its primary key.
+    A locking range read can lock queued rows when no claim exists, reversing
+    the Issue-first lock order used by claim_routing for competing runners.
+    """
+
+    filters = (
+        LoopItemExecution.executor_owner_user_id == owner_user_id,
+        LoopItemExecution.runtime_device_id == runtime_device_id,
+        LoopItemExecution.runtime_instance_id == runtime_instance_id,
+        LoopItemExecution.execution_environment == environment,
+        LoopItemExecution.status == "claimed",
+        loop_datetime_is_unset(LoopItemExecution.start_requested_at),
     )
-    candidate = query.first()
+    candidate = (
+        db.query(LoopItemExecution.id)
+        .filter(*filters)
+        .order_by(LoopItemExecution.claimed_at.asc(), LoopItemExecution.id.asc())
+        .first()
+    )
     if candidate is None:
         return None
-    # Empty Runtime scans must not lock other installations' rows or index gaps.
-    # Revalidate and lock only the selected aggregate before extending its lease.
     return (
-        query.filter(LoopItemExecution.id == candidate.id)
-        .populate_existing()
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.id == candidate.id, *filters)
         .with_for_update()
+        .populate_existing()
         .first()
     )
 

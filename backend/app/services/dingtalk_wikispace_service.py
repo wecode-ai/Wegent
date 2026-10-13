@@ -33,10 +33,12 @@ from sqlalchemy.orm import Session
 from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.user import User
 from app.services.dingtalk_doc_service import (
+    DINGTALK_PROVIDER_ID,
     MAX_NODES_PER_SYNC,
     MCP_TOOL_LIST_NODES,
     DingTalkDocService,
 )
+from app.services.user_mcp_oauth import UserMcpOAuthService
 from app.services.user_mcp_service import UserMCPService
 from shared.telemetry.decorators import (
     add_span_event,
@@ -48,6 +50,8 @@ logger = logging.getLogger(__name__)
 
 # Source identifier for wikispace nodes
 WIKISPACE_SOURCE = DingTalkNodeSource.WIKISPACE
+WIKISPACE_SERVICE_ID = "wikispace"
+DOCS_SERVICE_ID = "docs"
 
 # Tool name on the knowledge base MCP for listing knowledge bases
 MCP_TOOL_LIST_WIKI_SPACES = "list_wikiSpaces"
@@ -147,6 +151,18 @@ class DingTalkWikiSpaceService:
         all_nodes = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
             wikispace_mcp_url=wikispace_mcp_url,
             docs_mcp_url=docs_mcp_url,
+            wikispace_headers=await UserMcpOAuthService.provider_service_headers(
+                db,
+                user=user,
+                provider_id=DINGTALK_PROVIDER_ID,
+                service_id=WIKISPACE_SERVICE_ID,
+            ),
+            docs_headers=await UserMcpOAuthService.provider_service_headers(
+                db,
+                user=user,
+                provider_id=DINGTALK_PROVIDER_ID,
+                service_id=DOCS_SERVICE_ID,
+            ),
         )
         original_count = len(all_nodes)
 
@@ -183,7 +199,10 @@ class DingTalkWikiSpaceService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    async def _list_wiki_spaces(wikispace_mcp_url: str) -> list[dict[str, Any]]:
+    async def _list_wiki_spaces(
+        wikispace_mcp_url: str,
+        headers: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Call list_wikiSpaces on the wikispace MCP and return all KB entries.
 
         Paginates automatically and keeps provider responses out of logs.
@@ -197,7 +216,9 @@ class DingTalkWikiSpaceService:
 
         kb_nodes: list[dict[str, Any]] = []
 
-        async with streamablehttp_client(url=wikispace_mcp_url) as (
+        async with streamablehttp_client(
+            url=wikispace_mcp_url, headers=headers or None
+        ) as (
             read_stream,
             write_stream,
             _,
@@ -346,6 +367,8 @@ class DingTalkWikiSpaceService:
     async def _fetch_all_wikispace_nodes(
         wikispace_mcp_url: str,
         docs_mcp_url: str | None = None,
+        wikispace_headers: dict[str, str] | None = None,
+        docs_headers: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """Two-phase fetch of all documents across all accessible knowledge bases.
 
@@ -377,7 +400,9 @@ class DingTalkWikiSpaceService:
         all_nodes: list[dict[str, Any]] = []
 
         # Phase 1: obtain knowledge-base list.
-        kb_nodes = await DingTalkWikiSpaceService._list_wiki_spaces(wikispace_mcp_url)
+        kb_nodes = await DingTalkWikiSpaceService._list_wiki_spaces(
+            wikispace_mcp_url, wikispace_headers
+        )
 
         if not kb_nodes:
             logger.warning(
@@ -390,7 +415,9 @@ class DingTalkWikiSpaceService:
         nodes_url = docs_mcp_url
 
         # Phase 2: create a single docs MCP session and reuse for all KBs.
-        async with streamablehttp_client(url=nodes_url) as (
+        async with streamablehttp_client(
+            url=nodes_url, headers=docs_headers or None
+        ) as (
             read_stream,
             write_stream,
             _,
