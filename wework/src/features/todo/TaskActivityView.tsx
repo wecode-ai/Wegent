@@ -435,24 +435,18 @@ export function TaskActivityView({
         onTaskUpdated?.(updated)
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : t('workbench.save_failed'))
+        throw cause
       }
     },
     [projectDeliveryApi, task.id, onTaskUpdated, t]
   )
-  const latestActivitySequence = threadMessages.reduce(
-    (latest, message) => Math.max(latest, message.sequenceNumber),
-    0
-  )
-  const entryReadSequence =
-    (task.activity_read_sequence ?? 0) > 0 || task.is_unread
-      ? (task.activity_read_sequence ?? 0)
-      : latestActivitySequence
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({
       messages: threadMessages,
       loading,
       issueId: issueTimeline ? task.id : undefined,
-      readSequence: entryReadSequence,
+      readSequence: task.activity_read_sequence ?? 0,
+      unread: Boolean(task.is_unread),
       onReadSequence: issueTimeline && projectDeliveryApi ? markActivityRead : undefined,
       linear,
       compact,

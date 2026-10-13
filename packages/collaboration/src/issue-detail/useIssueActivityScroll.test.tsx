@@ -37,18 +37,21 @@ describe.each(["cloud-task-activity-card-", "collaboration-chat-card-"])(
       messages,
       issueId,
       readSequence,
+      unread,
       onReadSequence,
     }: {
       messages: ProjectChatMessage[];
       issueId?: string;
       readSequence?: number;
-      onReadSequence?: (sequence: number) => void;
+      unread?: boolean;
+      onReadSequence?: (sequence: number) => Promise<void> | void;
     }) {
       controls = useIssueActivityScroll({
         messages,
         loading: false,
         issueId,
         readSequence,
+        unread,
         onReadSequence,
         cardTestIdPrefix: prefix,
       });
@@ -68,7 +71,8 @@ describe.each(["cloud-task-activity-card-", "collaboration-chat-card-"])(
       props: {
         issueId?: string;
         readSequence?: number;
-        onReadSequence?: (sequence: number) => void;
+        unread?: boolean;
+        onReadSequence?: (sequence: number) => Promise<void> | void;
       } = {},
     ) {
       await act(async () =>
@@ -163,6 +167,62 @@ describe.each(["cloud-task-activity-card-", "collaboration-chat-card-"])(
       expect(scrollTo).toHaveBeenCalledWith({ top: 100, behavior: "auto" });
       act(() => frame?.(0));
       expect(onReadSequence).toHaveBeenCalledExactlyOnceWith(2);
+    });
+    it("keeps the initial read baseline when new activity arrives", async () => {
+      const onReadSequence = vi.fn();
+      cardBottom = 200;
+      vi.mocked(window.requestAnimationFrame).mockClear();
+      await render([message("root")], {
+        issueId: "issue",
+        unread: false,
+        onReadSequence,
+      });
+      act(() =>
+        vi
+          .mocked(window.requestAnimationFrame)
+          .mock.calls.forEach(([callback]) => callback(0)),
+      );
+      expect(onReadSequence).not.toHaveBeenCalled();
+
+      vi.mocked(window.requestAnimationFrame).mockClear();
+      await render([message("root"), message("run")], {
+        issueId: "issue",
+        unread: false,
+        onReadSequence,
+      });
+      act(() =>
+        vi
+          .mocked(window.requestAnimationFrame)
+          .mock.calls.forEach(([callback]) => callback(0)),
+      );
+      expect(onReadSequence).toHaveBeenCalledExactlyOnceWith(2);
+    });
+    it("allows the reader to retry the same sequence after a failed read request", async () => {
+      const onReadSequence = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Read update failed"))
+        .mockResolvedValue(undefined);
+      cardBottom = 200;
+      vi.mocked(window.requestAnimationFrame).mockClear();
+      await render([message("root"), message("run")], {
+        issueId: "issue",
+        readSequence: 1,
+        onReadSequence,
+      });
+      await act(async () =>
+        vi
+          .mocked(window.requestAnimationFrame)
+          .mock.calls.forEach(([callback]) => callback(0)),
+      );
+      expect(onReadSequence).toHaveBeenCalledExactlyOnceWith(2);
+
+      await act(async () => {
+        container
+          .querySelector('[data-testid="list"]')!
+          .dispatchEvent(new Event("scroll"));
+        frame?.(0);
+      });
+      expect(onReadSequence.mock.calls).toEqual([[2], [2]]);
     });
   },
 );

@@ -1292,6 +1292,7 @@ describe('TaskActivityView', () => {
       is_unread: true,
       activity_read_sequence: 1,
     }
+    // Content revisions are acknowledged independently from the activity cursor.
     const updated = { ...task, is_unread: false, activity_read_sequence: 2 }
     markLoopItemRead.mockResolvedValue(updated)
     const onTaskUpdated = vi.fn()
