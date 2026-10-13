@@ -8,8 +8,6 @@ const BASE_PATH = '/wework/electron-host/v1'
 const MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
 
 export async function apply(ctx) {
-  const cpuProfileClock =
-    process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1' ? await import('./cpu-profile-clock.js') : null
   const client = ElectronHostClient.fromEnvironment(process.env, {
     onDisconnect: hostDisconnectHandler(ctx),
   })
@@ -19,12 +17,11 @@ export async function apply(ctx) {
       const url = `http://127.0.0.1:${endpointCtx.webServer.port}/`
       const usage = process.resourceUsage()
       let cpuProfileEndpoint = {}
-      if (cpuProfileClock) {
+      if (process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1') {
         try {
-          cpuProfileEndpoint = {
-            cpuProfileEndTimeUs: cpuProfileClock.captureCpuProfileEndpoint(),
-            cpuProfileProcessId: process.pid,
-          }
+          const profiler = globalThis[Symbol.for('wework.core.startupCpuProfiler')]
+          if (!profiler) throw new Error('Core startup CPU profiler unavailable')
+          cpuProfileEndpoint = profiler.complete()
         } catch {
           cpuProfileEndpoint = { cpuProfileClockStatus: 'failed' }
         }

@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process'
+import { once } from 'node:events'
+import { execFile, spawn } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -107,33 +108,59 @@ test('clips the boundary interval and excludes all subsequent runtime samples', 
   }
 })
 
-test('the real V8 endpoint clock matches an independently running Node CPU profile', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-cpu-clock-'))
+test('writes safe startup samples before forced termination of a preloaded real Node process', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-cpu-bootstrap-'))
   roots.push(root)
-  const clockModule = new URL('../dsh/electron-host/cpu-profile-clock.js', import.meta.url).href
-  const { stdout } = await execute(process.execPath, [
-    '--cpu-prof',
-    `--cpu-prof-dir=${root}`,
-    '--input-type=module',
-    '-e',
-    `import { captureCpuProfileEndpoint } from ${JSON.stringify(clockModule)};
-     console.log(captureCpuProfileEndpoint());
-     await new Promise(resolve => setTimeout(resolve, 30));`,
-  ])
-  const files = await import('node:fs/promises').then(fs => fs.readdir(root))
-  const profile = JSON.parse(
-    await readFile(
-      join(
-        root,
-        files.find(name => name.endsWith('.cpuprofile'))
-      )
-    )
+  const bootstrap = new URL('../dsh/electron-host/cpu-profile-bootstrap.js', import.meta.url).href
+  const dshHome = join(root, 'session/electron-user-data/dsh-core')
+  const logsRoot = join(dshHome, '../logs')
+  const child = spawn(
+    process.execPath,
+    [
+      '--import',
+      bootstrap,
+      '--input-type=module',
+      '-e',
+      'let total=0;for(let i=0;i<20000000;i++)total+=Math.sqrt(i);console.log(JSON.stringify(globalThis[Symbol.for("wework.core.startupCpuProfiler")].complete()));setInterval(()=>{},1000);',
+    ],
+    { env: { ...process.env, WEWORK_E2E_CORE_CPU_PROFILE: '1', DSH_HOME: dshHome } }
   )
-  const endpoint = Number(stdout.trim())
-  expect(endpoint).toBeGreaterThan(profile.startTime)
-  expect(endpoint).toBeLessThan(profile.endTime)
-  expect(profile.endTime - endpoint).toBeGreaterThan(20000)
-  expect(summarizeCoreCpuProfile(profile, endpoint).scope).toBe('startup-to-endpoint')
+  const exited = once(child, 'exit')
+  try {
+    const output = await once(child.stdout, 'data')
+    const marker = JSON.parse(String(output[0]))
+    expect(marker.cpuProfileProcessId).toBe(child.pid)
+    const summaryPath = join(logsRoot, 'core-startup-cpu-profile-' + child.pid + '.json')
+    const before = await readFile(summaryPath, 'utf8')
+    child.kill('SIGKILL')
+    await exited
+    expect(await readFile(summaryPath, 'utf8')).toBe(before)
+    const summary = JSON.parse(before)
+    expect(summary.scope).toBe('startup-to-endpoint')
+    expect(summary.samples).toBeGreaterThan(0)
+    expect(JSON.stringify(summary)).not.toContain(root)
+    expect(summary).not.toHaveProperty('nodes')
+    expect(summary).not.toHaveProperty('timeDeltas')
+    await writeFile(
+      join(logsRoot, 'dsh-core-runtime.log'),
+      `[startup][core-dsh-endpoint] { cpuProfileEndTimeUs: ${marker.cpuProfileEndTimeUs}, cpuProfileProcessId: ${child.pid} }`
+    )
+    await execute('bash', [
+      resolve('../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'),
+      root,
+    ])
+    expect(await readFile(summaryPath, 'utf8')).toBe(before)
+    expect(
+      JSON.parse(await readFile(join(logsRoot, 'core-startup-cpu-profile-status.json'), 'utf8'))
+    ).toEqual({
+      completedProfiles: 1,
+      endpointProcesses: 1,
+      processesWithoutCompletedProfile: 0,
+    })
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    await exited
+  }
 })
 
 test('an unmatched clock fails diagnostics and still deletes every raw profile', async () => {

@@ -12,6 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import semver from 'semver'
 import { hashComponentPath } from './component-content-hash.js'
 import { copyComponentTree } from './component-copy.js'
@@ -139,6 +140,7 @@ export interface PreparedCoreDshRuntime {
   profile: string
   version: string
   sourceFingerprint: string
+  cpuProfileBootstrapPath?: string
 }
 
 export interface PrepareCoreDshRuntimeOptions {
@@ -181,9 +183,6 @@ export async function prepareCoreDshRuntime(
     onStartupStep: options.onStartupStep,
   })
   options.onStartupStep?.('core-dsh-profile-prepare', 'completed')
-  if (options.environment.WEWORK_E2E_CORE_CPU_PROFILE === '1') {
-    await mkdir(join(dshHome, '.cpu-profile'), { recursive: true, mode: 0o700 })
-  }
   return {
     command: nodeCommand,
     entry: runtime.entry,
@@ -197,6 +196,14 @@ export async function prepareCoreDshRuntime(
     profile: PROFILE_NAME,
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,
+    ...(options.environment.WEWORK_E2E_CORE_CPU_PROFILE === '1'
+      ? {
+          cpuProfileBootstrapPath: join(
+            runtime.pluginRoots['@wegent/dsh-electron-host'],
+            'cpu-profile-bootstrap.js'
+          ),
+        }
+      : {}),
   }
 }
 
@@ -214,11 +221,14 @@ export function coreDshRuntimeEnvironment(
 }
 
 export function createCoreDshLaunch(runtime: PreparedCoreDshRuntime, port: number): CoreDshLaunch {
+  if (runtime.environment.WEWORK_E2E_CORE_CPU_PROFILE === '1' && !runtime.cpuProfileBootstrapPath) {
+    throw new Error('Core startup CPU profile bootstrap unavailable')
+  }
   return {
     ...runtime,
     args: runtimeNodeArgs(runtime.environment, [
       ...(runtime.environment.WEWORK_E2E_CORE_CPU_PROFILE === '1'
-        ? ['--cpu-prof', `--cpu-prof-dir=${join(runtime.dshHome, '.cpu-profile')}`]
+        ? ['--import', pathToFileURL(runtime.cpuProfileBootstrapPath!).href]
         : []),
       runtime.entry,
       '--profile',

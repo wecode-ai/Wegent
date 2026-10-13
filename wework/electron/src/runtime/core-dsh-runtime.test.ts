@@ -1,5 +1,6 @@
 import {
   chmod,
+  cp,
   lstat,
   mkdir,
   readFile,
@@ -450,7 +451,7 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
-  test('profiles only an explicitly enabled isolated Core process with native V8 output', async () => {
+  test('profiles only an explicitly enabled isolated Core process before its entry executes', async () => {
     const root = await temporaryDirectory('core-dsh-cpu-profile-')
     const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
     const options = {
@@ -478,15 +479,31 @@ describe('core DSH runtime', () => {
       environment: { ...options.environment, WEWORK_E2E_CORE_CPU_PROFILE: '1' },
     })
     const entry = join(root.path, 'profile-fixture.mjs')
-    await writeFile(entry, 'await new Promise(resolve => setTimeout(resolve, 10))\n')
+    await cp(
+      new URL('../../../dsh/electron-host', import.meta.url),
+      runtime.pluginRoots['@wegent/dsh-electron-host'],
+      { recursive: true }
+    )
+    await writeFile(
+      entry,
+      `let total = 0
+       for (let i = 0; i < 10000000; i++) total += Math.sqrt(i)
+       globalThis[Symbol.for('wework.core.startupCpuProfiler')].complete()\n`
+    )
     const launch = createCoreDshLaunch({ ...profiled, entry }, 3080)
-    expect(launch.args.slice(0, 2)).toEqual(['--cpu-prof', `--cpu-prof-dir=${privateDirectory}`])
-    await promisify(execFile)(process.execPath, launch.args)
-    const files = await readdir(privateDirectory)
+    expect(launch.args[0]).toBe('--import')
+    expect(launch.args[1]).toContain('cpu-profile-bootstrap.js')
+    await promisify(execFile)(process.execPath, launch.args, {
+      env: { ...process.env, ...launch.environment },
+    })
+    await expect(lstat(privateDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+    const logsRoot = join(profiled.dshHome, '../logs')
+    const files = await readdir(logsRoot)
     expect(files).toHaveLength(1)
-    const profile = JSON.parse(await readFile(join(privateDirectory, files[0]), 'utf8'))
-    expect(profile.nodes.length).toBeGreaterThan(0)
-    expect(profile.samples.length).toBeGreaterThan(0)
+    const summary = JSON.parse(await readFile(join(logsRoot, files[0]), 'utf8'))
+    expect(summary.scope).toBe('startup-to-endpoint')
+    expect(summary.samples).toBeGreaterThan(0)
+    expect(JSON.stringify(summary)).not.toContain(root.path)
   })
 
   test('resolves configured and bundled Wework application web roots', async () => {
