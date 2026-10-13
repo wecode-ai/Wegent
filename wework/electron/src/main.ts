@@ -1,5 +1,9 @@
 import './host/process-output-bootstrap.js'
-import { logStartupStep, runSynchronousStartupStep } from './host/startup-step.js'
+import {
+  logStartupStep,
+  rendererStartupCpuDetails,
+  runSynchronousStartupStep,
+} from './host/startup-step.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 import { installDshBrowserSession } from './host/dsh-browser-session.js'
@@ -759,10 +763,14 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   if (!mainWindow || !desktopRuntime) return
   if (!desktopRuntime.state().ready) return
   if (primaryDshLoaded) return
-  logStartupStep('primary-renderer-load', 'started')
+  const contents = mainWindow.webContents
+  const rendererCpuDetails = () =>
+    rendererStartupCpuDetails(process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1', contents, () =>
+      app.getAppMetrics()
+    )
+  logStartupStep('primary-renderer-load', 'started', rendererCpuDetails())
   rendererHealth.loading()
   const dshUrl = desktopRuntime.coreDshUrl()
-  const contents = mainWindow.webContents
   if (!securedDshContents.has(contents)) {
     registerDshWindowLabel(contents, 'main')
   }
@@ -771,7 +779,7 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     primaryDshLoaded = true
     runtimeError = null
     rendererHealth.ready()
-    logStartupStep('primary-renderer-load', 'completed')
+    logStartupStep('primary-renderer-load', 'completed', rendererCpuDetails())
     void contents
       .executeJavaScript(
         `(() => {
@@ -1821,7 +1829,14 @@ async function configureDesktopRuntime(): Promise<void> {
           dockVisible: () => dockVisible,
           rendererStartupReady: createStartupReadyHandler(async source => {
             if (!mainWindow || mainWindow.isDestroyed()) return
-            logStartupStep('renderer-startup-ready', 'completed', { source })
+            logStartupStep('renderer-startup-ready', 'completed', {
+              source,
+              ...rendererStartupCpuDetails(
+                process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1',
+                mainWindow.webContents,
+                () => app.getAppMetrics()
+              ),
+            })
             startupTelemetrySuccess.markRendererReady()
             if (!keepE2EWindowInBackground) mainWindow.show()
             logStartupStep('main-window-show', 'completed')

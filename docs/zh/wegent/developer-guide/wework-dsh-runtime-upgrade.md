@@ -273,3 +273,17 @@ Windows 第 19 组的未知 CPU 叶帧无法由已清理的原始 profile 重新
 [Windows 第 9 组](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115533239034) 六项通过，collaboration-local-group-coordinate 在首轮成员完成后未发起续轮。最后一次模型目录查询在 40.990 秒，46.009 秒队列领取将新续轮标为 RUNNER_MODEL_UNAVAILABLE，中间没有目录查询。源码先独立判断队列是否需要目录，再原子领取任务；两步之间成员完成可加入路由任务，导致领取时缺少目录而永久置为 waiting_runtime。
 
 删除该非原子预检查。事务内选中的实际任务需要目录时返回专用 RunnerCatalogRequired，保持 queued、版本、payload 与绑定不变；释放事务后查询目录，再原子重选并验证。真实缺模型仍按原逻辑拒绝，空队列与旧无路由任务不查询目录，取消的任务不会复活。真实 SQLite 受控旧实现复现 waiting_runtime 错误；修复后 9 项路由测试全部通过，包括新增 3 项、原真实缺模型拒绝与独立连接并发单次领取，格式检查通过。原 E2E 不改，完整续轮须下一轮 Windows CI 验证。
+
+### `8d1bff57b` Linux 完整验证
+
+本轮正常 pre-push 的全部质量检查通过；Tests、Lint、平台 E2E、Auth 和两项策略均通过。Electron 1076 项、renderer 3835/3884 项通过，四项既有 skip 未增加，完整日志无被吞断言或未处理异常。
+
+[Linux Core19](https://github.com/wecode-ai/Wegent/actions/runs/38470348069/job/115551477555) 完整原场景通过：严格冷启动 4722 毫秒、缓存重启 4350 毫秒，均未扣除采样开销。旧版运行时按需下载一次，旧 manifest 字节不变，缓存离线复用；Core 被终止后恢复为新 PID，Executor PID 保留，恢复后旧 Smart app 仍运行。四种模板通过，三份 CPU 摘要对应三个端点，零缺失，Prune 通过；临时文件已清理。Windows 与正式 ARM 尚待独立结果，不能宣称跨平台达标。
+
+本次冷启动配置 477 毫秒、Core 到端点 1771 毫秒、页面加载 1215 毫秒、加载后就绪 919 毫秒。首次 outbox 初始化在端点之后，实际约 12.1 毫秒；不得把前轮 Linux 的 660 毫秒或全部墙钟差归为 lazy 收益。存储恢复 744.8 毫秒，其中响应头等待 292.3 毫秒、响应体等待 451.8 毫秒、同步替换 0.2 毫秒；Core 请求解析至宿主结果、res.end 调用返回共 9 毫秒，宿主初始化为 6 毫秒。response.json 等待并非纯解析 CPU，当前证据尚不能将其归因于网络或某个模块。新增公开包分类未显示 SDK/ajv 热点，匿名叶帧仍不能据采样权重认定具体优化对象。
+
+[本轮正式 ARM](https://github.com/wecode-ai/Wegent/actions/runs/38470370291/job/115547715161) 严格冷启动为 17980 毫秒，仍失败；原发布、组件更新、应用更新三流程通过，五份 CPU 摘要对应五个端点、零缺失，Prune 通过。配置 2671 毫秒、Core 到端点 5122 毫秒、页面加载 3312 毫秒、加载后就绪 3534 毫秒，主 Electron ready 为 2320 毫秒。Core 端点处已有实际 resourceUsage：uptime 4639 毫秒，user/system 合计约 3070 毫秒；主进程整个启动 CPU 合计约 3220 毫秒。采样窗口 4481.7 毫秒不能当作实际 CPU。没有本任务并发构建或系统负载实证，不能归因于共享 runner。
+
+ARM renderer 存储恢复约 1874 毫秒：响应头等待 1006 毫秒、响应体等待 867.6 毫秒、同步替换 0.1 毫秒；Core handler 至 res.end 返回约 79 毫秒，宿主存储约 17 毫秒。首次 outbox 初始化发生在端点后、约 28 毫秒。新的空 URL 祖先分类约 ESM 708.7 毫秒、Cordis 108 毫秒、CJS 20.9 毫秒，仍为栈采样权重；公开 SDK/ajv 无热点，不能据此修改供应商代码。renderer 实际 CPU 尚无观测，下一项仅补充现有阶段的固定 CPU 数值来区分计算与等待。
+
+仅现有 CPU profile 开关开启时，主 Electron 在原页面加载开始、完成及界面就绪三个阶段采集对应窗口 renderer 的累计 CPU 毫秒和进程 ID。关闭开关不调用额外进程 API；进程缺失、数值无效或采集异常仅记录不可用，不改变 await、错误或就绪行为。只有同一 PID 的累计数值可作差，进程 CPU 可包括多线程，不从严格启动墙钟扣除。23 项聚焦测试、Electron 类型、lint 和格式检查通过。一次隔离真实 Electron 验证采到同一进程 CPU 71/630/1015 毫秒，实际工作台就绪；stop 返回零，应用与所属会话进程退出，认证链接移除，无截图或会话文件提交。这验证 API 接线，仍须下一轮正式包提供实际 renderer CPU 证据。
