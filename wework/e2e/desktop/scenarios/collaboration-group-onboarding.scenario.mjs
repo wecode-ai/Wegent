@@ -206,13 +206,13 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-participants"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
       assert.equal(
         Number(
           await control.command(
             'getElementCount',
-            scoped('[data-testid="collaboration-participants-tab-agents"]')
+            scoped('[data-testid="collaboration-project-settings-agents"]')
           )
         ),
         1,
@@ -220,7 +220,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-participants-tab-agents"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
       await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
         text: '当前设备智能体',
@@ -238,11 +238,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-participants-tab-groups"]')
+        scoped('[data-testid="collaboration-project-settings-groups"]')
       )
       await control.command(
         'waitFor',
-        scoped('[data-testid="collaboration-participants-tab-groups"][aria-selected="true"]'),
+        scoped('[data-testid="collaboration-project-settings-groups"][aria-current="page"]'),
         { timeoutMs: uiTimeoutMs }
       )
       assert.equal(

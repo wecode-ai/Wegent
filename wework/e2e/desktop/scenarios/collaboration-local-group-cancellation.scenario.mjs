@@ -66,7 +66,7 @@ async function addAgent(control, name, prompt, timeoutMs) {
 }
 
 async function createGroup(control, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-groups"]'))
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-groups"]'))
   await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
   await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
     timeoutMs,
@@ -242,13 +242,10 @@ export async function createDesktopScenario({
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
 
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-participants"]')
-      )
-      await control.command(
-        'click',
-        scoped('[data-testid="collaboration-participants-tab-agents"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
       await addAgent(
         control,

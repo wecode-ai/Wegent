@@ -146,6 +146,7 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
   )
   const agentId = rowTestId.slice('project-agent-row-'.length)
   await control.command('click', scoped(`[data-testid="project-agent-edit-${agentId}"]`))
+  await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-runtime"]')
   await control.command('waitFor', '[data-testid="cloud-project-chat-agent-models"]', {
     timeoutMs,
   })
@@ -162,6 +163,7 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
     'scrollIntoView',
     `[data-testid="cloud-project-chat-agent-model-${ALTERNATE_MODEL}"]`
   )
+  await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-basic"]')
   await control.command('fill', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
     value: `${REVIEWER_ROLE_MARKER}。你是当前设备上的执行成员，只完成负责人分配的复核任务并返回证据。`,
   })
@@ -181,7 +183,7 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
 }
 
 async function createCoordinateGroup(control, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-groups"]'))
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-groups"]'))
   await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
   await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
     timeoutMs,
@@ -546,13 +548,10 @@ export async function createDesktopScenario({
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
 
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-participants"]')
-      )
-      await control.command(
-        'click',
-        scoped('[data-testid="collaboration-participants-tab-agents"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
       await addAgent(
         control,

@@ -293,7 +293,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
 
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-participants"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
       await openProjectAgentCreator(
         control,

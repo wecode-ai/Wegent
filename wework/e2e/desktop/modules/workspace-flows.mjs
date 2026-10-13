@@ -95,7 +95,7 @@ export async function waitForTestIdByText(
 }
 
 export async function selectWhenOptionAvailable(control, selector, value, timeoutMs) {
-  await control.command('waitFor', `${selector} option[value="${value}"]`, {
+  await control.command('waitFor', `${selector} option[value=${JSON.stringify(value)}]`, {
     timeoutMs,
   })
   await control.command('select', selector, { value })
@@ -104,18 +104,28 @@ export async function selectWhenOptionAvailable(control, selector, value, timeou
 /** Native fixtures require an explicit environment; automatic routing is cloud-only. */
 export async function selectProjectRunnerModel(control, timeoutMs) {
   const prefix = 'cloud-project-chat-agent'
-  const policy = `[data-testid="${prefix}-execution-policy"]`
+  await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'runtime', timeoutMs)
+  const environment = `[data-testid="${prefix}-environment"]`
   const model = `[data-testid="${prefix}-model"]`
-  await control.command('select', policy, { value: 'project_pool' })
   const identity = JSON.stringify(['codex', MODEL_PROVIDER_ID, DEFAULT_MODEL_ID])
+  await control.command(
+    'waitFor',
+    `${environment} option:checked:not([value=""]):not([value^="policy:"])`,
+    { timeoutMs }
+  )
+  await control.command('waitFor', `${model} option[value='${identity}']:checked`, { timeoutMs })
+  await control.command('select', environment, { value: 'policy:project_pool' })
   assert.equal(
-    Number(await control.command('getElementCount', `${model} option[value='${identity}']`)),
+    Number(
+      await control.command(
+        'getElementCount',
+        `${model} option[value='${identity}']:not(:disabled)`
+      )
+    ),
     0,
     'Automatic environment routing must not expose native models'
   )
-  await control.command('select', policy, { value: 'fixed' })
-  const environment = `[data-testid="${prefix}-environment"]`
-  const firstEnvironment = `${environment} option:not([value=""])`
+  const firstEnvironment = `${environment} option:not([value=""]):not([value^="policy:"])`
   await control.command('waitFor', firstEnvironment, { timeoutMs })
   const environmentId = await control.command('getAttribute', firstEnvironment, { value: 'value' })
   assert.ok(environmentId, 'The isolated execution environment must be available')
@@ -136,6 +146,46 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
     Number(await control.command('getElementCount', `[data-testid="${prefix}-model-policy"]`)),
     0,
     'Agent creation must use one model selector without a separate policy field'
+  )
+  await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'basic', timeoutMs)
+}
+
+export async function selectAgentFormTab(control, dialogId, tab, timeoutMs) {
+  const selector = `[data-testid="${dialogId}-tab-${tab}"]`
+  await control.command('clickWhenEnabled', selector, { timeoutMs })
+  await control.command('waitFor', `${selector}[aria-selected="true"]`, { timeoutMs })
+}
+
+/** Use a stable cloud resource identity and exercise both creation tabs. */
+export async function selectCloudAgentModel(control, request, modelName, timeoutMs) {
+  const dialog = 'wework-agent-resource-creator'
+  await control.command('waitFor', `[data-testid="${dialog}-tab-basic"][aria-selected="true"]`, {
+    timeoutMs,
+  })
+  await selectAgentFormTab(control, dialog, 'runtime', timeoutMs)
+  await control.command('select', '[data-testid="wework-agent-environment"]', {
+    value: 'policy:project_pool',
+  })
+  const models = await request(
+    '/api/models/unified?include_config=false&scope=all&model_category_type=llm&client_origin=wework'
+  )
+  const model = models.data.find(item => item.name === modelName && item.type === 'public')
+  assert.ok(model, `The cloud model ${modelName} must be available to the creating user`)
+  const identity = JSON.stringify([
+    'codex',
+    'cloud',
+    model.type,
+    model.namespace,
+    model.resourceUserId,
+    model.name,
+  ])
+  const selector = '[data-testid="wework-agent-model"]'
+  await selectWhenOptionAvailable(control, selector, identity, timeoutMs)
+  await selectAgentFormTab(control, dialog, 'basic', timeoutMs)
+  const summary = await control.command('getText', `[data-testid="${dialog}-runtime-summary"]`)
+  assert.ok(
+    summary.includes(model.displayName || model.name),
+    'The basic tab must show the selected runtime model'
   )
 }
 

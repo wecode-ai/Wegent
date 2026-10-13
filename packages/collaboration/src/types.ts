@@ -486,7 +486,9 @@ export type CollaborationView =
 export type CollaborationRootView = "home" | "my-work";
 export type ProjectSettingsSectionId =
   | "project"
-  | "collaboration-participants"
+  | "agents"
+  | "members"
+  | "groups"
   | "environments"
   | "automatic-processing";
 

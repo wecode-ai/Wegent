@@ -55,11 +55,8 @@ function advertisedToolNames(body) {
 
 async function addLocalAgent(control, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
-  await control.command(
-    'click',
-    scoped('[data-testid="collaboration-project-settings-participants"]')
-  )
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-agents"]'))
+
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await openProjectAgentCreator(control, scoped('[data-testid="project-agent-add"]'), timeoutMs)
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: AGENT,

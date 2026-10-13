@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
+import { selectCloudAgentModel } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -119,27 +120,6 @@ async function waitForPromise(promise, message, timeoutMs) {
   }
 }
 
-async function selectOptionByLabel(control, selector, label, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let options = []
-  while (Date.now() < deadline) {
-    const count = Number(await control.command('getElementCount', `${selector} option`))
-    options = []
-    for (let index = 1; index <= count; index += 1) {
-      const option = `${selector} option:nth-child(${index})`
-      const optionLabel = await control.command('getText', option)
-      const value = await control.command('getAttribute', option, { value: 'value' })
-      options.push({ label: optionLabel, value })
-      if (optionLabel === label) {
-        await control.command('select', selector, { value })
-        return
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`Option ${label} was not available in ${selector}: ${JSON.stringify(options)}`)
-}
-
 async function createWorkspaceAndProject(control, request, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-workspace-create"]'))
   await control.command('fill', scoped('[data-testid="collaboration-workspace-name-input"]'), {
@@ -186,40 +166,13 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
 }
 
 async function createAgent(control, request, projectId, timeoutMs) {
-  await control.command(
-    'click',
-    scoped('[data-testid="collaboration-project-settings-participants"]')
-  )
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-agents"]'))
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
     timeoutMs,
   })
   await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', { timeoutMs })
   await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: AGENT })
-  await control.command('select', '[data-testid="wework-agent-execution-policy"]', {
-    value: 'project_pool',
-  })
-  const models = await request(
-    '/api/models/unified?include_config=false&scope=all&model_category_type=llm&client_origin=wework'
-  )
-  const cloudModel = models.data.find(model => model.name === MODEL && model.type === 'public')
-  assert.ok(cloudModel, 'The cloud model must be available to the creating user')
-  const identity = JSON.stringify([
-    'codex',
-    'cloud',
-    cloudModel.type,
-    cloudModel.namespace,
-    cloudModel.resourceUserId,
-    cloudModel.name,
-  ])
-  await control.command(
-    'waitFor',
-    `[data-testid="wework-agent-model"] option[value='${identity}']`,
-    {
-      timeoutMs,
-    }
-  )
-  await control.command('select', '[data-testid="wework-agent-model"]', { value: identity })
+  await selectCloudAgentModel(control, request, MODEL, timeoutMs)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
     value: `${MARKER}。直接执行当前 Issue，不创建工作流、不调用负责人或协作小组。`,
   })

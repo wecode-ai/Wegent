@@ -1,8 +1,10 @@
 import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
+import { useAgentCreationDefaults } from '@/features/collaboration/useAgentCreationDefaults'
 import {
   AgentEnvironmentFields,
   AgentModelFields,
 } from '@/features/collaboration/AgentRoutingFields'
+import { useAgentRuntimeTab } from '@/features/collaboration/useAgentRuntimeTab'
 import { useEffect, useMemo, useState } from 'react'
 import {
   AgentCapabilitiesSelector,
@@ -89,7 +91,11 @@ export function ProjectChatAgentEditor({
   const [modelNamespace, setModelNamespace] = useState('default')
   const [allowedModels, setAllowedModels] = useState<LocalProjectChatAgentModel[]>([])
   const [runtime, setRuntime] = useState<LocalProjectChatAgent['runtime']>('codex')
-  const routing = useAgentRouting(api, runtime, projectId)
+  const creationDefaults = useAgentCreationDefaults(!editing)
+  const routing = useAgentRouting(api, runtime, projectId, {
+    creationDefaults,
+  })
+  const runtimeTab = useAgentRuntimeTab(routing)
   const loadRouting = routing.load
   const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
   const [mcpConfig, setMcpConfig] = useState('{}')
@@ -378,6 +384,17 @@ export function ProjectChatAgentEditor({
 
   return (
     <AgentFormDialog
+      runtimeTab={
+        defaultDeviceAgent
+          ? {
+              ...runtimeTab,
+              summary: t('workbench.agent_creator_allowed_models_summary', {
+                count: allowedModels.length,
+              }),
+              error: null,
+            }
+          : runtimeTab
+      }
       advancedSummary={{
         description:
           capabilityMode === 'follow_device'
@@ -451,7 +468,7 @@ export function ProjectChatAgentEditor({
       description={
         editing
           ? t('workbench.agent_editor_description', '修改执行环境、模型和提示词。')
-          : t('workbench.agent_creator_description', '先选择执行环境，再设置模型和提示词。')
+          : t('workbench.agent_creator_description', '定义智能体的职责，按需调整运行设置。')
       }
       displayName={{
         label: t('workbench.agent_creator_display_name', '智能体名称'),

@@ -359,6 +359,9 @@ const sharedMessages: Record<
     "todo.file_move_failed": "重命名或移动失败",
     "todo.manage_project": "管理项目",
     "todo.manage_project_description": "管理项目成员、标签和看板布局。",
+    "todo.ai_team": "AI 团队",
+    "todo.ai_team_members": "成员",
+    "todo.ai_team_groups": "协作团队",
     "todo.project_members": "项目成员",
     "todo.project_members_description":
       "管理成员访问和项目角色。填写职责与能力后会自动保存，AI 托管会据此选择合适的负责人。",
@@ -787,6 +790,9 @@ const sharedMessages: Record<
     "todo.manage_project": "Manage project",
     "todo.manage_project_description":
       "Manage project members, tags, and board layout.",
+    "todo.ai_team": "AI team",
+    "todo.ai_team_members": "Members",
+    "todo.ai_team_groups": "Collaboration teams",
     "todo.project_members": "Project members",
     "todo.project_members_description":
       "Manage member access and project roles. Capabilities save automatically and help AI-managed rules choose the right assignee.",

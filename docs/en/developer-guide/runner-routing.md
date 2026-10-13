@@ -27,18 +27,27 @@ flowchart TD
 
 ## Policies and authorization
 
-Agent creation follows name, environment, model, and prompt. Allocation options are automatic project allocation, a specific environment, or selection at run time. A specific environment requires choosing its device. Model selection appears after the environment choice; concrete models and selection at run time share one selector. Options show the model name and cloud/native source. Native selections show the environment account source. Public cloud models do not show a "public account" hint: gateway calls use the signed-in user's identity. Invalid models remain visible with a reselection message. Capabilities stay in collapsed advanced settings.
+The project settings sidebar groups basic information, execution environments, and automatic processing under Project settings. AI team provides separate Agents, Members, and Collaboration teams pages. Project pages no longer nest participant tabs. Add member and Add agent actions during Issue creation open the corresponding sidebar page directly. Cloud and local projects share this navigation.
+
+Wework creation and editing use Basic information and Runtime settings tabs. Basic information opens first with the name, save location, and prompt. New agents default to a fixed environment policy. Among authorized environments supporting the runtime, creation prefers the personal default, then the current desktop Executor. If neither matches and only one eligible environment exists, it selects that environment; multiple candidates require a choice. Device transport aliases match the catalog's `device_key`; the saved policy uses the environment ID. Models prefer the environment's reported default for the runtime, or the sole selectable model when no default exists. Other cases require a choice. Existing agents retain their saved environment and model policies. A clickable environment and model summary appears in the footer. Switching tabs preserves the draft and advanced configuration.
+
+Creation initializes these values once and saves explicit fixed rules. Late catalog responses never overwrite manual choices, and changing environments never replaces a selected model. Incomplete historical configurations and execution-selection dialogs do not apply creation defaults.
+
+Runtime settings use one environment selector, grouping devices by personal or workspace ownership and placing automatic project allocation and selection at run time under Other allocation rules. The model selector stays mounted and is disabled until an allocation rule and, for a fixed policy, a specific device are selected. Concrete models and selection at run time share one selector. Options show the model name and cloud/native source. Native selections show the environment account source. Public cloud models do not show a "public account" hint: gateway calls use the signed-in user's identity. Changing environments never replaces a selected model. Invalid environments and models stay visible, and confirmed conflicts also appear on the basic tab and prevent saving.
+
+Advanced settings retain both following the execution environment and fixing agent capabilities. Fixed capabilities keep the full plugin, Skill, and MCP configuration, including capabilities referenced by the prompt. Tabs and disclosure change presentation without reducing these rules to one checkbox or changing the saved contract.
 
 ```mermaid
 flowchart TD
-    A[Set name] --> B[Choose environment allocation]
-    B -->|Specific environment| C[Choose environment]
-    B -->|Project allocation or selection at run time| D[Choose model or selection at run time]
-    C --> D
-    D --> E[Set prompt]
-    E --> F[Create Agent]
-    E -. Optional .-> G[Advanced: capabilities and MCP]
-    G --> F
+    A[Basic: name, save location, prompt] -. Optional .-> B[Advanced: capability source, plugins, Skills, MCP]
+    A <-->|Switch tabs or footer summary; preserve draft| C[Runtime: environment, model]
+    C --> D[Specific device / project allocation / selection at run time]
+    D --> E[Choose model or selection at run time]
+    A --> F{Complete and compatible?}
+    B --> F
+    E --> F
+    F -->|Yes| G[Create or save Agent]
+    F -->|No| H[Show reason; preserve configuration for repair]
 ```
 
 `execution_policy` supports `project_pool`, `fixed`, and `user_select`. Backend fixed policies reference a Device Kind ID; local projects use the local environment ID. Ownership is independent of deployment location. `model_policy` supports `fixed` and `user_select`. Models store `(runtime, provider, model_id)` and `source`; cloud models additionally store a `cloud_model` reference containing name, type, namespace, and resource owner ID. Rules never contain model configs or credentials. Historical identities without a source retain native catalog matching and are never silently reinterpreted as cloud models.
@@ -72,7 +81,7 @@ flowchart TD
     H --> I
 ```
 
-`preferences.default_execution_target` applies only to unbound Issues manually invoking a `user_select` Agent without an explicit environment. Automations must persist all deferred choices in `runnerSelection` before being enabled. A collaboration group requires one runner satisfying every member's requirements, while members may use different fixed models.
+At execution time, `preferences.default_execution_target` applies only to unbound Issues manually invoking a `user_select` Agent without an explicit environment. Automations must persist all deferred choices in `runnerSelection` before being enabled. A collaboration group requires one runner satisfying every member's requirements, while members may use different fixed models.
 
 Sharing a personal environment preserves its owner and model account. Project pools intersect workspace and project Device grants. Revoking workspace sharing invalidates project access. Authorization always uses the triggering user; the creator's access is insufficient.
 

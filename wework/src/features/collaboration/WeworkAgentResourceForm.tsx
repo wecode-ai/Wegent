@@ -1,5 +1,7 @@
 import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
+import { useAgentCreationDefaults } from './useAgentCreationDefaults'
 import { AgentEnvironmentFields, AgentModelFields } from './AgentRoutingFields'
+import { useAgentRuntimeTab } from './useAgentRuntimeTab'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AgentCapabilitiesSelector,
@@ -69,7 +71,11 @@ export function WeworkAgentResourceForm({
   const [name, setName] = useState(createAgentResourceName)
   const [displayName, setDisplayName] = useState('')
   const [runtime, setRuntime] = useState<UnifiedAgentRuntime>('Codex')
-  const routing = useAgentRouting(api, runtime === 'Codex' ? 'codex' : 'claude_code', projectId)
+  const creationDefaults = useAgentCreationDefaults(!editing)
+  const routing = useAgentRouting(api, runtime === 'Codex' ? 'codex' : 'claude_code', projectId, {
+    creationDefaults,
+  })
+  const runtimeTab = useAgentRuntimeTab(routing)
   const loadRouting = routing.load
   const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
   const [systemPrompt, setSystemPrompt] = useState('')
@@ -276,6 +282,7 @@ export function WeworkAgentResourceForm({
 
   return (
     <AgentFormDialog
+      runtimeTab={runtimeTab}
       advanced={
         <>
           {unsupportedRuntime ? (
@@ -366,7 +373,7 @@ export function WeworkAgentResourceForm({
       description={
         editing
           ? t('workbench.agent_editor_description', '修改执行环境、模型和提示词。')
-          : t('workbench.agent_creator_description', '先选择执行环境，再设置模型和提示词。')
+          : t('workbench.agent_creator_description', '定义智能体的职责，按需调整运行设置。')
       }
       displayName={{
         label: t('workbench.agent_creator_display_name', '智能体名称'),

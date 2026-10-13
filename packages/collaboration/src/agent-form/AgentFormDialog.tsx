@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { ChevronRight, LoaderCircle, X } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { ChevronRight, LoaderCircle, SlidersHorizontal, X } from 'lucide-react'
+import { useRef, useState, type ReactNode } from 'react'
 
 import { DialogForm } from '../controls/DialogForm'
 
@@ -42,6 +42,13 @@ export interface AgentFormAdvancedSummary {
   title: string
 }
 
+interface AgentFormRuntimeTab {
+  basicLabel: string
+  label: string
+  summary: string
+  error?: string | null
+}
+
 export interface AgentFormTestIds {
   backdrop: string
   close: string
@@ -78,6 +85,7 @@ export function AgentFormDialog({
   promptEditor,
   capabilityMode,
   runtime,
+  runtimeTab,
   saveDisabled,
   saveLabel,
   savingLabel,
@@ -109,6 +117,7 @@ export function AgentFormDialog({
   promptEditor?: ReactNode
   capabilityMode?: ReactNode
   runtime?: AgentFormSelectField
+  runtimeTab?: AgentFormRuntimeTab
   saveDisabled: boolean
   saveLabel: string
   savingLabel: string
@@ -117,6 +126,7 @@ export function AgentFormDialog({
 }) {
   const titleId = `${testIds.dialog}-title`
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<'basic' | 'runtime'>('basic')
   const identityField = displayName ?? name
   const hasAdvancedSettings = Boolean(capabilityMode || capabilities || mcp)
   const modelField = modelControl ?? (model ? <SelectInput busy={busy} field={model} /> : null)
@@ -160,6 +170,16 @@ export function AgentFormDialog({
           </button>
         </header>
 
+        {runtimeTab ? (
+          <AgentFormTabs
+            activeTab={activeTab}
+            busy={busy}
+            labels={runtimeTab}
+            onChange={setActiveTab}
+            prefix={testIds.dialog}
+          />
+        ) : null}
+
         <div className="min-h-0 space-y-4 overflow-y-auto px-6 pb-5 pt-2">
           {loading ? (
             <p className="flex items-center gap-2 text-sm text-text-muted">
@@ -168,69 +188,99 @@ export function AgentFormDialog({
             </p>
           ) : null}
 
-          <section className="min-w-0 space-y-2">
-            {identityField ? <TextInput busy={busy} field={identityField} /> : null}
-            {owner ? (
-              <SelectInput busy={busy} field={owner} />
-            ) : (
-              <div className="flex min-h-5 items-center gap-2 text-xs text-text-muted">
-                <span>{labels.owner}</span>
-                <span aria-hidden="true">·</span>
-                <span className="truncate text-text-secondary">{ownerLabel}</span>
-              </div>
-            )}
-          </section>
-
-          <section className="space-y-4">
-            {executionControl}
-            {runtime ? (
-              <div className="grid gap-3 md:grid-cols-2">
-                <SelectInput busy={busy} field={runtime} />
-                {modelField}
-              </div>
-            ) : (
-              modelField
-            )}
-            {promptEditor ?? <TextareaInput busy={busy} field={prompt} />}
-          </section>
-
-          {advanced}
-
-          {hasAdvancedSettings ? (
-            <section className="border-t border-border pt-2">
-              <button
-                aria-expanded={advancedOpen}
-                className="flex min-h-11 w-full items-center gap-2 rounded-md py-1 text-left hover:bg-muted/60 disabled:pointer-events-none disabled:opacity-50 md:min-h-9"
-                data-testid={`${testIds.dialog}-advanced-toggle`}
-                disabled={busy}
-                onClick={() => setAdvancedOpen(open => !open)}
-                type="button"
-              >
-                <ChevronRight
-                  aria-hidden="true"
-                  className={classes(
-                    'h-4 w-4 shrink-0 text-text-muted transition-transform',
-                    advancedOpen ? 'rotate-90' : undefined
-                  )}
-                />
-                <span className="flex-1 text-sm text-text-secondary">{labels.advanced}</span>
-                {advancedSummary ? (
-                  <span className="truncate text-xs text-text-muted">{advancedSummary.title}</span>
-                ) : null}
-              </button>
-              {advancedOpen ? (
-                <div className="space-y-4 border-t border-border px-4 py-4">
-                  {!capabilityMode ? (
-                    <p className="text-xs text-text-muted">
-                      {advancedSummary?.description ?? labels.advancedDescription}
-                    </p>
-                  ) : null}
-                  {capabilityMode}
-                  {capabilities}
-                  {mcp ? <TextareaInput busy={busy} code field={mcp} /> : null}
+          <section
+            aria-labelledby={runtimeTab ? `${testIds.dialog}-tab-basic` : undefined}
+            className="min-w-0 space-y-4"
+            hidden={Boolean(runtimeTab && activeTab !== 'basic')}
+            id={`${testIds.dialog}-panel-basic`}
+            role={runtimeTab ? 'tabpanel' : undefined}
+          >
+            <section className="min-w-0 space-y-2">
+              {identityField ? <TextInput busy={busy} field={identityField} /> : null}
+              {owner ? (
+                <SelectInput busy={busy} field={owner} />
+              ) : (
+                <div className="flex min-h-5 items-center gap-2 text-xs text-text-muted">
+                  <span>{labels.owner}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="truncate text-text-secondary">{ownerLabel}</span>
                 </div>
-              ) : null}
+              )}
             </section>
+
+            <section className="space-y-4">
+              {!runtimeTab ? executionControl : null}
+              {!runtimeTab && runtime ? (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <SelectInput busy={busy} field={runtime} />
+                  {modelField}
+                </div>
+              ) : !runtimeTab ? (
+                modelField
+              ) : null}
+              {promptEditor ?? <TextareaInput busy={busy} field={prompt} />}
+            </section>
+
+            {advanced}
+
+            {hasAdvancedSettings ? (
+              <section className="border-t border-border pt-2">
+                <button
+                  aria-expanded={advancedOpen}
+                  className="flex min-h-11 w-full items-center gap-2 rounded-md py-1 text-left hover:bg-muted/60 disabled:pointer-events-none disabled:opacity-50 md:min-h-9"
+                  data-testid={`${testIds.dialog}-advanced-toggle`}
+                  disabled={busy}
+                  onClick={() => setAdvancedOpen(open => !open)}
+                  type="button"
+                >
+                  <ChevronRight
+                    aria-hidden="true"
+                    className={classes(
+                      'h-4 w-4 shrink-0 text-text-muted transition-transform',
+                      advancedOpen ? 'rotate-90' : undefined
+                    )}
+                  />
+                  <span className="flex-1 text-sm text-text-secondary">{labels.advanced}</span>
+                  {advancedSummary ? (
+                    <span className="truncate text-xs text-text-muted">
+                      {advancedSummary.title}
+                    </span>
+                  ) : null}
+                </button>
+                {advancedOpen ? (
+                  <div className="space-y-4 border-t border-border px-4 py-4">
+                    {!capabilityMode ? (
+                      <p className="text-xs text-text-muted">
+                        {advancedSummary?.description ?? labels.advancedDescription}
+                      </p>
+                    ) : null}
+                    {capabilityMode}
+                    {capabilities}
+                    {mcp ? <TextareaInput busy={busy} code field={mcp} /> : null}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+          </section>
+
+          {runtimeTab ? (
+            <section
+              aria-labelledby={`${testIds.dialog}-tab-runtime`}
+              className="space-y-4"
+              hidden={activeTab !== 'runtime'}
+              id={`${testIds.dialog}-panel-runtime`}
+              role="tabpanel"
+            >
+              {executionControl}
+              {runtime ? <SelectInput busy={busy} field={runtime} /> : null}
+              {modelField}
+            </section>
+          ) : null}
+
+          {runtimeTab?.error && activeTab === 'basic' ? (
+            <p className="text-sm text-destructive" role="alert">
+              {runtimeTab.error}
+            </p>
           ) : null}
 
           {error ? (
@@ -246,14 +296,30 @@ export function AgentFormDialog({
 
         <footer
           className={classes(
-            'flex items-center gap-3 border-t border-border bg-popover px-6 py-3',
-            footerHint ? 'justify-between' : 'justify-end'
+            'flex flex-wrap items-center gap-3 border-t border-border bg-popover px-6 py-3',
+            footerHint || runtimeTab ? 'justify-between' : 'justify-end'
           )}
         >
-          {footerHint ? (
+          {runtimeTab ? (
+            <button
+              aria-controls={`${testIds.dialog}-panel-runtime`}
+              aria-label={`${runtimeTab.label}: ${runtimeTab.summary}`}
+              className="flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-lg text-left text-xs text-text-muted hover:text-text-primary disabled:opacity-40 md:min-h-9"
+              data-testid={`${testIds.dialog}-runtime-summary`}
+              disabled={busy}
+              onClick={() => {
+                setActiveTab('runtime')
+                document.getElementById(`${testIds.dialog}-tab-runtime`)?.focus()
+              }}
+              type="button"
+            >
+              <span className="min-w-0 break-words">{runtimeTab.summary}</span>
+              <SlidersHorizontal aria-hidden="true" className="h-4 w-4 shrink-0" />
+            </button>
+          ) : footerHint ? (
             <p className="max-w-sm text-xs leading-4 text-text-muted">{footerHint}</p>
           ) : null}
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             <button
               className="h-11 rounded-lg px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-40 md:h-9"
               disabled={busy}
@@ -274,6 +340,70 @@ export function AgentFormDialog({
           </div>
         </footer>
       </DialogForm>
+    </div>
+  )
+}
+
+function AgentFormTabs({
+  activeTab,
+  busy,
+  labels,
+  onChange,
+  prefix,
+}: {
+  activeTab: 'basic' | 'runtime'
+  busy: boolean
+  labels: AgentFormRuntimeTab
+  onChange(tab: 'basic' | 'runtime'): void
+  prefix: string
+}) {
+  const buttons = useRef<Array<HTMLButtonElement | null>>([])
+  const tabs = ['basic', 'runtime'] as const
+  return (
+    <div
+      aria-label={`${labels.basicLabel} / ${labels.label}`}
+      className="mx-6 flex gap-5 border-b border-border"
+      role="tablist"
+    >
+      {tabs.map((tab, index) => (
+        <button
+          aria-controls={`${prefix}-panel-${tab}`}
+          aria-selected={activeTab === tab}
+          className={classes(
+            'min-h-11 border-b-2 px-1 text-sm disabled:opacity-40 md:min-h-9',
+            activeTab === tab
+              ? 'border-text-primary text-text-primary'
+              : 'border-transparent text-text-muted hover:text-text-primary'
+          )}
+          data-testid={`${prefix}-tab-${tab}`}
+          disabled={busy}
+          id={`${prefix}-tab-${tab}`}
+          key={tab}
+          onClick={() => onChange(tab)}
+          onKeyDown={event => {
+            const target =
+              event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? 1
+                  : event.key === 'ArrowLeft' || event.key === 'ArrowRight'
+                    ? 1 - index
+                    : null
+            if (target == null) return
+            event.preventDefault()
+            onChange(tabs[target]!)
+            buttons.current[target]?.focus()
+          }}
+          ref={element => {
+            buttons.current[index] = element
+          }}
+          role="tab"
+          tabIndex={activeTab === tab ? 0 : -1}
+          type="button"
+        >
+          {tab === 'basic' ? labels.basicLabel : labels.label}
+        </button>
+      ))}
     </div>
   )
 }

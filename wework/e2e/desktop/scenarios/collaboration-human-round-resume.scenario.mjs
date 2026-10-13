@@ -14,7 +14,11 @@ import {
   selectMcpTool,
 } from '../modules/response-protocol.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
-import { selectCollaborationDomain, waitForTestIdByText } from '../modules/workspace-flows.mjs'
+import {
+  selectCloudAgentModel,
+  selectCollaborationDomain,
+  waitForTestIdByText,
+} from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -156,30 +160,6 @@ async function waitForPromise(promise, timeoutMs, message) {
   }
 }
 
-async function selectAgentModel(control, modelName, timeoutMs) {
-  const selector = '[data-testid="wework-agent-model"]'
-  const deadline = Date.now() + timeoutMs
-  let availableModels = []
-  while (Date.now() < deadline) {
-    const optionCount = Number(await control.command('getElementCount', `${selector} option`))
-    availableModels = []
-    for (let index = 1; index <= optionCount; index += 1) {
-      const option = `${selector} option:nth-child(${index})`
-      const label = await control.command('getText', option)
-      const value = await control.command('getAttribute', option, { value: 'value' })
-      availableModels.push({ label, value })
-      if (label === modelName) {
-        await control.command('select', selector, { value })
-        return
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(
-    `Responses 模型 ${modelName} 未出现在 Agent 编辑器: ${JSON.stringify(availableModels)}`
-  )
-}
-
 async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
   await control.command('waitFor', scoped('[data-testid="collaboration-workspace-create"]'), {
     timeoutMs: uiTimeoutMs,
@@ -232,7 +212,7 @@ async function createAgent(control, request, projectId, name, prompt, uiTimeoutM
     timeoutMs: uiTimeoutMs,
   })
   await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: name })
-  await selectAgentModel(control, MODEL, uiTimeoutMs)
+  await selectCloudAgentModel(control, request, MODEL, uiTimeoutMs)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', { value: prompt })
   await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
     timeoutMs: uiTimeoutMs,
@@ -251,7 +231,7 @@ async function createAgent(control, request, projectId, name, prompt, uiTimeoutM
 }
 
 async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-groups"]'))
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-groups"]'))
   await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
   await control.command('fill', scoped('[data-testid="collaboration-group-name"]'), {
     value: GROUP,
@@ -624,13 +604,10 @@ export function createDesktopScenario({
       await authorizeRemoteEnvironment(control, remoteDevice, modelResponseTimeoutMs)
 
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-participants"]')
-      )
-      await control.command(
-        'click',
-        scoped('[data-testid="collaboration-participants-tab-agents"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
       await createAgent(
         control,

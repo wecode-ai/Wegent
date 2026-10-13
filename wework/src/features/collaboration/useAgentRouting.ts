@@ -16,11 +16,25 @@ export interface RunnerCatalogApi {
   listModels(): Promise<UnifiedModel[]>
 }
 
+interface RoutingDraft {
+  executionPolicy: AgentExecutionPolicy | null
+  modelMode: 'fixed' | 'user_select'
+  model: RunnerModelIdentity | null
+  initializeEnvironment: boolean
+  initializeModel: boolean
+}
+
 export function useAgentRouting(
   api: RunnerCatalogApi,
   runtime: RunnerModelIdentity['runtime'],
   projectId?: string,
-  cloudOnly = false
+  {
+    cloudOnly = false,
+    creationDefaults,
+  }: {
+    cloudOnly?: boolean
+    creationDefaults?: { preferredDeviceIds: string[] }
+  } = {}
 ) {
   const [catalog, setCatalog] = useState<{
     api: RunnerCatalogApi
@@ -48,9 +62,32 @@ export function useAgentRouting(
     () => cloudRunnerModels(cloudLoading ? [] : cloudCatalog.models),
     [cloudLoading, cloudCatalog]
   )
-  const [executionPolicy, setExecutionPolicy] = useState<AgentExecutionPolicy | null>(null)
-  const [modelMode, setModelMode] = useState<'fixed' | 'user_select'>('fixed')
-  const [model, setModel] = useState<RunnerModelIdentity | null>(null)
+  const [draft, setDraft] = useState<RoutingDraft>(() => ({
+    executionPolicy: creationDefaults ? { mode: 'fixed', environment_id: '' } : null,
+    modelMode: 'fixed',
+    model: null,
+    initializeEnvironment: Boolean(creationDefaults),
+    initializeModel: Boolean(creationDefaults),
+  }))
+
+  const setExecutionPolicy = useCallback(
+    (policy: AgentExecutionPolicy | null) => {
+      setDraft(draft => ({ ...draft, executionPolicy: policy, initializeEnvironment: false }))
+    },
+    [setDraft]
+  )
+  const setModelMode = useCallback(
+    (mode: 'fixed' | 'user_select') => {
+      setDraft(draft => ({ ...draft, modelMode: mode, initializeModel: false }))
+    },
+    [setDraft]
+  )
+  const setModel = useCallback(
+    (model: RunnerModelIdentity | null) => {
+      setDraft(draft => ({ ...draft, model, initializeModel: false }))
+    },
+    [setDraft]
+  )
 
   useEffect(() => {
     let active = true
@@ -94,8 +131,29 @@ export function useAgentRouting(
     }
   }, [api])
 
-  const loading = cloudLoading || (executionPolicy?.mode === 'fixed' && environmentLoading)
+  // Snapshot defaults once when catalogs settle, before rendering the form.
+  let initializedDraft = draft
+  if (creationDefaults && draft.initializeEnvironment && !environmentLoading) {
+    const eligible = environments.filter(
+      environment =>
+        environment.runtimes?.includes(runtime) ||
+        environment.models.some(model => model.runtime === runtime)
+    )
+    const preferred = creationDefaults.preferredDeviceIds
+      .map(id => eligible.find(environment => environment.device_key === id))
+      .find(Boolean)
+    const environment = preferred ?? (eligible.length === 1 ? eligible[0] : undefined)
+    initializedDraft = {
+      ...initializedDraft,
+      initializeEnvironment: false,
+      executionPolicy: environment
+        ? { mode: 'fixed', environment_id: environment.id }
+        : draft.executionPolicy,
+    }
+  }
 
+  const { executionPolicy } = initializedDraft
+  const loading = cloudLoading || (executionPolicy?.mode === 'fixed' && environmentLoading)
   const candidates = useMemo(
     () => policyEnvironments(environments, executionPolicy, Boolean(projectId)),
     [environments, executionPolicy, projectId]
@@ -104,6 +162,31 @@ export function useAgentRouting(
     () => policyModels(candidates, runtime, executionPolicy, cloudModels, cloudOnly),
     [candidates, runtime, executionPolicy, cloudModels, cloudOnly]
   )
+
+  if (
+    initializedDraft.initializeModel &&
+    !loading &&
+    executionPolicy?.mode === 'fixed' &&
+    candidates.length === 1
+  ) {
+    const defaultModel =
+      models.find(model => model.is_default) ?? (models.length === 1 ? models[0] : undefined)
+    initializedDraft = {
+      ...initializedDraft,
+      initializeModel: false,
+      model: defaultModel
+        ? {
+            runtime: defaultModel.runtime,
+            provider: defaultModel.provider,
+            model_id: defaultModel.model_id,
+            source: defaultModel.source ?? 'native',
+            ...(defaultModel.cloud_model ? { cloud_model: defaultModel.cloud_model } : {}),
+          }
+        : initializedDraft.model,
+    }
+  }
+  if (initializedDraft !== draft) setDraft(initializedDraft)
+  const { modelMode, model } = initializedDraft
   const modelAvailable =
     model !== null && models.some(item => runnerModelKey(item) === runnerModelKey(model))
   const modelPolicy: AgentModelPolicy | null =
@@ -112,11 +195,15 @@ export function useAgentRouting(
     executionPolicy !== null && (executionPolicy.mode !== 'fixed' || candidates.length === 1)
   const load = useCallback(
     (policy: AgentExecutionPolicy | undefined, modelPolicy: AgentModelPolicy | undefined) => {
-      setExecutionPolicy(policy ?? null)
-      setModelMode(modelPolicy?.mode ?? 'fixed')
-      setModel(modelPolicy?.model ?? null)
+      setDraft({
+        executionPolicy: policy ?? null,
+        modelMode: modelPolicy?.mode ?? 'fixed',
+        model: modelPolicy?.model ?? null,
+        initializeEnvironment: false,
+        initializeModel: false,
+      })
     },
-    []
+    [setDraft]
   )
   return {
     environments,

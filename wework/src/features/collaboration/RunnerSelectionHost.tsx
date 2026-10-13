@@ -22,12 +22,9 @@ function SelectionDialog({ pending, close }: { pending: Pending; close(): void }
     }),
     [pending]
   )
-  const routing = useAgentRouting(
-    api,
-    pending.request.runtime,
-    'execution',
-    pending.request.cloud_only
-  )
+  const routing = useAgentRouting(api, pending.request.runtime, 'execution', {
+    cloudOnly: pending.request.cloud_only,
+  })
   const legacyFixedModel =
     pending.request.model_policy.mode === 'fixed' && !pending.request.model_policy.model.source
   const modelAvailable = legacyFixedModel

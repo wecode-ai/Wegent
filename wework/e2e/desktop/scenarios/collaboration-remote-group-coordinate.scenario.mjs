@@ -14,6 +14,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCloudAgentModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
@@ -96,27 +97,6 @@ async function waitForValue(load, predicate, message, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
-}
-
-async function selectOptionByLabel(control, selector, label, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let options = []
-  while (Date.now() < deadline) {
-    const count = Number(await control.command('getElementCount', `${selector} option`))
-    options = []
-    for (let index = 1; index <= count; index += 1) {
-      const option = `${selector} option:nth-child(${index})`
-      const optionLabel = await control.command('getText', option)
-      const value = await control.command('getAttribute', option, { value: 'value' })
-      options.push({ label: optionLabel, value })
-      if (optionLabel === label) {
-        await control.command('select', selector, { value })
-        return
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`Option ${label} was not available in ${selector}: ${JSON.stringify(options)}`)
 }
 
 function managerToolEvents(body, toolName, toolCallId, argumentsValue) {
@@ -229,11 +209,7 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
 }
 
 async function addAgent(control, request, projectId, name, prompt, timeoutMs) {
-  await control.command(
-    'click',
-    scoped('[data-testid="collaboration-project-settings-participants"]')
-  )
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-agents"]'))
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
     timeoutMs,
   })
@@ -243,7 +219,7 @@ async function addAgent(control, request, projectId, name, prompt, timeoutMs) {
   await control.command('fill', '[data-testid="wework-agent-display-name"]', {
     value: name,
   })
-  await selectOptionByLabel(control, '[data-testid="wework-agent-model"]', MODEL, timeoutMs)
+  await selectCloudAgentModel(control, request, MODEL, timeoutMs)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
     value: prompt,
   })
@@ -272,7 +248,7 @@ async function addAgent(control, request, projectId, name, prompt, timeoutMs) {
 }
 
 async function createCoordinateGroup(control, request, projectId, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-groups"]'))
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-groups"]'))
   await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
   await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
     timeoutMs,
