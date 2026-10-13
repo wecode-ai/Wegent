@@ -287,3 +287,11 @@ Windows 第 19 组的未知 CPU 叶帧无法由已清理的原始 profile 重新
 ARM renderer 存储恢复约 1874 毫秒：响应头等待 1006 毫秒、响应体等待 867.6 毫秒、同步替换 0.1 毫秒；Core handler 至 res.end 返回约 79 毫秒，宿主存储约 17 毫秒。首次 outbox 初始化发生在端点后、约 28 毫秒。新的空 URL 祖先分类约 ESM 708.7 毫秒、Cordis 108 毫秒、CJS 20.9 毫秒，仍为栈采样权重；公开 SDK/ajv 无热点，不能据此修改供应商代码。renderer 实际 CPU 尚无观测，下一项仅补充现有阶段的固定 CPU 数值来区分计算与等待。
 
 仅现有 CPU profile 开关开启时，主 Electron 在原页面加载开始、完成及界面就绪三个阶段采集对应窗口 renderer 的累计 CPU 毫秒和进程 ID。关闭开关不调用额外进程 API；进程缺失、数值无效或采集异常仅记录不可用，不改变 await、错误或就绪行为。只有同一 PID 的累计数值可作差，进程 CPU 可包括多线程，不从严格启动墙钟扣除。23 项聚焦测试、Electron 类型、lint 和格式检查通过。一次隔离真实 Electron 验证采到同一进程 CPU 71/630/1015 毫秒，实际工作台就绪；stop 返回零，应用与所属会话进程退出，认证链接移除，无截图或会话文件提交。这验证 API 接线，仍须下一轮正式包提供实际 renderer CPU 证据。
+
+[Windows 第 9 组](https://github.com/wecode-ai/Wegent/actions/runs/38470348069/job/115563197070) 七个原场景全部通过；local-group-coordinate 49 秒，完成两轮三成员与负责人最终状态原断言，原子目录 admission 修复得到真实闭环。[第 14 组](https://github.com/wecode-ai/Wegent/actions/runs/38470348069/job/115563197045) 七场景全部通过，含真实恢复与重启；本轮无子错误报告，不能据通过倒推上轮未知退出 1 原因，保留安全诊断。
+
+[Windows 第 7 组](https://github.com/wecode-ai/Wegent/actions/runs/38470348069/job/115563197149) 的 context-compaction 失败已有完整证据：任务与会话身份正确，实际请求包含场景初始提示，合法模型路由为 kimi-k3 的 Chat Completions；但场景只接管 Responses，首次发送前没有选择模型，请求落入通用 handler 后触发另一 TASK_PROMPT 断言。仅在首次发送前复用 selectE2EModel，保留所有提示、身份、压缩与预算断言。语法、格式和 lint 通过；现有 runner 单次真实 context-compaction 验证 64 秒通过、exit 0、无断言错误。finally 清理后所属进程为空，认证链接为零，没有遗留应用。完整 Windows 分片待下一轮验证。
+
+本轮 [Windows 第 15 组](https://github.com/wecode-ai/Wegent/actions/runs/38470348069/job/115563197059) 其余五场景通过，running-conversation-history 的 performanceSnapshot 耗时约 5.48 秒，触发原 3000 毫秒断言；当时历史仍 loading、消息为零。该命令同步统计后还等待宿主 HeapProfiler.collectGarbage 和 Runtime.getHeapUsage，不能直接将测量总耗时归为消息渲染阻塞，也尚不能将全部差值归给 GC。仅在既有 E2E 开关内补充 snapshot 与 CDP attach/GC/heap/detach 固定阶段数值，保留原调用、参数、ownership、异常与预算。5 项聚焦回归、双端类型、lint 和格式检查通过，实际阻塞位置待新阶段证据。
+
+[Windows 第 19 组](https://github.com/wecode-ai/Wegent/actions/runs/38470348069/job/115563197342) 严格冷启动 8623 毫秒失败，后续旧版阶段未执行；配置 1153 毫秒、Core 4071 毫秒、页面 1260 毫秒、加载后就绪 1786 毫秒。CPU 摘要一份对应一个端点、零缺失、Prune 通过。node-addon-native-custom-loader 为最大已知模块采样类别，约 1029 毫秒；官方 app-boot 经 node-addon-require-builtin 调用真实 profile 模块解析与 native 加载，缓存物化及完整性校验有明确合同，尚无 Wework 重复调用证据。不能据采样权重删除官方校验或宣称具体优化收益。

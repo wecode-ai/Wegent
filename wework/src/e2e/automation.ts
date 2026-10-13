@@ -2170,6 +2170,19 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'performanceSnapshot': {
+      const startedAt = performance.now()
+      const recordPhase = (phase: string) => {
+        if (!isWeworkAutomationEnabled()) return
+        try {
+          console.info('[Wework] Performance snapshot diagnostic', {
+            phase,
+            elapsedMs: Math.round(performance.now() - startedAt),
+          })
+        } catch {
+          // Diagnostics must not affect snapshot results or error propagation.
+        }
+      }
+      recordPhase('entered')
       const debugSnapshot = getWorkbenchDebugSnapshot()
       const currentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
       const runtimeMessages = currentRuntimeTask
@@ -2190,13 +2203,18 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const assistantContentElements = Array.from(
         document.querySelectorAll<HTMLElement>('[data-testid="assistant-message-content"]')
       )
+      recordPhase('host-heap-started')
       const [processMemory, rendererHeap] = await Promise.all([
         navigator.platform.toLowerCase().includes('mac')
           ? invokeDesktopHost('e2e.getProcessSnapshot')
           : null,
         invokeDesktopHost('e2e.getRendererHeapUsage'),
-      ])
-      return JSON.stringify({
+      ]).catch(error => {
+        recordPhase('host-heap-failed')
+        throw error
+      })
+      recordPhase('host-heap-completed')
+      const snapshot = JSON.stringify({
         timestamp: Date.now(),
         domNodeCount: document.getElementsByTagName('*').length,
         assistantDom: {
@@ -2229,6 +2247,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         processMemory,
         rendererHeap,
       })
+      recordPhase('completed')
+      return snapshot
     }
     case 'focusMainWindow':
       await invokeDesktopHost('e2e.focusMainWindow')
