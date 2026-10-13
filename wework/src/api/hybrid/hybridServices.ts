@@ -1015,6 +1015,13 @@ export function createHybridWorkbenchServices(
     compactRuntimeTask(data: RuntimeCompactRequest) {
       return routeByAddress(data.address).compactRuntimeTask(data)
     },
+    cleanRuntimeBackgroundTerminals(address: RuntimeTaskAddress) {
+      const api = routeByAddress(address)
+      if (!api.cleanRuntimeBackgroundTerminals) {
+        throw new Error('Executor does not support background terminals')
+      }
+      return api.cleanRuntimeBackgroundTerminals(address)
+    },
     guideRuntimeTask(data) {
       return routeByAddress(data.address).guideRuntimeTask(data)
     },

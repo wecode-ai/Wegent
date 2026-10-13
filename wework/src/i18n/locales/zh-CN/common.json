@@ -4009,7 +4009,12 @@
     "project_plugins_support_pending": "正在确认此设备的插件能力，其他项目设置仍可保存。",
     "project_save_verification_failed": "设备未确认项目设置已保存。你的修改仍保留，请检查设备后重试。",
     "project_runtime_changed": "保存期间设备运行时已变化。你的修改仍保留，请重新打开项目设置后重试。",
-    "project_saved_space": "已保存的项目空间（{{id}}）"
+    "project_saved_space": "已保存的项目空间（{{id}}）",
+    "background_processes": "后台进程",
+    "background_terminal": "后台终端",
+    "background_terminals_stop_all": "停止全部后台终端",
+    "background_terminals_stop_error": "无法停止后台终端",
+    "background_terminal_no_output": "暂无输出"
   },
   "delivery": {
     "action": "交付",

@@ -91,7 +91,7 @@ test('Test Explorer discovers real test files and groups their frameworks', asyn
   assert.deepEqual(report.frameworks.sort(), ['Pytest', 'Test runner'])
   assert.deepEqual(
     report.tests.map(test => test.path),
-    ['tests/test_api.py', 'tests/widget.test.ts']
+    [join('tests', 'test_api.py'), join('tests', 'widget.test.ts')]
   )
   await rm(fixture, { recursive: true, force: true })
 })

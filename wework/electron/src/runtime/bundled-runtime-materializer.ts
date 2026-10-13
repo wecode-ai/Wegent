@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { extract } from 'tar'
+import { publishImmutableDirectory } from './immutable-directory.js'
 
 interface RuntimeDescriptor {
   dshVersion: string
@@ -73,19 +74,16 @@ async function materializeRuntime(
   if (sha256 !== runtime.archiveSha256) {
     throw new Error(`Bundled DSH runtime checksum mismatch: ${runtime.assetName}`)
   }
-  const temporary = `${target}.${process.pid}.tmp`
-  await rm(temporary, { recursive: true, force: true })
-  await mkdir(temporary, { recursive: true, mode: 0o700 })
-  try {
-    await extractArchive(archive, temporary)
-    if (!(await runtimeMatches(temporary, runtime))) {
-      throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
-    }
-    await rm(target, { recursive: true, force: true })
-    await rename(temporary, target)
-  } finally {
-    await rm(temporary, { recursive: true, force: true })
-  }
+  await publishImmutableDirectory(
+    target,
+    async content => {
+      await extractArchive(archive, content)
+      if (!(await runtimeMatches(content, runtime))) {
+        throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
+      }
+    },
+    path => runtimeMatches(path, runtime)
+  )
 }
 
 async function extractArchive(archive: string, destination: string): Promise<void> {

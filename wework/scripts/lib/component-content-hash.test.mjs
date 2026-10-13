@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -23,6 +23,13 @@ afterEach(async () => {
 })
 
 describe('hashComponentPath', () => {
+  test('rejects symbolic links instead of omitting unverified content', async () => {
+    const root = await temporaryDirectory()
+    await writeFile(join(root, 'target'), 'content')
+    await symlink(join(root, 'target'), join(root, 'link'))
+    await expect(hashComponentPath(root)).rejects.toThrow('Unsupported component tree entry')
+  })
+
   test('hashes a file by its bytes', async () => {
     const root = await temporaryDirectory()
     const path = join(root, 'component.bin')

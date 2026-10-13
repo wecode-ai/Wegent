@@ -721,7 +721,7 @@ fn non_empty(value: &str) -> Option<&str> {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    dirs::home_dir()
+    crate::local::command::configured_home_dir()
 }
 
 #[cfg(test)]

@@ -21,6 +21,7 @@ import {
 import { isOpenAiOfficialMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { loadLocalConnectorAuthPlugins } from '@/features/plugins/prefetchLocalConnectorAuth'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { WORKBENCH_NEW_CHAT_STARTED_EVENT } from '@/lib/workbenchComposerFocus'
 
 export interface PendingConnectorAuth {
   target: LocalConnectorAuthTarget
@@ -257,6 +258,13 @@ export function useLocalConnectorAuthGate(options: {
   }, [active, options.messages, pending, refreshPlugins, t, updatePending])
 
   const clearPending = useCallback(() => updatePending(null), [updatePending])
+
+  useEffect(() => {
+    // Blank conversations reuse their pane; invalidate authorization before
+    // a provider can resume its old draft in the next conversation.
+    window.addEventListener(WORKBENCH_NEW_CHAT_STARTED_EVENT, clearPending)
+    return () => window.removeEventListener(WORKBENCH_NEW_CHAT_STARTED_EVENT, clearPending)
+  }, [clearPending])
 
   const completePending = useCallback(async () => {
     const current = pendingRef.current

@@ -1462,6 +1462,7 @@ mod tests {
         fs::create_dir_all(&source).unwrap();
         for args in [
             vec!["init"],
+            vec!["config", "core.autocrlf", "false"],
             vec!["config", "user.name", "Wegent Test"],
             vec!["config", "user.email", "test@wegent.local"],
         ] {
@@ -1561,8 +1562,11 @@ mod tests {
         fs::write(
             &rollout_path,
             format!(
-                "{{\"ordinal\":0,\"timestamp\":\"2026-09-08T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread_id}\",\"cwd\":\"{}\",\"history_mode\":\"paginated\"}}}}\n",
-                workspace.to_string_lossy()
+                "{}\n",
+                serde_json::json!({
+                    "ordinal": 0, "timestamp": "2026-09-08T00:00:00Z", "type": "session_meta",
+                    "payload": { "id": thread_id, "cwd": workspace, "history_mode": "paginated" }
+                })
             ),
         )
         .unwrap();
@@ -1738,7 +1742,12 @@ mod tests {
             .unwrap();
         assert_eq!(restored_history_mode, "paginated");
         assert!(restored_rollout.contains("\"history_mode\":\"paginated\""));
-        assert!(restored_rollout.contains(restored.workspace_path.to_string_lossy().as_ref()));
+        let restored_metadata: Value =
+            serde_json::from_str(restored_rollout.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            restored_metadata["payload"]["cwd"],
+            restored.workspace_path.to_string_lossy().as_ref()
+        );
         let continued = export_segment(ExportRequest {
             transcript_id: "transcript-1".to_owned(),
             task_id: "task-1".to_owned(),

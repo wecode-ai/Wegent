@@ -181,6 +181,25 @@ test('migrates a real WAL database and credentials; historical artifacts stay in
   migrateWorkbenchExecutorData(source, target, state)
 })
 
+test('recreates a completed file bridge after SQLite removes both sidecar entries', () => {
+  const options = {
+    ...entry(),
+    source: join(root, 'old/tasks.sqlite-wal'),
+    target: join(root, 'new/tasks.sqlite-wal'),
+  }
+  write(options.source)
+  migrateWorkbenchDataEntry(options)
+  fs.unlinkSync(options.source)
+  fs.unlinkSync(options.target)
+  migrateWorkbenchDataEntry(options)
+  expect(fs.readlinkSync(options.source)).toBe(options.target)
+  write(options.target, 'new WAL')
+  expect(fs.readFileSync(options.source, 'utf8')).toBe('new WAL')
+  fs.unlinkSync(options.source)
+  write(options.source, 'unmanaged')
+  expect(() => migrateWorkbenchDataEntry(options)).toThrow('conflict')
+})
+
 test('moves browser partitions, preferences, logs and updater cache before stores open', () => {
   const source = join(root, 'appData/app')
   const desktop = join(root, 'workbench/wework/app')

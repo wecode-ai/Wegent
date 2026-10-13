@@ -87,7 +87,7 @@ impl RuntimeWorkRpcHandler {
         if notification.method != "turn/completed" {
             return;
         }
-        let Some(turn) = notification
+        let Some(mut turn) = notification
             .params
             .get("turn")
             .filter(|turn| turn.is_object())
@@ -98,6 +98,26 @@ impl RuntimeWorkRpcHandler {
         let Some(turn_id) = string_field(&turn, "id") else {
             return;
         };
+        // Completion notifications can omit items already delivered through the stream.
+        let active = self
+            .active_codex_transcript_items
+            .lock()
+            .ok()
+            .and_then(|items| {
+                items
+                    .get(local_task_id)
+                    .filter(|active| active.turn_id == turn_id)
+                    .cloned()
+            });
+        if let Some(active) = active.filter(|active| !active.items.is_empty()) {
+            let completed_items = turn
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            turn["items"] = Value::Array(active.items);
+            merge_codex_turn_items(&mut turn, completed_items);
+        }
         let thread_id = string_field(notification.params, "threadId")
             .or_else(|| {
                 self.local_task_link(local_task_id)
@@ -275,6 +295,7 @@ impl RuntimeWorkRpcHandler {
             .iter_mut()
             .find(|turn| string_field(turn, "id").as_deref() == Some(active.turn_id.as_str()))
         {
+            turn["status"] = json!("inProgress");
             merge_codex_turn_items(turn, active.items);
             return;
         }
@@ -476,43 +497,65 @@ impl RuntimeWorkRpcHandler {
         }
         let pending_replays =
             begin_pending_codex_notification_replays(&mut routing, &child_thread_ids);
-        let skip_active_notification = if self.is_active_local_task(&local_task_id) {
-            let Some(active_turn) = self.active_codex_turn(&local_task_id) else {
-                drop(routing);
-                self.replay_codex_notifications(pending_replays);
-                return;
-            };
-            let Some(notification_turn_id) = notification_turn_id.as_deref() else {
-                drop(routing);
-                self.replay_codex_notifications(pending_replays);
-                return;
-            };
-            if notification_turn_id == active_turn.turn_id {
-                true
-            } else {
-                if codex_stream_debug_enabled() {
-                    log_executor_event(
-                        "runtime work routes non-active turn notification",
-                        &[
-                            ("thread_id", thread_id.clone()),
-                            ("active_turn_id", active_turn.turn_id),
-                            ("notification_turn_id", notification_turn_id.to_owned()),
-                        ],
-                    );
+        let notification = codex_notification(&message);
+        let command_notification = notification.method.starts_with("item/commandExecution/")
+            || item_type(&notification_item(notification.params)) == "commandexecution";
+        let active_turn = self.active_codex_turn(&local_task_id);
+        // The turn callback finishes before its execution task settles. Completed
+        // commands belong to the global router during that handoff window.
+        let completed_command_turn = active_turn.is_none()
+            && command_notification
+            && notification_turn_id.as_deref().is_some_and(|turn_id| {
+                self.local_task_link(&local_task_id).is_some_and(|link| {
+                    completed_transcript_messages(&link).iter().any(|message| {
+                        string_field(message, "subtaskId").as_deref() == Some(turn_id)
+                    })
+                })
+            });
+        let skip_active_notification =
+            if self.is_active_local_task(&local_task_id) && !completed_command_turn {
+                let Some(active_turn) = active_turn else {
+                    drop(routing);
+                    self.replay_codex_notifications(pending_replays);
+                    return;
+                };
+                let Some(notification_turn_id) = notification_turn_id.as_deref() else {
+                    drop(routing);
+                    self.replay_codex_notifications(pending_replays);
+                    return;
+                };
+                if notification_turn_id == active_turn.turn_id {
+                    true
+                } else {
+                    if codex_stream_debug_enabled() {
+                        log_executor_event(
+                            "runtime work routes non-active turn notification",
+                            &[
+                                ("thread_id", thread_id.clone()),
+                                ("active_turn_id", active_turn.turn_id),
+                                ("notification_turn_id", notification_turn_id.to_owned()),
+                            ],
+                        );
+                    }
+                    false
                 }
+            } else {
                 false
-            }
-        } else {
-            false
-        };
+            };
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
             self.register_codex_thread_workspace_root(&started_thread_id, &route_request, false);
         }
         drop(routing);
 
         if !skip_active_notification {
+            if !route_nested {
+                self.record_background_terminal_notification(&local_task_id, &message);
+            }
             let mut event_request = route_request;
-            if !route_nested && !is_context_compaction_request(&event_request) {
+            // A background command keeps its native turn even after a compaction route replaces it.
+            if !route_nested
+                && (!is_context_compaction_request(&event_request) || command_notification)
+            {
                 if let Some(turn_id) = notification_turn_id {
                     if event_request.subtask_id != turn_id {
                         event_request.subtask_id = turn_id;
@@ -968,5 +1011,4 @@ fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {
     turn_object
         .entry("itemsView".to_owned())
         .or_insert_with(|| Value::String("full".to_owned()));
-    turn_object.insert("status".to_owned(), Value::String("inProgress".to_owned()));
 }

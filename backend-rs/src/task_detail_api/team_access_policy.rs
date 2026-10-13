@@ -8,40 +8,9 @@
 //! are kept; the member prompt and every agent-config field other than the
 //! model references are dropped.
 //!
-//! The authorization decision (`should_redact_team_for_user`) is shared with
-//! the other team-rendering APIs, but this transformation is bound to the
-//! task-detail response model, the only response that keeps the redacted team.
-use std::collections::BTreeMap;
-
-use brz_json::RawJson;
-
+//! The field allowlist is shared with the team-list response conversion.
 use super::models::TeamResponse;
-use brz_json::OpaqueJson;
-
-/// `team_usage_summary`'s `model_reference_fields`: the only `agent_config`
-/// keys a redacted team keeps.
-const MODEL_REFERENCE_FIELDS: [&str; 4] = [
-    "bind_model",
-    "bind_model_type",
-    "bind_model_namespace",
-    "allowed_models",
-];
-
-/// Rebuild one bot's `agent_config` with only the model-reference keys.
-///
-/// Values are re-emitted verbatim, so an allowed key that is explicitly null
-/// stays null while an absent key stays absent, like the source's dict
-/// comprehension. The source reads `member.get("agent_config") or {}` and then
-/// filters its items, so a missing or non-object value yields the empty object.
-fn filtered_agent_config(config: &RawJson) -> RawJson {
-    let projected: BTreeMap<String, RawJson> =
-        serde_json::from_str(config.get()).unwrap_or_default();
-    let kept = projected
-        .into_iter()
-        .filter(|(key, _)| MODEL_REFERENCE_FIELDS.contains(&key.as_str()))
-        .collect::<BTreeMap<String, RawJson>>();
-    OpaqueJson::from_serializable(kept).to_raw_value()
-}
+use crate::teams::team_access_policy::filtered_agent_config;
 
 /// Apply `team_usage_summary` in place.
 pub(crate) fn team_usage_summary(team: &mut TeamResponse) {
@@ -57,7 +26,7 @@ mod tests {
         BotSummaryResponse, TeamBotResponse, TeamDisplayConfig, TeamWorkflowResponse,
     };
     use super::*;
-    use brz_json::raw_null;
+    use brz_json::{RawJson, raw_null};
 
     fn raw(source: &str) -> RawJson {
         serde_json::from_str(source).expect("test fixture is valid JSON")

@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import { processIsAlive, windowsTaskkillArguments } from '../e2e/desktop/process-lifecycle.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -275,6 +276,21 @@ export function acknowledgeStartedCommand(pending, started) {
 
 async function stopOwnedSessionProcesses(session) {
   if (!Number.isInteger(session.launcherPid)) return
+  if (process.platform === 'win32') {
+    await new Promise((resolvePromise, reject) => {
+      execFile(
+        'taskkill',
+        windowsTaskkillArguments(session.launcherPid),
+        { windowsHide: true },
+        error => {
+          if (error && (typeof error.code !== 'number' || processIsAlive(session.launcherPid)))
+            reject(error)
+          else resolvePromise()
+        }
+      )
+    })
+    return
+  }
   await signalProcessGroup(session.launcherPid, 'TERM')
   await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
   await signalProcessGroup(session.launcherPid, 'KILL')

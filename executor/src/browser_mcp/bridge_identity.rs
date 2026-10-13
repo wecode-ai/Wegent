@@ -128,9 +128,26 @@ fn process_is_alive(pid: u32) -> bool {
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn process_is_alive(pid: u32) -> bool {
-    pid != 0
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+    };
+    if pid == 0 {
+        return false;
+    }
+    // SAFETY: the owned handle is queried and closed in this scope.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut exit_code = 0;
+        let alive = GetExitCodeProcess(handle, &mut exit_code) != 0 && exit_code == 259;
+        CloseHandle(handle);
+        alive
+    }
 }
 
 #[cfg(test)]

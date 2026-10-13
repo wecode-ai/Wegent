@@ -630,7 +630,7 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
     let staging = if sandbox {
         None
     } else {
-        let staging_root = root.join("shared/staging");
+        let staging_root = root.join("shared").join("staging");
         fs::create_dir_all(&staging_root).map_err(|error| error.to_string())?;
         Some(tempfile::tempdir_in(&staging_root).map_err(|error| error.to_string())?)
     };
@@ -638,7 +638,8 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
         Some(staging) => staging.path().join("skills"),
         None => dirs::home_dir()
             .ok_or_else(|| "Sandbox home directory is unavailable".to_owned())?
-            .join(".claude/skills"),
+            .join(".claude")
+            .join("skills"),
     };
     let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.push((
@@ -687,7 +688,7 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
         "failed_skills": report.failed_skills,
         "failed_skill_reasons": report.failed_skill_reasons,
         "required_skills": required_skills,
-        "skills_dir": if sandbox { plan.skills_dir } else { root.join("shared/skills") },
+        "skills_dir": if sandbox { plan.skills_dir } else { root.join("shared").join("skills") },
     }))
 }
 
@@ -1494,7 +1495,7 @@ async fn download_skill(
             .strip_prefix("sha256:")
             .unwrap_or(hash)
             .to_ascii_lowercase();
-        let cached = root.join("shared/skills").join(&digest);
+        let cached = root.join("shared").join("skills").join(&digest);
         if cached.exists() || cached.is_symlink() {
             let package = crate::services::workbench::verify_published_package(
                 &root,
@@ -1557,10 +1558,7 @@ fn stage_shared_skill(
 ) -> Result<SkillDeploymentResult, String> {
     let staging = tempfile::tempdir_in(&plan.skills_dir).map_err(|error| error.to_string())?;
     let staged = staging.path().join(skill_name);
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&package.path, &staged).map_err(|error| error.to_string())?;
-    #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(&package.path, &staged).map_err(|error| error.to_string())?;
+    crate::directory_link::create(&package.path, &staged).map_err(|error| error.to_string())?;
     Ok(SkillDeploymentResult {
         skill_name: skill_name.to_owned(),
         success: true,
@@ -1907,7 +1905,7 @@ fn attachment_record(value: &Value) -> Option<AttachmentRecord> {
 
 fn resolve_attachment_workspace(request: &ExecutionRequest) -> (PathBuf, bool) {
     if let Some(project_workspace) = project_workspace_path(request) {
-        return (project_workspace.join(".wegent/attachments"), true);
+        return (project_workspace.join(".wegent").join("attachments"), true);
     }
     (workspace_root().join(&request.task_id), false)
 }
@@ -2754,7 +2752,7 @@ mod tests {
         let target = temp.path().join("target");
         fs::create_dir_all(source.join("references")).expect("nested source directory");
         fs::write(source.join("SKILL.md"), "# Shared Skill").expect("Skill file");
-        fs::write(source.join("references/guide.md"), "guide").expect("reference file");
+        fs::write(source.join("references").join("guide.md"), "guide").expect("reference file");
 
         stage_local_skill(&source, &target).expect("local Skill should stage");
 
@@ -2763,7 +2761,8 @@ mod tests {
             "# Shared Skill"
         );
         assert_eq!(
-            fs::read_to_string(target.join("references/guide.md")).expect("staged reference"),
+            fs::read_to_string(target.join("references").join("guide.md"))
+                .expect("staged reference"),
             "guide"
         );
     }
@@ -2989,7 +2988,10 @@ mod tests {
                     let (path, scope) = resolve_attachments_dir(&request, &[], "turn-1".into());
                     assert_eq!(
                         path,
-                        root.path().join("runtime-device-task/attachments/turn-1")
+                        root.path()
+                            .join("runtime-device-task")
+                            .join("attachments")
+                            .join("turn-1")
                     );
                     assert_eq!(scope, "device_private");
                 }
@@ -3001,9 +3003,10 @@ mod tests {
     fn managed_attachment_resolution_preserves_project_layout() {
         let _lock = crate::test_env::lock();
         let _mode = EnvGuard::remove("EXECUTOR_MODE");
+        let project = std::path::absolute("/workspace/project").unwrap();
         let request = ExecutionRequest {
             task_id: "task-123".to_owned(),
-            project_workspace_path: Some("/workspace/project".to_owned()),
+            project_workspace_path: Some(project.to_string_lossy().into_owned()),
             ..ExecutionRequest::default()
         };
 
@@ -3011,7 +3014,11 @@ mod tests {
 
         assert_eq!(
             path,
-            PathBuf::from("/workspace/project/.wegent/attachments/task-123/turn-1")
+            project
+                .join(".wegent")
+                .join("attachments")
+                .join("task-123")
+                .join("turn-1")
         );
         assert_eq!(storage_scope, "managed_project");
     }
@@ -3029,7 +3036,14 @@ mod tests {
         let (path, scope) = resolve_attachments_dir(&request, &[], "turn-1".into());
         assert_eq!(
             path,
-            PathBuf::from("/tmp/sandbox-workspace/task-123/task-123:executor:attachments/turn-1")
+            PathBuf::from("/tmp/sandbox-workspace")
+                .join("task-123")
+                .join(if cfg!(windows) {
+                    "task-123_executor_attachments"
+                } else {
+                    "task-123:executor:attachments"
+                })
+                .join("turn-1")
         );
         assert_eq!(scope, "managed_task");
     }
@@ -3044,7 +3058,13 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let legacy = temp
             .path()
-            .join("executor/workspace/attachments/runtime/task-1/turn-1/image.png");
+            .join("executor")
+            .join("workspace")
+            .join("attachments")
+            .join("runtime")
+            .join("task-1")
+            .join("turn-1")
+            .join("image.png");
         fs::create_dir_all(legacy.parent().unwrap()).unwrap();
         fs::write(&legacy, b"historical attachment").unwrap();
         let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
@@ -3058,7 +3078,8 @@ mod tests {
         let prepared = runtime.block_on(prepare_claude_execution_request(request));
         assert!(prepared
             .prompt
-            .to_string()
+            .as_str()
+            .unwrap()
             .contains(legacy.to_str().unwrap()));
         assert_eq!(fs::read(&legacy).unwrap(), b"historical attachment");
         assert!(!workspace.exists());
@@ -3176,7 +3197,9 @@ mod tests {
             let prepared = prepare_claude_execution_request(request).await;
             let prompt = prepared.prompt.as_str().unwrap();
             let downloaded = temp
-                .join("workspace/72/attachments")
+                .join("workspace")
+                .join("72")
+                .join("attachments")
                 .join("203")
                 .join("image.png");
 
@@ -3533,7 +3556,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            fs::read_to_string(skills_dir.join("requested-skill/SKILL.md")).unwrap(),
+            fs::read_to_string(skills_dir.join("requested-skill").join("SKILL.md")).unwrap(),
             "# Skill"
         );
         assert!(!skills_dir.join("unexpected-root").exists());
@@ -3580,7 +3603,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            fs::read_to_string(skills_dir.join("requested-skill/SKILL.md")).unwrap(),
+            fs::read_to_string(skills_dir.join("requested-skill").join("SKILL.md")).unwrap(),
             "# Requested Skill"
         );
         assert!(!skills_dir.join("__MACOSX").exists());

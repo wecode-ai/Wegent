@@ -175,7 +175,14 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].key, "sidebar-stable");
         assert_eq!(items[0].project_key, project.project_key);
-        assert_eq!(items[0].roots, project.roots);
+        assert_eq!(
+            items[0].roots,
+            project
+                .roots
+                .iter()
+                .map(|path| normalize_workspace_path(path))
+                .collect::<Vec<_>>()
+        );
         assert_eq!(items[0].ai_settings, project.ai_settings);
         assert_eq!(
             items[0].default_project_space,
@@ -196,7 +203,7 @@ mod tests {
     fn legacy_remote_project_retains_its_single_directory() {
         let value = json!([{"id": "legacy", "hostId": "remote", "remotePath": "/legacy", "label": "Legacy"}]);
         let items = remote_project_items(Some(&value));
-        assert_eq!(items[0].roots, vec!["/legacy"]);
+        assert_eq!(items[0].roots, vec![normalize_workspace_path("/legacy")]);
         assert_eq!(items[0].project_key, None);
     }
 }
