@@ -256,7 +256,7 @@ function normalizeFixedWorkspaceTabs(value: unknown): FixedWorkspaceTabPreferenc
   })
 }
 
-function mergeAppPreferences(value: unknown): AppPreferences {
+export function mergeAppPreferences(value: unknown): AppPreferences {
   if (!value || typeof value !== 'object') {
     return defaultAppPreferences
   }
@@ -530,7 +530,7 @@ function normalizeQuickPhrase(value: unknown): QuickPhrase[] {
   ]
 }
 
-function emitAppPreferencesChanged(preferences: AppPreferences) {
+export function emitAppPreferencesChanged(preferences: AppPreferences) {
   window.dispatchEvent(new CustomEvent(APP_PREFERENCES_CHANGED_EVENT, { detail: preferences }))
 }
 

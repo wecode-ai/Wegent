@@ -12,6 +12,7 @@ const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
 const returnWorkspaceTabToMain = vi.fn().mockResolvedValue(undefined)
 const closeEmptyWorkspaceWindow = vi.fn().mockResolvedValue(undefined)
 const updateAppPreferences = vi.hoisted(() => vi.fn())
+const getAppPreferences = vi.hoisted(() => vi.fn())
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 const listHarnessApps = vi.hoisted(() => vi.fn().mockResolvedValue([]))
 
@@ -19,6 +20,7 @@ vi.mock('@/desktop/appPreferences', async importOriginal => {
   const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
   return {
     ...actual,
+    getAppPreferences,
     updateAppPreferences: (patch: AppPreferencesPatch) => updateAppPreferences(patch),
   }
 })
@@ -96,6 +98,7 @@ describe('WorkspaceTabStrip', () => {
     returnWorkspaceTabToMain.mockReset().mockResolvedValue(undefined)
     closeEmptyWorkspaceWindow.mockReset().mockResolvedValue(undefined)
     updateAppPreferences.mockReset()
+    getAppPreferences.mockReset().mockResolvedValue(defaultAppPreferences)
     updateAppPreferences.mockImplementation(async (patch: AppPreferencesPatch) => ({
       ...defaultAppPreferences,
       ...patch,
@@ -422,6 +425,29 @@ describe('WorkspaceTabStrip', () => {
     renderStrip()
     fireEvent.contextMenu(screen.getByRole('tab', { name: '任务' }))
     expect(screen.queryByTestId('workspace-tab-return-to-main')).toBeNull()
+  })
+
+  test('pins against the latest preferences and replaces a stale detached assignment', async () => {
+    const user = userEvent.setup()
+    renderStrip()
+    const id = screen
+      .getByRole('tab', { name: '任务' })
+      .getAttribute('data-testid')!
+      .replace('workspace-tab-select-', '')
+    getAppPreferences.mockResolvedValue({
+      ...defaultAppPreferences,
+      fixedWorkspaceTabs: [
+        ...defaultAppPreferences.fixedWorkspaceTabs,
+        { id, kind: 'task', title: '任务', contentRoute: '/', windowLabel: 'workspace-old' },
+      ],
+    })
+    fireEvent.contextMenu(screen.getByRole('tab', { name: '任务' }))
+    await user.click(screen.getByTestId('workspace-tab-pin'))
+    await waitFor(() => expect(updateAppPreferences).toHaveBeenCalledOnce())
+    const patch = updateAppPreferences.mock.calls[0][0] as AppPreferencesPatch
+    expect(patch.fixedWorkspaceTabs?.filter(tab => tab.id === id)).toEqual([
+      { id, kind: 'task', title: '任务', contentRoute: '/' },
+    ])
   })
 
   test('closes the detached window after returning its last tab', async () => {

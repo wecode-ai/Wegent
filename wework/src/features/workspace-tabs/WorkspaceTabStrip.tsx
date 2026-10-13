@@ -18,6 +18,11 @@ import { useAppPreferencesState } from '@/features/app-preferences/useAppPrefere
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import {
+  getAppPreferences,
+  type AppPreferences,
+  type FixedWorkspaceTabPreference,
+} from '@/desktop/appPreferences'
 import { cn } from '@/lib/utils'
 import {
   closeEmptyWorkspaceWindow,
@@ -384,12 +389,13 @@ export function WorkspaceTabStrip({
     const preference = fixedWorkspaceTabPreference(contextTab)
     const windowLabel = getDesktopWindowLabel()
     try {
+      const preferences = await getAppPreferences()
       await saveFixedWorkspaceTabs(
         [
-          ...appPreferences.preferences.fixedWorkspaceTabs,
+          ...preferences.fixedWorkspaceTabs.filter(tab => tab.id !== contextTab.id),
           windowLabel.startsWith('workspace-') ? { ...preference, windowLabel } : preference,
         ],
-        appPreferences.preferences.startupWorkspaceTabId
+        preferences.startupWorkspaceTabId
       )
     } catch (error) {
       console.error('Failed to pin workspace tab', error)
@@ -399,9 +405,10 @@ export function WorkspaceTabStrip({
     if (!contextTab?.fixed || !appPreferences?.loaded) return
     setContextMenu(null)
     try {
+      const preferences = await getAppPreferences()
       await saveFixedWorkspaceTabs(
-        appPreferences.preferences.fixedWorkspaceTabs.filter(tab => tab.id !== contextTab.id),
-        appPreferences.preferences.startupWorkspaceTabId
+        preferences.fixedWorkspaceTabs.filter(tab => tab.id !== contextTab.id),
+        preferences.startupWorkspaceTabId
       )
     } catch (error) {
       console.error('Failed to unpin workspace tab', error)
@@ -410,21 +417,21 @@ export function WorkspaceTabStrip({
   const openContextTabInNewWindow = async () => {
     if (!contextTab) return
     setContextMenu(null)
-    const preferences = appPreferences?.loaded ? appPreferences.preferences : null
-    const fixedPreference = preferences?.fixedWorkspaceTabs.find(tab => tab.id === contextTab.id)
-    const label = fixedPreference ? fixedWorkspaceWindowLabel(contextTab.id) : undefined
-    const currentPreference = fixedWorkspaceTabPreference(contextTab)
-    const reassignedPreferences =
-      fixedPreference && preferences
-        ? preferences.fixedWorkspaceTabs.map(tab =>
-            tab.id === fixedPreference.id
-              ? { ...tab, ...currentPreference, windowLabel: label }
-              : tab
-          )
-        : null
+    let preferences: AppPreferences | null = null
+    let fixedPreference: FixedWorkspaceTabPreference | undefined
     try {
-      if (reassignedPreferences && preferences) {
-        await saveFixedWorkspaceTabs(reassignedPreferences, preferences.startupWorkspaceTabId)
+      preferences = await getAppPreferences()
+      fixedPreference = preferences.fixedWorkspaceTabs.find(tab => tab.id === contextTab.id)
+      const label = fixedPreference ? fixedWorkspaceWindowLabel(contextTab.id) : undefined
+      if (fixedPreference) {
+        await saveFixedWorkspaceTabs(
+          preferences.fixedWorkspaceTabs.map(tab =>
+            tab.id === contextTab.id
+              ? { ...fixedWorkspaceTabPreference(contextTab), windowLabel: label }
+              : tab
+          ),
+          preferences.startupWorkspaceTabId
+        )
       }
       const opened = label
         ? await openWorkspaceTabWindow(contextTab, { label })

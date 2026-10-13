@@ -842,6 +842,7 @@ export function createElectronCapabilityRouter(
     if (typeof updated.preventSleepWhileTasksRunning === 'boolean') {
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
     }
+    desktopServices.events.publish('preferences.changed', updated)
     return updated
   })
   router.register('weworkSync.request', params => {
