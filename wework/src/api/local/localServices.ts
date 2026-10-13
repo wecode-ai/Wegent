@@ -136,7 +136,7 @@ import type {
 } from '@/types/automation'
 import type { WorkspaceTextFileResponse, WorkspaceTreeResponse } from '@/types/workspace-files'
 import {
-  ensureLocalExecutorAvailable,
+  getLocalExecutorStatus,
   ensureLocalExecutorStarted,
   requestLocalExecutor,
   subscribeLocalExecutorEvents,
@@ -3462,7 +3462,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       }))
     },
   }
-  const available = deps.available ?? deps.ensure ?? ensureLocalExecutorAvailable
+  const available = deps.available ?? deps.ensure ?? getLocalExecutorStatus
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents

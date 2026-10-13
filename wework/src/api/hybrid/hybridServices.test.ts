@@ -117,6 +117,7 @@ const mocks = vi.hoisted(() => {
       listRuntimeWork: localListRuntimeWork,
       createRuntimeTask: localCreateRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
+      cleanRuntimeBackgroundTerminals: vi.fn(),
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: localSearchRuntimeWork,
       getWorktreeCapabilities: localGetWorktreeCapabilities,
@@ -1784,6 +1785,56 @@ describe('createHybridWorkbenchServices', () => {
       expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
     }
   )
+
+  it('keeps APP-alias recovery on the validated local runtime while it is offline', async () => {
+    const local = {
+      id: 0,
+      device_id: 'electron-current',
+      name: 'Local Executor',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'local' as const,
+      runtime_instance_id: 'runtime-current',
+    }
+    mocks.localListDevices.mockResolvedValue([local])
+    mocks.cloudListDevices.mockResolvedValue([
+      { ...local, id: 2, device_type: 'app', socket_device_id: 'app-record-2' },
+    ])
+    const services = createServices()
+    await services.deviceApi.listDevices()
+    await services.cloudBackgroundApi!.listDevices!()
+    mocks.localListDevices.mockResolvedValue([{ ...local, status: 'offline' }])
+    const [device] = await services.deviceApi.listDevices()
+    expect(device.status).toBe('offline')
+    const address = { deviceId: 'app-record-2', taskId: 'task-1' }
+    const rollback = { address, message: '' }
+    mocks.localServices.runtimeWorkApi.rollbackRuntimeTask.mockRejectedValueOnce(
+      new Error('Local IPC offline')
+    )
+    mocks.localServices.runtimeWorkApi.cleanRuntimeBackgroundTerminals.mockRejectedValueOnce(
+      new Error('Local IPC offline')
+    )
+
+    await expect(
+      services.runtimeWorkApi!.createRuntimeTask({
+        deviceId: address.deviceId,
+        runtime: 'codex',
+        message: 'run',
+      })
+    ).rejects.toThrow('executor-offline')
+    await expect(services.runtimeWorkApi!.rollbackRuntimeTask(rollback)).rejects.toThrow(
+      'Local IPC offline'
+    )
+    await expect(
+      services.runtimeWorkApi!.cleanRuntimeBackgroundTerminals!(address)
+    ).rejects.toThrow('Local IPC offline')
+    expect(mocks.localServices.runtimeWorkApi.rollbackRuntimeTask).toHaveBeenCalledWith(rollback)
+    expect(mocks.localServices.runtimeWorkApi.cleanRuntimeBackgroundTerminals).toHaveBeenCalledWith(
+      address
+    )
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+    expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
+  })
 
   it('forwards the delivery fence to the selected runtime adapter', async () => {
     const services = createServices()
