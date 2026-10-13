@@ -18,8 +18,17 @@ import { useAppPreferencesState } from '@/features/app-preferences/useAppPrefere
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import {
+  getAppPreferences,
+  type AppPreferences,
+  type FixedWorkspaceTabPreference,
+} from '@/desktop/appPreferences'
 import { cn } from '@/lib/utils'
-import { openWorkspaceTabWindow } from './workspaceWindow'
+import {
+  closeEmptyWorkspaceWindow,
+  openWorkspaceTabWindow,
+  returnWorkspaceTabToMain,
+} from './workspaceWindow'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
 import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
@@ -362,18 +371,31 @@ export function WorkspaceTabStrip({
     setAddMenuPosition(null)
   }
   const contextTab = visibleTabs.find(tab => tab.id === contextMenu?.tabId) ?? null
+  const detachedWindow = getDesktopWindowLabel().startsWith('workspace-')
+  const returnContextTabToMain = async () => {
+    if (!contextTab || !detachedWindow) return
+    setContextMenu(null)
+    try {
+      await returnWorkspaceTabToMain(contextTab)
+      detachTab?.(contextTab.id)
+      if (tabs.length === 1) await closeEmptyWorkspaceWindow()
+    } catch (error) {
+      console.error('Failed to return workspace tab to main window', error)
+    }
+  }
   const pinContextTab = async () => {
     if (!contextTab || contextTab.fixed || !appPreferences?.loaded) return
     setContextMenu(null)
     const preference = fixedWorkspaceTabPreference(contextTab)
     const windowLabel = getDesktopWindowLabel()
     try {
+      const preferences = await getAppPreferences()
       await saveFixedWorkspaceTabs(
         [
-          ...appPreferences.preferences.fixedWorkspaceTabs,
+          ...preferences.fixedWorkspaceTabs.filter(tab => tab.id !== contextTab.id),
           windowLabel.startsWith('workspace-') ? { ...preference, windowLabel } : preference,
         ],
-        appPreferences.preferences.startupWorkspaceTabId
+        preferences.startupWorkspaceTabId
       )
     } catch (error) {
       console.error('Failed to pin workspace tab', error)
@@ -383,9 +405,10 @@ export function WorkspaceTabStrip({
     if (!contextTab?.fixed || !appPreferences?.loaded) return
     setContextMenu(null)
     try {
+      const preferences = await getAppPreferences()
       await saveFixedWorkspaceTabs(
-        appPreferences.preferences.fixedWorkspaceTabs.filter(tab => tab.id !== contextTab.id),
-        appPreferences.preferences.startupWorkspaceTabId
+        preferences.fixedWorkspaceTabs.filter(tab => tab.id !== contextTab.id),
+        preferences.startupWorkspaceTabId
       )
     } catch (error) {
       console.error('Failed to unpin workspace tab', error)
@@ -394,21 +417,21 @@ export function WorkspaceTabStrip({
   const openContextTabInNewWindow = async () => {
     if (!contextTab) return
     setContextMenu(null)
-    const preferences = appPreferences?.loaded ? appPreferences.preferences : null
-    const fixedPreference = preferences?.fixedWorkspaceTabs.find(tab => tab.id === contextTab.id)
-    const label = fixedPreference ? fixedWorkspaceWindowLabel(contextTab.id) : undefined
-    const currentPreference = fixedWorkspaceTabPreference(contextTab)
-    const reassignedPreferences =
-      fixedPreference && preferences
-        ? preferences.fixedWorkspaceTabs.map(tab =>
-            tab.id === fixedPreference.id
-              ? { ...tab, ...currentPreference, windowLabel: label }
-              : tab
-          )
-        : null
+    let preferences: AppPreferences | null = null
+    let fixedPreference: FixedWorkspaceTabPreference | undefined
     try {
-      if (reassignedPreferences && preferences) {
-        await saveFixedWorkspaceTabs(reassignedPreferences, preferences.startupWorkspaceTabId)
+      preferences = await getAppPreferences()
+      fixedPreference = preferences.fixedWorkspaceTabs.find(tab => tab.id === contextTab.id)
+      const label = fixedPreference ? fixedWorkspaceWindowLabel(contextTab.id) : undefined
+      if (fixedPreference) {
+        await saveFixedWorkspaceTabs(
+          preferences.fixedWorkspaceTabs.map(tab =>
+            tab.id === contextTab.id
+              ? { ...fixedWorkspaceTabPreference(contextTab), windowLabel: label }
+              : tab
+          ),
+          preferences.startupWorkspaceTabId
+        )
       }
       const opened = label
         ? await openWorkspaceTabWindow(contextTab, { label })
@@ -628,6 +651,17 @@ export function WorkspaceTabStrip({
               >
                 {t('workbench.workspace_tab_open_new_window', '在新窗口中打开')}
               </button>
+              {detachedWindow ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="workspace-tab-return-to-main"
+                  onClick={() => void returnContextTabToMain()}
+                  className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
+                >
+                  {t('workbench.workspace_tab_return_to_main', '移回主窗口')}
+                </button>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"

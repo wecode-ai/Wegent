@@ -7,6 +7,7 @@ core_segments=(
   workspace-tabs
   collaboration-shared-core
   collaboration-issue-task-discovery
+  collaboration-app-queue-identity
   collaboration-issue-archive
   collaboration-first-use
   collaboration-worktree-policy
@@ -170,7 +171,7 @@ core_shards=(
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-issue-archive,collaboration-local-group-cancellation
+  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
   rendering-extensions,transcript-sync,background-terminals
@@ -639,6 +640,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-issue-task-discovery.scenario.mjs)
       select_target "core:collaboration-issue-task-discovery"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-app-queue-identity.scenario.mjs)
+      select_target "core:collaboration-app-queue-identity"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs)
