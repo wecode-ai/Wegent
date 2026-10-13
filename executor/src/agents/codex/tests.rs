@@ -498,9 +498,13 @@ fn environment_change_diagnostics_report_keys_without_values() {
 
 #[test]
 fn shared_notification_lag_is_recoverable() {
-    let notification =
-        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None, false)
-            .expect("lagged notifications should keep the turn alive");
+    let notification = shared_notification_result(
+        Err(broadcast::error::RecvError::Lagged(37)),
+        None,
+        false,
+        false,
+    )
+    .expect("lagged notifications should keep the turn alive");
 
     assert!(matches!(notification, SharedNotification::Lagged(37)));
 }
@@ -508,7 +512,7 @@ fn shared_notification_lag_is_recoverable() {
 #[test]
 fn closed_notification_stream_reports_executor_shutdown() {
     assert!(matches!(
-        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true),
+        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true, false),
         Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
     ));
 }
@@ -5351,4 +5355,120 @@ async fn named_home_action_protects_only_its_request_scoped_process() {
         })
         .await;
     assert_eq!(scoped.restart_if_idle().await, Ok(()));
+}
+
+async fn read_goal_disconnect_case(
+    goal_status: Option<&str>,
+    process_exit: bool,
+    shutdown: bool,
+    completed: bool,
+) -> Result<ExecutionOutcome, String> {
+    let client =
+        CodexAppServerClient::new(format!("unused-test-app-server-{}", uuid::Uuid::new_v4()));
+    client.state.lock().await.executor_shutdown_requested = shutdown;
+    let mut state = CodexRunState::default();
+    state.set_root_thread_id("thread-goal");
+    if let Some(status) = goal_status {
+        state.set_goal_status(status);
+    }
+    let (sender, mut receiver) = broadcast::channel(4);
+    if completed {
+        sender
+            .send(json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-goal",
+                    "turn": {"id": "turn-previous", "status": "completed"}
+                }
+            }))
+            .unwrap();
+    }
+    if completed && goal_status == Some("active") {
+        sender
+            .send(json!({
+                "method": "turn/started",
+                "params": {
+                    "threadId": "thread-goal",
+                    "turn": {"id": "turn-continuation", "status": "inProgress"}
+                }
+            }))
+            .unwrap();
+    }
+    if process_exit {
+        sender
+            .send(json!({
+                "method": "codex/app-server/exited",
+                "params": {"message": "test process exited"}
+            }))
+            .unwrap();
+    }
+    drop(sender);
+    read_shared_turn_notifications(
+        &client,
+        &mut receiver,
+        "thread-goal",
+        &mut state,
+        5,
+        Instant::now() + Duration::from_secs(5),
+        SharedTurnNotificationOptions {
+            overload_turn_recovering: None,
+            overload_continuation_params: json!({}),
+            active_turn_id: Some("turn-previous".to_owned()),
+            expected_client_user_message_id: None,
+            notifications: None,
+            cancellation: None,
+            request_user_input_answers: None,
+            active_turn_started: None,
+            active_turn_finished: None,
+            wait_for_goal_continuation: true,
+            auto_approve_mcp_tool_calls: false,
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn goal_read_loop_process_exit_does_not_reuse_completed_turn() {
+    let result = read_goal_disconnect_case(Some("active"), true, false, true).await;
+    assert!(matches!(result, Err(error) if error == CODEX_APP_SERVER_PROCESS_EXITED));
+}
+
+#[tokio::test]
+async fn goal_read_loop_closed_stream_does_not_reuse_completed_turn() {
+    let result = read_goal_disconnect_case(Some("active"), false, false, true).await;
+    assert!(matches!(result, Err(error) if error == CODEX_APP_SERVER_PROCESS_EXITED));
+}
+
+#[tokio::test]
+async fn goal_read_loop_preserves_real_terminal_completion() {
+    for status in [None, Some("complete")] {
+        for exit in [false, true] {
+            assert!(matches!(
+                read_goal_disconnect_case(status, exit, false, true).await,
+                Ok(ExecutionOutcome::Completed { .. })
+            ));
+        }
+    }
+}
+
+#[tokio::test]
+async fn goal_read_loop_shutdown_preserves_interruption_after_completed_turn() {
+    for exit in [false, true] {
+        for completed in [false, true] {
+            assert!(matches!(
+                read_goal_disconnect_case(Some("active"), exit, true, completed).await,
+                Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+            ));
+        }
+    }
+}
+
+#[tokio::test]
+async fn goal_read_loop_interruption_without_previous_completion() {
+    for exit in [false, true] {
+        assert!(matches!(
+            read_goal_disconnect_case(Some("active"), exit, false, false).await,
+            Err(error) if error == CODEX_APP_SERVER_PROCESS_EXITED
+        ));
+    }
 }

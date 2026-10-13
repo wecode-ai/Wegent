@@ -48,6 +48,8 @@ const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_EXECUTOR_SHUTDOWN: &str =
     "codex app-server stopped because the executor is shutting down";
+pub const CODEX_APP_SERVER_PROCESS_EXITED: &str =
+    "codex app-server exited while an active Goal was running";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE: u32 = 720;
@@ -2496,13 +2498,16 @@ async fn read_shared_turn_notifications(
             }
             continue;
         };
-        let executor_shutdown_requested =
-            matches!(received, Err(broadcast::error::RecvError::Closed))
-                && client.state.lock().await.executor_shutdown_requested;
+        let executor_shutdown_requested = (matches!(
+            received,
+            Err(broadcast::error::RecvError::Closed)
+        ) || matches!(&received, Ok(message) if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited")))
+            && client.state.lock().await.executor_shutdown_requested;
         let notification = shared_notification_result(
             received,
             last_outcome.clone(),
             executor_shutdown_requested,
+            options.wait_for_goal_continuation && state.goal_is_active(),
         )?;
         let message = match notification {
             SharedNotification::Message(message) => message,
@@ -2523,18 +2528,6 @@ async fn read_shared_turn_notifications(
                 return Ok(outcome);
             }
         };
-        if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
-            if let Some(outcome) = last_outcome {
-                return Ok(outcome);
-            }
-            return Err(message
-                .get("params")
-                .and_then(|params| params.get("message"))
-                .and_then(Value::as_str)
-                .unwrap_or("codex app-server exited before completing the turn")
-                .to_owned());
-        }
-
         if !notification_belongs_to_thread(client, &message, thread_id).await {
             continue;
         }
@@ -2916,23 +2909,34 @@ fn shared_notification_result(
     result: Result<Value, broadcast::error::RecvError>,
     last_outcome: Option<ExecutionOutcome>,
     executor_shutdown_requested: bool,
+    active_goal: bool,
 ) -> Result<SharedNotification, String> {
-    match result {
-        Ok(message) => Ok(SharedNotification::Message(message)),
-        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-            Ok(SharedNotification::Lagged(skipped))
+    let error = match result {
+        Ok(message)
+            if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") =>
+        {
+            message
+                .get("params")
+                .and_then(|params| params.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("codex app-server exited before completing the turn")
+                .to_owned()
         }
-        Err(broadcast::error::RecvError::Closed) => last_outcome
-            .map(SharedNotification::Completed)
-            .ok_or_else(|| {
-                if executor_shutdown_requested {
-                    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned()
-                } else {
-                    "codex app-server notification stream closed before completing the turn"
-                        .to_owned()
-                }
-            }),
+        Ok(message) => return Ok(SharedNotification::Message(message)),
+        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+            return Ok(SharedNotification::Lagged(skipped));
+        }
+        Err(broadcast::error::RecvError::Closed) => {
+            "codex app-server notification stream closed before completing the turn".to_owned()
+        }
+    };
+    if executor_shutdown_requested {
+        return Err(CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned());
     }
+    if active_goal {
+        return Err(CODEX_APP_SERVER_PROCESS_EXITED.to_owned());
+    }
+    last_outcome.map(SharedNotification::Completed).ok_or(error)
 }
 
 async fn interrupt_shared_turn(

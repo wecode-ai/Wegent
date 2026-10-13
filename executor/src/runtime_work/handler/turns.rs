@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::agents::CODEX_APP_SERVER_EXECUTOR_SHUTDOWN;
+use crate::agents::{CODEX_APP_SERVER_EXECUTOR_SHUTDOWN, CODEX_APP_SERVER_PROCESS_EXITED};
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
@@ -26,10 +26,11 @@ const WORKTREE_PREPARATION_STOP_WAIT_MS: u64 = 50;
 static RUNTIME_TURN_QUEUE_WRITE_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
 static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-fn interrupted_by_executor_shutdown(
+pub(super) fn interrupted_for_runtime_restart(
     result: &Result<crate::agents::CodexAppServerTurn, String>,
 ) -> bool {
-    matches!(result, Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN)
+    matches!(result, Err(error) if matches!(error.as_str(),
+        CODEX_APP_SERVER_EXECUTOR_SHUTDOWN | CODEX_APP_SERVER_PROCESS_EXITED))
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -561,6 +562,11 @@ impl RuntimeWorkRpcHandler {
                 .get(GOAL_NEEDS_ATTENTION_MARKER)
                 .and_then(Value::as_bool)
                 != Some(true)
+                && !self.local_task_link(local_task_id).is_some_and(|link| {
+                    link.status == "failed"
+                        && link.goal_status.as_deref() == Some("active")
+                        && link.goal_execution_status.as_deref() == Some("needsAttention")
+                })
             {
                 return Ok(false);
             }
@@ -1325,9 +1331,9 @@ impl RuntimeWorkRpcHandler {
                     .await
             }
             .await;
-            let interrupted_by_shutdown = interrupted_by_executor_shutdown(&result);
+            let interrupted_for_restart = interrupted_for_runtime_restart(&result);
             let goal_execution_needs_attention = match result.as_ref() {
-                Err(_) if interrupted_by_shutdown => false,
+                Err(_) if interrupted_for_restart => false,
                 Err(_) => true,
                 Ok(turn) => matches!(
                     turn.outcome,
@@ -1406,7 +1412,7 @@ impl RuntimeWorkRpcHandler {
                     ExecutionOutcome::Failed { .. } => "failed",
                     ExecutionOutcome::Running => "inProgress",
                 },
-                Err(_) if interrupted_by_executor_shutdown(&result) => "inProgress",
+                Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN => "inProgress",
                 Err(_) => "failed",
             };
             handler
@@ -1424,7 +1430,7 @@ impl RuntimeWorkRpcHandler {
             );
             handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
             handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-            if interrupted_by_shutdown {
+            if interrupted_for_restart {
                 return;
             }
             if goal_execution_needs_attention
@@ -1603,7 +1609,7 @@ impl RuntimeWorkRpcHandler {
         active_turn: Option<&ActiveCodexTurn>,
         result: Result<crate::agents::CodexAppServerTurn, String>,
     ) {
-        if interrupted_by_executor_shutdown(&result) {
+        if matches!(&result, Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN) {
             log_executor_event(
                 "runtime work turn interrupted by executor shutdown",
                 &[
@@ -1771,6 +1777,9 @@ impl RuntimeWorkRpcHandler {
                         ],
                     );
                     return;
+                }
+                if error == CODEX_APP_SERVER_PROCESS_EXITED {
+                    self.set_goal_execution_status(local_task_id, Some("needsAttention"));
                 }
                 self.mark_thread_event_routes_idle_for_local_task(local_task_id);
                 self.persist_failed_assistant_message(local_task_id, &event_request, &error);

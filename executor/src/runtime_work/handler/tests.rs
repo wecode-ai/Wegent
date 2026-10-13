@@ -6826,3 +6826,146 @@ fn context_compaction_cache_preserves_started_and_completed_outcomes() {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[test]
+fn recoverable_app_server_interruption_preserves_active_goal_and_releases_live_execution() {
+    let _lock = crate::test_env::lock();
+    for (error, verify_restart) in [
+        (crate::agents::CODEX_APP_SERVER_EXECUTOR_SHUTDOWN, true),
+        (crate::agents::CODEX_APP_SERVER_PROCESS_EXITED, true),
+        (crate::agents::CODEX_APP_SERVER_PROCESS_EXITED, false),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+        let _workbench_home =
+            ScalarEnv::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (event_tx, mut event_rx) = broadcast::channel(4);
+                let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+                    "device-1",
+                    "/bin/false",
+                    event_tx,
+                );
+                let request = ExecutionRequest {
+                    task_id: "task-active-goal".to_owned(),
+                    subtask_id: "turn-active-goal".to_owned(),
+                    ..ExecutionRequest::default()
+                };
+                let mut link = RuntimeTaskLink::new_pending(
+                    request.task_id.clone(),
+                    "/tmp/project".to_owned(),
+                    "Active Goal".to_owned(),
+                );
+                link.goal_status = Some("active".to_owned());
+                handler.upsert_local_task(link);
+                let execution_id = start_test_execution(&handler, &request.task_id);
+                handler.active_goal_turns.lock().unwrap().insert(
+                    request.task_id.clone(),
+                    SpawnTurnRequest {
+                        local_task_id: request.task_id.clone(),
+                        runtime: "codex".to_owned(),
+                        request: request.clone(),
+                        send_payload: None,
+                        direct_thread_id: None,
+                        fork_thread_id: None,
+                        fork_thread_path: None,
+                        resume_thread_id: Some("thread-goal".to_owned()),
+                        initial_thread_goal: None,
+                    },
+                );
+                handler.persist_turn_queue(VecDeque::new()).await.unwrap();
+                handler.handle_turn_result(
+                    &request.task_id,
+                    execution_id,
+                    &request,
+                    None,
+                    Err(error.to_owned()),
+                );
+                let task = handler.local_task_link(&request.task_id).unwrap();
+                assert_eq!(task.goal_status.as_deref(), Some("active"));
+                assert_ne!(task.status, "succeeded");
+                if error == crate::agents::CODEX_APP_SERVER_EXECUTOR_SHUTDOWN {
+                    assert!(event_rx.try_recv().is_err());
+                } else {
+                    assert_eq!(event_rx.try_recv().unwrap()["event"], "response.failed");
+                    assert_eq!(task.status, "failed");
+                    assert!(!task.running);
+                    assert!(
+                        !handler.is_current_local_task_execution(&request.task_id, execution_id)
+                    );
+                    assert_eq!(
+                        task.goal_execution_status.as_deref(),
+                        Some("needsAttention")
+                    );
+                }
+                let persisted =
+                    super::turns::read_runtime_turn_state(&handler.turn_queue_path).unwrap();
+                let goal = persisted.active_goal_turns.get(&request.task_id).unwrap();
+                assert_eq!(goal.resume_thread_id.as_deref(), Some("thread-goal"));
+                assert!(!goal.request.extra.contains_key(GOAL_NEEDS_ATTENTION_MARKER));
+                if verify_restart {
+                    let (sender, _) = broadcast::channel(4);
+                    let restarted =
+                        RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+                            "device-1",
+                            "/bin/false",
+                            sender,
+                        );
+                    assert_eq!(
+                        restarted
+                            .local_task_link(&request.task_id)
+                            .unwrap()
+                            .goal_execution_status
+                            .as_deref(),
+                        Some("recovering"),
+                    );
+                    let scheduler = restarted.turn_scheduler.lock().unwrap();
+                    let restored = scheduler
+                        .queued_turns
+                        .front()
+                        .expect("next Executor must recover interrupted Goal");
+                    assert_eq!(restored.local_task_id, request.task_id);
+                    assert_eq!(restored.resume_thread_id.as_deref(), Some("thread-goal"));
+                    assert_eq!(
+                        restored.request.extra.get(RESUME_GOAL_ONLY_MARKER),
+                        Some(&Value::Bool(true))
+                    );
+                    drop(scheduler);
+                    assert!(!restarted
+                        .resume_goal_needing_attention(&request.task_id)
+                        .await
+                        .unwrap());
+                } else {
+                    {
+                        let mut scheduler = handler.turn_scheduler.lock().unwrap();
+                        scheduler.max_concurrent_tasks = 1;
+                        scheduler.active_tasks = 1;
+                        scheduler
+                            .active_task_ids
+                            .insert("capacity-blocker".to_owned());
+                    }
+                    assert!(handler
+                        .resume_goal_needing_attention(&request.task_id)
+                        .await
+                        .unwrap());
+                    assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 1);
+                    assert!(!handler
+                        .resume_goal_needing_attention(&request.task_id)
+                        .await
+                        .unwrap());
+                    assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 1);
+                }
+            });
+    }
+}
+
+#[test]
+fn business_errors_are_not_runtime_restart_interruptions() {
+    assert!(!super::turns::interrupted_for_runtime_restart(&Err(
+        "model request failed".to_owned(),
+    )));
+}
