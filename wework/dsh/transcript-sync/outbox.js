@@ -10,6 +10,10 @@ export class SqliteSyncOutbox {
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
       PRAGMA busy_timeout = 5000;
+    `)
+    this.database.exec('BEGIN')
+    try {
+      this.database.exec(`
       CREATE TABLE IF NOT EXISTS session_routes (
         session_id TEXT PRIMARY KEY,
         transcript_id TEXT NOT NULL,
@@ -42,12 +46,17 @@ export class SqliteSyncOutbox {
       CREATE INDEX IF NOT EXISTS pending_turns_transcript
         ON pending_turns (transcript_id);
     `)
-    const pendingColumns = this.database
-      .prepare('PRAGMA table_info(pending_turns)')
-      .all()
-      .map(column => column.name)
-    if (!pendingColumns.includes('executor_turn_id')) {
-      this.database.exec('ALTER TABLE pending_turns ADD COLUMN executor_turn_id TEXT')
+      const pendingColumns = this.database
+        .prepare('PRAGMA table_info(pending_turns)')
+        .all()
+        .map(column => column.name)
+      if (!pendingColumns.includes('executor_turn_id')) {
+        this.database.exec('ALTER TABLE pending_turns ADD COLUMN executor_turn_id TEXT')
+      }
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.close()
+      throw error
     }
     this.selectRoute = this.database.prepare(`
       SELECT

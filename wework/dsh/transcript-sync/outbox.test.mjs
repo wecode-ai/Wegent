@@ -301,3 +301,37 @@ test('upgrades an existing locator outbox without copying transcript bodies', as
   assert.equal(outbox.first().executorTurnId, 'executor-turn-1')
   outbox.close()
 })
+
+test('rolls back partial schema initialization and closes the failed connection', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'outbox.sqlite3')
+  const legacy = new DatabaseSync(path)
+  legacy.exec(
+    "CREATE TABLE pending_turns (turn_id TEXT PRIMARY KEY); INSERT INTO pending_turns VALUES ('existing-turn')"
+  )
+  legacy.close()
+
+  assert.throws(() => new SqliteSyncOutbox(path), /no such column/)
+
+  const reopened = new DatabaseSync(path)
+  try {
+    assert.equal(reopened.prepare('PRAGMA synchronous').get().synchronous, 2)
+    assert.equal(reopened.prepare('PRAGMA journal_mode').get().journal_mode, 'wal')
+    assert.equal(
+      reopened
+        .prepare(
+          "SELECT count(*) AS count FROM sqlite_schema WHERE name IN ('session_routes', 'discarded_turns')"
+        )
+        .get().count,
+      0
+    )
+    assert.equal(
+      reopened.prepare('SELECT turn_id FROM pending_turns').get().turn_id,
+      'existing-turn'
+    )
+    reopened.exec('BEGIN EXCLUSIVE; ROLLBACK')
+  } finally {
+    reopened.close()
+  }
+})
