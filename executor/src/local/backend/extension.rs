@@ -16,7 +16,7 @@ use tokio::{process::Command, time::timeout};
 
 const EXTENSION_TIMEOUT: Duration = Duration::from_secs(60);
 
-type TaskSkillsResolver = dyn Fn(&str, &str, &str) -> Result<PathBuf, String> + Send + Sync;
+type TaskSkillsResolver = dyn Fn(&str, &str) -> Result<PathBuf, String> + Send + Sync;
 
 #[derive(Clone)]
 enum BackendIdentity {
@@ -67,7 +67,7 @@ impl DeviceExtensionRunner {
 
     pub fn with_task_skills_resolver<F>(mut self, resolver: F) -> Self
     where
-        F: Fn(&str, &str, &str) -> Result<PathBuf, String> + Send + Sync + 'static,
+        F: Fn(&str, &str) -> Result<PathBuf, String> + Send + Sync + 'static,
     {
         self.task_skills_resolver = Arc::new(resolver);
         self
@@ -91,8 +91,8 @@ impl DeviceExtensionRunner {
     }
 
     pub fn with_workbench_root(self, root: PathBuf) -> Self {
-        self.with_task_skills_resolver(move |task_id, backend_url, user_id| {
-            crate::agents::task_skills_directory_at(&root, task_id, backend_url, user_id)
+        self.with_task_skills_resolver(move |task_id, user_id| {
+            crate::agents::task_skills_directory_at(&root, task_id, user_id)
         })
     }
 
@@ -174,8 +174,8 @@ impl DeviceExtensionRunner {
         let skills_root = if extension_scope == "global" {
             self.global_skills_root.clone()
         } else {
-            let (backend_url, user_id) = self.authenticated_identity().await?;
-            (self.task_skills_resolver)(&task_id.to_string(), &backend_url, &user_id)?
+            let (_, user_id) = self.authenticated_identity().await?;
+            (self.task_skills_resolver)(&task_id.to_string(), &user_id)?
         };
         let script = resolve_script_path(&skills_root, &extension_name, &script_path)?;
         let output = run_script(&script, &action, &extension_name, &extension_payload).await?;
