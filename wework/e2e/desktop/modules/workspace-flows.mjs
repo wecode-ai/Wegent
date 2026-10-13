@@ -172,14 +172,23 @@ export async function selectAgentFormTab(control, dialogId, tab, timeoutMs) {
 }
 
 /** Use a stable cloud resource identity and exercise both creation tabs. */
-export async function selectCloudAgentModel(control, request, modelName, timeoutMs) {
+export async function selectCloudAgentModel(
+  control,
+  request,
+  modelName,
+  timeoutMs,
+  environmentId = null
+) {
   const dialog = 'wework-agent-resource-creator'
   await control.command('waitFor', `[data-testid="${dialog}-tab-basic"][aria-selected="true"]`, {
     timeoutMs,
   })
   await selectAgentFormTab(control, dialog, 'runtime', timeoutMs)
-  await control.command('select', '[data-testid="wework-agent-environment"]', {
-    value: 'policy:project_pool',
+  const environment = '[data-testid="wework-agent-environment"]'
+  const environmentValue = environmentId == null ? 'policy:project_pool' : String(environmentId)
+  await selectWhenOptionAvailable(control, environment, environmentValue, timeoutMs)
+  await control.command('waitFor', `${environment} option[value="${environmentValue}"]:checked`, {
+    timeoutMs,
   })
   const models = await request(
     '/api/models/unified?include_config=false&scope=all&model_category_type=llm&client_origin=wework'
