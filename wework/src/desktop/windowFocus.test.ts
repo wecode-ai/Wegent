@@ -37,4 +37,20 @@ describe('windowFocus', () => {
     unsubscribe()
     expect(unsubscribeNative).toHaveBeenCalledOnce()
   })
+
+  test('does not treat retained renderer focus as native window activation', async () => {
+    window.weworkElectronLifecycle = {
+      onSystemResume: vi.fn(() => () => undefined),
+      onWindowFocusChanged: vi.fn(() => () => undefined),
+    }
+    invokeDesktopHostMock.mockResolvedValue({ focused: false })
+    const unsubscribe = subscribeMainWindowFocus(vi.fn())
+    try {
+      await vi.waitFor(() => expect(isMainWindowFocused()).toBe(false))
+      window.dispatchEvent(new FocusEvent('focus'))
+      expect(isMainWindowFocused()).toBe(false)
+    } finally {
+      unsubscribe()
+    }
+  })
 })
