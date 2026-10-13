@@ -5074,7 +5074,7 @@ export function CloudTodoWorkspace({
                         return (
                           <CloudTodoBoardCard
                             item={item}
-                            unread={isMyTasksBoard ? isTaskBoardItemUnread(item) : undefined}
+                            unread={isMyTasksBoard && isTaskBoardItemUnread(item)}
                             taskBindings={
                               (
                                 selectedProject.location === 'cloud'
