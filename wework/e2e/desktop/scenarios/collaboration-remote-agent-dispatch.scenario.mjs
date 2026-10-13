@@ -167,14 +167,14 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
   )
 }
 
-async function createAgent(control, request, projectId, timeoutMs) {
+async function createAgent(control, request, projectId, timeoutMs, environmentId) {
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
     timeoutMs,
   })
   await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', { timeoutMs })
   await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: AGENT })
-  await selectCloudAgentModel(control, request, MODEL, timeoutMs)
+  await selectCloudAgentModel(control, request, MODEL, timeoutMs, environmentId)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
     value: `${MARKER}。直接执行当前 Issue，不创建工作流、不调用负责人或协作小组。`,
   })
@@ -753,7 +753,7 @@ export function createDesktopScenario({
         0,
         'Direct assignment must work with an authorized runner and no code repository'
       )
-      const agent = await createAgent(control, request, project.id, uiTimeoutMs)
+      const agent = await createAgent(control, request, project.id, uiTimeoutMs, remoteDevice.id)
       issue = await createAndAssignIssue(control, request, project.id, agent, uiTimeoutMs)
 
       try {
