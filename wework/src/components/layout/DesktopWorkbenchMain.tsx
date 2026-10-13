@@ -357,7 +357,6 @@ function hasResolvedExecutionAddress(
   )
 }
 
-const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
 const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
   'a',
@@ -2057,9 +2056,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? '100%'
     : `calc(100% - ${rightSplitChatWidth}px)`
   const rightPanelShellWidth = displayedRightPanelOpen ? rightPanelWidth : '0px'
-  const rightPanelTabBarRightOffset = '0px'
+  // Reserve each 32px control, the 4px gaps, and the 8px trailing inset.
+  const rightTitlebarActionsWidth = displayedRightPanelOpen ? '7rem' : '5rem'
   const rightPanelTabBarWidth = displayedRightPanelOpen
-    ? `calc(${rightPanelWidth} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
+    ? `calc(${rightPanelWidth} - ${rightTitlebarActionsWidth})`
     : '0px'
   const temporaryChatAvailable = !activeLocalHarnessSession
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
@@ -4975,7 +4975,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
-          width: `calc(${rightPanelTabBarWidth} + ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`,
+          width: `calc(${rightPanelTabBarWidth} + ${rightTitlebarActionsWidth})`,
         }}
       />
       <div
@@ -4989,7 +4989,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
-          right: COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE,
+          right: rightTitlebarActionsWidth,
           width: rightPanelTabBarWidth,
         }}
       >
@@ -5008,7 +5008,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         )}
         style={{
           right: '0px',
-          width: COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE,
+          width: rightTitlebarActionsWidth,
         }}
       >
         {topRightActions}

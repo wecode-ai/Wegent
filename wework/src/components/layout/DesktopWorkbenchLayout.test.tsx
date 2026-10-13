@@ -8983,7 +8983,7 @@ describe('DesktopWorkbenchLayout', () => {
       'h-full'
     )
     expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
-      right: '5rem',
+      right: '7rem',
     })
     expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('border-l')
     expect(screen.getByTestId('titlebar-actions')).toHaveClass('min-w-[5rem]')
@@ -8992,6 +8992,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('titlebar-actions')).toHaveStyle({
       right: '0px',
+      width: '7rem',
     })
     expect(screen.getByTestId('titlebar-right-workspace-zone').style.width).toContain(
       'calc(100% - 420px)'
@@ -9034,6 +9035,8 @@ describe('DesktopWorkbenchLayout', () => {
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
     expect(rightPanelShell).toHaveStyle({ width: '0px' })
+    expect(screen.getByTestId('titlebar-actions')).toHaveStyle({ width: '5rem' })
+    expect(screen.queryByTestId('toggle-right-workspace-panel-expanded-button')).toBeNull()
     expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
     expect(rightPanelShell).toContainElement(screen.getByTestId('right-workspace-file-tab'))
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
