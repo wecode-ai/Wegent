@@ -1942,7 +1942,9 @@ describe('DesktopWorkbenchLayout', () => {
     }
   }
 
-  test('keeps startup blocked until a selected task transcript is restored', async () => {
+  test('keeps startup blocked until a selected task transcript is restored', async ({
+    onTestFinished,
+  }) => {
     startupMarkdownRenderer.enabled = true
     runtimeMocks.electron = true
     window.__WEWORK_RUNTIME_CONFIG__ = {
@@ -1953,8 +1955,13 @@ describe('DesktopWorkbenchLayout', () => {
     const phaseLog = vi.spyOn(console, 'info')
     const startupReadyObservations = vi.fn()
     const invoke = desktopHostMocks.invoke.getMockImplementation()
+    onTestFinished(() => {
+      desktopHostMocks.invoke.mockReset()
+      if (invoke) desktopHostMocks.invoke.mockImplementation(invoke)
+    })
     desktopHostMocks.invoke.mockImplementation(async capability => {
       if (capability === 'renderer.startupReady') {
+        expect.soft(screen.queryByText('Restored startup answer')).toBeVisible()
         startupReadyObservations(
           screen.queryByText('Restored startup answer'),
           phaseLog.mock.calls.slice()

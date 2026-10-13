@@ -236,7 +236,7 @@ Three runtime modules no longer import the archive library eagerly; it loads onl
 
 [Both Wework test shards](https://github.com/wecode-ai/Wegent/actions/runs/38451605817) passed, but assertions inside the Transcript restoration test's `renderer.startupReady` mock were caught and logged by production error handling rather than failing the test. The fixture set only the mocked Electron flag; the real renderer-phase module read a browser runtime config and correctly suppressed the Electron-only phase.
 
-The fixture now uses the actual Electron/main config, captures DOM and phase-log snapshots at readiness, and asserts the original visible-content and surface-ready ordering requirements in the test body. Moving the assertion first reproduced a failure; correcting the fixture passed the case, followed by four startup/recovery cases and all 17 phase tests. The original regex, product gates and E2E remain unchanged. Per-case config reset prevents swallowed assertions and environment leakage.
+The fixture now uses the actual Electron/main config and checks visibility at the readiness call with Vitest `expect.soft`, which records a runner failure without throwing into production error handling. Phase-log snapshots and call counts are still asserted in the test body. Temporarily hiding and immediately restoring the content proved that final DOM visibility cannot mask a failure at the readiness call. Four startup/recovery cases and all 17 phase tests passed. The original regex, product gates and E2E remain unchanged. Restoring the invoke mock implementation on test completion and resetting per-case config prevent swallowed assertions and environment leakage.
 
 ### ARM CPU sample ordering for `703c1196e`
 
