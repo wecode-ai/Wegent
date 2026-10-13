@@ -3559,7 +3559,16 @@ async fn finish_codex_app_server_termination(
         })?;
         *task = None;
         if let Err(error) = result {
-            if matches!(child.try_wait(), Ok(Some(_))) {
+            let child_state = match child.try_wait() {
+                Ok(Some(_)) => "exited",
+                Ok(None) => "running",
+                Err(_) => "check-failed",
+            };
+            log_executor_event(
+                "codex app-server process tree termination failed",
+                &[("child_state", child_state.to_owned())],
+            );
+            if child_state == "exited" {
                 return Ok(());
             }
             return Err(error);

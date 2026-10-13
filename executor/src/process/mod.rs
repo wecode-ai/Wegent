@@ -795,21 +795,48 @@ pub(crate) fn kill_windows_process_tree(pid: u32) -> Result<(), String> {
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let pid = pid.to_string();
-    let status = std::process::Command::new("taskkill")
+    let output = std::process::Command::new("taskkill")
         .args(["/PID", pid.as_str(), "/T", "/F"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .creation_flags(CREATE_NO_WINDOW)
-        .status();
+        .output();
+    let stderr_kind = output
+        .as_ref()
+        .map(|output| windows_taskkill_error_kind(&output.stderr))
+        .unwrap_or("unavailable");
+    let stderr_bytes = output.as_ref().map_or(0, |output| output.stderr.len());
+    let status = output.map(|output| output.status);
     let result = windows_process_tree_termination_result(status);
     if let Err(error) = &result {
         log_executor_event(
             "windows process tree termination failed",
-            &[("pid", pid), ("error", error.clone())],
+            &[
+                ("pid", pid),
+                ("error", error.clone()),
+                ("stderr_kind", stderr_kind.to_owned()),
+                ("stderr_bytes", stderr_bytes.to_string()),
+            ],
         );
     }
     result
+}
+
+#[cfg(any(windows, test))]
+fn windows_taskkill_error_kind(stderr: &[u8]) -> &'static str {
+    let message = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    if message.contains("access is denied") {
+        "access-denied"
+    } else if message.contains("not found") {
+        "not-found"
+    } else if message.contains("could not be terminated") {
+        "termination-failed"
+    } else if stderr.is_empty() {
+        "empty"
+    } else {
+        "unknown"
+    }
 }
 
 #[cfg(any(windows, test))]
@@ -1869,6 +1896,26 @@ mod output_text_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn windows_taskkill_diagnostics_only_return_fixed_error_kinds() {
+        for (stderr, expected) in [
+            (b"ERROR: Access is denied.".as_slice(), "access-denied"),
+            (
+                b"ERROR: The process with PID 1234 was not found.",
+                "not-found",
+            ),
+            (
+                b"ERROR: The process could not be terminated.",
+                "termination-failed",
+            ),
+            (b"", "empty"),
+            (b"private-path secret-token localized message", "unknown"),
+            (b"\xff\xfe private-path secret-token", "unknown"),
+        ] {
+            assert_eq!(windows_taskkill_error_kind(stderr), expected);
+        }
+    }
+
     #[test]
     fn windows_process_tree_termination_reports_launch_errors() {
         let error = std::io::Error::from(std::io::ErrorKind::PermissionDenied);

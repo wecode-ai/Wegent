@@ -169,6 +169,36 @@ async fn install_idle_process(client: &CodexAppServerClient, terminating: bool) 
     pid
 }
 
+#[tokio::test]
+async fn termination_tool_failure_accepts_a_confirmed_exited_child() {
+    let mut child = spawn_idle_app_server_child();
+    signal_controlled_child(child.id().unwrap()).unwrap();
+    child.wait().await.unwrap();
+    let mut task = Some(tokio::spawn(async {
+        Err("taskkill failed with controlled exit status".to_owned())
+    }));
+    assert_eq!(
+        finish_codex_app_server_termination(&mut child, &mut task).await,
+        Ok(())
+    );
+    assert!(task.is_none());
+}
+
+#[tokio::test]
+async fn termination_tool_failure_rejects_a_still_running_child() {
+    let mut child = spawn_idle_app_server_child();
+    let error = "taskkill failed with controlled exit status".to_owned();
+    let task_error = error.clone();
+    let mut task = Some(tokio::spawn(async move { Err(task_error) }));
+    let result = finish_codex_app_server_termination(&mut child, &mut task).await;
+    let still_running = matches!(child.try_wait(), Ok(None));
+    signal_controlled_child(child.id().unwrap()).unwrap();
+    child.wait().await.unwrap();
+    assert_eq!(result, Err(error));
+    assert!(still_running);
+    assert!(task.is_none());
+}
+
 pub(in crate::agents::codex) fn signal_controlled_child(pid: u32) -> Result<(), String> {
     #[cfg(unix)]
     unsafe {
