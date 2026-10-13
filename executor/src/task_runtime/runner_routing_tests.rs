@@ -478,3 +478,108 @@ fn concurrent_first_claims_on_independent_connections_bind_one_runner() {
         .clone();
     assert!(binding == "runner-a" || binding == "runner-b");
 }
+
+#[test]
+fn routed_execution_arriving_after_empty_queue_check_keeps_admission_pending() {
+    let (_directory, store, project, agent, issue, catalog) = setup();
+    assert!(store
+        .claim_next_execution_with_catalog(Some("runner-a"), "instance-a", 300, None)
+        .unwrap()
+        .is_none());
+    let run = store
+        .enqueue_execution(
+            &project.id,
+            &issue.id,
+            &agent.id,
+            json!({"message":"Manager continuation"}),
+            None,
+        )
+        .unwrap();
+    let required = store
+        .claim_next_execution_with_catalog(Some("runner-a"), "instance-a", 300, None)
+        .unwrap_err();
+    assert!(matches!(required, TaskRuntimeError::RunnerCatalogRequired));
+    let pending = store
+        .list_executions(&project.id, None, None, true)
+        .unwrap()
+        .into_iter()
+        .find(|execution| execution.id == run.id)
+        .unwrap();
+    assert_eq!(pending.status, "queued");
+    assert_eq!(pending.version, run.version);
+    assert_eq!(pending.execution_payload, run.execution_payload);
+    assert_eq!(pending.runtime_instance_id, run.runtime_instance_id);
+    assert!(pending.error_message.is_empty());
+    assert!(store
+        .get_task(&project.id, &issue.id)
+        .unwrap()
+        .metadata
+        .get("runner_binding")
+        .is_none());
+    let claimed = store
+        .claim_next_execution_with_catalog(Some("runner-a"), "instance-a", 300, Some(&catalog))
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, run.id);
+    assert!(store
+        .claim_next_execution_with_catalog(Some("runner-a"), "instance-a", 300, Some(&catalog))
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn catalog_required_admission_does_not_revive_a_cancelled_execution() {
+    let (_directory, store, project, agent, issue, catalog) = setup();
+    let run = store
+        .enqueue_execution(
+            &project.id,
+            &issue.id,
+            &agent.id,
+            json!({"message":"Cancelled"}),
+            None,
+        )
+        .unwrap();
+    assert!(matches!(
+        store.claim_next_execution_with_catalog(Some("runner-a"), "instance-a", 300, None),
+        Err(TaskRuntimeError::RunnerCatalogRequired)
+    ));
+    assert_eq!(
+        store.cancel_execution(run.id, None).unwrap().status,
+        "cancelled"
+    );
+    assert!(store
+        .claim_next_execution_with_catalog(Some("runner-a"), "instance-a", 300, Some(&catalog))
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn legacy_execution_admission_does_not_require_a_catalog() {
+    let (_directory, store, project, _agent, issue, _catalog) = setup();
+    let agent = store
+        .create_chat_agent(
+            &project.id,
+            serde_json::from_value(json!({"name":"Legacy runner", "execution_mode":"auto"}))
+                .unwrap(),
+        )
+        .unwrap();
+    let run = store
+        .enqueue_execution(
+            &project.id,
+            &issue.id,
+            &agent.id,
+            json!({"message":"Legacy"}),
+            None,
+        )
+        .unwrap();
+    let claimed = store
+        .claim_next_execution_with_catalog(Some("runner-a"), "instance-a", 300, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, run.id);
+    assert!(claimed
+        .execution_payload
+        .unwrap()
+        .get("runnerRouting")
+        .is_none());
+}

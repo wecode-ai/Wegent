@@ -61,6 +61,8 @@ pub enum TaskRuntimeError {
     Database(#[from] rusqlite::Error),
     #[error("invalid task data: {0}")]
     Invalid(String),
+    #[error("runner model catalog is required before admission")]
+    RunnerCatalogRequired,
     #[error("project not found")]
     ProjectNotFound,
     #[error("task not found")]
@@ -1635,13 +1637,6 @@ impl LocalTaskStore {
         )
     }
 
-    pub fn has_queued_routed_executions(&self) -> Result<bool, TaskRuntimeError> {
-        Ok(self.connection()?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM loop_item_executions WHERE status='queued' AND (json_extract(execution_payload, '$.runnerRouting') IS NOT NULL OR json_extract(execution_payload, '$.runnerPolicy') IS NOT NULL))",
-            [], |row| row.get(0),
-        )?)
-    }
-
     pub(crate) fn claim_next_execution_with_catalog(
         &self,
         execution_device_id: Option<&str>,
@@ -1724,6 +1719,15 @@ impl LocalTaskStore {
         let resume_conflict = payload["resumeEnvironmentId"]
             .as_str()
             .is_some_and(|bound| bound != runtime_device_id);
+        if !conflict
+            && !resume_conflict
+            && catalog.is_none()
+            && (payload.get("runnerRouting").is_some() || payload.get("runnerPolicy").is_some())
+        {
+            // The selected execution, not an earlier queue snapshot, determines
+            // whether admission needs a model catalog. Leave all state untouched.
+            return Err(TaskRuntimeError::RunnerCatalogRequired);
+        }
         let validation = if conflict || resume_conflict {
             Err(TaskRuntimeError::Invalid(
                 "ISSUE_RUNNER_CONFLICT: Issue is bound to another runner".into(),
