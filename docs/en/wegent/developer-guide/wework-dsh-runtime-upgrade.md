@@ -29,6 +29,13 @@ compatibility verification and Codex file validation run concurrently, but all m
 startup paths are returned. Node and CLI preparation also overlap component
 preparation. Home migration still runs after compatibility verification.
 
+A pnpm patch for `0.2.0-rc.2` `dsh-app-boot` reads and parses its version manifest
+once per immutable runtime process. Every plugin compatibility check still runs,
+and initial read or parse failures still propagate. Patch configuration, bytes,
+and the matching lockfile participate in the runtime build fingerprint, preventing
+reuse of unpatched archives. The patch does not apply to `0.1.0-rc.8`, preserving
+its existing on-demand download identity.
+
 Browser authentication exchanges a token once. Electron saves DSH's Set-Cookie
 headers in the existing browser partition, preserving domain, path, expiration,
 Secure, HttpOnly, and SameSite attributes.

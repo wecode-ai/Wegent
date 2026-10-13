@@ -23,6 +23,7 @@ import {
   PublishedRuntimeUnavailableError,
 } from './lib/published-runtime-fetch.mjs'
 import { resolveHarnessRuntimeCachePaths } from './lib/harness-runtime-cache.mjs'
+import { harnessRuntimePatchSources } from './lib/harness-runtime-patches.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const source = path.join(root, 'harness-runtime')
@@ -135,7 +136,7 @@ async function runtimeSources() {
         entries: [
           { name: 'package.json', content: packageContent },
           { name: 'pnpm-lock.yaml', content: lockContent },
-          ...sharedEntries,
+          ...(await harnessRuntimePatchSources(source, packageJson, sharedEntries)),
           ...pluginEntries,
         ],
         pluginFiles,

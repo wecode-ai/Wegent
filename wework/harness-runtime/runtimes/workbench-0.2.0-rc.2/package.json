@@ -6,5 +6,8 @@
     "@deepseek-ai/dsh": "0.2.0-rc.2",
     "pnpm": "11.7.0"
   },
-  "runtimeRole": "workbench"
+  "runtimeRole": "workbench",
+  "runtimePatches": {
+    "@deepseek-ai/dsh-app-boot@0.2.0-rc.2": "patches/@deepseek-ai__dsh-app-boot@0.2.0-rc.2.patch"
+  }
 }

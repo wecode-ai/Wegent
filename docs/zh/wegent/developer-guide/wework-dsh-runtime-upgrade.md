@@ -21,6 +21,11 @@ Wework Core、内置 DSH 插件和新 Smart app 模板使用官方 `0.2.0-rc.2`�
 Executor 兼容性校验及 Codex 文件校验并行执行，但必须全部完成后才返回启动路径。Node 和 CLI
 准备与组件准备并行，Home 迁移仍在兼容性校验之后进行。
 
+`0.2.0-rc.2` 的 `dsh-app-boot` 使用正式 pnpm patch，在同一不可变运行时进程中
+只读取并解析一次版本 manifest；每个插件的版本兼容性检查仍照常执行，首次读取或
+解析失败也仍向调用方报错。补丁配置、补丁字节和对应锁文件全部参与运行时构建指纹，
+不能复用未打补丁的归档。`0.1.0-rc.8` 不应用此补丁，既有按需下载身份保持不变。
+
 浏览器认证只交换一次 token。Electron 将 DSH 响应的 Set-Cookie 保存到原有浏览器
 分区，保留 Cookie 的域、路径、有效期、Secure、HttpOnly 和 SameSite 属性。
 
