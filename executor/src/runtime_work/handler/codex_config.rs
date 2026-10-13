@@ -398,6 +398,34 @@ fn codex_models_with_configured_default(
     models
 }
 
+pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppIpcError> {
+    let Some(value) = payload.get("proxyUrl").or_else(|| payload.get("proxy_url")) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let proxy_url = value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppIpcError::new("invalid_proxy_url", "proxyUrl must be a string or null")
+        })?;
+    let parsed = url::Url::parse(proxy_url)
+        .map_err(|_| AppIpcError::new("invalid_proxy_url", "proxyUrl must be a valid URL"))?;
+    if !matches!(parsed.scheme(), "http" | "https" | "socks5")
+        || parsed.host_str().is_none()
+        || parsed.port().is_none()
+    {
+        return Err(AppIpcError::new(
+            "invalid_proxy_url",
+            "proxyUrl must use http, https, or socks5 and include host and port",
+        ));
+    }
+    Ok(Some(proxy_url.to_owned()))
+}
+
 #[cfg(test)]
 mod configured_default_tests {
     use super::*;
@@ -430,32 +458,4 @@ mod configured_default_tests {
         );
         assert_eq!(models[0]["isDefault"], false);
     }
-}
-
-pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppIpcError> {
-    let Some(value) = payload.get("proxyUrl").or_else(|| payload.get("proxy_url")) else {
-        return Ok(None);
-    };
-    if value.is_null() {
-        return Ok(None);
-    }
-    let proxy_url = value
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            AppIpcError::new("invalid_proxy_url", "proxyUrl must be a string or null")
-        })?;
-    let parsed = url::Url::parse(proxy_url)
-        .map_err(|_| AppIpcError::new("invalid_proxy_url", "proxyUrl must be a valid URL"))?;
-    if !matches!(parsed.scheme(), "http" | "https" | "socks5")
-        || parsed.host_str().is_none()
-        || parsed.port().is_none()
-    {
-        return Err(AppIpcError::new(
-            "invalid_proxy_url",
-            "proxyUrl must use http, https, or socks5 and include host and port",
-        ));
-    }
-    Ok(Some(proxy_url.to_owned()))
 }
