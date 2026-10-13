@@ -32,6 +32,53 @@ function deferred<T>() {
 }
 
 describe('agent routing editor', () => {
+  test('uses the environment default while the independent cloud catalog is pending', async () => {
+    const cloud = deferred<[]>()
+    const api = {
+      listModels: () => cloud.promise,
+      listRunnerEnvironments: async () => [
+        environment('device', [model, { ...model, model_id: 'b', is_default: false }]),
+      ],
+    }
+    const { result } = renderHook(() =>
+      useAgentRouting(api, 'codex', 'project', {
+        creationDefaults: { preferredDeviceIds: ['device'] },
+      })
+    )
+    await waitFor(() => expect(result.current.valid).toBe(true))
+    expect(result.current.loading).toBe(false)
+    expect(result.current.model?.model_id).toBe('a')
+    act(() => result.current.setModel({ runtime: 'codex', provider: 'openai', model_id: 'b' }))
+    await act(async () => cloud.resolve([]))
+    expect(result.current.model?.model_id).toBe('b')
+    expect(result.current.valid).toBe(true)
+  })
+
+  test('keeps cloud routing pending and does not invent a unique default before both catalogs settle', async () => {
+    const cloud = deferred<[]>()
+    const api = {
+      listModels: () => cloud.promise,
+      listRunnerEnvironments: async () => [
+        environment('device', [{ ...model, is_default: false }]),
+      ],
+    }
+    const { result } = renderHook(() =>
+      useAgentRouting(api, 'codex', 'project', {
+        creationDefaults: { preferredDeviceIds: ['device'] },
+      })
+    )
+    await waitFor(() => expect(result.current.environmentLoading).toBe(false))
+    expect(result.current.loading).toBe(false)
+    expect(result.current.model).toBeNull()
+    act(() => result.current.setExecutionPolicy({ mode: 'project_pool' }))
+    expect(result.current.loading).toBe(true)
+    expect(result.current.models).toEqual([])
+    expect(result.current.valid).toBe(false)
+    await act(async () => cloud.resolve([]))
+    expect(result.current.loading).toBe(false)
+    expect(result.current.model).toBeNull()
+  })
+
   test.each(['environment-first', 'cloud-first'])(
     'selects the configured default from multiple models when catalogs resolve %s',
     async order => {

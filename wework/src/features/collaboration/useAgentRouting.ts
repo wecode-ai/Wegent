@@ -164,7 +164,6 @@ export function useAgentRouting(
   }
 
   const { executionPolicy } = initializedDraft
-  const loading = cloudLoading || (executionPolicy?.mode === 'fixed' && environmentLoading)
   const candidates = useMemo(
     () => policyEnvironments(environments, executionPolicy, Boolean(projectId)),
     [environments, executionPolicy, projectId]
@@ -173,15 +172,21 @@ export function useAgentRouting(
     () => policyModels(candidates, runtime, executionPolicy, cloudModels, cloudOnly),
     [candidates, runtime, executionPolicy, cloudModels, cloudOnly]
   )
+  const loading =
+    executionPolicy?.mode === 'fixed'
+      ? environmentLoading || (cloudLoading && !models.some(model => model.source !== 'cloud'))
+      : cloudLoading
+  const defaultModel =
+    models.find(model => model.is_default) ??
+    (!cloudLoading && models.length === 1 ? models[0] : undefined)
 
   if (
     initializedDraft.initializeModel &&
     !loading &&
     executionPolicy?.mode === 'fixed' &&
-    candidates.length === 1
+    candidates.length === 1 &&
+    (defaultModel || !cloudLoading)
   ) {
-    const defaultModel =
-      models.find(model => model.is_default) ?? (models.length === 1 ? models[0] : undefined)
     logModelLoading(traceId, 'agent.model_default_initialized', {
       models: models.length,
       defaultModels: models.filter(model => model.is_default).length,
