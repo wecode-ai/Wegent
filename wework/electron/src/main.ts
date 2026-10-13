@@ -1,4 +1,5 @@
 import './host/process-output-bootstrap.js'
+import { logStartupStep } from './host/startup-step.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 import { installDshBrowserSession } from './host/dsh-browser-session.js'
@@ -211,24 +212,6 @@ const pluginDevelopmentCommand = commandLineValue(
 const startupWorkspaceOpenRequest = parseLocalWorkspaceOpenRequest(process.argv)
 
 if (developmentDockIdentity) process.title = developmentDockIdentity.displayName
-
-function logStartupStep(
-  step: string,
-  status: 'started' | 'completed' | 'failed',
-  details: Record<string, unknown> = {}
-): void {
-  const usage = process.resourceUsage()
-  console.info('[startup]', {
-    step,
-    status,
-    elapsedMs: Math.round(performance.now()),
-    userCpuMs: Math.round(usage.userCPUTime / 1000),
-    systemCpuMs: Math.round(usage.systemCPUTime / 1000),
-    voluntaryContextSwitches: usage.voluntaryContextSwitches,
-    involuntaryContextSwitches: usage.involuntaryContextSwitches,
-    ...details,
-  })
-}
 
 function commandLineValue(argv: string[], name: string): string | null {
   const index = argv.lastIndexOf(name)

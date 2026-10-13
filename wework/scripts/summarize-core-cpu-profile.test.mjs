@@ -478,3 +478,94 @@ test('maps overlapping restarted profiles by process and tolerates a killed proc
     processesWithoutCompletedProfile: 1,
   })
 })
+
+test.each([
+  [{ ...fixture(), samples: undefined }, 'core_profile_invalid_shape'],
+  [{ ...fixture(), samples: [999, 3, 4] }, 'core_profile_missing_sample_node'],
+  [{ ...fixture(), timeDeltas: [NaN, 2, 3] }, 'core_profile_nonfinite_delta'],
+  [{ ...fixture(), timeDeltas: [-1, 2, 3] }, 'core_profile_negative_delta'],
+])('retains hard validation failures with fixed reasons (case %#)', (profile, code) => {
+  expect(() => summarizeCoreCpuProfile(profile)).toThrow('Invalid CPU profile')
+  try {
+    summarizeCoreCpuProfile(profile)
+  } catch (error) {
+    expect(error.code).toBe(code)
+    expect(error.message).not.toMatch(/private|token|file:/)
+  }
+})
+
+test('propagates the real summarizer failure through bootstrap and endpoint publication safely', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-cpu-invalid-profile-'))
+  roots.push(root)
+  const inspector = join(root, 'invalid-profile.mjs')
+  await writeFile(
+    inspector,
+    `import { Session } from 'node:inspector'
+const original = Session.prototype.post
+Session.prototype.post = function (method, ...args) {
+  if (method !== 'Profiler.stop') return original.call(this, method, ...args)
+  const callback = args.pop()
+  queueMicrotask(() => callback(null, { profile: ${JSON.stringify({ ...fixture(), timeDeltas: [-1, 2, 3] })} }))
+}`
+  )
+  const { stdout } = await execute(
+    process.execPath,
+    [
+      '--import',
+      pathToFileURL(inspector).href,
+      '--import',
+      pathToFileURL(resolve('dsh/electron-host/cpu-profile-bootstrap.js')).href,
+      '--input-type=module',
+      '-e',
+      `import { completeStartupCpuProfile } from ${JSON.stringify(pathToFileURL(resolve('dsh/electron-host/index.js')).href)}; console.log(JSON.stringify(await completeStartupCpuProfile()))`,
+    ],
+    { env: { ...process.env, WEWORK_E2E_CORE_CPU_PROFILE: '1', DSH_HOME: join(root, 'dsh-core') } }
+  )
+  const marker = JSON.parse(stdout)
+  expect(marker.cpuProfileClockStatus).toBe('failed')
+  expect(marker.cpuProfileFailureCode).toBe('core_profile_summarize_failed')
+  expect(marker.cpuProfileValidationCode).toBe('core_profile_negative_delta')
+  expect(marker).not.toHaveProperty('cpuProfileEndTimeUs')
+  expect(stdout).not.toMatch(/private|token|file:/)
+  const logs = join(root, 'session/electron-user-data/logs')
+  await mkdir(logs, { recursive: true })
+  await writeFile(
+    join(logs, 'dsh-core-runtime.log'),
+    `[startup][core-dsh-endpoint] { cpuProfileClockStatus: 'failed', cpuProfileProcessId: ${marker.cpuProfileProcessId}, cpuProfileSummaryMode: 'before-endpoint', cpuProfileFailureCode: '${marker.cpuProfileFailureCode}', cpuProfileValidationCode: '${marker.cpuProfileValidationCode}' }`
+  )
+  const result = await execute(process.execPath, [
+    resolve('scripts/summarize-core-startup-profiles.mjs'),
+    root,
+  ]).catch(error => error)
+  expect(result.code).toBe(1)
+  expect(result.stderr).toContain(
+    'Core startup CPU diagnostics failed before endpoint (core_profile_summarize_failed; core_profile_negative_delta)'
+  )
+  expect(result.stderr).not.toContain('CPU profile startup clock is unavailable')
+  expect(result.stderr).not.toMatch(/private|token|file:/)
+})
+
+test('keeps missing clocks fatal and excludes unrecognized validation reasons', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-cpu-missing-clock-'))
+  roots.push(root)
+  const logs = join(root, 'session/electron-user-data/logs')
+  await mkdir(logs, { recursive: true })
+  for (const failure of [
+    '',
+    ", cpuProfileFailureCode: 'core_profile_summarize_failed', cpuProfileValidationCode: 'private-token/path'",
+  ]) {
+    await writeFile(
+      join(logs, 'dsh-core-runtime.log'),
+      `[startup][core-dsh-endpoint] { cpuProfileClockStatus: 'failed', cpuProfileProcessId: 10${failure} }`
+    )
+    const result = await execute(process.execPath, [
+      resolve('scripts/summarize-core-startup-profiles.mjs'),
+      root,
+    ]).catch(error => error)
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain(
+      failure ? 'core_profile_summarize_failed' : 'CPU profile startup clock is unavailable'
+    )
+    expect(result.stderr).not.toContain('private-token')
+  }
+})

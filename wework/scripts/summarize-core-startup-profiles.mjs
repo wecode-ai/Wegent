@@ -1,3 +1,4 @@
+import { coreCpuProfileValidationCode } from '../dsh/electron-host/cpu-profile-summary.js'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,8 +37,21 @@ export async function summarizeCoreStartupProfiles(root) {
       .map(match => ({
         time: Number(match[1].match(/cpuProfileEndTimeUs:\s*(\d+)/)?.[1]),
         processId: Number(match[1].match(/cpuProfileProcessId:\s*(\d+)/)?.[1]),
+        failureCode: match[1].match(
+          /cpuProfileFailureCode:\s*['"](core_profile_(?:stop_failed|summarize_failed|write_failed|unknown_failure|unavailable))['"]/
+        )?.[1],
+        validationCode: coreCpuProfileValidationCode(
+          match[1].match(/cpuProfileValidationCode:\s*['"]([^'"]+)['"]/)?.[1]
+        ),
         requiresSummary: /cpuProfileSummaryMode:\s*['"]before-endpoint['"]/.test(match[1]),
       }))
+    const failed = markers.find(marker => marker.failureCode)
+    if (failed) {
+      throw Object.assign(new Error('Core startup CPU diagnostics failed before endpoint'), {
+        code: failed.failureCode,
+        validationCode: failed.validationCode,
+      })
+    }
     if (
       markers.some(marker => !Number.isFinite(marker.time) || !Number.isInteger(marker.processId))
     ) {
@@ -104,6 +118,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const safeErrors = new Set([
       'Core startup CPU endpoint log is unavailable',
       'CPU profile startup clock is unavailable',
+      'Core startup CPU diagnostics failed before endpoint',
       'Core startup CPU summary is invalid',
       'Core startup CPU summary endpoint is unavailable',
       'Core startup CPU summary is unavailable before endpoint',
@@ -113,7 +128,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       'Startup marker is outside CPU profile',
     ])
     const reason = safeErrors.has(error.message) ? error.message : 'Diagnostic input is unavailable'
-    console.error(`Could not summarize Core startup CPU diagnostics: ${reason}`)
+    const failure =
+      reason === 'Core startup CPU diagnostics failed before endpoint'
+        ? ` (${error.code}${error.validationCode ? `; ${error.validationCode}` : ''})`
+        : ''
+    console.error(`Could not summarize Core startup CPU diagnostics: ${reason}${failure}`)
     process.exitCode = 1
   }
 }

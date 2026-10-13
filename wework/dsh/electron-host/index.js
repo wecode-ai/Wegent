@@ -1,3 +1,4 @@
+import { coreCpuProfileValidationCode } from './cpu-profile-summary.js'
 import { ElectronHostClient, ElectronHostError } from './electron-host-client.js'
 import { createWeworkDesktopService, WEWORK_DESKTOP_SERVICE_KEY } from './desktop-service.js'
 
@@ -201,16 +202,18 @@ export async function completeStartupCpuProfile() {
       'core_profile_write_failed',
     ])
     return failedStartupCpuProfile(
-      knownCodes.has(error?.code) ? error.code : 'core_profile_unknown_failure'
+      knownCodes.has(error?.code) ? error.code : 'core_profile_unknown_failure',
+      coreCpuProfileValidationCode(error?.validationCode)
     )
   }
 }
 
-function failedStartupCpuProfile(code) {
+function failedStartupCpuProfile(code, validationCode) {
   return {
     cpuProfileClockStatus: 'failed',
     cpuProfileProcessId: process.pid,
     cpuProfileSummaryMode: 'before-endpoint',
     cpuProfileFailureCode: code,
+    ...(validationCode ? { cpuProfileValidationCode: validationCode } : {}),
   }
 }

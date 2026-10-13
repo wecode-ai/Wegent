@@ -1,7 +1,7 @@
 import { Session } from 'node:inspector'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { summarizeCoreCpuProfile } from './cpu-profile-summary.js'
+import { coreCpuProfileValidationCode, summarizeCoreCpuProfile } from './cpu-profile-summary.js'
 
 function inspectorRequest(session, method) {
   return new Promise((resolve, reject) => {
@@ -51,9 +51,11 @@ if (process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1') {
         cpuProfileProcessId: process.pid,
         cpuProfileSummaryMode: 'before-endpoint',
       }
-    } catch {
+    } catch (error) {
       throw Object.assign(new Error('Core startup CPU diagnostics failed'), {
         code: `core_profile_${stage}_failed`,
+        validationCode:
+          stage === 'summarize' ? coreCpuProfileValidationCode(error?.code) : undefined,
       })
     } finally {
       session.disconnect()

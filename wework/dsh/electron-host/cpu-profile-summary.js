@@ -1,3 +1,20 @@
+const validationCodes = new Set([
+  'core_profile_invalid_shape',
+  'core_profile_invalid_marker',
+  'core_profile_missing_sample_node',
+  'core_profile_missing_sample_frame',
+  'core_profile_nonfinite_delta',
+  'core_profile_negative_delta',
+])
+
+export function coreCpuProfileValidationCode(value) {
+  return validationCodes.has(value) ? value : undefined
+}
+
+function invalidProfile(code, message = 'Invalid CPU profile') {
+  return Object.assign(new Error(message), { code })
+}
+
 const packages = [
   '@deepseek-ai/dsh',
   '@deepseek-ai/dsh-app-boot',
@@ -166,7 +183,7 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
     !Number.isFinite(profile.endTime) ||
     profile.endTime < profile.startTime
   ) {
-    throw new Error('Invalid CPU profile')
+    throw invalidProfile('core_profile_invalid_shape')
   }
   if (
     startupEndTimeUs !== undefined &&
@@ -174,7 +191,7 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
       startupEndTimeUs <= profile.startTime ||
       startupEndTimeUs > profile.endTime)
   ) {
-    throw new Error('Startup marker is outside CPU profile')
+    throw invalidProfile('core_profile_invalid_marker', 'Startup marker is outside CPU profile')
   }
   const nodes = new Map(profile.nodes.map(node => [node.id, node]))
   const parents = new Map()
@@ -190,9 +207,10 @@ export function summarizeCoreCpuProfile(profile, startupEndTimeUs) {
   for (const [index, id] of profile.samples.entries()) {
     const delta = profile.timeDeltas[index]
     const node = nodes.get(id)
-    if (!node?.callFrame || !Number.isFinite(delta) || delta < 0) {
-      throw new Error('Invalid CPU profile')
-    }
+    if (!node) throw invalidProfile('core_profile_missing_sample_node')
+    if (!node.callFrame) throw invalidProfile('core_profile_missing_sample_frame')
+    if (!Number.isFinite(delta)) throw invalidProfile('core_profile_nonfinite_delta')
+    if (delta < 0) throw invalidProfile('core_profile_negative_delta')
     const capturedDelta = Math.max(
       0,
       Math.min(sampleTime + delta, startupEndTimeUs ?? profile.endTime) - sampleTime

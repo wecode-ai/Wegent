@@ -103,7 +103,10 @@ test('reports only fixed CPU diagnostic failure categories', async () => {
     ]) {
       globalThis[key] = {
         complete: async () => {
-          throw Object.assign(new Error('private-token/path'), { code })
+          throw Object.assign(new Error('private-token/path'), {
+            code,
+            validationCode: 'private-validation/path',
+          })
         },
       }
       const result = await completeStartupCpuProfile()
@@ -114,6 +117,7 @@ test('reports only fixed CPU diagnostic failure categories', async () => {
         code === 'private-token/path' ? 'core_profile_unknown_failure' : code
       )
       assert.equal(JSON.stringify(result).includes('private-token'), false)
+      assert.equal(JSON.stringify(result).includes('private-validation'), false)
     }
     delete globalThis[key]
     assert.equal(
