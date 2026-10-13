@@ -191,8 +191,10 @@ def test_optional_config_and_explicit_removal():
         {},
         {"template_id": " "},
         {"template_id": "a", "content_key": "flowStatus"},
+        {"template_id": "a", "content_key": AUTO_LAYOUT_PARAM},
         {"template_id": "a", "content_key": " "},
         {"template_id": "a", "follow_up_images_key": "followUpText"},
+        {"template_id": "a", "follow_up_status_key": AUTO_LAYOUT_PARAM},
     ],
 )
 def test_bad_config_rejected_before_saving(value):

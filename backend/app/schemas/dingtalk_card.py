@@ -53,10 +53,15 @@ class DingTalkChatCardConfig(BaseModel):
     def validate_reserved_fields(self) -> "DingTalkChatCardConfig":
         if self.content_key == "flowStatus":
             raise ValueError("content_key cannot be the AI card state field flowStatus")
+        if self.content_key == AUTO_LAYOUT_PARAM:
+            raise ValueError(
+                f"content_key cannot be the system field {AUTO_LAYOUT_PARAM}"
+            )
         if self.follow_up_text_key == self.follow_up_images_key:
             raise ValueError("Follow-up text and images must use different fields")
         if self.follow_up_status_key in {
             "flowStatus",
+            AUTO_LAYOUT_PARAM,
             self.content_key,
             self.follow_up_text_key,
             self.follow_up_images_key,

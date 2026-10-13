@@ -45,6 +45,8 @@ Send `{"chat_card": null}` to remove this configuration through the API. Omittin
 
 `flowStatus` is reserved by DingTalk's AI-card protocol and cannot be the content field. DingTalk templates own styling and layout; field mapping does not turn an ordinary card into a streaming AI card.
 
+Reply cards carry `sys_full_json_obj` (`{"config":{"autoLayout":true}}`) by default: a template that declares `config.autoLayout` widens to fit its content, so a wide table is no longer squeezed into a narrow column, while a template that does not declare the variable ignores it. The variable is a system field too, so it cannot be the content field or the follow-up status field; set the same variable in `initial_data` to override the default.
+
 ## Notification cards (optional)
 
 The same DingTalk channel can push its in-app notifications as cards. Turn on "Send task notifications as cards" and mentions, assignments, run starts and run completion/failure/cancellation go out as cards; with the option off, or when the card cannot be delivered, the markdown notification is sent instead. In-app notifications and stored records are unaffected.
