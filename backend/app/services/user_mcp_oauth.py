@@ -291,7 +291,9 @@ class UserMcpOAuthService:
         claims = UserMcpOAuthService._decode_state(state_token)
         session_id = str(claims["session_id"])
         session = await UserMcpOAuthService._read_session(session_id)
-        UserMcpOAuthService._validate_browser_binding(session, browser_binding)
+        UserMcpOAuthService._validate_browser_binding(
+            session, session_id=session_id, browser_binding=browser_binding
+        )
         UserMcpOAuthService._validate_callback_session(claims, session)
         if str(session.get("status")) != "pending":
             raise HTTPException(
@@ -428,14 +430,18 @@ class UserMcpOAuthService:
 
     @staticmethod
     def _validate_browser_binding(
-        session: dict[str, Any], browser_binding: str | None
+        session: dict[str, Any],
+        *,
+        session_id: str,
+        browser_binding: str | None,
     ) -> None:
         """Require the completing browser to be the one that started the flow."""
         expected = str(session.get("binding") or "")
-        provided = (browser_binding or "").split(".", 1)[-1]
+        cookie_session_id, _, provided = (browser_binding or "").partition(".")
         if (
             not expected
             or not provided
+            or not secrets.compare_digest(session_id, cookie_session_id)
             or not secrets.compare_digest(expected, provided)
         ):
             raise HTTPException(
