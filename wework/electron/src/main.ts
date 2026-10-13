@@ -154,17 +154,24 @@ import { resolveDevelopmentDockIdentity } from './host/development-dock-identity
 import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import { normalizeWeworkSyncApiBaseUrl, requestWeworkSync } from './host/wework-sync-request.js'
+import { installStartupExceptionMonitor } from './host/startup-exception-monitor.js'
 import { fixedWorkspaceWindowDescriptors } from './host/fixed-workspace-window-restore.js'
 
+const removeStartupExceptionMonitor = installStartupExceptionMonitor(details => {
+  logStartupStep('electron-initialization-exception', 'failed', details)
+})
 logStartupStep('electron-main-module', 'completed')
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+logStartupStep('package-metadata-read', 'started')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
   name: string
   weworkAppId?: string
   weworkProductName?: string
   weworkUpdateBaseUrl?: string
 } & BrandRuntimeMetadata
+logStartupStep('package-metadata-read', 'completed')
+logStartupStep('environment-isolation', 'started')
 if (packageMetadata.weworkProductName?.trim()) app.setName(packageMetadata.weworkProductName.trim())
 const packagedApplication = isEffectivePackagedApplication(app.isPackaged, process.env)
 isolateDevelopmentEnvironment(process.env, {
@@ -173,13 +180,16 @@ isolateDevelopmentEnvironment(process.env, {
   appData: app.getPath('appData'),
   homeDirectory: process.env.HOME?.trim() || app.getPath('home'),
 })
+logStartupStep('environment-isolation', 'completed')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-preload.cjs')
 const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
 const isolatedSurfacePreloadPath = resolve(packageRoot, 'dist/isolated-surface-preload.cjs')
+logStartupStep('isolated-surface-policy-load', 'started')
 const isolatedSurfacePolicies = loadTrustedIsolatedSurfacePolicies(
   resolve(packageRoot, 'dist/isolated-surfaces.json')
 )
+logStartupStep('isolated-surface-policy-load', 'completed')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const execFileAsync = promisify(execFile)
 const keepE2EWindowInBackground = keepDesktopE2EInBackground(process.env, process.platform)
@@ -286,6 +296,7 @@ if (desktopDataPaths) {
 }
 
 logStartupStep('desktop-instance-lock', 'completed', { acquired: hasSingleInstanceLock })
+removeStartupExceptionMonitor()
 
 let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null

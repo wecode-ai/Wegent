@@ -174,3 +174,26 @@ active-turn, pending-request, and forced-restart semantics.
 Failed-directory diagnostics add only the actual reported Gitdir UTF-16 length, existence, and membership under the current common directory worktrees metadata, without exposing paths. Desktop startup reuses existing phase logging for the main module, instance lock, Electron readiness, renderer initialization, and controller registration. Renderer logs use the shared structured phase format so the host retains them. Phase records do not replace real controller connection, application readiness, or startup-budget assertions.
 
 Initial storage phases record storage restoration, model reading, legacy migration, and runtime resolution in their original order. Timings include waits caused by concurrent JavaScript work and do not establish pure I/O duration. Migration depends on restored localStorage, and runtime resolution still verifies the accepted configuration revision.
+
+A Windows controller timeout can occur after main-module execution and before instance-lock initialization. An existing failure artifact records only module entry while the application remains alive, with no Executor or SQLite initialization records; the particular synchronous operation or exception remains unknown. Fixed phases cover package metadata reading, environment isolation, and trusted isolated-surface manifest loading. A temporary `uncaughtExceptionMonitor` records only a fixed exception kind and origin category, excluding messages, stacks, and paths, without changing existing exception handling. The listener is removed after the instance-lock phase. Diagnose subsequent failures from the last completed phase and exception record; the client restart-race fix does not establish that this startup failure is resolved.
+
+### Startup measurements for `2e15949f2`
+
+CI cold starts for the same revision enabled `WEWORK_E2E_CORE_CPU_PROFILE=1`. Diagnostic overhead remains within the original budget strictly below five seconds. All three platforms failed the cold-start gate; these results do not establish default-mode compliance. Values below come from actual startup events. Core process startup includes authentication and endpoint checks, so its subphases must not be added again.
+
+| Phase (milliseconds)                                             | Linux Core19 | Windows Core19 | Formally signed macOS ARM |
+| ---------------------------------------------------------------- | -----------: | -------------: | ------------------------: |
+| Total cold startup                                               |         5492 |          10182 |                     10373 |
+| Electron ready                                                   |          252 |            291 |                      1533 |
+| Runtime configure                                                |          512 |           1019 |                      1212 |
+| Core process start to all endpoints ready                        |         1989 |           3986 |                      3438 |
+| Renderer page loading                                            |         1490 |           1284 |                      1517 |
+| Loaded page to actual surface ready                              |         1138 |           3495 |                      2009 |
+| Surface ready to splash closed                                   |           48 |             39 |                        37 |
+| Core JavaScript import                                           |          611 |           2386 |                      1214 |
+| Core stylesheets                                                 |           35 |             59 |                        15 |
+| Authentication / cookie installation / remaining endpoint checks |  26 / 6 / 16 |    21 / 9 / 15 |                18 / 9 / 8 |
+
+Each cold start retained its process-specific safe CPU summary: one endpoint process, one completed summary, and none missing. Sampling windows were 1773, 3723, and 3015 milliseconds; these measure profiling coverage, not CPU usage. Windows sampled 1241 milliseconds in unattributed installed packages and 247 milliseconds in empty-URL frames. Neither category identifies a particular dependency or native operation. Its actual outbox initialization took 8.43 milliseconds, with database opening, PRAGMAs, and schema transaction taking 0.80, 2.57, and 3.74 milliseconds. The three subsequent formal ARM release, component-update, and app-update flows passed, all five Core process summaries were complete, and diagnostic pruning passed. These results do not replace the failed cold-start assertion.
+
+Windows preference restoration overlaps Core JavaScript loading. Separate host receipt and response timestamps are unavailable, so its 2046-millisecond wait cannot be attributed to disk I/O. A separately built deferred-dialog candidate saved approximately 50KB from the initial task screen, added three static requests, and left the main entry unchanged. Without evidence of a critical-path improvement, the candidate and its source changes were withdrawn.
