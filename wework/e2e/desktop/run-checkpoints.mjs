@@ -51,6 +51,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'goal-state-sync': './scenarios/goal-state-sync.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
@@ -136,6 +137,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'goal-state-sync',
   'model-settings',
   'reply-predictions',
   'collaboration-worktree-policy',

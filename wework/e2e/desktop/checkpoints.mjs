@@ -83,6 +83,7 @@ export const DESKTOP_CHECKPOINTS = [
   'tray-lifecycle',
   'window-lifecycle',
   'goal-lifecycle',
+  'goal-state-sync',
   'supervisor-lifecycle',
   'resilience',
   'environment-panel-scroll',
