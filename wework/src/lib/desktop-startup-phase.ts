@@ -3,6 +3,11 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 type DesktopStartupPhase =
   | 'renderer-entry'
   | 'renderer-storage-initialize'
+  | 'renderer-storage-restore'
+  | 'provider-model-initialize'
+  | 'provider-model-read'
+  | 'provider-model-migration'
+  | 'provider-model-runtime'
   | 'react-mount'
   | 'renderer-startup'
   | 'wework-mount'
@@ -48,4 +53,20 @@ export function markDesktopStartupPhase(
         preferencesLoaded: details.preferencesLoaded,
       })
   )
+}
+
+export async function traceDesktopStartupPhase<Result>(
+  phase: DesktopStartupPhase,
+  operation: () => Promise<Result>
+): Promise<Result> {
+  const started = performance.now()
+  markDesktopStartupPhase(phase, 'started')
+  try {
+    const result = await operation()
+    markDesktopStartupPhase(phase, 'completed', { durationMs: performance.now() - started })
+    return result
+  } catch (error) {
+    markDesktopStartupPhase(phase, 'failed', { durationMs: performance.now() - started })
+    throw error
+  }
 }

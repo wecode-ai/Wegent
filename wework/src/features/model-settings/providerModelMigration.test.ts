@@ -13,6 +13,10 @@ import {
 import { replaceProviderModelConfigs } from './providerModelState'
 
 const invoke = vi.hoisted(() => vi.fn())
+const trace = vi.hoisted(() =>
+  vi.fn(async (_phase: string, operation: () => Promise<unknown>) => operation())
+)
+vi.mock('@/lib/desktop-startup-phase', () => ({ traceDesktopStartupPhase: trace }))
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: invoke,
   subscribeDesktopHostEvents: vi.fn(),
@@ -29,6 +33,7 @@ beforeEach(() => {
   failSave = false
   mismatch = false
   invoke.mockReset()
+  trace.mockClear()
   invoke.mockImplementation(async (method, args) => {
     if (method === 'modelConfiguration.read')
       return { path: '/test/models.yml', revision, providers, loadedAt: '' }
@@ -48,6 +53,28 @@ beforeEach(() => {
 })
 
 describe('Automatic legacy model migration', () => {
+  test('measures read, legacy migration, and runtime in the existing order', async () => {
+    saveLocalModelConfig({
+      modelId: 'private-model',
+      name: 'Private model',
+      baseUrl: 'https://private.example/v1',
+      apiKey: 'private-token',
+    })
+    await reloadProviderConfiguration()
+    expect(trace.mock.calls.map(([phase]) => phase)).toEqual([
+      'provider-model-read',
+      'provider-model-migration',
+      'provider-model-runtime',
+    ])
+    expect(invoke.mock.calls.map(([method]) => method)).toEqual([
+      'modelConfiguration.read',
+      'modelConfiguration.save',
+      'modelConfiguration.read',
+      'modelConfiguration.runtime',
+    ])
+    expect(listLegacyLocalModelConfigs()).toEqual([])
+    expect(getProviderConfigurationState().snapshot?.revision).toBe('saved')
+  })
   test('save waits for a superseding native refresh to publish the deleted model', async () => {
     providers = [
       {

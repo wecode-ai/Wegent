@@ -1,5 +1,6 @@
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { traceDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 import {
   defaultLocalModelRequestPath,
   defaultLocalModelToolProfile,
@@ -164,13 +165,19 @@ export async function reloadProviderConfiguration(): Promise<void> {
 
 async function loadProviderConfiguration(sequence: number): Promise<void> {
   try {
-    let snapshot = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
+    let snapshot = await traceDesktopStartupPhase('provider-model-read', () =>
+      invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
+    )
     if (sequence !== reloadSequence) return
     if (snapshot.error) throw new Error(snapshot.error)
     const legacy = listLegacyLocalModelConfigs()
-    snapshot = await migrateLegacySnapshot(snapshot)
-    const runtime = await invokeDesktopHost<{ revision: string; models: ResolvedProviderModel[] }>(
-      'modelConfiguration.runtime'
+    snapshot = await traceDesktopStartupPhase('provider-model-migration', () =>
+      migrateLegacySnapshot(snapshot)
+    )
+    const runtime = await traceDesktopStartupPhase('provider-model-runtime', () =>
+      invokeDesktopHost<{ revision: string; models: ResolvedProviderModel[] }>(
+        'modelConfiguration.runtime'
+      )
     )
     if (sequence !== reloadSequence) return
     if (runtime.revision && runtime.revision !== snapshot.revision)

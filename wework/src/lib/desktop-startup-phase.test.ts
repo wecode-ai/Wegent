@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 let markDesktopStartupPhase: typeof import('./desktop-startup-phase').markDesktopStartupPhase
+let traceDesktopStartupPhase: typeof import('./desktop-startup-phase').traceDesktopStartupPhase
 let clearDshUiModuleCache: typeof import('@/features/dsh-runtime/dshUiModules').clearDshUiModuleCache
 let getLoadedDshUiModule: typeof import('@/features/dsh-runtime/dshUiModules').getLoadedDshUiModule
 let importDshUiModule: typeof import('@/features/dsh-runtime/dshUiModules').importDshUiModule
@@ -24,6 +25,7 @@ describe('desktop startup phase diagnostics', () => {
     const modules = await import('@/features/dsh-runtime/dshUiModules')
     stylesheetModule = await import('@/features/dsh-runtime/dshUiStylesheets')
     markDesktopStartupPhase = diagnostics.markDesktopStartupPhase
+    traceDesktopStartupPhase = diagnostics.traceDesktopStartupPhase
     clearDshUiModuleCache = modules.clearDshUiModuleCache
     getLoadedDshUiModule = modules.getLoadedDshUiModule
     importDshUiModule = modules.importDshUiModule
@@ -63,6 +65,11 @@ describe('desktop startup phase diagnostics', () => {
   test.each([
     'renderer-entry',
     'renderer-storage-initialize',
+    'renderer-storage-restore',
+    'provider-model-initialize',
+    'provider-model-read',
+    'provider-model-migration',
+    'provider-model-runtime',
     'automation-bridge-install',
     'controller-client',
     'controller-register',
@@ -74,6 +81,37 @@ describe('desktop startup phase diagnostics', () => {
       { phase, status: 'started', navigationTimeMs: expect.any(Number) },
       { phase, status: 'completed', navigationTimeMs: expect.any(Number) },
     ])
+  })
+
+  test('traces the existing asynchronous operation without changing its result or failure', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    let release!: (result: object) => void
+    const operation = new Promise<object>(resolve => {
+      release = resolve
+    })
+    const traced = traceDesktopStartupPhase('renderer-storage-restore', () => operation)
+    expect(recordedPhases(info).map(({ phase, status }) => [phase, status])).toEqual([
+      ['renderer-storage-restore', 'started'],
+    ])
+    const value = { private: 'private-token' }
+    release(value)
+    await expect(traced).resolves.toBe(value)
+    const error = new Error('private-token')
+    await expect(
+      traceDesktopStartupPhase('provider-model-read', async () => {
+        throw error
+      })
+    ).rejects.toBe(error)
+    const phases = recordedPhases(info)
+    expect(phases.map(({ phase, status }) => [phase, status])).toEqual([
+      ['renderer-storage-restore', 'started'],
+      ['renderer-storage-restore', 'completed'],
+      ['provider-model-read', 'started'],
+      ['provider-model-read', 'failed'],
+    ])
+    expect(phases[1].durationMs).toEqual(expect.any(Number))
+    expect(phases[3].durationMs).toEqual(expect.any(Number))
+    expect(JSON.stringify(phases)).not.toContain('private-token')
   })
 
   test.each(['plugins/wework-ui-home-developer.js', 'plugins/wework-ui-core-apps.js'])(

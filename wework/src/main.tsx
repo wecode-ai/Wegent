@@ -1,4 +1,4 @@
-import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
+import { markDesktopStartupPhase, traceDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 import { initializeProviderModelConfiguration } from '@/features/model-settings/providerModelConfiguration'
 import './i18n'
 import { Profiler, StrictMode } from 'react'
@@ -105,8 +105,14 @@ function renderStartupFailure(container: HTMLElement, error: unknown): void {
 const desktopStorageReady = (async () => {
   markDesktopStartupPhase('renderer-storage-initialize', 'started')
   try {
-    await initializeDesktopLocalStoragePersistence()
-    await initializeProviderModelConfiguration()
+    await traceDesktopStartupPhase(
+      'renderer-storage-restore',
+      initializeDesktopLocalStoragePersistence
+    )
+    await traceDesktopStartupPhase(
+      'provider-model-initialize',
+      initializeProviderModelConfiguration
+    )
     markDesktopStartupPhase('renderer-storage-initialize', 'completed')
     return null
   } catch (error) {

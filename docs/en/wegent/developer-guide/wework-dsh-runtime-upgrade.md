@@ -172,3 +172,5 @@ Windows process-tree termination runs in a blocking task, preserving existing
 active-turn, pending-request, and forced-restart semantics.
 
 Failed-directory diagnostics add only the actual reported Gitdir UTF-16 length, existence, and membership under the current common directory worktrees metadata, without exposing paths. Desktop startup reuses existing phase logging for the main module, instance lock, Electron readiness, renderer initialization, and controller registration. Renderer logs use the shared structured phase format so the host retains them. Phase records do not replace real controller connection, application readiness, or startup-budget assertions.
+
+Initial storage phases record storage restoration, model reading, legacy migration, and runtime resolution in their original order. Timings include waits caused by concurrent JavaScript work and do not establish pure I/O duration. Migration depends on restored localStorage, and runtime resolution still verifies the accepted configuration revision.
