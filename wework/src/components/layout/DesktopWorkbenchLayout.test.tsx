@@ -10106,8 +10106,12 @@ describe('DesktopWorkbenchLayout', () => {
       currentTreeCount: number
     } | null = null
     const clickPickerEntry = async (name: string) => {
-      const tree = await screen.findByTestId('workspace-file-picker-tree')
       const row = await waitFor(() => {
+        const menus = screen
+          .queryAllByTestId('workspace-file-siblings-menu')
+          .filter(menu => menu.dataset.state === 'open')
+        expect(menus).toHaveLength(1)
+        const tree = within(menus[0]).getByTestId('workspace-file-picker-tree')
         const root = tree.shadowRoot ?? tree
         const candidate = Array.from(
           root.querySelectorAll<HTMLElement>('[data-item-path], button')
@@ -10118,6 +10122,7 @@ describe('DesktopWorkbenchLayout', () => {
             item.textContent === name
         )
         expect(candidate).toBeDefined()
+        expect(candidate!.isConnected).toBe(true)
         return candidate!
       })
       if (name === 'quick_launch.py') {
