@@ -312,6 +312,11 @@ class ModelSpec(BaseModel):
         coerce_numbers_to_str=True,
         description="Relative model usage cost. A value of 1 represents the baseline cost.",
     )
+    capability: Optional[str | Dict[str, Any]] = Field(
+        None,
+        description="Human-readable model summary, or publication metadata with "
+        "the summary in its description field.",
+    )
 
     # Legacy top-level token limits. New configurations should use the
     # snake_case fields in modelConfig.

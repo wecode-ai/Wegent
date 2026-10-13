@@ -18,6 +18,7 @@ def _public_model(name: str, display_name: str) -> dict[str, object]:
         "displayName": display_name,
         "provider": "openai",
         "model_id": name,
+        "capability": "Fast responses for everyday tasks",
         "model_category_type": "llm",
         "is_advanced": False,
     }
@@ -30,6 +31,7 @@ def _recommended_model(name: str, display_name: str) -> dict[str, object]:
         "displayName": display_name,
         "provider": "openai",
         "modelId": name,
+        "capability": "Fast responses for everyday tasks",
         "modelCategoryType": "llm",
         "isAdvanced": False,
     }

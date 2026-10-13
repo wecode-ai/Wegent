@@ -4,6 +4,14 @@
 
 import type { ModelCapabilities } from '@/apis/models'
 
+export function getModelCapabilityDescription(capability: unknown): string | undefined {
+  if (typeof capability === 'string') return capability
+  if (typeof capability === 'object' && capability !== null && 'description' in capability) {
+    return typeof capability.description === 'string' ? capability.description : undefined
+  }
+  return undefined
+}
+
 export interface ModelCapabilitySource {
   modelCapabilities?: unknown
   config?: Record<string, unknown> | null
