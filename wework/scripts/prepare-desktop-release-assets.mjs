@@ -11,7 +11,7 @@ import { create } from 'tar'
 import { hashComponentPath } from './lib/component-content-hash.mjs'
 import { componentReleaseScope } from './desktop-component-release.mjs'
 import { collectHarnessRuntimeReleaseAssets } from './collect-harness-runtime-release-assets.mjs'
-import { resolveSharedHarnessRuntimeAssetCacheRoot } from './lib/harness-runtime-cache.mjs'
+import { resolveHarnessRuntimeCachePaths } from './lib/harness-runtime-cache.mjs'
 
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const installerRoot = join(weworkRoot, 'electron', 'release-installer')
@@ -92,7 +92,7 @@ if (platform === 'macos') {
 }
 await prepareComponentAssets()
 await collectHarnessRuntimeReleaseAssets(
-  join(resolveSharedHarnessRuntimeAssetCacheRoot(), 'harness-runtime-assets'),
+  resolveHarnessRuntimeCachePaths(weworkRoot).assetDirectory,
   output,
   JSON.parse(
     await readFile(join(componentResourcesRoot, 'harness-runtime', 'runtimes.json'), 'utf8')

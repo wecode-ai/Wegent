@@ -89,3 +89,5 @@ Formal macOS package verification runs `dsh-runtime-upgrade` first, preserving b
 Desktop PR and Merge Queue builds consume the Executor binary artifact for the same commit and event. Packaging can overlap the producer build without requiring its OCI tag to publish within the short registry wait window. Fork Backend Rust builds remain source builds; other paths retain the existing OCI cache.
 
 DSH UI native dynamic imports load the build-generated CSS of the entry and its static dependencies before publishing the module, sharing stylesheet loads across modules. Stylesheet failures propagate directly instead of re-importing the full collaboration package. Long drafts scroll inside the constrained editor viewport while attachments and the toolbar retain their positions.
+
+Formal release assets use the same cache-path resolver as the runtime archive producer, collecting the latest Core, latest Workbench, and on-demand legacy archives for both default caches and relative overrides while preserving Executor bytes and component content hashes.
