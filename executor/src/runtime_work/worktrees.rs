@@ -2684,6 +2684,7 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
         let mut command = worktree_git_command();
         command.arg("-C").arg(&nested).args(["rev-parse", "HEAD"]);
+        command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
         command.env("GIT_COMMON_DIR", other.join(".git"));
         configure_git_common_dir(&mut command, &nested).unwrap();
         assert_eq!(
