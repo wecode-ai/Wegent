@@ -25,7 +25,8 @@ use crate::{config::device::ConnectionConfig, logging::log_executor_event};
 
 /// Routes that are not used for this long are reclaimed.
 const ROUTE_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
-/// Hard cap so a leaked route can never become a permanent token.
+/// Hard cap for a route nobody references any more, so an abandoned token does
+/// not outlive its Smart App indefinitely.
 const ROUTE_MAX_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const TOKEN_PREFIX: &str = "decision-";
 const TOKEN_RANDOM_BYTES: usize = 32;
@@ -130,11 +131,14 @@ impl DecisionRouteRegistry {
 
     fn prune(&mut self, now: Instant) {
         self.routes.retain(|_, binding| {
-            if now.saturating_duration_since(binding.created_at) >= ROUTE_MAX_TTL {
-                return false;
+            // A route a running Smart App still references must survive: nothing
+            // re-registers it while the app runs, so expiring it here would make
+            // every later request fail with route_not_found.
+            if binding.active_references > 0 {
+                return true;
             }
-            binding.active_references > 0
-                || now.saturating_duration_since(binding.last_used) < ROUTE_IDLE_TTL
+            now.saturating_duration_since(binding.created_at) < ROUTE_MAX_TTL
+                && now.saturating_duration_since(binding.last_used) < ROUTE_IDLE_TTL
         });
         let routes = &self.routes;
         self.tokens_by_scope
@@ -353,12 +357,33 @@ mod tests {
     }
 
     #[test]
-    fn routes_expire_at_the_absolute_cap() {
+    fn released_routes_expire_at_the_absolute_cap() {
         let mut registry = DecisionRouteRegistry::default();
         let now = Instant::now();
         let token = registry.register("scope-a", snapshot("token-a"), now);
+        // Released routes stop authenticating immediately; the cap only decides
+        // when the abandoned entry is dropped from memory.
+        assert!(registry.unregister(&token, now));
         registry.prune(now + ROUTE_MAX_TTL + Duration::from_secs(1));
         assert!(registry.lookup(&token, now).is_none());
+        assert_eq!(registry.len(), 0, "an abandoned route must not be kept");
+    }
+
+    #[test]
+    fn a_referenced_route_survives_the_absolute_cap() {
+        let mut registry = DecisionRouteRegistry::default();
+        let now = Instant::now();
+        let token = registry.register("scope-long-running", snapshot("token-a"), now);
+
+        // A resident Smart App keeps one reference for as long as it runs and
+        // never registers again, so its route must outlive the cap.
+        let later = now + ROUTE_MAX_TTL + Duration::from_secs(1);
+        assert!(registry.lookup(&token, later).is_some());
+        registry.prune(later);
+        assert!(
+            registry.lookup(&token, later).is_some(),
+            "pruning must never invalidate a route a running app still holds"
+        );
     }
 
     #[test]
