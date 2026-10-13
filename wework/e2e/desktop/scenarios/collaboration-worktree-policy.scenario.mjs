@@ -281,6 +281,7 @@ export function createDesktopScenario({
       })
       await control.command('click', '[data-testid="settings-button"]', { visible: true })
       await control.command('click', '[data-testid="settings-menu-button"]', { visible: true })
+      await control.command('waitFor', '[data-testid="settings-nav-worktrees"]', { visible: true })
       await control.command('click', '[data-testid="settings-nav-worktrees"]', { visible: true })
       const remove = `[data-testid="delete-worktree-button-${isolated.taskId}"]`
       await control.command('waitFor', remove, { visible: true })
