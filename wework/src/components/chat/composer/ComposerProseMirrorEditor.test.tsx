@@ -163,6 +163,33 @@ describe('ComposerProseMirrorEditor', () => {
     expect(serializeComposerDocument(updated)).toBe('*some **bold** added text*')
   })
 
+  test('preserves the link and italic formatting after typing past pasted bold text', async () => {
+    const { editorRef } = renderEditor('')
+    const editor = screen.getByTestId('composer-editor')
+    pasteMarkdown(editor, '[*some **bold** text*](https://example.com)')
+    expect(editorRef.current!.getSnapshot().value).toBe(
+      '*[some **bold** text](https://example.com)*'
+    )
+    const bold = editor.querySelector('strong')!
+    act(() => {
+      const text = document.createTreeWalker(bold, NodeFilter.SHOW_TEXT).nextNode() as Text
+      text.appendData('x')
+      window.getSelection()!.collapse(text, text.length)
+      fireEvent.input(editor, { inputType: 'insertText', data: 'x' })
+    })
+    await waitFor(() => {
+      expect(editorRef.current!.getSnapshot().value).toBe(
+        '*[some **bold**x text](https://example.com)*'
+      )
+    })
+    expect(editor.querySelector('strong')).toHaveTextContent(/^bold$/)
+    for (const selector of ['em', 'a[href="https://example.com"]']) {
+      expect(Array.from(editor.querySelectorAll(selector), node => node.textContent).join('')).toBe(
+        'some boldx text'
+      )
+    }
+  })
+
   test('keeps native input after a pasted URL outside the link', async () => {
     const url = 'https://example.com/1192966660/Riodm8zUo'
     const { editorRef } = renderEditor('')

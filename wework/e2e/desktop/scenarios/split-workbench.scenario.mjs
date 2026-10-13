@@ -427,18 +427,19 @@ async function verifyComposerMarkdownEditing(control) {
       )
     }
   }
-  for (const [value, selector, expected] of [
+  for (const [value, selector, expected, normalized = value] of [
     ['*some **bold** text*', 'strong', '*some **bold**x text*'],
     ['**some *italic* text**', 'em', '**some *italic*x text**'],
     [
       '[*some **bold** text*](https://example.com)',
       'strong',
-      '[*some **bold**x text*](https://example.com)',
+      '*[some **bold**x text](https://example.com)*',
+      '*[some **bold** text](https://example.com)*',
     ],
   ]) {
     await control.command('fill', COMPOSER, { value: '' })
     await control.command('pasteText', COMPOSER, { value })
-    assert.equal(await control.command('getValue', COMPOSER), value)
+    assert.equal(await control.command('getValue', COMPOSER), normalized)
     const innerText = await control.command('getText', `${COMPOSER} ${selector}`)
     await control.command('setSelectionOffset', `${COMPOSER} ${selector}`, {
       value: String(innerText.length),
