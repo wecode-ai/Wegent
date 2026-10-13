@@ -12,6 +12,7 @@ import {
 } from '@/desktop/cloudCredentials'
 import { raceWithTimeout } from '@/lib/promise-timeout'
 import { getAppPreferences, updateAppPreferences } from '@/desktop/appPreferences'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { subscribeSystemResume } from '@/desktop/systemResume'
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type { User } from '@/types/api'
@@ -457,6 +458,7 @@ interface CloudConnectionProviderProps {
 
 export function CloudConnectionProvider({ children }: CloudConnectionProviderProps) {
   const { t } = useTranslation('common')
+  const appPreferences = useAppPreferencesState()
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
   const [desktopRestoreSettled, setDesktopRestoreSettled] = useState(false)
   const initialRefreshStartedRef = useRef(false)
@@ -464,14 +466,19 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   const refreshPromiseRef = useRef<Promise<User | null> | null>(null)
   const refreshAttemptIdRef = useRef(0)
   const refreshGenerationRef = useRef(0)
+  const desktopRestoreGenerationRef = useRef(refreshGenerationRef.current)
   const disconnectRequestedRef = useRef(false)
   const terminalDesktopCredentialExpiryRef = useRef(false)
 
   useEffect(() => {
     if (desktopRestoreStartedRef.current) return
+    if (appPreferences && !appPreferences.loaded) return
     desktopRestoreStartedRef.current = true
-    const restoreGeneration = refreshGenerationRef.current
-    void getAppPreferences()
+    const restoreGeneration = desktopRestoreGenerationRef.current
+    const initialPreferences = appPreferences
+      ? Promise.resolve(appPreferences.preferences)
+      : getAppPreferences()
+    void initialPreferences
       .then(preferences => {
         if (disconnectRequestedRef.current || refreshGenerationRef.current !== restoreGeneration) {
           return
@@ -495,7 +502,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       .finally(() => {
         setDesktopRestoreSettled(true)
       })
-  }, [])
+  }, [appPreferences])
 
   const applyConnectedSnapshot = useCallback(
     (nextSnapshot: CloudConnectionSnapshot, connectionGeneration: number) => {

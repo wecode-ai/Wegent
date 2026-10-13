@@ -29,6 +29,13 @@ compatibility verification and Codex file validation run concurrently, but all m
 startup paths are returned. Node and CLI preparation also overlap component
 preparation. Home migration still runs after compatibility verification.
 
+Initial cloud restoration reuses the parent preferences provider’s first loaded
+snapshot instead of reading the same serialized store twice. A standalone cloud
+provider keeps its original read path. Restoration runs once; later preference
+updates do not overwrite the current connection. The initial generation and
+disconnect guard still protect disconnects and new connection attempts made
+while preferences are loading.
+
 A pnpm patch for `0.2.0-rc.2` `dsh-app-boot` reads and parses its version manifest
 once per immutable runtime process. Every plugin compatibility check still runs,
 and initial read or parse failures still propagate. Patch configuration, bytes,
@@ -142,7 +149,7 @@ The Markdown renderer loads only when content is displayed, preserving the publi
 
 Startup imports collaboration components, translations, and pure model helpers through their corresponding module entry points, preserving existing package-root exports and component identity. Replacing 18 startup aggregate imports with precise entry points to the existing implementations reduced the static JavaScript closure of the application entry, Core, and Developer Home from 5,740,346 to 5,151,628 bytes in Vite production builds of the same source revision: 588,718 fewer bytes, with 18 project-platform modules removed from that closure. These totals use the actual emitted chunks and their static dependency sets; startup duration remains subject to the existing real cold-start assertion below five seconds. File editors, file trees, diffs, and terminals retain their existing on-demand entry points, without migrating caller behavior or props.
 
-Initial chunk assignment names only the main entry, removing redundant module-graph traversal and letting Rolldown group live dependencies recursively. This prevents optional icons exported by the Lucide barrel from being promoted into the initial bundle. Pure icon modules referenced by at least two entries form a shared chunk; dynamic icons retain their existing entry. Same-source production builds reduce the static JavaScript closure from 5,151,626 to 4,694,367 bytes, saving 457,259 bytes and reducing startup icon modules from 1713 to 198, while static chunks change from 78 to 79. Real compiler regressions verify required static dependencies, shared icons, and deferred entry reachability; actual benefits still require the real cold-start assertion.
+Initial chunk assignment names only the main entry, removing redundant module-graph traversal and letting Rolldown group live dependencies recursively. This prevents optional icons exported by the Lucide barrel from being promoted into the initial bundle. Pure icon modules referenced by at least two entries form a shared chunk; dynamic icons retain their existing entry. Same-source production builds reduce the main page’s static JavaScript closure from 2,851,300 to 2,357,349 bytes, saving 493,951 bytes and reducing its icon modules from 1713 to 58; both have three static chunks. The actual initial task screen also loads Core and Developer Home. The union of these three entries’ static closures decreases from 5,151,626 to 4,694,367 bytes, saving 457,259 bytes, with 198 icon modules and 78 to 79 static chunks. Report these scopes separately instead of conflating the main entry with the complete initial task screen. Real compiler regressions verify required static dependencies, shared icons, and deferred entry reachability; actual benefits still require the real cold-start assertion.
 
 Core readiness diagnostics reuse existing startup events to record fixed phases and statuses for authentication exchange, browser-cookie installation, and endpoint readiness without recording URLs, tokens, or cookies. The endpoint phase includes the authentication phases. Logging preserves cookie-installation ordering, the requirement that every endpoint succeeds, and the startup budget.
 
@@ -151,3 +158,11 @@ When Core CPU diagnostics are enabled, the outbox additionally records monotonic
 Terminal plugin route registration and its empty session manager do not load the native `node-pty` module. Starting a terminal loads the same dependency through the standard Node loader, retaining synchronous spawn, existing error responses, and paired-resource requirements. Real Node and Electron verification must create, exchange data with, and close a PTY.
 
 Windows failure diagnostics preserve the original errors and cleanup. Git worktree diagnostics add only fixed error forms, known directory roles, UTF-16 lengths, and existence flags, without paths or stderr. Desktop failure snapshots record process exit states and isolated Codex SQLite file metadata. Database checks open disposable byte copies only; original DB/WAL/SHM files remain unchanged, output contains fixed statuses and migration versions, and copies are removed. Copies can span concurrent writes and cannot replace causal evidence for the original initialization error. E2E Executor HTTP diagnostics separately record request arrival, body completion, and active SSE counts without request content. These diagnostics do not establish that the underlying failures are fixed.
+
+Codex app-server restart holds the client state lock through old process-tree
+termination and confirmed exit before admitting a replacement, preventing old
+and new processes from overlapping on the same SQLite Home. Cancellation retains
+the retiring process so subsequent requests continue waiting for exit. Termination
+or exit-confirmation failures propagate rather than reporting successful restart.
+Windows process-tree termination runs in a blocking task, preserving existing
+active-turn, pending-request, and forced-restart semantics.

@@ -2,6 +2,8 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHttpClient } from '@/api/http'
+import * as appPreferences from '@/desktop/appPreferences'
+import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import { DesktopCloudCredentialError } from '@/desktop/cloudCredentials'
 import type { OpenCloudAuthorizationUrl } from './CloudConnectionContext'
@@ -345,44 +347,156 @@ describe('CloudConnectionProvider', () => {
     )
   })
 
-  it('restores the cloud connection from desktop preferences on a new local origin', async () => {
+  it('shares the parent initial preferences read without restoring subsequent updates', async () => {
+    const read = vi
+      .spyOn(appPreferences, 'getAppPreferences')
+      .mockResolvedValue(appPreferences.defaultAppPreferences)
+    render(
+      <AppPreferencesProvider>
+        <CloudConnectionProvider>
+          <CloudSocketProbe />
+        </CloudConnectionProvider>
+      </AppPreferencesProvider>
+    )
+    await act(async () => {})
+    expect(read).toHaveBeenCalledTimes(1)
+    act(() => {
+      appPreferences.emitAppPreferencesChanged({
+        ...appPreferences.defaultAppPreferences,
+        cloudConnection: {
+          backendUrl: 'https://stale.example.com',
+          apiBaseUrl: 'https://stale.example.com/api',
+          socketBaseUrl: 'wss://stale.example.com',
+          socketPath: '/socket.io',
+          user: { id: 7, user_name: 'stale', email: 'stale@example.com' },
+          connectedAt: '2026-07-20T00:00:00.000Z',
+        },
+      })
+    })
+    await act(async () => {})
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not restore delayed parent preferences over a newer connection attempt', async () => {
+    let finishPreferences!: (preferences: appPreferences.AppPreferences) => void
+    const pendingPreferences = new Promise<appPreferences.AppPreferences>(resolve => {
+      finishPreferences = resolve
+    })
+    vi.spyOn(appPreferences, 'getAppPreferences').mockReturnValue(pendingPreferences)
+    let failHealth!: (error: Error) => void
+    httpMocks.get.mockReturnValue(
+      new Promise((_resolve, reject) => {
+        failHealth = reject
+      })
+    )
+    const onError = vi.fn()
+    render(
+      <AppPreferencesProvider>
+        <CloudConnectionProvider>
+          <CloudSocketProbe />
+          <CloudConnectProbe onError={onError} />
+        </CloudConnectionProvider>
+      </AppPreferencesProvider>
+    )
+    await userEvent.click(screen.getByTestId('connect-cloud-button'))
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connecting')
+    await act(async () =>
+      finishPreferences({
+        ...appPreferences.defaultAppPreferences,
+        cloudConnection: {
+          backendUrl: 'https://stale.example.com',
+          apiBaseUrl: 'https://stale.example.com/api',
+          socketBaseUrl: 'wss://stale.example.com',
+          socketPath: '/socket.io',
+          user: { id: 7, user_name: 'stale', email: 'stale@example.com' },
+          connectedAt: '2026-07-20T00:00:00.000Z',
+        },
+      })
+    )
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connecting')
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+    await act(async () => failHealth(new Error('Controlled health failure')))
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1))
+  })
+
+  it.each([false, true])(
+    'restores the cloud connection from desktop preferences on a new local origin (parent provider: %s)',
+    async hasParentProvider => {
+      const storedConnection = {
+        backendUrl: 'https://cloud.example.com',
+        apiBaseUrl: 'https://cloud.example.com/api',
+        socketBaseUrl: 'wss://backend-socket.example.com',
+        socketPath: '/socket.io',
+        webUrl: 'https://cloud.example.com',
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-07-20T00:00:00.000Z',
+      }
+      await updateAppPreferences({ cloudConnection: storedConnection })
+      localStorage.clear()
+      httpMocks.get.mockImplementation((endpoint: string) => {
+        if (endpoint === '/auth/wework/config') {
+          return Promise.resolve({
+            web_url: 'https://cloud.example.com',
+            socket_url: 'wss://backend-socket.example.com',
+          })
+        }
+        if (endpoint === '/users/me') return Promise.resolve(storedConnection.user)
+        return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+      })
+
+      const read = vi.spyOn(appPreferences, 'getAppPreferences')
+      const cloud = (
+        <CloudConnectionProvider>
+          <CloudSocketProbe />
+        </CloudConnectionProvider>
+      )
+      render(hasParentProvider ? <AppPreferencesProvider>{cloud}</AppPreferencesProvider> : cloud)
+
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+      )
+      expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).toMatchObject({
+        user: { id: 7, user_name: 'alice' },
+      })
+      expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).not.toHaveProperty(
+        'token'
+      )
+      expect(read).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('settles cloud restoration when the parent preference read fails and supplies defaults', async () => {
+    const failure = new Error('Controlled preference read failure')
+    vi.spyOn(appPreferences, 'getAppPreferences').mockRejectedValue(failure)
     const storedConnection = {
       backendUrl: 'https://cloud.example.com',
       apiBaseUrl: 'https://cloud.example.com/api',
       socketBaseUrl: 'wss://backend-socket.example.com',
       socketPath: '/socket.io',
-      webUrl: 'https://cloud.example.com',
       user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
       connectedAt: '2026-07-20T00:00:00.000Z',
     }
-    await updateAppPreferences({ cloudConnection: storedConnection })
-    localStorage.clear()
+    saveStoredCloudConnection(storedConnection)
     httpMocks.get.mockImplementation((endpoint: string) => {
-      if (endpoint === '/auth/wework/config') {
-        return Promise.resolve({
-          web_url: 'https://cloud.example.com',
-          socket_url: 'wss://backend-socket.example.com',
-        })
-      }
+      if (endpoint === '/auth/wework/config') return Promise.resolve({})
       if (endpoint === '/users/me') return Promise.resolve(storedConnection.user)
-      return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+      return Promise.reject(new Error('Unexpected request'))
     })
-
     render(
-      <CloudConnectionProvider>
-        <CloudSocketProbe />
-      </CloudConnectionProvider>
+      <AppPreferencesProvider>
+        <CloudConnectionProvider>
+          <CloudSocketProbe />
+        </CloudConnectionProvider>
+      </AppPreferencesProvider>
     )
-
     await waitFor(() =>
-      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+      expect(httpMocks.get).toHaveBeenCalledWith('/users/me', { redirectOnUnauthorized: false })
     )
-    expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).toMatchObject({
-      user: { id: 7, user_name: 'alice' },
-    })
-    expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).not.toHaveProperty(
-      'token'
-    )
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+    expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(1)
+    expect(console.error).toHaveBeenCalledWith('[Wework] Failed to load app preferences:', failure)
   })
 
   it('prefers desktop connection settings over a stale renderer connection', async () => {
@@ -442,40 +556,98 @@ describe('CloudConnectionProvider', () => {
     )
   })
 
-  it('does not restore stale desktop preferences after disconnecting', async () => {
-    const storedConnection = {
-      backendUrl: 'https://cloud.example.com',
-      apiBaseUrl: 'https://cloud.example.com/api',
-      socketBaseUrl: 'wss://backend-socket.example.com',
-      socketPath: '/socket.io',
-      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
-      connectedAt: '2026-07-20T00:00:00.000Z',
+  it.each([false, true])(
+    'does not restore stale desktop preferences after disconnecting (parent provider: %s)',
+    async hasParentProvider => {
+      const storedConnection = {
+        backendUrl: 'https://cloud.example.com',
+        apiBaseUrl: 'https://cloud.example.com/api',
+        socketBaseUrl: 'wss://backend-socket.example.com',
+        socketPath: '/socket.io',
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-07-20T00:00:00.000Z',
+      }
+      await updateAppPreferences({ cloudConnection: storedConnection })
+      saveStoredCloudConnection(storedConnection)
+      httpMocks.get.mockImplementation((endpoint: string) => {
+        if (endpoint === '/auth/wework/config') return Promise.resolve({})
+        if (endpoint === '/users/me') return Promise.resolve(storedConnection.user)
+        return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+      })
+
+      const read = vi.spyOn(appPreferences, 'getAppPreferences')
+      const cloud = (
+        <CloudConnectionProvider>
+          <CloudSocketProbe />
+        </CloudConnectionProvider>
+      )
+      render(hasParentProvider ? <AppPreferencesProvider>{cloud}</AppPreferencesProvider> : cloud)
+
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+      )
+      await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+      )
+      expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+      expect(credentialMocks.clear).toHaveBeenCalledTimes(1)
+      expect(read).toHaveBeenCalledTimes(1)
     }
-    await updateAppPreferences({ cloudConnection: storedConnection })
-    saveStoredCloudConnection(storedConnection)
-    httpMocks.get.mockImplementation((endpoint: string) => {
-      if (endpoint === '/auth/wework/config') return Promise.resolve({})
-      if (endpoint === '/users/me') return Promise.resolve(storedConnection.user)
-      return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
-    })
+  )
 
-    render(
-      <CloudConnectionProvider>
-        <CloudSocketProbe />
-      </CloudConnectionProvider>
-    )
+  it.each([false, true])(
+    'does not restore a pending initial preference snapshot after disconnecting (parent provider: %s)',
+    async hasParentProvider => {
+      const storedConnection = {
+        backendUrl: 'https://cloud.example.com',
+        apiBaseUrl: 'https://cloud.example.com/api',
+        socketBaseUrl: 'wss://backend-socket.example.com',
+        socketPath: '/socket.io',
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-07-20T00:00:00.000Z',
+      }
+      await updateAppPreferences({ cloudConnection: storedConnection })
+      saveStoredCloudConnection(storedConnection)
+      httpMocks.get.mockImplementation((endpoint: string) => {
+        if (endpoint === '/auth/wework/config') return Promise.resolve({})
+        if (endpoint === '/users/me') return Promise.resolve(storedConnection.user)
+        return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+      })
 
-    await waitFor(() =>
-      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
-    )
-    await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+      let finishPreferences!: (preferences: appPreferences.AppPreferences) => void
+      const read = vi.spyOn(appPreferences, 'getAppPreferences').mockReturnValue(
+        new Promise(resolve => {
+          finishPreferences = resolve
+        })
+      )
+      const cloud = (
+        <CloudConnectionProvider>
+          <CloudSocketProbe />
+        </CloudConnectionProvider>
+      )
+      render(hasParentProvider ? <AppPreferencesProvider>{cloud}</AppPreferencesProvider> : cloud)
 
-    await waitFor(() =>
-      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
-    )
-    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
-    expect(credentialMocks.clear).toHaveBeenCalledTimes(1)
-  })
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('restoring')
+      )
+      await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+
+      await act(async () =>
+        finishPreferences({
+          ...appPreferences.defaultAppPreferences,
+          cloudConnection: storedConnection,
+        })
+      )
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+      )
+      expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+      expect(credentialMocks.clear).toHaveBeenCalledTimes(1)
+      expect(read).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('disconnects when the desktop credential bridge throws synchronously', async () => {
     saveStoredCloudConnection({

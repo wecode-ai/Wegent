@@ -100,6 +100,7 @@ fn spawn_idle_app_server_child() -> Child {
         command.args(["-c", "sleep 60"]);
         command
     };
+    configure_codex_app_server_process_group(&mut command);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -116,10 +117,14 @@ async fn terminating_shared_app_servers_releases_every_registered_process() {
     let state = shared_codex_app_server_state("codex-app-server-termination-test");
     state.lock().await.process = Some(CodexAppServerProcess {
         child,
+        terminating: false,
+        termination_error: None,
+        termination_task: None,
         stdin: Arc::new(Mutex::new(stdin)),
         pending: Arc::new(Mutex::new(HashMap::new())),
         notifications: CodexNotificationHub::new(),
         reader_task: tokio::spawn(async {}),
+        teardown_barrier: None,
     });
 
     let terminated = terminate_shared_codex_app_servers().await;
@@ -191,7 +196,13 @@ async fn idle_restart_rejects_active_goal_recovery_before_a_turn_is_reported() {
 
     let result = client.restart_if_idle().await;
 
-    assert_eq!(result, Err((1, 0)));
+    assert_eq!(
+        result,
+        Err(CodexIdleMutationError::Busy {
+            active_turn_count: 1,
+            pending_request_count: 0
+        })
+    );
     client.mark_thread_idle("recovering-goal", false).await;
     assert_eq!(client.restart_if_idle().await, Ok(()));
 }
@@ -5349,7 +5360,10 @@ async fn named_home_action_protects_only_its_request_scoped_process() {
                     .unwrap()
                     .restart_if_idle()
                     .await,
-                Err((1, 0))
+                Err(CodexIdleMutationError::Busy {
+                    active_turn_count: 1,
+                    pending_request_count: 0
+                })
             );
             assert_eq!(client.restart_if_idle().await, Ok(()));
         })
@@ -5472,3 +5486,6 @@ async fn goal_read_loop_interruption_without_previous_completion() {
         ));
     }
 }
+
+#[path = "tests/lifecycle.rs"]
+pub(super) mod lifecycle;

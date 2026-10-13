@@ -85,6 +85,6 @@ async fn running_codex_turn_releases_capability_lease_after_startup() {
             .expect("turn must stop on cancellation")
             .unwrap();
         assert!(result.is_err(), "cancelled model work must not succeed");
-        client.restart().await;
+        client.restart().await.unwrap();
     }
 }

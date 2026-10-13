@@ -778,7 +778,7 @@ impl ProcessTreeGuard {
     pub(crate) fn terminate(&mut self) {
         #[cfg(windows)]
         if let Some(pid) = self.pid.take() {
-            kill_windows_process_tree(pid);
+            let _ = kill_windows_process_tree(pid);
         }
     }
 }
@@ -790,7 +790,7 @@ impl Drop for ProcessTreeGuard {
 }
 
 #[cfg(windows)]
-pub(crate) fn kill_windows_process_tree(pid: u32) {
+pub(crate) fn kill_windows_process_tree(pid: u32) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -802,11 +802,25 @@ pub(crate) fn kill_windows_process_tree(pid: u32) {
         .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
         .status();
-    if let Err(error) = status {
+    let result = windows_process_tree_termination_result(status);
+    if let Err(error) = &result {
         log_executor_event(
             "windows process tree termination failed",
-            &[("pid", pid), ("error", error.to_string())],
+            &[("pid", pid), ("error", error.clone())],
         );
+    }
+    result
+}
+
+#[cfg(any(windows, test))]
+fn windows_process_tree_termination_result(
+    status: std::io::Result<std::process::ExitStatus>,
+) -> Result<(), String> {
+    let status = status.map_err(|error| format!("failed to launch taskkill: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("taskkill failed with exit status {status}"))
     }
 }
 
@@ -1855,6 +1869,39 @@ mod output_text_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn windows_process_tree_termination_reports_launch_errors() {
+        let error = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(windows_process_tree_termination_result(Err(error))
+            .unwrap_err()
+            .contains("failed to launch taskkill"));
+    }
+
+    #[test]
+    fn windows_process_tree_termination_reports_nonzero_exit() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        #[cfg(unix)]
+        let status = std::process::ExitStatus::from_raw(7 << 8);
+        #[cfg(windows)]
+        let status = std::process::ExitStatus::from_raw(7);
+        assert!(windows_process_tree_termination_result(Ok(status))
+            .unwrap_err()
+            .contains("taskkill failed with exit status"));
+    }
+
+    #[test]
+    fn windows_process_tree_termination_accepts_successful_exit() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        let status = std::process::ExitStatus::from_raw(0);
+        assert_eq!(windows_process_tree_termination_result(Ok(status)), Ok(()));
+    }
+
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     use super::*;

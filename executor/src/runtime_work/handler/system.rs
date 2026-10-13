@@ -911,7 +911,10 @@ impl RuntimeWorkRpcHandler {
         if if_idle && !force {
             match self.codex_app_server.restart_if_idle().await {
                 Ok(()) => {}
-                Err((active_turn_count, pending_request_count)) => {
+                Err(CodexIdleMutationError::Busy {
+                    active_turn_count,
+                    pending_request_count,
+                }) => {
                     return Ok(json!({
                         "restarted": false,
                         "requiresConfirmation": true,
@@ -919,9 +922,15 @@ impl RuntimeWorkRpcHandler {
                         "pendingRequestCount": pending_request_count,
                     }));
                 }
+                Err(CodexIdleMutationError::Update(error)) => {
+                    return Err(AppIpcError::new("codex_app_server_restart_failed", error));
+                }
             }
         } else {
-            self.codex_app_server.restart().await;
+            self.codex_app_server
+                .restart()
+                .await
+                .map_err(|error| AppIpcError::new("codex_app_server_restart_failed", error))?;
         }
         crate::server::codex_model_catalog::invalidate_models_cache()
             .map_err(|error| AppIpcError::new("codex_cache_invalidation_failed", error))?;

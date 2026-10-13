@@ -113,7 +113,13 @@ mod tests {
             resource_rx.try_recv(),
             Err(oneshot::error::TryRecvError::Empty)
         );
-        assert_eq!(client.restart_if_idle().await, Err((1, 0)));
+        assert_eq!(
+            client.restart_if_idle().await,
+            Err(CodexIdleMutationError::Busy {
+                active_turn_count: 1,
+                pending_request_count: 0
+            })
+        );
         release_tx.send(()).unwrap();
         assert!(resource_rx.await.is_err());
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -168,7 +174,13 @@ mod tests {
                 .await
         });
         started_rx.await.unwrap();
-        assert_eq!(client.restart_if_idle().await, Err((1, 0)));
+        assert_eq!(
+            client.restart_if_idle().await,
+            Err(CodexIdleMutationError::Busy {
+                active_turn_count: 1,
+                pending_request_count: 0
+            })
+        );
         assert_eq!(
             client
                 .mutate_configuration_if_idle(|| async { Ok((true, true)) })
