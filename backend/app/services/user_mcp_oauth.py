@@ -355,10 +355,15 @@ class UserMcpOAuthService:
         updated = user_mcp_service.clear_service_oauth_credentials(
             user.preferences, provider_id, service_id
         )
-        user.preferences = user_mcp_service.dump_preferences(updated)
-        db.add(user)
+        preferences = user_mcp_service.dump_preferences(updated)
+        # Callers can hold a user loaded in another session (request building
+        # runs in a fresh session), so merge instead of add: adding a detached
+        # instance would insert a duplicate user row.
+        persistent = db.merge(user)
+        persistent.preferences = preferences
         db.commit()
-        db.refresh(user)
+        db.refresh(persistent)
+        user.preferences = persistent.preferences
 
     @staticmethod
     async def disconnect(
@@ -829,10 +834,15 @@ class UserMcpOAuthService:
             expires_at=UserMcpOAuthService._expires_at(payload),
             scope=str(payload.get("scope") or ""),
         )
-        user.preferences = user_mcp_service.dump_preferences(updated)
-        db.add(user)
+        preferences = user_mcp_service.dump_preferences(updated)
+        # Callers can hold a user loaded in another session (request building
+        # runs in a fresh session), so merge instead of add: adding a detached
+        # instance would insert a duplicate user row.
+        persistent = db.merge(user)
+        persistent.preferences = preferences
         db.commit()
-        db.refresh(user)
+        db.refresh(persistent)
+        user.preferences = persistent.preferences
         return access_token
 
     @staticmethod
