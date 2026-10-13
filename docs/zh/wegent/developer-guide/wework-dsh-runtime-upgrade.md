@@ -239,3 +239,5 @@ component-update 的首个 Core 进程报告固定 `core_profile_summarize_faile
 [Windows 第 10 组](https://github.com/wecode-ai/Wegent/actions/runs/38451605915/job/115500677231) 的真实模型请求成功，Executor 已完成回复，活动中有 DONE 内容，但执行弹窗仍为空。完整日志显示弹窗绑定 App 注册标识，实际流按原生设备标识刷新；设备状态遗漏两者的 runtime 映射。后台 `listDevices` 只返回过滤掉 App 注册的云设备，而前台查询已通过既有 `mergeKnownDevices` 将当前 App 注册合入本地设备的 route。后台现在复用同一合并逻辑，不新增请求、重试、独立 App 卡或 identity 兜底。
 
 集成式单测将真实后台查询结果经过设备合并、会话 alias 注册和订阅，再送入原生 assistant 流；旧实现复现空会话，新实现收到回复。异 runtime 注册仍不共享会话，更新的 App 注册能读取同一原生内容。Hybrid 75 项、Provider 与会话缓存 303 项聚焦测试以及格式/lint 通过。原 Windows E2E 断言不改，完整场景仍须下一轮 CI 闭环。
+
+正常 pre-push 发现共享设备合并 helper 将调用方的严格类型擦宽。合并与内部保留记录的函数现在以同一泛型保留输入类型，同时删除前台既有的返回强制转换，不新增过滤或兜底。包级 typecheck、设备与 Hybrid 83 项、runtime identity 6 项测试通过；首次 push 被 hook 拦下，未触发 CI。

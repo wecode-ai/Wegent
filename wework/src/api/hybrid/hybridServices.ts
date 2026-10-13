@@ -864,9 +864,7 @@ export function createHybridWorkbenchServices(
           error
         )
       }
-      return mergeKnownDevices(localDevices, cloudDevices) as Awaited<
-        ReturnType<WorkbenchServices['deviceApi']['listDevices']>
-      >
+      return mergeKnownDevices(localDevices, cloudDevices)
     },
   }
 
