@@ -1,3 +1,4 @@
+import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import { useEffect, useMemo } from 'react'
 import {
   createExecutorClientForWorkbenchServices,
@@ -10,7 +11,6 @@ import {
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationSnapshot,
   runtimeConversationKey,
-  setRuntimeConversationGoal,
 } from '../runtimeConversationCache'
 import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
@@ -103,8 +103,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           return
         }
         const goal = response.goal ?? null
-        setRuntimeConversationGoal(address, goal)
-        store.goalStatusReceived(address, goal?.status ?? null)
+        syncRuntimeGoal(store, address, goal)
       } catch (error) {
         console.warn('[Wework] Runtime Goal reconciliation failed', {
           reason,

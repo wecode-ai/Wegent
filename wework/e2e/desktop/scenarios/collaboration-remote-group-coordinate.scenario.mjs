@@ -208,7 +208,7 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
   )
 }
 
-async function addAgent(control, request, projectId, name, prompt, timeoutMs) {
+async function addAgent(control, request, projectId, name, prompt, timeoutMs, environmentId) {
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
     timeoutMs,
@@ -219,7 +219,7 @@ async function addAgent(control, request, projectId, name, prompt, timeoutMs) {
   await control.command('fill', '[data-testid="wework-agent-display-name"]', {
     value: name,
   })
-  await selectCloudAgentModel(control, request, MODEL, timeoutMs)
+  await selectCloudAgentModel(control, request, MODEL, timeoutMs, environmentId)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
     value: prompt,
   })
@@ -728,7 +728,8 @@ export async function createDesktopScenario({
         project.id,
         LEADER,
         `${MARKER}。你是负责人，每轮必须通过 wework_space.submit_workflow_plan 分配独立任务；Executor 在整轮 barrier 后启动新的负责人运行，最终由你显式调用 update_issue_status。`,
-        uiTimeoutMs
+        uiTimeoutMs,
+        remoteDevice.id
       )
       const collector = await addAgent(
         control,
@@ -736,7 +737,8 @@ export async function createDesktopScenario({
         project.id,
         COLLECTOR,
         `${MARKER}。你是执行成员，只完成负责人分配的采集任务并返回证据。`,
-        uiTimeoutMs
+        uiTimeoutMs,
+        remoteDevice.id
       )
       const reviewer = await addAgent(
         control,
@@ -744,7 +746,8 @@ export async function createDesktopScenario({
         project.id,
         REVIEWER,
         `${MARKER}。你是执行成员，只完成负责人分配的复核任务并返回证据。`,
-        uiTimeoutMs
+        uiTimeoutMs,
+        remoteDevice.id
       )
       const group = await createCoordinateGroup(control, request, project.id, uiTimeoutMs)
       assert.equal(String(group.leaderId), String(collaborationGroupAgentId(leader)))
