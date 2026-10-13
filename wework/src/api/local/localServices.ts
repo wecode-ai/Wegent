@@ -3626,27 +3626,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       assertCommandSuccess(response, 'Failed to list skills')
       return decodeRuntimeSkills(response.stdout)
     },
-    async listWorkspaceEntries(
-      _deviceId: string,
-      path: string,
-      workspaceRoot = path
-    ): Promise<WorkspaceTreeResponse> {
-      return listWorkspaceEntries(workspaceRoot, path)
+    async listWorkspaceEntries(_deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
+      return listWorkspaceEntries(path)
     },
     async readWorkspaceTextFile(
       _deviceId: string,
-      filePath: string,
-      workspaceRoot: string
+      filePath: string
     ): Promise<WorkspaceTextFileResponse> {
-      return readWorkspaceTextFile(workspaceRoot, filePath)
+      return readWorkspaceTextFile(filePath)
     },
-    async readWorkspaceFileChunk(
-      _deviceId: string,
-      filePath: string,
-      offset: number,
-      workspaceRoot: string
-    ) {
-      return readWorkspaceFileChunk(workspaceRoot, filePath, offset)
+    async readWorkspaceFileChunk(_deviceId: string, filePath: string, offset: number) {
+      return readWorkspaceFileChunk(filePath, offset)
     },
     async writeWorkspaceTextFile(
       deviceId: string,

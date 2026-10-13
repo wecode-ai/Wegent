@@ -5858,11 +5858,8 @@ describe('createLocalAppServices', () => {
       modifiedAt: '2026-06-20T01:02:00Z',
     })
 
-    expect(listWorkspaceEntries).toHaveBeenCalledWith('/Users/me/project', '/Users/me/project')
-    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
-      '/Users/me/project',
-      '/Users/me/project/README.md'
-    )
+    expect(listWorkspaceEntries).toHaveBeenCalledWith('/Users/me/project')
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith('/Users/me/project/README.md')
     expect(request).toHaveBeenCalledWith('device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'workspace_write_text_file',
@@ -5872,11 +5869,7 @@ describe('createLocalAppServices', () => {
       timeout_seconds: 15,
       max_output_bytes: 1024 * 1024 * 2,
     })
-    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(
-      '/Users/me/.alias/project',
-      '/Users/me/.alias/project/image.png',
-      0
-    )
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith('/Users/me/.alias/project/image.png', 0)
     expect(request).not.toHaveBeenCalledWith(
       'device.execute_command',
       expect.objectContaining({
