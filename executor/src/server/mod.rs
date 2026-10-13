@@ -89,9 +89,9 @@ pub struct AppState<R> {
     runner: R,
     runtime_heartbeat: Option<RuntimeHeartbeatController>,
     decision_proxy: Arc<local_decision_proxy::DecisionProxyConfig>,
-    /// Shared for the life of the process so the login token is traded for the
-    /// upstream credential once per TTL instead of once per request.
-    decision_model_key: Arc<local_decision_proxy::ModelKeyExchanger>,
+    /// Shared for the life of the process so the exchanged credential cache and
+    /// the pooled upstream client survive per-request state construction.
+    decision_runtime: Arc<local_decision_proxy::DecisionProxyRuntime>,
 }
 
 impl<R> AppState<R> {
@@ -100,7 +100,7 @@ impl<R> AppState<R> {
             runner,
             runtime_heartbeat: None,
             decision_proxy: local_decision_proxy::config_from_env_or_unconfigured(),
-            decision_model_key: Arc::new(local_decision_proxy::ModelKeyExchanger::new()),
+            decision_runtime: Arc::new(local_decision_proxy::DecisionProxyRuntime::new()),
         }
     }
 

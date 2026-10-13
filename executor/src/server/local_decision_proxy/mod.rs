@@ -18,7 +18,6 @@ mod model_key;
 mod protocol;
 mod registry;
 
-pub(crate) use model_key::ModelKeyExchanger;
 pub(crate) use protocol::{
     DecisionModel, DecisionProxyErrorBody, DecisionProxyErrorPayload, DecisionRequest,
     DecisionStatusResponse, DECISION_PROXY_PROTOCOL_VERSION,
@@ -241,6 +240,35 @@ pub(crate) const STATUS_ROUTE: &str = "/v1/decision-router/{token}/status";
 /// `POST` route for decision requests.
 pub(crate) const DECISIONS_ROUTE: &str = "/v1/decision-router/{token}/v1/decisions";
 
+/// Process-lifetime resources shared by every decision request.
+///
+/// The HTTP state is rebuilt per request, so anything stateful has to live
+/// here: the pooled upstream client and the exchanged-credential cache.
+pub(crate) struct DecisionProxyRuntime {
+    model_key: model_key::ModelKeyExchanger,
+    client: reqwest::Client,
+}
+
+impl DecisionProxyRuntime {
+    pub(crate) fn new() -> Self {
+        Self {
+            model_key: model_key::ModelKeyExchanger::new(),
+            // One pooled client for the whole process, so decision requests and
+            // 401 retries reuse the upstream connection instead of opening a new
+            // TCP and TLS session each time.
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+impl fmt::Debug for DecisionProxyRuntime {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DecisionProxyRuntime")
+            .finish_non_exhaustive()
+    }
+}
+
 /// State shared by the decision routes.
 ///
 /// The configuration comes from Executor-controlled input, never from the
@@ -248,18 +276,21 @@ pub(crate) const DECISIONS_ROUTE: &str = "/v1/decision-router/{token}/v1/decisio
 #[derive(Clone)]
 pub(crate) struct DecisionProxyState {
     config: Arc<DecisionProxyConfig>,
-    model_key: Arc<model_key::ModelKeyExchanger>,
+    runtime: Arc<DecisionProxyRuntime>,
     timeout: Duration,
 }
 
 impl DecisionProxyState {
-    /// The exchanger is passed in because the traded key must stay cached for
-    /// the whole process: a state rebuilt per request would trade the login
-    /// token again on every decision request.
-    pub(crate) fn new(config: Arc<DecisionProxyConfig>, model_key: Arc<ModelKeyExchanger>) -> Self {
+    /// The runtime is passed in because the traded key must stay cached, and the
+    /// client must stay pooled, for the whole process: a state rebuilt per
+    /// request would drop both.
+    pub(crate) fn new(
+        config: Arc<DecisionProxyConfig>,
+        runtime: Arc<DecisionProxyRuntime>,
+    ) -> Self {
         Self {
             config,
-            model_key,
+            runtime,
             timeout: UPSTREAM_TIMEOUT,
         }
     }
@@ -269,7 +300,7 @@ impl<R> FromRef<AppState<R>> for DecisionProxyState {
     fn from_ref(state: &AppState<R>) -> Self {
         Self::new(
             Arc::clone(&state.decision_proxy),
-            Arc::clone(&state.decision_model_key),
+            Arc::clone(&state.decision_runtime),
         )
     }
 }
@@ -400,7 +431,7 @@ async fn forward_with_credential(
     if !rejected {
         return response;
     }
-    state.model_key.invalidate().await;
+    state.runtime.model_key.invalidate().await;
     let Some(credential) = resolve_credential(state, route).await else {
         return response;
     };
@@ -477,7 +508,11 @@ async fn resolve_credential(
             connection.auth_token.trim().to_owned(),
         )
     };
-    state.model_key.key_for(&backend_url, &login_token).await
+    state
+        .runtime
+        .model_key
+        .key_for(&backend_url, &login_token)
+        .await
 }
 
 /// Sends one request upstream.
@@ -497,25 +532,13 @@ async fn forward_to_upstream(
         "state": request.state,
         "questions": request.questions,
     });
-    let client = match reqwest::Client::builder().timeout(state.timeout).build() {
-        Ok(client) => client,
-        Err(_) => {
-            return (
-                error_response(
-                    StatusCode::BAD_GATEWAY,
-                    "upstream_invalid_response",
-                    "decision upstream response is unusable",
-                    false,
-                    request_id.to_owned(),
-                ),
-                false,
-            )
-        }
-    };
     // Only Executor-chosen headers travel upstream: no cookie, origin,
     // referer, forwarded, or client-supplied authorization.
-    let outcome = client
+    let outcome = state
+        .runtime
+        .client
         .post(settings.upstream_url.as_str())
+        .timeout(state.timeout)
         .header(header::AUTHORIZATION, format!("Bearer {credential}"))
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "application/json")
@@ -892,13 +915,13 @@ mod tests {
     /// request. Building a fresh exchanger there would trade the login token on
     /// every decision request instead of reusing the cached credential.
     #[tokio::test]
-    async fn every_request_shares_one_model_key_cache() {
+    async fn every_request_shares_the_process_runtime() {
         let state = crate::server::AppState::new(NoopRunner);
         let first: DecisionProxyState = FromRef::from_ref(&state);
         let second: DecisionProxyState = FromRef::from_ref(&state);
         assert!(
-            Arc::ptr_eq(&first.model_key, &second.model_key),
-            "each request must reuse the process-wide model key cache"
+            Arc::ptr_eq(&first.runtime, &second.runtime),
+            "each request must reuse the process-wide credential cache and client"
         );
     }
 }
@@ -1156,10 +1179,8 @@ mod http_tests {
     }
 
     fn app(config: DecisionProxyConfig, timeout: Duration) -> Router {
-        let mut state = DecisionProxyState::new(
-            Arc::new(config),
-            Arc::new(model_key::ModelKeyExchanger::new()),
-        );
+        let mut state =
+            DecisionProxyState::new(Arc::new(config), Arc::new(DecisionProxyRuntime::new()));
         state.timeout = timeout;
         routes::<DecisionProxyState>().with_state(state)
     }
