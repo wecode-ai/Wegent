@@ -588,7 +588,7 @@ async fn forward_to_upstream(
                     false,
                     request_id.to_owned(),
                 ),
-                Err(response) => response,
+                Err(response) => *response,
             },
             false,
         ),
@@ -598,37 +598,40 @@ async fn forward_to_upstream(
 
 /// `Ok(Some(body))` for a usable success, `Ok(None)` for an unusable success,
 /// `Err(response)` when the upstream status alone decides the outcome.
+///
+/// The error is boxed because `Response` is large and this `Result` is not on a
+/// hot path: clippy rejects an unboxed `Err` variant of that size.
 async fn upstream_response_body(
     response: reqwest::Response,
     request_id: &str,
-) -> Result<Option<Value>, Response> {
+) -> Result<Option<Value>, Box<Response>> {
     let status = response.status();
     if status.as_u16() == 429 {
-        return Err(error_response(
+        return Err(Box::new(error_response(
             StatusCode::TOO_MANY_REQUESTS,
             "upstream_rate_limited",
             "decision upstream is rate limited",
             true,
             request_id.to_owned(),
-        ));
+        )));
     }
     if status.is_server_error() {
-        return Err(error_response(
+        return Err(Box::new(error_response(
             StatusCode::BAD_GATEWAY,
             "upstream_rejected",
             "decision upstream is unavailable",
             true,
             request_id.to_owned(),
-        ));
+        )));
     }
     if !status.is_success() {
-        return Err(error_response(
+        return Err(Box::new(error_response(
             StatusCode::BAD_GATEWAY,
             "upstream_rejected",
             "decision upstream rejected the request",
             false,
             request_id.to_owned(),
-        ));
+        )));
     }
     let Ok(value) = response.json::<Value>().await else {
         return Ok(None);
