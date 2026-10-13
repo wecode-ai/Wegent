@@ -1097,12 +1097,8 @@ fn worktree_git_command() -> Command {
 fn remove_git_worktree(path: &Path) -> Result<(), String> {
     let value = path.to_str().ok_or("Invalid worktree path")?;
     let common_dir = git_common_dir(path)?;
-    let mut command = worktree_git_command();
-    command
-        .arg("--git-dir")
-        .arg(common_dir)
-        .args(["worktree", "remove", "--force", value]);
-    command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
+    let mut command = git_common_dir_command(&common_dir)?;
+    command.args(["worktree", "remove", "--force", value]);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
@@ -1136,10 +1132,8 @@ fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let mut command = worktree_git_command();
+    let mut command = git_common_dir_command(git_common_dir)?;
     command
-        .arg("--git-dir")
-        .arg(git_common_dir)
         .args(["worktree", "add", "--detach"])
         .arg(path)
         .arg(reference);
@@ -1148,13 +1142,29 @@ fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> 
 }
 
 fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), String> {
-    let mut command = worktree_git_command();
-    command
-        .arg("--git-dir")
-        .arg(git_common_dir)
-        .args(["update-ref", "-d", reference]);
+    let mut command = git_common_dir_command(git_common_dir)?;
+    command.args(["update-ref", "-d", reference]);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
+}
+
+fn git_common_dir_command(git_common_dir: &Path) -> Result<Command, String> {
+    let parent = git_common_dir
+        .parent()
+        .ok_or("Invalid Git common directory")?;
+    let name = git_common_dir
+        .file_name()
+        .ok_or("Invalid Git common directory")?;
+    let mut command = worktree_git_command();
+    // Git checks the literal GIT_DIR length before resolving it or honoring long paths.
+    command
+        .arg("-C")
+        .arg(parent)
+        .arg("--git-dir")
+        .arg(name)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE");
+    Ok(command)
 }
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
@@ -2643,6 +2653,17 @@ mod tests {
         )
         .unwrap();
         fs::write(source.join("tracked.txt"), "base\n").unwrap();
+        let long_file = PathBuf::from("nested").join(format!("{}.txt", "f".repeat(200)));
+        fs::create_dir_all(source.join("nested")).unwrap();
+        assert!(
+            source
+                .join(&long_file)
+                .to_string_lossy()
+                .encode_utf16()
+                .count()
+                > 260
+        );
+        fs::write(source.join(&long_file), "long base\n").unwrap();
         git_output(&source, &["add", "."], None).unwrap();
         git_output(&source, &["commit", "-m", "base"], None).unwrap();
         assert!(
@@ -2657,30 +2678,48 @@ mod tests {
         let manager = WorktreeManager::new(root.path().join("worktrees.json"));
         manager
             .update_settings(WorktreeSettingsPatch {
-                worktree_root: Some(nested.join("managed-worktrees").display().to_string()),
+                // Git supports long files, but its Windows cwd buffer is still MAX_PATH.
+                worktree_root: Some(root.path().join("managed-worktrees").display().to_string()),
                 ..WorktreeSettingsPatch::default()
             })
             .unwrap();
         let record = manager
             .prepare(&source, "isolated-task", None, false)
             .unwrap();
+        assert!(source.join(".git/worktrees/workspace/HEAD").is_file());
         let path = PathBuf::from(&record.path);
-        assert!(path.to_string_lossy().encode_utf16().count() > 260);
+        assert!(path.to_string_lossy().encode_utf16().count() < 260);
+        assert!(
+            path.join(&long_file)
+                .to_string_lossy()
+                .encode_utf16()
+                .count()
+                > 260
+        );
         assert_eq!(
             fs::read_to_string(path.join("tracked.txt")).unwrap(),
             "base\n"
+        );
+        assert_eq!(
+            fs::read_to_string(path.join(&long_file)).unwrap(),
+            "long base\n"
         );
         assert_eq!(
             git_output(&path, &["rev-parse", "--is-inside-work-tree"], None).unwrap(),
             "true"
         );
         fs::write(path.join("tracked.txt"), "changed\n").unwrap();
+        fs::write(path.join(&long_file), "long changed\n").unwrap();
         assert_eq!(manager.delete(&path, true).unwrap().state, STATE_RESTORABLE);
         assert!(!path.exists());
         manager.restore(&path).unwrap();
         assert_eq!(
             fs::read_to_string(path.join("tracked.txt")).unwrap(),
             "changed\n"
+        );
+        assert_eq!(
+            fs::read_to_string(path.join(&long_file)).unwrap(),
+            "long changed\n"
         );
         manager.delete(&path, false).unwrap();
         assert!(!path.exists());
