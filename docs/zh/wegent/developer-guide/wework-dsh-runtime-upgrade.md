@@ -241,3 +241,15 @@ component-update 的首个 Core 进程报告固定 `core_profile_summarize_faile
 集成式单测将真实后台查询结果经过设备合并、会话 alias 注册和订阅，再送入原生 assistant 流；旧实现复现空会话，新实现收到回复。异 runtime 注册仍不共享会话，更新的 App 注册能读取同一原生内容。Hybrid 75 项、Provider 与会话缓存 303 项聚焦测试以及格式/lint 通过。原 Windows E2E 断言不改，完整场景仍须下一轮 CI 闭环。
 
 正常 pre-push 发现共享设备合并 helper 将调用方的严格类型擦宽。合并与内部保留记录的函数现在以同一泛型保留输入类型，同时删除前台既有的返回强制转换，不新增过滤或兜底。包级 typecheck、设备与 Hybrid 83 项、runtime identity 6 项测试通过；首次 push 被 hook 拦下，未触发 CI。
+
+### `f122a5911` 真实验证与剩余启动瓶颈
+
+[Tests](https://github.com/wecode-ai/Wegent/actions/runs/38461246131)、Lint 与平台 E2E 全部通过。Wework 第一个分片的 Electron 1076 项和 renderer 3821 项、第二个分片的 renderer 3871 项通过；四项既有 skip 数量未增加，完整单测日志未再出现被产品捕获的启动断言错误。
+
+[Linux Core19](https://github.com/wecode-ai/Wegent/actions/runs/38461246055/job/115519376285) 仍因严格冷启动 6341 毫秒失败：配置 594 毫秒、Core 到端点 3500 毫秒、页面加载 1071 毫秒、加载完成到界面就绪 875 毫秒。宿主存储操作与响应写出为 6 毫秒，renderer 恢复约 559 毫秒；不能把差值全部归因于宿主 I/O 或宣称管道改动已消除全部等待。真实阶段记录另显示未启用同步时，队列初始化消耗约 660 毫秒，其中打开数据库约 0.34 毫秒、PRAGMA 399 毫秒、建表 260 毫秒。这是下一项资源初始化优化的实际证据，尚不是已达到预算的结果。
+
+[正式 ARM 包](https://github.com/wecode-ai/Wegent/actions/runs/38461261361/job/115516851688) 的严格冷启动为 7531 毫秒，仍失败；原 release、component-update、app-update 三流程通过。五份 CPU 摘要对应五个端点，缺失为零，Prune 通过，样本顺序修复已获得真实打包验证。配置 1444 毫秒、Core 到端点 2128 毫秒、页面加载 1213 毫秒、加载后界面就绪 1427 毫秒；宿主存储 7 毫秒而 renderer 恢复约 732 毫秒。两平台严格检查均先于旧 Smart app 阶段失败，不能声称本轮已验证旧版兼容。不同 CI 环境的墙钟差不能单独归因于任何一次改动；原 `<5s` 断言、真实就绪条件和 CPU 有效性检查均保留。
+
+队列资源现在只在首次同步操作初始化，构造和未使用的关闭不创建目录或数据库；原事务、FULL/WAL、升级、持久化及异常保持。34 项 Node 与 34 项真实 Electron Node 模式测试通过，包括首次写入后重开恢复、启用同步时读取旧 pending、状态读取触发初始化和失败异常身份。renderer 插件启动会查询同步状态，该查询必须恢复旧队列并创建数据库；因此不能断言完整就绪后仍无数据库，也不能把 Core 端点前省下的初始化时间直接视为总启动收益。这项修改尚待下一提交的真实跨平台验证。
+
+存储恢复差值尚无足够证据归因。沿用主 Electron renderer 的既有阶段记录，将固定 `rendererStorage.initialize` 拆为收到响应头、JSON 解码和同步存储替换；Core 仅在既有 CPU 诊断开启时记录请求体解析、宿主结果返回及 `res.end` 调用返回。后者不代表响应已送达或 flush 完成；日志不含内容、键、路径、token 或请求标识。32 项 renderer、9 项 Core 路由测试以及类型、lint、格式检查通过；原 await、同步替换、错误身份及就绪条件保留。新增诊断仍须下一轮真实 CI 给出阶段证据，不构成性能修复。

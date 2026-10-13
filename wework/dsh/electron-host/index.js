@@ -93,14 +93,29 @@ async function invoke(req, res, client) {
     methodNotAllowed(res, 'POST')
     return
   }
+  const startedAt = process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1' ? performance.now() : null
+  let traceStorage = false
+  const markStorage = phase => {
+    if (traceStorage && startedAt !== null) {
+      console.info('[startup][core-host-storage]', {
+        phase,
+        durationMs: Math.round(performance.now() - startedAt),
+      })
+    }
+  }
   try {
     const body = await readJsonBody(req)
     if (!isRecord(body) || typeof body.capability !== 'string' || !isRecord(body.params)) {
       throw new ElectronHostError('invalid_params', 'Request must contain capability and params')
     }
+    traceStorage = body.capability === 'rendererStorage.initialize'
+    markStorage('request-body-parsed')
     const result = await client.invoke(body.capability, body.params)
+    markStorage('host-response-received')
     sendJson(res, 200, { ok: true, result: result ?? null })
+    markStorage('http-response-ended')
   } catch (error) {
+    markStorage('failed')
     const normalized =
       error instanceof ElectronHostError
         ? error

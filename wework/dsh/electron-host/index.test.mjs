@@ -1,7 +1,109 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ElectronHostClient } from './electron-host-client.js'
+import { Readable } from 'node:stream'
+import { ElectronHostClient, ElectronHostError } from './electron-host-client.js'
 import { apply, completeStartupCpuProfile, hostDisconnectHandler } from './index.js'
+
+for (const [profiling, capability, failed] of [
+  [false, 'rendererStorage.initialize', false],
+  [true, 'preferences.get', false],
+  [true, 'rendererStorage.initialize', false],
+  [true, 'rendererStorage.initialize', true],
+]) {
+  test(`traces only profiled storage HTTP stages: ${profiling}/${capability}/${failed}`, async () => {
+    const originalFactory = ElectronHostClient.fromEnvironment
+    const originalProfile = process.env.WEWORK_E2E_CORE_CPU_PROFILE
+    const originalManaged = process.env.WEWORK_DSH_MANAGED_ENDPOINT
+    const originalInfo = console.info
+    const markers = []
+    let handler
+    let resolveHost
+    let rejectHost
+    const hostResponse = new Promise((resolve, reject) => {
+      resolveHost = resolve
+      rejectHost = reject
+    })
+    ElectronHostClient.fromEnvironment = () => ({
+      start: async () => {},
+      invoke: () => hostResponse,
+    })
+    process.env.WEWORK_E2E_CORE_CPU_PROFILE = profiling ? '1' : '0'
+    process.env.WEWORK_DSH_MANAGED_ENDPOINT = '0'
+    console.info = (prefix, marker) => markers.push({ prefix, ...marker })
+    try {
+      await apply({
+        get: () => () => {},
+        reflect: { provide: () => () => {} },
+        effect: callback => callback(),
+        webServer: {
+          register: route => {
+            if (route.path.endsWith('/invoke')) handler = route.handler
+            return () => {}
+          },
+        },
+      })
+      const req = Readable.from([
+        JSON.stringify({ capability, params: { entries: { private: 'private-value' } } }),
+      ])
+      Object.assign(req, { method: 'POST', headers: {}, socket: { remoteAddress: '127.0.0.1' } })
+      let responseStatus
+      let responseBody
+      let phasesAtEnd
+      const request = handler(req, {
+        writeHead: status => {
+          responseStatus = status
+        },
+        end: body => {
+          responseBody = JSON.parse(body)
+          phasesAtEnd = markers.map(({ phase }) => phase)
+        },
+      })
+      await new Promise(resolve => setImmediate(resolve))
+      const traced = profiling && capability === 'rendererStorage.initialize'
+      assert.deepEqual(
+        markers.map(({ phase }) => phase),
+        traced ? ['request-body-parsed'] : []
+      )
+      if (failed) rejectHost(new ElectronHostError('storage_unavailable', 'private-error'))
+      else resolveHost({ private: 'private-result' })
+      await request
+      assert.equal(responseStatus, failed ? 500 : 200)
+      assert.deepEqual(
+        responseBody,
+        failed
+          ? {
+              ok: false,
+              error: { code: 'storage_unavailable', message: 'private-error', details: {} },
+            }
+          : { ok: true, result: { private: 'private-result' } }
+      )
+      assert.deepEqual(
+        markers.map(({ phase }) => phase),
+        traced
+          ? [
+              'request-body-parsed',
+              ...(failed ? ['failed'] : ['host-response-received', 'http-response-ended']),
+            ]
+          : []
+      )
+      if (traced && !failed)
+        assert.deepEqual(phasesAtEnd, ['request-body-parsed', 'host-response-received'])
+      for (const marker of markers) {
+        assert.deepEqual(Object.keys(marker).sort(), ['durationMs', 'phase', 'prefix'])
+        assert.equal(marker.prefix, '[startup][core-host-storage]')
+        assert.ok(marker.durationMs >= 0)
+      }
+      assert.equal(JSON.stringify(markers).includes('private'), false)
+    } finally {
+      ElectronHostClient.fromEnvironment = originalFactory
+      console.info = originalInfo
+      if (originalProfile === undefined) delete process.env.WEWORK_E2E_CORE_CPU_PROFILE
+      else process.env.WEWORK_E2E_CORE_CPU_PROFILE = originalProfile
+      if (originalManaged === undefined) delete process.env.WEWORK_DSH_MANAGED_ENDPOINT
+      else process.env.WEWORK_DSH_MANAGED_ENDPOINT = originalManaged
+    }
+  })
+}
 
 test('requests bounded DSH exit when the Electron host disconnects', () => {
   const exits = []

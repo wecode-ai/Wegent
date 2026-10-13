@@ -41,10 +41,8 @@ test('measures real SQLite startup phases with only fixed safe metadata', async 
   const directory = await mkdtemp(join(tmpdir(), 'wework-private-outbox-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const path = join(directory, 'private-auth-secret.sqlite3')
-  const outbox = measureOutboxStartupPhase(
-    'outbox-initialization',
-    () => new SqliteSyncOutbox(path)
-  )
+  const outbox = new SqliteSyncOutbox(path)
+  assert.deepEqual(messages, [])
   assert.equal(outbox.count(), 0)
   outbox.close()
   const entries = messages.map(message =>
@@ -411,7 +409,9 @@ test('rolls back partial schema initialization and closes the failed connection'
   )
   legacy.close()
 
-  assert.throws(() => new SqliteSyncOutbox(path), /no such column/)
+  const failed = new SqliteSyncOutbox(path)
+  assert.throws(() => failed.count(), /no such column/)
+  failed.close()
 
   const reopened = new DatabaseSync(path)
   try {
@@ -433,4 +433,51 @@ test('rolls back partial schema initialization and closes the failed connection'
   } finally {
     reopened.close()
   }
+})
+
+test('unused outboxes create no directory and remain closed after disposal', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-unused-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'uncreated', 'outbox.sqlite3')
+  const outbox = new SqliteSyncOutbox(path)
+  await assert.rejects(stat(join(directory, 'uncreated')), { code: 'ENOENT' })
+  outbox.close()
+  await assert.rejects(stat(path), { code: 'ENOENT' })
+  assert.throws(() => outbox.count(), /closed/i)
+  await assert.rejects(stat(path), { code: 'ENOENT' })
+})
+
+test('first operation persists with FULL WAL durability and initialization failures stay synchronous', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-lazy-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'outbox.sqlite3')
+  const outbox = new SqliteSyncOutbox(path)
+  await assert.rejects(stat(path), { code: 'ENOENT' })
+  outbox.enqueue({
+    turnId: 'first',
+    sessionId: 'session',
+    transcriptId: 'transcript',
+    taskId: 'task',
+    sequence: 1,
+  })
+  assert.equal(outbox.database.prepare('PRAGMA journal_mode').get().journal_mode, 'wal')
+  assert.equal(outbox.database.prepare('PRAGMA synchronous').get().synchronous, 2)
+  outbox.close()
+  const restored = new SqliteSyncOutbox(path)
+  assert.equal(restored.first().turnId, 'first')
+  restored.close()
+  const invalid = new SqliteSyncOutbox(join(path, 'invalid.sqlite3'))
+  let original
+  assert.throws(
+    () => invalid.count(),
+    error => {
+      original = error
+      return Boolean(error)
+    }
+  )
+  assert.throws(
+    () => invalid.count(),
+    error => error === original
+  )
+  invalid.close()
 })

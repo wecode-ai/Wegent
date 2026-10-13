@@ -38,6 +38,29 @@ export function measureOutboxStartupPhase(phase, operation) {
 
 export class SqliteSyncOutbox {
   constructor(path) {
+    this.path = path
+    this.closed = false
+  }
+
+  initialize() {
+    if (this.closed) throw new Error('Transcript outbox is closed')
+    if (this.initializationError) throw this.initializationError
+    if (this.database) return
+    try {
+      measureOutboxStartupPhase('outbox-initialization', () => this.initializeDatabase())
+    } catch (error) {
+      this.initializationError = error
+      try {
+        this.database?.close()
+      } finally {
+        this.database = undefined
+        throw error
+      }
+    }
+  }
+
+  initializeDatabase() {
+    const path = this.path
     this.database = measureOutboxStartupPhase('database-open', () => {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
       return new DatabaseSync(path)
@@ -51,8 +74,7 @@ export class SqliteSyncOutbox {
     )
     measureOutboxStartupPhase('schema-transaction', () => {
       this.database.exec('BEGIN')
-      try {
-        this.database.exec(`
+      this.database.exec(`
       CREATE TABLE IF NOT EXISTS session_routes (
         session_id TEXT PRIMARY KEY,
         transcript_id TEXT NOT NULL,
@@ -85,18 +107,14 @@ export class SqliteSyncOutbox {
       CREATE INDEX IF NOT EXISTS pending_turns_transcript
         ON pending_turns (transcript_id);
     `)
-        const pendingColumns = this.database
-          .prepare('PRAGMA table_info(pending_turns)')
-          .all()
-          .map(column => column.name)
-        if (!pendingColumns.includes('executor_turn_id')) {
-          this.database.exec('ALTER TABLE pending_turns ADD COLUMN executor_turn_id TEXT')
-        }
-        this.database.exec('COMMIT')
-      } catch (error) {
-        this.database.close()
-        throw error
+      const pendingColumns = this.database
+        .prepare('PRAGMA table_info(pending_turns)')
+        .all()
+        .map(column => column.name)
+      if (!pendingColumns.includes('executor_turn_id')) {
+        this.database.exec('ALTER TABLE pending_turns ADD COLUMN executor_turn_id TEXT')
       }
+      this.database.exec('COMMIT')
     })
     this.selectRoute = this.database.prepare(`
       SELECT
@@ -254,10 +272,12 @@ export class SqliteSyncOutbox {
   }
 
   target(turn) {
+    this.initialize()
     return rowToRoute(this.selectRoute.get(turn.sessionId))?.transcriptId ?? turn.transcriptId
   }
 
   enqueue(turn, knownSequence = 0) {
+    this.initialize()
     if (this.selectDiscardedTurn.get(turn.turnId)) return false
     let route = rowToRoute(this.selectRoute.get(turn.sessionId))
     if (!route) {
@@ -287,22 +307,27 @@ export class SqliteSyncOutbox {
   }
 
   first() {
+    this.initialize()
     return rowToTurn(this.selectFirst.get())
   }
 
   sessionIds() {
+    this.initialize()
     return this.selectSessions.all().map(row => row.session_id)
   }
 
   firstForSession(sessionId) {
+    this.initialize()
     return rowToTurn(this.selectSessionFirst.get(sessionId))
   }
 
   hasPendingTranscript(transcriptId) {
+    this.initialize()
     return Boolean(this.selectTranscriptPending.get(transcriptId))
   }
 
   fork(turn, transcriptId, forkedAtSequence = turn.baseSequence) {
+    this.initialize()
     const pending = this.selectSessionPending.all(turn.sessionId)
     const start = pending.findIndex(item => item.turn_id === turn.turnId)
     if (start < 0) throw new Error(`Pending transcript turn is unavailable: ${turn.turnId}`)
@@ -345,18 +370,23 @@ export class SqliteSyncOutbox {
   }
 
   count() {
+    this.initialize()
     return Number(this.selectCount.get().count)
   }
 
   list() {
+    this.initialize()
     return this.selectAll.all().map(rowToTurn)
   }
 
   close() {
-    this.database.close()
+    if (this.closed) return
+    this.closed = true
+    this.database?.close()
   }
 
   transaction(action) {
+    this.initialize()
     this.database.exec('BEGIN IMMEDIATE')
     try {
       action()
