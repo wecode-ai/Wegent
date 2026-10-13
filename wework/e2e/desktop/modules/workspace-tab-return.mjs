@@ -5,6 +5,7 @@ import { DEFAULT_STEP_TIMEOUT_MS, WORKBENCH_READY_TIMEOUT_MS, withTimeout } from
 async function returnTab(control, detached, tabId, draft, waitForDraft) {
   const selector = `[data-testid="workspace-tab-select-${tabId}"]`
   const composer = `[data-testid="workspace-tab-content-${tabId}"] [data-testid="chat-message-input"]`
+  await detached.command('waitFor', composer, { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   await detached.command('fill', composer, { value: draft })
   await waitForDraft(
     detached,
