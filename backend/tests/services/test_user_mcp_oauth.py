@@ -122,6 +122,54 @@ async def test_discover_reads_protected_resource_and_authorization_server(
 
 
 @pytest.mark.asyncio
+async def test_authorization_names_the_protected_resource(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    """The RFC 8707 resource indicator is sent on authorize and token requests."""
+    _memory_cache(monkeypatch)
+    monkeypatch.setattr(settings, "MCP_OAUTH_STATE_SECRET", "state-key")
+    _configure_oauth_service(test_db, test_user)
+    monkeypatch.setattr(
+        UserMcpOAuthService, "discover", AsyncMock(return_value=_metadata())
+    )
+    httpx_mock.add_response(
+        url=REGISTRATION_URL,
+        method="POST",
+        status_code=201,
+        json={"client_id": "dingtalk-client"},
+    )
+    httpx_mock.add_response(
+        url=TOKEN_URL,
+        method="POST",
+        json={
+            "access_token": "dingtalk-access",
+            "refresh_token": "dingtalk-refresh",
+            "expires_in": 3600,
+            "scope": "user",
+        },
+    )
+
+    session = await user_mcp_oauth_service.create_session(
+        test_db, user=test_user, provider_id="dingtalk", service_id="ai_table"
+    )
+    query = parse_qs(urlsplit(session["authorize_url"]).query)
+    assert query["resource"] == [RESOURCE_URL]
+
+    await user_mcp_oauth_service.complete_callback(
+        test_db,
+        code="provider-code",
+        state_token=query["state"][0],
+        browser_binding=f"{session['session_id']}.{session['binding']}",
+    )
+
+    token_request = httpx_mock.get_requests(url=TOKEN_URL)[0]
+    assert parse_qs(token_request.content.decode())["resource"] == [RESOURCE_URL]
+
+
+@pytest.mark.asyncio
 async def test_oauth_session_registers_client_and_stores_encrypted_tokens(
     test_db: Session,
     test_user: User,
