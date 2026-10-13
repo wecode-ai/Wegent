@@ -38,7 +38,7 @@ def _unconfirmed_claim(
 ) -> LoopItemExecution | None:
     """Return work reserved by this Runtime but not yet acknowledged."""
 
-    return (
+    query = (
         db.query(LoopItemExecution)
         .filter(
             LoopItemExecution.executor_owner_user_id == owner_user_id,
@@ -49,6 +49,15 @@ def _unconfirmed_claim(
             loop_datetime_is_unset(LoopItemExecution.start_requested_at),
         )
         .order_by(LoopItemExecution.claimed_at.asc(), LoopItemExecution.id.asc())
+    )
+    candidate = query.first()
+    if candidate is None:
+        return None
+    # Empty Runtime scans must not lock other installations' rows or index gaps.
+    # Revalidate and lock only the selected aggregate before extending its lease.
+    return (
+        query.filter(LoopItemExecution.id == candidate.id)
+        .populate_existing()
         .with_for_update()
         .first()
     )
