@@ -18,6 +18,7 @@ class MCPProviderServiceDefinition(TypedDict):
     skill_name: str | None
     display_name: str
     message_keywords: tuple[str, ...]
+    oauth_supported: bool
 
 
 class MCPProviderDefinition(TypedDict):
@@ -39,6 +40,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
         "services": {
             "docs": {
                 "service_id": "docs",
+                "oauth_supported": True,
                 "server_name": "dingtalk_docs",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9629",
                 "skill_name": "dingtalk-docs",
@@ -47,6 +49,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
             },
             "table": {
                 "service_id": "table",
+                "oauth_supported": True,
                 "server_name": "dingtalk_table",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9704",
                 "skill_name": "dingtalk-table",
@@ -64,6 +67,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
             },
             "ai_table": {
                 "service_id": "ai_table",
+                "oauth_supported": True,
                 "server_name": "dingtalk_ai_table",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9555",
                 "skill_name": "dingtalk-ai-table",
@@ -81,6 +85,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
             },
             "wikispace": {
                 "service_id": "wikispace",
+                "oauth_supported": True,
                 "server_name": "dingtalk_wikispace",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9730",
                 "skill_name": "dingtalk-wikispace",

@@ -12,13 +12,18 @@ from app.api.ws import device_namespace
 from app.api.ws.device_namespace import DeviceNamespace, DeviceRegistrationFingerprint
 from app.models.kind import Kind
 from app.schemas.device import DeviceRegisterPayload, DeviceType
+from app.services.device.identity import resolve_owned_device_alias
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "original_app_device_id", ["electron-original", "electron-other"]
+)
 async def test_new_app_identity_registers_with_independent_record_route(
     test_db,
     test_user,
     monkeypatch,
+    original_app_device_id,
 ):
     from app.services.device_service import device_service
 
@@ -35,7 +40,7 @@ async def test_new_app_identity_registers_with_independent_record_route(
         "Wework",
         device_type="app",
         runtime_instance_id="runtime-original",
-        app_device_id="electron-original",
+        app_device_id=original_app_device_id,
     )
 
     @contextmanager
@@ -93,6 +98,26 @@ async def test_new_app_identity_registers_with_independent_record_route(
     assert replacement.json["spec"]["runtimeInstanceId"] == "runtime-other"
     assert replacement.json["spec"]["runtimeTransferPort"] == 17888
     assert save_session.await_args.args[1]["device_id"] == replacement_route
+    assert save_session.await_args.args[1]["execution_target_id"] == replacement_route
+    assert (
+        resolve_owned_device_alias(
+            test_db,
+            user_id=test_user.id,
+            device_id=save_session.await_args.args[1]["execution_target_id"],
+        ).id
+        == replacement.id
+    )
+    if original_app_device_id == "electron-other":
+        assert (
+            resolve_owned_device_alias(
+                test_db, user_id=test_user.id, device_id="electron-other"
+            )
+            is None
+        )
+    assert enter_room.await_args_list[1].args == (
+        "new-app",
+        f"execution-target:{test_user.id}:{replacement_route}",
+    )
     assert save_session.await_args.args[1]["runtime_transfer_port"] == 17888
     assert enter_room.await_count == 2
     assert set_online.await_args.kwargs["device_id"] == replacement_route

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { selectCollaborationDomain, waitForTestIdByText } from '../modules/workspace-flows.mjs'
+import {
+  inProjectCreateDialog,
+  selectCloudAgentModel,
+  selectCollaborationDomain,
+  waitForTestIdByText,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作组验收空间'
@@ -238,17 +243,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           '[data-testid="collaboration-workspace-project-create-blank"]'
         )
+        await control.command('waitFor', inProjectCreateDialog(), { timeoutMs: uiTimeoutMs })
         await control.command(
-          'waitFor',
-          scoped('[data-testid="collaboration-project-create-dialog"]'),
-          { timeoutMs: uiTimeoutMs }
+          'fill',
+          inProjectCreateDialog('[data-testid="collaboration-project-name-input"]'),
+          {
+            value: projectName,
+          }
         )
-        await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-          value: projectName,
-        })
         await control.command(
           'clickWhenEnabled',
-          scoped('[data-testid="collaboration-project-create-confirm"]'),
+          inProjectCreateDialog('[data-testid="collaboration-project-create-confirm"]'),
           { timeoutMs: uiTimeoutMs }
         )
         project = await waitForApiValue(
@@ -261,14 +266,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           uiTimeoutMs
         )
 
-        await control.command(
-          'waitFor',
-          scoped('[data-testid="collaboration-project-create-dialog"]'),
-          {
-            visible: false,
-            timeoutMs: uiTimeoutMs,
-          }
-        )
+        await control.command('waitFor', inProjectCreateDialog(), {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command(
           'clickWhenEnabled',
           scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
@@ -279,17 +280,39 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         })
         await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
         await control.command(
-          'click',
-          scoped('[data-testid="collaboration-project-settings-participants"]')
+          'waitFor',
+          scoped('[data-testid="project-settings-shell-group-ai-team"]'),
+          { timeoutMs: uiTimeoutMs }
         )
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="project-settings-shell-group-ai-team"] + nav button')
+            )
+          ),
+          3,
+          'AI team navigation must expose agents, members, and collaboration teams'
+        )
+
         await control.command(
           'click',
-          scoped('[data-testid="collaboration-participants-tab-groups"]')
+          scoped('[data-testid="collaboration-project-settings-groups"]')
         )
         await control.command(
           'waitFor',
-          scoped('[data-testid="collaboration-participants-tab-groups"][aria-selected="true"]'),
+          scoped('[data-testid="collaboration-project-settings-groups"][aria-current="page"]'),
           { timeoutMs: uiTimeoutMs }
+        )
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="collaboration-project-groups-page"] [role="tablist"]')
+            )
+          ),
+          0,
+          'Project collaboration teams must open directly without nested participant tabs'
         )
         await control.command(
           'waitFor',
@@ -309,11 +332,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
         await control.command(
           'click',
-          scoped('[data-testid="collaboration-participants-tab-agents"]')
+          scoped('[data-testid="collaboration-project-settings-agents"]')
         )
         await control.command(
           'waitFor',
-          scoped('[data-testid="collaboration-participants-tab-agents"][aria-selected="true"]'),
+          scoped('[data-testid="collaboration-project-settings-agents"][aria-current="page"]'),
           { timeoutMs: uiTimeoutMs }
         )
         await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
@@ -326,10 +349,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           await control.command('snapshot', '[data-testid="wework-agent-resource-creator"]')
         )
         assert.ok(
-          !agentDialogSnapshot.testIds.some(testId => testId.includes('execution-environment')),
-          'Custom Agent creation must not bind an execution environment'
+          agentDialogSnapshot.testIds.includes('wework-agent-resource-creator-tab-basic'),
+          'Agent creation must open the basic information tab'
         )
-        await capture(control, 'project-automation-02-agent-create-without-environment.png')
+        await capture(control, 'project-automation-02-agent-create-basic-tab.png')
         await control.command('fill', '[data-testid="wework-agent-display-name"]', {
           value: PROJECT_AGENT_NAME,
         })
@@ -337,15 +360,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           '/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
         )
         const selectableModels = (modelCatalog.data ?? []).filter(
-          model => model.isActive !== false && !model.compatibilityDisabled
+          model =>
+            model.type === 'public' && model.isActive !== false && !model.compatibilityDisabled
         )
         assert.ok(
           selectableModels.length > 0,
           'No executable model is available for Agent creation'
         )
-        await control.command('select', '[data-testid="wework-agent-model"]', {
-          value: '0',
-        })
+        await selectCloudAgentModel(control, request, selectableModels[0].name, uiTimeoutMs)
         await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
           value: '负责 Issue 分解、委派与交付验收。按项目约束完成任务并给出可验证证据。',
         })
@@ -410,11 +432,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         })
         await control.command(
           'click',
-          scoped('[data-testid="collaboration-participants-tab-groups"]')
+          scoped('[data-testid="collaboration-project-settings-groups"]')
         )
         await control.command(
           'waitFor',
-          scoped('[data-testid="collaboration-participants-tab-groups"][aria-selected="true"]'),
+          scoped('[data-testid="collaboration-project-settings-groups"][aria-current="page"]'),
           { timeoutMs: uiTimeoutMs }
         )
         await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))

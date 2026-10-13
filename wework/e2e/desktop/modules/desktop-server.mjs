@@ -1205,7 +1205,13 @@ class DesktopE2EServer {
       `Desktop control client ${clientId} is not registered`
     )
     const id = randomUUID()
-    const command = { id, action, selector, ...options }
+    const command = {
+      id,
+      action,
+      selector,
+      ...options,
+      timeoutMs: options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
+    }
     let resolveDelivery
     let rejectDelivery
     const delivery = new Promise((resolvePromise, reject) => {
@@ -1231,7 +1237,7 @@ class DesktopE2EServer {
       )
       return await withTimeout(
         this.guard(result),
-        (options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS) + DESKTOP_CONTROL_RESULT_GRACE_MS,
+        command.timeoutMs + DESKTOP_CONTROL_RESULT_GRACE_MS,
         `Timed out running UI action ${action} for ${selector}`
       )
     } catch (error) {

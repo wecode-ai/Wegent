@@ -234,6 +234,8 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   let requestCount = 0
+  let verificationComplete = false
+  const sockets = new Set()
   const executorLogPath = join(resultDir, 'executor.log')
   const launchWorkingDirectory = join(resultDir, 'invalid-launch-cwd')
   const modelServerPort = process.env.WEWORK_E2E_MODEL_SERVER_PORT
@@ -247,6 +249,12 @@ export function createDesktopScenario({
   return {
     attachServer(server) {
       server.on('upgrade', (request, socket, head) => {
+        sockets.add(socket)
+        socket.once('close', () => sockets.delete(socket))
+        socket.on('error', error => {
+          if (!verificationComplete || error.code !== 'ECONNRESET') server.emit('error', error)
+          socket.destroy()
+        })
         const url = new URL(request.url ?? '/', modelServerUrl)
         if (!['/v1/responses', '/responses'].includes(url.pathname)) {
           socket.destroy()
@@ -276,6 +284,10 @@ export function createDesktopScenario({
     modelProviderId: 'openai',
     modelId: BUILTIN_MODEL_ID,
     modelServerUrl,
+    close() {
+      for (const socket of sockets) socket.destroy()
+      sockets.clear()
+    },
 
     async verify(control) {
       if (process.platform !== 'win32') {
@@ -320,6 +332,7 @@ export function createDesktopScenario({
         'codex-invalid-launch-cwd-01-completed.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
+      verificationComplete = true
     },
 
     diagnostics() {

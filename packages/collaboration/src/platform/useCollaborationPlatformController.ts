@@ -266,7 +266,7 @@ export function useCollaborationPlatformController({
         !force &&
         !location.workspaceId &&
         !location.projectId &&
-        rootView === "home" &&
+        (rootView === "home" || rootView === "devices") &&
         navigationCacheReadyRef.current
       ) {
         setState((current) => ({
@@ -406,9 +406,7 @@ export function useCollaborationPlatformController({
         // Navigation sources own independent storage, not resource identity.
         if (
           api.resources &&
-          (rootView === "agents" ||
-            rootView === "teams" ||
-            rootView === "devices")
+          (rootView === "agents" || rootView === "teams")
         ) {
           void api.resources
             .list()

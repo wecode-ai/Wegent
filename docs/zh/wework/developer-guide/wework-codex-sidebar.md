@@ -79,7 +79,9 @@ Executor 将以下三类数据合并为统一项目列表：
 
 ## 执行器身份、项目和本机入口
 
-- `deviceId` 是执行请求使用的设备地址。设备别名统一由 `workbench-device.ts` 解析；有持久化 `runtime_instance_id` 时用它比较执行器身份，连接地址仍使用可路由的 `device_id`。缺少 Runtime 身份的记录只按已知别名关联；不同 Runtime 同时声明同一别名时明确报错。
+- `deviceId` 是执行请求使用的设备地址。设备别名统一由 `workbench-device.ts` 解析；有持久化 `runtime_instance_id` 时用它比较执行器身份，连接地址仍使用可路由的 `device_id`。只有双方都缺少 Runtime 身份时才按已知别名关联；有身份的记录不会与缺少身份的记录合并，不同 Runtime 同时声明同一别名时明确报错。
+- 本机身份来自 `executor.describe` 的必填 `runtime_instance_id`。只有与本机 Runtime 身份相同的 APP 云端注册记录才能加入本地 IPC 路由；共享 `app_device_id` 的其他安装不属于本机。描述缺少或包含无效 Runtime 身份时，按 IPC 协议错误处理。
+- 连接健康状态与安装身份分开处理。短暂 IPC 断连只将已验证的执行器标记为离线，保留其身份，使 APP 地址的回滚和终端清理仍使用本地路由；重新连接时更新身份。无效的协议描述会撤销缓存身份。
 - `remoteHostId` 是保存在 Codex 远程项目入口中的主机引用。读取和写回时保留原值，通过身份解析器参与比较，不在列表合并中改写为另一种地址。
 - `stateDeviceId` 指定收藏、排序和入口元数据的保存设备。它与运行任务的设备可以不同，不能据此重定向任务。
 

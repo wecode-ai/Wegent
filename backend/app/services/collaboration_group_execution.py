@@ -44,6 +44,9 @@ def dispatch_collaboration_group_assignment(
     item: LoopItem,
     user_id: int,
     group: dict[str, Any],
+    runner_selection: dict | None = None,
+    automatic: bool = False,
+    automation_context: dict | None = None,
 ) -> LoopItemExecution | None:
     """Dispatch exactly once to the configured human or AI leader."""
 
@@ -73,6 +76,9 @@ def dispatch_collaboration_group_assignment(
         user_id=user_id,
         group=group,
         assignment_key=assignment_key,
+        runner_selection=runner_selection,
+        automatic=automatic,
+        automation_context=automation_context,
     )
 
 
@@ -83,8 +89,13 @@ def _enqueue_ai_leader(
     user_id: int,
     group: dict[str, Any],
     assignment_key: str,
+    runner_selection: dict | None = None,
+    automatic: bool = False,
+    automation_context: dict | None = None,
 ) -> LoopItemExecution:
-    run_id = f"collaboration-group:{assignment_key}"
+    run_id = (automation_context or {}).get(
+        "run_id"
+    ) or f"collaboration-group:{assignment_key}"
     existing = (
         db.query(LoopItemExecution)
         .filter(
@@ -123,6 +134,7 @@ def _enqueue_ai_leader(
         group=group,
     )
     context = {
+        **(automation_context or {}),
         "run_id": run_id,
         "dispatch_kind": "collaboration_group",
         "dispatch_id": f"collaboration-group:{group['id']}:{assignment_key}",
@@ -130,17 +142,36 @@ def _enqueue_ai_leader(
         "dispatch_role": "manager",
         "manager_agent_id": leader.id,
         "collaboration_group_id": str(group["id"]),
+        "assignment_key": assignment_key,
         "manager_display_name": str(group.get("name") or "Collaboration manager"),
         "collaboration_group": jsonable_encoder(group),
         "execution_prompt": manager_user_message,
         "system_prompt": MANAGER_SYSTEM_INSTRUCTIONS,
     }
-    device_id = str(config.get("execution_device_id") or "") or None
+    from app.services.runner_routing import resolve_group_routing
+
+    routes = resolve_group_routing(
+        db,
+        group=group,
+        project_id=str(project.id),
+        issue_id=item.id,
+        user_id=user_id,
+        selection=runner_selection,
+        automatic=automatic,
+    )
+    if routes:
+        if leader.id not in routes:
+            raise HTTPException(
+                422, "Configure the group leader's environment and model policies"
+            )
+        context["group_runner_requirements"] = routes
+        context["runner_routing"] = routes[leader.id]
+    device_id = None if routes else str(config.get("execution_device_id") or "") or None
     dispatch = loop_item_execution_service.enqueue_collaboration_group_dispatch(
         db,
         loop_item_id=item.id,
         cloud_project_id=str(project.id),
-        owner_user_id=int(leader.created_by_user_id or user_id),
+        owner_user_id=user_id if routes else int(leader.created_by_user_id or user_id),
         assigner_user_id=user_id,
         environment=str(config.get("execution_environment") or "local"),
         execution_device_id=device_id,
@@ -249,7 +280,11 @@ def collaboration_group_snapshot_for_dispatch(
         or not assigned_group_id
         or snapshot_group_id != assigned_group_id
         or str(context.get("collaboration_group_id") or "") != snapshot_group_id
-        or str(context.get("run_id") or "") != f"collaboration-group:{assignment_key}"
+        or str(
+            context.get("assignment_key")
+            or str(context.get("run_id") or "").removeprefix("collaboration-group:")
+        )
+        != assignment_key
     ):
         raise HTTPException(409, "Collaboration dispatch is no longer active")
     return dict(snapshot)

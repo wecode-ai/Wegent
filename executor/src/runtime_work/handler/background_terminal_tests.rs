@@ -36,7 +36,20 @@ async fn background_terminal_prevents_idle_restart_until_native_exit() {
 
 #[test]
 fn background_terminal_output_survives_execution_settlement_gap() {
-    let (mut handler, root) = isolated_runtime_work_handler("background-terminal-settlement");
+    verify_background_terminal_settlement(true);
+}
+
+#[test]
+fn background_terminal_output_survives_before_completion_mapper_drains() {
+    verify_background_terminal_settlement(false);
+}
+
+fn verify_background_terminal_settlement(persist_before_finish: bool) {
+    let (mut handler, root) = isolated_runtime_work_handler(if persist_before_finish {
+        "background-terminal-settlement"
+    } else {
+        "background-terminal-before-persistence"
+    });
     let (event_tx, mut event_rx) = broadcast::channel(8);
     handler.event_tx = Some(event_tx);
     let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
@@ -59,11 +72,18 @@ fn background_terminal_output_survives_execution_settlement_gap() {
         "thread-1".into(),
         "command-turn-1".into(),
     );
-    handler.persist_completed_codex_turn_from_notification("task-1", &json!({
+    handler.begin_active_codex_transcript("task-1", "thread-1", "command-turn-1");
+    handler.record_active_codex_transcript_item("task-1", "command-turn-1", &json!({
+        "method": "item/started", "params": {"item": {"id": "command-1", "type": "commandExecution", "command": "pnpm dev", "status": "inProgress", "processId": "42", "aggregatedOutput": "ready\n"}}
+    }));
+    let completion = json!({
         "method": "turn/completed", "params": {"threadId": "thread-1", "turn": {
             "id": "command-turn-1", "status": "completed", "items": [{"id": "command-1", "type": "commandExecution", "command": "pnpm dev", "status": "inProgress", "processId": "42", "aggregatedOutput": "ready\n"}]
         }}
-    }));
+    });
+    if persist_before_finish {
+        handler.persist_completed_codex_turn_from_notification("task-1", &completion);
+    }
     handler.clear_active_codex_turn("task-1", execution_id);
     assert!(handler.is_active_local_task("task-1"));
     handler.route_codex_notification(json!({
@@ -78,6 +98,9 @@ fn background_terminal_output_survives_execution_settlement_gap() {
         event["payload"]["data"]["updates"]["tool_output_delta"],
         "tick\n"
     );
+    if !persist_before_finish {
+        handler.persist_completed_codex_turn_from_notification("task-1", &completion);
+    }
     let messages = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
     assert_eq!(messages[0]["blocks"][0]["tool_output"], "ready\ntick\n");
     let _ = fs::remove_dir_all(root);

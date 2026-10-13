@@ -4,7 +4,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   captureVerificationScreenshot,
   createLocalCollaborationProject,
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -133,7 +133,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
-      await initializeFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
+      await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
 
       const firstIssueId = await createIssue(control, FIRST_ISSUE, 'completed', uiTimeoutMs)

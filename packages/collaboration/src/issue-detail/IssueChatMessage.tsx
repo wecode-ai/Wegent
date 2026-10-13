@@ -302,7 +302,13 @@ export function IssueChatMessage({
   const openExecution =
     onOpenExecution ??
     (allowBackendExecutionFallback ? openBackendExecution : undefined);
-  if (compact && plain && isManager && !isManagerStatusComment) {
+  if (
+    compact &&
+    plain &&
+    isManager &&
+    !isManagerStatusComment &&
+    !message.replyToMessageId
+  ) {
     const failed = displayStatus === "failed";
     const completed = displayStatus === "succeeded";
     const presentation = managerActivityPresentation(

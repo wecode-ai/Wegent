@@ -118,7 +118,7 @@ impl RuntimeWorkRpcHandler {
             Ok(response) => (
                 true,
                 Value::Null,
-                codex_models_with_provider(&response, &provider),
+                codex_models_with_configured_default(&response, &provider, &config),
             ),
             Err(error) => (false, Value::String(error), Vec::new()),
         };
@@ -131,6 +131,31 @@ impl RuntimeWorkRpcHandler {
             "error": error,
             "data": models.clone(),
         })];
+        log_executor_event(
+            "runtime model default resolved",
+            &[
+                ("query_id", query_id),
+                ("provider_id", provider.id.clone()),
+                (
+                    "configured_model",
+                    config
+                        .pointer("/config/model")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                ),
+                (
+                    "default_model",
+                    models
+                        .iter()
+                        .find(|model| model.get("isDefault").and_then(Value::as_bool) == Some(true))
+                        .and_then(|model| model.get("model").or_else(|| model.get("id")))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                ),
+            ],
+        );
         Ok(json!({
             "data": models,
             "providers": provider_results,
@@ -380,6 +405,24 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn codex_models_with_configured_default(
+    response: &Value,
+    provider: &CodexModelProviderInfo,
+    config: &Value,
+) -> Vec<Value> {
+    let mut models = codex_models_with_provider(response, provider);
+    if let Some(default) = config.pointer("/config/model").and_then(Value::as_str) {
+        for model in &mut models {
+            let id = model
+                .get("model")
+                .or_else(|| model.get("id"))
+                .and_then(Value::as_str);
+            model["isDefault"] = Value::Bool(id == Some(default));
+        }
+    }
+    models
+}
+
 pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppIpcError> {
     let Some(value) = payload.get("proxyUrl").or_else(|| payload.get("proxy_url")) else {
         return Ok(None);
@@ -406,4 +449,38 @@ pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppI
         ));
     }
     Ok(Some(proxy_url.to_owned()))
+}
+
+#[cfg(test)]
+mod configured_default_tests {
+    use super::*;
+
+    #[test]
+    fn configured_model_overrides_the_catalog_recommendation() {
+        let config = json!({"config": {"model": "chosen", "model_provider": "custom"}});
+        let provider = current_codex_model_provider_from_config(&config);
+        let models = codex_models_with_configured_default(
+            &json!({"data": [
+                {"model": "recommended", "isDefault": true},
+                {"model": "chosen", "isDefault": false}
+            ]}),
+            &provider,
+            &config,
+        );
+        assert_eq!(models[0]["isDefault"], false);
+        assert_eq!(models[1]["isDefault"], true);
+        assert_eq!(models[1]["providerId"], "custom");
+    }
+
+    #[test]
+    fn unavailable_configured_model_does_not_choose_a_replacement() {
+        let config = json!({"config": {"model": "removed"}});
+        let provider = current_codex_model_provider_from_config(&config);
+        let models = codex_models_with_configured_default(
+            &json!({"data": [{"model": "recommended", "isDefault": true}]}),
+            &provider,
+            &config,
+        );
+        assert_eq!(models[0]["isDefault"], false);
+    }
 }

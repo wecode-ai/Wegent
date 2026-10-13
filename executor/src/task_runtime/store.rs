@@ -30,6 +30,13 @@ use super::model::{
 #[path = "local_automation.rs"]
 mod local_automation;
 
+#[path = "runner_dispatch.rs"]
+mod runner_dispatch;
+
+#[cfg(test)]
+#[path = "runner_routing_tests.rs"]
+mod runner_routing_tests;
+
 #[path = "local_execution_activity.rs"]
 mod local_execution_activity;
 use local_execution_activity::{
@@ -124,7 +131,7 @@ impl LocalTaskStore {
              WHERE resource_type = 'project' AND deleted_at IS NULL
              ORDER BY updated_at DESC",
         )?;
-        let rows = statement.query_map([], map_loop_item)?;
+        let rows = statement.query_map([], |row| map_loop_item(&connection, row))?;
         let mut projects = collect_items(rows)?;
         drop(statement);
         projects.extend(list_external_projects(&connection)?);
@@ -338,7 +345,12 @@ impl LocalTaskStore {
             metadata["collaboration_groups"] = collaboration_groups;
         }
         if let Some(automatic_processing_rules) = input.automatic_processing_rules {
-            local_automation::validate_rules(&automatic_processing_rules)?;
+            local_automation::validate_rules(
+                &*self.connection()?,
+                &project.id,
+                &metadata,
+                &automatic_processing_rules,
+            )?;
             metadata["automatic_processing_rules"] = automatic_processing_rules;
         }
         if let Some(execution_environment) = input.execution_environment {
@@ -409,7 +421,7 @@ impl LocalTaskStore {
                AND deleted_at IS NULL
              ORDER BY sort_order, updated_at DESC",
         )?;
-        let rows = statement.query_map([project_id], map_loop_item)?;
+        let rows = statement.query_map([project_id], |row| map_loop_item(&connection, row))?;
         let mut items = collect_items(rows)?;
         drop(statement);
         let executions = latest_executions_for_project(&connection, project_id)?;
@@ -956,7 +968,8 @@ impl LocalTaskStore {
              WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1 AND deleted_at IS NULL
              ORDER BY created_at ASC",
         )?;
-        let rows = statement.query_map(params![project_id], map_loop_item)?;
+        let rows =
+            statement.query_map(params![project_id], |row| map_loop_item(&connection, row))?;
         let agents = collect_items(rows)?;
         Ok(agents
             .into_iter()
@@ -1033,6 +1046,34 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::VersionConflict);
         }
         let mut metadata = current.metadata;
+        if let Some(policy) = input.execution_policy.as_ref() {
+            metadata["execution_policy"] = policy.clone();
+        }
+        if let Some(policy) = input.model_policy.as_ref() {
+            metadata["model_policy"] = policy.clone();
+        }
+        super::runner_routing::validate_policies(
+            metadata.get("execution_policy"),
+            metadata.get("model_policy"),
+        )?;
+        super::runner_routing::validate_model_runtime(
+            metadata.get("model_policy"),
+            input
+                .runtime
+                .as_deref()
+                .or_else(|| metadata["runtime"].as_str())
+                .unwrap_or("codex"),
+        )?;
+        if metadata
+            .get("execution_policy")
+            .is_some_and(|v| !v.is_null())
+            && metadata.get("model_policy").is_some_and(|v| !v.is_null())
+        {
+            metadata
+                .as_object_mut()
+                .unwrap()
+                .remove("routing_configuration_required");
+        }
         if let Some(name) = input.name.as_ref() {
             validate_name(name, "robot name")?;
         }
@@ -1496,8 +1537,10 @@ impl LocalTaskStore {
         let timestamp = now();
         let message = note.unwrap_or("AI execution was cancelled");
         let start_was_delivered = current.start_requested_at.is_some();
-        if matches!(current.status.as_str(), "pending_approval" | "queued")
-            || (current.status == "claimed" && !start_was_delivered)
+        if matches!(
+            current.status.as_str(),
+            "pending_approval" | "queued" | "waiting_runtime"
+        ) || (current.status == "claimed" && !start_was_delivered)
         {
             let changed = transaction.execute(
                 "UPDATE loop_item_executions
@@ -1581,12 +1624,35 @@ impl LocalTaskStore {
         runtime_instance_id: &str,
         lease_seconds: u64,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.claim_next_execution_with_catalog(
+            execution_device_id,
+            runtime_instance_id,
+            lease_seconds,
+            None,
+        )
+    }
+
+    pub fn has_queued_routed_executions(&self) -> Result<bool, TaskRuntimeError> {
+        Ok(self.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_item_executions WHERE status='queued' AND (json_extract(execution_payload, '$.runnerRouting') IS NOT NULL OR json_extract(execution_payload, '$.runnerPolicy') IS NOT NULL))",
+            [], |row| row.get(0),
+        )?)
+    }
+
+    pub(crate) fn claim_next_execution_with_catalog(
+        &self,
+        execution_device_id: Option<&str>,
+        runtime_instance_id: &str,
+        lease_seconds: u64,
+        catalog: Option<&Value>,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
         if runtime_instance_id.trim().is_empty() {
             return Err(TaskRuntimeError::Invalid(
                 "Runtime instance identity is required".to_owned(),
             ));
         }
-        let connection = self.connection()?;
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut sql = String::from(
             "SELECT e.id, e.execution_scope
              FROM loop_item_executions e
@@ -1634,7 +1700,45 @@ impl LocalTaskStore {
         };
         let now = now();
         let runtime_device_id = execution_device_id.unwrap_or("local-device");
-        let runtime_task_id = format!("codex-queue-{candidate_id}");
+        let pending = execution_row(&connection, candidate_id)?;
+        let issue = get_item_from(&connection, &pending.loop_item_id, "task")?
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let conflict = issue.metadata.get("runner_binding_conflict").is_some()
+            || issue
+                .metadata
+                .pointer("/runner_binding/environment_id")
+                .and_then(Value::as_str)
+                .is_some_and(|bound| bound != runtime_device_id);
+        let mut payload = local_execution_runtime_payload(&pending);
+        let project = get_item_from(&connection, &pending.cloud_project_id, "project")?;
+        if project.is_none() {
+            drop(statement);
+            connection.rollback()?;
+            drop(guard);
+            self.fail_runtime_preflight(candidate_id, "Project is unavailable")?;
+            return Err(TaskRuntimeError::ProjectNotFound);
+        }
+        let resume_conflict = payload["resumeEnvironmentId"]
+            .as_str()
+            .is_some_and(|bound| bound != runtime_device_id);
+        let validation = if conflict || resume_conflict {
+            Err(TaskRuntimeError::Invalid(
+                "ISSUE_RUNNER_CONFLICT: Issue is bound to another runner".into(),
+            ))
+        } else {
+            super::runner_routing::resolve_pending(&mut payload, catalog, runtime_device_id)
+        };
+        if let Err(error) = validation {
+            connection.execute("UPDATE loop_item_executions SET status='waiting_runtime', error_message=?1 WHERE id=?2", params![error.to_string(), candidate_id])?;
+            drop(statement);
+            connection.commit()?;
+            return Err(error);
+        }
+
+        let runtime_task_id = payload["continueTaskId"]
+            .as_str()
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("codex-queue-{candidate_id}"));
         let lease_seconds = lease_seconds.max(60);
         let changed = connection.execute(
             "UPDATE loop_item_executions
@@ -1656,9 +1760,21 @@ impl LocalTaskStore {
         if changed != 1 {
             return Ok(None);
         }
+        connection.execute(
+            "UPDATE loop_item_executions SET execution_payload=?1 WHERE id=?2",
+            params![payload.to_string(), candidate_id],
+        )?;
         let mut execution = execution_row(&connection, candidate_id)?;
         drop(statement);
-        drop(connection);
+        connection.execute(
+            "UPDATE loop_items
+             SET metadata=json_set(COALESCE(metadata, '{}'), '$.runner_binding',
+                 json_object('environment_id', ?1))
+             WHERE id=?2 AND json_extract(metadata, '$.runner_binding') IS NULL",
+            params![runtime_device_id, issue.id],
+        )?;
+        connection.commit()?;
+        drop(guard);
         let mut payload = local_execution_runtime_payload(&execution);
         let preflight = self
             .get_project(&execution.cloud_project_id)
@@ -1667,6 +1783,7 @@ impl LocalTaskStore {
                     &mut payload,
                     &project.metadata,
                     runtime_device_id,
+                    &execution.cloud_project_id,
                 )
             });
         if let Err(error) = preflight {
@@ -1826,7 +1943,8 @@ impl LocalTaskStore {
         &self,
         runtime_task_id: &str,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        let connection = self.connection()?;
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let timestamp = now();
         let changed = connection.execute(
             "UPDATE loop_item_executions
@@ -1845,12 +1963,23 @@ impl LocalTaskStore {
             return Ok(None);
         }
         let execution_id = connection.query_row(
-            "SELECT id FROM loop_item_executions WHERE runtime_task_id = ?1",
+            "SELECT id FROM loop_item_executions WHERE runtime_task_id = ?1
+             AND status IN ('running', 'cancel_requested') ORDER BY id DESC LIMIT 1",
             params![runtime_task_id],
             |row| row.get(0),
         )?;
         connection.execute("UPDATE loop_item_comments SET status='streaming', updated_at=?1 WHERE deleted_at IS NULL AND json_extract(metadata,'$.execution_id')=?2", params![timestamp, execution_id])?;
-        execution_row(&connection, execution_id).map(Some)
+        let execution = execution_row(&connection, execution_id)?;
+        let dispatch_role = execution
+            .execution_payload
+            .as_ref()
+            .and_then(|payload| payload.get("dispatch_role"))
+            .and_then(Value::as_str);
+        if !matches!(dispatch_role, Some("manager" | "member")) {
+            move_runtime_comment_task_to_in_progress(&connection, &execution.loop_item_id)?;
+        }
+        connection.commit()?;
+        Ok(Some(execution))
     }
 
     pub fn reconcile_execution_snapshot(
@@ -2103,7 +2232,9 @@ impl LocalTaskStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current = execution_row(&transaction, execution_id)?;
-        if current.status != "claimed" || current.start_requested_at.is_some() {
+        if !matches!(current.status.as_str(), "queued" | "claimed")
+            || current.start_requested_at.is_some()
+        {
             transaction.rollback()?;
             return Ok(Some(current));
         }
@@ -2115,7 +2246,7 @@ impl LocalTaskStore {
                  sync_state = 'in_sync', error_message = ?2,
                  termination_reason = 'runtime_preflight_failed',
                  version = version + 1, updated_at = ?1
-             WHERE id = ?3 AND status = 'claimed' AND start_requested_at IS NULL",
+             WHERE id = ?3 AND status IN ('queued', 'claimed') AND start_requested_at IS NULL",
             params![timestamp, error, execution_id],
         )?;
         if changed != 1 {
@@ -2247,7 +2378,34 @@ impl LocalTaskStore {
         })?;
         let task =
             get_item_from(&connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        if agent.cloud_project_id.as_deref() != Some(project_id)
+            || agent.status.as_deref() != Some("active")
+            || task.cloud_project_id.as_deref() != Some(project_id)
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Robot or Issue is not active in this project".into(),
+            ));
+        }
         if let Some(trigger) = trigger_message_id {
+            let trigger_record = comment_row(&connection, trigger)?;
+            if trigger_record.project_id != project_id || trigger_record.task_id != task_id {
+                return Err(TaskRuntimeError::Invalid(
+                    "Comment does not belong to this Issue".into(),
+                ));
+            }
+            let existing: Option<i64> = connection.query_row(
+                "SELECT id FROM loop_item_executions WHERE loop_item_id=?1 AND agent_id=?2 AND json_extract(execution_payload, '$.trigger_message_id')=?3 ORDER BY id DESC LIMIT 1",
+                params![task_id, agent_id, trigger], |row| row.get(0),
+            ).optional()?;
+            if let Some(id) = existing {
+                return execution_row(&connection, id);
+            }
+            payload = local_execution_activity::comment_execution_payload(
+                &connection,
+                &trigger_record,
+                agent_id,
+                payload,
+            )?;
             if !payload.is_object() {
                 payload = json!({});
             }
@@ -2374,7 +2532,7 @@ impl LocalTaskStore {
             params![project_id, limit.saturating_add(1), offset],
             |row| {
                 Ok(ArchivedLoopItem {
-                    item: map_loop_item(row)?,
+                    item: map_loop_item(&connection, row)?,
                     archived_at: row.get(24)?,
                 })
             },
@@ -2495,10 +2653,11 @@ impl LocalTaskStore {
                AND deleted_at IS NULL
              ORDER BY sort_order, updated_at DESC",
         )?;
-        let lane = collect_items(statement.query_map(
-            params![project_id, input.status, input.parent_id],
-            map_loop_item,
-        )?)?;
+        let lane = collect_items(
+            statement.query_map(params![project_id, input.status, input.parent_id], |row| {
+                map_loop_item(&transaction, row)
+            })?,
+        )?;
         drop(statement);
         let mut ordered_ids = input
             .item_ids
@@ -3011,6 +3170,11 @@ fn insert_chat_agent(
     project_id: &str,
     input: ChatAgentCreate,
 ) -> Result<String, TaskRuntimeError> {
+    super::runner_routing::validate_policies(
+        input.execution_policy.as_ref(),
+        input.model_policy.as_ref(),
+    )?;
+    super::runner_routing::validate_model_runtime(input.model_policy.as_ref(), &input.runtime)?;
     validate_name(&input.name, "robot name")?;
     validate_chat_agent_runtime(&input.runtime)?;
     if !(1..=20).contains(&input.max_concurrent_executions) {
@@ -3049,6 +3213,8 @@ fn insert_chat_agent(
             .unwrap_or_default()
     });
     let mut metadata = json!({
+        "execution_policy": input.execution_policy,
+        "model_policy": input.model_policy,
         "display_name": input.display_name.unwrap_or_else(|| input.name.clone()),
         "namespace": input.namespace.unwrap_or_else(|| "default".to_owned()),
         "runtime": input.runtime,
@@ -3868,12 +4034,22 @@ fn get_item_from(
              FROM loop_items
              WHERE id = ?1 AND resource_type = ?2 AND deleted_at IS NULL",
             params![id, resource_type],
-            map_loop_item,
+            |row| map_loop_item(connection, row),
         )
         .optional()
 }
 
-fn map_loop_item(row: &Row<'_>) -> rusqlite::Result<LoopItem> {
+fn map_loop_item(connection: &Connection, row: &Row<'_>) -> rusqlite::Result<LoopItem> {
+    let metadata = row
+        .get::<_, Option<String>>(16)?
+        .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+        .unwrap_or_else(|| json!({}));
+    let metadata = super::runner_history::metadata(
+        connection,
+        &row.get::<_, String>(0)?,
+        &row.get::<_, String>(1)?,
+        metadata,
+    )?;
     Ok(LoopItem {
         id: row.get(0)?,
         resource_type: row.get(1)?,
@@ -3892,10 +4068,7 @@ fn map_loop_item(row: &Row<'_>) -> rusqlite::Result<LoopItem> {
         priority: row.get(13)?,
         sort_order: row.get(14)?,
         current_delivery_id: row.get(15)?,
-        metadata: row
-            .get::<_, Option<String>>(16)?
-            .and_then(|value| serde_json::from_str(&value).ok())
-            .unwrap_or_else(|| json!({})),
+        metadata,
         version: row.get(17)?,
         created_at: row.get(18)?,
         updated_at: row.get(19)?,
@@ -4346,6 +4519,14 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .to_owned()
     };
     ChatAgent {
+        execution_policy: metadata
+            .get("execution_policy")
+            .filter(|value| !value.is_null())
+            .cloned(),
+        model_policy: metadata
+            .get("model_policy")
+            .filter(|value| !value.is_null())
+            .cloned(),
         id: row.id.clone(),
         project_id: row.cloud_project_id.clone().unwrap_or_default(),
         display_name: text("display_name", &name),
@@ -4760,6 +4941,12 @@ fn dispatch_collaboration_group_assignment(
     }
     let leader_agent = collaboration_agent(connection, input.project_id, leader_id)?;
     let mut execution_payload = input.payload.as_object().cloned().unwrap_or_default();
+    runner_dispatch::add_group_profiles(
+        connection,
+        input.project_id,
+        input.group,
+        &mut execution_payload,
+    )?;
     let manager_context = collaboration_manager_message(
         input.group,
         project
@@ -4877,7 +5064,7 @@ fn collaboration_agent(
     let agent = statement
         .query_row(
             params![project_id, DEFAULT_WORK_ITEM_PROJECT_ID, agent_id],
-            map_loop_item,
+            |row| map_loop_item(connection, row),
         )
         .optional()?
         .ok_or_else(|| {
@@ -5069,7 +5256,26 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
     let payload_object = payload
         .as_object_mut()
         .expect("materialized Runtime payload must be an object");
+    for (key, value) in &stored {
+        if ![
+            "runtimePayload",
+            "runtime_payload",
+            "managerRuntimeRequest",
+            "manager_runtime_request",
+        ]
+        .contains(&key.as_str())
+        {
+            payload_object
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
+        }
+    }
     apply_execution_agent_profile(payload_object, execution);
+    for key in ["runnerPolicy", "runnerSelection"] {
+        if let Some(value) = stored.get(key) {
+            payload_object.insert(key.into(), value.clone());
+        }
+    }
     if let Some(project_instructions) = stored.get("projectInstructions").cloned() {
         payload_object.insert("projectInstructions".to_owned(), project_instructions);
     }
@@ -5138,7 +5344,10 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
             json!(format!("{title} - Assistant")),
         );
         request.insert("prompt".to_owned(), json!(message));
-        request.insert("new_session".to_owned(), json!(true));
+        request.insert(
+            "new_session".to_owned(),
+            json!(stored.get("continueTaskId").is_none()),
+        );
         request.insert(
             "device_id".to_owned(),
             json!(execution
@@ -5265,6 +5474,8 @@ mod tests {
             .create_chat_agent(
                 project_id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Local Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -5294,6 +5505,8 @@ mod tests {
 
     fn default_chat_agent_input() -> ChatAgentCreate {
         ChatAgentCreate {
+            execution_policy: None,
+            model_policy: None,
             name: "current-device-assistant".to_owned(),
             display_name: Some("Current device assistant".to_owned()),
             namespace: Some("default".to_owned()),
@@ -5345,6 +5558,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Explicit Empty Bot".to_owned(),
                     model: Some("legacy-model".to_owned()),
                     model_type: Some("runtime".to_owned()),
@@ -6404,6 +6619,8 @@ mod tests {
             .create_chat_agent(
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Evidence Bot".to_owned(),
                     display_name: Some("Evidence Bot".to_owned()),
                     namespace: None,
@@ -6438,6 +6655,8 @@ mod tests {
             .create_chat_agent(
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Review Bot".to_owned(),
                     display_name: Some("Review Bot".to_owned()),
                     namespace: None,
@@ -7113,6 +7332,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Creator Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -7282,6 +7503,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Bound Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -7316,6 +7539,8 @@ mod tests {
                 &project.id,
                 &agent.id,
                 ChatAgentUpdate {
+                    execution_policy: None,
+                    model_policy: None,
                     version: agent.version,
                     name: None,
                     display_name: None,
@@ -7349,6 +7574,8 @@ mod tests {
                 &project.id,
                 &agent.id,
                 ChatAgentUpdate {
+                    execution_policy: None,
+                    model_policy: None,
                     version: updated.version,
                     name: None,
                     display_name: None,
@@ -7386,6 +7613,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Bot A".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -7415,6 +7644,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Bot B".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -7530,6 +7761,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Parallel Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -7617,6 +7850,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Unbound Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -7809,6 +8044,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Manual Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -7883,6 +8120,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Status Filter Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -8638,6 +8877,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Migrated Bot".to_owned(),
                     display_name: None,
                     namespace: None,

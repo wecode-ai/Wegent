@@ -1,4 +1,6 @@
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
+import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
+import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
 import { createPluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
 import {
   useCallback,
@@ -147,7 +149,6 @@ import {
   publishRuntimeTransportReplaced,
   reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
-  setRuntimeConversationGoal,
   setRuntimeConversationTaskPlan,
   settleRuntimeConversationAcceptedMessage,
   settleRuntimeConversationSubagents,
@@ -2088,8 +2089,7 @@ export function WorkbenchProvider({
       .then(response => {
         if (!response.accepted || !isRuntimeGoalSnapshotCurrent(address, snapshotVersion)) return
         const goal = response.goal ?? null
-        setRuntimeConversationGoal(address, goal)
-        lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
+        syncRuntimeGoal(lifecycleStore, address, goal)
       })
       .catch(error => {
         console.warn('[Wework] Runtime Goal snapshot sync failed', {
@@ -2178,13 +2178,11 @@ export function WorkbenchProvider({
           },
           onRuntimeGoalUpdated: (address, payload) => {
             const goal = payload.goal ?? null
-            setRuntimeConversationGoal(address, goal)
-            lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
+            syncRuntimeGoal(lifecycleStore, address, goal)
             syncRuntimeTaskSnapshot(address)
           },
           onRuntimeGoalCleared: address => {
-            setRuntimeConversationGoal(address, null)
-            lifecycleStore.goalStatusReceived(address, null)
+            syncRuntimeGoal(lifecycleStore, address, null)
             syncRuntimeTaskSnapshot(address)
           },
           onRuntimeSupervisorUpdated: (address, payload) => {
@@ -2976,6 +2974,7 @@ export function WorkbenchProvider({
                 models={conversationModels}
                 services={resolvedServices}
               />
+              <RunnerSelectionHost />
               {children}
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>

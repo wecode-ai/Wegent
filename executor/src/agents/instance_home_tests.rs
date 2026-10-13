@@ -36,14 +36,14 @@ fn pipeline_stages_have_independent_homes_and_route_skills_to_the_active_task() 
     assert_ne!(first_home, second_home);
     let second_lease = acquire_at(&second, root.path(), &second_home).unwrap();
     fs::create_dir_all(second_home.join("skills")).unwrap();
-    let lookup = || task_skills_directory_at(root.path(), "task-1", "https://backend.example", "1");
+    let lookup = || task_skills_directory_at(root.path(), "task-1", "1");
     assert!(lookup().unwrap_err().contains("multiple"));
     drop(first_lease);
     assert_eq!(lookup().unwrap(), second_home.join("skills"));
     assert!(acquire_at(&second, root.path(), &second_home)
         .unwrap_err()
         .contains("active"));
-    assert!(task_skills_directory_at(root.path(), "task-1", "https://other.example", "1").is_err());
+    assert!(task_skills_directory_at(root.path(), "task-1", "2").is_err());
     drop(second_lease);
     assert!(lookup().unwrap_err().contains("multiple"));
     // An execution for another task must not select a historical pipeline stage.
@@ -127,7 +127,7 @@ fn compact_records_keep_identity_once_and_do_not_rewrite_on_followup() {
     let task_path = task_binding(&home, &request.task_id).unwrap();
     assert_eq!(
         read_marker(&agent_path).unwrap(),
-        json!({"schema_version":5, "backend_url":"https://backend.example",
+        json!({"schema_version":5,
             "user_id":"1", "user_name":"user1", "team_id":"12", "bot_id":"23", "shell_type":"codex"})
     );
     assert_eq!(
@@ -152,6 +152,53 @@ fn compact_records_keep_identity_once_and_do_not_rewrite_on_followup() {
 }
 
 #[test]
+fn followup_reuses_existing_home_and_session_across_backend_urls() {
+    for shell in ["Codex", "ClaudeCode"] {
+        let root = tempfile::tempdir().unwrap();
+        let mut request = request();
+        request.bot[0]["shell_type"] = json!(shell);
+        request.backend_url = Some("https://preview.example/api".to_owned());
+        let home = named_home_at(root.path(), &request).unwrap();
+        drop(acquire_at(&request, root.path(), &home).unwrap());
+        // Reproduce an existing schema 5 Home written before backend URLs were removed.
+        let agent_path = home.join("agent.json");
+        let mut marker = read_marker(&agent_path).unwrap();
+        marker["backend_url"] = json!(request.backend_url);
+        fs::write(&agent_path, marker.to_string()).unwrap();
+        let session_path = home.join("sessions/remembered.jsonl");
+        fs::create_dir_all(session_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(home.join("skills")).unwrap();
+        fs::write(&session_path, "synthetic-session-preserved\n").unwrap();
+        let session = json!({"id":"remembered", "path":"sessions/remembered.jsonl"});
+        let task_path = task_binding(&home, &request.task_id).unwrap();
+        let task = json!({"task_id":request.task_id, "migrated_session":session});
+        fs::write(&task_path, task.to_string()).unwrap();
+
+        request.backend_url = Some("https://production.example/api".to_owned());
+        request.subtask_id = "next-turn".to_owned();
+        request.new_session = false;
+        assert_eq!(named_home_at(root.path(), &request).unwrap(), home);
+        drop(acquire_at(&request, root.path(), &home).unwrap());
+        assert!(read_marker(&agent_path)
+            .unwrap()
+            .get("backend_url")
+            .is_none());
+        assert_eq!(read_marker(&task_path).unwrap(), task);
+        assert_eq!(
+            task_skills_directory_at(root.path(), &request.task_id, "1").unwrap(),
+            home.join("skills")
+        );
+        assert_eq!(
+            fs::read_to_string(&session_path).unwrap(),
+            "synthetic-session-preserved\n"
+        );
+        request.backend_url = None;
+        drop(acquire_at(&request, root.path(), &home).unwrap());
+        assert_eq!(read_marker(&task_path).unwrap(), task);
+    }
+}
+
+#[test]
 fn expanded_records_upgrade_without_reimporting_or_losing_other_tasks() {
     let root = tempfile::tempdir().unwrap();
     let mut request = request();
@@ -165,15 +212,17 @@ fn expanded_records_upgrade_without_reimporting_or_losing_other_tasks() {
     let session = json!({"id":"remembered", "path":"sessions/remembered.jsonl"});
     let mut agent = request_identity(&request).unwrap();
     agent["schema_version"] = json!(4);
+    agent["backend_url"] = json!("https://preview.example/api");
     fs::write(home.join("agent.json"), agent.to_string()).unwrap();
     let mut expanded = request_identity(&request).unwrap();
+    expanded["backend_url"] = agent["backend_url"].clone();
     expanded["migrated_session"] = session.clone();
     expanded["skills_path"] = json!("skills");
     for id in ["task-1", "task-2"] {
         expanded["task_id"] = json!(id);
         fs::write(task_binding(&home, id).unwrap(), expanded.to_string()).unwrap();
     }
-    let lookup = |id| task_skills_directory_at(root.path(), id, "https://backend.example", "1");
+    let lookup = |id| task_skills_directory_at(root.path(), id, "1");
     assert_eq!(lookup("task-1").unwrap(), home.join("skills"));
     let untouched = fs::read(task_binding(&home, "task-2").unwrap()).unwrap();
     drop(acquire_at(&request, root.path(), &home).unwrap());
@@ -189,6 +238,9 @@ fn expanded_records_upgrade_without_reimporting_or_losing_other_tasks() {
         fs::read(task_binding(&home, "task-2").unwrap()).unwrap(),
         untouched
     );
+    request.bot[0]["id"] = json!(24);
+    request.bot[0]["shell_type"] = json!("ClaudeCode");
+    drop(acquire_at(&request, root.path(), &home).unwrap());
     // This also represents interruption after upgrading agent.json but before its task.
     assert_eq!(lookup("task-2").unwrap(), home.join("skills"));
     request.task_id = "task-2".to_owned();
@@ -218,15 +270,7 @@ fn invalid_expanded_binding_is_not_pruned_or_reimported() {
     task["task_id"] = json!(request.task_id);
     task["migrated_session"] = Value::Null;
     let task_path = task_binding(&home, &request.task_id).unwrap();
-    for field in [
-        "backend_url",
-        "user_id",
-        "team_id",
-        "bot_id",
-        "shell_type",
-        "team_namespace",
-        "user_name",
-    ] {
+    for field in ["team_namespace", "user_name"] {
         let mut wrong = task.clone();
         wrong.as_object_mut().unwrap().remove(field);
         fs::write(&task_path, wrong.to_string()).unwrap();
@@ -252,18 +296,14 @@ fn compact_binding_does_not_allow_a_symlinked_skills_directory() {
     let request = request();
     let home = named_home_at(root.path(), &request).unwrap();
     drop(acquire_at(&request, root.path(), &home).unwrap());
-    assert!(
-        task_skills_directory_at(root.path(), "task-1", "https://backend.example", "1").is_err()
-    );
+    assert!(task_skills_directory_at(root.path(), "task-1", "1").is_err());
     let external = root.path().join("unmanaged");
     fs::create_dir_all(&external).unwrap();
     fs::write(external.join("keep"), "untouched").unwrap();
     std::os::unix::fs::symlink(&external, home.join("skills")).unwrap();
-    assert!(
-        task_skills_directory_at(root.path(), "task-1", "https://backend.example", "1")
-            .unwrap_err()
-            .contains("symlink")
-    );
+    assert!(task_skills_directory_at(root.path(), "task-1", "1")
+        .unwrap_err()
+        .contains("symlink"));
     assert_eq!(
         fs::read_to_string(external.join("keep")).unwrap(),
         "untouched"
@@ -326,7 +366,7 @@ fn internal_spaces_are_preserved_without_aliasing_other_names() {
     let skills = home.join("skills");
     fs::create_dir_all(&skills).unwrap();
     assert_eq!(
-        task_skills_directory_at(&root, "task-1", "https://backend.example", "1").unwrap(),
+        task_skills_directory_at(&root, "task-1", "1").unwrap(),
         skills
     );
     drop(acquire_at(&request, &root, &home).unwrap());
@@ -348,7 +388,7 @@ fn releasing_home_lease_unlocks_inherited_file_description() {
 }
 
 #[test]
-fn shared_agent_home_keeps_task_bindings_and_rejects_identity_conflicts() {
+fn shared_agent_home_keeps_task_bindings_when_configuration_changes() {
     let root = tempfile::tempdir().unwrap();
     let original = request();
     let home = named_home_at(root.path(), &original).unwrap();
@@ -369,7 +409,7 @@ fn shared_agent_home_keeps_task_bindings_and_rejects_identity_conflicts() {
     fs::create_dir_all(&second).unwrap();
     for (task, expected) in [("task-1", first), ("task-2", second)] {
         assert_eq!(
-            task_skills_directory_at(root.path(), task, "https://backend.example", "1").unwrap(),
+            task_skills_directory_at(root.path(), task, "1").unwrap(),
             expected
         );
     }
@@ -380,17 +420,18 @@ fn shared_agent_home_keeps_task_bindings_and_rejects_identity_conflicts() {
     for (key, value) in [
         ("user", json!({"id":2})),
         ("team_id", json!(13)),
-        ("team_namespace", json!("other")),
-        ("user_name", json!("other-user")),
-        ("backend_url", json!("https://other.example")),
         ("bot", json!([{"id":24,"shell_type":"Codex"}])),
         ("bot", json!([{"id":23,"shell_type":"ClaudeCode"}])),
     ] {
         let mut raw = serde_json::to_value(&original).unwrap();
         raw[key] = value;
-        let changed = serde_json::from_value(raw).unwrap();
-        let error = acquire_at(&changed, root.path(), &home).unwrap_err();
-        assert!(error.contains("identity"), "changed {key}: {error}");
+        let changed: ExecutionRequest = serde_json::from_value(raw).unwrap();
+        assert_eq!(named_home_at(root.path(), &changed).unwrap(), home);
+        drop(acquire_at(&changed, root.path(), &home).unwrap());
+        let marker = read_marker(&home.join("agent.json")).unwrap();
+        assert!(marker_matches(&marker, &legacy_identity(&changed).unwrap()));
+        assert!(task_binding(&home, "task-1").unwrap().is_file());
+        assert!(task_binding(&home, "task-2").unwrap().is_file());
     }
 }
 
@@ -477,7 +518,7 @@ fn prefixed_user_home_requires_matching_owner_and_task() {
 }
 
 #[test]
-fn different_same_named_agents_cannot_overwrite_existing_home() {
+fn recreated_same_named_agent_reuses_existing_directory() {
     let root = tempfile::tempdir().unwrap();
     let mut request = request();
     request.team_namespace = Some("default".to_owned());
@@ -486,10 +527,15 @@ fn different_same_named_agents_cannot_overwrite_existing_home() {
     drop(acquire_at(&request, root.path(), &home).unwrap());
     request.extra["team_owner"] = json!({"kind":"user","id":1,"name":"public"});
     request.extra["team_id"] = json!(13);
+    request.bot[0]["id"] = json!(24);
+    request.task_id = "task-2".to_owned();
     assert_eq!(named_home_at(root.path(), &request).unwrap(), home);
-    assert!(acquire_at(&request, root.path(), &home)
-        .unwrap_err()
-        .contains("identity"));
+    drop(acquire_at(&request, root.path(), &home).unwrap());
+    let marker = read_marker(&home.join("agent.json")).unwrap();
+    assert_eq!(marker["team_id"], "13");
+    assert_eq!(marker["bot_id"], "24");
+    assert!(task_binding(&home, "task-1").unwrap().is_file());
+    assert!(task_binding(&home, "task-2").unwrap().is_file());
 }
 
 #[test]
@@ -531,27 +577,22 @@ fn named_legacy_home_requires_namespace_and_task_binding_before_import() {
 }
 
 #[test]
-fn skills_lookup_requires_matching_backend_and_account_even_for_unique_task() {
+fn skills_lookup_requires_matching_account_and_task() {
     let root = tempfile::tempdir().unwrap();
     let home = named_home_at(root.path(), &request()).unwrap();
     drop(acquire_at(&request(), root.path(), &home).unwrap());
     let skills = home.join("skills");
     fs::create_dir_all(&skills).unwrap();
     assert_eq!(
-        task_skills_directory_at(root.path(), "task-1", "https://backend.example/", "1").unwrap(),
+        task_skills_directory_at(root.path(), "task-1", "1").unwrap(),
         skills
     );
-    assert!(task_skills_directory_at(root.path(), "task-1", "https://other.example", "1").is_err());
-    assert!(
-        task_skills_directory_at(root.path(), "task-1", "https://backend.example", "2").is_err()
-    );
+    assert!(task_skills_directory_at(root.path(), "task-1", "2").is_err());
     let path = task_binding(&home, "task-1").unwrap();
     let mut marker = read_marker(&path).unwrap();
     marker["task_id"] = json!("another-task");
     fs::write(path, marker.to_string()).unwrap();
-    assert!(
-        task_skills_directory_at(root.path(), "task-1", "https://backend.example", "1").is_err()
-    );
+    assert!(task_skills_directory_at(root.path(), "task-1", "1").is_err());
 }
 
 #[test]
@@ -574,7 +615,7 @@ fn skills_lookup_prefers_current_user_home_after_session_migration() {
     drop(acquire_at(&request, root.path(), &home).unwrap());
     fs::create_dir_all(home.join("skills")).unwrap();
     assert_eq!(
-        task_skills_directory_at(root.path(), "task-1", "https://backend.example", "1").unwrap(),
+        task_skills_directory_at(root.path(), "task-1", "1").unwrap(),
         home.join("skills")
     );
     assert!(old.join("agent.json").is_file());

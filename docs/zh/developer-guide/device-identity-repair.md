@@ -19,6 +19,13 @@ sidebar_position: 90
 - `app_device_id`：桌面 IPC 身份，不替代逻辑设备 ID。
 - `execution_target_id`：后端对 app 记录返回 `app-record-<主键>`，用于精确执行路由；界面仍展示原 `device_id`。
 
+App 的 WebSocket 注册会话、执行队列领取和唤醒房间必须使用注册确认的同一个
+`app-record-<主键>`。不能在领取任务时改用 `app_device_id`：多个安装共享 IPC 别名时，
+别名无法唯一解析，执行器会收到 `Runner is no longer authorized`，Issue 无法开始执行。
+发布此修复后需要重新建立执行器连接，以更新已有注册会话；无需删除设备或修改历史记录。
+桌面 E2E 的 `collaboration-app-queue-identity` 检查点使用两个共享别名的真实执行器，
+验证云端 Issue 自动领取、完成、记录路由和单次执行。
+
 新配置的生成和保存受文件锁保护，采用同目录临时文件原子替换。配置损坏或保存失败会明确报错，
 不使用所有安装共用的兜底 ID，也不丢弃旧配置重新生成身份。
 

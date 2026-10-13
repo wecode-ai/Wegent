@@ -208,7 +208,7 @@ def git_hosting_cli_status_command(tool: str) -> str:
     )
 
 
-WORKSPACE_ROOT_GUARD_SCRIPT = """
+WORKSPACE_FILE_HELPERS_SCRIPT = """
 def fail(message, code=64):
     print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
     raise SystemExit(code)
@@ -221,53 +221,13 @@ def is_relative_to(path, root):
     except ValueError:
         return False
 
-
-def configured_workspace_roots():
-    roots = []
-    for raw_root in os.environ.get("WEGENT_WORKSPACE_ROOTS", "").split(os.pathsep):
-        raw_root = raw_root.strip()
-        if raw_root:
-            roots.append(Path(raw_root).expanduser().resolve())
-
-    raw_projects_root = os.environ.get("WEGENT_EXECUTOR_PROJECTS_DIR", "").strip()
-    if raw_projects_root:
-        projects_root = Path(raw_projects_root).expanduser().resolve()
-        roots.append(projects_root)
-        if projects_root.name == "projects":
-            roots.append(projects_root.parent / "worktrees")
-        else:
-            roots.append(projects_root / "worktrees")
-
-    wecode_home = Path(os.environ.get("WECODE_HOME", Path.home() / ".wecode"))
-    executor_workspace = wecode_home.expanduser() / "wegent-executor" / "workspace"
-    roots.extend(
-        [
-            executor_workspace / "projects",
-            executor_workspace / "worktrees",
-            Path("/workspace/projects"),
-            Path("/workspace/worktrees"),
-        ]
-    )
-    return tuple(dict.fromkeys(root.resolve() for root in roots))
-
-
-def require_workspace_root(path):
-    for allowed_root in configured_workspace_roots():
-        if is_relative_to(path, allowed_root):
-            return allowed_root
-
-    fail("workspace path is outside allowed workspace roots")
 """.strip()
 
 WORKSPACE_TREE_SCRIPT = """
 import json
-import os
 import stat as stat_module
 from datetime import datetime, timezone
 from pathlib import Path
-
-
-__WORKSPACE_ROOT_GUARD_SCRIPT__
 
 
 def iso_mtime(path_stat):
@@ -275,9 +235,6 @@ def iso_mtime(path_stat):
 
 
 root = Path.cwd().resolve()
-workspace_root = require_workspace_root(root)
-if not is_relative_to(root, workspace_root):
-    fail("workspace path is outside allowed workspace root")
 
 entries = []
 for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
@@ -300,13 +257,10 @@ for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
 
 entries.sort(key=lambda item: (not item["is_directory"], item["name"].lower()))
 print(json.dumps({"path": str(root), "entries": entries}, ensure_ascii=False))
-""".replace(
-    "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
-).strip()
+""".strip()
 
 WORKSPACE_READ_TEXT_FILE_SCRIPT = """
 import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -314,17 +268,14 @@ from pathlib import Path
 MAX_BYTES = 262144
 
 
-__WORKSPACE_ROOT_GUARD_SCRIPT__
+__WORKSPACE_FILE_HELPERS_SCRIPT__
 
 
 if len(sys.argv) != 2:
     fail("file name is required")
 
 root = Path.cwd().resolve()
-workspace_root = require_workspace_root(root)
 target = (root / sys.argv[1]).resolve()
-if not is_relative_to(target, workspace_root):
-    fail("file path is outside workspace root")
 if not is_relative_to(target, root):
     fail("file path is outside workspace")
 if not target.is_file():
@@ -350,7 +301,7 @@ print(
     )
 )
 """.replace(
-    "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
+    "__WORKSPACE_FILE_HELPERS_SCRIPT__", WORKSPACE_FILE_HELPERS_SCRIPT
 ).strip()
 
 WORKSPACE_READ_FILE_CHUNK_SCRIPT = """
@@ -363,7 +314,7 @@ from pathlib import Path
 MAX_BYTES = 1024 * 1024
 
 
-__WORKSPACE_ROOT_GUARD_SCRIPT__
+__WORKSPACE_FILE_HELPERS_SCRIPT__
 
 
 if len(sys.argv) != 3:
@@ -377,10 +328,7 @@ if offset < 0:
     fail("file offset must be a non-negative integer")
 
 root = Path.cwd().resolve()
-workspace_root = require_workspace_root(root)
 target = (root / sys.argv[1]).resolve()
-if not is_relative_to(target, workspace_root):
-    fail("file path is outside workspace root")
 if not is_relative_to(target, root):
     fail("file path is outside workspace")
 if not target.is_file():
@@ -405,7 +353,7 @@ print(
     )
 )
 """.replace(
-    "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
+    "__WORKSPACE_FILE_HELPERS_SCRIPT__", WORKSPACE_FILE_HELPERS_SCRIPT
 ).strip()
 
 PROJECT_FOLDER_STATUS_SCRIPT = """

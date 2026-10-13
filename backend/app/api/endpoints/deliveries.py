@@ -1056,6 +1056,7 @@ async def create_issue_assignment(
                 workflow_step=values.workflow_step,
                 notify_assignee=values.notify_target,
                 trigger=values.trigger,
+                runner_selection=values.runner_selection,
             ),
         )
         issue_values = external_loop_item_provider.get(db, item_id, current_user.id)
@@ -1093,6 +1094,7 @@ async def create_issue_assignment(
                     workflow_step=values.workflow_step,
                     notify_assignee=values.notify_target,
                     trigger=values.trigger,
+                    runner_selection=values.runner_selection,
                 ),
                 assignment_comment_id=(
                     str(comment_values["id"]) if comment_values is not None else None

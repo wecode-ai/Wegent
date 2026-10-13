@@ -2,6 +2,7 @@ import {
   createRemoteProjectDevicePluginApi,
   type ProjectDevicePluginApi,
 } from '@/api/projectDevicePlugins'
+import { requestRunnerSelection, type RunnerSelectionRequest } from '@/lib/runner-selection'
 import { getToken } from '@/api/auth'
 import { createAgentResourceApi } from '@/api/agentResources'
 import { createAttachmentApi } from '@/api/attachments'
@@ -87,6 +88,7 @@ export function createBackendWorkbenchServices(
     logger: console,
   })
   const projectChatClient = createProjectChatClient({
+    requestRunnerSelection: request => requestRunnerSelection(request as RunnerSelectionRequest),
     socketBaseUrl,
     socketPath,
     getToken: resolveToken,

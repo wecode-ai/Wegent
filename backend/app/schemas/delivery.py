@@ -18,6 +18,7 @@ from pydantic import (
 
 from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
 from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionConfig
+from app.schemas.runner_routing import RunnerSelection
 from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
 from app.schemas.tagging import normalize_tags as _normalize_tags
@@ -25,6 +26,7 @@ from app.utils.schedule_time import normalize_schedule_datetime
 
 
 class LoopItemCreate(BaseModel):
+    runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     title: str = Field(min_length=1, max_length=255)
     description: str = ""
@@ -68,6 +70,7 @@ class LoopItemCreate(BaseModel):
 
 
 class LoopItemUpdate(BaseModel):
+    runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     version: int = Field(ge=1)
     security_level: Literal["open", "related"] | None = None

@@ -203,6 +203,7 @@ class RuntimeRpcService:
         timeout_seconds: int = DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS,
         allow_app_device_task_messaging: bool = False,
         allow_app_device_task_reading: bool = False,
+        allow_app_device_catalog_reading: bool = False,
     ) -> dict[str, Any]:
         """Call `runtime:rpc` on an online local executor and return its result."""
 
@@ -230,10 +231,16 @@ class RuntimeRpcService:
             and route.device_type == DeviceType.APP
             and method == "runtime.tasks.transcript"
         )
+        app_catalog_reading_allowed = (
+            allow_app_device_catalog_reading
+            and route.device_type == DeviceType.APP
+            and method == "runtime.runner.catalog"
+        )
         if (
             not remote_control_is_enabled(route.device_type)
             and not app_task_messaging_allowed
             and not app_task_reading_allowed
+            and not app_catalog_reading_allowed
         ):
             raise RuntimeRpcError(
                 REMOTE_CONTROL_DISABLED_MESSAGE,

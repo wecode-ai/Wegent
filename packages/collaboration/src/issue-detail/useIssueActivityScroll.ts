@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { ProjectChatMessage } from "@wegent/chat-core";
 
+interface ActivityReadCursor {
+  issueId?: string;
+  acknowledged: number;
+  requested: number;
+  baseline?: number;
+}
+
 /** Shared PC scroll policy: follow the submitted card, never unrelated incoming activity. */
 export function useIssueActivityScroll({
   messages: threadMessages,
   loading,
   issueId,
-  readSequence = 0,
+  readSequence: storedReadSequence = 0,
+  unread = true,
   onReadSequence,
   linear = true,
   compact = true,
@@ -16,6 +24,7 @@ export function useIssueActivityScroll({
   loading: boolean;
   issueId?: string;
   readSequence?: number;
+  unread?: boolean;
   onReadSequence?(sequence: number): Promise<void> | void;
   linear?: boolean;
   compact?: boolean;
@@ -24,19 +33,27 @@ export function useIssueActivityScroll({
   const listRef = useRef<HTMLDivElement>(null);
   const followCardRef = useRef<string | null>(null);
   const initializedIssueRef = useRef<string | null>(null);
-  const cursorIssueRef = useRef<string | undefined>(issueId);
-  const requestedReadSequenceRef = useRef(readSequence);
-  const readSequenceRef = useRef(readSequence);
-  if (cursorIssueRef.current !== issueId) {
-    cursorIssueRef.current = issueId;
-    readSequenceRef.current = readSequence;
-    requestedReadSequenceRef.current = readSequence;
+  const readCursorRef = useRef<ActivityReadCursor>({
+    issueId,
+    acknowledged: 0,
+    requested: 0,
+  });
+  if (readCursorRef.current.issueId !== issueId) {
+    readCursorRef.current = { issueId, acknowledged: 0, requested: 0 };
   }
-  readSequenceRef.current = Math.max(readSequenceRef.current, readSequence);
-  requestedReadSequenceRef.current = Math.max(
-    requestedReadSequenceRef.current,
-    readSequence,
-  );
+  const cursor = readCursorRef.current;
+  if (!loading && cursor.baseline === undefined) {
+    cursor.baseline = threadMessages.reduce(
+      (latest, message) => Math.max(latest, message.sequenceNumber),
+      0,
+    );
+  }
+  const readSequence =
+    storedReadSequence > 0 || unread
+      ? storedReadSequence
+      : (cursor.baseline ?? 0);
+  cursor.acknowledged = Math.max(cursor.acknowledged, readSequence);
+  cursor.requested = Math.max(cursor.requested, cursor.acknowledged);
   const scrollTaskCommentsToBottom = useCallback(
     (behavior: ScrollBehavior = "auto") => {
       const scroller = resolveTaskCommentScrollContainer(
@@ -103,6 +120,7 @@ export function useIssueActivityScroll({
 
   useEffect(() => {
     if (!issueId || loading || initializedIssueRef.current === issueId) return;
+    const readCursor = readCursorRef.current;
     const frame = requestAnimationFrame(() => {
       const scroller = resolveTaskCommentScrollContainer(
         listRef.current,
@@ -113,7 +131,7 @@ export function useIssueActivityScroll({
       if (activities.length === 0) return;
       initializedIssueRef.current = issueId;
       const firstUnread = activities.find(
-        (element) => activitySequence(element) > readSequenceRef.current,
+        (element) => activitySequence(element) > readCursor.acknowledged,
       );
       if (firstUnread) {
         const scrollerRect = scroller.getBoundingClientRect();
@@ -126,11 +144,7 @@ export function useIssueActivityScroll({
         scroller.scrollTo({ top: scroller.scrollHeight, behavior: "auto" });
       }
       requestAnimationFrame(() =>
-        markVisibleActivitiesRead(
-          scroller,
-          requestedReadSequenceRef,
-          onReadSequence,
-        ),
+        markVisibleActivitiesRead(scroller, readCursor, onReadSequence),
       );
     });
     return () => cancelAnimationFrame(frame);
@@ -139,23 +153,21 @@ export function useIssueActivityScroll({
   useEffect(() => {
     const scroller = resolveTaskCommentScrollContainer(listRef.current, linear);
     if (!scroller || !onReadSequence) return;
+    const readCursor = readCursorRef.current;
     let frame = 0;
     const update = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() =>
-        markVisibleActivitiesRead(
-          scroller,
-          requestedReadSequenceRef,
-          onReadSequence,
-        ),
+        markVisibleActivitiesRead(scroller, readCursor, onReadSequence),
       );
     };
     scroller.addEventListener("scroll", update, { passive: true });
+    if (!loading) update();
     return () => {
       cancelAnimationFrame(frame);
       scroller.removeEventListener("scroll", update);
     };
-  }, [linear, onReadSequence]);
+  }, [issueId, linear, loading, onReadSequence, threadMessages.length]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -221,7 +233,7 @@ function activitySequence(element: HTMLElement): number {
 
 function markVisibleActivitiesRead(
   scroller: HTMLElement,
-  requestedReadSequenceRef: { current: number },
+  cursor: ActivityReadCursor,
   onReadSequence?: (sequence: number) => Promise<void> | void,
 ): void {
   if (!onReadSequence) return;
@@ -236,10 +248,21 @@ function markVisibleActivitiesRead(
       return Math.max(latest, activitySequence(element));
     }
     return latest;
-  }, requestedReadSequenceRef.current);
-  if (sequence <= requestedReadSequenceRef.current) return;
-  requestedReadSequenceRef.current = sequence;
-  void onReadSequence(sequence);
+  }, cursor.requested);
+  if (sequence <= cursor.requested) return;
+  cursor.requested = sequence;
+  const restoreCursor = () => {
+    if (cursor.requested === sequence) cursor.requested = cursor.acknowledged;
+  };
+  try {
+    const request = onReadSequence(sequence);
+    void Promise.resolve(request).then(() => {
+      cursor.acknowledged = Math.max(cursor.acknowledged, sequence);
+      cursor.requested = Math.max(cursor.requested, cursor.acknowledged);
+    }, restoreCursor);
+  } catch {
+    restoreCursor();
+  }
 }
 
 function findTaskCommentScrollContainer(

@@ -94,6 +94,7 @@ describe('CollaborationApp project collaboration groups', () => {
         listExecutionEnvironments: jest.fn().mockResolvedValue([]),
       },
       resources: {
+        devices: { cloud: jest.fn().mockResolvedValue([]) },
         list: jest.fn().mockResolvedValue({
           agents: [],
           execution_environments: [],
@@ -172,13 +173,10 @@ describe('CollaborationApp project collaboration groups', () => {
     await renderProject(api)
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId('collaboration-project-settings-participants'))
+      fireEvent.click(await screen.findByTestId('collaboration-project-settings-groups'))
     })
     await act(async () => {
-      fireEvent.click(screen.getByTestId('collaboration-participants-tab-groups'))
-    })
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('collaboration-group-add-group-1'))
+      fireEvent.click(await screen.findByTestId('collaboration-group-add-group-1'))
     })
     await waitFor(() =>
       expect(addCollaborationGroup).toHaveBeenCalledWith(project.id, workspaceGroup.id)
@@ -200,12 +198,7 @@ describe('CollaborationApp project collaboration groups', () => {
 
     await renderProject(api)
 
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('collaboration-project-settings-participants'))
-    })
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('collaboration-participants-tab-groups'))
-    })
+    fireEvent.click(await screen.findByTestId('collaboration-project-settings-groups'))
     fireEvent.click(await screen.findByTestId('collaboration-group-open-create'))
     fireEvent.change(await screen.findByTestId('collaboration-group-name'), {
       target: { value: '项目交付组' },
@@ -242,18 +235,20 @@ describe('CollaborationApp project collaboration groups', () => {
 
     const settings = await screen.findByTestId('project-settings-shell')
     expect(settings).toHaveTextContent('基本信息')
-    expect(settings).toHaveTextContent('协作成员')
+    expect(settings).toHaveTextContent('AI 团队')
     expect(settings).toHaveTextContent('执行环境')
     expect(settings).toHaveTextContent('自动处理')
-    expect(screen.queryByTestId('collaboration-project-settings-groups')).not.toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-project-settings-groups')).toHaveTextContent(
+      '协作团队'
+    )
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId('collaboration-project-settings-participants'))
+      fireEvent.click(screen.getByTestId('collaboration-project-settings-agents'))
     })
-    expect(await screen.findByTestId('collaboration-project-participants-page')).toBeInTheDocument()
-    expect(screen.getByTestId('collaboration-participants-tab-agents')).toHaveAttribute(
-      'aria-selected',
-      'true'
+    expect(await screen.findByTestId('collaboration-project-agents-page')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-project-settings-agents')).toHaveAttribute(
+      'aria-current',
+      'page'
     )
 
     await act(async () => {
@@ -262,7 +257,7 @@ describe('CollaborationApp project collaboration groups', () => {
     expect(
       await screen.findByTestId('collaboration-project-automatic-processing-page')
     ).toBeInTheDocument()
-    expect(screen.queryByTestId('collaboration-project-participants-page')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-project-agents-page')).not.toBeInTheDocument()
   })
 
   it('edits common schedules without exposing Cron as the primary control', async () => {

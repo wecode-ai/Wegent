@@ -331,10 +331,14 @@ def test_fresh_login_survives_expired_sync_intent_and_is_cleared_after_enrollmen
     call(lifecycle, test_db, test_user, installed, "login")
     old = reconcile(lifecycle, test_db, test_user, installed)[0]["id"]
     row = lifecycle.migrations._query(test_db, test_user.id, old).first()
+    row_id = row.id
     row.json = {"spec": {**row.json["spec"], "expires_at": 1}}
     test_db.flush()
     renewed = reconcile(lifecycle, test_db, test_user, installed)[0]["id"]
     assert renewed != old
+    assert (
+        lifecycle.migrations._query(test_db, test_user.id, renewed).one().id == row_id
+    )
     assert consume(lifecycle, test_db, test_user, renewed).status == "connected"
     source = lifecycle.connections._source_identity(installed.json["spec"]["source"])
     assert (
@@ -342,4 +346,43 @@ def test_fresh_login_survives_expired_sync_intent_and_is_cleared_after_enrollmen
         .first()
         .json["spec"]["pendingLogins"]
         == {}
+    )
+
+
+def test_login_upgrades_existing_automatic_slot_and_logout_relogin_reuses_it(
+    lifecycle, test_db, test_user, installed, local
+):
+    from app.models.kind import Kind
+    from app.services.plugin_auth_migrations import MIGRATION_KIND
+
+    intent = reconcile(lifecycle, test_db, test_user, installed)[0]["id"]
+    row = lifecycle.migrations._query(test_db, test_user.id, intent).one()
+    row_id = row.id
+
+    call(lifecycle, test_db, test_user, installed, "login")
+
+    assert reconcile(lifecycle, test_db, test_user, installed)[0]["id"] == intent
+    test_db.refresh(row)
+    assert row.json["spec"]["local_login"] is True
+    consume(lifecycle, test_db, test_user, intent)
+    for _ in range(3):
+        call(lifecycle, test_db, test_user, installed, "logout")
+        call(lifecycle, test_db, test_user, installed, "login")
+        renewed = reconcile(lifecycle, test_db, test_user, installed)[0]["id"]
+        assert renewed != intent
+        assert (
+            lifecycle.migrations._query(test_db, test_user.id, renewed).one().id
+            == row_id
+        )
+        consume(lifecycle, test_db, test_user, renewed)
+        intent = renewed
+    assert (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == test_user.id,
+            Kind.namespace == "plugin-auth",
+            Kind.kind == MIGRATION_KIND,
+        )
+        .count()
+        == 1
     )

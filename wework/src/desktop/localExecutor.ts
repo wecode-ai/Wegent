@@ -88,6 +88,7 @@ export interface BundledPluginMarketplace {
 
 let ensureLocalExecutorAvailablePromise: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
+let localExecutorIdentityEpoch = 0
 let availableLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedBundledPluginMarketplace: BundledPluginMarketplace | null = null
@@ -233,6 +234,30 @@ function isExecutorHealthy(status: LocalExecutorStatus): boolean {
   return status.running && status.ready !== false && !status.error
 }
 
+function ensureLocalExecutorIdentityUnchanged(epoch: number): void {
+  if (epoch !== localExecutorIdentityEpoch) {
+    throw new DshExecutorTransportError(
+      'protocol_mismatch',
+      'Executor identity was revoked while checking executor readiness'
+    )
+  }
+}
+
+function markLocalExecutorUnavailable(cause: unknown): void {
+  if (cause instanceof DshExecutorTransportError && cause.code === 'protocol_mismatch') {
+    localExecutorIdentityEpoch += 1
+    availableLocalExecutorStatus = null
+  } else if (availableLocalExecutorStatus) {
+    availableLocalExecutorStatus = {
+      ...availableLocalExecutorStatus,
+      running: false,
+      ready: false,
+      error: cause instanceof Error ? cause.message : String(cause),
+    }
+  }
+  initializedLocalExecutorStatus = null
+}
+
 function normalizedMarketplacePath(path: string | null | undefined): string {
   return (path ?? '').trim().replace(/\\/g, '/').replace(/\/+$/, '')
 }
@@ -366,8 +391,10 @@ export function ensureLocalExecutorAvailable(): Promise<LocalExecutorStatus> {
     return Promise.resolve(availableLocalExecutorStatus)
   }
   if (!ensureLocalExecutorAvailablePromise) {
-    ensureLocalExecutorAvailablePromise = describeDshExecutor()
+    const epoch = localExecutorIdentityEpoch
+    const availability = describeDshExecutor()
       .then(description => {
+        ensureLocalExecutorIdentityUnchanged(epoch)
         const status: LocalExecutorStatus = {
           running: true,
           ready: true,
@@ -378,9 +405,15 @@ export function ensureLocalExecutorAvailable(): Promise<LocalExecutorStatus> {
         availableLocalExecutorStatus = status
         return status
       })
-      .finally(() => {
-        ensureLocalExecutorAvailablePromise = null
+      .catch((cause: unknown) => {
+        if (epoch === localExecutorIdentityEpoch) markLocalExecutorUnavailable(cause)
+        throw cause
       })
+      .finally(() => {
+        if (ensureLocalExecutorAvailablePromise === availability)
+          ensureLocalExecutorAvailablePromise = null
+      })
+    ensureLocalExecutorAvailablePromise = availability
   }
   return ensureLocalExecutorAvailablePromise
 }
@@ -421,8 +454,9 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
     return Promise.resolve(initializedLocalExecutorStatus)
   }
   if (!ensureLocalExecutorStartedPromise) {
+    const epoch = localExecutorIdentityEpoch
     const traceId = createModelLoadingTrace()
-    ensureLocalExecutorStartedPromise = (async () => {
+    const startup = (async () => {
       const available = await traceModelLoading(
         traceId,
         'executor.available',
@@ -435,6 +469,7 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
       const codexStartup = await traceModelLoading(traceId, 'executor.codex_start', () =>
         requestDshExecutor<CodexStartupStatus>('runtime.codex.ensure_started')
       )
+      ensureLocalExecutorIdentityUnchanged(epoch)
       const status: LocalExecutorStatus = {
         ...available,
         ready: codexStartup.ready,
@@ -453,14 +488,16 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
         })
       return status
     })().finally(() => {
-      ensureLocalExecutorStartedPromise = null
+      if (ensureLocalExecutorStartedPromise === startup) ensureLocalExecutorStartedPromise = null
     })
+    ensureLocalExecutorStartedPromise = startup
   }
 
   return ensureLocalExecutorStartedPromise
 }
 
 export function resetLocalExecutorStateForTests(): void {
+  localExecutorIdentityEpoch += 1
   bundledPluginUpdateEpoch += 1
   bundledPluginRetryListener?.()
   bundledPluginRetryListener = null
@@ -481,7 +518,10 @@ export function resetLocalExecutorStateForTests(): void {
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
-  return ensureLocalExecutorAvailable()
+  return ensureLocalExecutorAvailable().catch((cause: unknown) => {
+    if (availableLocalExecutorStatus) return availableLocalExecutorStatus
+    throw cause
+  })
 }
 
 export async function readLocalExecutorLog(): Promise<LocalExecutorLog> {
@@ -554,8 +594,7 @@ export function requestLocalExecutor<T = unknown>(
       bundledPluginUpdateEpoch += 1
       bundledPluginUpdateTasks.clear()
       bundledPluginUpdates.clear()
-      availableLocalExecutorStatus = null
-      initializedLocalExecutorStatus = null
+      markLocalExecutorUnavailable(cause)
       initializedBundledPluginMarketplace = null
       initializeBundledPluginMarketplacePromise = null
       reconciledBundledPluginMarketplaceKey = ''

@@ -8,6 +8,7 @@ import {
   createWorkbenchDeviceResolver,
   getWorkbenchDeviceIds,
   mergeDeviceLists,
+  workbenchDevicesShareRuntimeIdentity,
 } from '@/lib/workbench-device'
 import { mergeRuntimeWorkLists as mergeRuntimeWorkPair } from '@/features/workbench/runtimeWorkMerge'
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
@@ -36,11 +37,7 @@ import {
   notifyWorkbenchAutomationsChanged,
 } from '@/features/workbench/workbenchCloudDataEvents'
 import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
-import {
-  isAppDeviceRegistration,
-  isCurrentAppDevice,
-  isCurrentAppDeviceId,
-} from '@/lib/app-device-registration'
+import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
 import { shouldUseCloudDeviceCommand } from '@extensions/device-command-routing'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
@@ -373,7 +370,11 @@ export function createHybridWorkbenchServices(
     apiKey: options.token,
     ...(options.backendUrl ? { backendUrl: options.backendUrl } : {}),
   }
-  const localProjectServices = createLocalAppServices()
+  const localProjectServices = createLocalAppServices({
+    cloudModelGateway,
+    listCloudModels: () => cloudServices.agentResourceApi!.listModels(),
+    user: options.user,
+  })
   const localServices = createLocalAppServices({
     listCloudInstalledPlugins: deviceId =>
       createPluginApi(
@@ -387,6 +388,7 @@ export function createHybridWorkbenchServices(
         .listInstalledPlugins(deviceId)
         .then(response => response.items),
     cloudModelGateway,
+    listCloudModels: () => cloudServices.agentResourceApi!.listModels(),
     user: options.user,
     materializeRuntimeTask: async request => {
       try {
@@ -470,7 +472,9 @@ export function createHybridWorkbenchServices(
   const deviceMatchesId = (device: RuntimeDeviceInfo, deviceId: string) =>
     getWorkbenchDeviceIds(device).includes(deviceId)
   const currentAppDeviceRegistrations = () =>
-    rememberedAppDeviceRegistrations.filter(device => isCurrentAppDevice(device, localDeviceIds))
+    rememberedAppDeviceRegistrations.filter(device =>
+      rememberedLocalDevices.some(local => workbenchDevicesShareRuntimeIdentity(local, device))
+    )
   const isLocalDeviceId = (deviceId?: string | null) =>
     Boolean(
       deviceId &&
@@ -1522,6 +1526,7 @@ export function createHybridWorkbenchServices(
     localProjectChatAgentApi: localProjectServices.localProjectChatAgentApi,
     localLoopItemExecutionApi: localServices.localLoopItemExecutionApi,
     localHarnessModelApi: localServices.localHarnessModelApi,
+    localDecisionRouterApi: localServices.localDecisionRouterApi,
     localProjectChatClient: localServices.localProjectChatClient,
     projectSpaceApis: {
       local: localServices.deliveryApi,

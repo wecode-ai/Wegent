@@ -36,6 +36,51 @@ describe('createProjectChatClient', () => {
     ensureConnected.mockClear()
   })
 
+  it('resolves missing runner choices and replays the saved comment once', async () => {
+    const request = {
+      runtime: 'codex',
+      execution_policy: { mode: 'user_select' },
+    }
+    const selection = {
+      execution_policy: { mode: 'fixed', environment_id: '41' },
+    }
+    socket.emit
+      .mockImplementationOnce((_event, _payload, ack) =>
+        ack({
+          ok: false,
+          error: {
+            code: 'RUNNER_SELECTION_REQUIRED',
+            message: 'Choose a runner',
+            detail: { runner_selection_request: request },
+          },
+        }),
+      )
+      .mockImplementationOnce((_event, _payload, ack) =>
+        ack({ ok: true, result: [message] }),
+      )
+    const requestRunnerSelection = vi.fn(async () => selection)
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+      requestRunnerSelection,
+    })
+    const input = {
+      projectId: 'project-1',
+      taskId: 'issue-1',
+      triggerMessageId: 'saved-comment',
+      attachmentIds: [],
+    }
+    await expect(client.executeTaskComment!(input)).resolves.toEqual([message])
+    expect(requestRunnerSelection).toHaveBeenCalledWith(request)
+    expect(socket.emit).toHaveBeenCalledTimes(2)
+    expect(socket.emit).toHaveBeenLastCalledWith(
+      'wework:project_chat:comment:execute',
+      { ...input, runnerSelection: selection },
+      expect.any(Function),
+    )
+  })
+
   it('subscribes through the authenticated runtime socket and returns history', async () => {
     socket.emit.mockImplementationOnce((event, payload, ack) => {
       expect(event).toBe('wework:project_chat:subscribe')

@@ -14,6 +14,7 @@ export interface ProviderModel {
   api_format?: ModelApiFormat
   request_path?: string
   context_window?: number
+  max_output_tokens?: number
   tool_profile?: 'custom' | 'function' | 'shell'
   codex_tool_compatibility?: 'native' | 'standard'
   web_search_mode?: 'disabled' | 'cached' | 'live'

@@ -45,8 +45,10 @@ describe('harnessAppsApi', () => {
     try {
       const failed = { state: 'failed', error: 'private runtime error' }
       mocks.desktopInvoke.mockResolvedValueOnce(failed).mockResolvedValueOnce({ state: 'running' })
-      await expect(harnessAppsApi.start('private-app', null)).resolves.toBe(failed)
-      await harnessAppsApi.start('private-app', null)
+      await expect(
+        harnessAppsApi.start({ installationId: 'private-app', modelBaseUrl: null })
+      ).resolves.toBe(failed)
+      await harnessAppsApi.start({ installationId: 'private-app', modelBaseUrl: null })
       const firstStartupId = mocks.businessTrack.mock.calls[0]?.[1]?.startup_id
       const secondStartupId = mocks.businessTrack.mock.calls[1]?.[1]?.startup_id
       expect(firstStartupId).toMatch(/^[0-9a-f-]{36}$/)
@@ -72,6 +74,37 @@ describe('harnessAppsApi', () => {
     } finally {
       stop()
     }
+  })
+
+  test('forwards the decision route fields and defaults them to null', async () => {
+    mocks.desktopInvoke.mockResolvedValue({ state: 'running' })
+
+    await harnessAppsApi.start({
+      installationId: 'decision-app',
+      modelBaseUrl: 'http://127.0.0.1:9000',
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: 'http://127.0.0.1:9500/v1/decision-router/decision-token',
+      decisionProtocolVersion: 1,
+    })
+    await harnessAppsApi.start({ installationId: 'plain-app', modelBaseUrl: null })
+
+    expect(mocks.desktopInvoke).toHaveBeenNthCalledWith(1, 'smartApps.start', {
+      installationId: 'decision-app',
+      modelBaseUrl: 'http://127.0.0.1:9000',
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: 'http://127.0.0.1:9500/v1/decision-router/decision-token',
+      decisionProtocolVersion: 1,
+    })
+    expect(mocks.desktopInvoke).toHaveBeenNthCalledWith(2, 'smartApps.start', {
+      installationId: 'plain-app',
+      modelBaseUrl: null,
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: null,
+      decisionProtocolVersion: null,
+    })
   })
 
   test('exports an installation and copies the archive to Downloads', async () => {

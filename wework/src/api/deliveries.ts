@@ -1,3 +1,4 @@
+import type { RunnerSelection } from '@wegent/collaboration'
 import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-api'
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
@@ -111,6 +112,7 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  runner_binding?: { environment_id: string } | null
   human_work?: CollaborationHumanWork | null
   assignee_group_id?: string | null
   assignee_group_name?: string | null
@@ -970,6 +972,7 @@ export function createDeliveryApi(client: HttpClient) {
         version: number
         assigneeType: 'user' | 'agent' | 'team' | 'group'
         assigneeId: string
+        runnerSelection?: RunnerSelection
         notifyAssignee?: boolean
       }
     ): Promise<CloudLoopItem> {

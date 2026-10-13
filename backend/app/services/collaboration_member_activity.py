@@ -10,8 +10,12 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.models.delivery import LoopItem
 from app.models.project_chat_message import ProjectChatMessage
-from app.schemas.project_chat import LoopItemExecutionAssignmentStatus
+from app.schemas.project_chat import (
+    LoopItemExecutionAssignmentStatus,
+    ProjectChatCommentExecution,
+)
 from app.services.project_chat.service import project_chat_service
 
 
@@ -86,23 +90,12 @@ def project_collaboration_member_activity(
         project_id=project_id,
         values=values,
     )
-    if manager_assignment is None and message is None:
+    if manager_assignment is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             "Collaboration assignment was not found",
         )
-    if manager_assignment is not None:
-        manager_message, assignment, assignment_index = manager_assignment
-    else:
-        manager_message = None
-        assignment = {
-            "assignment_id": values.assignment_id,
-            "agent_id": message.agent_id,
-            "agent_name": message.sender_name,
-            "task_title": (message.metadata_json or {}).get("workflow_task_title"),
-            "workflow_stage_id": (message.metadata_json or {}).get("workflow_stage_id"),
-        }
-        assignment_index = -1
+    manager_message, assignment, assignment_index = manager_assignment
     previous_assignment = dict(assignment)
     assignment = {
         **assignment,
@@ -112,14 +105,13 @@ def project_collaboration_member_activity(
         "result": values.result,
         "error": values.error,
     }
-    if manager_message is not None:
-        manager_metadata = dict(manager_message.metadata_json or {})
-        assignments = list(manager_metadata["dispatch_assignments"])
-        assignments[assignment_index] = assignment
-        manager_message.metadata_json = {
-            **manager_metadata,
-            "dispatch_assignments": assignments,
-        }
+    manager_metadata = dict(manager_message.metadata_json or {})
+    assignments = list(manager_metadata["dispatch_assignments"])
+    assignments[assignment_index] = assignment
+    manager_message.metadata_json = {
+        **manager_metadata,
+        "dispatch_assignments": assignments,
+    }
     created = message is None
     metadata = {
         "activity_type": "member_execution",
@@ -174,6 +166,28 @@ def project_collaboration_member_activity(
         message.runtime_task_id = values.runtime_task_id
         message.status = "streaming" if values.status == "running" else values.status
     if changed:
+        from app.services.project_chat.runtime_binding import (
+            bind_collaboration_activity_task,
+            collaboration_member_assignment,
+        )
+
+        db.flush()
+        dispatch, _ = collaboration_member_assignment(
+            db,
+            ProjectChatCommentExecution(
+                project_id=str(project_id),
+                task_id=values.loop_item_id,
+                trigger_message_id=message.message_id,
+            ),
+            message,
+            require_current_assignment=False,
+        )
+        bind_collaboration_activity_task(
+            db,
+            dispatch=dispatch,
+            activity=message,
+            item=db.get(LoopItem, values.loop_item_id),
+        )
         db.commit()
         db.refresh(message)
     return message, changed

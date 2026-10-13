@@ -96,6 +96,17 @@ export interface ProjectChatClient {
     error?: string;
   }) => Promise<ProjectChatMessage>;
   executeTaskComment?: (input: {
+    runnerSelection?: {
+      execution_policy?: {
+        mode: "project_pool" | "fixed" | "user_select";
+        environment_id?: string;
+      };
+      model?: {
+        runtime: "codex" | "claude_code";
+        provider: string;
+        model_id: string;
+      };
+    };
     projectId: string;
     taskId: string;
     triggerMessageId: string;
@@ -132,12 +143,17 @@ interface ProjectChatClientOptions {
   socketPath: string;
   getToken: () => string | null;
   clientOrigin?: "wework" | "web";
+  requestRunnerSelection?: (request: unknown) => Promise<unknown>;
 }
 
 interface SocketAck<T> {
   ok?: boolean;
   result?: T;
-  error?: { code?: string; message?: string };
+  error?: {
+    code?: string;
+    message?: string;
+    detail?: { runner_selection_request?: unknown };
+  };
 }
 
 export function createProjectChatClient(
@@ -275,13 +291,32 @@ export function createProjectChatClient(
     failAgentResponse(input) {
       return emitWithAck<ProjectChatMessage>(client, AGENT_FAILED_EVENT, input);
     },
-    executeTaskComment(input) {
-      return emitWithAck<ProjectChatMessage[]>(
-        client,
-        "wework:project_chat:comment:execute",
-        input,
-        90_000,
-      );
+    async executeTaskComment(input) {
+      try {
+        return await emitWithAck<ProjectChatMessage[]>(
+          client,
+          "wework:project_chat:comment:execute",
+          input,
+          90_000,
+        );
+      } catch (error) {
+        const request = (
+          error as { detail?: { runner_selection_request?: unknown } }
+        ).detail?.runner_selection_request;
+        if (
+          !request ||
+          !options.requestRunnerSelection ||
+          input.runnerSelection
+        )
+          throw error;
+        const runnerSelection = await options.requestRunnerSelection(request);
+        return emitWithAck<ProjectChatMessage[]>(
+          client,
+          "wework:project_chat:comment:execute",
+          { ...input, runnerSelection },
+          90_000,
+        );
+      }
     },
     continueWegentTask(input) {
       return emitWithAck<ProjectChatMessage>(
@@ -316,7 +351,12 @@ async function emitWithAck<T>(
     client.socket.emit(event, payload, (ack: SocketAck<T> | undefined) => {
       window.clearTimeout(timeout);
       if (!ack || ack.ok === false || ack.error) {
-        reject(new Error(ack?.error?.message || "Project chat request failed"));
+        reject(
+          Object.assign(
+            new Error(ack?.error?.message || "Project chat request failed"),
+            { detail: ack?.error?.detail, code: ack?.error?.code },
+          ),
+        );
         return;
       }
       resolve(ack.result as T);

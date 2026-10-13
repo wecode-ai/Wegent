@@ -157,20 +157,7 @@ where
                                     .collect()
                             })
                             .unwrap_or_default();
-                        let env = payload
-                            .get("env")
-                            .and_then(Value::as_object)
-                            .map(|items| {
-                                items
-                                    .iter()
-                                    .filter_map(|(key, value)| {
-                                        value.as_str().map(|value| (key.clone(), value.to_owned()))
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let result =
-                            execute_workspace_file_command(command_key, path, args, env).await;
+                        let result = execute_workspace_file_command(command_key, path, args).await;
                         return Some(serde_json::to_value(result).unwrap_or_else(
                             |error| json!({"success": false, "error": error.to_string()}),
                         ));

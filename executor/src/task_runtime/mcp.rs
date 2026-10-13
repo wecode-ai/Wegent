@@ -1782,6 +1782,11 @@ async fn local_update_issue_status(
             content: comment.to_owned(),
             metadata: json!({
                 "dispatch_role": "manager",
+                "execution_id": manager.id,
+                "runtime_address": {
+                    "deviceId": manager.runtime_device_id,
+                    "taskId": manager_runtime_task_id,
+                },
                 "activity_type": "manager_status_comment",
                 "target_status": status,
             }),
@@ -1925,6 +1930,7 @@ async fn call_backend_tool(
                 "dispatch_id": dispatch_id,
                 "manager_agent_id": manager_agent_id,
                 "idempotency_key": decision.get("idempotency_key"),
+                "manager_runtime_task_id": grant.task_id,
                 "target_status": decision.get("target_status"),
                 "reason": decision.get("reason"),
                 "comment": decision.get("comment"),
@@ -4326,6 +4332,7 @@ mod tests {
                         "dispatch_id": "dispatch-1",
                         "manager_agent_id": "manager-agent",
                         "idempotency_key": "decision-1",
+                        "manager_runtime_task_id": "manager-task",
                         "target_status": "in_review",
                         "reason": "Evidence is ready",
                         "comment": "Please confirm the completed work",
@@ -4688,6 +4695,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "manager".to_owned(),
                     display_name: Some("Issue manager".to_owned()),
                     namespace: None,

@@ -18,6 +18,7 @@ import {
 
 import { WORKTREE_CHECKPOINTS, verifyCloudWorktreeCheckpoint } from './cloud-worktree-flows.mjs'
 import { verifyCloudDeviceLifecycleFlow } from './cloud-device-lifecycle-flow.mjs'
+import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
 
 import {
   verifyActiveGoalIdleUnreadLifecycle,
@@ -913,6 +914,8 @@ async function verifyCloudCheckpoint({
       return
     }
     case 'workspace-attachments':
+      setPhase('cloud-files-outside-workspace')
+      await verifyCloudFileAccessOutsideWorkspace({ cloudEnvironment, workspacePath })
       setPhase('cloud-attachment-sidebar')
       await verifyAttachmentOnlySidebarLifecycle({
         app,

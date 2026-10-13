@@ -432,6 +432,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
         matches!(
             key.as_str(),
             "additional_skills"
+                | "deferred_project_environment"
                 | "additionalSkills"
                 | "cloudProjectId"
                 | "cloud_project_id"

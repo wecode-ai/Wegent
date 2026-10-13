@@ -282,18 +282,6 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
           environment.device_key,
           'The project execution environment must have a device key'
         )
-        const currentProject = await requestJson(cloud, `/api/v1/cloud-projects/${cloud.projectId}`)
-        await requestJson(
-          cloud,
-          `/api/v1/cloud-projects/${cloud.projectId}/execution-environment/initialize`,
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              device_id: device.id,
-              version: currentProject.version,
-            }),
-          }
-        )
         const configured = await requestJson(
           cloud,
           `/api/v1/cloud-projects/${cloud.projectId}/chat-agents/${agent.id}`,

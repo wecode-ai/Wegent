@@ -110,6 +110,7 @@ const localExecutorMocks = vi.hoisted(() => ({
   disconnectLocalExecutorFromBackend: vi.fn().mockResolvedValue({ running: true, ready: true }),
   ensureBundledPluginMarketplaceRegistered: vi.fn().mockResolvedValue(undefined),
   ensureLocalExecutorAvailable: vi.fn(),
+  getLocalExecutorStatus: vi.fn(),
   ensureLocalExecutorStarted: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   getKnownLocalExecutorDeviceId: vi.fn().mockReturnValue('local-device'),
@@ -143,6 +144,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   ensureBundledPluginMarketplaceRegistered:
     localExecutorMocks.ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorAvailable: localExecutorMocks.ensureLocalExecutorAvailable,
+  getLocalExecutorStatus: localExecutorMocks.getLocalExecutorStatus,
   ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace: localExecutorMocks.getInitializedBundledPluginMarketplace,
   getKnownLocalExecutorDeviceId: localExecutorMocks.getKnownLocalExecutorDeviceId,
@@ -2840,6 +2842,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     resetRuntimeTerminalContextForTests()
     pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [] })
     localExecutorMocks.ensureLocalExecutorAvailable.mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+    })
+    localExecutorMocks.getLocalExecutorStatus.mockResolvedValue({
       running: true,
       ready: true,
       deviceId: 'local-device',

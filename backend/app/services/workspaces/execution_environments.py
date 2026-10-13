@@ -162,12 +162,16 @@ class WorkspaceExecutionEnvironmentService:
         self, db: Session, workspace_id: int, device_id: int, user_id: int
     ) -> None:
         access = require_workspace_role(db, workspace_id, user_id, BaseRole.Developer)
-        grant, _ = _get_execution_environment(db, workspace_id, device_id)
+        grant, device = _get_execution_environment(db, workspace_id, device_id)
         if grant.invited_by_user_id != user_id and access.role not in {
             BaseRole.Owner,
             BaseRole.Maintainer,
         }:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        if (device.json or {}).get("spec", {}).get("workspaceOwnerId"):
+            from app.services.workspaces.runner_registration import revoke_runner
+
+            revoke_runner(db, workspace_id, user_id, device_id)
         db.delete(grant)
         db.commit()
 

@@ -186,6 +186,36 @@ export async function startTaskAiRun<ExecutionProject, Task extends CommentExecu
   startFailedText,
   onBindingChange,
 }: StartTaskAiRunInput<ExecutionProject, Task>): Promise<boolean> {
+  if (client.executeTaskComment) {
+    try {
+      const comment =
+        trigger ??
+        (await client.send({
+          projectId: project.id,
+          taskId: task.id,
+          clientMessageId: crypto.randomUUID(),
+          text: prompt,
+          mentions: [{ type: 'agent', id: agent.id, label: agent.name }],
+          replyToMessageId: threadRootId ?? null,
+          model: null,
+        }))
+      onMessages([comment])
+      const responses = await client.executeTaskComment({
+        projectId: project.id,
+        taskId: task.id,
+        triggerMessageId: comment.messageId,
+        attachmentIds: remoteAttachmentIds(attachments ?? []),
+      })
+      onMessages(responses)
+      if (services.deliveryApi && onTaskUpdated) {
+        onTaskUpdated(await services.deliveryApi.getLoopItem(task.id))
+      }
+      return true
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : startFailedText)
+      return false
+    }
+  }
   const responseRef: { current: ProjectChatMessage | null } = { current: null }
   // The executor can fail a turn asynchronously (lost thread, no model
   // progress). The backend event relay is not guaranteed to close the
