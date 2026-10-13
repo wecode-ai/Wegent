@@ -233,3 +233,9 @@ component-update 的首个 Core 进程报告固定 `core_profile_summarize_faile
 [Windows 第 11 组](https://github.com/wecode-ai/Wegent/actions/runs/38451605915/job/115500677035) 未等到终端输入标记，原日志不能确定输入、PTY 写入或输出订阅哪一环丢失。审查发现 SSE 用 request `close` 注销响应订阅，而 [Node IncomingMessage 契约](https://nodejs.org/download/release/v18.20.8/docs/api/http.html#event-close_3) 从 v16 起将该事件定义为请求完成。真实 HTTP 回归在请求读取完成、响应仍开放时复现旧实现提前注销；修复使用 response 关闭、完成或错误以及请求中断，单次清理订阅。新回归确认请求完成后仍收到 live output，实际断开响应后注销；新增用例有界超时并统一清理自己的客户端和服务端。
 
 两个终端测试文件共 12 项通过，格式与 lint 通过。仅既有 E2E control 标志开启时记录固定输入/输出阶段、字节数、匿名序号和订阅数量，不记录输入、输出、cwd、token 或原始错误。该回归证明 SSE 生命周期缺陷，尚不能证明本次 Windows 标记超时由它导致；保留原终端命令、完整 E2E 断言和预算，下一轮通过阶段日志继续定位。
+
+### 后台设备刷新与执行会话映射
+
+[Windows 第 10 组](https://github.com/wecode-ai/Wegent/actions/runs/38451605915/job/115500677231) 的真实模型请求成功，Executor 已完成回复，活动中有 DONE 内容，但执行弹窗仍为空。完整日志显示弹窗绑定 App 注册标识，实际流按原生设备标识刷新；设备状态遗漏两者的 runtime 映射。后台 `listDevices` 只返回过滤掉 App 注册的云设备，而前台查询已通过既有 `mergeKnownDevices` 将当前 App 注册合入本地设备的 route。后台现在复用同一合并逻辑，不新增请求、重试、独立 App 卡或 identity 兜底。
+
+集成式单测将真实后台查询结果经过设备合并、会话 alias 注册和订阅，再送入原生 assistant 流；旧实现复现空会话，新实现收到回复。异 runtime 注册仍不共享会话，更新的 App 注册能读取同一原生内容。Hybrid 75 项、Provider 与会话缓存 303 项聚焦测试以及格式/lint 通过。原 Windows E2E 断言不改，完整场景仍须下一轮 CI 闭环。
