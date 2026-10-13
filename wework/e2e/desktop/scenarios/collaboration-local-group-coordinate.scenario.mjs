@@ -318,6 +318,11 @@ async function waitForCompletedMemberTasks(control, expected, timeoutMs) {
     completed = 0
     for (const taskSummaryTestId of taskSummaryTestIds) {
       const activityId = taskSummaryTestId.slice('cloud-task-activity-task-summary-'.length)
+      const title = await control.command(
+        'getText',
+        scoped(`[data-testid="cloud-task-activity-task-title-${activityId}"]`)
+      )
+      if (![FIRST_TASK, SECOND_TASK, THIRD_TASK].includes(title.trim())) continue
       const badgeTestId = `cloud-task-activity-execution-badge-${activityId}`
       if (!snapshot.testIds.includes(badgeTestId)) continue
       const badge = await control.command('getText', `[data-testid="${badgeTestId}"]`)
