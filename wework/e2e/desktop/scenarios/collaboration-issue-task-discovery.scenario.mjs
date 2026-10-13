@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { selectCollaborationDomain } from '../modules/workspace-flows.mjs'
+import { waitForSnapshot } from '../modules/conversation-layout.mjs'
+import {
+  reloadMainWindow,
+  selectCollaborationDomain,
+  waitForWorkbenchDebugState,
+} from '../modules/workspace-flows.mjs'
+import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -16,11 +22,17 @@ const OTHER_APP_ID = `issue-other-app-${process.pid}`
 const COMPLETION = 'ISSUE_APP_RECORD_COMPLETE'
 const scoped = selector => `${CONTENT} ${selector}`
 
-export function createDesktopScenario({ workbenchReadyTimeoutMs, modelResponseTimeoutMs }) {
+export function createDesktopScenario({
+  workbenchReadyTimeoutMs,
+  modelResponseTimeoutMs,
+  workspacePath,
+  captureScreenshot,
+}) {
   let cloud
   let environment
   let workspace
   let currentApp
+  let localProjectCreated = false
   const fixtures = []
   const modelRequests = []
   const request = async (path, values) => {
@@ -97,7 +109,7 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs, modelResponseTi
     )
     assert.doesNotMatch(
       await control.command('getText', scoped('[data-testid="ai-chat-modal"]')),
-      /executor-not-found:/
+      /executor-not-found:|ambiguous-executor-identity:/
     )
     const bindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)
     assert.equal(bindings.length, 1, 'AI assistance must create exactly one bound task')
@@ -115,6 +127,63 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs, modelResponseTi
     )
     await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
     await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+  }
+  async function runLocalTask(control) {
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+    if (!localProjectCreated) {
+      await createSingleRootLocalProject(control, workspacePath, 'duplicate-app-local-task')
+      localProjectCreated = true
+    } else {
+      await control.command('markElementWithText', '[data-testid^="project-row-"]', {
+        text: 'duplicate-app-local-task',
+        value: 'duplicate-app-project',
+      })
+      const project = '[data-e2e-anchor-id="duplicate-app-project"]'
+      await control.command('hover', project)
+      await control.command('click', `${project} [data-testid="project-new-conversation-button"]`)
+    }
+    const pane = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+    const composer = `${pane} [data-testid="chat-message-input"][contenteditable="true"]`
+    await control.command('waitFor', composer)
+    await control.command('click', `${pane} [data-testid="execution-mode-button"]`)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="execution-mode-current-workspace-button"]'
+    )
+    await selectE2EModel(control)
+    await control.command('fill', composer, { value: 'LOCAL_DUPLICATE_APP_IDENTITY' })
+    await control.command('press', composer, { key: 'Enter' })
+    const result = await waitForSnapshot(
+      control,
+      snapshot =>
+        /executor-not-found:|ambiguous-executor-identity:/.test(snapshot.text) ||
+        snapshot.text.includes(COMPLETION),
+      'The local task did not complete after refreshing App registrations',
+      modelResponseTimeoutMs,
+      pane
+    )
+    await captureScreenshot(
+      control,
+      `duplicate-app-local-task-${fixtures.length ? 'conflict' : 'registered'}.png`,
+      pane
+    )
+    assert.doesNotMatch(result.text, /executor-not-found:|ambiguous-executor-identity:/)
+    assert.ok(result.testIds.includes('message-assistant'))
+  }
+  async function waitForCurrentRegistration(control) {
+    await reloadMainWindow(control, 'The registered runtime did not reload the workbench')
+    await waitForWorkbenchDebugState(
+      control,
+      snapshot =>
+        snapshot.workbench?.cloudWorkStatus?.checks?.devices === 'available' &&
+        snapshot.workbench?.devices?.some(
+          device =>
+            device.device_type === 'local' &&
+            device.runtime_instance_id === currentApp.runtime_instance_id
+        ),
+      'The registered local runtime did not refresh the real cloud device catalog',
+      workbenchReadyTimeoutMs
+    )
   }
   return {
     requiresCloudEnvironment: true,
@@ -141,6 +210,13 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs, modelResponseTi
     async verify(control) {
       const localApp = await environment.waitForConnectedAppDevice()
       currentApp = localApp
+      console.log('[executor-identity] Registered local Executor; refreshing the cloud catalog')
+      await waitForCurrentRegistration(control)
+      await runLocalTask(control)
+      console.log(
+        '[executor-identity] Local task completed; registering a conflicting installation'
+      )
+      await environment.startDuplicateAppDeviceIdentity()
       await environment.startGeneratedRemoteDevice({
         deviceId: OTHER_APP_ID,
         deviceName: 'Other Wework installation',
@@ -152,6 +228,14 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs, modelResponseTi
       const owner = await request('/api/users/me')
       const local = await prepareIssue(localApp, `${TITLE} local`, owner)
       const other = await prepareIssue(otherApp, `${TITLE} other`, owner)
+      console.log(
+        '[executor-identity] Independent App registrations ready; sending another local task'
+      )
+      await waitForCurrentRegistration(control)
+      await runLocalTask(control)
+      console.log(
+        '[executor-identity] Local task completed with duplicate addresses; checking Issue assistance'
+      )
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
         timeoutMs: workbenchReadyTimeoutMs,
@@ -169,6 +253,11 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs, modelResponseTi
     },
     diagnostics() {
       return {
+        currentApp: currentApp && {
+          deviceId: currentApp.device_id,
+          runtimeInstanceId: currentApp.runtime_instance_id,
+          executionTarget: currentApp.execution_target_id,
+        },
         fixtures: fixtures.map(({ issue, device }) => ({
           issueId: issue.id,
           executionTarget: device.execution_target_id,

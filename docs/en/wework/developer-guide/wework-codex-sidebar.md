@@ -36,7 +36,8 @@ Thread grouping applies this precedence: exclusion through `projectless-thread-i
 
 ## Executor identity, projects, and local sidebar references
 
-- `deviceId` is the device address used for execution requests. `workbench-device.ts` resolves aliases centrally. When available, the persisted `runtime_instance_id` determines executor equality while requests retain the routable `device_id`. Records without a Runtime identity are associated only through known aliases; conflicting Runtime owners of one alias produce an explicit error.
+- `deviceId` is the device address used for execution requests. `workbench-device.ts` resolves aliases centrally. When available, the persisted `runtime_instance_id` determines executor equality while requests retain the routable `device_id`. Known aliases associate records only when both lack a Runtime identity. A record with an identity cannot merge with one lacking it; conflicting Runtime owners of one alias produce an explicit error.
+- Local identity comes from the required `runtime_instance_id` in `executor.describe`. Only APP cloud registrations with the same Runtime identity may join the local IPC routes; another installation sharing `app_device_id` is a separate executor. Missing or invalid Runtime identity in the description is an IPC protocol error.
 - `remoteHostId` is the host reference stored in a Codex remote-project entry. Preserve its original value on read and write; resolve it for comparison without replacing it during list reconciliation.
 - `stateDeviceId` owns pins, order, and sidebar-entry metadata. It may differ from the execution device and must not redirect tasks.
 

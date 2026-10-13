@@ -1717,6 +1717,74 @@ describe('createHybridWorkbenchServices', () => {
     expect(runtimeWork?.totalTasks).toBe(1)
   })
 
+  it.each([
+    ['online', 'runtime-other'],
+    ['offline', 'runtime-other'],
+    ['online', undefined],
+    ['offline', undefined],
+  ] as const)(
+    'starts local tasks when a %s app registration shares the address with runtime %s',
+    async (status, runtimeInstanceId) => {
+      const local = {
+        id: 0,
+        device_id: 'electron-current',
+        name: 'Local Executor',
+        status: 'online' as const,
+        is_default: true,
+        device_type: 'local' as const,
+        runtime_instance_id: 'runtime-current',
+      }
+      mocks.localListDevices.mockResolvedValue([local])
+      mocks.cloudListDevices.mockResolvedValue([
+        {
+          ...local,
+          id: 1,
+          device_type: 'app',
+          app_device_id: local.device_id,
+          socket_device_id: 'app-record-1',
+          runtime_instance_id: runtimeInstanceId,
+          status,
+        },
+        {
+          ...local,
+          id: 2,
+          device_type: 'app',
+          app_device_id: local.device_id,
+          socket_device_id: 'app-record-2',
+        },
+      ])
+      const services = createServices()
+      await services.deviceApi.listDevices()
+      await services.cloudBackgroundApi!.listDevices!()
+      const devices = await services.deviceApi.listDevices()
+      expect(devices).toHaveLength(1)
+      expect(devices[0].runtime_routes).toEqual(
+        expect.arrayContaining([expect.objectContaining({ runtime_device_id: 'app-record-2' })])
+      )
+      expect(devices[0].runtime_routes).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ runtime_device_id: 'app-record-1' })])
+      )
+      mocks.localCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'local-task' })
+      for (const deviceId of [local.device_id, 'app-record-2']) {
+        const request = { deviceId, runtime: 'codex' as const, message: 'run' }
+        await expect(services.runtimeWorkApi!.createRuntimeTask(request)).resolves.toMatchObject({
+          accepted: true,
+          taskId: 'local-task',
+        })
+      }
+      expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(2)
+      await expect(
+        services.runtimeWorkApi!.createRuntimeTask({
+          deviceId: 'app-record-1',
+          runtime: 'codex',
+          message: 'run',
+        })
+      ).rejects.toThrow('executor-not-found:app-record-1')
+      expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(2)
+      expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
+    }
+  )
+
   it('forwards the delivery fence to the selected runtime adapter', async () => {
     const services = createServices()
     await services.deviceApi.listDevices()
