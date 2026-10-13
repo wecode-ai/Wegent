@@ -10,6 +10,8 @@ const KEYS: Record<string, string> = {
   ArrowDown: 'Down',
   ArrowLeft: 'Left',
   ArrowRight: 'Right',
+  PageUp: 'PageUp',
+  PageDown: 'PageDown',
   A: 'A',
   B: 'B',
   C: 'C',

@@ -58,6 +58,74 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
 }
 
 describe('RuntimeTaskLifecycleStore', () => {
+  test('keeps an unresolved action running when the previous completion gains precision', () => {
+    const store = new RuntimeTaskLifecycleStore('pending-action-completion-test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({ status: 'done', completedAt: 1_791_829_759_000, updatedAt: 1_791_829_758_994 })
+      )
+    )
+    store.sendRequested(address)
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({ status: 'done', completedAt: 1_791_829_759_167, updatedAt: 1_791_829_759_167 })
+      )
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('starting')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+    store.sendAccepted(address)
+    store.executorSettled(address)
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
+  test('accepts completion once the executor confirms the pending action is running', () => {
+    const store = new RuntimeTaskLifecycleStore('confirmed-pending-action-test')
+    store.syncRuntimeWork(
+      runtimeWork(task({ status: 'done', completedAt: 1_000, updatedAt: 1_000 }))
+    )
+    store.sendRequested(address)
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+          updatedAt: 2_000,
+        })
+      )
+    )
+    store.syncRuntimeWork(
+      runtimeWork(task({ status: 'done', completedAt: 3_000, updatedAt: 3_000 }))
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
+  test('preserves a live turn when an older completion snapshot arrives late', () => {
+    const store = new RuntimeTaskLifecycleStore('late-completion-test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({ running: true, status: 'running', turnStatus: 'inProgress', updatedAt: 20_200 })
+      )
+    )
+    store.turnStarted(address, 'current-turn')
+
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: false, status: 'done', completedAt: 10_000, updatedAt: 30_000 }))
+    )
+
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(store.getTask(address)?.turn.id).toBe('current-turn')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: false, status: 'done', completedAt: 30_000, updatedAt: 30_000 }))
+    )
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
   test('does not revive a completed turn from its earlier millisecond-precision snapshot', () => {
     const store = new RuntimeTaskLifecycleStore('completion-precision-test')
     const started = task({
@@ -222,6 +290,87 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
     expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
+  test('keeps an unanswered async question visible after execution completes and reloads', () => {
+    const store = new RuntimeTaskLifecycleStore('async-question-test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))
+    store.userInputRequested(address, 'async')
+    expect(store.getTask(address)?.derived.isBusy).toBe(true)
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+
+    const completedTask = task({
+      running: false,
+      status: 'done',
+      completedAt: 123,
+      interactionStatus: 'awaitingUserReply',
+    })
+    store.turnSettled(address, null, 'succeeded')
+    store.syncRuntimeWork(runtimeWork(completedTask))
+    expect(store.getTask(address)?.derived).toMatchObject({
+      isBusy: false,
+      canSend: true,
+      shouldShowSidebarWaiting: true,
+    })
+
+    const restored = new RuntimeTaskLifecycleStore('async-question-restored-test')
+    restored.syncRuntimeWork(runtimeWork(completedTask))
+    expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    restored.userInputResponded(address)
+    expect(restored.getTask(address)?.derived).toMatchObject({
+      isBusy: false,
+      shouldShowSidebarWaiting: false,
+    })
+    restored.syncRuntimeWork(runtimeWork(completedTask))
+    restored.sendRequested(address)
+    expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    restored.sendRejected(address)
+    expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    restored.sendRequested(address)
+    restored.sendAccepted(address)
+    restored.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          threadStatus: 'active',
+          updatedAt: 124,
+          interactionStatus: null,
+        })
+      )
+    )
+    expect(restored.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
+  })
+
+  test('keeps realtime async input through a terminal snapshot without interaction metadata', () => {
+    const store = new RuntimeTaskLifecycleStore('async-question-terminal-test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))
+    store.userInputRequested(address, 'async')
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done', completedAt: 123 })))
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({ running: false, status: 'done', completedAt: 123, interactionStatus: null })
+      )
+    )
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
+  })
+
+  test('does not let a terminal transcript clear newer async interaction state', () => {
+    const store = new RuntimeTaskLifecycleStore('async-question-transcript-test')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: true, status: 'running', interactionStatus: null }))
+    )
+    store.userInputRequested(address, 'async')
+    store.syncRuntimeTranscriptSnapshot(address, {
+      running: false,
+      turns: [{ id: 'turn-1', status: 'completed', completedAt: 123 }],
+    })
+    expect(store.getTask(address)?.derived).toMatchObject({
+      isBusy: false,
+      shouldShowSidebarWaiting: true,
+    })
   })
 
   test('does not publish a new store snapshot for identical executor work', () => {

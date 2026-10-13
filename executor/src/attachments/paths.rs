@@ -19,7 +19,9 @@ pub(crate) fn device_runtime_attachment_task_dir(task_id: &str) -> PathBuf {
 // Historical files stay at their original paths, including during task cleanup.
 pub(crate) fn legacy_device_runtime_attachment_task_dir(task_id: &str) -> PathBuf {
     crate::config::paths::executor_home()
-        .join("workspace/attachments/runtime")
+        .join("workspace")
+        .join("attachments")
+        .join("runtime")
         .join(safe_identity_segment(task_id))
 }
 

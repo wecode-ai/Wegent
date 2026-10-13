@@ -23,7 +23,8 @@ import type { SmartAppVerificationIssue } from './smart-app-verification-types.j
 const roots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  for (const root of roots.splice(0).sort((left, right) => right.length - left.length))
+    await rm(root, { recursive: true, force: true })
 })
 
 describe('verified Smart App delivery archives', () => {
@@ -105,7 +106,7 @@ describe('verified Smart App delivery archives', () => {
     const root = await project()
     const output = join(root, '..', `missing-client-${Date.now()}.zip`)
     roots.push(output)
-    const appBundle = join('packages', 'bundle', 'verified-app')
+    const appBundle = 'packages/bundle/verified-app'
 
     const service = verifier(
       {},

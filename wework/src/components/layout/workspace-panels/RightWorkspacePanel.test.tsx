@@ -83,6 +83,44 @@ function renderPanel(overrides: Partial<ComponentProps<typeof RightWorkspacePane
 }
 
 describe('RightWorkspacePanel workspace target errors', () => {
+  test.each(['pnpm dev', '/opt/homebrew/bin/zsh -lc "pnpm dev"'])(
+    'keeps an exited background terminal open with its actual command title: %s',
+    command => {
+      const tabId = 'background-terminal:task-1:command-1' as const
+      const onCloseTab = vi.fn()
+      renderPanel({
+        activeView: tabId,
+        openTabs: [tabId],
+        onCloseTab,
+        backgroundTerminals: [
+          {
+            id: 'command-1',
+            tabId,
+            command,
+            cwd: '/project',
+            running: false,
+            background: false,
+            block: {
+              id: 'command-1',
+              type: 'tool',
+              toolName: 'bash',
+              status: 'done',
+              createdAt: 1,
+            },
+          },
+        ],
+      })
+
+      expect(screen.getByTestId(`right-workspace-${tabId}-tab`)).toHaveTextContent('pnpm dev')
+      expect(screen.getByTestId(`right-workspace-${tabId}-tab`)).not.toHaveTextContent(' -lc ')
+      expect(screen.getByTestId(`right-workspace-${tabId}-tab`)).toHaveAttribute('title', command)
+      expect(screen.getByRole('region', { name: 'pnpm dev' })).toBeInTheDocument()
+      screen.getByTestId(`right-workspace-${tabId}-tab-close-button`).click()
+      expect(onCloseTab).toHaveBeenCalledWith(tabId)
+      expect(screen.queryByTestId('workspace-target-error')).not.toBeInTheDocument()
+    }
+  )
+
   test('does not mount the file error beside an active browser', () => {
     renderPanel()
 

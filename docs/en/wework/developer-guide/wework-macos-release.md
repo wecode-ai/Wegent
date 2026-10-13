@@ -8,10 +8,14 @@ The Wework desktop application uses Electron. Formal builds and releases are
 handled by `.github/workflows/wework-app.yml`, which produces Electron
 installers for macOS, Windows, and Linux.
 
-Both macOS arm64 and x64 releases use the Apple Silicon `macos-14` runner. The
-x64 build verifies Rosetta 2 and then installs x64 Node.js through
-`actions/setup-node`. Before installing dependencies, the workflow checks that
-the running Node.js architecture matches the target. Harness Runtime native
+macOS arm64 releases use the Apple Silicon `macos-14` runner; x64 releases use
+the native Intel `macos-15-intel` runner. Before installing dependencies, the
+workflow checks that host hardware and Node.js architectures match the target,
+preventing release tools from running through Rosetta translation. Intel builds
+can take longer; do not restore translation solely to shorten compilation.
+Package preparation logs each subprocess command, PID, and completion state,
+and retains exit codes or signals to identify failures during parallel preparation.
+Harness Runtime native
 dependencies follow the running Node.js architecture, so selecting an Electron
 Builder target alone cannot cross-build the complete runtime. If the
 architectures differ, correct the Node.js architecture and rebuild; do not
@@ -155,6 +159,20 @@ Release. External Core DSH, Codex, and DWS archives live centrally in
 Core DSH, Codex, or DWS binaries. Every publication Release contains complete
 installers and its component manifests, and uploads only archive hashes that
 are not already available at the appropriate location.
+
+Before uploading a version Release component, the workflow checks any existing
+asset's upload state, size, and SHA-256. An exact match is reused without
+overwriting the immutable component. If GitHub CLI reports an upload error,
+the script queries the asset list again and continues only when the remote
+asset is fully uploaded and exactly matches the local archive. Missing,
+incomplete, or mismatched assets still block publication, and the original
+CLI error remains in the logs.
+
+After checking out the release source, the publish job uses the shared
+`setup-node-workspace` action to prepare Node.js, pnpm, and workspace
+dependencies before running release scripts. Harness Runtime archive
+collection uses the `tar` package declared by Wework; dependencies installed
+in build jobs are not automatically available in the publish job.
 
 The version boundary follows whether an artifact must remain atomically
 compatible with the Electron host:
@@ -403,3 +421,38 @@ workflow repairs an incomplete equal version and fails for an incomplete newer
 version instead of overwriting it with an older release. Component archives
 are never overwritten and are uploaded only when their content-addressed asset
 name is absent.
+
+## Component preparation I/O concurrency
+
+Formal package verification requires `component-update` to stage the complete
+component set within its existing budget. Release scripts and Electron share
+one hashing implementation: read at most eight files concurrently per directory
+tree, then feed records to the hash in sorted path order. Directory records,
+file digests, and path separators remain consistent, preserving existing
+component digests. Unsupported entries such as symbolic links still fail
+validation. Independent components validate and prepare their caches in
+parallel; missing downloads and pending-state publication follow only after
+all preparations succeed. Do not increase E2E timeouts or omit digest checks
+to hide serial I/O costs.
+
+## Runner capacity for formal package verification
+
+The shared runner executes all three formal-package checkpoints with a concurrency
+limit of one: `release-package-startup`, `component-update`, and `app-update-full`.
+Each isolated signed app unpacks its own Core Runtime. With three concurrent cold
+starts, release logs show approximately 121 seconds per unpack, and two apps exhaust
+the existing controller connection or first UI-action budget. Address this resource
+contention by limiting formal verification concurrency, without reruns or larger
+timeouts. Regular desktop CI shards and concurrency remain unchanged, as do formal
+scenario code, assertions, and timeouts.
+
+## Apple ticket-service transport errors
+
+Notarization submission, stapling, and ticket validation share bounded transport
+retries: three attempts by default, with five- and ten-second delays. Only recognized
+connection loss and timeout failures qualify; notarization rejection, invalid tickets,
+and other validation failures stop immediately. CloudKit lookups made by
+`stapler validate` can also fail with `NSURLErrorDomain -1005`. A failed lookup must
+not be treated as a missing ticket and trigger another notarization submission.
+Exhausted transport attempts still fail the release, and final ticket validation is
+always required.

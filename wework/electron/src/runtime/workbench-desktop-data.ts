@@ -31,8 +31,8 @@ export function migrateDesktopControlRegistry(home: string, shared: string): voi
   migrateWorkbenchDataEntry(options)
 }
 
-// Must run synchronously under Electron's single-instance lock, before ready,
-// constructing stores, initializing sessions, or starting update downloads.
+// Must run synchronously before ready, stores, sessions, or update downloads.
+// Caller holds the Electron singleton or, during its Windows handoff, native migration locks.
 export function migrateWorkbenchDesktopData(options: {
   source: string
   desktop: string

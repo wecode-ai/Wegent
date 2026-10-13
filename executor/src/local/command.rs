@@ -253,9 +253,9 @@ pub(crate) fn configured_home_dir() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from);
     #[cfg(windows)]
     {
-        return configured
+        configured
             .map(normalize_windows_home_path)
-            .or_else(dirs::home_dir);
+            .or_else(dirs::home_dir)
     }
     #[cfg(not(windows))]
     {
@@ -318,10 +318,7 @@ fn process_command(request: &CommandRequest) -> Command {
 
 #[cfg(windows)]
 fn shell_command(command_line: &str) -> Command {
-    let mut command = Command::new("cmd");
-    command.args(["/C", command_line]);
-    crate::process::hide_windows_console(&mut command);
-    command
+    crate::process::windows_shell_command(command_line)
 }
 
 #[cfg(not(windows))]

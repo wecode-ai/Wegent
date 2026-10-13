@@ -4,7 +4,17 @@
 
 use serde_json::{json, Value};
 
-use super::util::string_field;
+use super::util::{item_id, item_type, string_field};
+
+pub(crate) fn async_question_payload_from_item(params: &Value) -> Option<Value> {
+    let item = params.get("item").unwrap_or(params);
+    if item_type(item) != "agentmessage" {
+        return None;
+    }
+    let questions = item.get("questions")?.as_array()?;
+    let item_id = item_id(item, "request-user-input");
+    async_question_render_payload(&item_id, questions)
+}
 
 /// A `request_user_input_async` question: one prompt plus suggested answers.
 ///

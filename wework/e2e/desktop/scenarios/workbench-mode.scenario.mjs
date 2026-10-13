@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { createWorkbenchHomeMigrationScenario } from '../modules/workbench-home-migration.mjs'
+import { verifyCustomModelOutputBudget } from '../modules/custom-model-output-budget.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 120_000
 
@@ -72,6 +73,7 @@ export async function createDesktopScenario(options) {
 
     async verify(control) {
       await homeMigration.verify(control)
+      await verifyCustomModelOutputBudget(control)
       await openGeneralSettings(control)
       await assertMode(control, 'developer')
       assert.equal(

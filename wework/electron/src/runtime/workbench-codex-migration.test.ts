@@ -1,8 +1,21 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import { assertCodexHomeCanMove } from './workbench-codex-migration.js'
+
+vi.mock('node:child_process', async importOriginal => {
+  const original = await importOriginal<typeof import('node:child_process')>()
+  const { promisify } = await import('node:util')
+  const execFile = Object.assign(vi.fn(), {
+    [promisify.custom]: (
+      command: string,
+      args: string[],
+      options: import('node:child_process').ExecFileOptions
+    ) => promisify(original.execFile)(process.execPath, [command, ...args], options),
+  })
+  return { ...original, execFile }
+})
 
 const directories: string[] = []
 afterEach(async () => {
@@ -14,15 +27,9 @@ afterEach(async () => {
 test('checks the exact Home without passing credentials or accepting legacy version output', async () => {
   const root = await mkdtemp(join(tmpdir(), 'codex move check '))
   directories.push(root)
-  const binary = join(root, 'executor')
   const script = join(root, 'probe.cjs')
+  const binary = script
   const home = join(root, 'codex home')
-  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
-  await writeFile(
-    binary,
-    `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`
-  )
-  await chmod(binary, 0o755)
   await writeFile(
     script,
     `

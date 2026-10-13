@@ -385,10 +385,10 @@ fn executable_candidates(path: PathBuf) -> Vec<PathBuf> {
         if path.extension().is_some() {
             return vec![path];
         }
-        return [".exe", ".cmd", ".bat", ".com"]
+        [".exe", ".cmd", ".bat", ".com"]
             .iter()
             .map(|extension| path.with_extension(&extension[1..]))
-            .collect();
+            .collect()
     }
 
     #[cfg(not(windows))]

@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { createServer } from 'node:http'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
@@ -133,12 +133,12 @@ describe('resolveCodexLegalSources', () => {
       '/tmp/codex-source',
       '/tmp/bundled/LICENSE',
       '/tmp/bundled/NOTICE',
-      async path => path.endsWith('/NOTICE')
+      async path => basename(path) === 'NOTICE'
     )
 
     expect(sources).toEqual({
       license: '/tmp/bundled/LICENSE',
-      notice: '/tmp/codex-source/NOTICE',
+      notice: join('/tmp/codex-source', 'NOTICE'),
     })
   })
 })

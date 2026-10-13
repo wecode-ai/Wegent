@@ -44,7 +44,7 @@ Executor projects are identified by their owning executor and project key. Direc
 
 Wework's `wegent-remote:<host>:<projectKey>` entries explicitly reference a target project. Reconciliation indexes actual projects before resolving references, independently of input order. The reference supplies name, pins, order, and appearance; the actual project supplies directories and tasks. Distinct projects may share a directory without becoming one project. Legacy directory records and external directory-only references attach only to a unique project on the same executor and path. Ambiguous references remain separate. A missing explicit target must not bind to another project at the same path.
 
-Executor responses preserve project keys and remote-host boundaries too. Tasks follow their existing `group_project_key`; without an explicit assignment, only a unique longest local root can claim them. A remote reference cannot claim local tasks at an identical path. Workspace kind is metadata, not directory identity.
+Executor responses preserve project keys and remote-host boundaries too. Tasks follow their existing `group_project_key`. Unassigned standalone chats keep their own directory group even when their directory is inside a code project; other unassigned tasks may belong to a unique longest local root. A remote reference cannot claim local tasks at an identical path. Workspace kind is metadata, not directory identity.
 
 Sync removal records are scoped by device and project key. An unresolved external reference is scoped by its state device and sidebar key. Removing or reopening one project cannot affect another device or another project sharing its directory. Never suppress references by display name or block synchronization by path alone.
 
@@ -75,6 +75,23 @@ flowchart TB
     n485ac7c8b2 -->|"calls"| nd2df7ee7c2
     n485ac7c8b2 -->|"dispatches-through"| ne5f2afb869
 ```
+
+## User questions and execution state
+
+Executor persists task `interactionStatus` independently of turn and execution
+completion. Blocking questions use `waitingForUserInput`. Codex's
+`request_user_input_async` uses `awaitingUserReply`: the model can keep working,
+and the answer travels as the next user message. Both states show the sidebar
+bell, but an async pending reply alone does not prevent sending a message.
+
+Async reminders survive successful execution completion, task switching, and
+task-list reloads. Executor clears them when it accepts the next message or
+in-turn guidance, or when execution fails or is cancelled. Completing a turn or
+the question's tool call does not constitute an answer.
+
+The desktop `priority-filter` checkpoint covers the async bell regression: wait
+for execution to finish, verify the bell in the current and background task,
+then submit an answer and verify that the reminder disappears.
 
 ## Writes and concurrency
 

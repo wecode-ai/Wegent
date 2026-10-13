@@ -141,12 +141,31 @@ fn merge_latest_completed_transcript_messages(
     if before_cursor.is_some() || after_cursor.is_some() {
         return;
     }
-    for completed in completed_transcript_messages(link) {
+    for mut completed in completed_transcript_messages(link) {
         let message_id = string_field(&completed, "id");
         if let Some(existing) = messages
             .iter_mut()
             .find(|message| message_id.is_some() && string_field(message, "id") == message_id)
         {
+            // Exit snapshots are authoritative; running commands use their live event buffer.
+            visit_transcript_blocks_mut(&mut completed, |block| {
+                if block.pointer("/render_payload/kind").and_then(Value::as_str)
+                    != Some("command_execution")
+                {
+                    return;
+                }
+                if let Some(native) = existing.get("blocks").and_then(Value::as_array)
+                    .into_iter().flatten().find(|native| {
+                        native.get("id") == block.get("id")
+                            && native.pointer("/render_payload/kind").and_then(Value::as_str) == Some("command_execution")
+                            && matches!(native.get("status").and_then(Value::as_str), Some("done" | "error"))
+                    })
+                {
+                    if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object()) {
+                        block.extend(native.clone());
+                    }
+                }
+            });
             *existing = merge_assistant_transcript_message(existing, completed);
         } else {
             messages.push(completed);

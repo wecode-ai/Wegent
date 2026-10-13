@@ -12,6 +12,21 @@ import {
 } from './localModelSettings'
 
 describe('localModelSettings', () => {
+  test('validates output budgets and allows clearing the limit', () => {
+    const input = {
+      id: 'output-budget',
+      modelId: 'custom',
+      baseUrl: 'https://models.example/v1',
+      contextWindow: 128000,
+    }
+    for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, 128000, 128001]) {
+      expect(() => saveLocalModelConfig({ ...input, maxOutputTokens: value })).toThrow()
+    }
+    saveLocalModelConfig({ ...input, maxOutputTokens: '16000' })
+    expect(listLocalModelConfigs()[0].maxOutputTokens).toBe(16000)
+    saveLocalModelConfig({ ...input, maxOutputTokens: '' })
+    expect(listLocalModelConfigs()[0].maxOutputTokens).toBeUndefined()
+  })
   test('defaults tool profiles by API format and rejects incompatible combinations', () => {
     const responses = saveLocalModelConfig({
       modelId: 'responses-model',
@@ -89,6 +104,7 @@ describe('localModelSettings', () => {
       modelId: 'gpt-oss:20b',
       baseUrl: ' http://localhost:11434/v1/ ',
       contextWindow: '128000',
+      maxOutputTokens: '16000',
       enabled: true,
     })
     const withKey = saveLocalModelConfig({
@@ -106,6 +122,7 @@ describe('localModelSettings', () => {
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
       contextWindow: 128000,
+      maxOutputTokens: 16000,
       webSearchMode: 'disabled',
       imageGenerationEnabled: false,
       enabled: true,

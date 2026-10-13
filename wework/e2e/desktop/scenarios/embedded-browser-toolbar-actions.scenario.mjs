@@ -268,18 +268,22 @@ async function waitForPositionOnlyBrowserFrameSync(control, before, timeoutMs) {
 }
 
 export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
-  const hangingWaiters = []
+  // Loading starts before the HTTP request arrives; retain an early release.
+  let releaseHangingFixture
+  const hangingFixtureReleased = new Promise(resolve => {
+    releaseHangingFixture = resolve
+  })
   return {
     async handleHttp(request, response, url) {
       if (request.method !== 'GET') return false
       if (url.pathname === HANGING_FIXTURE_PATH) {
-        await new Promise(resolve => hangingWaiters.push(resolve))
+        await hangingFixtureReleased
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
         response.end(fixtureHtml('Embedded Browser Hanging Fixture', 'Hanging fixture loaded'))
         return true
       }
       if (url.pathname === HANGING_FIXTURE_RELEASE_PATH) {
-        while (hangingWaiters.length > 0) hangingWaiters.pop()()
+        releaseHangingFixture()
         response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
         response.end('released')
         return true

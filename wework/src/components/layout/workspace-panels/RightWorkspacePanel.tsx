@@ -32,6 +32,7 @@ import {
   type FileChangesReviewViewOption,
 } from '@/components/chat/FileChangesReviewPanel'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
+import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
 import { CentralHarnessTerminal } from '@/components/layout/CentralHarnessTerminal'
 import type { LocalHarnessWorkbenchSession } from '@/components/layout/localHarnessWorkbench'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
@@ -82,6 +83,8 @@ import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import { BackgroundTerminalPanel } from './BackgroundTerminalPanel'
+import type { BackgroundTerminal } from '../backgroundTerminals'
 import { DshSidebarExtensionPanel } from './DshSidebarExtensionPanel'
 import { BrowserAgentCursorIcon } from './BrowserAgentCursorIcon'
 import {
@@ -118,6 +121,7 @@ export type RightWorkspaceChatTab = `chat:${string}`
 export type RightWorkspaceBrowserTab = `browser:${string}`
 export type RightWorkspaceHarnessTab = `harness:${string}`
 export type RightWorkspaceTerminalTab = `terminal:${string}`
+export type RightWorkspaceBackgroundTerminalTab = `background-terminal:${string}`
 export type RightWorkspacePanelTab =
   | 'review'
   | 'files'
@@ -128,6 +132,7 @@ export type RightWorkspacePanelTab =
   | RightWorkspaceBrowserTab
   | RightWorkspaceHarnessTab
   | RightWorkspaceTerminalTab
+  | RightWorkspaceBackgroundTerminalTab
   | RightWorkspaceExtensionTab
   | WorkspaceFileTabId
 export type RightWorkspacePanelView = 'launcher' | RightWorkspacePanelTab
@@ -238,6 +243,7 @@ interface RightWorkspacePanelProps {
   review: RightWorkspaceReviewState
   planContent?: string | null
   subagentPanel?: ReactNode
+  backgroundTerminals?: BackgroundTerminal[]
   workItemPanel?: ReactNode
   extensionTabs?: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
   extensionScope: WeworkWorkspaceScope
@@ -562,6 +568,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   review,
   planContent,
   subagentPanel,
+  backgroundTerminals = [],
   workItemPanel,
   extensionTabs = {},
   extensionScope,
@@ -834,6 +841,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           key={tab}
           tab={tab}
           active={activeView === tab}
+          title={backgroundTerminals.find(terminal => terminal.tabId === tab)?.command}
           filePath={
             isWorkspaceFileTab(tab)
               ? fileTabs[tab]?.path
@@ -846,7 +854,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             t,
             browserStates,
             harnessSessionsById,
-            extensionTabs
+            extensionTabs,
+            backgroundTerminals
           )}
           icon={
             isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.developmentPreview
@@ -981,6 +990,22 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             />
           )
         )}
+        {openTabs
+          .filter(tab => tab.startsWith('background-terminal:'))
+          .map(tab => (
+            <div
+              key={tab}
+              className={cn(
+                'min-h-0 min-w-0 flex-1 flex-col',
+                activeView === tab ? 'flex' : 'hidden'
+              )}
+            >
+              <BackgroundTerminalPanel
+                terminal={backgroundTerminals.find(terminal => terminal.tabId === tab)}
+                active={visible && activeView === tab}
+              />
+            </div>
+          ))}
         {chatTabs.map(tab => (
           <div
             key={tab}
@@ -1209,6 +1234,7 @@ function RightWorkspaceTitleTab({
   tab,
   active,
   label,
+  title,
   filePath,
   icon: Icon,
   extensionState,
@@ -1221,6 +1247,7 @@ function RightWorkspaceTitleTab({
   tab: RightWorkspacePanelTab
   active: boolean
   label: string
+  title?: string
   filePath?: string
   icon: LucideIcon
   extensionState?: RightWorkspaceExtensionTabState
@@ -1244,7 +1271,7 @@ function RightWorkspaceTitleTab({
       data-testid={getRightWorkspaceTabTestId(tab)}
       role="tab"
       aria-selected={active}
-      title={filePath}
+      title={title ?? filePath}
       tabIndex={0}
       onClick={onSelect}
       onKeyDown={handleKeyDown}
@@ -1506,8 +1533,16 @@ function getRightWorkspaceTabLabel(
   t: ReturnType<typeof useTranslation>['t'],
   browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>,
   harnessSessionsById: Map<string, LocalHarnessWorkbenchSession>,
-  extensionTabs: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
+  extensionTabs: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>,
+  backgroundTerminals: BackgroundTerminal[]
 ) {
+  if (tab.startsWith('background-terminal:')) {
+    return (
+      unwrapShellCommand(
+        backgroundTerminals.find(terminal => terminal.tabId === tab)?.command ?? ''
+      ) || t('workbench.background_terminal')
+    )
+  }
   if (isRightWorkspaceExtensionTab(tab)) {
     const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionTabs[tab])
     if (!descriptor) return t('workbench.workspace_tab_plugin', '插件')
@@ -1566,6 +1601,7 @@ function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
 }
 
 function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
+  if (tab.startsWith('background-terminal:')) return SquareTerminal
   if (isRightWorkspaceExtensionTab(tab)) return PanelRight
   if (tab === 'review') return FileDiff
   if (isRightWorkspaceTerminalTab(tab)) return SquareTerminal

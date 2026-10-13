@@ -151,6 +151,10 @@ pub fn migrate(root: &Path) -> Result<(), String> {
             moves.push((source, destination));
         }
     }
+    // Windows cannot rename metadata directories containing open lock handles.
+    // The caller has stopped all executors; keep the migration lock throughout.
+    #[cfg(windows)]
+    drop(leases);
     // Rename, never copy or overwrite. Each completed step is valid on the next run.
     for (source, destination) in moves {
         fs::rename(source, destination).map_err(|error| error.to_string())?;

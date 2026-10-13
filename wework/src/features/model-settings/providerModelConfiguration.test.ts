@@ -71,6 +71,7 @@ describe('Provider configuration runtime adapter', () => {
       baseUrl: provider.base_url,
       apiKey: 'key-a',
       contextWindow: 12345,
+      maxOutputTokens: 2345,
     })
     const second = saveLocalModelConfig({
       id: 'legacy-b',
@@ -89,6 +90,10 @@ describe('Provider configuration runtime adapter', () => {
     expect(groups[0].models.map(model => model.id)).toEqual(['legacy-a', 'legacy-b'])
     expect(groups[0].models[0].catalog_entry).toEqual(first.catalogEntry)
     expect(groups[0].models[0].context_window).toBe(12345)
+    expect(groups[0].models[0].max_output_tokens).toBe(2345)
+    expect(
+      resolveProviderModel({ provider: groups[0], model: groups[0].models[0] }).maxOutputTokens
+    ).toBe(2345)
   })
   test('projection shadows only matching migrated IDs; legacy records and cloud-looking names remain distinct', () => {
     const legacy = saveLocalModelConfig({

@@ -5,8 +5,6 @@
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::{collections::HashMap, future::Future, path::Path, pin::Pin, sync::Arc};
-#[cfg(windows)]
-use std::{env, path::PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
@@ -60,7 +58,7 @@ use crate::{
     },
     local::turn_file_changes_commands::turn_file_changes as turn_file_changes_command,
     local::workspace_files::{
-        execute_workspace_file_command_with_input, is_workspace_file_command, WORKSPACE_ROOTS_ENV,
+        execute_workspace_file_command_with_input, is_workspace_file_command,
     },
     logging::{
         format_executor_log, reserve_executor_stdout_for_protocol, write_executor_error_line,
@@ -1558,19 +1556,13 @@ impl AppIpcServer {
 
         let args = string_list(params.get("args"))?;
         let path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
-        let mut env = string_env(params.get("env"))?;
+        let env = string_env(params.get("env"))?;
         if is_workspace_file_command(command_key) {
-            if !env.contains_key(WORKSPACE_ROOTS_ENV) {
-                if let Some(path) = path.as_ref() {
-                    env.insert(WORKSPACE_ROOTS_ENV.to_owned(), path.clone());
-                }
-            }
             return serde_json::to_value(
                 execute_workspace_file_command_with_input(
                     command_key,
                     path,
                     args,
-                    env,
                     string_field(&params, "stdin"),
                 )
                 .await,

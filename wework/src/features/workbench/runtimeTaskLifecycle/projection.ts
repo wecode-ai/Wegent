@@ -108,7 +108,14 @@ export function shouldReplaceRuntimeTaskProjection(
   const candidateCompleted = isRuntimeTaskAuthoritativeCompletion(candidate)
 
   if (currentCompleted !== candidateCompleted) {
-    if (candidateCompleted) return true
+    if (candidateCompleted) {
+      if (!isRuntimeTaskExecutionRunning(current)) return true
+      // Completion belongs to its turn, not to a later metadata refresh.
+      // Native completion timestamps may have only second precision.
+      const completedAt = runtimeTaskTimestamp(candidate.completedAt)
+      const currentTime = runtimeTaskProjectionTime(current)
+      return completedAt === 0 || Math.floor(completedAt / 1000) >= Math.floor(currentTime / 1000)
+    }
     if (!isRuntimeTaskConfirmedActive(candidate)) return false
     const candidateTime = runtimeTaskProjectionTime(candidate)
     // Native completion can be second-precision while the accepted start is milliseconds.
