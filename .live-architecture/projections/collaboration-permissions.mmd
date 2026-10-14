@@ -1,16 +1,41 @@
 flowchart TB
     n8852b6883f["c635908b"]
+    na000dd47fc["compat-storage-e27a"]
     n3bcaf0a572["f0244dd2"]
     nc717745173["2f391a06"]
     nb6a99c6cc3["6d0bb441"]
     n2f13afe83c["9e54c378"]
     nc83f3fd022["04839d2f"]
     nfde2300964["ccd5381b"]
+    n402c830cd5["project-chat-socket-e27a"]
+    nf0e0d2b574["startup-e27a"]
+    n7363aefce4["546c88a4"]
     nee232a4d92["8e6bb2c4"]
     n1a89811c33["94f7802d"]
+    nf645da0b61["aab71206"]
+    nb5e50c14c4["issue-read-e27a"]
     n6078b72559["287398da"]
+    nce87cd8a2b["617dc728"]
+    nfcb8afad8c["aab71205"]
+    n94b0ec4141["issue-read-e27a"]
     n8852b6883f -->|"constrains"| nc83f3fd022
-    n3bcaf0a572 -->|"establishes-containment-for"| nc717745173
+    na000dd47fc -->|"establishes-containment-for"| nc717745173
+    nc717745173 -->|"enables"| n2f13afe83c
+    nb6a99c6cc3 -->|"contains"| nc717745173
+    nc83f3fd022 -->|"authorizes"| nc717745173
+    nc83f3fd022 -->|"derives-authority-from"| nb6a99c6cc3
+    nc83f3fd022 -->|"validates"| n2f13afe83c
+    nfde2300964 -->|"rechecks"| nc83f3fd022
+    nfde2300964 -->|"revalidates"| n2f13afe83c
+    n7363aefce4 -->|"verifies"| nce87cd8a2b
+    nee232a4d92 -->|"protects"| n6078b72559
+    n1a89811c33 -->|"protects"| n8852b6883f
+    nf645da0b61 -->|"verifies"| nfcb8afad8c
+    nb5e50c14c4 -->|"verifies"| n94b0ec4141
+    n6078b72559 -->|"obeys"| nc83f3fd022
+    n6078b72559 -->|"subscribes-through"| n402c830cd5
+    n8852b6883f -->|"constrains"| nc83f3fd022
+    na000dd47fc -->|"establishes-containment-for"| nc717745173
     nc717745173 -->|"enables"| n2f13afe83c
     nb6a99c6cc3 -->|"contains"| nc717745173
     nc83f3fd022 -->|"authorizes"| nc717745173
@@ -20,4 +45,7 @@ flowchart TB
     nfde2300964 -->|"revalidates"| n2f13afe83c
     nee232a4d92 -->|"protects"| n6078b72559
     n1a89811c33 -->|"protects"| n8852b6883f
+    nb5e50c14c4 -->|"verifies"| n94b0ec4141
+    n6078b72559 -->|"contains"| nfcb8afad8c
     n6078b72559 -->|"obeys"| nc83f3fd022
+    n6078b72559 -->|"subscribes-through"| n402c830cd5

@@ -444,11 +444,27 @@
       "reason": "Both Python upstream 8004 and gateway 8000 accepted authentication, project and actual Issue read-only subscriptions; no messages or tasks were dispatched by the diagnostic.",
       "subject": "arch://wegent/service/project-chat-socket-e27a",
       "timestamp": "2026-10-14T09:05:32Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-8df89e98efe5",
+      "confidence": 1.0,
+      "evidence": [
+        ".live-architecture/evidence/collaboration-pr-integration-20261014.md",
+        "backend/tests/test_collaboration_permission_guard.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Combined source on upstream main passes 862 permission and changed-backend regression tests. CP invariant rows retain their approved digest. Document broader historical failures and mixed-version enforcement limits without declaring them resolved.",
+      "subject": "arch://wegent/test/94f7802d",
+      "timestamp": "2026-10-14T11:57:12Z"
     }
   ],
   "created_at": "2026-10-14T06:45:30Z",
   "id": "tx-b6334c5994c6",
   "intent": "Recover the interrupted automatic development migration without losing projects: validate and resume MySQL schema phases, preserve legacy parent mappings and role backups, stop startup after migration failure, and prove recovery against populated databases.",
+  "merged_revision": "A00000010",
   "read_set": [
     "arch://wegent/contract/c635908b",
     "arch://wegent/data/compat-storage-e27a",
@@ -468,8 +484,8 @@
       "to": "A00000009"
     }
   ],
-  "status": "open",
-  "updated_at": "2026-10-14T11:55:53Z",
+  "status": "merged",
+  "updated_at": "2026-10-14T11:57:12Z",
   "write_set": [
     "arch://wegent/contract/c635908b",
     "arch://wegent/data/compat-storage-e27a",

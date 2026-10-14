@@ -13,9 +13,10 @@
     {
       "active": true,
       "evidence": [
-        "backend/alembic/versions/20261014_4c18b92f0e76_unify_collaboration_permissions.py"
+        "docs/zh/wegent/developer-guide/collaboration-permissions.md",
+        "backend/app/models/delivery.py"
       ],
-      "from": "arch://wegent/data/f0244dd2",
+      "from": "arch://wegent/data/compat-storage-e27a",
       "plane": "implementation",
       "to": "arch://wegent/domain/2f391a06",
       "type": "establishes-containment-for"
@@ -93,6 +94,16 @@
     {
       "active": true,
       "evidence": [
+        "packages/collaboration/src/platform/ProjectCreationAction.test.tsx"
+      ],
+      "from": "arch://wegent/test/546c88a4",
+      "plane": "implementation",
+      "to": "arch://wegent/ui/617dc728",
+      "type": "verifies"
+    },
+    {
+      "active": true,
+      "evidence": [
         "docs/zh/wegent/developer-guide/project-member-settings.md"
       ],
       "from": "arch://wegent/test/8e6bb2c4",
@@ -113,12 +124,43 @@
     {
       "active": true,
       "evidence": [
+        "packages/collaboration/src/issue-detail/IssuePropertiesPopover.test.tsx"
+      ],
+      "from": "arch://wegent/test/aab71206",
+      "plane": "implementation",
+      "to": "arch://wegent/ui/aab71205",
+      "type": "verifies"
+    },
+    {
+      "active": true,
+      "evidence": [
+        ".live-architecture/evidence/issue-unread-20261014.md"
+      ],
+      "from": "arch://wegent/test/issue-read-e27a",
+      "plane": "implementation",
+      "to": "arch://wegent/ui/issue-read-e27a",
+      "type": "verifies"
+    },
+    {
+      "active": true,
+      "evidence": [
         "packages/collaboration/src/permissions.ts"
       ],
       "from": "arch://wegent/ui/287398da",
       "plane": "implementation",
       "to": "arch://wegent/service/04839d2f",
       "type": "obeys"
+    },
+    {
+      "active": true,
+      "evidence": [
+        "docs/zh/wegent/developer-guide/collaboration-permissions.md",
+        "packages/collaboration/src/issue-detail/useIssueProjectChat.ts"
+      ],
+      "from": "arch://wegent/ui/287398da",
+      "plane": "implementation",
+      "to": "arch://wegent/service/project-chat-socket-e27a",
+      "type": "subscribes-through"
     },
     {
       "active": true,
@@ -133,9 +175,10 @@
     {
       "active": true,
       "evidence": [
-        "docs/zh/wegent/developer-guide/collaboration-permissions.md"
+        "docs/zh/wegent/developer-guide/collaboration-permissions.md",
+        "backend/app/models/delivery.py"
       ],
-      "from": "arch://wegent/data/f0244dd2",
+      "from": "arch://wegent/data/compat-storage-e27a",
       "plane": "model",
       "to": "arch://wegent/domain/2f391a06",
       "type": "establishes-containment-for"
@@ -233,19 +276,51 @@
     {
       "active": true,
       "evidence": [
+        "docs/zh/wegent/developer-guide/issue-unread.md"
+      ],
+      "from": "arch://wegent/test/issue-read-e27a",
+      "plane": "model",
+      "to": "arch://wegent/ui/issue-read-e27a",
+      "type": "verifies"
+    },
+    {
+      "active": true,
+      "evidence": [
+        "packages/collaboration/src/SharedIssueDetailEditor.tsx"
+      ],
+      "from": "arch://wegent/ui/287398da",
+      "plane": "model",
+      "to": "arch://wegent/ui/aab71205",
+      "type": "contains"
+    },
+    {
+      "active": true,
+      "evidence": [
         "docs/zh/wegent/developer-guide/collaboration-permissions.md"
       ],
       "from": "arch://wegent/ui/287398da",
       "plane": "model",
       "to": "arch://wegent/service/04839d2f",
       "type": "obeys"
+    },
+    {
+      "active": true,
+      "evidence": [
+        "docs/zh/wegent/developer-guide/collaboration-permissions.md",
+        "packages/collaboration/src/issue-detail/useIssueProjectChat.ts"
+      ],
+      "from": "arch://wegent/ui/287398da",
+      "plane": "model",
+      "to": "arch://wegent/service/project-chat-socket-e27a",
+      "type": "subscribes-through"
     }
   ],
   "nodes": [
     {
       "active": true,
       "evidence": [
-        "docs/zh/wegent/developer-guide/collaboration-permissions.md"
+        "docs/zh/wegent/developer-guide/collaboration-permissions.md",
+        "user:20261014-no-schema-and-mixed-version-request"
       ],
       "id": "arch://wegent/contract/c635908b",
       "planes": [
@@ -261,10 +336,11 @@
     {
       "active": true,
       "evidence": [
-        "backend/alembic/versions/20261014_4c18b92f0e76_unify_collaboration_permissions.py",
+        "backend/app/models/delivery.py",
+        "backend/app/services/cloud_projects/service.py",
         "docs/zh/wegent/developer-guide/collaboration-permissions.md"
       ],
-      "id": "arch://wegent/data/f0244dd2",
+      "id": "arch://wegent/data/compat-storage-e27a",
       "planes": [
         "implementation",
         "model"
@@ -277,6 +353,27 @@
     {
       "active": true,
       "evidence": [
+        ".live-architecture/evidence/permissions-recovery-runtime-20261014.json",
+        "backend/alembic/versions/20261014_4c18b92f0e76_unify_collaboration_permissions.py",
+        "backend/tests/models/test_collaboration_permission_compatibility.py",
+        "docs/zh/wegent/developer-guide/collaboration-permissions.md"
+      ],
+      "id": "arch://wegent/data/f0244dd2",
+      "planes": [
+        "implementation",
+        "model",
+        "runtime"
+      ],
+      "state_by_plane": {
+        "implementation": false,
+        "model": false,
+        "runtime": true
+      }
+    },
+    {
+      "active": true,
+      "evidence": [
+        ".live-architecture/evidence/permissions-recovery-runtime-20261014.json",
         "backend/app/models/delivery.py",
         "backend/app/services/collaboration_permissions.py",
         "docs/zh/wegent/developer-guide/collaboration-permissions.md"
@@ -284,11 +381,13 @@
       "id": "arch://wegent/domain/2f391a06",
       "planes": [
         "implementation",
-        "model"
+        "model",
+        "runtime"
       ],
       "state_by_plane": {
         "implementation": true,
-        "model": true
+        "model": true,
+        "runtime": true
       }
     },
     {
@@ -312,6 +411,7 @@
       "active": true,
       "evidence": [
         "backend/app/services/collaboration_permissions.py",
+        "backend/app/services/runner_routing.py",
         "docs/zh/wegent/developer-guide/collaboration-permissions.md"
       ],
       "id": "arch://wegent/domain/9e54c378",
@@ -327,6 +427,7 @@
     {
       "active": true,
       "evidence": [
+        "backend/app/schemas/base_role.py",
         "backend/app/services/cloud_project_visibility.py",
         "backend/app/services/collaboration_permissions.py",
         "docs/zh/wegent/developer-guide/collaboration-permissions.md"
@@ -345,6 +446,7 @@
       "active": true,
       "evidence": [
         "backend/app/services/collaboration_revocation.py",
+        "backend/app/services/runner_routing.py",
         "docs/zh/wegent/developer-guide/collaboration-permissions.md"
       ],
       "id": "arch://wegent/service/ccd5381b",
@@ -355,6 +457,58 @@
       "state_by_plane": {
         "implementation": true,
         "model": true
+      }
+    },
+    {
+      "active": true,
+      "evidence": [
+        ".live-architecture/evidence/permissions-recovery-runtime-20261014.json",
+        "docs/zh/wegent/developer-guide/collaboration-permissions.md",
+        "packages/chat-core/src/project-chat.ts",
+        "packages/collaboration/src/issue-detail/useIssueProjectChat.ts"
+      ],
+      "id": "arch://wegent/service/project-chat-socket-e27a",
+      "planes": [
+        "implementation",
+        "model",
+        "runtime"
+      ],
+      "state_by_plane": {
+        "implementation": true,
+        "model": true,
+        "runtime": true
+      }
+    },
+    {
+      "active": true,
+      "evidence": [
+        "backend/app/main.py",
+        "backend/tests/test_startup_migration_failure.py",
+        "docs/zh/wegent/developer-guide/collaboration-permissions.md"
+      ],
+      "id": "arch://wegent/service/startup-e27a",
+      "planes": [
+        "implementation",
+        "model"
+      ],
+      "state_by_plane": {
+        "implementation": true,
+        "model": true
+      }
+    },
+    {
+      "active": true,
+      "evidence": [
+        "packages/collaboration/src/platform/CollaborationPlatformApp.test.tsx",
+        "packages/collaboration/src/platform/ProjectCreationAction.test.tsx",
+        "wework/e2e/desktop/modules/workspace-flows.mjs"
+      ],
+      "id": "arch://wegent/test/546c88a4",
+      "planes": [
+        "implementation"
+      ],
+      "state_by_plane": {
+        "implementation": true
       }
     },
     {
@@ -376,6 +530,7 @@
     {
       "active": true,
       "evidence": [
+        ".live-architecture/evidence/collaboration-pr-integration-20261014.md",
         "backend/tests/test_collaboration_permission_guard.py",
         "docs/zh/wegent/developer-guide/collaboration-permissions.md"
       ],
@@ -392,9 +547,47 @@
     {
       "active": true,
       "evidence": [
+        "packages/collaboration/src/issue-detail/IssuePropertiesPopover.test.tsx",
+        "wework/src/features/todo/TodoEditor.test.tsx"
+      ],
+      "id": "arch://wegent/test/aab71206",
+      "planes": [
+        "implementation"
+      ],
+      "state_by_plane": {
+        "implementation": true
+      }
+    },
+    {
+      "active": true,
+      "evidence": [
+        ".live-architecture/evidence/issue-unread-20261014.md",
+        "docs/zh/wegent/developer-guide/issue-unread.md",
+        "packages/collaboration/src/issue-detail/IssueActivityPanel.test.tsx",
+        "packages/collaboration/src/issue-detail/useIssueActivityScroll.test.tsx",
+        "wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs",
+        "wework/src/features/todo/TaskActivityView.test.tsx"
+      ],
+      "id": "arch://wegent/test/issue-read-e27a",
+      "planes": [
+        "implementation",
+        "model"
+      ],
+      "state_by_plane": {
+        "implementation": true,
+        "model": true
+      }
+    },
+    {
+      "active": true,
+      "evidence": [
         "docs/zh/wegent/developer-guide/collaboration-permissions.md",
         "docs/zh/wegent/developer-guide/project-member-settings.md",
+        "packages/collaboration/src/SharedIssueDetailEditor.tsx",
+        "packages/collaboration/src/issue-detail/useIssueProjectChat.ts",
         "packages/collaboration/src/permissions.ts",
+        "packages/collaboration/src/platform/WorkspaceResourceConfiguration.tsx",
+        "packages/collaboration/src/project-agent-config/ProjectAgentConfiguration.tsx",
         "packages/collaboration/src/project-manage/ProjectManageView.tsx",
         "packages/collaboration/src/project-manage/ProjectMembersSection.tsx",
         "packages/collaboration/src/project-manage/useProjectMembers.ts"
@@ -408,8 +601,72 @@
         "implementation": true,
         "model": true
       }
+    },
+    {
+      "active": true,
+      "evidence": [
+        ".live-architecture/evidence/project-creation-action.md",
+        ".live-architecture/evidence/starter-action-sizing.md",
+        ".live-architecture/evidence/workspace-action-sizing.md",
+        "packages/collaboration/src/platform/CollaborationPlatformApp.tsx",
+        "packages/collaboration/src/platform/ProjectCreationAction.tsx",
+        "packages/collaboration/src/platform/base.css",
+        "packages/collaboration/src/platform/platform.css"
+      ],
+      "id": "arch://wegent/ui/617dc728",
+      "planes": [
+        "implementation",
+        "model"
+      ],
+      "state_by_plane": {
+        "implementation": true,
+        "model": true
+      }
+    },
+    {
+      "active": true,
+      "evidence": [
+        ".live-architecture/evidence/assignment-history-disclosure.md",
+        ".live-architecture/evidence/issue-properties-popover.md",
+        "packages/collaboration/src/SharedIssueDetailEditor.tsx",
+        "packages/collaboration/src/issue-detail/IssueAssignmentHistoryDisclosure.tsx",
+        "packages/collaboration/src/issue-detail/IssuePropertiesPopover.css",
+        "packages/collaboration/src/issue-detail/IssuePropertiesPopover.tsx",
+        "packages/collaboration/src/issue-detail/IssuePropertyRow.tsx",
+        "wework/src/features/todo/AnchorPopover.tsx"
+      ],
+      "id": "arch://wegent/ui/aab71205",
+      "planes": [
+        "implementation",
+        "model"
+      ],
+      "state_by_plane": {
+        "implementation": true,
+        "model": true
+      }
+    },
+    {
+      "active": true,
+      "evidence": [
+        ".live-architecture/evidence/issue-unread-20261014.md",
+        "docs/en/wegent/developer-guide/issue-unread.md",
+        "docs/zh/wegent/developer-guide/issue-unread.md",
+        "packages/collaboration/src/issue-detail/IssueActivityPanel.tsx",
+        "packages/collaboration/src/issue-detail/useIssueActivityScroll.ts",
+        "wework/src/features/todo/TaskActivityView.tsx"
+      ],
+      "id": "arch://wegent/ui/issue-read-e27a",
+      "planes": [
+        "implementation",
+        "intent",
+        "model"
+      ],
+      "state_by_plane": {
+        "implementation": true,
+        "model": true
+      }
     }
   ],
   "plane": null,
-  "revision": "A00000003"
+  "revision": "A00000010"
 }
