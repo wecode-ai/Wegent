@@ -351,16 +351,39 @@ impl CodexAppServerClient {
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self.prepare_request().await?;
-        Self::send_request_and_wait(
+        let diagnostic_start = turn_start_rpc_diagnostic_start(method);
+        log_turn_start_rpc_phase(diagnostic_start, "prepare", "started");
+        let prepared = self
+            .prepare_request_with_process(true, None, diagnostic_start)
+            .await;
+        log_turn_start_rpc_phase(
+            diagnostic_start,
+            "prepare",
+            if prepared.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            },
+        );
+        let prepared = prepared?;
+        let result = Self::send_request_and_wait(
             method,
             params,
             timeout_seconds,
-            request_id,
-            handle,
-            response_rx,
+            prepared,
+            diagnostic_start,
         )
-        .await
+        .await;
+        log_turn_start_rpc_phase(
+            diagnostic_start,
+            "response",
+            if result.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            },
+        );
+        result
     }
 
     async fn request_for_launch_config(
@@ -370,34 +393,33 @@ impl CodexAppServerClient {
         launch_config: &CodexLaunchConfig,
     ) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self
-            .prepare_request_with_process(true, Some(launch_config))
+        let prepared = self
+            .prepare_request_with_process(true, Some(launch_config), None)
             .await?;
-        Self::send_request_and_wait(
-            method,
-            params,
-            timeout_seconds,
-            request_id,
-            handle,
-            response_rx,
-        )
-        .await
+        Self::send_request_and_wait(method, params, timeout_seconds, prepared, None).await
     }
 
     async fn send_request_and_wait(
         method: &str,
         params: Value,
         timeout_seconds: u64,
-        request_id: u64,
-        handle: CodexAppServerHandle,
-        response_rx: oneshot::Receiver<Result<Value, String>>,
+        prepared: (
+            u64,
+            CodexAppServerHandle,
+            oneshot::Receiver<Result<Value, String>>,
+        ),
+        diagnostic_start: Option<Instant>,
     ) -> Result<Value, String> {
+        let (request_id, handle, response_rx) = prepared;
         let message = json!({
             "method": method,
             "id": request_id,
             "params": params,
         });
-        if let Err(error) = handle.write_message(message).await {
+        if let Err(error) = handle
+            .write_message_with_diagnostics(message, diagnostic_start)
+            .await
+        {
             handle.remove_pending(request_id).await;
             return Err(error);
         }
@@ -614,19 +636,6 @@ impl CodexAppServerClient {
             .ok_or_else(|| "turn/steer response missing turnId".to_owned())
     }
 
-    async fn prepare_request(
-        &self,
-    ) -> Result<
-        (
-            u64,
-            CodexAppServerHandle,
-            oneshot::Receiver<Result<Value, String>>,
-        ),
-        String,
-    > {
-        self.prepare_request_with_process(true, None).await
-    }
-
     async fn prepare_existing_request(
         &self,
     ) -> Result<
@@ -637,13 +646,14 @@ impl CodexAppServerClient {
         ),
         String,
     > {
-        self.prepare_request_with_process(false, None).await
+        self.prepare_request_with_process(false, None, None).await
     }
 
     async fn prepare_request_with_process(
         &self,
         start_if_missing: bool,
         launch_config: Option<&CodexLaunchConfig>,
+        diagnostic_start: Option<Instant>,
     ) -> Result<
         (
             u64,
@@ -652,9 +662,15 @@ impl CodexAppServerClient {
         ),
         String,
     > {
+        log_turn_start_rpc_phase(diagnostic_start, "mcp-endpoints", "started");
         ensure_codex_mcp_endpoints().await?;
+        log_turn_start_rpc_phase(diagnostic_start, "mcp-endpoints", "completed");
+        log_turn_start_rpc_phase(diagnostic_start, "state-lock", "started");
         let mut state = self.state.lock().await;
+        log_turn_start_rpc_phase(diagnostic_start, "state-lock", "completed");
+        log_turn_start_rpc_phase(diagnostic_start, "retiring-process", "started");
         state.finish_retiring_process().await?;
+        log_turn_start_rpc_phase(diagnostic_start, "retiring-process", "completed");
         if state
             .process
             .as_mut()
@@ -709,7 +725,9 @@ impl CodexAppServerClient {
             .expect("persistent Codex app-server should be initialized")
             .handle();
         let (tx, rx) = oneshot::channel();
+        log_turn_start_rpc_phase(diagnostic_start, "pending-registration", "started");
         handle.pending.lock().await.insert(request_id, tx);
+        log_turn_start_rpc_phase(diagnostic_start, "pending-registration", "completed");
         Ok((request_id, handle, rx))
     }
 
@@ -1437,22 +1455,62 @@ struct CodexAppServerHandle {
 
 impl CodexAppServerHandle {
     async fn write_message(&self, message: Value) -> Result<(), String> {
+        self.write_message_with_diagnostics(message, None).await
+    }
+
+    async fn write_message_with_diagnostics(
+        &self,
+        message: Value,
+        diagnostic_start: Option<Instant>,
+    ) -> Result<(), String> {
         let mut line = serde_json::to_vec(&message)
             .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
         line.push(b'\n');
+        log_turn_start_rpc_phase(diagnostic_start, "stdin-lock", "started");
         let mut stdin = self.stdin.lock().await;
+        log_turn_start_rpc_phase(diagnostic_start, "stdin-lock", "completed");
+        log_turn_start_rpc_phase(diagnostic_start, "request-write", "started");
         stdin
             .write_all(&line)
             .await
             .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))?;
-        stdin
+        let result = stdin
             .flush()
             .await
-            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"))
+            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"));
+        if result.is_ok() {
+            log_turn_start_rpc_phase(diagnostic_start, "request-write", "completed");
+        }
+        result
     }
 
     async fn remove_pending(&self, request_id: u64) {
         self.pending.lock().await.remove(&request_id);
+    }
+}
+
+fn turn_start_rpc_diagnostic_start(method: &str) -> Option<Instant> {
+    if method != "turn/start" {
+        return None;
+    }
+    turn_start_rpc_diagnostic_enabled(method, env::var("VITE_WEWORK_E2E").ok().as_deref())
+        .then(Instant::now)
+}
+
+fn turn_start_rpc_diagnostic_enabled(method: &str, e2e: Option<&str>) -> bool {
+    method == "turn/start" && e2e == Some("true")
+}
+
+fn log_turn_start_rpc_phase(start: Option<Instant>, phase: &'static str, status: &'static str) {
+    if let Some(start) = start {
+        log_executor_event(
+            "codex turn start RPC phase",
+            &[
+                ("phase", phase.to_owned()),
+                ("status", status.to_owned()),
+                ("elapsed_ms", start.elapsed().as_millis().to_string()),
+            ],
+        );
     }
 }
 

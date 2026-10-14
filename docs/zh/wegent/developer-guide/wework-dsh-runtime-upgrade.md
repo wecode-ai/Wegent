@@ -310,3 +310,19 @@ ARM renderer 存储恢复约 1874 毫秒：响应头等待 1006 毫秒、响应�
 仅现有 CPU 诊断开关开启时，在六个固定主进程启动边界记录系统累计 CPU 总量、idle、CPU 数、可用内存及受支持平台的 1 分钟负载；不读取进程名或命令，不增加定时器。无效或失败只记不可用，关闭诊断或其他阶段不调用系统 API。18 项新增与 23 项既有聚焦测试、Electron 类型和 lint 通过。一次隔离真实 Electron 验证中六个边界均可用、工作台就绪；stop 返回零，所属进程为空，认证链接移除。系统负载包含此前构建，空闲内存也不等同内存压力，这些只是后续取证，尚非性能修复。
 
 快捷短语现在复用既有 AppPreferencesProvider，删除多个输入框各自重复读取偏好及注册同类 listener 的逻辑；独立使用仍保留原有加载和事件行为，不增加全局缓存。真实 Provider 多消费者测试在旧实现复现重复读取（两项失败），修改后 6 项 hook 与 3 项 Provider 测试、renderer 类型和 lint 通过，包括事件优先于未完成初读及卸载清理。上述真实 Electron 工作台验证也覆盖修改后的启动。这不能证明 ARM 后续某次 395 毫秒偏好读取已消除，更不能宣称跨平台 `<5s` 已完成。
+
+
+本轮 Windows [第 9 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955653)、[第 14 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955847)、[第 15 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955648) 完整日志分别证实 7、7、6 个原场景通过，包括两轮协作、真实启动恢复和 running-conversation-history。历史恢复原 3000 毫秒断言保留，未重跑；通过不能倒推上轮 5.48 秒的唯一原因。
+
+[正式 macOS x64 构建](https://github.com/wecode-ai/Wegent/actions/runs/38480832768/job/115582837821) 在 Apple stapler validate 的既有三次尝试中均遇到 CloudKit NSURLErrorDomain -1005 连接中断，最终 xcrun 退出 68；尚未进入正式包 E2E。没有签名无效或票据被拒绝的证据，日志也不能区分前置已有票据检查与最终校验。源码已识别传输错误并在原次数后失败；不删除联网校验、不增加重试或另行重跑以获得绿色结果。外部票据服务连接故障仍是本轮构建的实际阻塞，不能宣称已修复。
+
+
+最新 [Windows 第 19 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955883) 严格冷启动 7800 毫秒仍失败：配置 1030 毫秒、Core 到端点 3735 毫秒、页面加载 1167 毫秒、加载后就绪 1441 毫秒。Core 端点 uptime 3623 毫秒，累计 user/system CPU 合计 4296 毫秒；同一 renderer 页面 CPU 增量 1388 毫秒、随后 933 毫秒，均包含多线程。native loader 固定操作中未知归属约 996 毫秒采样，loadPrebuild 仅 13.7 毫秒、物化 4.8 毫秒、hash 1.3 毫秒，不能把未知部分归为这些操作。renderer 存储响应头/体等待 287.7/432.1 毫秒，宿主存储 6 毫秒、响应 7 毫秒；没有证据表明宿主存储是该等待的主因。CPU 一摘要/一端点/零缺失、Prune 和临时清理通过，旧版和缓存阶段因严格检查失败未执行。
+
+最新 [Windows 第 7 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955634) 原 context-compaction 37 秒通过，明确 Responses 前置条件的修改获得实际 Windows 闭环；其他三个板关联/状态场景通过。新失败来自 task-status-sync 的初始模型请求未收到：已明确选择模型、Enter 提交、草稿清空且真实任务 running，正确路由和 MCP ready 已记录，Executor 的 turn/start 调用仅记录 request started，原请求等待已超时；该日志早于准备和写入边界，尚不能证明请求已写入 Codex。它不同于未提交请求的 fixture，尚无证据可修改原断言或等待预算；继续定位该调用链。
+
+
+[Windows 第 16 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955599) 本轮 plugin-development 50 秒通过，但不倒推旧 taskkill 128 根因已修。新失败为 executor-stream-recovery 未收到请求：模型目录在真实 Enter 时仍为 isSelectionReady=false、modelCount=0，1619 毫秒后才就绪；生产提交函数按现有门槛拒绝提交，草稿保留、无任务和模型请求，与日志一致。原场景仅等待 editor 存在，未建立发送前模型前置条件。只复用 selectE2EModel 在 fill 前等待并选择场景要求的 Responses 模型，保留 Enter、原 partial、reload、completion、settled 和全部预算。原注册场景单次真实本地 E2E 49 秒通过，无断言错误；finally 清理 17 项，所属进程为空、认证链接为零、隔离应用已移除。未通过重跑或修改生产提交门槛取得通过。
+
+
+为定位该请求等待，删除仅单调用的 prepare_request 空壳，复用现有日志与既有 VITE_WEWORK_E2E=true 开关，仅为 turn/start 记录准备、MCP 端点、状态锁、退役进程、pending 注册、stdin 锁、写入和响应的固定阶段及单调累计毫秒。其他方法不读取该环境开关，非 E2E 不记录；无请求参数、ID、模型、路径或错误原文，也不启用完整 stream debug。原 await 顺序、超时位置、响应及错误传递保持。两项 all-features 聚焦测试通过，真实 stdio 四种开关/成功/错误组合的返回一致、子进程全部 wait；Clippy、格式通过。此诊断用于下一轮实际边界证据，尚未修复第 7 组阻塞或跨平台启动预算。

@@ -7,6 +7,80 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn turn_start_rpc_diagnostics_require_the_existing_e2e_flag_and_exact_method() {
+    assert!(turn_start_rpc_diagnostic_enabled(
+        "turn/start",
+        Some("true")
+    ));
+    for flag in [None, Some("false"), Some("1"), Some("TRUE")] {
+        assert!(!turn_start_rpc_diagnostic_enabled("turn/start", flag));
+    }
+    for method in ["thread/start", "turn/start/private-value", "initialize"] {
+        assert!(!turn_start_rpc_diagnostic_enabled(method, Some("true")));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn turn_start_rpc_diagnostics_preserve_real_stdio_response_and_error() {
+    use tokio::io::AsyncBufReadExt;
+
+    for diagnostic in [false, true] {
+        for response in [
+            json!({"id":7,"result":{"accepted":true}}),
+            json!({"id":7,"error":{"code":-32602,"message":"synthetic invalid turn"}}),
+        ] {
+            let mut child = Command::new("sh")
+                .args([
+                    "-c",
+                    "IFS= read -r line; printf '%s\\n' \"$1\"",
+                    "rpc-fixture",
+                ])
+                .arg(response.to_string())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let mut stdout = tokio::io::BufReader::new(child.stdout.take().unwrap());
+            let pending = Arc::new(Mutex::new(HashMap::new()));
+            let handle = CodexAppServerHandle {
+                stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
+                pending: pending.clone(),
+                notifications: CodexNotificationHub::new(),
+            };
+            let (tx, rx) = oneshot::channel();
+            pending.lock().await.insert(7, tx);
+            let reader = tokio::spawn(async move {
+                let mut line = String::new();
+                stdout.read_line(&mut line).await.unwrap();
+                let message: Value = serde_json::from_str(&line).unwrap();
+                pending
+                    .lock()
+                    .await
+                    .remove(&7)
+                    .unwrap()
+                    .send(response_result(message))
+                    .unwrap();
+            });
+            let expected = response_result(response);
+            let result = CodexAppServerClient::send_request_and_wait(
+                "turn/start",
+                json!({"privateFixture":"must-not-appear-in-phase-fields"}),
+                5,
+                (7, handle.clone(), rx),
+                diagnostic.then(Instant::now),
+            )
+            .await;
+            assert_eq!(result, expected);
+            assert!(handle.pending.lock().await.is_empty());
+            reader.await.unwrap();
+            assert!(child.wait().await.unwrap().success());
+        }
+    }
+}
+
+#[test]
 fn named_home_rpc_clients_preserve_process_isolation() {
     let _environment = environment::LaunchEnvironment::new();
     let root = PathBuf::from(env::var("WEGENT_WORKBENCH_HOME").unwrap());
