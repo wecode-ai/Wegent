@@ -25,8 +25,6 @@ import {
 import { resolveHarnessRuntimeCachePaths } from './lib/harness-runtime-cache.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const coreDshVersion = '0.1.1-rc.2'
-const workbenchDshVersions = new Set(['0.1.0-rc.8'])
 const source = path.join(root, 'harness-runtime')
 const runtimesDirectory = path.join(source, 'runtimes')
 const pluginsDirectory = path.join(source, 'plugins')
@@ -40,7 +38,7 @@ const {
   prepareLockPath,
 } = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v8'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v9'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -115,7 +113,7 @@ async function runtimeSources() {
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name)
     .sort()
-  return Promise.all(
+  const sources = await Promise.all(
     runtimeDirectories.map(async directory => {
       const runtimeRoot = path.join(runtimesDirectory, directory)
       const packageContent = await readFile(path.join(runtimeRoot, 'package.json'))
@@ -125,14 +123,18 @@ async function runtimeSources() {
       if (typeof dshVersion !== 'string' || dshVersion !== packageJson.version) {
         throw new Error(`${directory}/package.json must pin DSH to its package version`)
       }
-      return {
+      const roles = packageJson.wework?.runtimeRoles
+      if (
+        !Array.isArray(roles) ||
+        roles.length === 0 ||
+        new Set(roles).size !== roles.length ||
+        roles.some(role => !['core', 'workbench'].includes(role))
+      ) {
+        throw new Error(`${directory}/package.json must declare unique Wework runtime roles`)
+      }
+      return roles.map(role => ({
         dshVersion,
-        role:
-          dshVersion === coreDshVersion
-            ? 'core'
-            : workbenchDshVersions.has(dshVersion)
-              ? 'workbench'
-              : 'legacy',
+        role,
         runtimeRoot,
         entries: [
           { name: 'package.json', content: packageContent },
@@ -141,14 +143,17 @@ async function runtimeSources() {
           ...pluginEntries,
         ],
         pluginFiles,
-      }
+      }))
     })
   )
+  return sources.flat()
 }
 
 function runtimeIdentity(runtime) {
   const sourceFingerprint = createHash('sha256')
     .update(archiveFormatVersion)
+    .update('\0')
+    .update(runtime.role)
     .update('\0')
     .update(process.versions.modules)
     .update('\0')

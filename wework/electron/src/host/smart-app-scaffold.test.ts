@@ -15,6 +15,25 @@ afterEach(async () => {
 })
 
 describe('scaffoldSmartApp', () => {
+  test('uses the split renderer package for the current DSH runtime', async () => {
+    const root = await createFixture('web')
+    await scaffoldSmartApp({
+      path: root,
+      name: 'contract-app',
+      displayName: 'Contract app',
+      description: 'Current DSH runtime',
+      dshVersion: '0.2.0-rc.2',
+      template: 'web',
+    })
+    const manifest = JSON.parse(
+      await readFile(join(root, 'packages/bundle/contract-app/package.json'), 'utf8')
+    )
+    expect(manifest.dsh.client.inject).toEqual(['@deepseek-ai/dsh-client-ui-renderer'])
+    expect(manifest.peerDependencies['@deepseek-ai/dsh-client-ui-renderer']).toBe('0.2.0-rc.2')
+    expect(manifest.peerDependencies['@deepseek-ai/dsh-client-runtime']).toBeUndefined()
+    await execFileAsync(process.execPath, ['--test', 'test/contracts.test.mjs'], { cwd: root })
+  })
+
   test.each<{
     template: SmartAppTemplate
     capabilities: { host: boolean; client: boolean; remote: boolean }

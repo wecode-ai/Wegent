@@ -1,7 +1,11 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { createInterface } from 'node:readline'
+import type { Readable } from 'node:stream'
 import { join } from 'node:path'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
+
+type HttpRequest = (url: string, init?: RequestInit) => Promise<Response>
 
 const LOCAL_READINESS_RETRY_INTERVAL_MS = 25
 
@@ -25,12 +29,16 @@ export class DshRuntime {
   private child: ChildProcessWithoutNullStreams | null = null
 
   constructor(private readonly options: DshRuntimeOptions) {
+    const browserAuthentication = options.env?.WEWORK_DSH_BROWSER_AUTH === '1'
     this.process = options.command
       ? new RuntimeSupervisor({
           command: options.command,
           args: options.args,
           cwd: options.cwd,
-          env: options.env,
+          env: {
+            ...options.env,
+            ...(browserAuthentication ? { WEWORK_DSH_BROWSER_AUTH_FD: '5' } : {}),
+          },
           name: options.name ?? 'dsh-web',
           ...(options.logDirectory
             ? {
@@ -39,9 +47,18 @@ export class DshRuntime {
                 },
               }
             : {}),
-          ...(options.hostPipe ? { extraPipeCount: 2 } : {}),
+          ...(browserAuthentication
+            ? { extraPipeCount: 3 }
+            : options.hostPipe
+              ? { extraPipeCount: 2 }
+              : {}),
           startTimeoutMs: options.startTimeoutMs,
-          probe: (_child, signal) => waitForHttpEndpoints(runtimeProbeUrls(options), signal),
+          probe: async (child, signal) => {
+            const request = browserAuthentication
+              ? await authenticateBrowser(child, options.url, signal)
+              : fetch
+            await waitForHttpEndpoints(runtimeProbeUrls(options), signal, request)
+          },
         })
       : null
     if (this.process && options.hostPipe) {
@@ -89,17 +106,21 @@ function runtimeProbeUrls(options: DshRuntimeOptions): string[] {
   return configured?.length ? configured : [options.probeUrl ?? options.url]
 }
 
-async function waitForHttpEndpoints(urls: string[], signal: AbortSignal): Promise<void> {
+async function waitForHttpEndpoints(
+  urls: string[],
+  signal: AbortSignal,
+  request: HttpRequest = fetch
+): Promise<void> {
   for (const url of urls) {
-    await waitForHttp(url, signal)
+    await waitForHttp(url, signal, request)
   }
 }
 
-async function waitForHttp(url: string, signal: AbortSignal): Promise<void> {
+async function waitForHttp(url: string, signal: AbortSignal, request: HttpRequest): Promise<void> {
   let lastError: unknown
   while (!signal.aborted) {
     try {
-      const response = await fetch(url, {
+      const response = await request(url, {
         signal: AbortSignal.any([signal, AbortSignal.timeout(1_000)]),
       })
       if (response.ok) return
@@ -130,4 +151,49 @@ function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void
       { once: true }
     )
   })
+}
+
+async function authenticateBrowser(
+  child: ChildProcessWithoutNullStreams,
+  baseUrl: string,
+  signal: AbortSignal
+): Promise<HttpRequest> {
+  const pipe = child.stdio.at(5) as Readable | null | undefined
+  if (!pipe) throw new Error('DSH browser authentication pipe is unavailable')
+  const lines = createInterface({ input: pipe })
+  const authenticatedUrl = await new Promise<string>((resolve, reject) => {
+    const abort = () => {
+      reject(signal.reason)
+      lines.close()
+    }
+    if (signal.aborted) return abort()
+    signal.addEventListener('abort', abort, { once: true })
+    lines.once('line', line => {
+      signal.removeEventListener('abort', abort)
+      try {
+        const url = new URL(JSON.parse(line).url)
+        if (
+          url.origin !== new URL(baseUrl).origin ||
+          url.pathname !== '/' ||
+          !url.searchParams.get('token')
+        ) {
+          throw new Error('Invalid DSH browser authentication URL')
+        }
+        resolve(url.href)
+      } catch {
+        reject(new Error('Invalid DSH browser authentication response'))
+      } finally {
+        lines.close()
+      }
+    })
+    lines.once('close', () => {
+      signal.removeEventListener('abort', abort)
+      reject(new Error('DSH browser authentication pipe closed'))
+    })
+  })
+  const { session } = await import('electron')
+  const request = session.defaultSession.fetch.bind(session.defaultSession)
+  const response = await request(authenticatedUrl, { signal })
+  if (!response.ok) throw new Error(`DSH browser authentication failed: HTTP ${response.status}`)
+  return request
 }

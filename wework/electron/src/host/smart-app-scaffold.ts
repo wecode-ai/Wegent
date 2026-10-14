@@ -1,6 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
+import {
+  workbenchClientRendererPackage,
+  type WorkbenchAppManifest,
+} from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationContract } from './smart-app-verification-types.js'
 
 export const SMART_APP_TEMPLATES = ['web', 'host', 'web-host', 'web-host-remote'] as const
@@ -110,7 +113,7 @@ async function writeBundle(
   if (capabilities.client) {
     dsh.client = {
       inject: [
-        '@deepseek-ai/dsh-client-runtime',
+        workbenchClientRendererPackage(input.dshVersion),
         ...(capabilities.remote ? ['@deepseek-ai/dsh-api-gateway'] : []),
       ],
       platform: 'web',
@@ -119,7 +122,7 @@ async function writeBundle(
   const dependencies: Record<string, string> = {}
   const peerDependencies: Record<string, string> = {}
   if (capabilities.client) {
-    peerDependencies['@deepseek-ai/dsh-client-runtime'] = input.dshVersion
+    peerDependencies[workbenchClientRendererPackage(input.dshVersion)] = input.dshVersion
     peerDependencies.react = '^18.2.0'
   }
   if (capabilities.remote) {
@@ -212,7 +215,7 @@ async function writeProjectTools(
   }
   await writeFile(
     join(input.path, 'test', 'contracts.test.mjs'),
-    generatedContractTest(bundlePath, capabilities)
+    generatedContractTest(bundlePath, capabilities, input.dshVersion)
   )
 }
 
@@ -291,11 +294,12 @@ function typertHostSource(): string {
 
 function generatedContractTest(
   bundlePath: string,
-  capabilities: ReturnType<typeof templateCapabilities>
+  capabilities: ReturnType<typeof templateCapabilities>,
+  dshVersion: string
 ): string {
   const clientInject = capabilities.client
     ? [
-        '@deepseek-ai/dsh-client-runtime',
+        workbenchClientRendererPackage(dshVersion),
         ...(capabilities.remote ? ['@deepseek-ai/dsh-api-gateway'] : []),
       ]
     : []

@@ -214,6 +214,7 @@ describe('core DSH runtime', () => {
       dsh: {
         profile: {
           bundles: [
+            '@wework/dsh-browser-auth',
             '@deepseek-ai/dsh-base',
             '@wegent/dsh-electron-host',
             '@wegent/dsh-browser-runtime',
@@ -628,8 +629,10 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-transcript-sync',
       '@wegent/dsh-plugin-runtime',
+      '@wework/dsh-browser-auth',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
+      '@wework/dsh-browser-auth',
       '@deepseek-ai/dsh-base',
       '@wegent/dsh-electron-host',
       '@wegent/dsh-browser-runtime',
@@ -902,6 +905,7 @@ async function writeRuntime(
       ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
     ].map(([packageName, directory]) => [packageName, join(pluginsRoot, directory)])
   )
+  pluginRoots['@wework/dsh-browser-auth'] = join(runtime, 'plugins', 'wework-browser-auth')
   await mkdir(join(packageRoot, 'lib'), { recursive: true })
   await Promise.all(Object.values(pluginRoots).map(root => mkdir(root, { recursive: true })))
   await writeFile(

@@ -15,7 +15,7 @@ import semver from 'semver'
 import { hashComponentPath } from './component-update-manager.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
-export const CORE_DSH_VERSION = '0.1.1-rc.2'
+export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
 const PROFILE_STAMP = '.wework-runtime.json'
 const CORE_PLUGIN_PACKAGES = [
@@ -43,6 +43,7 @@ const CORE_PLUGIN_PACKAGES = [
 const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
+  '@wework/dsh-browser-auth',
   '@deepseek-ai/dsh-base',
   '@wegent/dsh-electron-host',
   '@wegent/dsh-browser-runtime',
@@ -177,6 +178,7 @@ export async function prepareCoreDshRuntime(
         options.environment.WEWORK_APP_WEB_ROOT?.trim() ||
         join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
       WEWORK_HARNESS_API_KEY: 'wework-local-router',
+      WEWORK_DSH_BROWSER_AUTH: '1',
     },
     profile: PROFILE_NAME,
     version: runtime.version,
@@ -211,6 +213,7 @@ export async function selectCoreDshRuntime(
       join(pluginsRoot, directory),
     ])
   )
+  pluginRoots['@wework/dsh-browser-auth'] = join(runtime.pluginsRoot, 'wework-browser-auth')
   for (const plugin of internalPlugins) {
     if (plugin.name in pluginRoots) {
       throw new Error(`Duplicate core DSH plugin: ${plugin.name}`)

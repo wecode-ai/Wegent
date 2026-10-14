@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { SmartAppVerificationIssue } from './smart-app-verification-types.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
@@ -34,7 +34,8 @@ export async function verifySmartAppPage(
 ): Promise<SmartAppVerificationViewResult> {
   const target = sameOriginTarget(options.baseUrl, options.path)
   if (!target) return { issues: [runtimeIssue('SA-RUNTIME-PATH', 'Runtime path changes origin')] }
-  const createView = options.createView ?? createElectronVerificationView
+  const createView =
+    options.createView ?? (partition => createElectronVerificationView(partition, options.baseUrl))
   const view = await createView(`smart-app-verification-${randomUUID()}`)
   try {
     try {
@@ -87,10 +88,26 @@ async function waitForReadySelector(
 }
 
 async function createElectronVerificationView(
-  partition: string
+  partition: string,
+  baseUrl: string
 ): Promise<SmartAppVerificationViewHandle> {
   const { BrowserWindow, session } = await import('electron')
   const isolatedSession = session.fromPartition(partition, { cache: false })
+  // Transfer only DSH's authority-bound authentication cookie into the disposable session.
+  const name = `dsh-auth-${createHash('sha256').update(new URL(baseUrl).host).digest('base64url')}`
+  const cookies = await session.defaultSession.cookies.get({ url: baseUrl, name })
+  for (const cookie of cookies) {
+    await isolatedSession.cookies.set({
+      url: baseUrl,
+      name: cookie.name,
+      value: cookie.value,
+      path: cookie.path,
+      httpOnly: cookie.httpOnly,
+      secure: cookie.secure,
+      sameSite: cookie.sameSite,
+      expirationDate: cookie.expirationDate,
+    })
+  }
   const window = new BrowserWindow({
     show: false,
     webPreferences: {

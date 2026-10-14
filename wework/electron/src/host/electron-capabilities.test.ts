@@ -35,9 +35,9 @@ import type { RendererStorageStore } from './renderer-storage-store.js'
 const electronMocks = vi.hoisted(() => ({
   appGetPath: vi.fn(() => '/tmp'),
   appGetVersion: vi.fn(() => '0.0.0-test'),
-  clipboardAvailableFormats: vi.fn(() => [] as string[]),
-  clipboardRead: vi.fn(() => ''),
-  clipboardReadBuffer: vi.fn(() => Buffer.alloc(0)),
+  clipboardRead: vi.fn(
+    async () => [] as Array<{ types: string[]; getType: (type: string) => Promise<Blob> }>
+  ),
   clipboardReadText: vi.fn(() => 'native text'),
   clipboardWriteText: vi.fn(),
   dialogShowMessageBox: vi.fn(),
@@ -59,9 +59,7 @@ vi.mock('electron', () => ({
   },
   BrowserWindow: class BrowserWindow {},
   clipboard: {
-    availableFormats: electronMocks.clipboardAvailableFormats,
     read: electronMocks.clipboardRead,
-    readBuffer: electronMocks.clipboardReadBuffer,
     readText: electronMocks.clipboardReadText,
     writeText: electronMocks.clipboardWriteText,
   },
@@ -874,6 +872,19 @@ describe('isolated surface clipboard capabilities', () => {
   beforeEach(() => {
     electronMocks.clipboardReadText.mockClear()
     electronMocks.clipboardWriteText.mockClear()
+  })
+
+  test('propagates asynchronous clipboard write failures', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.activate', { leaseId: 'lease-1' })
+    electronMocks.clipboardWriteText.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.writeText', {
+        leaseId: 'lease-1',
+        text: 'pending write',
+      })
+    ).rejects.toThrow('Clipboard unavailable')
   })
 
   test('read and write require a focused window with the active lease', async () => {
