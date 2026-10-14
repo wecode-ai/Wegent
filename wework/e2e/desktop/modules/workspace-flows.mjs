@@ -121,6 +121,22 @@ export async function expandCollaborationWorkspace(
   })
 }
 
+export async function selectCollaborationIssueAgent(
+  control,
+  triggerSelector,
+  agentId,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  await control.command('click', triggerSelector)
+  const option = `[data-testid="cloud-todo-detail-assignee-option-agent:${agentId}"]`
+  await control.command('waitFor', option, { visible: true, timeoutMs })
+  await control.command('click', option)
+  await control.command('waitFor', `${triggerSelector}[data-value="agent:${agentId}"]`, {
+    visible: true,
+    timeoutMs,
+  })
+}
+
 export async function waitForTestIdByText(
   control,
   contentSelector,

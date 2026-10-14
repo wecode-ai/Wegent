@@ -4,6 +4,7 @@ import {
   openDirectProjectCreation,
   openProjectAgentCreator,
   expandCollaborationWorkspace,
+  selectCollaborationIssueAgent,
 } from '../e2e/desktop/modules/workspace-flows.mjs'
 
 function projectCreationControl({ menuTrigger = false, menuCount = 0, dialogError } = {}) {
@@ -139,4 +140,44 @@ test('rejects a workspace toggle without a declared expanded state', async () =>
     /must expose its expanded state/
   )
   assert.ok(!calls.includes('click'))
+})
+
+test('waits for asynchronously loaded Agent options before selecting an assignee', async () => {
+  const calls = []
+  let optionReady
+  const ready = new Promise(resolve => {
+    optionReady = resolve
+  })
+  const trigger = 'main [data-testid="cloud-todo-detail-assignee"]'
+  const option = '[data-testid="cloud-todo-detail-assignee-option-agent:shared-agent"]'
+  const control = {
+    async command(action, selector, options) {
+      calls.push({ action, selector, options })
+      if (action === 'waitFor' && selector === option) await ready
+    },
+  }
+  const selection = selectCollaborationIssueAgent(control, trigger, 'shared-agent')
+  await Promise.resolve()
+  assert.ok(!calls.some(call => call.action === 'click' && call.selector === option))
+  optionReady()
+  await selection
+  assert.ok(calls.some(call => call.action === 'click' && call.selector === option))
+  assert.equal(calls.at(-1).selector, `${trigger}[data-value="agent:shared-agent"]`)
+})
+
+test('does not select an Agent when the authorized option never becomes available', async () => {
+  const clicks = []
+  const failure = new Error('Authorized Agent option is unavailable')
+  const control = {
+    async command(action, selector) {
+      if (action === 'click') clicks.push(selector)
+      if (action === 'waitFor') throw failure
+    },
+  }
+  const trigger = 'main [data-testid="cloud-todo-detail-assignee"]'
+  await assert.rejects(
+    selectCollaborationIssueAgent(control, trigger, 'missing-agent'),
+    error => error === failure
+  )
+  assert.deepEqual(clicks, [trigger])
 })

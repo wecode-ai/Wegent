@@ -30,6 +30,7 @@ import {
   openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationIssueAgent,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -208,10 +209,11 @@ async function createAndAssignIssue(control, request, projectId, agent, timeoutM
     'Wework UI did not persist the Issue',
     timeoutMs
   )
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-  await control.command(
-    'click',
-    `[data-testid="cloud-todo-detail-assignee-option-agent:${agent.id}"]`
+  await selectCollaborationIssueAgent(
+    control,
+    scoped('[data-testid="cloud-todo-detail-assignee"]'),
+    agent.id,
+    timeoutMs
   )
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,

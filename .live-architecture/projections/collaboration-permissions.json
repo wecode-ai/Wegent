@@ -531,6 +531,7 @@
       "active": true,
       "evidence": [
         ".live-architecture/evidence/collaboration-pr-integration-20261014.md",
+        ".live-architecture/evidence/desktop-agent-assignment-ci-20261014.md",
         ".live-architecture/evidence/project-only-navigation-20261014.md",
         ".live-architecture/evidence/project-only-navigation-ci-repair-20261014.md",
         "backend/tests/api/test_collaboration_permission_contract.py",
@@ -717,5 +718,5 @@
     }
   ],
   "plane": null,
-  "revision": "A00000015"
+  "revision": "A00000016"
 }

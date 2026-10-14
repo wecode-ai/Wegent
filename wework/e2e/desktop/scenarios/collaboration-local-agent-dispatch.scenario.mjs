@@ -14,6 +14,7 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   selectProjectRunnerModel,
+  selectCollaborationIssueAgent,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
@@ -109,10 +110,11 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     text: ASSIGNED_TASK,
     timeoutMs,
   })
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-  await control.command(
-    'click',
-    `[data-testid="cloud-todo-detail-assignee-option-agent:${agentId}"]`
+  await selectCollaborationIssueAgent(
+    control,
+    scoped('[data-testid="cloud-todo-detail-assignee"]'),
+    agentId,
+    timeoutMs
   )
   await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), { text: '保存分配' })
   assert.equal(
