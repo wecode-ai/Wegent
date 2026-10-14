@@ -10,8 +10,6 @@ import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
-const NATIVE_PROVIDER = process.argv.includes('--cloud-only')
-const MODEL_LABEL = NATIVE_PROVIDER ? 'GPT-5.6 Luna' : DEFAULT_MODEL_LABEL
 const TOOL_REGRESSION_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_TEXT_OFFSET'
 const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文：'
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
@@ -164,7 +162,7 @@ const SCROLL_BUTTON_APPENDED_TEXT = `\n\n${Array.from({ length: 24 }, (_, index)
 async function openNewChatWithE2EModel(control, timeoutMs) {
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
-  await selectE2EModel(control, DEFAULT_MODEL_ID, MODEL_LABEL, ACTIVE_WORKBENCH_SELECTOR)
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, ACTIVE_WORKBENCH_SELECTOR)
 }
 const COMPLETION_TEXT = `${PARTIAL_TEXT}${APPENDED_TEXT}${SCROLL_BUTTON_APPENDED_TEXT}\n\nCOMPLETE`
 
@@ -1483,11 +1481,10 @@ export function createDesktopScenario({
     modelProviderConfigToml:
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
     appEnvironment: {
-      WEWORK_E2E_SEED_LOCAL_MODELS: NATIVE_PROVIDER ? 'false' : 'true',
+      WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
     },
 
     async prepareApp({ appEnvironment, codexHome }) {
-      if (NATIVE_PROVIDER) return
       const { stdout } = await promisify(execFile)(
         appEnvironment.CODEX_BINARY_PATH,
         ['debug', 'models', '--bundled'],
@@ -1496,7 +1493,7 @@ export function createDesktopScenario({
       const catalog = JSON.parse(stdout)
       const model = catalog.models.find(entry => entry.slug === DEFAULT_MODEL_ID)
       assert.ok(model, 'The rendering fixture model is missing from the native catalog')
-      // Core tool-block assertions exercise direct tools with the shared fixture label.
+      // Rendering assertions exercise direct tools with the shared fixture label.
       model.tool_mode = 'direct'
       model.use_responses_lite = false
       model.display_name = DEFAULT_MODEL_LABEL
@@ -2047,7 +2044,12 @@ export function createDesktopScenario({
       } else {
         await openNewChatWithE2EModel(control, uiTimeoutMs)
       }
-      await selectE2EModel(control, DEFAULT_MODEL_ID, MODEL_LABEL, ACTIVE_WORKBENCH_SELECTOR)
+      await selectE2EModel(
+        control,
+        DEFAULT_MODEL_ID,
+        DEFAULT_MODEL_LABEL,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
       if (process.env.WEWORK_E2E_MESSAGE_ORDER_ONLY === 'true') {
         await verifyStoppedTurnOrder(control)
         active = false
