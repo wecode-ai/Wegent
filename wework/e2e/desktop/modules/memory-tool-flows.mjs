@@ -13,6 +13,8 @@ import {
   CONCURRENT_MEMORY_TASK_COUNT,
   DEFAULT_STEP_TIMEOUT_MS,
   EARLIER_TOOL_BLOCK_ID,
+  FRESH_CHAT_COMPLETION_TEXT,
+  FRESH_CHAT_PROMPT,
   GENERIC_MCP_TOOL_BLOCK_ID,
   LATER_TOOL_BLOCK_ID,
   LOCAL_MARKDOWN_IMAGE_FILENAME,
@@ -418,6 +420,13 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
 
 async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Desktop memory E2E currently requires macOS')
+  // Measure the workload in the same task surface, including its sidebar and panels.
+  control.setScenario('fresh_chat')
+  await sendPromptUntilScenarioRequest(control, composerSelector, FRESH_CHAT_PROMPT, 'fresh_chat')
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   control.setScenario('memory')
   await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
   await control.command('waitFor', '[data-testid="workspace-terminal-window"]', {
@@ -525,6 +534,11 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.ok(
     peakGrowthKiB <= MEMORY_MAX_PEAK_GROWTH_KIB,
     `WebContent peak physical footprint grew by ${peakGrowthKiB} KiB`
+  )
+  await writeFile(
+    join(resultDir, 'memory-markdown-chunk-layout.json'),
+    await control.command('getElementMetrics', '[data-markdown-window-chunk]'),
+    'utf8'
   )
   assert.ok(
     settledDomNodeGrowth <= MEMORY_MAX_SETTLED_DOM_NODE_GROWTH,

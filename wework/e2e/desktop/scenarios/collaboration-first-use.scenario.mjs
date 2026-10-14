@@ -72,6 +72,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await control.command('click', scoped('[data-testid="cloud-todo-create-assignee"]'))
       const ownerSelector = '[data-testid^="cloud-todo-create-assignee-option-user:"]'
+      await control.command('waitFor', ownerSelector, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       const ownerName = await control.command('getText', ownerSelector)
       const ownerTarget = (
         await control.command('getAttribute', ownerSelector, { value: 'data-testid' })

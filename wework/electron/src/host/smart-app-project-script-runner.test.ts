@@ -15,6 +15,30 @@ afterEach(async () => {
 })
 
 describe('runSmartAppProjectScripts', () => {
+  test('authenticates the runtime probe and redacts its private cookie from output', async () => {
+    const root = await projectRoot()
+    const run = vi.fn<SmartAppScriptCommandRunner>().mockResolvedValue({
+      exitCode: 0,
+      stdout: 'cookie: dsh-session=private-session-value',
+      stderr: 'private-session-value',
+    })
+    await runSmartAppRuntimeProbe({
+      ...options(root),
+      script: 'runtime:probe',
+      baseUrl: 'http://127.0.0.1:41001/',
+      cookie: 'dsh-session=private-session-value',
+      run,
+    })
+    expect(run.mock.calls[0]?.[2].env.SMART_APP_RUNTIME_COOKIE).toBe(
+      'dsh-session=private-session-value'
+    )
+    const log = await readFile(
+      join(root, 'test-results', 'smart-app', 'logs', 'runtime-probe.log'),
+      'utf8'
+    )
+    expect(log).not.toContain('private-session-value')
+    expect(log).toContain('[REDACTED]')
+  })
   test('runs typecheck, test, and build in a fixed order through managed pnpm', async () => {
     const root = await projectRoot()
     const run = vi.fn<SmartAppScriptCommandRunner>().mockResolvedValue({
@@ -36,8 +60,12 @@ describe('runSmartAppProjectScripts', () => {
     ])
     expect(run).toHaveBeenCalledWith(
       '/managed/node',
-      ['/managed/pnpm.cjs', 'run', 'check:types'],
-      expect.objectContaining({ cwd: root, shell: false })
+      ['/managed/pnpm.cjs', '--ignore-workspace', 'run', 'check:types'],
+      expect.objectContaining({
+        cwd: root,
+        shell: false,
+        env: expect.objectContaining({ PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: 'false' }),
+      })
     )
     expect(result.issues).toEqual([])
     expect(result.scripts.map(script => script.status)).toEqual(['passed', 'passed', 'passed'])
@@ -140,6 +168,7 @@ describe('runSmartAppProjectScripts', () => {
     expect(run.mock.calls[0]?.[2].env).toEqual({
       PATH: '/managed/bin',
       SMART_APP_BASE_URL: 'http://127.0.0.1:41001/',
+      PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: 'false',
     })
   })
 })

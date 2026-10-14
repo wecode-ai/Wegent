@@ -450,6 +450,9 @@ export function marketplacePluginDetailSource(
   const id = localMarketplaceIdFromItem(item)
   if (!id) throw new Error('Plugin marketplace source is unavailable')
   const marketplace = marketplaces.find(entry => entry.kind === 'local' && entry.id === id)
+  const itemPath =
+    typeof item.manifest?.marketplacePath === 'string' ? item.manifest.marketplacePath.trim() : ''
+  if (itemPath) return { id, name: marketplace?.name ?? id, path: itemPath }
   const path = marketplace?.path?.trim()
   if (marketplace && path) return { id, name: marketplace.name, path }
   if (isOpenAiOfficialRemoteMarketplaceId(id)) return { id, name: id, path: id }

@@ -101,7 +101,8 @@ async fn assert_model_query_activation(cancel_at: Option<&str>) {
     drop(query);
     CodexAppServerClient::new(binary.display().to_string())
         .restart()
-        .await;
+        .await
+        .unwrap();
     drop(handler);
 }
 

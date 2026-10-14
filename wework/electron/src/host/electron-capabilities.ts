@@ -22,6 +22,7 @@ import {
   HostCapabilityError,
   HostCapabilityRouter,
   type HostCapability,
+  type HostInvocationContext,
 } from './capability-router.js'
 import type { RendererHealthSnapshot } from './renderer-health.js'
 import type { SmartAppManager } from './smart-app-manager.js'
@@ -33,7 +34,8 @@ import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
-import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
+import { readE2ERendererHeapUsage } from './e2e-renderer-heap.js'
+import { sendE2EKey, sendE2EText, setE2EReducedMotion, type E2EKeyPhase } from './e2e-keyboard.js'
 import {
   extractFilePathsFromNativePayloads,
   inspectWorkspacePaths,
@@ -127,6 +129,7 @@ export interface ElectronDesktopServices {
   openScheme: (url: string) => void
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
+  onStorageStartupStep?: StorageStartupStep
   weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
@@ -397,13 +400,16 @@ export function createElectronCapabilityRouter(
     })
   )
   registerBrowserAnnotationCapabilities(router, desktopServices.browserAnnotations)
-  router.register('browser.setBounds', params =>
-    browser.setBounds(
-      stringParam(params, 'label'),
+  router.register('browser.setBounds', params => {
+    const label = stringParam(params, 'label')
+    return browser.setBounds(
+      label,
       browserBoundsParam(params),
-      booleanParam(params, 'visible') ?? true
+      booleanParam(params, 'preserveVisibility')
+        ? browser.state(label).visible
+        : (booleanParam(params, 'visible') ?? true)
     )
-  )
+  })
   router.register('browser.setDeviceMetrics', params => {
     const width = nullableIntegerParam(params, 'width')
     const height = nullableIntegerParam(params, 'height')
@@ -526,26 +532,19 @@ export function createElectronCapabilityRouter(
   })
   router.register('clipboard.readWorkspacePaths', async params => {
     const fallbackPaths = stringArrayParam(params, 'fallbackPaths') ?? []
-    const nativePayloads = clipboard
-      .availableFormats()
-      .filter(format => /(file|filename|uri)/i.test(format))
-      .flatMap(format => {
-        const values: string[] = []
-        try {
-          values.push(clipboard.read(format))
-        } catch {
-          // Some native formats can only be read as buffers.
+    const nativePayloads: string[] = []
+    try {
+      for (const item of await clipboard.read()) {
+        for (const type of item.types.filter(type => /(file|filename|uri)/i.test(type))) {
+          const payload = await item.getType(type)
+          if (!(payload instanceof Blob)) continue
+          const buffer = Buffer.from(await payload.arrayBuffer())
+          nativePayloads.push(buffer.toString('utf8'), buffer.toString('utf16le'))
         }
-        try {
-          const buffer = clipboard.readBuffer(format)
-          if (buffer.length > 0) {
-            values.push(buffer.toString('utf8'), buffer.toString('utf16le'))
-          }
-        } catch {
-          // Ignore unsupported clipboard encodings.
-        }
-        return values
-      })
+      }
+    } catch (error) {
+      if (!fallbackPaths.length) throw error
+    }
     return inspectWorkspacePaths([
       ...extractFilePathsFromNativePayloads(nativePayloads),
       ...fallbackPaths,
@@ -575,9 +574,9 @@ export function createElectronCapabilityRouter(
     requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
     return clipboard.readText()
   })
-  router.register('isolatedClipboard.writeText', params => {
+  router.register('isolatedClipboard.writeText', async params => {
     requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
-    clipboard.writeText(rawStringParam(params, 'text'))
+    await clipboard.writeText(rawStringParam(params, 'text'))
     return { written: true }
   })
   router.register('computerUse.status', () => computerUse.status())
@@ -684,20 +683,24 @@ export function createElectronCapabilityRouter(
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
+  router.register('e2e.setReducedMotion', params => {
+    const label = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const contents = e2eHost.captureTarget(label)
+    if (!contents) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
+    }
+    return setE2EReducedMotion(contents, booleanParam(params, 'reduced') === true)
+  })
   router.register('e2e.getRendererHeapUsage', async () => {
     const contents = e2eHost.captureTarget('main')
     if (!contents || contents.isDestroyed()) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
     }
-    const debugSession = contents.debugger
-    const alreadyAttached = debugSession.isAttached()
-    if (!alreadyAttached) debugSession.attach('1.3')
-    try {
-      await debugSession.sendCommand('HeapProfiler.collectGarbage')
-      return await debugSession.sendCommand('Runtime.getHeapUsage')
-    } finally {
-      if (!alreadyAttached && debugSession.isAttached()) debugSession.detach()
-    }
+    return readE2ERendererHeapUsage(contents.debugger, entry => {
+      if (process.env.WEWORK_E2E_CONTROL_URL?.trim()) {
+        console.info('[wework-renderer-heap] diagnostic', entry)
+      }
+    })
   })
   router.register('e2e.getRuntimeDiagnostics', () => e2eHost.runtimeDiagnostics())
   router.register('e2e.getClipboardText', () => clipboard.readText())
@@ -829,7 +832,14 @@ export function createElectronCapabilityRouter(
       desktopServices
     )
   })
-  router.register('preferences.get', () => preferences.read())
+  router.register('preferences.get', (_params, context) =>
+    traceStorageResponse(
+      () => preferences.read(),
+      context,
+      desktopServices.onStorageStartupStep,
+      'host-preferences-get'
+    )
+  )
   router.register('preferences.update', async params => {
     const patch = params.patch
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
@@ -877,7 +887,7 @@ export function createElectronCapabilityRouter(
         : {}),
     })
   })
-  registerRendererStorageCapabilities(router, rendererStorage)
+  registerRendererStorageCapabilities(router, rendererStorage, desktopServices.onStorageStartupStep)
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
   registerPluginDevelopmentCapabilities(router, desktopServices)
@@ -1087,13 +1097,51 @@ export function createElectronCapabilityRouter(
   return router
 }
 
+type StorageStartupStep = (
+  step: 'host-preferences-get' | 'host-renderer-storage-initialize',
+  status: 'started' | 'completed' | 'failed',
+  durationMs?: number,
+  readDurationMs?: number
+) => void
+
+function traceStorageResponse<Result>(
+  operation: () => Promise<Result>,
+  context: HostInvocationContext,
+  trace: StorageStartupStep | undefined,
+  step: Parameters<StorageStartupStep>[0]
+): Promise<Result> {
+  if (!trace) return operation()
+  const startedAt = performance.now()
+  trace(step, 'started')
+  return operation().then(
+    value => {
+      const readDurationMs = Math.round(performance.now() - startedAt)
+      context.deferUntilResponseSent(() => {
+        trace(step, 'completed', Math.round(performance.now() - startedAt), readDurationMs)
+      })
+      return value
+    },
+    error => {
+      trace(step, 'failed', Math.round(performance.now() - startedAt))
+      throw error
+    }
+  )
+}
+
 export function registerRendererStorageCapabilities(
   router: HostCapabilityRouter,
-  rendererStorage: RendererStorageStore
+  rendererStorage: RendererStorageStore,
+  trace?: StorageStartupStep
 ): void {
-  router.register('rendererStorage.initialize', params =>
-    rendererStorage.initialize(stringRecordParam(params, 'entries'))
-  )
+  router.register('rendererStorage.initialize', (params, context) => {
+    const entries = stringRecordParam(params, 'entries')
+    return traceStorageResponse(
+      () => rendererStorage.initialize(entries),
+      context,
+      trace,
+      'host-renderer-storage-initialize'
+    )
+  })
   router.register('rendererStorage.update', async params => {
     await rendererStorage.update({
       clear: requiredBooleanParam(params, 'clear'),

@@ -4,7 +4,104 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
-import { SqliteSyncOutbox } from './outbox.js'
+import { measureOutboxStartupPhase, SqliteSyncOutbox } from './outbox.js'
+
+function captureStartupPhases(t, enabled) {
+  const previous = process.env.WEWORK_E2E_CORE_CPU_PROFILE
+  process.env.WEWORK_E2E_CORE_CPU_PROFILE = enabled
+  t.after(() => {
+    if (previous === undefined) delete process.env.WEWORK_E2E_CORE_CPU_PROFILE
+    else process.env.WEWORK_E2E_CORE_CPU_PROFILE = previous
+  })
+  const messages = []
+  t.mock.method(console, 'info', message => messages.push(message))
+  return messages
+}
+
+test('outbox diagnostics preserve the disabled production path without logging', t => {
+  const messages = captureStartupPhases(t, '0')
+  const result = {}
+  assert.equal(
+    measureOutboxStartupPhase('database-open', () => result),
+    result
+  )
+  const error = new Error('private-path-secret')
+  assert.throws(
+    () =>
+      measureOutboxStartupPhase('pragmas', () => {
+        throw error
+      }),
+    value => value === error
+  )
+  assert.deepEqual(messages, [])
+})
+
+test('measures real SQLite startup phases with only fixed safe metadata', async t => {
+  const messages = captureStartupPhases(t, '1')
+  const directory = await mkdtemp(join(tmpdir(), 'wework-private-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'private-auth-secret.sqlite3')
+  const outbox = new SqliteSyncOutbox(path)
+  assert.deepEqual(messages, [])
+  assert.equal(outbox.count(), 0)
+  outbox.close()
+  const entries = messages.map(message =>
+    JSON.parse(message.replace('[startup][transcript-outbox] ', ''))
+  )
+  assert.deepEqual(
+    entries.map(entry => `${entry.phase}:${entry.status}`),
+    [
+      'outbox-initialization:started',
+      'database-open:started',
+      'database-open:completed',
+      'pragmas:started',
+      'pragmas:completed',
+      'schema-transaction:started',
+      'schema-transaction:completed',
+      'outbox-initialization:completed',
+    ]
+  )
+  for (const [index, entry] of entries.entries()) {
+    assert.deepEqual(
+      Object.keys(entry).sort(),
+      entry.status === 'started'
+        ? ['monotonicTimeMs', 'phase', 'status']
+        : ['durationMs', 'monotonicTimeMs', 'phase', 'status']
+    )
+    assert.ok(Number.isFinite(entry.monotonicTimeMs))
+    if (index) assert.ok(entry.monotonicTimeMs >= entries[index - 1].monotonicTimeMs)
+    if (entry.status === 'completed') assert.ok(entry.durationMs >= 0)
+  }
+  assert.equal(messages.join('\n').includes(path), false)
+  assert.equal(messages.join('\n').includes('CREATE TABLE'), false)
+  assert.equal(messages.join('\n').includes('secret'), false)
+})
+
+test('reports failed startup phases without exposing or replacing the original error', t => {
+  const messages = captureStartupPhases(t, '1')
+  const error = new Error('private-path-secret SQL credential')
+  assert.throws(
+    () =>
+      measureOutboxStartupPhase('schema-transaction', () => {
+        throw error
+      }),
+    value => value === error
+  )
+  const entries = messages.map(message =>
+    JSON.parse(message.replace('[startup][transcript-outbox] ', ''))
+  )
+  assert.deepEqual(
+    entries.map(entry => entry.status),
+    ['started', 'failed']
+  )
+  assert.ok(entries[1].durationMs >= 0)
+  assert.equal(messages.join('\n').includes(error.message), false)
+  assert.equal(
+    measureOutboxStartupPhase('private-path-secret', () => 42),
+    42
+  )
+  assert.equal(messages.length, 2)
+})
 
 test('stores only durable turn locators across a month of intensive offline use', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
@@ -300,4 +397,87 @@ test('upgrades an existing locator outbox without copying transcript bodies', as
 
   assert.equal(outbox.first().executorTurnId, 'executor-turn-1')
   outbox.close()
+})
+
+test('rolls back partial schema initialization and closes the failed connection', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'outbox.sqlite3')
+  const legacy = new DatabaseSync(path)
+  legacy.exec(
+    "CREATE TABLE pending_turns (turn_id TEXT PRIMARY KEY); INSERT INTO pending_turns VALUES ('existing-turn')"
+  )
+  legacy.close()
+
+  const failed = new SqliteSyncOutbox(path)
+  assert.throws(() => failed.count(), /no such column/)
+  failed.close()
+
+  const reopened = new DatabaseSync(path)
+  try {
+    assert.equal(reopened.prepare('PRAGMA synchronous').get().synchronous, 2)
+    assert.equal(reopened.prepare('PRAGMA journal_mode').get().journal_mode, 'wal')
+    assert.equal(
+      reopened
+        .prepare(
+          "SELECT count(*) AS count FROM sqlite_schema WHERE name IN ('session_routes', 'discarded_turns')"
+        )
+        .get().count,
+      0
+    )
+    assert.equal(
+      reopened.prepare('SELECT turn_id FROM pending_turns').get().turn_id,
+      'existing-turn'
+    )
+    reopened.exec('BEGIN EXCLUSIVE; ROLLBACK')
+  } finally {
+    reopened.close()
+  }
+})
+
+test('unused outboxes create no directory and remain closed after disposal', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-unused-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'uncreated', 'outbox.sqlite3')
+  const outbox = new SqliteSyncOutbox(path)
+  await assert.rejects(stat(join(directory, 'uncreated')), { code: 'ENOENT' })
+  outbox.close()
+  await assert.rejects(stat(path), { code: 'ENOENT' })
+  assert.throws(() => outbox.count(), /closed/i)
+  await assert.rejects(stat(path), { code: 'ENOENT' })
+})
+
+test('first operation persists with FULL WAL durability and initialization failures stay synchronous', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-lazy-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'outbox.sqlite3')
+  const outbox = new SqliteSyncOutbox(path)
+  await assert.rejects(stat(path), { code: 'ENOENT' })
+  outbox.enqueue({
+    turnId: 'first',
+    sessionId: 'session',
+    transcriptId: 'transcript',
+    taskId: 'task',
+    sequence: 1,
+  })
+  assert.equal(outbox.database.prepare('PRAGMA journal_mode').get().journal_mode, 'wal')
+  assert.equal(outbox.database.prepare('PRAGMA synchronous').get().synchronous, 2)
+  outbox.close()
+  const restored = new SqliteSyncOutbox(path)
+  assert.equal(restored.first().turnId, 'first')
+  restored.close()
+  const invalid = new SqliteSyncOutbox(join(path, 'invalid.sqlite3'))
+  let original
+  assert.throws(
+    () => invalid.count(),
+    error => {
+      original = error
+      return Boolean(error)
+    }
+  )
+  assert.throws(
+    () => invalid.count(),
+    error => error === original
+  )
+  invalid.close()
 })

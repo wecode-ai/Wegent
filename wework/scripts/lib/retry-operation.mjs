@@ -12,6 +12,7 @@ export async function retryOperation(
     retryDelayMs = DEFAULT_RETRY_DELAY_MS,
     sleepImpl = sleep,
     onRetry,
+    shouldRetry = () => true,
   } = {}
 ) {
   if (!Number.isInteger(attempts) || attempts < 1) {
@@ -24,7 +25,7 @@ export async function retryOperation(
       return await operation()
     } catch (error) {
       lastError = error
-      if (attempt === attempts) break
+      if (attempt === attempts || !shouldRetry(error)) break
       const delayMs = retryDelayMs * attempt
       onRetry?.({ attempt, attempts, delayMs, error })
       await sleepImpl(delayMs)

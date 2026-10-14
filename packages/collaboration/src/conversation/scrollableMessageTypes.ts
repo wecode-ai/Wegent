@@ -12,7 +12,7 @@ import type {
   WorkbenchMessage,
 } from '@wegent/chat-core/runtime-conversation'
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
-import { type MessageListProps } from './MessageList'
+import type { MessageListProps } from './MessageList'
 
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
@@ -55,6 +55,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   | 'virtualize'
   | 'useContentVisibility'
   | 'onVirtualMeasurement'
+  | 'onContentReady'
   | 'renderVisualization'
 > {
   messages: WorkbenchMessage[]
@@ -133,6 +134,7 @@ export function areScrollableMessageAreaPropsEqual(
     previous.virtualize !== next.virtualize ? 'virtualize' : null,
     previous.useContentVisibility !== next.useContentVisibility ? 'useContentVisibility' : null,
     previous.onVirtualMeasurement !== next.onVirtualMeasurement ? 'onVirtualMeasurement' : null,
+    previous.onContentReady !== next.onContentReady ? 'onContentReady' : null,
     previous.renderVisualization !== next.renderVisualization ? 'renderVisualization' : null,
     previous.messages !== next.messages ? 'messages' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,

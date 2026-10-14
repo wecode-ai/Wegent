@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
+import { packagedResourcesRoot, preparePackagedHarnessRuntimes } from './runtime-assets.mjs'
 
 import {
   closeBottomWorkspacePanel,
@@ -465,27 +466,11 @@ function codexCacheRoot() {
 }
 
 async function prepareHarnessRuntimeRoots(appBinary) {
-  const packagedResourcesRoot = join(
-    dirname(appBinary),
-    ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
-  )
-  const packagedResources = join(packagedResourcesRoot, 'harness-runtime')
-  const catalogPath = join(packagedResources, 'runtimes.json')
-  const catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
   const runtimeRoot = join(resultDir, 'harness-runtime')
   await rm(runtimeRoot, { recursive: true, force: true })
-  await mkdir(runtimeRoot, { recursive: true })
-  for (const runtime of catalog.runtimes) {
-    const archivePath = join(packagedResources, runtime.assetName)
-    const extracted = join(runtimeRoot, runtime.sourceFingerprint)
-    await mkdir(extracted, { recursive: true })
-    await runChecked('tar', ['-xzf', archivePath, '-C', extracted], { cwd: weworkDir })
-    const dshEntry = join(extracted, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-    await readFile(dshEntry)
-  }
-
+  await preparePackagedHarnessRuntimes(appBinary, runtimeRoot)
   return {
-    corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins'),
+    corePluginsRoot: join(packagedResourcesRoot(appBinary), 'wework-core-plugins'),
     harnessRuntimeRoot: runtimeRoot,
   }
 }

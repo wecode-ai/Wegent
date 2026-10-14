@@ -95,7 +95,6 @@ try {
     },
     extraResource: [
       ...(process.platform === 'darwin' ? [macosAppIcon.assetCatalog] : []),
-      join(electronRoot, 'resources', 'harness-runtime'),
       join(electronRoot, 'resources', 'bin'),
       join(electronRoot, 'resources', 'codex'),
       join(electronRoot, 'resources', 'wework-core-plugins'),
@@ -105,6 +104,20 @@ try {
       join(sharedResourcesRoot, 'licenses'),
       join(sharedResourcesRoot, 'icons'),
       join(repositoryRoot, 'LICENSE'),
+    ],
+    afterCopyExtraResources: [
+      async ({ buildPath, platform }) => {
+        const resources =
+          platform === 'darwin'
+            ? join(buildPath, `${identity.productName}.app`, 'Contents', 'Resources')
+            : join(buildPath, 'resources')
+        // Packager's default copy rewrites relative links to the build machine's absolute paths.
+        await cp(
+          join(electronRoot, 'resources', 'harness-runtime'),
+          join(resources, 'harness-runtime'),
+          { recursive: true, verbatimSymlinks: true }
+        )
+      },
     ],
     icon,
     prune: false,

@@ -22,6 +22,77 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     delete window.weworkElectronLifecycle
   })
 
+  test('tracks automatic Goal turns without a chat-start event and ignores older settlements', () => {
+    const store = new RuntimeTaskLifecycleStore('goal-continuation')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true))
+    store.goalStatusReceived(address, 'active')
+    store.turnStarted(address, 'initial-turn')
+    let streamHandlers: ChatStreamHandlers = {}
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: { runtime: {} },
+    } as unknown as WorkbenchServices
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    const continuation = { taskId: address.taskId, deviceId: address.deviceId }
+
+    act(() => {
+      streamHandlers.onRuntimeGoalContinuation?.({
+        ...continuation,
+        turnId: 'continuation-turn',
+        status: 'started',
+      })
+    })
+    expect(store.getTask(address)?.turn).toMatchObject({
+      id: 'continuation-turn',
+      phase: 'streaming',
+      active: true,
+    })
+    expect(store.getTask(address)?.goalStatus).toBe('active')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+
+    act(() => {
+      streamHandlers.onRuntimeGoalContinuation?.({
+        ...continuation,
+        turnId: 'initial-turn',
+        status: 'settled',
+      })
+    })
+    expect(store.getTask(address)?.turn.id).toBe('continuation-turn')
+
+    act(() => {
+      streamHandlers.onRuntimeGoalContinuation?.({
+        ...continuation,
+        turnId: '',
+        status: 'started',
+      })
+      streamHandlers.onRuntimeGoalContinuation?.({
+        ...continuation,
+        deviceId: 'other-device',
+        turnId: 'unrelated-turn',
+        status: 'started',
+      })
+    })
+    expect(store.getTask(address)?.turn.id).toBe('continuation-turn')
+
+    act(() => {
+      streamHandlers.onRuntimeGoalContinuation?.({
+        ...continuation,
+        turnId: 'continuation-turn',
+        status: 'settled',
+      })
+    })
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.goalStatus).toBe('active')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
   test('does not poll running task transcripts or work lists', async () => {
     vi.useFakeTimers()
     const store = new RuntimeTaskLifecycleStore('test')

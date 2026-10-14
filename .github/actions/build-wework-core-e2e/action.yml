@@ -40,7 +40,7 @@ runs:
         BACKEND_RS_IMAGE: ${{ inputs.backend-rs-image }}
         GITHUB_TOKEN: ${{ github.token }}
         BUILD_RUNTIMES_FROM_SOURCE: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-        EXECUTOR_ARTIFACT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        EXECUTOR_ARTIFACT: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         EXECUTOR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         OCI_RUNTIME_WAIT_SECONDS: "420"
         CI: true
@@ -49,7 +49,8 @@ runs:
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
       run: |
         mkdir -p .ci-artifacts
-        # Fork runtime producers have a 25-minute job deadline.
+        # PR and merge queue builds consume the exact producer artifact.
+        # The runtime producer has a 25-minute job deadline.
         if [[ "$EXECUTOR_ARTIFACT" == "true" ]]; then
           export WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS=1500
         fi

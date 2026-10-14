@@ -3713,6 +3713,10 @@ describe('TaskActivityView', () => {
       )
 
       const { rerender } = render(view)
+      expect(client.subscribe).toHaveBeenCalledOnce()
+      await act(async () => {
+        await client.subscribe.mock.results[0].value
+      })
 
       await user.type(
         await screen.findByTestId(`cloud-task-activity-card-composer-${rootMessage.messageId}`),

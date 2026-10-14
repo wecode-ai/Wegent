@@ -1,3 +1,5 @@
+import { traceDesktopStartupPhase } from '@/lib/desktop-startup-phase'
+
 export interface DesktopHostErrorPayload {
   code: string
   message: string
@@ -46,12 +48,22 @@ export async function invokeDesktopHost<Result>(
   capability: string,
   params: Record<string, unknown> = {}
 ): Promise<Result> {
-  const response = await fetch('/wework/electron-host/v1/invoke', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ capability, params }),
-  })
-  const body = (await response.json()) as {
+  const request = () =>
+    fetch('/wework/electron-host/v1/invoke', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ capability, params }),
+    })
+  const phases =
+    capability === 'rendererStorage.initialize'
+      ? (['renderer-storage-request', 'renderer-storage-response-body'] as const)
+      : capability === 'preferences.get'
+        ? (['preferences-request', 'preferences-response-body'] as const)
+        : null
+  const response = await (phases ? traceDesktopStartupPhase(phases[0], request) : request())
+  const body = (await (phases
+    ? traceDesktopStartupPhase(phases[1], () => response.json())
+    : response.json())) as {
     ok?: boolean
     result?: Result
     error?: DesktopHostErrorPayload

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
+import { createWriteStream, type Dirent } from 'node:fs'
 import {
   cp,
   lstat,
@@ -18,9 +18,14 @@ import type { ComponentDownloadProgress } from '../host/app-update-progress.js'
 import { cloudFetch } from '../host/cloud-http.js'
 import { pipeline } from 'node:stream/promises'
 import { publishImmutableDirectory } from './immutable-directory.js'
-import * as tar from 'tar'
-import { hashComponentPath, sha256 } from './component-content-hash.js'
-
+import { hashComponentPath, fileSha256 as sha256 } from './component-content-hash.js'
+import {
+  cachePackagedComponent,
+  copyComponentSnapshot,
+  type PackagedSnapshotStep,
+} from './component-snapshot.js'
+import { createFileOperationQueue } from './file-operation-queue.js'
+import { copyComponentTree } from './component-copy.js'
 export { hashComponentPath } from './component-content-hash.js'
 
 export const MANAGED_COMPONENT_IDS = [
@@ -43,6 +48,7 @@ interface PackagedComponent {
   version: string
   path: string
   sha256: string
+  workbenchSchema?: unknown
 }
 
 interface PackagedComponentManifest {
@@ -53,6 +59,7 @@ interface PackagedComponentManifest {
 }
 
 interface RemoteComponent {
+  workbenchSchema?: unknown
   version: string
   contentSha256: string
   archiveSha256: string
@@ -110,7 +117,12 @@ export interface ComponentUpdateManagerOptions {
   fetch?: typeof fetch
   retryDelay?: (attempt: number) => Promise<void>
   log?: (event: Record<string, unknown>) => void
-  validateExecutor?: (path: string) => Promise<void>
+  validateExecutor?: (path: string, schema?: PackagedExecutorSchema) => Promise<void>
+}
+
+export interface PackagedExecutorSchema {
+  sha256: string
+  response: unknown
 }
 
 export class ComponentUpdateManager {
@@ -131,7 +143,7 @@ export class ComponentUpdateManager {
     progress?: ComponentDownloadProgress
   } | null = null
   private packaged: PackagedComponentManifest | null = null
-  private readonly validateExecutor: (path: string) => Promise<void>
+  private readonly validateExecutor: NonNullable<ComponentUpdateManagerOptions['validateExecutor']>
   private usingPackagedFallback = false
 
   constructor(options: ComponentUpdateManagerOptions) {
@@ -234,15 +246,6 @@ export class ComponentUpdateManager {
     return true
   }
 
-  private async checkedPaths(
-    packaged: PackagedComponentManifest,
-    current?: ComponentSet
-  ): Promise<ComponentPaths> {
-    const paths = await this.resolvePaths(packaged, current)
-    await this.validateExecutor(paths.executor)
-    return paths
-  }
-
   async stageAvailableUpdate(): Promise<boolean> {
     const packaged = await this.packagedManifest()
     const channel = packaged.channel
@@ -340,57 +343,81 @@ export class ComponentUpdateManager {
     const stagedComponents = {} as Record<ManagedComponentId, RemoteComponent>
 
     const downloads: Array<{ id: ManagedComponentId; component: RemoteComponent }> = []
-    await Promise.all(
-      MANAGED_COMPONENT_IDS.map(async id => {
-        const component = remote.components[id]
-        const effectiveComponent = effective?.[id]
-        const expectedCurrentContentSha256 =
-          effectiveComponent?.contentSha256 ?? packaged.components[id].sha256
-        const reusesCurrentContent =
-          appVersion === this.currentAppVersion &&
-          component.contentSha256 === expectedCurrentContentSha256
-        const reusableContentSha256 = await hashComponentPath(reusablePaths[id])
-        if (reusesCurrentContent || component.contentSha256 === reusableContentSha256) {
-          this.log({
-            event: 'component-reused',
-            id,
-            reason: reusesCurrentContent ? 'current-content' : 'verified-installed-content',
-          })
-          // Packaged binaries may have changed during signing or stripping.
-          // Cache the installed bytes with their actual hash, independently of the app bundle.
-          const reusable =
-            effectiveComponent?.contentSha256 === reusableContentSha256
-              ? effectiveComponent
-              : await this.packagedComponentDescriptor(
-                  packaged.components[id].version,
+    const prepare = createFileOperationQueue(2)
+    const reusesCurrentContent = (id: ManagedComponentId) =>
+      appVersion === this.currentAppVersion &&
+      remote.components[id].contentSha256 ===
+        (effective?.[id].contentSha256 ?? packaged.components[id].sha256)
+    const prepareComponents = async (ids: ManagedComponentId[]) => {
+      const prepared = await Promise.allSettled(
+        ids.map(id =>
+          prepare(async () => {
+            const component = remote.components[id]
+            const effectiveComponent = effective?.[id]
+            const reusesCurrent = reusesCurrentContent(id)
+            if (reusesCurrent && !effectiveComponent) {
+              stagedComponents[id] = await this.componentStageStep(id, 'packaged-snapshot', () =>
+                cachePackagedComponent(
+                  this.componentRoot(id, ''),
+                  component.version,
                   reusablePaths[id],
-                  reusableContentSha256
+                  (step, operation) => this.componentStageStep(id, step, operation)
                 )
-          stagedComponents[id] = {
-            ...reusable,
-            version: component.version,
-          }
-          await this.ensureReusableComponent(id, stagedComponents[id], reusablePaths[id])
-        } else {
-          const target = this.componentRoot(id, component.archiveSha256)
-          const componentPath =
-            component.entryPath === '.' ? target : join(target, component.entryPath)
-          if (!(await componentMatches(componentPath, component.contentSha256))) {
-            downloads.push({ id, component })
-            this.log({
-              event: 'component-download-required',
-              id,
-              version: component.version,
-              archiveBytes: component.archiveBytes,
-            })
-          } else {
-            this.log({ event: 'component-reused', id, reason: 'verified-cache' })
-          }
-          stagedComponents[id] = component
-        }
-      })
-    )
-    await this.downloadComponents(downloads, onProgress)
+              )
+              this.log({ event: 'component-reused', id, reason: 'packaged-snapshot' })
+              return
+            }
+            const reusableContentSha256 = await hashComponentPath(reusablePaths[id])
+            if (reusesCurrent || component.contentSha256 === reusableContentSha256) {
+              this.log({
+                event: 'component-reused',
+                id,
+                reason: reusesCurrent ? 'current-content' : 'verified-installed-content',
+              })
+              // Packaged binaries may have changed during signing or stripping.
+              // Cache the installed bytes with their actual hash, independently of the app bundle.
+              const reusable =
+                effectiveComponent?.contentSha256 === reusableContentSha256
+                  ? effectiveComponent
+                  : await this.packagedComponentDescriptor(
+                      packaged.components[id].version,
+                      reusablePaths[id],
+                      reusableContentSha256
+                    )
+              stagedComponents[id] = {
+                ...reusable,
+                version: component.version,
+              }
+              await this.ensureReusableComponent(id, stagedComponents[id], reusablePaths[id])
+            } else {
+              const target = this.componentRoot(id, component.archiveSha256)
+              const componentPath =
+                component.entryPath === '.' ? target : join(target, component.entryPath)
+              if (!(await componentMatches(componentPath, component.contentSha256))) {
+                downloads.push({ id, component })
+                this.log({
+                  event: 'component-download-required',
+                  id,
+                  version: component.version,
+                  archiveBytes: component.archiveBytes,
+                })
+              } else {
+                this.log({ event: 'component-reused', id, reason: 'verified-cache' })
+              }
+              stagedComponents[id] = component
+            }
+          })
+        )
+      )
+      for (const result of prepared) if (result.status === 'rejected') throw result.reason
+    }
+    const prepared = await Promise.allSettled([
+      prepareComponents(MANAGED_COMPONENT_IDS.filter(id => !reusesCurrentContent(id))).then(() =>
+        this.downloadComponents(downloads, onProgress)
+      ),
+      prepareComponents(MANAGED_COMPONENT_IDS.filter(reusesCurrentContent)),
+    ])
+    for (const result of prepared) if (result.status === 'rejected') throw result.reason
     await this.writeState({
       ...state,
       schemaVersion: 1,
@@ -432,18 +459,8 @@ export class ComponentUpdateManager {
     await rm(temporary, { recursive: true, force: true })
     await mkdir(dirname(target), { recursive: true, mode: 0o700 })
     try {
-      if (component.entryPath === '.') {
-        await cp(source, temporary, { recursive: true, force: true })
-      } else {
-        await mkdir(temporary, { recursive: true, mode: 0o700 })
-        await cp(source, join(temporary, component.entryPath), {
-          recursive: true,
-          force: true,
-        })
-      }
-      const stagedPath =
-        component.entryPath === '.' ? temporary : join(temporary, component.entryPath)
-      if (!(await componentMatches(stagedPath, component.contentSha256))) {
+      const snapshot = await copyComponentSnapshot(source, temporary, component.entryPath)
+      if (snapshot.contentSha256 !== component.contentSha256) {
         throw new Error(`Reusable component checksum mismatch: ${id}`)
       }
       await rm(target, { recursive: true, force: true })
@@ -475,23 +492,53 @@ export class ComponentUpdateManager {
     return parsed
   }
 
-  private async resolvePaths(
+  private async checkedPaths(
     packaged: PackagedComponentManifest,
     current?: ComponentSet
   ): Promise<ComponentPaths> {
+    this.log({ event: 'startup-step', step: 'component-path-resolution', status: 'started' })
     const resolved = await this.resolveComponents(packaged, current)
+    this.log({ event: 'startup-step', step: 'component-path-resolution', status: 'completed' })
     const paths = {} as Record<ManagedComponentId, string>
     const fingerprints = {} as Record<ManagedComponentId, string>
     for (const entry of resolved) {
       paths[entry.id] = entry.path
       fingerprints[entry.id] = entry.contentSha256
     }
-    const composedCorePlugins = await this.composeCorePlugins(
-      paths.weworkCorePlugins,
-      paths.weworkAppStatic,
-      fingerprints.weworkCorePlugins,
-      fingerprints.weworkAppStatic
-    )
+    const installedExecutor = current?.components.executor
+    const executor =
+      installedExecutor?.workbenchSchema !== undefined
+        ? installedExecutor
+        : packaged.components.executor
+    const sha256 = 'contentSha256' in executor ? executor.contentSha256 : executor.sha256
+    const preparations = await Promise.allSettled([
+      (async () => {
+        this.log({ event: 'startup-step', step: 'component-plugin-composition', status: 'started' })
+        const plugins = await this.composeCorePlugins(
+          paths.weworkCorePlugins,
+          paths.weworkAppStatic,
+          fingerprints.weworkCorePlugins,
+          fingerprints.weworkAppStatic
+        )
+        this.log({
+          event: 'startup-step',
+          step: 'component-plugin-composition',
+          status: 'completed',
+        })
+        return plugins
+      })(),
+      this.validateExecutor(
+        paths.executor,
+        fingerprints.executor === sha256 && executor.workbenchSchema !== undefined
+          ? { sha256, response: executor.workbenchSchema }
+          : undefined
+      ),
+      this.resolveCodexBinary(paths.codex),
+    ])
+    const [composition, compatibility, codex] = preparations
+    if (composition.status === 'rejected') throw composition.reason
+    if (compatibility.status === 'rejected') throw compatibility.reason
+    if (codex.status === 'rejected') throw codex.reason
     fingerprints.weworkCorePlugins = createHash('sha256')
       .update(fingerprints.weworkCorePlugins)
       .update('\0')
@@ -499,10 +546,10 @@ export class ComponentUpdateManager {
       .digest('hex')
     return {
       coreDsh: paths.coreDsh,
-      weworkCorePlugins: composedCorePlugins,
+      weworkCorePlugins: composition.value,
       bundledPlugins: paths.bundledPlugins,
       executor: paths.executor,
-      codex: await this.resolveCodexBinary(paths.codex),
+      codex: codex.value,
       dws: paths.dws,
       contentSha256: fingerprints,
     }
@@ -587,10 +634,9 @@ export class ComponentUpdateManager {
     appStatic: string,
     content: string
   ): Promise<void> {
-    await this.copyDirectoryEntries(corePlugins, content, new Set(['wework-app']))
+    await this.linkDirectoryEntries(corePlugins, content, new Set(['wework-app']))
     const appRoot = join(content, 'wework-app')
-    await mkdir(appRoot, { recursive: true, mode: 0o700 })
-    await this.copyDirectoryEntries(join(corePlugins, 'wework-app'), appRoot, new Set(['web']))
+    await copyComponentTree(join(corePlugins, 'wework-app'), appRoot, new Set(['web']), false)
     const webRoot = join(appRoot, 'web')
     await mkdir(webRoot, { recursive: true, mode: 0o700 })
     await this.linkDirectoryEntries(
@@ -599,22 +645,8 @@ export class ComponentUpdateManager {
       new Set(WEWORK_APP_STATIC_DIRECTORIES)
     )
     for (const directory of WEWORK_APP_STATIC_DIRECTORIES) {
-      await this.linkEntry(join(appStatic, directory), join(webRoot, directory))
-    }
-  }
-
-  private async copyDirectoryEntries(
-    source: string,
-    destination: string,
-    excluded: ReadonlySet<string>
-  ): Promise<void> {
-    const entries = await readdir(source, { withFileTypes: true })
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (excluded.has(entry.name)) continue
-      await cp(join(source, entry.name), join(destination, entry.name), {
-        recursive: true,
-        force: true,
-      })
+      const source = join(appStatic, directory)
+      await this.linkEntry(source, join(webRoot, directory), await lstat(source))
     }
   }
 
@@ -624,14 +656,25 @@ export class ComponentUpdateManager {
     excluded: ReadonlySet<string>
   ): Promise<void> {
     const entries = await readdir(source, { withFileTypes: true })
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (excluded.has(entry.name)) continue
-      await this.linkEntry(join(source, entry.name), join(destination, entry.name))
-    }
+    const prepare = createFileOperationQueue()
+    const results = await Promise.allSettled(
+      entries
+        .filter(entry => !excluded.has(entry.name))
+        .map(entry =>
+          prepare(() =>
+            this.linkEntry(join(source, entry.name), join(destination, entry.name), entry)
+          )
+        )
+    )
+    const failure = results.find(result => result.status === 'rejected')
+    if (failure?.status === 'rejected') throw failure.reason
   }
 
-  private async linkEntry(source: string, destination: string): Promise<void> {
-    const metadata = await lstat(source)
+  private async linkEntry(
+    source: string,
+    destination: string,
+    metadata: Pick<Dirent, 'isDirectory' | 'isFile'>
+  ): Promise<void> {
     if (metadata.isDirectory()) {
       await symlink(source, destination, process.platform === 'win32' ? 'junction' : 'dir')
       return
@@ -726,43 +769,95 @@ export class ComponentUpdateManager {
     await rm(archive, { force: true })
     await rm(temporary, { recursive: true, force: true })
     try {
-      const response = await this.fetch(component.downloadUrl, { cache: 'no-store', signal })
-      if (!response.ok || !response.body) {
-        throw new ComponentDownloadHttpError(id, response.status)
-      }
-      await pipeline(
-        Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
-        new Transform({
-          transform(chunk: Buffer, _encoding, callback) {
-            onBytes(chunk.length)
-            callback(null, chunk)
-          },
-        }),
-        createWriteStream(archive, { mode: 0o600 }),
-        { signal }
+      const response = await this.componentStageStep(id, 'download-headers', async () => {
+        const fetched = await this.fetch(component.downloadUrl, { cache: 'no-store', signal })
+        if (!fetched.ok || !fetched.body) {
+          throw new ComponentDownloadHttpError(id, fetched.status)
+        }
+        return fetched
+      })
+      await this.componentStageStep(id, 'download-body', () =>
+        pipeline(
+          Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
+          new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+              onBytes(chunk.length)
+              callback(null, chunk)
+            },
+          }),
+          createWriteStream(archive, { mode: 0o600 }),
+          { signal }
+        )
       )
-      const archiveMetadata = await stat(archive)
-      if (archiveMetadata.size !== component.archiveBytes) {
-        throw new Error(`Component archive size mismatch: ${id}`)
-      }
-      if ((await sha256(archive)) !== component.archiveSha256) {
-        throw new Error(`Component archive checksum mismatch: ${id}`)
-      }
+      await this.componentStageStep(id, 'archive-verification', async () => {
+        const archiveMetadata = await stat(archive)
+        if (archiveMetadata.size !== component.archiveBytes) {
+          throw new Error(`Component archive size mismatch: ${id}`)
+        }
+        if ((await sha256(archive)) !== component.archiveSha256) {
+          throw new Error(`Component archive checksum mismatch: ${id}`)
+        }
+      })
       await mkdir(temporary, { recursive: true, mode: 0o700 })
-      await tar.x({ cwd: temporary, file: archive, gzip: true, strict: true })
-      if (
-        !(await componentMatches(
-          component.entryPath === '.' ? temporary : join(temporary, component.entryPath),
-          component.contentSha256
-        ))
-      ) {
-        throw new Error(`Extracted component checksum mismatch: ${id}`)
-      }
-      await rm(target, { recursive: true, force: true })
-      await rename(temporary, target)
+      const { x } = await this.componentStageStep(id, 'tar-module-load', () => import('tar'))
+      await this.componentStageStep(id, 'archive-extraction', async () => {
+        await x({ cwd: temporary, file: archive, gzip: true, strict: true })
+      })
+      await this.componentStageStep(id, 'content-verification', async () => {
+        if (
+          !(await componentMatches(
+            component.entryPath === '.' ? temporary : join(temporary, component.entryPath),
+            component.contentSha256
+          ))
+        ) {
+          throw new Error(`Extracted component checksum mismatch: ${id}`)
+        }
+      })
+      await this.componentStageStep(id, 'publish', async () => {
+        await rm(target, { recursive: true, force: true })
+        await rename(temporary, target)
+      })
     } finally {
       await rm(archive, { force: true })
       await rm(temporary, { recursive: true, force: true })
+    }
+  }
+
+  private async componentStageStep<T>(
+    id: ManagedComponentId,
+    step:
+      | 'packaged-snapshot'
+      | 'download-headers'
+      | 'download-body'
+      | 'archive-verification'
+      | 'tar-module-load'
+      | 'archive-extraction'
+      | 'content-verification'
+      | 'publish'
+      | PackagedSnapshotStep,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const started = performance.now()
+    this.log({ event: 'component-stage-step', id, step, status: 'started' })
+    try {
+      const result = await operation()
+      this.log({
+        event: 'component-stage-step',
+        id,
+        step,
+        status: 'completed',
+        durationMs: performance.now() - started,
+      })
+      return result
+    } catch (error) {
+      this.log({
+        event: 'component-stage-step',
+        id,
+        step,
+        status: 'failed',
+        durationMs: performance.now() - started,
+      })
+      throw error
     }
   }
 

@@ -1,4 +1,5 @@
-import { IssueThreadReplyComposer, type CollaborationTranslate } from '@wegent/collaboration'
+import { IssueThreadReplyComposer } from '@wegent/collaboration/issue-detail'
+import type { CollaborationTranslate } from '@wegent/collaboration'
 import type { ComposerExternalMentionCandidate } from '@wegent/collaboration/composer/composerAutocompleteInputTypes'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'

@@ -2,14 +2,79 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
+const STARTUP_PHASES = new Set([
+  'outbox-initialization',
+  'database-open',
+  'pragmas',
+  'schema-transaction',
+])
+
+export function measureOutboxStartupPhase(phase, operation) {
+  if (process.env.WEWORK_E2E_CORE_CPU_PROFILE !== '1' || !STARTUP_PHASES.has(phase)) {
+    return operation()
+  }
+  const startedAt = performance.now()
+  const report = status => {
+    const monotonicTimeMs = performance.now()
+    console.info(
+      `[startup][transcript-outbox] ${JSON.stringify({
+        phase,
+        status,
+        monotonicTimeMs,
+        ...(status === 'started' ? {} : { durationMs: monotonicTimeMs - startedAt }),
+      })}`
+    )
+  }
+  report('started')
+  try {
+    const result = operation()
+    report('completed')
+    return result
+  } catch (error) {
+    report('failed')
+    throw error
+  }
+}
+
 export class SqliteSyncOutbox {
   constructor(path) {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-    this.database = new DatabaseSync(path)
-    this.database.exec(`
+    this.path = path
+    this.closed = false
+  }
+
+  initialize() {
+    if (this.closed) throw new Error('Transcript outbox is closed')
+    if (this.initializationError) throw this.initializationError
+    if (this.database) return
+    try {
+      measureOutboxStartupPhase('outbox-initialization', () => this.initializeDatabase())
+    } catch (error) {
+      this.initializationError = error
+      try {
+        this.database?.close()
+      } finally {
+        this.database = undefined
+        throw error
+      }
+    }
+  }
+
+  initializeDatabase() {
+    const path = this.path
+    this.database = measureOutboxStartupPhase('database-open', () => {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+      return new DatabaseSync(path)
+    })
+    measureOutboxStartupPhase('pragmas', () =>
+      this.database.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
       PRAGMA busy_timeout = 5000;
+    `)
+    )
+    measureOutboxStartupPhase('schema-transaction', () => {
+      this.database.exec('BEGIN')
+      this.database.exec(`
       CREATE TABLE IF NOT EXISTS session_routes (
         session_id TEXT PRIMARY KEY,
         transcript_id TEXT NOT NULL,
@@ -42,13 +107,15 @@ export class SqliteSyncOutbox {
       CREATE INDEX IF NOT EXISTS pending_turns_transcript
         ON pending_turns (transcript_id);
     `)
-    const pendingColumns = this.database
-      .prepare('PRAGMA table_info(pending_turns)')
-      .all()
-      .map(column => column.name)
-    if (!pendingColumns.includes('executor_turn_id')) {
-      this.database.exec('ALTER TABLE pending_turns ADD COLUMN executor_turn_id TEXT')
-    }
+      const pendingColumns = this.database
+        .prepare('PRAGMA table_info(pending_turns)')
+        .all()
+        .map(column => column.name)
+      if (!pendingColumns.includes('executor_turn_id')) {
+        this.database.exec('ALTER TABLE pending_turns ADD COLUMN executor_turn_id TEXT')
+      }
+      this.database.exec('COMMIT')
+    })
     this.selectRoute = this.database.prepare(`
       SELECT
         session_id,
@@ -205,10 +272,12 @@ export class SqliteSyncOutbox {
   }
 
   target(turn) {
+    this.initialize()
     return rowToRoute(this.selectRoute.get(turn.sessionId))?.transcriptId ?? turn.transcriptId
   }
 
   enqueue(turn, knownSequence = 0) {
+    this.initialize()
     if (this.selectDiscardedTurn.get(turn.turnId)) return false
     let route = rowToRoute(this.selectRoute.get(turn.sessionId))
     if (!route) {
@@ -238,22 +307,27 @@ export class SqliteSyncOutbox {
   }
 
   first() {
+    this.initialize()
     return rowToTurn(this.selectFirst.get())
   }
 
   sessionIds() {
+    this.initialize()
     return this.selectSessions.all().map(row => row.session_id)
   }
 
   firstForSession(sessionId) {
+    this.initialize()
     return rowToTurn(this.selectSessionFirst.get(sessionId))
   }
 
   hasPendingTranscript(transcriptId) {
+    this.initialize()
     return Boolean(this.selectTranscriptPending.get(transcriptId))
   }
 
   fork(turn, transcriptId, forkedAtSequence = turn.baseSequence) {
+    this.initialize()
     const pending = this.selectSessionPending.all(turn.sessionId)
     const start = pending.findIndex(item => item.turn_id === turn.turnId)
     if (start < 0) throw new Error(`Pending transcript turn is unavailable: ${turn.turnId}`)
@@ -296,18 +370,23 @@ export class SqliteSyncOutbox {
   }
 
   count() {
+    this.initialize()
     return Number(this.selectCount.get().count)
   }
 
   list() {
+    this.initialize()
     return this.selectAll.all().map(rowToTurn)
   }
 
   close() {
-    this.database.close()
+    if (this.closed) return
+    this.closed = true
+    this.database?.close()
   }
 
   transaction(action) {
+    this.initialize()
     this.database.exec('BEGIN IMMEDIATE')
     try {
       action()

@@ -21,6 +21,114 @@ afterEach(async () => {
 })
 
 describe('DSH runtime readiness', () => {
+  test.each(['stdout', 'pipe'])('discovers the child-bound port through %s', async transport => {
+    const authenticateBrowserSession = vi.fn(async () => {})
+    const onRestarted = vi.fn(async () => {})
+    const onStartupStep = vi.fn()
+    const hostPipe = new HostPipeServer(new HostCapabilityRouter())
+    const runtime = new DshRuntime({
+      url: 'http://127.0.0.1:0',
+      command: process.execPath,
+      args: [
+        '--input-type=module',
+        '-e',
+        `
+        import { createServer } from 'node:http'
+        const server = createServer((request, response) => {
+          if (request.url === '/?token=fixture-token') {
+            response.writeHead(303, { location: '/', 'set-cookie': 'fixture=authenticated' })
+          } else {
+            response.writeHead(request.headers.cookie === 'fixture=authenticated' ? 200 : 401)
+          }
+          response.end()
+        })
+        server.listen(0, '127.0.0.1', () => {
+          const url = 'http://127.0.0.1:' + server.address().port + '/?token=fixture-token'
+          if (process.env.ENDPOINT_TRANSPORT === 'stdout') {
+            console.log('dsh web: ' + url)
+          } else {
+            import('node:fs').then(async fs => {
+              const { createInterface } = await import('node:readline')
+              const input = fs.createReadStream(null, { fd: 3, autoClose: false })
+              const output = fs.createWriteStream(null, { fd: 4, autoClose: false })
+              const send = value => output.write(JSON.stringify(value) + '\\n')
+              createInterface({ input }).on('line', line => {
+                if (JSON.parse(line).type === 'hello') send({ type: 'runtimeEndpoint', url })
+              })
+              send({ type: 'hello', protocolVersion: 1,
+                token: process.env.WEWORK_ELECTRON_HOST_TOKEN, principal: '@wegent/dsh-app-wework' })
+            })
+            setTimeout(() => console.log('dsh web: ' + url), 3000)
+          }
+        })
+      `,
+      ],
+      probeUrls: ['http://127.0.0.1:0/host', 'http://127.0.0.1:0/executor'],
+      startTimeoutMs: 1000,
+      authenticateBrowserSession,
+      onRestarted,
+      onStartupStep,
+      hostPipe,
+      env: { ...process.env, ...hostPipe.environment(), ENDPOINT_TRANSPORT: transport },
+    })
+    try {
+      await runtime.start()
+      const origin = runtime.url()
+      expect(Number(new URL(origin).port)).toBeGreaterThan(0)
+      expect(authenticateBrowserSession).toHaveBeenCalledWith(
+        `${origin}/?token=fixture-token`,
+        'fixture=authenticated',
+        ['fixture=authenticated']
+      )
+      for (const path of ['/host', '/executor']) {
+        const response = await fetch(`${origin}${path}`, {
+          headers: { cookie: 'fixture=authenticated' },
+        })
+        expect(response.ok).toBe(true)
+      }
+      expect(onRestarted).not.toHaveBeenCalled()
+      expect(onStartupStep.mock.calls).toEqual([
+        ['core-dsh-endpoints-readiness', 'started'],
+        ['core-dsh-auth-exchange', 'started'],
+        ['core-dsh-auth-exchange', 'completed'],
+        ['core-dsh-auth-cookie-install', 'started'],
+        ['core-dsh-auth-cookie-install', 'completed'],
+        ['core-dsh-endpoints-readiness', 'completed'],
+      ])
+      const pid = runtime.pid()
+      if (!pid) throw new Error('The managed runtime has no process')
+      process.kill(pid, 'SIGKILL')
+      await vi.waitFor(() => expect(onRestarted).toHaveBeenCalledOnce(), { timeout: 2000 })
+      expect(runtime.pid()).not.toBe(pid)
+      expect(Number(new URL(runtime.url()).port)).toBeGreaterThan(0)
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  test('reports the failed endpoint and HTTP status without its authentication query', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 403 }))
+    )
+    const onStartupStep = vi.fn()
+    const runtime = new DshRuntime({
+      url: 'http://127.0.0.1/host?token=private-query',
+      onStartupStep,
+    })
+    await expect(runtime.start(10)).rejects.toMatchObject({
+      message: 'DSH startup timed out',
+      cause: {
+        message: 'DSH endpoint readiness failed: /host',
+        cause: { message: 'HTTP 403' },
+      },
+    })
+    expect(onStartupStep.mock.calls).toEqual([
+      ['core-dsh-endpoints-readiness', 'started'],
+      ['core-dsh-endpoints-readiness', 'failed'],
+    ])
+  })
+
   test('preserves the timeout reason while a probe request is still in flight', async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
       return new Promise<Response>((_resolve, reject) => {
@@ -73,6 +181,41 @@ describe('DSH runtime readiness', () => {
     await expect(started).resolves.toBeUndefined()
   })
 
+  test('checks independent readiness routes without waiting for an earlier route', async () => {
+    const requested = new Set<string>()
+    let releaseHost: (() => void) | undefined
+    const server = createServer((request, response) => {
+      requested.add(request.url ?? '')
+      if (request.url === '/host') releaseHost = () => response.end('ready')
+      else response.end('ready')
+    })
+    servers.push(server)
+    await listen(server)
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
+    const origin = `http://127.0.0.1:${address.port}`
+    const runtime = new DshRuntime({
+      url: origin,
+      probeUrls: [`${origin}/host`, `${origin}/executor`, `${origin}/terminal`],
+    })
+    let ready = false
+    const started = runtime.start(2_000).then(() => {
+      ready = true
+    })
+    try {
+      await vi.waitFor(
+        () => expect(requested).toEqual(new Set(['/host', '/executor', '/terminal'])),
+        { timeout: 500 }
+      )
+      expect(ready).toBe(false)
+    } finally {
+      releaseHost?.()
+      await started
+      await runtime.stop()
+    }
+    expect(ready).toBe(true)
+  })
+
   test('uses the configured managed-process startup timeout', async () => {
     const runtime = new DshRuntime({
       url: 'http://127.0.0.1/pending',
@@ -83,6 +226,130 @@ describe('DSH runtime readiness', () => {
 
     await expect(runtime.start()).rejects.toThrow('dsh-web startup timed out')
     await runtime.stop()
+  })
+
+  test.each([false, true])(
+    'authenticates clean readiness URLs (transient failure=%s)',
+    async transientFailure => {
+      let exchanges = 0
+      const server = createServer((request, response) => {
+        if (request.url === '/?token=fixture-token') {
+          exchanges += 1
+          if (transientFailure && exchanges === 1) {
+            response.writeHead(503)
+          } else {
+            response.writeHead(303, {
+              location: '/',
+              'set-cookie': 'fixture=authenticated; HttpOnly',
+            })
+          }
+        } else {
+          response.writeHead(request.headers.cookie === 'fixture=authenticated' ? 200 : 401)
+        }
+        response.end()
+      })
+      servers.push(server)
+      await listen(server)
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
+      const origin = `http://127.0.0.1:${address.port}`
+      const authenticateBrowserSession = vi.fn(async () => {})
+      const onStartupStep = vi.fn()
+      const runtime = new DshRuntime({
+        url: origin,
+        command: process.execPath,
+        args: [
+          '-e',
+          `console.log('dsh web: ${origin}/?token=fixture-token'); setInterval(() => {}, 1000)`,
+        ],
+        probeUrls: [origin, `${origin}/api-ready`],
+        startTimeoutMs: 2000,
+        authenticateBrowserSession,
+        onStartupStep,
+      })
+      try {
+        await runtime.start()
+        expect(exchanges).toBe(transientFailure ? 2 : 1)
+        expect(authenticateBrowserSession).toHaveBeenCalledWith(
+          `${origin}/?token=fixture-token`,
+          'fixture=authenticated',
+          ['fixture=authenticated; HttpOnly']
+        )
+        expect(runtime.url()).toBe(origin)
+        expect(onStartupStep.mock.calls.filter(([, status]) => status === 'failed')).toEqual(
+          transientFailure ? [['core-dsh-auth-exchange', 'failed']] : []
+        )
+        expect(onStartupStep.mock.calls.every(call => call.length === 2)).toBe(true)
+        expect(JSON.stringify(onStartupStep.mock.calls)).not.toContain('fixture-token')
+        expect(JSON.stringify(onStartupStep.mock.calls)).not.toContain('fixture=authenticated')
+      } finally {
+        await runtime.stop()
+      }
+    }
+  )
+
+  test('records held cookie installation without allowing probes or readiness to pass it', async () => {
+    const probes: string[] = []
+    const server = createServer((request, response) => {
+      if (request.url === '/?token=fixture-token') {
+        response.writeHead(303, { location: '/', 'set-cookie': 'fixture=authenticated' })
+      } else {
+        probes.push(request.url ?? '')
+        response.writeHead(request.headers.cookie === 'fixture=authenticated' ? 200 : 401)
+      }
+      response.end()
+    })
+    servers.push(server)
+    await listen(server)
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
+    const origin = `http://127.0.0.1:${address.port}`
+    let releaseCookies!: () => void
+    const cookieInstallation = new Promise<void>(resolve => {
+      releaseCookies = resolve
+    })
+    let startedCookies!: () => void
+    const cookieInstallationStarted = new Promise<void>(resolve => {
+      startedCookies = resolve
+    })
+    const onStartupStep = vi.fn()
+    const runtime = new DshRuntime({
+      url: 'http://127.0.0.1:0',
+      command: process.execPath,
+      args: [
+        '-e',
+        `console.log('dsh web: ${origin}/?token=fixture-token'); setInterval(() => {}, 1000)`,
+      ],
+      probeUrls: ['http://127.0.0.1:0/host', 'http://127.0.0.1:0/executor'],
+      startTimeoutMs: 2000,
+      onStartupStep,
+      authenticateBrowserSession: async () => {
+        startedCookies()
+        await cookieInstallation
+      },
+    })
+    let ready = false
+    const start = runtime.start().then(() => {
+      ready = true
+    })
+    try {
+      await cookieInstallationStarted
+      expect(ready).toBe(false)
+      expect(probes).toEqual([])
+      expect(onStartupStep.mock.calls.at(-1)).toEqual(['core-dsh-auth-cookie-install', 'started'])
+      expect(onStartupStep).not.toHaveBeenCalledWith('core-dsh-endpoints-readiness', 'completed')
+      releaseCookies()
+      await start
+      expect(new Set(probes)).toEqual(new Set(['/host', '/executor']))
+      expect(ready).toBe(true)
+      expect(onStartupStep.mock.calls.slice(-2)).toEqual([
+        ['core-dsh-auth-cookie-install', 'completed'],
+        ['core-dsh-endpoints-readiness', 'completed'],
+      ])
+    } finally {
+      releaseCookies()
+      await runtime.stop()
+    }
   })
 })
 

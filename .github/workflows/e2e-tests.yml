@@ -304,11 +304,10 @@ jobs:
   build-executor-e2e-runtime:
     name: Prepare Executor E2E Runtime
     needs: changes
-    # Fork pull requests cannot pull the executor E2E image from GHCR, so the
-    # Wework desktop E2E build downloads the executor-e2e-binary artifact from
-    # this job instead. That artifact must exist whenever a fork PR selects
-    # desktop E2E, even when platform_e2e itself is not selected.
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || (needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository)))
+    # Desktop PR and merge queue builds consume this job's exact-head binary
+    # artifact instead of racing the publication of a content-addressed image.
+    # Produce it for desktop-only changes as well as platform E2E changes.
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:

@@ -128,6 +128,22 @@ function hasOversizedLogo(interfaceData?: PluginInterface | null): boolean {
   )
 }
 
+function persistableMarketplaceManifest(
+  item: PluginMarketplaceItem,
+  marketplaces: PluginMarketplaceCacheSnapshot['marketplaces']
+): Record<string, unknown> {
+  const manifest = slimPluginManifestForCache(item.manifest)
+  // Earlier inventory compaction omitted the per-plugin path but preserved the
+  // declared marketplace source. Restore that source when upgrading the cache.
+  if (item.sourceProvider === 'codex' && !manifest.marketplacePath) {
+    const source = marketplaces.find(
+      marketplace => marketplace.kind === 'local' && marketplace.id === manifest.marketplaceId
+    )
+    if (source?.path) manifest.marketplacePath = source.path
+  }
+  return manifest
+}
+
 function persistableComponents(components: InstalledPluginComponents): InstalledPluginComponents {
   // Preserve invocation and presentation metadata across restart. Runtime MCP
   // server configuration remains outside durable browser storage.
@@ -158,7 +174,7 @@ function toPersistedSnapshot(next: PluginMarketplaceCacheSnapshot): PluginMarket
       ...item,
       interface: slimInterface(item.interface),
       components: persistableComponents(item.components),
-      manifest: slimPluginManifestForCache(item.manifest),
+      manifest: persistableMarketplaceManifest(item, next.marketplaces),
     })),
     installedPlugins: next.installedPlugins.map(plugin => ({
       ...plugin,
@@ -656,6 +672,7 @@ export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): strin
         typeof item.manifest?.availability === 'string' ? item.manifest.availability : '',
         typeof item.manifest?.disabledReason === 'string' ? item.manifest.disabledReason : '',
         typeof item.manifest?.installPolicy === 'string' ? item.manifest.installPolicy : '',
+        typeof item.manifest?.marketplacePath === 'string' ? item.manifest.marketplacePath : '',
         item.localPersonalSource?.marketplacePath ?? '',
         item.localPersonalSource?.pluginName ?? '',
         pluginComponentsSignature(item.components),

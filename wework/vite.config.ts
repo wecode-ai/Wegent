@@ -2,11 +2,13 @@ import path from 'path'
 import fs from 'fs'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
-import { createLogger, defineConfig, type Plugin } from 'vite'
+import { createLogger, defineConfig, normalizePath, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
 import { excalidrawAssets } from './vite/excalidrawAssets'
+import { createInitialRendererChunk } from './vite/initialRendererChunk'
+import { attachDshUiEntryStylesheets, type DshUiOutput } from './vite/dshUiEntryStylesheets'
 
 function normalizeBackendUrl(value: string): string {
   const url = new URL(value)
@@ -68,9 +70,13 @@ const logger = createLogger()
 const defaultWarn = logger.warn.bind(logger)
 const browserExternalPackages = ['/avsc/', '/ag-psd/', '/jszip/', '/@ljheee/xmind-parser/']
 
-function preserveDshUiEntryExports() {
+function preserveDshUiEntryExports(): Plugin {
+  let base = appBasePath
   return {
     name: 'wework-preserve-dsh-ui-entry-exports',
+    configResolved(config) {
+      base = config.base
+    },
     options(options: {
       preserveEntrySignatures?: false | 'strict' | 'allow-extension' | 'exports-only'
     }) {
@@ -79,28 +85,28 @@ function preserveDshUiEntryExports() {
         preserveEntrySignatures: 'strict' as const,
       }
     },
-    generateBundle(
-      _options: unknown,
-      bundle: Record<
-        string,
-        {
-          exports?: string[]
-          isEntry?: boolean
-          name?: string
-          type: 'asset' | 'chunk'
-        }
-      >
-    ) {
-      for (const output of Object.values(bundle)) {
-        if (
-          output.type === 'chunk' &&
-          output.isEntry &&
-          output.name?.startsWith('wework-ui-') &&
-          !output.exports?.includes('default')
-        ) {
-          throw new Error(`DSH UI entry "${output.name}" must preserve its default export`)
-        }
-      }
+    generateBundle(_options: unknown, bundle: Record<string, DshUiOutput>) {
+      attachDshUiEntryStylesheets(bundle)
+    },
+    transformIndexHtml: {
+      order: 'post',
+      handler(_html, context) {
+        const coreApp = Object.values(context.bundle ?? {}).find(
+          entry => entry.type === 'chunk' && entry.isEntry && entry.name === 'wework-ui-core-apps'
+        )
+        if (!coreApp) return
+        return [
+          {
+            tag: 'link',
+            attrs: {
+              rel: 'modulepreload',
+              crossorigin: '',
+              href: `${base}${coreApp.fileName}`,
+            },
+            injectTo: 'head',
+          },
+        ]
+      },
     },
   }
 }
@@ -123,8 +129,11 @@ export default defineConfig({
     fileViewerRenderers({
       preset: 'auto',
       autoPresets: ['office', 'lite', 'engineering'],
+      // Preview components provide presets explicitly when they are opened.
+      inject: false,
       copyAssets: process.env.VITEST !== 'true',
-      chunkStrategy: 'renderer',
+      // Forced renderer chunks also capture Vite's shared preload helper.
+      chunkStrategy: 'none',
     }),
   ],
   define: {
@@ -140,8 +149,7 @@ export default defineConfig({
     include: ['mermaid', 'plantuml-encoder'],
   },
   build: {
-    // File-viewer renderers are split into dedicated chunks; the desktop shell
-    // intentionally remains a single entry bundle.
+    // Let the bundler retain dynamic-import boundaries for optional viewers.
     chunkSizeWarningLimit: 5_000,
     rolldownOptions: {
       input: {
@@ -205,6 +213,20 @@ export default defineConfig({
         ),
       },
       output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: createInitialRendererChunk(
+                normalizePath(path.resolve(__dirname, 'src/main.tsx'))
+              ),
+            },
+            {
+              name: 'shared-icons',
+              test: /node_modules[\\/]lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/]/,
+              minShareCount: 2,
+            },
+          ],
+        },
         entryFileNames: chunk =>
           chunk.name.startsWith('wework-ui-') ? 'plugins/[name].js' : 'assets/[name]-[hash].js',
       },

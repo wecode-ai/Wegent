@@ -614,12 +614,18 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   fail "Wework desktop builds must reuse content-addressed artifacts and shared Rust runtimes"
 fi
 
+windows_build_section="$(sed -n '/^  build-wework-desktop-windows-core-e2e:/,/^  wework-desktop-windows-core-e2e:/p' "$workflow_dir/wework-e2e.yml")"
+if [[ "$windows_build_section" != *'WEWORK_EXECUTOR_PROFILE: release'* ]]; then
+  fail "Windows desktop startup verification must use the released Executor profile"
+fi
+
 bash "$script_dir/test-wework-core-e2e-runtimes.sh"
 
 bash "$script_dir/test-build-macos-e2e-runtimes.sh"
 bash "$script_dir/test-macos-e2e-runtime-oci.sh"
 bash "$script_dir/test-wework-macos-e2e-build.sh"
 bash "$script_dir/test-wework-core-e2e-build-oci.sh"
+bash "$script_dir/test-archive-wework-core-e2e-build.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"
 bash "$script_dir/test-restore-oci-runtime-binary.sh"
 bash "$script_dir/test-download-actions-artifact.sh"

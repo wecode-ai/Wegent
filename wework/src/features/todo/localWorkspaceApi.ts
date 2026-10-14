@@ -1,4 +1,7 @@
-import { cloudRunnerModels, resolveRunnerSelection } from '@wegent/collaboration'
+import {
+  cloudRunnerModels,
+  resolveRunnerSelection,
+} from '@wegent/collaboration/agent-form/runnerRouting'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
   mapAutomationExecutionCatalog,

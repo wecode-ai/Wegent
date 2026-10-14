@@ -1030,10 +1030,13 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
     let index_path = root.join("runtime-work").join("index.json");
     let queue_path = root.join("runtime-work").join("turn-queue.json");
     initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
-    handler.turn_queue_path = Arc::new(queue_path.clone());
+    let handler = RuntimeWorkRpcHandler::new_with_runtime_storage(
+        "device-1".to_owned(),
+        "/bin/false",
+        RuntimeWorkStore::new(index_path.clone()),
+        WorktreeManager::new(root.join("runtime-work").join("worktrees.json")),
+        queue_path.clone(),
+    );
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -1078,7 +1081,19 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
         initial_thread_goal: None,
     }]);
     write_runtime_turn_queue(&queue_path, &interrupted).unwrap();
-    handler.store = RuntimeWorkStore::new(index_path);
+    let handler = RuntimeWorkRpcHandler::new_with_runtime_storage(
+        "device-1".to_owned(),
+        "/bin/false",
+        RuntimeWorkStore::new(index_path),
+        WorktreeManager::new(root.join("runtime-work").join("worktrees.json")),
+        queue_path.clone(),
+    );
+    assert!(handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .queued_turns
+        .is_empty());
     assert!(handler.reconcile_worktrees_once().await);
 
     let task = handler
@@ -6830,6 +6845,232 @@ fn context_compaction_cache_preserves_started_and_completed_outcomes() {
             .is_empty());
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+fn goal_recovery_handler(root: &Path, event_tx: broadcast::Sender<Value>) -> RuntimeWorkRpcHandler {
+    let mut handler = RuntimeWorkRpcHandler::new_with_runtime_storage(
+        "device-1".to_owned(),
+        "/bin/false",
+        RuntimeWorkStore::new(root.join("index.json")),
+        WorktreeManager::new(root.join("worktrees.json")),
+        root.join("turn-queue.json"),
+    );
+    handler.event_tx = Some(event_tx);
+    handler.task_store_path = Arc::new(root.join("tasks.db"));
+    handler
+        .startup_recovery_deferred
+        .store(true, Ordering::Release);
+    handler
+}
+
+async fn active_goal_recovery_fixture(
+    root: &Path,
+    task_id: &str,
+    event_tx: broadcast::Sender<Value>,
+) -> (RuntimeWorkRpcHandler, ExecutionRequest, u64) {
+    let handler = goal_recovery_handler(root, event_tx);
+    let request = ExecutionRequest {
+        task_id: task_id.to_owned(),
+        subtask_id: "turn-active-goal".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        request.task_id.clone(),
+        "/tmp/project".to_owned(),
+        "Active Goal".to_owned(),
+    );
+    link.goal_status = Some("active".to_owned());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, &request.task_id);
+    handler.active_goal_turns.lock().unwrap().insert(
+        request.task_id.clone(),
+        SpawnTurnRequest {
+            local_task_id: request.task_id.clone(),
+            runtime: "codex".to_owned(),
+            request: request.clone(),
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: Some("thread-goal".to_owned()),
+            initial_thread_goal: None,
+        },
+    );
+    handler.persist_turn_queue(VecDeque::new()).await.unwrap();
+    (handler, request, execution_id)
+}
+
+#[test]
+fn recoverable_app_server_interruption_preserves_active_goal_and_releases_live_execution() {
+    for (error, verify_restart) in [
+        (crate::agents::CODEX_APP_SERVER_EXECUTOR_SHUTDOWN, true),
+        (crate::agents::CODEX_APP_SERVER_PROCESS_EXITED, true),
+        (crate::agents::CODEX_APP_SERVER_PROCESS_EXITED, false),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (event_tx, mut event_rx) = broadcast::channel(4);
+                let (handler, request, execution_id) =
+                    active_goal_recovery_fixture(root.path(), "task-active-goal", event_tx).await;
+                handler.handle_turn_result(
+                    &request.task_id,
+                    execution_id,
+                    &request,
+                    None,
+                    Err(error.to_owned()),
+                );
+                let task = handler.local_task_link(&request.task_id).unwrap();
+                assert_eq!(task.goal_status.as_deref(), Some("active"));
+                assert_ne!(task.status, "succeeded");
+                if error == crate::agents::CODEX_APP_SERVER_EXECUTOR_SHUTDOWN {
+                    assert!(event_rx.try_recv().is_err());
+                } else {
+                    assert_eq!(event_rx.try_recv().unwrap()["event"], "response.failed");
+                    assert_eq!(task.status, "failed");
+                    assert!(!task.running);
+                    assert!(
+                        !handler.is_current_local_task_execution(&request.task_id, execution_id)
+                    );
+                    assert_eq!(
+                        task.goal_execution_status.as_deref(),
+                        Some("needsAttention")
+                    );
+                }
+                let persisted =
+                    super::turns::read_runtime_turn_state(&handler.turn_queue_path).unwrap();
+                let goal = persisted.active_goal_turns.get(&request.task_id).unwrap();
+                assert_eq!(goal.resume_thread_id.as_deref(), Some("thread-goal"));
+                assert!(!goal.request.extra.contains_key(GOAL_NEEDS_ATTENTION_MARKER));
+                if verify_restart {
+                    let (sender, _) = broadcast::channel(4);
+                    let restarted = goal_recovery_handler(root.path(), sender);
+                    assert_eq!(
+                        restarted
+                            .local_task_link(&request.task_id)
+                            .unwrap()
+                            .goal_execution_status
+                            .as_deref(),
+                        Some("recovering"),
+                    );
+                    {
+                        let scheduler = restarted.turn_scheduler.lock().unwrap();
+                        let restored = scheduler
+                            .queued_turns
+                            .front()
+                            .expect("next Executor must recover interrupted Goal");
+                        assert_eq!(restored.local_task_id, request.task_id);
+                        assert_eq!(restored.resume_thread_id.as_deref(), Some("thread-goal"));
+                        assert_eq!(
+                            restored.request.extra.get(RESUME_GOAL_ONLY_MARKER),
+                            Some(&Value::Bool(true))
+                        );
+                    }
+                    assert!(!restarted
+                        .resume_goal_needing_attention(&request.task_id)
+                        .await
+                        .unwrap());
+                } else {
+                    {
+                        let mut scheduler = handler.turn_scheduler.lock().unwrap();
+                        scheduler.max_concurrent_tasks = 1;
+                        scheduler.active_tasks = 1;
+                        scheduler
+                            .active_task_ids
+                            .insert("capacity-blocker".to_owned());
+                    }
+                    assert!(handler
+                        .resume_goal_needing_attention(&request.task_id)
+                        .await
+                        .unwrap());
+                    assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 1);
+                    assert!(!handler
+                        .resume_goal_needing_attention(&request.task_id)
+                        .await
+                        .unwrap());
+                    assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 1);
+                }
+            });
+    }
+}
+
+#[tokio::test]
+async fn goal_recovery_constructors_isolate_persisted_queues_and_task_state() {
+    let first_root = tempfile::tempdir().unwrap();
+    let second_root = tempfile::tempdir().unwrap();
+    let (sender, _) = broadcast::channel(4);
+    let (first, first_request, first_execution) =
+        active_goal_recovery_fixture(first_root.path(), "first-goal", sender).await;
+    let (sender, _) = broadcast::channel(4);
+    let (second, second_request, second_execution) =
+        active_goal_recovery_fixture(second_root.path(), "second-goal", sender).await;
+    for (handler, request, execution) in [
+        (&first, &first_request, first_execution),
+        (&second, &second_request, second_execution),
+    ] {
+        handler.handle_turn_result(
+            &request.task_id,
+            execution,
+            request,
+            None,
+            Err(crate::agents::CODEX_APP_SERVER_PROCESS_EXITED.to_owned()),
+        );
+    }
+    let (sender, _) = broadcast::channel(4);
+    let second_restarted = goal_recovery_handler(second_root.path(), sender);
+    assert_eq!(
+        first
+            .local_task_link("first-goal")
+            .unwrap()
+            .goal_execution_status
+            .as_deref(),
+        Some("needsAttention")
+    );
+    assert!(first.local_task_link("second-goal").is_none());
+    assert_eq!(
+        second_restarted
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .iter()
+            .map(|turn| turn.local_task_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["second-goal"],
+    );
+    let (sender, _) = broadcast::channel(4);
+    let first_restarted = goal_recovery_handler(first_root.path(), sender);
+    assert_eq!(
+        first_restarted
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .iter()
+            .map(|turn| turn.local_task_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["first-goal"],
+    );
+    assert!(first_restarted.local_task_link("second-goal").is_none());
+    assert!(second_restarted.local_task_link("first-goal").is_none());
+    assert_eq!(
+        second_restarted
+            .local_task_link("second-goal")
+            .unwrap()
+            .goal_execution_status
+            .as_deref(),
+        Some("recovering")
+    );
+}
+
+#[test]
+fn business_errors_are_not_runtime_restart_interruptions() {
+    assert!(!super::turns::interrupted_for_runtime_restart(&Err(
+        "model request failed".to_owned(),
+    )));
 }
 
 fn decision_proxy_handler(

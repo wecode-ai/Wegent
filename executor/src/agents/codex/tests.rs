@@ -7,6 +7,80 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn turn_start_rpc_diagnostics_require_the_existing_e2e_flag_and_exact_method() {
+    assert!(turn_start_rpc_diagnostic_enabled(
+        "turn/start",
+        Some("true")
+    ));
+    for flag in [None, Some("false"), Some("1"), Some("TRUE")] {
+        assert!(!turn_start_rpc_diagnostic_enabled("turn/start", flag));
+    }
+    for method in ["thread/start", "turn/start/private-value", "initialize"] {
+        assert!(!turn_start_rpc_diagnostic_enabled(method, Some("true")));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn turn_start_rpc_diagnostics_preserve_real_stdio_response_and_error() {
+    use tokio::io::AsyncBufReadExt;
+
+    for diagnostic in [false, true] {
+        for response in [
+            json!({"id":7,"result":{"accepted":true}}),
+            json!({"id":7,"error":{"code":-32602,"message":"synthetic invalid turn"}}),
+        ] {
+            let mut child = Command::new("sh")
+                .args([
+                    "-c",
+                    "IFS= read -r line; printf '%s\\n' \"$1\"",
+                    "rpc-fixture",
+                ])
+                .arg(response.to_string())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let mut stdout = tokio::io::BufReader::new(child.stdout.take().unwrap());
+            let pending = Arc::new(Mutex::new(HashMap::new()));
+            let handle = CodexAppServerHandle {
+                stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
+                pending: pending.clone(),
+                notifications: CodexNotificationHub::new(),
+            };
+            let (tx, rx) = oneshot::channel();
+            pending.lock().await.insert(7, tx);
+            let reader = tokio::spawn(async move {
+                let mut line = String::new();
+                stdout.read_line(&mut line).await.unwrap();
+                let message: Value = serde_json::from_str(&line).unwrap();
+                pending
+                    .lock()
+                    .await
+                    .remove(&7)
+                    .unwrap()
+                    .send(response_result(message))
+                    .unwrap();
+            });
+            let expected = response_result(response);
+            let result = CodexAppServerClient::send_request_and_wait(
+                "turn/start",
+                json!({"privateFixture":"must-not-appear-in-phase-fields"}),
+                5,
+                (7, handle.clone(), rx),
+                diagnostic.then(Instant::now),
+            )
+            .await;
+            assert_eq!(result, expected);
+            assert!(handle.pending.lock().await.is_empty());
+            reader.await.unwrap();
+            assert!(child.wait().await.unwrap().success());
+        }
+    }
+}
+
+#[test]
 fn named_home_rpc_clients_preserve_process_isolation() {
     let _environment = environment::LaunchEnvironment::new();
     let root = PathBuf::from(env::var("WEGENT_WORKBENCH_HOME").unwrap());
@@ -100,6 +174,7 @@ fn spawn_idle_app_server_child() -> Child {
         command.args(["-c", "sleep 60"]);
         command
     };
+    configure_codex_app_server_process_group(&mut command);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -116,10 +191,14 @@ async fn terminating_shared_app_servers_releases_every_registered_process() {
     let state = shared_codex_app_server_state("codex-app-server-termination-test");
     state.lock().await.process = Some(CodexAppServerProcess {
         child,
+        terminating: false,
+        termination_error: None,
+        termination_task: None,
         stdin: Arc::new(Mutex::new(stdin)),
         pending: Arc::new(Mutex::new(HashMap::new())),
         notifications: CodexNotificationHub::new(),
         reader_task: tokio::spawn(async {}),
+        teardown_barrier: None,
     });
 
     let terminated = terminate_shared_codex_app_servers().await;
@@ -191,7 +270,13 @@ async fn idle_restart_rejects_active_goal_recovery_before_a_turn_is_reported() {
 
     let result = client.restart_if_idle().await;
 
-    assert_eq!(result, Err((1, 0)));
+    assert_eq!(
+        result,
+        Err(CodexIdleMutationError::Busy {
+            active_turn_count: 1,
+            pending_request_count: 0
+        })
+    );
     client.mark_thread_idle("recovering-goal", false).await;
     assert_eq!(client.restart_if_idle().await, Ok(()));
 }
@@ -498,9 +583,13 @@ fn environment_change_diagnostics_report_keys_without_values() {
 
 #[test]
 fn shared_notification_lag_is_recoverable() {
-    let notification =
-        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None, false)
-            .expect("lagged notifications should keep the turn alive");
+    let notification = shared_notification_result(
+        Err(broadcast::error::RecvError::Lagged(37)),
+        None,
+        false,
+        false,
+    )
+    .expect("lagged notifications should keep the turn alive");
 
     assert!(matches!(notification, SharedNotification::Lagged(37)));
 }
@@ -508,7 +597,7 @@ fn shared_notification_lag_is_recoverable() {
 #[test]
 fn closed_notification_stream_reports_executor_shutdown() {
     assert!(matches!(
-        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true),
+        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true, false),
         Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
     ));
 }
@@ -5345,10 +5434,132 @@ async fn named_home_action_protects_only_its_request_scoped_process() {
                     .unwrap()
                     .restart_if_idle()
                     .await,
-                Err((1, 0))
+                Err(CodexIdleMutationError::Busy {
+                    active_turn_count: 1,
+                    pending_request_count: 0
+                })
             );
             assert_eq!(client.restart_if_idle().await, Ok(()));
         })
         .await;
     assert_eq!(scoped.restart_if_idle().await, Ok(()));
 }
+
+async fn read_goal_disconnect_case(
+    goal_status: Option<&str>,
+    process_exit: bool,
+    shutdown: bool,
+    completed: bool,
+) -> Result<ExecutionOutcome, String> {
+    let client =
+        CodexAppServerClient::new(format!("unused-test-app-server-{}", uuid::Uuid::new_v4()));
+    client.state.lock().await.executor_shutdown_requested = shutdown;
+    let mut state = CodexRunState::default();
+    state.set_root_thread_id("thread-goal");
+    if let Some(status) = goal_status {
+        state.set_goal_status(status);
+    }
+    let (sender, mut receiver) = broadcast::channel(4);
+    if completed {
+        sender
+            .send(json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-goal",
+                    "turn": {"id": "turn-previous", "status": "completed"}
+                }
+            }))
+            .unwrap();
+    }
+    if completed && goal_status == Some("active") {
+        sender
+            .send(json!({
+                "method": "turn/started",
+                "params": {
+                    "threadId": "thread-goal",
+                    "turn": {"id": "turn-continuation", "status": "inProgress"}
+                }
+            }))
+            .unwrap();
+    }
+    if process_exit {
+        sender
+            .send(json!({
+                "method": "codex/app-server/exited",
+                "params": {"message": "test process exited"}
+            }))
+            .unwrap();
+    }
+    drop(sender);
+    read_shared_turn_notifications(
+        &client,
+        &mut receiver,
+        "thread-goal",
+        &mut state,
+        5,
+        Instant::now() + Duration::from_secs(5),
+        SharedTurnNotificationOptions {
+            overload_turn_recovering: None,
+            overload_continuation_params: json!({}),
+            active_turn_id: Some("turn-previous".to_owned()),
+            expected_client_user_message_id: None,
+            notifications: None,
+            cancellation: None,
+            request_user_input_answers: None,
+            active_turn_started: None,
+            active_turn_finished: None,
+            wait_for_goal_continuation: true,
+            auto_approve_mcp_tool_calls: false,
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn goal_read_loop_process_exit_does_not_reuse_completed_turn() {
+    let result = read_goal_disconnect_case(Some("active"), true, false, true).await;
+    assert!(matches!(result, Err(error) if error == CODEX_APP_SERVER_PROCESS_EXITED));
+}
+
+#[tokio::test]
+async fn goal_read_loop_closed_stream_does_not_reuse_completed_turn() {
+    let result = read_goal_disconnect_case(Some("active"), false, false, true).await;
+    assert!(matches!(result, Err(error) if error == CODEX_APP_SERVER_PROCESS_EXITED));
+}
+
+#[tokio::test]
+async fn goal_read_loop_preserves_real_terminal_completion() {
+    for status in [None, Some("complete")] {
+        for exit in [false, true] {
+            assert!(matches!(
+                read_goal_disconnect_case(status, exit, false, true).await,
+                Ok(ExecutionOutcome::Completed { .. })
+            ));
+        }
+    }
+}
+
+#[tokio::test]
+async fn goal_read_loop_shutdown_preserves_interruption_after_completed_turn() {
+    for exit in [false, true] {
+        for completed in [false, true] {
+            assert!(matches!(
+                read_goal_disconnect_case(Some("active"), exit, true, completed).await,
+                Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+            ));
+        }
+    }
+}
+
+#[tokio::test]
+async fn goal_read_loop_interruption_without_previous_completion() {
+    for exit in [false, true] {
+        assert!(matches!(
+            read_goal_disconnect_case(Some("active"), exit, false, false).await,
+            Err(error) if error == CODEX_APP_SERVER_PROCESS_EXITED
+        ));
+    }
+}
+
+#[path = "tests/lifecycle.rs"]
+pub(super) mod lifecycle;

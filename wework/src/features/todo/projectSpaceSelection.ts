@@ -4,7 +4,7 @@ import {
   type CloudProject,
   type CloudTaskContext,
 } from '@/api/deliveries'
-import { canEditCollaborationIssue } from '@wegent/collaboration'
+import { canEditCollaborationIssue } from '@wegent/collaboration/permissions'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
 

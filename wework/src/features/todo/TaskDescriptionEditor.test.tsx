@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { detectInitialImeCodeBlockDuplicate, detectInitialImeDuplicate } from './imeComposition'
-import { TaskDescriptionEditor } from './TaskDescriptionEditor'
+import { TaskDescriptionEditor } from './TaskDescriptionEditorContent'
 import { normalizeTaskDescription } from './taskDescription'
 
 describe('TaskDescriptionEditor', () => {

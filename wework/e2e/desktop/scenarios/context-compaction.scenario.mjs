@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { selectE2EModel } from '../modules/shared.mjs'
 import { createInterruptedCompactionScenario } from './interrupted-context-compaction.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -258,6 +259,7 @@ export function createDesktopScenario({
       try {
         await createLocalProject(control, workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs)
         await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+        await selectE2EModel(control)
         await control.command('fill', COMPOSER_SELECTOR, { value: INITIAL_PROMPT })
         await control.command(
           'waitFor',

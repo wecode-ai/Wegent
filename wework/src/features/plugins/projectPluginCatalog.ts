@@ -1,10 +1,10 @@
 import {
   buildInstalledPluginProjectCatalog,
   mergeProjectPluginCatalogs,
-} from '@wegent/collaboration'
+} from '@wegent/collaboration/plugin-catalog'
 import type { InstalledPlugin, LocalDeviceApp, RuntimeProjectPluginRef } from '@/types/api'
 
-export { mergeProjectPluginCatalogs } from '@wegent/collaboration'
+export { mergeProjectPluginCatalogs } from '@wegent/collaboration/plugin-catalog'
 
 function normalized(value: string | null | undefined): string {
   return (value ?? '').trim().toLowerCase()

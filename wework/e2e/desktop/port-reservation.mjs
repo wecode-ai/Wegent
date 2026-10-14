@@ -14,17 +14,34 @@ async function claimPort(registryDir, port) {
   }
 }
 
-export async function reservePort(registryDir = process.env.WEWORK_E2E_PORT_REGISTRY_DIR) {
+export async function reserveListeningPort(registryDir = process.env.WEWORK_E2E_PORT_REGISTRY_DIR) {
   while (true) {
-    const server = createServer()
+    const server = createServer(socket => socket.destroy())
     await new Promise((resolvePromise, reject) => {
       server.once('error', reject)
       server.listen(0, '127.0.0.1', resolvePromise)
     })
     const address = server.address()
     assert.ok(address && typeof address !== 'string', 'Unable to reserve an E2E port')
-    const claimed = await claimPort(registryDir, address.port)
-    await new Promise(resolvePromise => server.close(resolvePromise))
-    if (claimed) return address.port
+    let released
+    const release = () =>
+      (released ??= new Promise((resolvePromise, reject) => {
+        server.close(error => (error ? reject(error) : resolvePromise()))
+      }))
+    let claimed
+    try {
+      claimed = await claimPort(registryDir, address.port)
+    } catch (error) {
+      await release()
+      throw error
+    }
+    if (claimed) return { port: address.port, release }
+    await release()
   }
+}
+
+export async function reservePort(registryDir = process.env.WEWORK_E2E_PORT_REGISTRY_DIR) {
+  const reservation = await reserveListeningPort(registryDir)
+  await reservation.release()
+  return reservation.port
 }

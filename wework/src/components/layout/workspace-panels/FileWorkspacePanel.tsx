@@ -37,7 +37,7 @@ import type {
   WorkspaceTarget,
   WorkspaceTextFileResponse,
 } from '@/types/workspace-files'
-import { WorkspaceFilePreview } from './WorkspaceFilePreview'
+import { WorkspaceFilePreview } from './LazyWorkspaceFiles'
 import { WorkspaceFileToolbar, WorkspaceFileRootSelector } from './WorkspaceFileToolbar'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 import { useWorkspaceFileReveal } from './useWorkspaceFileReveal'

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { EventEmitter } from 'node:events'
+import { EventEmitter, once } from 'node:events'
+import { createServer, get } from 'node:http'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -203,10 +204,137 @@ test('stops SSE delivery when the browser disconnects without writing after end'
 
   streamTerminalEvents(request, response, runtime, 0)
   assert.equal(response.writes.length, 1)
-  request.emit('close')
+  response.emit('close')
   assert.equal(disposed, true)
 
   response.writableEnded = true
   registeredListener({ sequence: 1, event: 'terminal.output', payload: {} })
   assert.equal(response.writes.length, 1)
 })
+
+test(
+  'keeps SSE delivery after the HTTP request completes until the response disconnects',
+  { timeout: 5000 },
+  async t => {
+    let listener
+    let disposed = false
+    let completeRequest
+    let responseClosed
+    const lifecycle = []
+    const requestCompleted = new Promise(resolve => {
+      completeRequest = resolve
+    })
+    const responseCompleted = new Promise(resolve => {
+      responseClosed = resolve
+    })
+    const server = createServer((request, response) => {
+      streamTerminalEvents(
+        request,
+        response,
+        {
+          replay: () => [],
+          listen(next) {
+            listener = next
+            return () => {
+              disposed = true
+            }
+          },
+        },
+        0,
+        status => lifecycle.push(status)
+      )
+      request.once('close', () => completeRequest(request.complete))
+      response.once('close', responseClosed)
+      request.resume()
+    })
+    let client
+    t.after(async () => {
+      client?.destroy()
+      server.closeAllConnections()
+      await new Promise(resolve => server.close(resolve))
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    client = await new Promise((resolve, reject) => {
+      get(`http://127.0.0.1:${server.address().port}/events`, resolve).once('error', reject)
+    })
+    const chunks = []
+    client.on('data', chunk => chunks.push(chunk.toString()))
+    assert.equal(await requestCompleted, true)
+    assert.equal(disposed, false)
+    assert.deepEqual(lifecycle, ['opened'])
+    await once(client, 'data')
+    const delivered = once(client, 'data')
+    listener({ sequence: 1, event: 'terminal.output', payload: { data: 'live-output' } })
+    await delivered
+    assert.match(chunks.join(''), /live-output/)
+    client.destroy()
+    await responseCompleted
+    assert.equal(disposed, true)
+    assert.deepEqual(lifecycle, ['opened', 'closed'])
+  }
+)
+
+test('terminal diagnostics retain byte counts and original input failures without private data', async () => {
+  const pty = new FakePty()
+  const diagnostics = []
+  const runtime = new TerminalRuntime({
+    spawn: () => pty,
+    diagnostic: event => diagnostics.push(event),
+  })
+  const sessionId = 'private-session-secret'
+  try {
+    await runtime.request('terminal.start', { session_id: sessionId, cwd: process.cwd() })
+    pty.emitData('private-output-secret')
+    await runtime.request('terminal.snapshot', { session_id: sessionId })
+    await runtime.request('terminal.input', { session_id: sessionId, data: 'private-input-secret' })
+    const failure = new Error('private-failure-secret')
+    pty.write = () => {
+      throw failure
+    }
+    await assert.rejects(
+      runtime.request('terminal.input', { session_id: sessionId, data: 'private-input-secret' }),
+      error => error === failure
+    )
+    assert.deepEqual(
+      diagnostics.map(event => event.phase),
+      ['output', 'snapshot', 'input-started', 'input-completed', 'input-started', 'input-failed']
+    )
+    assert.equal(diagnostics[0].bytes, Buffer.byteLength('private-output-secret'))
+    assert.equal(diagnostics[1].sequence, 1)
+    assert.ok(diagnostics.every(event => event.sessionSequence === 1))
+    assert.doesNotMatch(JSON.stringify(diagnostics), /private|secret|session_id|cwd|data/)
+  } finally {
+    runtime.dispose()
+  }
+})
+
+for (const [target, event] of [
+  ['request', 'aborted'],
+  ['response', 'finish'],
+  ['response', 'error'],
+]) {
+  test(`cleans the terminal SSE subscription once on ${target} ${event}`, () => {
+    const request = new EventEmitter()
+    const response = new EventEmitter()
+    Object.assign(response, { writeHead() {}, write() {} })
+    let disposalCount = 0
+    const lifecycle = []
+    streamTerminalEvents(
+      request,
+      response,
+      {
+        replay: () => [],
+        listen: () => () => {
+          disposalCount++
+        },
+      },
+      0,
+      status => lifecycle.push(status)
+    )
+    ;(target === 'request' ? request : response).emit(event)
+    response.emit('close')
+    assert.equal(disposalCount, 1)
+    assert.deepEqual(lifecycle, ['opened', 'closed'])
+  })
+}

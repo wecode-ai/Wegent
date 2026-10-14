@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 
 import { processGroupIsAlive, processIsAlive } from './process-lifecycle.mjs'
@@ -16,7 +16,7 @@ const CACHE_DIRECTORY_NAMES = new Set([
   'GrShaderCache',
   'ShaderCache',
 ])
-const RETAINED_TOP_LEVEL_DIRECTORIES = new Set(['electron-user-data'])
+const RETAINED_TOP_LEVEL_DIRECTORIES = new Set(['electron-user-data', 'smart-app-verification'])
 const TRANSIENT_TOP_LEVEL_FILES = new Set(['wegent-executor', 'wegent-executor.exe'])
 const TRANSIENT_TOP_LEVEL_ARCHIVE_PATTERN = /\.(?:tar(?:\.(?:gz|zst))?|tgz|zip)$/iu
 const REBUILDABLE_USER_DATA_DIRECTORY_NAMES = new Set(['managed-components', 'managed-runtimes'])
@@ -206,7 +206,24 @@ export async function clearDesktopE2EResultActive(resultDirectory) {
   await rm(join(resultDirectory, ACTIVE_MARKER), { force: true })
 }
 
+async function preserveSmartAppVerification(resultDirectory) {
+  for (const entry of await directoryEntries(resultDirectory)) {
+    if (!entry.isDirectory() || RETAINED_TOP_LEVEL_DIRECTORIES.has(entry.name)) continue
+    const source = join(resultDirectory, entry.name, 'test-results', 'smart-app')
+    try {
+      const report = await readFile(join(source, 'verification.json'))
+      const destination = join(resultDirectory, 'smart-app-verification', entry.name)
+      await mkdir(destination, { recursive: true })
+      await writeFile(join(destination, 'verification.json'), report)
+      await cp(join(source, 'logs'), destination, { recursive: true })
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+  }
+}
+
 export async function compactDesktopE2EResult(resultDirectory) {
+  await preserveSmartAppVerification(resultDirectory)
   let removed = 0
   for (const entry of await directoryEntries(resultDirectory)) {
     const removeDirectory = entry.isDirectory() && !RETAINED_TOP_LEVEL_DIRECTORIES.has(entry.name)

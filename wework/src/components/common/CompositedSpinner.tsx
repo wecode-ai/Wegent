@@ -1,1 +1,1 @@
-export { CompositedSpinner } from '@wegent/collaboration'
+export { CompositedSpinner } from '@wegent/collaboration/issue-detail/CompositedSpinner'

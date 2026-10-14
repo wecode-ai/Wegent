@@ -430,6 +430,48 @@ async fn reclones_a_workspace_left_behind_by_an_interrupted_clone() {
     );
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn clones_execution_repositories_beyond_the_windows_legacy_path_limit() {
+    use std::os::windows::ffi::OsStrExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let source = create_local_repository(directory.path(), "source", "payload.txt", "payload");
+    let parent = directory.path().join("environment");
+    let parent_length = parent.as_os_str().encode_wide().count();
+    // Git supports long files, but its Windows current-directory buffer is still MAX_PATH.
+    let target = parent.join("r".repeat(230_usize.checked_sub(parent_length + 1).unwrap()));
+    assert!(target.as_os_str().encode_wide().count() < 260);
+    assert!(
+        target
+            .join(".git/hooks/fsmonitor-watchman.sample")
+            .as_os_str()
+            .encode_wide()
+            .count()
+            > 260
+    );
+
+    clone_repo(
+        &ExecutionRequest::default(),
+        source.to_str().unwrap(),
+        &target,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(target.join("payload.txt")).unwrap(),
+        "payload"
+    );
+    let config = run_test_git(StdCommand::new("git").arg("-C").arg(&target).args([
+        "config",
+        "--get",
+        "core.longpaths",
+    ]));
+    assert!(config.status.success());
+    assert_eq!(String::from_utf8_lossy(&config.stdout).trim(), "true");
+}
+
 #[test]
 fn repo_name_supports_https_and_ssh_urls() {
     assert_eq!(

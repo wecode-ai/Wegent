@@ -18,7 +18,10 @@ use tokio::{
     sync::{Mutex, MutexGuard},
 };
 use wegent_executor::{
-    agents::{CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurnOptions},
+    agents::{
+        CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurnOptions,
+        CodexIdleMutationError,
+    },
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
 };
@@ -616,7 +619,7 @@ async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
     assert!(stdout.iter().any(|line| line["id"] == 1));
     assert!(stdout.iter().any(|line| line["method"] == "turn/completed"));
     assert!(stdout.iter().all(|line| line["received_at"].is_string()));
-    client.restart().await;
+    client.restart().await.unwrap();
     fs::remove_file(stdout_path).unwrap();
 
     assert_eq!(
@@ -980,7 +983,7 @@ async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
     wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            if matches!(client.restart_if_idle().await, Err((0, 1))) {
+            if matches!(client.restart_if_idle().await, Err(CodexIdleMutationError::Busy { active_turn_count: 0, pending_request_count: 1 })) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -989,7 +992,7 @@ async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
     .await
     .expect("pending app-server request should be observed");
 
-    client.restart().await;
+    client.restart().await.unwrap();
     let result = tokio::time::timeout(std::time::Duration::from_secs(1), pending_request)
         .await
         .expect("forced restart should settle the pending request")
@@ -1009,7 +1012,7 @@ async fn codex_app_server_proxy_restart_settles_in_flight_requests() {
     wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            if matches!(client.restart_if_idle().await, Err((0, 1))) {
+            if matches!(client.restart_if_idle().await, Err(CodexIdleMutationError::Busy { active_turn_count: 0, pending_request_count: 1 })) {
                 break;
             }
             tokio::task::yield_now().await;

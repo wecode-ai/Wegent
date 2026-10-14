@@ -126,7 +126,15 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         discard_endpoint(&endpoint);
     }
 
+    let runtime_started = Instant::now();
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
+    log_executor_event(
+        "project-space MCP runtime initialized",
+        &[(
+            "elapsed_ms",
+            runtime_started.elapsed().as_millis().to_string(),
+        )],
+    );
     let listener = StdTcpListener::bind("127.0.0.1:0")
         .map_err(|error| format!("failed to bind project-space MCP endpoint: {error}"))?;
     listener

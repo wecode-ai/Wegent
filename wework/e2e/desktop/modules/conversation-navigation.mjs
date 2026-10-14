@@ -879,30 +879,29 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
   await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-active.png')
 }
 
-async function verifyEnvironmentPanelScrollStability(control) {
+async function verifyEnvironmentPanelScrollStability(
+  control,
+  evidencePrefix = 'environment-panel-scroll'
+) {
   const scrollFrameSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-scroll-frame"]`
   const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
-  const environmentPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-container"]`
-  const environmentButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-button"]`
-  if (
-    Number(
-      await control.command(
-        'getElementCount',
-        `${environmentPanelSelector} [data-testid="environment-info-popover"]`
-      )
-    ) === 0
-  ) {
+  const dockedPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-container"]`
+  const popoverSelector = '[data-testid="environment-info-popover"]'
+  const environmentButtonSelector =
+    '[data-testid="workbench-main-header"] [data-testid="environment-info-button"]'
+  if (Number(await control.command('getElementCount', popoverSelector)) === 0) {
     await control.command('click', environmentButtonSelector, { visible: true })
   }
-  await control.command(
-    'waitFor',
-    `${environmentPanelSelector} [data-testid="environment-info-popover"]`,
-    {
-      visible: true,
-      stableMs: COMPOSER_READY_STABILITY_MS,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', popoverSelector, {
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  // Narrow desktop windows use a floating summary instead of the docked side panel.
+  const docked =
+    Number(await control.command('getElementCount', `${dockedPanelSelector} ${popoverSelector}`)) >
+    0
+  const environmentPanelSelector = docked ? dockedPanelSelector : popoverSelector
   const scrollerBeforeScroll = await getSingleElementMetrics(
     control,
     scrollerSelector,
@@ -930,13 +929,27 @@ async function verifyEnvironmentPanelScrollStability(control) {
       scroller: scrollerBeforeScroll,
     })}`
   )
-  assert.ok(
-    Math.abs(environmentPanelBeforeScroll.right - scrollFrameBeforeScroll.right) <= 1,
-    `The fixed environment panel was not aligned to the workbench right edge: ${JSON.stringify({
-      environmentPanel: environmentPanelBeforeScroll,
-      scrollFrame: scrollFrameBeforeScroll,
-    })}`
-  )
+  if (docked) {
+    assert.ok(
+      Math.abs(environmentPanelBeforeScroll.right - scrollFrameBeforeScroll.right) <= 1,
+      `The fixed environment panel was not aligned to the workbench right edge: ${JSON.stringify({
+        environmentPanel: environmentPanelBeforeScroll,
+        scrollFrame: scrollFrameBeforeScroll,
+      })}`
+    )
+  } else {
+    const viewport = await getSingleElementMetrics(control, 'html', 'The narrow desktop viewport')
+    assert.ok(
+      environmentPanelBeforeScroll.left >= 0 &&
+        environmentPanelBeforeScroll.right <= viewport.right &&
+        environmentPanelBeforeScroll.top >= 0 &&
+        environmentPanelBeforeScroll.bottom <= viewport.bottom,
+      `The floating environment summary exceeded the viewport: ${JSON.stringify({
+        environmentPanel: environmentPanelBeforeScroll,
+        viewport,
+      })}`
+    )
+  }
   const assertEnvironmentPanelDidNotMove = (metrics, description) => {
     for (const property of ['top', 'right', 'bottom', 'left', 'width', 'height']) {
       assert.ok(
@@ -945,7 +958,7 @@ async function verifyEnvironmentPanelScrollStability(control) {
       )
     }
   }
-  await captureVerificationScreenshot(control, 'environment-panel-scroll-01-before.png')
+  await captureVerificationScreenshot(control, `${evidencePrefix}-01-before.png`)
 
   const upwardScrollTop = Number(
     await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.15' })
@@ -965,7 +978,7 @@ async function verifyEnvironmentPanelScrollStability(control) {
     environmentPanelAfterUpwardScroll,
     'The environment panel moved with the upward conversation scroll'
   )
-  await captureVerificationScreenshot(control, 'environment-panel-scroll-02-upward.png')
+  await captureVerificationScreenshot(control, `${evidencePrefix}-02-upward.png`)
 
   const downwardScrollTop = Number(
     await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.75' })
@@ -1013,7 +1026,7 @@ async function verifyEnvironmentPanelScrollStability(control) {
       upwardScrollTop,
     })
   )
-  await captureVerificationScreenshot(control, 'environment-panel-scroll-03-downward.png')
+  await captureVerificationScreenshot(control, `${evidencePrefix}-03-downward.png`)
 }
 
 async function reopenCurrentTurnNavigationTask(

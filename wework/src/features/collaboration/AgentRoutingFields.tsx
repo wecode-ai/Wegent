@@ -1,4 +1,7 @@
-import { runnerModelKey, type RunnerEnvironment } from '@wegent/collaboration'
+import {
+  runnerModelKey,
+  type RunnerEnvironment,
+} from '@wegent/collaboration/agent-form/runnerRouting'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { useAgentRouting } from './useAgentRouting'
 

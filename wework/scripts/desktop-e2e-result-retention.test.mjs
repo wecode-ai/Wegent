@@ -115,6 +115,29 @@ describe('desktop E2E result retention', () => {
     await expectExists(join(resultDirectory, 'electron-user-data', 'Local Storage', 'payload'))
   })
 
+  test('preserves Smart app verification reports before removing their project', async () => {
+    const resultDirectory = await temporaryRoot()
+    const evidence = join(resultDirectory, 'development-app', 'test-results', 'smart-app')
+    await mkdir(join(evidence, 'logs'), { recursive: true })
+    await writeFile(join(evidence, 'verification.json'), '{"status":"failed"}')
+    await writeFile(join(evidence, 'logs', 'runtime.log'), 'Runtime failure')
+    await mkdir(join(evidence, 'logs', 'package'))
+    await writeFile(join(evidence, 'logs', 'package', 'runtime.log'), 'Package runtime failure')
+
+    await compactDesktopE2EResult(resultDirectory)
+
+    await expectMissing(join(resultDirectory, 'development-app'))
+    await expectExists(
+      join(resultDirectory, 'smart-app-verification', 'development-app', 'verification.json')
+    )
+    await expectExists(
+      join(resultDirectory, 'smart-app-verification', 'development-app', 'runtime.log')
+    )
+    await expectExists(
+      join(resultDirectory, 'smart-app-verification', 'development-app', 'package', 'runtime.log')
+    )
+  })
+
   test('prunes managed components after an interrupted desktop run', async () => {
     const resultRoot = await temporaryRoot()
     const resultDirectory = join(resultRoot, '2026-09-02T00-00-00-000Z-321')

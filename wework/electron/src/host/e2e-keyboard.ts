@@ -41,6 +41,20 @@ function requireAvailableContents(contents: WebContents) {
   }
 }
 
+export async function setE2EReducedMotion(
+  contents: WebContents,
+  reduced: boolean,
+  environment: NodeJS.ProcessEnv = process.env
+) {
+  requireE2EControl(environment)
+  requireAvailableContents(contents)
+  if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
+  await contents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: reduced ? 'reduce' : 'no-preference' }],
+  })
+  return { reduced }
+}
+
 export async function sendE2EKey(
   contents: WebContents,
   key: string,

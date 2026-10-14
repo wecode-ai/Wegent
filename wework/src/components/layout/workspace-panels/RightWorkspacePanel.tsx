@@ -28,10 +28,8 @@ import {
   useSyncExternalStore,
 } from 'react'
 import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
-import {
-  FileChangesReviewPanel,
-  type FileChangesReviewViewOption,
-} from '@/components/chat/FileChangesReviewPanel'
+import type { FileChangesReviewViewOption } from '@/components/chat/FileChangesReviewPanel'
+import { FileChangesReviewPanel, FileWorkspacePanel } from './LazyWorkspaceFiles'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
 import { CentralHarnessTerminal } from '@/components/layout/CentralHarnessTerminal'
@@ -68,11 +66,7 @@ import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/a
 import type { GitPatchAction } from '@/api/environment'
 import type { DesktopReviewMode } from '../desktopWorkbenchPaneTypes'
 import { shouldIgnoreWorkbenchShortcut } from '@/lib/keybindings'
-import {
-  FileWorkspacePanel,
-  type FileWorkspacePanelHandle,
-  type FileWorkspacePanelSelection,
-} from './FileWorkspacePanel'
+import type { FileWorkspacePanelHandle, FileWorkspacePanelSelection } from './FileWorkspacePanel'
 import {
   isWorkspaceFileTab,
   workspaceFileTabLabel,
@@ -84,7 +78,7 @@ import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
-import { BackgroundTerminalPanel } from './BackgroundTerminalPanel'
+import { BackgroundTerminalPanel } from './LazyWorkspaceTerminal'
 import type { BackgroundTerminal } from '../backgroundTerminals'
 import { DshSidebarExtensionPanel } from './DshSidebarExtensionPanel'
 import { BrowserAgentCursorIcon } from './BrowserAgentCursorIcon'

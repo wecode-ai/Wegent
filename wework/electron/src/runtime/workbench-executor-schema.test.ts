@@ -3,6 +3,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
+import { hashComponentFileContents } from './component-content-hash.js'
+import * as componentHash from './component-content-hash.js'
 
 import {
   EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
@@ -38,6 +40,7 @@ const compatible = {
 }
 const directories: string[] = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true })
 })
@@ -78,6 +81,25 @@ test('missing executors and arbitrary wrapper arguments cannot authorize migrati
   ).rejects.toThrow('schema query failed')
 })
 
+test('packaged schema authorizes only its exact binary and detects later replacement', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'packaged schema '))
+  directories.push(directory)
+  const binary = join(directory, 'executor')
+  // This file cannot execute: only a verified build-time handshake may authorize it.
+  await writeFile(binary, 'packaged-native-executor')
+  const environment = { WEWORK_EXECUTOR_PATH: binary }
+  const proof = { sha256: await hashComponentFileContents(binary), response: compatible }
+  await expect(assertExecutorWorkbenchCompatibility(environment, proof)).resolves.toBeUndefined()
+  await expect(assertExecutorWorkbenchCompatibility(environment)).resolves.toBeUndefined()
+  await writeFile(binary, 'replaced-executor')
+  await expect(assertExecutorWorkbenchCompatibility(environment)).rejects.toThrow(
+    'checksum mismatch'
+  )
+  await expect(
+    assertExecutorWorkbenchCompatibility(environment, { ...proof, response: {} })
+  ).rejects.toThrow('cannot read and write')
+})
+
 test('query supports spaced paths, carries the legacy version guard and strips credentials', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'workbench schema '))
   directories.push(directory)
@@ -110,3 +132,53 @@ test('query supports spaced paths, carries the legacy version guard and strips c
     assertExecutorWorkbenchCompatibility({ WEWORK_EXECUTOR_PATH: binary })
   ).rejects.toThrow('schema query failed')
 }, 20_000)
+
+test('validates a matching override candidate with one fresh binary hash per preflight', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'candidate schema '))
+  directories.push(directory)
+  const binary = join(directory, 'executor')
+  await writeFile(binary, 'candidate-native-executor')
+  const candidateSchema = { sha256: await hashComponentFileContents(binary), response: compatible }
+  const hash = vi.spyOn(componentHash, 'hashComponentFileContents')
+  const environment = { WEWORK_EXECUTOR_PATH: binary }
+
+  await expect(
+    assertExecutorWorkbenchCompatibility(environment, undefined, { candidateSchema })
+  ).resolves.toBeUndefined()
+  expect(hash).toHaveBeenCalledTimes(1)
+  await expect(assertExecutorWorkbenchCompatibility(environment)).resolves.toBeUndefined()
+  expect(hash).toHaveBeenCalledTimes(2)
+  await writeFile(binary, 'replaced-executor')
+  await expect(
+    assertExecutorWorkbenchCompatibility(environment, undefined, { candidateSchema })
+  ).rejects.toThrow('checksum mismatch')
+  expect(hash).toHaveBeenCalledTimes(3)
+})
+
+test('queries the real override when candidate bytes differ without forwarding credentials', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'override schema '))
+  directories.push(directory)
+  const binary = join(directory, 'override.cjs')
+  await writeFile(
+    binary,
+    `if (process.argv.slice(2).join(' ') !== '--workbench-schema --version') process.exit(2);\n` +
+      `if (process.env.WEGENT_AUTH_TOKEN || process.env.WEGENT_CODEX_HOME) process.exit(3);\n` +
+      `process.stdout.write(${JSON.stringify(JSON.stringify(compatible))});\n`
+  )
+  const hash = vi.spyOn(componentHash, 'hashComponentFileContents')
+  const environment = { WEWORK_EXECUTOR_PATH: binary, WEGENT_AUTH_TOKEN: 'synthetic-not-forwarded' }
+  const candidateSchema = { sha256: 'different-binary-digest', response: {} }
+
+  await expect(
+    assertExecutorWorkbenchCompatibility(environment, undefined, { candidateSchema })
+  ).resolves.toBeUndefined()
+  expect(hash).toHaveBeenCalledTimes(1)
+  await writeFile(
+    binary,
+    `process.stdout.write(${JSON.stringify(JSON.stringify({ ...compatible, protocol_version: 2 }))});\n`
+  )
+  await expect(
+    assertExecutorWorkbenchCompatibility(environment, undefined, { candidateSchema })
+  ).rejects.toThrow('cannot read and write')
+  expect(hash).toHaveBeenCalledTimes(2)
+})

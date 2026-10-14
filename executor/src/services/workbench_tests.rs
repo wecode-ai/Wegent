@@ -15,6 +15,27 @@ fn zip(entries: &[(&str, &str)]) -> Vec<u8> {
 }
 
 #[test]
+fn workbench_root_uses_the_same_configured_home_as_device_commands() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let previous_home = env::var_os("HOME");
+    let previous_workbench = env::var_os("WEGENT_WORKBENCH_HOME");
+    env::set_var("HOME", root.path());
+    env::remove_var("WEGENT_WORKBENCH_HOME");
+    let actual = workbench_root();
+    for (key, previous) in [
+        ("HOME", previous_home),
+        ("WEGENT_WORKBENCH_HOME", previous_workbench),
+    ] {
+        match previous {
+            Some(value) => env::set_var(key, value),
+            None => env::remove_var(key),
+        }
+    }
+    assert_eq!(actual.unwrap(), root.path().join(".wegent/workbench"));
+}
+
+#[test]
 fn root_resolution_uses_user_home_and_absolute_overrides() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home/user");

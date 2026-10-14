@@ -177,6 +177,10 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         assert.ok(deletedModelId, 'The deletion fixture was not persisted')
         const localModelId = await createLocalModel(control)
         await control.command('navigate', 'body', { value: '/' })
+        // Exercise the constrained desktop height used by the Linux CI display.
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 1280, height: 720 }),
+        })
         await createSingleRootLocalProject(control, workspacePath, 'Task model deletion')
         await selectE2EModel(control, `local-model:${localModelId}`, localModelName)
         await send(control, 'initial local model')

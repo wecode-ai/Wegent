@@ -12,6 +12,7 @@ import {
 } from '../modules/zip-fixtures.mjs'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifySmartAppMarketplaceIdentity } from '../modules/smart-app-marketplace-identity.mjs'
+import { prepareLegacyHarnessRuntimeVerification } from '../modules/harness-runtime-compatibility.mjs'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
 const IMPORTED_INSTALLATION_ID = 'dsh-e2e-smoke-imported'
@@ -286,8 +287,18 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
     process.platform === 'linux' ? join(resultDir, 'home') : join(homedir(), 'Downloads')
   let sharedSmartAppId = null
   let ownerRequest
+  let legacyRuntimeVerification
   return {
     requiresCloudEnvironment: true,
+
+    async prepareApp({ appBinary, appEnvironment }) {
+      legacyRuntimeVerification = await prepareLegacyHarnessRuntimeVerification({
+        appBinary,
+        appEnvironment,
+        requestJson,
+        resultDir,
+      })
+    },
 
     async prepareCloud({ authToken, backendUrl, publishOfficialSmartApp }) {
       await publishOfficialSmartApp(officialSource)
@@ -444,6 +455,8 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
     },
 
     async verify(control) {
+      assert.ok(legacyRuntimeVerification, 'Legacy runtime verification must be prepared')
+      legacyRuntimeVerification.assertNoStartupDownload(control)
       await setExperimentalFeatures(control, false, uiTimeoutMs)
       await control.command('navigate', 'body', { value: '/' })
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
@@ -571,6 +584,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="app-iframe-harness-market-1"]', {
         timeoutMs: 600_000,
       })
+      await legacyRuntimeVerification.assertRunning(control, 'market-1')
       await control.command(
         'click',
         `[data-testid="workspace-tab-select-${officialManagementTabId}"]`
@@ -1214,6 +1228,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: 600_000,
         }
       )
+      await legacyRuntimeVerification.assertRunning(control, IMPORTED_INSTALLATION_ID)
       await control.command('navigate', 'body', {
         value: '/sites?app_type=smart_app&view=owned',
       })
@@ -1289,6 +1304,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', appSurface, {
         timeoutMs: 600_000,
       })
+      await legacyRuntimeVerification.assertRunning(control, INSTALLATION_ID)
       const appTabId = await control.command('getAttribute', appSurface, {
         value: 'data-workspace-tab-id',
       })

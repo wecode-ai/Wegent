@@ -234,6 +234,7 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   let requestCount = 0
+  const connectionResets = []
   let verificationComplete = false
   const sockets = new Set()
   const executorLogPath = join(resultDir, 'executor.log')
@@ -251,12 +252,18 @@ export function createDesktopScenario({
       server.on('upgrade', (request, socket, head) => {
         sockets.add(socket)
         socket.once('close', () => sockets.delete(socket))
+        const url = new URL(request.url ?? '/', modelServerUrl)
+        const acceptsModelRequests = ['/v1/responses', '/responses'].includes(url.pathname)
         socket.on('error', error => {
-          if (!verificationComplete || error.code !== 'ECONNRESET') server.emit('error', error)
+          if (error.code === 'ECONNRESET') {
+            connectionResets.push({ code: error.code, at: new Date().toISOString() })
+          }
+          if ((acceptsModelRequests && !verificationComplete) || error.code !== 'ECONNRESET') {
+            server.emit('error', error)
+          }
           socket.destroy()
         })
-        const url = new URL(request.url ?? '/', modelServerUrl)
-        if (!['/v1/responses', '/responses'].includes(url.pathname)) {
+        if (!acceptsModelRequests) {
           socket.destroy()
           return
         }
@@ -336,7 +343,7 @@ export function createDesktopScenario({
     },
 
     diagnostics() {
-      return { requestCount }
+      return { requestCount, connectionResets }
     },
   }
 }

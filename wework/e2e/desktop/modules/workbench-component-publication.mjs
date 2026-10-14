@@ -97,8 +97,15 @@ try {
     'app.asar/dist/runtime/bundled-runtime-materializer.js')).href)
   const runtimeRoot = join(input.root, 'runtimes')
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
+  const catalog = JSON.parse(await fs.readFile(join(runtimeRoot, 'runtimes.json'), 'utf8'))
+  const core = catalog.runtimes.find(runtime => runtime.role === 'core' && runtime.bundled !== false)
+  assert.equal((await fs.lstat(join(runtimeRoot, core.sourceFingerprint))).isSymbolicLink(), true)
+  assert.equal(await fs.realpath(join(runtimeRoot, core.sourceFingerprint)),
+    await fs.realpath(join(input.resources, 'harness-runtime', core.directory)))
+  assert.equal(occupiedPublications, 1)
+  await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['workbench'])
   assert.equal(occupiedPublications, 2)
-  await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
+  await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core', 'workbench'])
   assert.equal(occupiedPublications, 2)
   const { renameWorkbenchData } = await import(pathToFileURL(join(input.resources,
     'app.asar/dist/runtime/workbench-data-rename.js')).href)
@@ -117,6 +124,7 @@ try {
   await assert.rejects(fs.lstat(pending), { code: 'ENOENT' })
   process.stdout.write(JSON.stringify({ occupiedDirectoryRenameRejected: true,
     completeContentPublishedWhileOccupied: true, runtimePublishedWhileOccupied: true,
+    coreRuntimeLinkedFromVerifiedResources: true,
     restartReusedComposition: true, migrationJournalReplacedAfterHandleClosed: true }), () => app.exit(0))
 } catch (error) {
   if (child) { child.kill(); await closed.catch(() => {}) }

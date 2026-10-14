@@ -8,16 +8,23 @@ import {
   realpath,
   rm,
   symlink,
+  unlink,
   writeFile,
 } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import semver from 'semver'
-import { hashComponentPath } from './component-update-manager.js'
+import { hashComponentPath } from './component-content-hash.js'
+import { copyComponentTree } from './component-copy.js'
+import { createFileOperationQueue } from './file-operation-queue.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
+import { workbenchModePluginStates, type WorkbenchMode } from './workbench-mode.js'
 
-export const CORE_DSH_VERSION = '0.1.1-rc.2'
+export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
 const PROFILE_STAMP = '.wework-runtime.json'
+// The profile patch runs after bundles, including the web bundle's client HMR entry.
+const PRODUCTION_PROFILE_PATCH = '- id: hmr\n  disabled: true\n- id: client-hmr\n  disabled: true\n'
 const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-app-wework', 'wework-app'],
   ['@wegent/dsh-electron-host', 'wework-electron-host'],
@@ -73,6 +80,7 @@ const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 // User plugin packages and their manifests must survive a runtime-only reset.
 export async function resetCoreDshRuntime(dataDirectory: string): Promise<void> {
   const profileRoot = join(dataDirectory, 'dsh-core', 'profiles', PROFILE_NAME)
+  await unlinkManagedAppWebAlias(profileRoot)
   const paths = [
     join(profileRoot, PROFILE_STAMP),
     ...CORE_PLUGIN_PACKAGES.map(([name]) => join(profileRoot, 'node_modules', name)),
@@ -87,6 +95,7 @@ interface RuntimeIdentity {
 }
 
 interface ProfileStamp extends RuntimeIdentity {
+  managedPluginLayout: number
   managedUiPlugins: boolean
   corePluginsFingerprint: string
 }
@@ -131,12 +140,15 @@ export interface PreparedCoreDshRuntime {
   profile: string
   version: string
   sourceFingerprint: string
+  cpuProfileBootstrapPath?: string
 }
 
 export interface PrepareCoreDshRuntimeOptions {
   runtimeRoot: string
   dataDirectory: string
   environment: NodeJS.ProcessEnv
+  workbenchMode?: WorkbenchMode
+  onStartupStep?: (step: string, status: 'started' | 'completed') => void
 }
 
 export type CommandRunner = (
@@ -152,42 +164,72 @@ export async function prepareCoreDshRuntime(
   if (!pluginsRoot) {
     throw new Error('WEWORK_CORE_PLUGIN_ROOT is required for the packaged Core DSH runtime')
   }
+  options.onStartupStep?.('core-dsh-runtime-select', 'started')
   const runtime = await selectCoreDshRuntime(options.runtimeRoot, pluginsRoot)
+  options.onStartupStep?.('core-dsh-runtime-select', 'completed')
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
   const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
   const corePluginsFingerprint =
     options.environment.WEWORK_CORE_PLUGINS_SHA256?.trim() ||
     (await hashComponentPath(resolve(pluginsRoot)))
+  options.onStartupStep?.('core-dsh-profile-prepare', 'started')
   await prepareProfile({
     runtime,
     dshHome,
     managedUiPlugins,
     corePluginsFingerprint,
+    workbenchMode: options.workbenchMode,
+    onStartupStep: options.onStartupStep,
   })
+  options.onStartupStep?.('core-dsh-profile-prepare', 'completed')
   return {
     command: nodeCommand,
     entry: runtime.entry,
     cwd: runtime.root,
     dshHome,
-    environment: {
-      ...options.environment,
-      DSH_HOME: dshHome,
-      WEWORK_APP_WEB_ROOT:
-        options.environment.WEWORK_APP_WEB_ROOT?.trim() ||
-        join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
-      WEWORK_HARNESS_API_KEY: 'wework-local-router',
-    },
+    environment: coreDshRuntimeEnvironment(
+      options.environment,
+      dshHome,
+      join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web')
+    ),
     profile: PROFILE_NAME,
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,
+    ...(options.environment.WEWORK_E2E_CORE_CPU_PROFILE === '1'
+      ? {
+          cpuProfileBootstrapPath: join(
+            runtime.pluginRoots['@wegent/dsh-electron-host'],
+            'cpu-profile-bootstrap.js'
+          ),
+        }
+      : {}),
+  }
+}
+
+export function coreDshRuntimeEnvironment(
+  environment: NodeJS.ProcessEnv,
+  dshHome: string,
+  appWebRoot: string
+): NodeJS.ProcessEnv {
+  return {
+    ...environment,
+    DSH_HOME: dshHome,
+    WEWORK_APP_WEB_ROOT: environment.WEWORK_APP_WEB_ROOT?.trim() || appWebRoot,
+    WEWORK_HARNESS_API_KEY: 'wework-local-router',
   }
 }
 
 export function createCoreDshLaunch(runtime: PreparedCoreDshRuntime, port: number): CoreDshLaunch {
+  if (runtime.environment.WEWORK_E2E_CORE_CPU_PROFILE === '1' && !runtime.cpuProfileBootstrapPath) {
+    throw new Error('Core startup CPU profile bootstrap unavailable')
+  }
   return {
     ...runtime,
     args: runtimeNodeArgs(runtime.environment, [
+      ...(runtime.environment.WEWORK_E2E_CORE_CPU_PROFILE === '1'
+        ? ['--import', pathToFileURL(runtime.cpuProfileBootstrapPath!).href]
+        : []),
       runtime.entry,
       '--profile',
       PROFILE_NAME,
@@ -288,10 +330,13 @@ async function prepareProfile(options: {
   dshHome: string
   managedUiPlugins: boolean
   corePluginsFingerprint: string
+  workbenchMode?: WorkbenchMode
+  onStartupStep?: PrepareCoreDshRuntimeOptions['onStartupStep']
 }): Promise<void> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
   const expectedStamp: ProfileStamp = {
+    managedPluginLayout: 1,
     dshVersion: options.runtime.version,
     role: 'core',
     sourceFingerprint: options.runtime.sourceFingerprint,
@@ -300,9 +345,15 @@ async function prepareProfile(options: {
   }
   const managedDependencies = managedCoreDependencies(options.runtime, options.managedUiPlugins)
   const managedDependencyNames = Object.keys(managedDependencies)
-  const managedBundles: string[] = options.managedUiPlugins
-    ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
-    : [...CORE_HOST_BUNDLES]
+  const modeStates = options.workbenchMode
+    ? workbenchModePluginStates(options.workbenchMode)
+    : new Map<string, boolean>()
+  const managedBundles: string[] = (
+    options.managedUiPlugins
+      ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
+      : [...CORE_HOST_BUNDLES]
+  ).filter(name => modeStates.get(name) !== false)
+  options.onStartupStep?.('core-dsh-profile-metadata-read', 'started')
   const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
   const currentManifestRoot = objectRecord(currentManifest)
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
@@ -319,16 +370,20 @@ async function prepareProfile(options: {
     managedDependencies
   )
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
+  options.onStartupStep?.('core-dsh-profile-metadata-read', 'completed')
   if (stampIsCurrent && removedDependencies.size === 0 && coreDependenciesAreCurrent) {
     return
   }
 
+  options.onStartupStep?.('core-dsh-user-plugin-recovery', 'started')
   const recoveredUserPlugins = await recoverInstalledDshDependencies(
     profileRoot,
     currentDependencies,
     currentBundles,
     new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
   )
+  options.onStartupStep?.('core-dsh-user-plugin-recovery', 'completed')
+  options.onStartupStep?.('core-dsh-profile-config-write', 'started')
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
   if (
     currentManifest &&
@@ -375,18 +430,61 @@ async function prepareProfile(options: {
     { mode: 0o600 }
   )
   await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
-  await writeFile(join(profileRoot, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
+  await writeFile(join(profileRoot, 'cordis.patch.yml'), PRODUCTION_PROFILE_PATCH, { mode: 0o600 })
+  await synchronizeModePluginState(profileRoot, modeStates, managedDependencyNames)
   await ensureCoreWorkspace(workspacePath)
-  for (const packageName of managedDependencyNames) {
-    const source = options.runtime.pluginRoots[packageName]
-    const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
-    await rm(destination, { recursive: true, force: true })
-    await copyManagedPlugin(source, destination)
+  await unlinkManagedAppWebAlias(profileRoot)
+  options.onStartupStep?.('core-dsh-profile-config-write', 'completed')
+  const preparePlugin = createFileOperationQueue(4)
+  const results = await Promise.allSettled(
+    managedDependencyNames.map(packageName =>
+      preparePlugin(async () => {
+        const source = options.runtime.pluginRoots[packageName]
+        const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
+        const step = `core-dsh-plugin-copy:${packageName}`
+        options.onStartupStep?.(step, 'started')
+        await rm(destination, { recursive: true, force: true })
+        await copyManagedPlugin(source, destination, {
+          excludeWeb: packageName === '@wegent/dsh-app-wework',
+        })
+        options.onStartupStep?.(step, 'completed')
+      })
+    )
+  )
+  for (const result of results) {
+    if (result.status === 'rejected') throw result.reason
   }
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
     mode: 0o600,
   })
+}
+
+async function synchronizeModePluginState(
+  profileRoot: string,
+  modeStates: ReadonlyMap<string, boolean>,
+  installedNames: string[]
+): Promise<void> {
+  if (!modeStates.size) return
+  const path = join(profileRoot, '.wework-core-plugins.json')
+  const stored = await readJsonFile(path)
+  if (!stored) return
+  const state = objectRecord(stored)
+  const order = stringArray(state.order)
+  const disabled = new Set(stringArray(state.disabled))
+  for (const [name, enabled] of modeStates) {
+    if (!installedNames.includes(name)) continue
+    if (!order.includes(name)) order.push(name)
+    if (enabled) disabled.delete(name)
+    else disabled.add(name)
+  }
+  await writeFile(
+    path,
+    `${JSON.stringify({ ...state, order, disabled: [...disabled] }, null, 2)}\n`,
+    {
+      mode: 0o600,
+    }
+  )
 }
 
 export async function copyManagedPlugin(
@@ -395,14 +493,49 @@ export async function copyManagedPlugin(
   options: {
     platform?: NodeJS.Platform
     linkDirectory?: typeof symlink
+    excludeWeb?: boolean
   } = {}
 ): Promise<void> {
   const platform = options.platform ?? process.platform
+  const linkDirectory = options.linkDirectory ?? symlink
+  const entries = (await readdir(source, { withFileTypes: true })).filter(
+    entry => !options.excludeWeb || entry.name !== 'web'
+  )
   if (platform !== 'win32') {
-    await cp(source, destination, { recursive: true })
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+    await copyComponentTree(await realpath(source), destination, new Set(['web']), false)
+    const web = entries.find(entry => entry.name === 'web')
+    if (web?.isDirectory() || web?.isSymbolicLink()) {
+      await linkDirectory(resolve(source, 'web'), join(destination, 'web'), 'dir')
+    } else if (web) {
+      await cp(join(source, 'web'), join(destination, 'web'))
+    }
     return
   }
-  await copyWindowsEntry(source, destination, options.linkDirectory ?? symlink)
+  await mkdir(destination, { recursive: true, mode: 0o700 })
+  for (const entry of entries) {
+    const sourceEntry = join(source, entry.name)
+    const destinationEntry = join(destination, entry.name)
+    if (entry.name === 'web' && entry.isDirectory()) {
+      await linkDirectory(
+        resolve(sourceEntry),
+        destinationEntry,
+        platform === 'win32' ? 'junction' : 'dir'
+      )
+    } else {
+      await copyWindowsEntry(sourceEntry, destinationEntry, linkDirectory)
+    }
+  }
+}
+
+async function unlinkManagedAppWebAlias(profileRoot: string): Promise<void> {
+  const web = join(profileRoot, 'node_modules', '@wegent', 'dsh-app-wework', 'web')
+  try {
+    // Electron's Windows rmSync follows junctions while replacing pnpm packages.
+    if ((await lstat(web)).isSymbolicLink()) await unlink(web)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
 }
 
 async function copyWindowsEntry(
@@ -661,7 +794,8 @@ async function stampMatches(path: string, expected: ProfileStamp): Promise<boole
       current.dshVersion === expected.dshVersion &&
       current.sourceFingerprint === expected.sourceFingerprint &&
       current.managedUiPlugins === expected.managedUiPlugins &&
-      current.corePluginsFingerprint === expected.corePluginsFingerprint
+      current.corePluginsFingerprint === expected.corePluginsFingerprint &&
+      current.managedPluginLayout === expected.managedPluginLayout
     )
   } catch {
     return false

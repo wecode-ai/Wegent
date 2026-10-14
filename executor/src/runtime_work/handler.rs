@@ -796,14 +796,24 @@ impl RuntimeThreadEventRoute {
 
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
-        let codex_binary = codex_binary.into();
         let device_id = normalize_device_id(device_id.into());
-        let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
-        let codex_app_server = CodexAppServerClient::new(codex_binary);
-        let runtime_settings = system::read_runtime_settings();
         let store = RuntimeWorkStore::from_env();
         let worktrees = WorktreeManager::from_env(&device_id);
         let turn_queue_path = turns::runtime_turn_queue_path();
+        Self::new_with_runtime_storage(device_id, codex_binary, store, worktrees, turn_queue_path)
+    }
+
+    fn new_with_runtime_storage(
+        device_id: String,
+        codex_binary: impl Into<String>,
+        store: RuntimeWorkStore,
+        worktrees: WorktreeManager,
+        turn_queue_path: PathBuf,
+    ) -> Self {
+        let codex_binary = codex_binary.into();
+        let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
+        let codex_app_server = CodexAppServerClient::new(codex_binary);
+        let runtime_settings = system::read_runtime_settings();
         let mut persisted_turns =
             turns::read_runtime_turn_state(&turn_queue_path).unwrap_or_else(|error| {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);

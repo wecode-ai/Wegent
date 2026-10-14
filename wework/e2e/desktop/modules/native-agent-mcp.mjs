@@ -135,9 +135,10 @@ export async function verifyNativeAgentMcp({
     .slice(0, 8)}`
   const workspace = join(home, '.wegent', 'workspace', repositoryKey)
   await writeFile(join(source, 'README.md'), 'synthetic workspace repository\n')
+  await writeFile(join(source, '.gitattributes'), 'README.md text eol=lf\n')
   for (const args of [
     ['init'],
-    ['add', 'README.md'],
+    ['add', 'README.md', '.gitattributes'],
     [
       '-c',
       'user.name=Workspace Test',
@@ -308,7 +309,10 @@ export async function verifyNativeAgentMcp({
       assert.equal(treeResponse.status, 200)
       const tree = await treeResponse.json()
       const expectedReadmePath = await realpath(join(workspace, 'README.md'))
-      assert.ok(tree.some(entry => entry.path === expectedReadmePath))
+      assert.ok(
+        tree.some(entry => entry.path === expectedReadmePath),
+        `Task tree must expose the canonical README path ${expectedReadmePath}; returned paths=${JSON.stringify(tree.map(entry => entry.path))}`
+      )
       const branch = await promisify(execFile)('git', ['-C', workspace, 'symbolic-ref', 'HEAD'], {
         env,
         timeout: 10_000,

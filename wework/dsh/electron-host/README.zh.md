@@ -4,9 +4,10 @@
 Electron 主进程，并向第一方 Wework DSH 应用提供带版本的、仅限回环地址的
 HTTP 载体。
 
-该插件只属于内置 Core Runtime `0.1.1-rc.2`。Workbench Runtime
-`0.1.0-rc.8` 不携带它，也不会获得 Electron Host pipe。Electron 新架构不再
-支持 `0.1.0-rc.7`。
+该插件随内置 Core Runtime `0.2.0-rc.2` 分发。Smart app 的隔离 Workbench
+Profile 会安装同一个受信任插件，并通过应用专属的 Electron Host pipe 调用
+授权能力；新版 `0.2.0-rc.2` 和按需下载的 `0.1.0-rc.8` 均支持这条链路。
+Electron 新架构不再支持 `0.1.0-rc.7`。
 
 插件在当前 Cordis generation 内提供类型化的 `ctx.weworkDesktop` Host
 service。它只暴露按领域分组的窄能力，不暴露 Electron 对象、文件描述符或鉴权
@@ -14,6 +15,10 @@ token。旧 generation 卸载后，保留的 service 引用会立即拒绝调用
 
 Renderer 不能直接读取 Host Cordis service。浏览器侧仍通过同源 HTTP
 route 调用同一套 capability，后续由产品插件封装 client adapter。
+
+`browser.setBounds` 的 `preserveVisibility: true` 表示仅同步尺寸，保留宿主当前的
+可见性。入场动画和布局更新使用该选项，避免覆盖显式隐藏操作；未指定该选项的
+既有调用仍按 `visible` 更新可见性，省略 `visible` 时仍默认为显示。
 
 Electron 主进程向 Renderer 推送的窗口、托盘和内置浏览器事件统一通过
 `desktop.events` capability 传输。Renderer 为所有订阅者共享一个 500ms 的

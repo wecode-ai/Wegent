@@ -4,6 +4,11 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import {
+  collectCodexSqliteHealth,
+  observeDesktopAppProcess,
+} from './desktop-startup-diagnostics.mjs'
+import { packagedResourcesRoot } from './runtime-assets.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
@@ -1172,12 +1177,33 @@ async function main() {
   })
   const modelSwitchVerification = []
   let app
+  const applicationProcesses = []
   let appBundlePath
   let blockingNetworkProxy
   let cloudEnvironment
   let phase = 'startup'
   let desktopScenarioVerified = false
   let testFailed = false
+  const interrupted = async signal => {
+    for (const cleanup of [
+      () => cloudEnvironment?.stop(),
+      () => blockingNetworkProxy?.stop(),
+      () => stopDesktopAppProcess(app),
+      () => control.close(),
+      () => desktopScenario?.cleanup?.(),
+    ]) {
+      try {
+        await cleanup()
+      } catch (error) {
+        console.error(`[desktop-e2e] interrupted cleanup failed: ${String(error)}`)
+      }
+    }
+    process.exit(signal === 'SIGINT' ? 130 : 143)
+  }
+  const onInterrupt = () => void interrupted('SIGINT')
+  const onTerminate = () => void interrupted('SIGTERM')
+  process.once('SIGINT', onInterrupt)
+  process.once('SIGTERM', onTerminate)
   try {
     await control.start()
     // Publish bound ports for scenarios without releasing the listening sockets.
@@ -1255,6 +1281,12 @@ async function main() {
       : await desktopAppPromise
     desktopScenario?.setCloudEnvironment?.(cloudEnvironment)
     const appBinary = desktopApp.binaryPath
+    if (['linux', 'win32'].includes(process.platform) && process.env.CI === 'true') {
+      control.harnessRuntimeAssetDirectory = join(
+        packagedResourcesRoot(appBinary),
+        'e2e-runtime-assets'
+      )
+    }
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {
@@ -1331,6 +1363,7 @@ async function main() {
       WEWORK_E2E_CONTROL_URL: control.controlUrl,
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_E2E_MODEL_SERVER_URL: control.url,
+      WEWORK_HARNESS_RUNTIME_BASE_URL: `${control.url}/dsh-runtime-assets`,
       WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
       WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
       WEWORK_E2E_POSTHOG_HOST: control.url,
@@ -1387,6 +1420,7 @@ async function main() {
     }
     if (electronCoreRuntimeRoot) {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
+      appEnvironment.WEWORK_HARNESS_RESOURCE_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
     if (DESKTOP_SEGMENT === 'running-conversation-history') {
@@ -1411,6 +1445,7 @@ async function main() {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
+      applicationProcesses.push(observeDesktopAppProcess(child))
       await markDesktopE2EResultActive(resultDir, {
         applicationProcessId: child.pid,
         ownerProcessId: process.pid,
@@ -2008,6 +2043,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       if (shouldRunPluginSegment('core-dsh-plugin-management')) {
         phase = 'core-dsh-plugin-management'
         await verifyCoreDshPluginManagement({
+          appBinary,
+          appEnvironment: activeAppEnvironment,
           control,
           pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
           restartDesktopApp,
@@ -3597,6 +3634,18 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       }
       await verifyEnvironmentPanelScrollStability(control)
+      const previousWindowSize = JSON.parse(
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 1024, height: 720 }),
+        })
+      )
+      try {
+        await verifyEnvironmentPanelScrollStability(control, 'environment-panel-scroll-narrow')
+      } finally {
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify(previousWindowSize),
+        })
+      }
       if (shouldStopAfterDesktopCheckpoint('environment-panel-scroll')) {
         console.log(`Wework desktop environment-panel-scroll E2E passed. Evidence: ${resultDir}`)
         return
@@ -3710,6 +3759,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       await control.command('click', filePanelLinkSelector)
       await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      // The tab mounts before its lazy file panel; wait for the panel's path before asserting it.
+      await control.command('waitFor', '[data-testid="workspace-file-path"]', {
+        text: join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       assert.equal(
@@ -4461,6 +4515,22 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     testFailed = true
+    try {
+      await writeFile(
+        join(resultDir, 'desktop-startup-diagnostics.json'),
+        `${JSON.stringify(
+          {
+            applicationProcesses,
+            codexSqlite: await collectCodexSqliteHealth(codexSqliteHome),
+          },
+          null,
+          2
+        )}\n`,
+        'utf8'
+      )
+    } catch {
+      // Diagnostic collection must preserve the original scenario failure.
+    }
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -4528,6 +4598,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     throw error
   } finally {
+    process.off('SIGINT', onInterrupt)
+    process.off('SIGTERM', onTerminate)
     const teardownFailures = []
     const runTeardownStep = async (label, action) => {
       try {

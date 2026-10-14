@@ -1,3 +1,6 @@
+import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
+import { loadDshUiStylesheets } from './dshUiStylesheets'
+
 const modulePromises = new Map<string, Promise<unknown>>()
 const loadedModules = new Map<string, unknown>()
 
@@ -16,16 +19,74 @@ export function importDshUiModule<T>(module: string): Promise<T> {
   const url = dshUiModuleUrl(module)
   const existing = modulePromises.get(url)
   if (existing) return existing as Promise<T>
+  const startupModule =
+    module === 'plugins/wework-ui-core-apps.js' ||
+    module === 'plugins/wework-ui-home-developer.js' ||
+    module === 'plugins/wework-ui-home-focus.js'
+      ? module
+      : undefined
+  const startupPhase =
+    module === 'plugins/wework-ui-core-apps.js' ? 'core-app-module-import' : 'home-module-import'
+  const startedAt = performance.now()
+  if (startupModule) {
+    markDesktopStartupPhase(startupPhase, 'started', { modulePath: startupModule })
+  }
   const injected = window.__WEWORK_DSH_UI_MODULES__?.[module]
   const loading: Promise<unknown> = injected
     ? typeof injected === 'function'
       ? injected()
       : Promise.resolve(injected)
     : import(/* @vite-ignore */ url)
-  const loaded = loading.then(value => {
-    loadedModules.set(url, value)
-    return value
-  })
+  const loaded = loading
+    .then(async value => {
+      if (startupModule) {
+        markDesktopStartupPhase('module-import-resolved', 'completed', {
+          modulePath: startupModule,
+          durationMs: Math.round(performance.now() - startedAt),
+        })
+        markDesktopStartupPhase('module-stylesheets', 'started', { modulePath: startupModule })
+      }
+      const stylesStartedAt = performance.now()
+      try {
+        await loadDshUiStylesheets(value)
+      } catch (error) {
+        if (startupModule) {
+          markDesktopStartupPhase('module-stylesheets', 'failed', {
+            modulePath: startupModule,
+            durationMs: Math.round(performance.now() - stylesStartedAt),
+          })
+        }
+        throw error
+      }
+      if (startupModule) {
+        markDesktopStartupPhase('module-stylesheets', 'completed', {
+          modulePath: startupModule,
+          durationMs: Math.round(performance.now() - stylesStartedAt),
+        })
+      }
+      return value
+    })
+    .then(
+      value => {
+        loadedModules.set(url, value)
+        if (startupModule) {
+          markDesktopStartupPhase(startupPhase, 'completed', {
+            modulePath: startupModule,
+            durationMs: Math.round(performance.now() - startedAt),
+          })
+        }
+        return value
+      },
+      error => {
+        if (startupModule) {
+          markDesktopStartupPhase(startupPhase, 'failed', {
+            modulePath: startupModule,
+            durationMs: Math.round(performance.now() - startedAt),
+          })
+        }
+        throw error
+      }
+    )
   modulePromises.set(url, loaded)
   return loaded as Promise<T>
 }

@@ -5,6 +5,7 @@ import {
   sitesMarketplacePlugin,
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
+import { serveHarnessRuntimeAsset } from './runtime-assets.mjs'
 
 import {
   assistantMessage,
@@ -1324,6 +1325,8 @@ class DesktopE2EServer {
       method: request.method ?? 'UNKNOWN',
       pathname: url.pathname,
     })
+    if (await serveHarnessRuntimeAsset(request, response, url, this.harnessRuntimeAssetDirectory))
+      return
     if (await this.handleControlRoute(request, response, url)) return
     try {
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
@@ -3146,7 +3149,9 @@ class DesktopE2EServer {
       )
       const tool = selectShellToolCommand(
         body,
-        `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
+        process.platform === 'win32'
+          ? '[Console]::Write($env:WEGENT_SKILL_USER_NAME)'
+          : `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
         this.cloudWorkspacePath,
         { yieldTimeMs: 10_000 }
       )

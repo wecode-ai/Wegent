@@ -239,6 +239,16 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         if (!address) return
         store.turnStarted(address, payload.subtaskId?.trim() || null)
       },
+      onRuntimeGoalContinuation: payload => {
+        const address = matchingLifecycleAddress(store, payload)
+        const turnId = payload.turnId?.trim()
+        if (!address || !turnId) return
+        if (payload.status === 'started') {
+          store.turnStarted(address, turnId)
+        } else {
+          store.turnSettled(address, turnId)
+        }
+      },
       onBlockCreated: payload => {
         const request = pendingRequestUserInputBlockPayload(payload)
         if (!request) return

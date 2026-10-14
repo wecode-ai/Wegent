@@ -1,9 +1,9 @@
-import { render } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
 import { expect, test } from 'vitest'
 import { AssistantMarkdown } from './AssistantMarkdown'
 
-test('preserves ordered-list starts when prose separates numbered items', () => {
-  const { container } = render(
+test('preserves ordered-list starts when prose separates numbered items', async () => {
+  const { container } = await renderLazy(
     <AssistantMarkdown
       content={[
         '1. First issue',

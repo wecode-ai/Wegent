@@ -30,6 +30,11 @@ test ! -L "$codex_root"
 rm -rf "$staging_dir"
 mkdir -p "$staging_dir/codex"
 cp -a "$electron_package" "$staging_dir/electron-app"
+runtime_asset_cache="$(node --input-type=module -e "import { resolveSharedHarnessRuntimeAssetCacheRoot } from './wework/scripts/lib/harness-runtime-cache.mjs'; console.log(resolveSharedHarnessRuntimeAssetCacheRoot() + '/harness-runtime-assets')")"
+node wework/scripts/collect-harness-runtime-release-assets.mjs \
+  "$runtime_asset_cache" \
+  "$staging_dir/electron-app/resources/e2e-runtime-assets" \
+  "$core_dsh/runtimes.json"
 cp -R "$codex_root" "$staging_dir/codex/$codex_target"
 mkdir -p "$staging_dir/backend-rs"
 cp "$backend_rs_binary" "$staging_dir/backend-rs/wegent-backend-rs"
@@ -42,9 +47,21 @@ chmod 0755 \
 if [[ "$(uname -s)" == "Linux" ]]; then
   strip --strip-debug \
     "$staging_dir/electron-app/WeWork" \
-    "$staging_dir/electron-app/resources/bin/wegent-executor" \
     "$staging_dir/backend-rs/wegent-backend-rs"
 fi
+
+# Executor bytes must remain identical to the packaged schema proof.
+node --input-type=module - "$staging_dir/electron-app/resources" <<'NODE'
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { hashComponentPath } from './wework/scripts/lib/component-content-hash.mjs'
+
+const resources = process.argv[2]
+const { executor } = JSON.parse(await readFile(join(resources, 'components.json'), 'utf8')).components
+assert.equal(await hashComponentPath(join(resources, executor.path)), executor.sha256,
+  'E2E archive Executor must match its packaged schema proof')
+NODE
 
 tar -I 'zstd -T0 -3' -cf "$archive" -C "$artifact_dir" wework-core-e2e-build
 test -s "$archive"

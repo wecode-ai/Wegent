@@ -1452,13 +1452,15 @@ describe('App plugins route', () => {
 
     await renderApp()
 
-    expect(screen.getByText('云端站点')).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:9100/api/sites?app_type=web&offset=0&limit=20',
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
-      })
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://127.0.0.1:9100/api/sites?app_type=web&offset=0&limit=20',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
+        })
+      )
     )
+    expect(await screen.findByText('云端站点')).toBeInTheDocument()
 
     await createSiteFromMenu()
 

@@ -1,3 +1,4 @@
+import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { HostCapabilityRouter } from '../host/capability-router.js'
 import { HostPipeServer } from '../host/host-pipe.js'
@@ -18,14 +19,17 @@ vi.mock('./workbench-executor-schema.js', () => ({
 interface Deferred<T> {
   promise: Promise<T>
   resolve: (value: T) => void
+  reject: (reason: unknown) => void
 }
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>(res => {
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
     resolve = res
+    reject = rej
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 class FakeCoreDsh implements CoreDshHandle {
@@ -94,7 +98,8 @@ const deviceIdentityState = vi.hoisted(() => ({
   resolve: null as ((value: string) => void) | null,
 }))
 
-vi.mock('./core-dsh-runtime.js', () => ({
+vi.mock('./core-dsh-runtime.js', async importOriginal => ({
+  ...(await importOriginal<typeof import('./core-dsh-runtime.js')>()),
   prepareCoreDshRuntime: vi.fn(() => {
     prepareState.prepareCalls += 1
     return new Promise(resolve => {
@@ -169,6 +174,24 @@ describe('DesktopRuntime lifecycle generation', () => {
     prepareState.resolveLaunch = null
   })
 
+  test('reloads only the active Core after an automatic process restart', async () => {
+    const onCoreDshRestarted = vi.fn(async () => {})
+    const runtime = createRuntime(EXTERNAL_DSH, { onCoreDshRestarted })
+    await runtime.start()
+    const first = createdOptions[0].onRestarted
+    await first?.()
+    expect(onCoreDshRestarted).toHaveBeenCalledTimes(1)
+    await runtime.restartCoreDsh()
+    await first?.()
+    expect(onCoreDshRestarted).toHaveBeenCalledTimes(1)
+    const current = createdOptions[1].onRestarted
+    await current?.()
+    expect(onCoreDshRestarted).toHaveBeenCalledTimes(2)
+    await runtime.stop()
+    await current?.()
+    expect(onCoreDshRestarted).toHaveBeenCalledTimes(2)
+  })
+
   test('rejects an incompatible executor before constructing its managed Home writer', async () => {
     vi.mocked(resolveDesktopDeviceId).mockClear()
     const createExecutor = vi.fn()
@@ -183,6 +206,198 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(createExecutor).not.toHaveBeenCalled()
     expect(resolveDesktopDeviceId).not.toHaveBeenCalled()
     await runtime.stop()
+  })
+
+  test('does not prepare the Core profile when the executor is incompatible', async () => {
+    const runtime = createRuntime({
+      WEWORK_EXECUTOR_PATH: '/executor',
+      WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime',
+    })
+    vi.mocked(assertExecutorWorkbenchCompatibility).mockRejectedValue(
+      new Error('incompatible schema')
+    )
+    await expect(runtime.start()).rejects.toThrow('incompatible schema')
+    expect(prepareState.prepareCalls).toBe(0)
+    expect(created).toHaveLength(0)
+  })
+
+  test('prepares the profile once before startup and uses the ready bridge environment', async () => {
+    const environment = { WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime' } as NodeJS.ProcessEnv
+    const runtime = createRuntime(environment)
+    const preparation = runtime.prepare()
+    await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(1))
+    expect(created).toHaveLength(0)
+    environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = '/managed/browser-bridge.json'
+    prepareState.resolveLaunch?.({
+      command: 'node',
+      entry: 'entry.js',
+      cwd: '/managed/runtime',
+      dshHome: '/managed/home',
+      environment: { WEWORK_APP_WEB_ROOT: '/managed/web' },
+      profile: 'test',
+      version: '0.0.0',
+      sourceFingerprint: 'test',
+    })
+    await preparation
+    await runtime.start()
+    expect(prepareState.prepareCalls).toBe(1)
+    expect(createdOptions[0].env).toMatchObject({
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE: '/managed/browser-bridge.json',
+      WEWORK_APP_WEB_ROOT: '/managed/web',
+      DSH_HOME: '/managed/home',
+    })
+    await runtime.stop()
+  })
+
+  test('prepares Core while updater host registration is held and gates both process starts', async () => {
+    vi.mocked(resolveDesktopDeviceId).mockClear()
+    const registration = deferred<HostPipeServer>()
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    const runtime = createRuntime(
+      { WEWORK_EXECUTOR_PATH: '/executor', WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime' },
+      { hostPipe: registration.promise, createExecutor }
+    )
+    const preparation = runtime.prepare()
+    await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(1))
+    prepareState.resolveLaunch?.({
+      command: 'node',
+      entry: 'entry.js',
+      cwd: '/managed/runtime',
+      dshHome: '/managed/home',
+      environment: { WEWORK_APP_WEB_ROOT: '/managed/web' },
+      profile: 'test',
+      version: '0.0.0',
+      sourceFingerprint: 'test',
+    })
+    await preparation
+    let settled = false
+    const startup = runtime.start().finally(() => {
+      settled = true
+    })
+    const result = startup.catch(error => error)
+    await flush()
+    expect(settled).toBe(false)
+    expect(createExecutor).not.toHaveBeenCalled()
+    expect(resolveDesktopDeviceId).not.toHaveBeenCalled()
+    expect(created).toHaveLength(0)
+    registration.resolve(hostPipe)
+    expect(await result).toBeUndefined()
+    expect(prepareState.prepareCalls).toBe(1)
+    expect(createExecutor).toHaveBeenCalledTimes(1)
+    expect(createdOptions[0].hostPipe).toBe(hostPipe)
+    expect(createdOptions[0].env).toMatchObject(hostPipe.environment())
+    await runtime.stop()
+  })
+
+  test('preserves updater host registration errors before any managed process starts', async () => {
+    const registration = deferred<HostPipeServer>()
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { hostPipe: registration.promise, createExecutor }
+    )
+    const failure = new Error('updater initialization failed')
+    registration.reject(failure)
+    await flush()
+    await runtime.prepare()
+    await expect(runtime.start()).rejects.toBe(failure)
+    expect(createExecutor).not.toHaveBeenCalled()
+    expect(created).toHaveLength(0)
+    await runtime.stop()
+  })
+
+  test('shutdown waits for updater registration and disposes its late host pipe', async () => {
+    const registration = deferred<HostPipeServer>()
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { hostPipe: registration.promise, createExecutor }
+    )
+    const startup = runtime.start()
+    let stopped = false
+    const stop = runtime.stop().then(() => {
+      stopped = true
+    })
+    await flush()
+    expect(stopped).toBe(false)
+    const latePipe = new HostPipeServer(new HostCapabilityRouter())
+    const input = new PassThrough()
+    const output = new PassThrough()
+    latePipe.attachStreams(input, output, null)
+    const dispose = vi.spyOn(latePipe, 'stop')
+    registration.resolve(latePipe)
+    await Promise.all([startup, stop])
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(output.writableEnded).toBe(true)
+    expect(input.listenerCount('close')).toBe(0)
+    expect(createExecutor).not.toHaveBeenCalled()
+    expect(created).toHaveLength(0)
+    input.destroy()
+    output.destroy()
+  })
+
+  test('early preparation preserves the executor compatibility gate', async () => {
+    const runtime = createRuntime({
+      WEWORK_EXECUTOR_PATH: '/executor',
+      WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime',
+    })
+    vi.mocked(assertExecutorWorkbenchCompatibility).mockRejectedValue(
+      new Error('incompatible schema')
+    )
+    await expect(runtime.prepare()).rejects.toThrow('incompatible schema')
+    expect(prepareState.prepareCalls).toBe(0)
+    expect(created).toHaveLength(0)
+    await runtime.stop()
+  })
+
+  test('shutdown settles the pending schema gate without preparing a stopped profile', async () => {
+    const compatibility = deferred<void>()
+    vi.mocked(assertExecutorWorkbenchCompatibility).mockReturnValue(compatibility.promise)
+    const runtime = createRuntime({
+      WEWORK_EXECUTOR_PATH: '/executor',
+      WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime',
+    })
+    const preparation = runtime.prepare()
+    let stopped = false
+    const stop = runtime.stop().then(() => {
+      stopped = true
+    })
+    await flush()
+    expect(stopped).toBe(false)
+    compatibility.resolve()
+    await Promise.all([preparation, stop])
+    expect(prepareState.prepareCalls).toBe(0)
+    expect(created).toHaveLength(0)
+  })
+
+  test('settles Core profile preparation before cleaning up a failed executor startup', async () => {
+    const executor = new FakeExecutor()
+    vi.spyOn(executor, 'start').mockRejectedValue(new Error('executor start failed'))
+    const runtime = createRuntime(
+      {
+        WEWORK_EXECUTOR_PATH: '/executor',
+        WEWORK_HARNESS_RUNTIME_ROOT: '/managed/runtime',
+      },
+      { createExecutor: () => executor }
+    )
+    const cleanup = vi.spyOn(runtime, 'stop')
+    const failure = expect(runtime.start()).rejects.toThrow('executor start failed')
+    await vi.waitFor(() => expect(executor.start).toHaveBeenCalled())
+    expect(cleanup).not.toHaveBeenCalled()
+    prepareState.resolveLaunch?.({
+      command: 'node',
+      entry: 'entry.js',
+      cwd: '/managed/runtime',
+      dshHome: '/managed/home',
+      environment: {},
+      profile: 'test',
+      version: '0.0.0',
+      sourceFingerprint: 'test',
+    })
+    await failure
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(executor.stopCalls).toBe(1)
+    expect(runtime.state().ready).toBe(false)
   })
 
   test('a restart continuation cannot publish a runtime after shutdown', async () => {
@@ -322,7 +537,12 @@ describe('DesktopRuntime lifecycle generation', () => {
     const start = runtime.start()
     await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(1))
 
-    await runtime.stop()
+    let stopped = false
+    const stop = runtime.stop().then(() => {
+      stopped = true
+    })
+    await flush()
+    expect(stopped).toBe(false)
     prepareState.resolveLaunch?.({
       command: 'node',
       entry: 'entry.js',
@@ -334,6 +554,7 @@ describe('DesktopRuntime lifecycle generation', () => {
       version: '0.0.0',
       sourceFingerprint: 'test',
     })
+    await stop
     await start
 
     expect(created).toHaveLength(0)
@@ -341,7 +562,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(runtime.state().ready).toBe(false)
   })
 
-  test('prepares Core DSH in parallel but allocates its port after executor startup', async () => {
+  test('starts Core DSH and the executor concurrently after the Home compatibility gate', async () => {
     const executor = new FakeExecutor()
     executor.startHang = deferred()
     nextStartHang = deferred()
@@ -365,10 +586,14 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(prepareState.prepareCalls).toBe(1)
     expect(executor.startCalls).toBe(0)
     expect(startupSteps).toContain('core-dsh-prepare:started')
+    expect(startupSteps).not.toContain('executor-home-preparation:completed')
     expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
 
     deviceIdentityState.resolve?.('test-device-id')
     await vi.waitFor(() => expect(executor.startCalls).toBe(1))
+    expect(startupSteps.indexOf('executor-home-preparation:completed')).toBeLessThan(
+      startupSteps.indexOf('executor-start:started')
+    )
     expect(created).toHaveLength(0)
     expect(runtime.state().ready).toBe(false)
     expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
@@ -385,25 +610,16 @@ describe('DesktopRuntime lifecycle generation', () => {
       version: '0.0.0',
       sourceFingerprint: 'test',
     })
-    await flush()
-    expect(created).toHaveLength(0)
-    expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
-
-    executor.startHang.resolve()
     await vi.waitFor(() => expect(created).toHaveLength(1))
     expect(created[0].startCalls).toBe(1)
-    expect(startupSteps.indexOf('core-dsh-prepare:started')).toBeLessThan(
-      startupSteps.indexOf('executor-start:completed')
-    )
-    expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
-      startupSteps.indexOf('core-dsh-port-allocation:started')
-    )
+    expect(createdOptions[0].args?.slice(-2)).toEqual(['--port', '0'])
+    expect(runtime.state().ready).toBe(false)
     expect(startupSteps.indexOf('core-dsh-port-allocation:completed')).toBeLessThan(
       startupSteps.indexOf('core-dsh-process-start:started')
     )
-    expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
-      startupSteps.indexOf('core-dsh-process-start:started')
-    )
+    expect(startupSteps).not.toContain('executor-start:completed')
+    executor.startHang.resolve()
+    await vi.waitFor(() => expect(startupSteps).toContain('executor-start:completed'))
     expect(executor.requests).toEqual([])
 
     nextStartHang.resolve()

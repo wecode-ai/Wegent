@@ -99,6 +99,19 @@ describe('HostPipeServer', () => {
       capabilities: ['window.getState'],
     })
 
+    const runtimeEndpoint = vi.fn()
+    server.on('runtimeEndpoint', runtimeEndpoint)
+    childToHost.write(
+      `${JSON.stringify({
+        type: 'runtimeEndpoint',
+        url: 'http://127.0.0.1:12345/?token=fixture-token',
+      })}\n`
+    )
+    expect(runtimeEndpoint).toHaveBeenCalledWith(
+      null,
+      'http://127.0.0.1:12345/?token=fixture-token'
+    )
+
     const response = nextReply()
     childToHost.write(
       `${JSON.stringify({

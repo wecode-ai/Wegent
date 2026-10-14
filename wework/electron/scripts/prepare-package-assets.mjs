@@ -71,6 +71,16 @@ const packagedRuntimes = runtimeCatalog.runtimes.filter(runtime =>
 const harnessResources = join(resourcesRoot, 'harness-runtime')
 await mkdir(harnessResources, { recursive: true, mode: 0o700 })
 for (const runtime of packagedRuntimes) {
+  if (runtime.bundled === false) continue
+  if (runtime.role === 'core') {
+    runtime.directory = runtime.sourceFingerprint
+    await cp(
+      join(harnessRuntimeMaterializedRoot, runtime.sourceFingerprint),
+      join(harnessResources, runtime.directory),
+      { recursive: true, verbatimSymlinks: true }
+    )
+    continue
+  }
   await cp(
     join(harnessRuntimeAssetDirectory, runtime.assetName),
     join(harnessResources, runtime.assetName)
@@ -111,6 +121,9 @@ const packagedExecutor = join(resourcesRoot, 'bin', executorName)
 await cp(executorPath, packagedExecutor)
 if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
 const executorSha256 = await hashComponentPath(packagedExecutor)
+const executorWorkbenchSchema = JSON.parse(
+  await capture(packagedExecutor, ['--workbench-schema', '--version'], repositoryRoot)
+)
 const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
 const packagedDws = join(resourcesRoot, 'bin', dwsName)
 const dwsSourceName = targetExecutableName(
@@ -166,6 +179,7 @@ await writeFile(
           version: weworkRuntimeVersion,
           path: `bin/${executorName}`,
           sha256: executorSha256,
+          workbenchSchema: executorWorkbenchSchema,
         },
         codex: {
           version: codexRuntime.codexVersion,

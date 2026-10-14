@@ -4,6 +4,14 @@ import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { ApiError } from '@/api/http'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import { mergeDeviceLists } from '@/lib/workbench-device'
+import {
+  applyRuntimeConversationAction,
+  clearRuntimeConversationCacheForTests,
+  getRuntimeConversationMessages,
+  subscribeRuntimeConversation,
+  syncRuntimeConversationDeviceAliases,
+} from '@/features/workbench/runtimeConversationCache'
 import { createHybridWorkbenchServices } from './hybridServices'
 
 const extensionCommandRouting = vi.hoisted(() =>
@@ -1577,6 +1585,76 @@ describe('createHybridWorkbenchServices', () => {
     expect(projects).toEqual({ items: [] })
   })
 
+  it('delivers local conversation updates to App binding aliases discovered by background sync', async () => {
+    const local = {
+      id: 0,
+      device_id: 'electron-current',
+      name: 'Local Executor',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'local' as const,
+      runtime_instance_id: 'runtime-current',
+    }
+    const registration = {
+      ...local,
+      id: 66,
+      device_type: 'app' as const,
+      app_device_id: local.device_id,
+      socket_device_id: 'app-record-66',
+    }
+    mocks.localListDevices.mockResolvedValue([local])
+    mocks.cloudListDevices.mockResolvedValue([
+      registration,
+      { ...registration, id: 67, socket_device_id: 'app-record-67', runtime_instance_id: 'other' },
+    ])
+    const services = createServices()
+    const initialDevices = await services.deviceApi.listDevices()
+    const executorAddress = { deviceId: local.device_id, taskId: 'execution-1' }
+    const bindingAddress = { ...executorAddress, deviceId: registration.socket_device_id }
+    const foreignAddress = { ...executorAddress, deviceId: 'app-record-67' }
+    clearRuntimeConversationCacheForTests()
+    try {
+      const backgroundDevices = await services.cloudBackgroundApi!.listDevices!()
+      const devices = mergeDeviceLists(initialDevices, backgroundDevices)
+      expect(devices).toHaveLength(1)
+      expect(devices[0].device_type).toBe('local')
+      syncRuntimeConversationDeviceAliases(devices)
+      expect(getRuntimeConversationMessages(bindingAddress)).toEqual([])
+      const onConversationChanged = vi.fn()
+      const unsubscribe = subscribeRuntimeConversation(bindingAddress, onConversationChanged)
+      try {
+        applyRuntimeConversationAction(executorAddress, {
+          type: 'assistant_started',
+          taskId: executorAddress.taskId,
+          subtaskId: 'turn-1',
+        })
+        applyRuntimeConversationAction(executorAddress, {
+          type: 'assistant_chunk',
+          subtaskId: 'turn-1',
+          itemId: 'answer-1',
+          content: 'BOARD_REPLY_DONE',
+        })
+        expect(getRuntimeConversationMessages(bindingAddress)).toEqual(
+          expect.arrayContaining([expect.objectContaining({ content: 'BOARD_REPLY_DONE' })])
+        )
+        expect(onConversationChanged).toHaveBeenCalled()
+        expect(getRuntimeConversationMessages(foreignAddress)).toEqual([])
+      } finally {
+        unsubscribe()
+      }
+      mocks.cloudListDevices.mockResolvedValue([
+        { ...registration, id: 68, socket_device_id: 'app-record-68' },
+      ])
+      const refreshedDevices = await services.cloudBackgroundApi!.listDevices!()
+      syncRuntimeConversationDeviceAliases(mergeDeviceLists(initialDevices, refreshedDevices))
+      expect(
+        getRuntimeConversationMessages({ ...executorAddress, deviceId: 'app-record-68' })
+      ).toEqual(getRuntimeConversationMessages(executorAddress))
+    } finally {
+      clearRuntimeConversationCacheForTests()
+    }
+  })
+
   it('does not expose the current app registration as a background cloud work device', async () => {
     mocks.cloudListDevices.mockResolvedValue([
       {
@@ -1604,7 +1682,8 @@ describe('createHybridWorkbenchServices', () => {
     await services.deviceApi.listDevices()
     const devices = await services.cloudBackgroundApi?.listDevices?.()
 
-    expect(devices?.map(device => device.device_id)).toEqual(['cloud-device'])
+    expect(devices?.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
+    expect(devices?.some(device => device.device_type === 'app')).toBe(false)
   })
 
   it('does not request runtime work from offline cloud devices', async () => {

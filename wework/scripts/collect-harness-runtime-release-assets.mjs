@@ -5,21 +5,30 @@ import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { extract } from 'tar'
 
-const CORE_COMPONENT_PATTERN = /^WeworkComponent_coreDsh_.+\.tar\.gz$/
-
-export async function collectHarnessRuntimeReleaseAssets(inputDirectory, outputDirectory) {
+export async function collectHarnessRuntimeReleaseAssets(inputDirectory, outputDirectory, catalog) {
   const input = resolve(inputDirectory)
   const output = resolve(outputDirectory)
   await mkdir(output, { recursive: true })
-  const componentArchives = (await readdir(input))
-    .filter(name => CORE_COMPONENT_PATTERN.test(name))
+  const names = await readdir(input)
+  const descriptorNames = names.filter(name => /^harness-runtime-.+\.json$/.test(name)).sort()
+  if (catalog || descriptorNames.length) {
+    const descriptors =
+      catalog?.runtimes ??
+      (await Promise.all(
+        descriptorNames.map(async name => JSON.parse(await readFile(join(input, name), 'utf8')))
+      ))
+    if (!Array.isArray(descriptors) || descriptors.length === 0) {
+      throw new Error(`Harness Runtime assets are unavailable: ${input}`)
+    }
+    for (const descriptor of descriptors) await collectRuntime(input, output, descriptor)
+    return
+  }
+  const componentArchives = names
+    .filter(name => /^WeworkComponent_coreDsh_.+\.tar\.gz$/.test(name))
     .sort()
-  if (componentArchives.length === 0) {
-    throw new Error(`Core DSH component assets are unavailable: ${input}`)
-  }
-  for (const archive of componentArchives) {
+  if (!componentArchives.length) throw new Error(`Harness Runtime assets are unavailable: ${input}`)
+  for (const archive of componentArchives)
     await collectComponentArchive(join(input, archive), output)
-  }
 }
 
 async function collectComponentArchive(archive, output) {
@@ -30,7 +39,7 @@ async function collectComponentArchive(archive, output) {
     if (!Array.isArray(catalog.runtimes) || catalog.runtimes.length === 0) {
       throw new Error(`Harness Runtime catalog is invalid: ${archive}`)
     }
-    for (const descriptor of catalog.runtimes) {
+    for (const descriptor of catalog.runtimes.filter(runtime => runtime.bundled !== false)) {
       await collectRuntime(temporary, output, descriptor)
     }
   } finally {
@@ -75,11 +84,15 @@ async function fileSha256(path) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [input, output] = process.argv.slice(2)
+  const [input, output, catalogPath] = process.argv.slice(2)
   if (!input || !output) {
     throw new Error(
-      'Usage: collect-harness-runtime-release-assets.mjs <release-assets> <output-directory>'
+      'Usage: collect-harness-runtime-release-assets.mjs <runtime-assets> <output-directory> [runtime-catalog]'
     )
   }
-  await collectHarnessRuntimeReleaseAssets(input, output)
+  await collectHarnessRuntimeReleaseAssets(
+    input,
+    output,
+    catalogPath ? JSON.parse(await readFile(catalogPath, 'utf8')) : undefined
+  )
 }

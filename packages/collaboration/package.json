@@ -130,6 +130,14 @@
       "types": "./src/controls/ModelSelector.tsx",
       "import": "./src/controls/ModelSelector.tsx"
     },
+    "./conversation/ConversationTranslation": {
+      "types": "./src/conversation/ConversationTranslation.tsx",
+      "import": "./src/conversation/ConversationTranslation.tsx"
+    },
+    "./conversation/SelectionActionsPopover": {
+      "types": "./src/conversation/SelectionActionsPopover.tsx",
+      "import": "./src/conversation/SelectionActionsPopover.tsx"
+    },
     "./conversation": {
       "types": "./src/conversation/index.ts",
       "import": "./src/conversation/index.ts"
@@ -217,6 +225,14 @@
     "./composer/composerMentions": {
       "types": "./src/composer/composerMentions.ts",
       "import": "./src/composer/composerMentions.ts"
+    },
+    "./composer/useComposerAttachments": {
+      "types": "./src/composer/useComposerAttachments.ts",
+      "import": "./src/composer/useComposerAttachments.ts"
+    },
+    "./composer/useComposerTransfers": {
+      "types": "./src/composer/useComposerTransfers.ts",
+      "import": "./src/composer/useComposerTransfers.ts"
     },
     "./composer": {
       "types": "./src/composer/index.ts",
@@ -433,6 +449,66 @@
     "./controls/DialogForm": {
       "types": "./src/controls/DialogForm.tsx",
       "import": "./src/controls/DialogForm.tsx"
+    },
+    "./plugin-catalog": {
+      "types": "./src/plugin-catalog.ts",
+      "import": "./src/plugin-catalog.ts"
+    },
+    "./agent-form/types": {
+      "types": "./src/agent-form/types.ts",
+      "import": "./src/agent-form/types.ts"
+    },
+    "./agent-form/runnerRouting": {
+      "types": "./src/agent-form/runnerRouting.ts",
+      "import": "./src/agent-form/runnerRouting.ts"
+    },
+    "./http-api": {
+      "types": "./src/http-api/index.ts",
+      "import": "./src/http-api/index.ts"
+    },
+    "./dto-mappers": {
+      "types": "./src/dto-mappers/index.ts",
+      "import": "./src/dto-mappers/index.ts"
+    },
+    "./runtime-profile/executionCatalog": {
+      "types": "./src/runtime-profile/executionCatalog.ts",
+      "import": "./src/runtime-profile/executionCatalog.ts"
+    },
+    "./issue-detail/CompositedSpinner": {
+      "types": "./src/issue-detail/CompositedSpinner.tsx",
+      "import": "./src/issue-detail/CompositedSpinner.tsx"
+    },
+    "./issue-detail/Tooltip": {
+      "types": "./src/issue-detail/Tooltip.tsx",
+      "import": "./src/issue-detail/Tooltip.tsx"
+    },
+    "./i18n": {
+      "types": "./src/i18n.ts",
+      "import": "./src/i18n.ts"
+    },
+    "./permissions": {
+      "types": "./src/permissions.ts",
+      "import": "./src/permissions.ts"
+    },
+    "./issue-detail": {
+      "types": "./src/issue-detail/index.ts",
+      "import": "./src/issue-detail/index.ts"
+    },
+    "./SharedIssueDetailEditor": {
+      "types": "./src/SharedIssueDetailEditor.tsx",
+      "import": "./src/SharedIssueDetailEditor.tsx"
+    },
+    "./my-work/model": {
+      "types": "./src/my-work/model.ts",
+      "import": "./src/my-work/model.ts"
+    },
+    "./board": {
+      "types": "./src/board.ts",
+      "import": "./src/board.ts"
+    },
+    "./issue-card/priorityBadgeClasses": {
+      "types": "./src/issue-card/priorityBadgeClasses.ts",
+      "import": "./src/issue-card/priorityBadgeClasses.ts"
     }
   },
   "scripts": {

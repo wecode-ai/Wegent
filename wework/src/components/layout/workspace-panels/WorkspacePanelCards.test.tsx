@@ -319,7 +319,10 @@ describe('WorkspacePanelCards', () => {
         clientFactory: createRemoteTerminalClientMock,
       })
     )
-    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
+    expect(await screen.findByTestId('remote-terminal')).toHaveAttribute(
+      'data-session-id',
+      'terminal-1'
+    )
     expect(screen.queryByTestId('workspace-terminal-frame')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-terminal-window')).toHaveClass('bg-background')
     expect(screen.getByTestId('workspace-terminal-tab')).toHaveTextContent('project38')
@@ -481,7 +484,7 @@ describe('WorkspacePanelCards', () => {
       )
     )
     expect(getLocalExecutorDeviceIdMock).toHaveBeenCalledWith('/api')
-    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+    expect(await screen.findByTestId('embedded-local-terminal')).toHaveAttribute(
       'data-session-id',
       'local-terminal-1'
     )

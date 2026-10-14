@@ -25,6 +25,7 @@ interface HostPipeSession {
 
 export interface HostPipeEvents {
   ready: [string]
+  runtimeEndpoint: [ChildProcessWithoutNullStreams | null, string]
   close: []
   protocolError: [Error]
 }
@@ -111,6 +112,10 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
     }
     if (!session.principal) {
       this.handleHello(session, message)
+      return
+    }
+    if (message.type === 'runtimeEndpoint' && typeof message.url === 'string') {
+      this.emit('runtimeEndpoint', session.child, message.url)
       return
     }
     if (

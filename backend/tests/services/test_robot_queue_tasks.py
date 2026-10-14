@@ -10,6 +10,8 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import operators, visitors
+from sqlalchemy.sql.elements import BinaryExpression
 
 from app.models.delivery import (
     CloudProject,
@@ -19,6 +21,7 @@ from app.models.delivery import (
     loop_datetime_value_is_unset,
 )
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -358,6 +361,101 @@ def test_device_pull_redelivers_same_unconfirmed_claim_before_new_work(
     assert first.status == "claimed"
     assert loop_datetime_value_is_unset(first.start_requested_at)
     assert second.status == "queued"
+
+
+def test_unconfirmed_redelivery_locks_only_its_selected_execution(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    from app.services.loop_item_executions.device_pull import _unconfirmed_claim
+
+    execution = _make_execution(test_db, test_user)
+    execution.status = "claimed"
+    execution.runtime_device_id = "cloud-device"
+    execution.runtime_instance_id = "runtime-1"
+    test_db.commit()
+    locked_ids = []
+
+    def assert_bounded_lock(state):
+        statement = state.statement
+        if not state.is_select or statement._for_update_arg is None:
+            return
+        identities = [
+            clause.right.value
+            for clause in visitors.iterate(statement.whereclause)
+            if isinstance(clause, BinaryExpression)
+            and clause.operator is operators.eq
+            and clause.left.compare(LoopItemExecution.__table__.c.id)
+        ]
+        assert identities, "Runtime polling must never lock an unbounded scan"
+        locked_ids.extend(identities)
+
+    event.listen(test_db, "do_orm_execute", assert_bounded_lock)
+    try:
+        assert (
+            _unconfirmed_claim(
+                test_db,
+                owner_user_id=test_user.id,
+                runtime_device_id="other-installation",
+                runtime_instance_id="runtime-2",
+                environment="cloud",
+            )
+            is None
+        )
+        assert not locked_ids
+        selected = _unconfirmed_claim(
+            test_db,
+            owner_user_id=test_user.id,
+            runtime_device_id="cloud-device",
+            runtime_instance_id="runtime-1",
+            environment="cloud",
+        )
+        assert selected is not None and selected.id == execution.id
+        assert locked_ids == [execution.id]
+    finally:
+        event.remove(test_db, "do_orm_execute", assert_bounded_lock)
+
+
+@pytest.mark.parametrize(
+    "changed_values",
+    [{"status": "failed"}, {"runtime_instance_id": "replacement-runtime"}],
+)
+def test_unconfirmed_redelivery_rechecks_terminal_state_and_runtime_identity(
+    test_db: Session,
+    test_user: User,
+    changed_values: dict,
+) -> None:
+    from app.services.loop_item_executions.device_pull import _unconfirmed_claim
+
+    execution = _make_execution(test_db, test_user)
+    execution.status = "claimed"
+    execution.runtime_device_id = "cloud-device"
+    execution.runtime_instance_id = "runtime-1"
+    test_db.commit()
+
+    def change_before_lock(state):
+        if state.is_select and state.statement._for_update_arg is not None:
+            # Reproduce a committed transition after discovery, before locking.
+            test_db.connection().execute(
+                LoopItemExecution.__table__.update()
+                .where(LoopItemExecution.id == execution.id)
+                .values(**changed_values)
+            )
+
+    event.listen(test_db, "do_orm_execute", change_before_lock)
+    try:
+        assert (
+            _unconfirmed_claim(
+                test_db,
+                owner_user_id=test_user.id,
+                runtime_device_id="cloud-device",
+                runtime_instance_id="runtime-1",
+                environment="cloud",
+            )
+            is None
+        )
+    finally:
+        event.remove(test_db, "do_orm_execute", change_before_lock)
 
 
 def test_periodic_scan_does_not_dispatch_runtime_work(

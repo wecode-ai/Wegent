@@ -372,7 +372,10 @@ impl RuntimeTaskLink {
 }
 
 fn git_workspace_info(workspace_path: &str) -> (Option<String>, Option<String>) {
-    let Some((git_dir, common_git_dir)) = git_directories_at_workspace(workspace_path) else {
+    let Some((git_dir, common_git_dir)) = git_directories_at_workspace(Path::new(workspace_path))
+        .ok()
+        .flatten()
+    else {
         return (None, None);
     };
     let branch = fs::read_to_string(git_dir.join("HEAD"))
@@ -406,14 +409,25 @@ fn git_info_for_workspace(mut git_info: Option<Value>, workspace_path: &str) -> 
     git_info
 }
 
-fn git_directories_at_workspace(workspace_path: &str) -> Option<(PathBuf, PathBuf)> {
-    let workspace = Path::new(workspace_path);
+pub(super) fn git_directories_at_workspace(
+    workspace: &Path,
+) -> Result<Option<(PathBuf, PathBuf)>, String> {
     let dot_git = workspace.join(".git");
-    let git_dir = if dot_git.is_dir() {
+    let marker = match fs::symlink_metadata(&dot_git) {
+        Ok(marker) => marker,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let git_dir = if marker.is_dir() || (marker.is_symlink() && dot_git.is_dir()) {
         dot_git
     } else {
-        let pointer = fs::read_to_string(&dot_git).ok()?;
-        let path = pointer.trim().strip_prefix("gitdir:")?.trim();
+        let pointer = fs::read_to_string(&dot_git).map_err(|error| error.to_string())?;
+        let path = pointer
+            .trim()
+            .strip_prefix("gitdir:")
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .ok_or("Invalid Git directory pointer")?;
         let path = PathBuf::from(path);
         if path.is_absolute() {
             path
@@ -421,18 +435,30 @@ fn git_directories_at_workspace(workspace_path: &str) -> Option<(PathBuf, PathBu
             workspace.join(path)
         }
     };
-    let common_git_dir = fs::read_to_string(git_dir.join("commondir"))
-        .ok()
-        .map(|value| PathBuf::from(value.trim()))
-        .map(|path| {
+    let common_pointer = git_dir.join("commondir");
+    let common_git_dir = match fs::read_to_string(&common_pointer) {
+        Ok(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                return Err("Invalid Git common directory pointer".to_owned());
+            }
+            let path = PathBuf::from(value);
             if path.is_absolute() {
                 path
             } else {
                 git_dir.join(path)
             }
-        })
-        .unwrap_or_else(|| git_dir.clone());
-    Some((git_dir, common_git_dir))
+        }
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && matches!(fs::symlink_metadata(&common_pointer), Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            git_dir.clone()
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    Ok(Some((git_dir, common_git_dir)))
 }
 
 fn git_origin_url(config: &str) -> Option<String> {

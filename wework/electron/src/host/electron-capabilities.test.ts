@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clipboard, type WebContents } from 'electron'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type {
   HostCapability,
@@ -35,9 +36,7 @@ import type { RendererStorageStore } from './renderer-storage-store.js'
 const electronMocks = vi.hoisted(() => ({
   appGetPath: vi.fn(() => '/tmp'),
   appGetVersion: vi.fn(() => '0.0.0-test'),
-  clipboardAvailableFormats: vi.fn(() => [] as string[]),
-  clipboardRead: vi.fn(() => ''),
-  clipboardReadBuffer: vi.fn(() => Buffer.alloc(0)),
+  clipboardRead: vi.fn(async () => []),
   clipboardReadText: vi.fn(() => 'native text'),
   clipboardWriteText: vi.fn(),
   dialogShowMessageBox: vi.fn(),
@@ -59,9 +58,7 @@ vi.mock('electron', () => ({
   },
   BrowserWindow: class BrowserWindow {},
   clipboard: {
-    availableFormats: electronMocks.clipboardAvailableFormats,
     read: electronMocks.clipboardRead,
-    readBuffer: electronMocks.clipboardReadBuffer,
     readText: electronMocks.clipboardReadText,
     writeText: electronMocks.clipboardWriteText,
   },
@@ -320,7 +317,12 @@ function createIsolatedClipboardRouter(
   focused = true,
   popoutHost?: Partial<ElectronE2EHost>,
   smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> },
-  services?: Partial<ElectronDesktopServices>
+  services?: Partial<ElectronDesktopServices>,
+  browser?: Pick<EmbeddedBrowserManager, 'state' | 'setBounds'>,
+  preferences?: { read: () => Promise<Record<string, unknown>> },
+  rendererStorage?: {
+    initialize: (entries: Record<string, string>) => Promise<Record<string, unknown>>
+  }
 ) {
   const notificationNavigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
   const targetWindow = {
@@ -337,9 +339,9 @@ function createIsolatedClipboardRouter(
       updatedAt: '2026-09-12T00:00:00.000Z',
     }),
     () => (smartApps ?? null) as never,
-    {} as never,
-    {} as never,
-    {} as never,
+    (preferences ?? {}) as never,
+    (rendererStorage ?? {}) as never,
+    (browser ?? {}) as never,
     {} as never,
     {
       executorHome: '/tmp/wework-clipboard-test/executor',
@@ -367,6 +369,90 @@ function createIsolatedClipboardRouter(
   )
   return { router, targetWindow, notificationNavigation }
 }
+
+describe.each([
+  ['preferences.get', 'host-preferences-get'],
+  ['rendererStorage.initialize', 'host-renderer-storage-initialize'],
+] as const)('%s startup diagnostics', (capability, step) => {
+  const params = capability === 'rendererStorage.initialize' ? { entries: { theme: 'dark' } } : {}
+  function storageRouter(
+    read: () => Promise<Record<string, unknown>>,
+    trace?: ElectronDesktopServices['onStorageStartupStep']
+  ) {
+    return createIsolatedClipboardRouter(
+      true,
+      undefined,
+      undefined,
+      { onStorageStartupStep: trace },
+      undefined,
+      { read },
+      { initialize: read }
+    )
+  }
+  test('records host receipt and waits for response completion after the original read', async () => {
+    let resolveRead!: (value: Record<string, unknown>) => void
+    const read = vi.fn(
+      () =>
+        new Promise<Record<string, unknown>>(resolve => {
+          resolveRead = resolve
+        })
+    )
+    const trace = vi.fn()
+    const { router } = storageRouter(read, trace)
+    const completions: Array<() => void | Promise<void>> = []
+    const now = vi
+      .spyOn(performance, 'now')
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(125)
+      .mockReturnValueOnce(180)
+    const request = router.invoke(WEWORK_APP_PRINCIPAL, capability, params, {
+      onResponseSent: completion => completions.push(completion),
+    })
+    expect(trace).toHaveBeenCalledWith(step, 'started')
+    expect(read).toHaveBeenCalledTimes(1)
+    if (capability === 'rendererStorage.initialize') {
+      expect(read).toHaveBeenCalledWith(params.entries)
+    } else {
+      expect(read).toHaveBeenCalledWith()
+    }
+    const preferences = { privateCredential: 'must-not-be-logged' }
+    resolveRead(preferences)
+    expect(await request).toBe(preferences)
+    expect(trace).toHaveBeenCalledTimes(1)
+    expect(completions).toHaveLength(1)
+    await completions[0]()
+    expect(trace).toHaveBeenCalledWith(step, 'completed', 80, 25)
+    const [, , durationMs, readDurationMs] = trace.mock.calls[1]
+    expect(durationMs).toBeGreaterThanOrEqual(readDurationMs)
+    expect(readDurationMs).toBeGreaterThanOrEqual(0)
+    expect(JSON.stringify(trace.mock.calls)).not.toContain('must-not-be-logged')
+    now.mockRestore()
+  })
+
+  test('records a fixed failure without changing the original read error', async () => {
+    const error = new Error('private preferences path and credentials')
+    const trace = vi.fn()
+    const { router } = storageRouter(vi.fn().mockRejectedValue(error), trace)
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, capability, params)).rejects.toBe(error)
+    expect(trace.mock.calls).toEqual([
+      [step, 'started'],
+      [step, 'failed', expect.any(Number)],
+    ])
+    expect(JSON.stringify(trace.mock.calls)).not.toContain(error.message)
+  })
+
+  test('preserves the normal uninstrumented read and original result', async () => {
+    const preferences = { theme: 'dark' }
+    const read = vi.fn().mockResolvedValue(preferences)
+    const { router } = storageRouter(read)
+    const onResponseSent = vi.fn()
+    expect(await router.invoke(WEWORK_APP_PRINCIPAL, capability, params, { onResponseSent })).toBe(
+      preferences
+    )
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(onResponseSent).not.toHaveBeenCalled()
+  })
+})
 
 describe('Core DSH runtime capabilities', () => {
   test('publishes persisted preferences to every subscribed window', async () => {
@@ -871,6 +957,44 @@ describe('registerDesktopServiceCapabilities', () => {
 })
 
 describe('isolated surface clipboard capabilities', () => {
+  test.each(['read', 'item'])(
+    'preserves supplied workspace paths when native clipboard %s fails',
+    async failure => {
+      const { router } = createIsolatedClipboardRouter()
+      const path = resolve('.')
+      if (failure === 'read') {
+        electronMocks.clipboardRead.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+      } else {
+        electronMocks.clipboardRead.mockResolvedValueOnce([
+          {
+            types: ['text/uri-list'],
+            getType: vi.fn().mockRejectedValue(new Error('Item unavailable')),
+          },
+        ] as never)
+      }
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readWorkspacePaths', {
+          fallbackPaths: [path],
+        })
+      ).resolves.toEqual([{ path, isDirectory: true }])
+    }
+  )
+
+  test('reads native file payloads through asynchronous Electron clipboard items', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    const path = resolve('.')
+    const getType = vi.fn(async () => new Blob([pathToFileURL(path).toString()]))
+    electronMocks.clipboardRead.mockResolvedValueOnce([
+      { types: ['electron application/osclipboard;format="public.file-url"'], getType },
+    ] as never)
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readWorkspacePaths', {})
+    ).resolves.toEqual([{ path, isDirectory: true }])
+    expect(getType).toHaveBeenCalledWith(
+      'electron application/osclipboard;format="public.file-url"'
+    )
+  })
+
   beforeEach(() => {
     electronMocks.clipboardReadText.mockClear()
     electronMocks.clipboardWriteText.mockClear()
@@ -1021,6 +1145,55 @@ describe('registerPluginDevelopmentCapabilities', () => {
 })
 
 describe('createWorkbenchCapabilityRouter', () => {
+  test('geometry updates preserve a hidden owner while legacy visibility commands still work', async () => {
+    let visible = false
+    const browser = {
+      has: vi.fn(() => true),
+      state: vi.fn(() => ({ visible })),
+      setBounds: vi.fn((_label: string, _bounds: unknown, requestedVisible: boolean) => {
+        visible = requestedVisible
+      }),
+      capture: vi.fn(async () => 'data:image/png;base64,owner-rect'),
+    }
+    const { router } = createIsolatedClipboardRouter(
+      true,
+      undefined,
+      undefined,
+      undefined,
+      browser as never
+    )
+    const owner = createWorkbenchCapabilityRouter(browser as never, 'smart-app:test')
+    const params = {
+      label: 'smart-app:test',
+      bounds: { x: 0, y: 0, width: 100, height: 100 },
+      visible: true,
+    }
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'browser.setBounds', {
+      ...params,
+      preserveVisibility: true,
+    })
+    await expect(
+      owner.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'dshCapture.ownerRect', {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+      })
+    ).rejects.toMatchObject({ code: 'owner_view_hidden' })
+    expect(browser.capture).not.toHaveBeenCalled()
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'browser.setBounds', params)
+    await expect(
+      owner.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'dshCapture.ownerRect', {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+      })
+    ).resolves.toEqual({ dataUrl: 'data:image/png;base64,owner-rect' })
+  })
+
   test('captures a rectangle from the scoped owner without accepting a caller-supplied label', async () => {
     const browser = {
       has: vi.fn((label: string) => label === 'smart-app:test'),

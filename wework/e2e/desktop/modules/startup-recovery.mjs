@@ -8,6 +8,87 @@ import { promisify } from 'node:util'
 import { packagedResourcesRoot } from './workbench-schema-compatibility.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
+// Keep subprocess failures useful after transient verification files are removed.
+export function startupRecoveryFailureDiagnostic(value = {}, error = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) value = {}
+  const phases = [
+    'entered',
+    'fixtures',
+    'app-ready',
+    'load-services',
+    'verify-retained',
+    'verify-reset',
+    'create-splash',
+    'load-splash',
+    'open-confirmation',
+    'capture-confirmation',
+    'submit-recovery',
+    'verify-cleanup-failure',
+    'await-relaunch',
+  ]
+  const names = ['Error', 'TypeError', 'RangeError', 'SyntaxError', 'AssertionError']
+  const codes = [
+    'ENOENT',
+    'EACCES',
+    'EPERM',
+    'EBUSY',
+    'EEXIST',
+    'ENOTDIR',
+    'ERR_ASSERTION',
+    'ERR_MODULE_NOT_FOUND',
+    'MODULE_NOT_FOUND',
+    'ERR_UNKNOWN_BUILTIN_MODULE',
+  ]
+  return {
+    phase: phases.includes(value.phase) ? value.phase : 'unknown',
+    verificationMode: ['runtime', 'user', 'verify'].includes(value.verificationMode)
+      ? value.verificationMode
+      : 'unknown',
+    errorName: names.includes(value.errorName) ? value.errorName : 'unknown',
+    errorCode: codes.includes(value.errorCode) ? value.errorCode : 'unknown',
+    exitCode: Number.isInteger(error.code) ? error.code : null,
+    killed: error.killed === true,
+    signal: ['SIGTERM', 'SIGKILL', 'SIGABRT', 'SIGSEGV'].includes(error.signal)
+      ? error.signal
+      : null,
+  }
+}
+
+export async function executeStartupRecoveryChild(
+  executable,
+  args,
+  options,
+  { root, resultDir, execute = promisify(execFile) }
+) {
+  try {
+    return await execute(executable, args, options)
+  } catch (error) {
+    let evidence = {}
+    try {
+      evidence = JSON.parse(await readFile(join(root, 'failure-diagnostic.json'), 'utf8'))
+    } catch {
+      /* Preserve the subprocess failure when no child evidence was written. */
+    }
+    try {
+      await writeFile(
+        join(resultDir, 'startup-reset-failure.json'),
+        JSON.stringify(startupRecoveryFailureDiagnostic(evidence, error), null, 2) + '\n'
+      )
+    } catch {
+      /* Diagnostic collection must never replace the original failure. */
+    }
+    throw error
+  }
+}
+
+export function writeStartupRecoveryDiagnostic(file, diagnostic, write) {
+  try {
+    write(file, JSON.stringify(diagnostic))
+  } catch {
+    // Diagnostic collection must not affect verification or process shutdown.
+  }
+}
+
 // Run the production splash, preload, recovery service, and filesystem stores in
 // isolated Electron processes. Each reset must really relaunch before verification.
 export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot }) {
@@ -20,11 +101,14 @@ export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot
   const scriptPath = join(root, 'verify.cjs')
   await writeFile(
     scriptPath,
-    `(${runRecoveryVerification.toString()})().catch(async error => {
-    const fs = require('node:fs/promises');
+    `globalThis.__weworkRecordRecoveryDiagnostic = ${writeStartupRecoveryDiagnostic.toString()};
+  (${runRecoveryVerification.toString()})().catch(error => {
     const path = require('node:path');
     const input = JSON.parse(process.argv[2]);
-    await fs.writeFile(path.join(input.root, 'evidence.json'), JSON.stringify({ error: error.stack }));
+    const diagnostic = ${startupRecoveryFailureDiagnostic.toString()}(
+      { ...globalThis.__weworkRecoveryDiagnostic, errorName: error?.name, errorCode: error?.code });
+    globalThis.__weworkRecordRecoveryDiagnostic(
+      path.join(input.root, 'failure-diagnostic.json'), diagnostic, require('node:fs').writeFileSync);
     require('electron').app.exit(1);
   });`
   )
@@ -32,11 +116,16 @@ export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot
   const environment = { ...process.env }
   delete environment.ELECTRON_RUN_AS_NODE
   const args = [scriptPath, JSON.stringify(input), 'runtime', ...resolveElectronLaunchArguments()]
-  await promisify(execFile)(require('electron'), args, {
-    env: environment,
-    timeout: 60_000,
-    maxBuffer: 1024 * 1024,
-  })
+  await executeStartupRecoveryChild(
+    require('electron'),
+    args,
+    {
+      env: environment,
+      timeout: 60_000,
+      maxBuffer: 1024 * 1024,
+    },
+    { root, resultDir }
+  )
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
     let evidence
@@ -79,6 +168,15 @@ async function runRecoveryVerification() {
   const input = JSON.parse(process.argv[2])
   const phase = process.argv[3]
   const root = input.root
+  const recordPhase = value => {
+    globalThis.__weworkRecoveryDiagnostic = { phase: value, verificationMode: phase }
+    globalThis.__weworkRecordRecoveryDiagnostic(
+      path.join(root, 'failure-diagnostic.json'),
+      globalThis.__weworkRecoveryDiagnostic,
+      require('node:fs').writeFileSync
+    )
+  }
+  recordPhase('entered')
   const dataDirectory = path.join(root, 'user-data')
   const paths = {
     dataDirectory,
@@ -100,6 +198,7 @@ async function runRecoveryVerification() {
     await fs.mkdir(path.dirname(file), { recursive: true })
     await fs.writeFile(file, value)
   }
+  recordPhase('fixtures')
   if (phase === 'runtime') {
     await put(path.join(profile, '.wework-runtime.json'), 'broken stamp')
     await put(path.join(profile, 'node_modules/@wegent/dsh-app-wework/index.js'), 'broken built-in')
@@ -127,7 +226,9 @@ async function runRecoveryVerification() {
     database.close()
   }
   app.setPath('userData', dataDirectory)
+  recordPhase('app-ready')
   await app.whenReady()
+  recordPhase('load-services')
   const metadata = JSON.parse(
     await fs.readFile(path.join(input.electronRoot, 'package.json'), 'utf8')
   )
@@ -149,6 +250,7 @@ async function runRecoveryVerification() {
     )
     database.close()
   }
+  recordPhase('verify-retained')
   if (phase !== 'runtime') {
     await assertRetained()
     await assert.rejects(fs.stat(path.join(profile, '.wework-runtime.json')), { code: 'ENOENT' })
@@ -179,6 +281,7 @@ async function runRecoveryVerification() {
     await fs.mkdir(path.join(dataDirectory, 'app-preferences.json'))
   }
   if (phase === 'verify') {
+    recordPhase('verify-reset')
     assert.deepEqual(
       JSON.parse(
         await fs.readFile(path.join(dataDirectory, 'renderer-local-storage.json'), 'utf8')
@@ -208,6 +311,7 @@ async function runRecoveryVerification() {
     app.exit(0)
     return
   }
+  recordPhase('create-splash')
   const splash = new BrowserWindow({
     show: false,
     width: 720,
@@ -259,11 +363,13 @@ async function runRecoveryVerification() {
       return recovery.run(mode)
     })
   }
+  recordPhase('load-splash')
   await splash.loadFile(path.join(dist, 'shell/startup-splash/index.html'))
   splash.showInactive()
   await splash.webContents.executeJavaScript(
     "window.dispatchEvent(new CustomEvent('wework-startup-error', { detail: {} }))"
   )
+  recordPhase('open-confirmation')
   const button = phase === 'runtime' ? 'startup-recover-button' : 'startup-reset-options-button'
   await splash.webContents.executeJavaScript(
     `document.querySelector('[data-testid="${button}"]').click()`
@@ -286,14 +392,17 @@ async function runRecoveryVerification() {
     assert.ok(Date.now() < paintDeadline, 'The startup confirmation did not become visible')
     await new Promise(resolve => setTimeout(resolve, 50))
   }
+  recordPhase('capture-confirmation')
   await fs.writeFile(
     path.join(root, phase + '-confirmation.png'),
     (await splash.webContents.capturePage()).toPNG()
   )
+  recordPhase('submit-recovery')
   await splash.webContents.executeJavaScript(
     "document.querySelector('#startup-confirmation-submit').click()"
   )
   if (phase === 'user') {
+    recordPhase('verify-cleanup-failure')
     const deadline = Date.now() + 10_000
     while (
       await splash.webContents.executeJavaScript(
@@ -311,6 +420,7 @@ async function runRecoveryVerification() {
     await put(path.join(dataDirectory, 'app-preferences.json'), '{}')
     await splash.webContents.executeJavaScript("document.querySelector('#startup-retry').click()")
   }
+  recordPhase('await-relaunch')
   setTimeout(() => {
     throw new Error('The splash recovery action did not relaunch Electron')
   }, 10_000)

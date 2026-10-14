@@ -1,4 +1,3 @@
-import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -89,7 +88,7 @@ export interface SmartAppManagerOptions {
   runtimeRoot: string
   environment: NodeJS.ProcessEnv
   runtimeHost: () => SmartAppRuntimeHost | null
-  ensureWorkbenchRuntime?: () => Promise<void>
+  ensureWorkbenchRuntime?: (versionRequirement: string) => Promise<void>
   verificationService?: SmartAppVerificationService
 }
 
@@ -328,6 +327,7 @@ export class SmartAppManager {
       const manifestPath = join(packageRoot, 'plugin-manifest.json')
       const originalManifest = await readFile(manifestPath)
       const manifest = JSON.parse(originalManifest.toString('utf8')) as WorkbenchAppManifest
+      await this.options.ensureWorkbenchRuntime?.(manifest.requirements.dsh)
       const localDirectory = await optionalDirectory(spec)
       let copiedDirectory: string | null = null
       const plugin: { spec: string; path?: string } = localDirectory
@@ -479,7 +479,7 @@ export class SmartAppManager {
       }
       const port = await freePort()
       try {
-        await this.options.ensureWorkbenchRuntime?.()
+        await this.options.ensureWorkbenchRuntime?.(installation.manifest.requirements.dsh)
         const prepared = await prepareWorkbenchDshLaunch({
           runtimeRoot: this.options.runtimeRoot,
           dataDirectory: this.options.dataDirectory,
@@ -618,6 +618,7 @@ export class SmartAppManager {
 
   async verify(installationId: string): Promise<SmartAppVerificationReport> {
     const installation = requiredLinkedInstallation(await this.readRegistry(), installationId)
+    await this.options.ensureWorkbenchRuntime?.(installation.manifest.requirements.dsh)
     return this.verificationService.verify(installation.packagePath)
   }
 
@@ -628,6 +629,7 @@ export class SmartAppManager {
 
   async verifyProject(projectRoot: string): Promise<SmartAppVerificationReport> {
     const installation = await this.linkedInstallationByProject(projectRoot)
+    await this.options.ensureWorkbenchRuntime?.(installation.manifest.requirements.dsh)
     return this.verificationService.verify(installation.packagePath)
   }
 
@@ -912,6 +914,7 @@ async function fileSha256(path: string): Promise<string> {
 }
 
 async function archiveDirectory(source: string, destination: string): Promise<void> {
+  const { ZipArchive } = await import('archiver')
   await new Promise<void>((resolvePromise, reject) => {
     const output = createWriteStream(destination, { mode: 0o600 })
     const archive = new ZipArchive({ zlib: { level: 9 } })

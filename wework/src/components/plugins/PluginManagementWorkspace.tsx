@@ -26,7 +26,7 @@ import {
 } from '@/features/plugins/pluginMarketplaceCache'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, replaceTo } from '@/lib/navigation'
 import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import { INTERNAL_DEVICE_MARKETPLACE_ID } from '@/features/plugins/marketplaceIdentity'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
@@ -70,6 +70,13 @@ interface PluginManagementWorkspaceProps {
 }
 
 type PluginManagementTab = 'codex' | 'core-dsh'
+
+function readManagementTab(): PluginManagementTab {
+  return isElectronRuntime() &&
+    new URLSearchParams(window.location.search).get('surface') === 'core-dsh'
+    ? 'core-dsh'
+    : 'codex'
+}
 
 export function PluginManagementWorkspace(props: PluginManagementWorkspaceProps) {
   const cacheKey = pluginMarketplaceCacheKey(
@@ -117,7 +124,7 @@ function PluginManagementWorkspaceContent({
   )
   const [pluginOperationNotice, setPluginOperationNotice] =
     useState<PluginOperationNoticeState | null>(null)
-  const [activeTab, setActiveTab] = useState<PluginManagementTab>('codex')
+  const [activeTab, setActiveTab] = useState<PluginManagementTab>(readManagementTab)
   const showCoreDshTab = isElectronRuntime()
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
@@ -136,9 +143,19 @@ function PluginManagementWorkspaceContent({
   }, [cloudToken, resolvedCloudApiBaseUrl])
 
   const selectTab = (tab: PluginManagementTab) => {
+    const params = new URLSearchParams(window.location.search)
+    if (tab === 'core-dsh') params.set('surface', tab)
+    else params.delete('surface')
+    replaceTo(`/plugins/manage${params.size ? `?${params.toString()}` : ''}`)
     setActiveTab(tab)
     document.getElementById(`plugin-management-${tab}-tab`)?.focus()
   }
+
+  useEffect(() => {
+    const syncTab = () => setActiveTab(readManagementTab())
+    window.addEventListener('popstate', syncTab)
+    return () => window.removeEventListener('popstate', syncTab)
+  }, [])
 
   useEffect(() => {
     return subscribePluginMarketplaceCache(snapshot => {
@@ -640,7 +657,7 @@ function PluginManagementWorkspaceContent({
               aria-controls="plugin-management-codex-panel"
               tabIndex={activeTab === 'codex' ? 0 : -1}
               data-testid="plugin-management-surface-wework"
-              onClick={() => setActiveTab('codex')}
+              onClick={() => selectTab('codex')}
               onKeyDown={event => handleTabKeyDown(event, 'codex')}
               className={[
                 'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
@@ -662,7 +679,7 @@ function PluginManagementWorkspaceContent({
               aria-controls="plugin-management-core-dsh-panel"
               tabIndex={activeTab === 'core-dsh' ? 0 : -1}
               data-testid="plugin-management-surface-core-dsh"
-              onClick={() => setActiveTab('core-dsh')}
+              onClick={() => selectTab('core-dsh')}
               onKeyDown={event => handleTabKeyDown(event, 'core-dsh')}
               className={[
                 'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',

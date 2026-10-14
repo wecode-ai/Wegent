@@ -1,0 +1,17 @@
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -268,10 +268,13 @@
+ * @returns the validated runtime semantic version, preserving its exact spelling.
+ * @throws if package.json cannot be read or its version is missing or invalid.
+ */
++let cachedDshRuntimeVersion;
+ function getDshRuntimeVersion() {
++	if (cachedDshRuntimeVersion !== void 0) return cachedDshRuntimeVersion;
+ 	const filename = fileURLToPath(new URL("../package.json", import.meta.url));
+ 	const manifest = objectOf$1(JSON.parse(fs.readFileSync(filename, "utf8")), "app-boot package.json");
+-	return runtimeVersionOf(Object.hasOwn(manifest, "version") ? manifest.version : void 0);
++	cachedDshRuntimeVersion = runtimeVersionOf(Object.hasOwn(manifest, "version") ? manifest.version : void 0);
++	return cachedDshRuntimeVersion;
+ }
+ /**
+ * Check every @deepseek-ai/dsh or @deepseek-ai/dsh-* peer against the runtime.

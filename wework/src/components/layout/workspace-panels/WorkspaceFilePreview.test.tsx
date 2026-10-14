@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
+import './WorkspaceBinaryFilePreview'
 import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
 
 const fileViewerMocks = vi.hoisted(() => ({
@@ -191,7 +192,7 @@ test('drags selected preview lines as plain text', () => {
   expect(dataTransfer.effectAllowed).toBe('copy')
 })
 
-test('uses the application dark theme for code and binary previews', () => {
+test('uses the application dark theme for code and binary previews', async () => {
   document.documentElement.dataset.theme = 'dark'
   appearanceMocks.resolvedMode = 'dark'
 
@@ -240,6 +241,7 @@ test('uses the application dark theme for code and binary previews', () => {
     />
   )
 
+  await screen.findByTestId('file-viewer')
   expect(fileViewerMocks.render).toHaveBeenLastCalledWith(
     expect.objectContaining({
       'data-viewer-theme': 'dark',
@@ -261,7 +263,7 @@ test('uses the application dark theme for code and binary previews', () => {
   )
 })
 
-test('uses the application dark theme while editing text files', () => {
+test('uses the application dark theme while editing text files', async () => {
   document.documentElement.dataset.theme = 'dark'
   appearanceMocks.resolvedMode = 'dark'
 
@@ -286,7 +288,7 @@ test('uses the application dark theme while editing text files', () => {
     />
   )
 
-  expect(screen.getByTestId('workspace-file-editor')).toHaveAttribute('data-theme', 'dark')
+  expect(await screen.findByTestId('workspace-file-editor')).toHaveAttribute('data-theme', 'dark')
 })
 
 test('keeps the code view mounted while switching between text files', () => {
@@ -480,7 +482,7 @@ test('keeps the current text preview visible while the next file is loading', ()
   expect(screen.queryByTestId('workspace-file-preview-progress')).not.toBeInTheDocument()
 })
 
-test('does not rebuild a binary image preview when its parent rerenders', () => {
+test('does not rebuild a binary image preview when its parent rerenders', async () => {
   const binaryFile = {
     path: '/workspace/project/diagram.png',
     name: 'diagram.png',
@@ -496,6 +498,8 @@ test('does not rebuild a binary image preview when its parent rerenders', () => 
       onAddCodeComment={vi.fn()}
     />
   )
+
+  await screen.findByTestId('file-viewer')
 
   rerender(
     <WorkspaceFilePreview
@@ -513,7 +517,7 @@ test('does not rebuild a binary image preview when its parent rerenders', () => 
 test.each([
   ['architecture.mmd', 'mermaid'],
   ['architecture.puml', 'plantuml'],
-])('routes %s files to the diagram renderer', (name, type) => {
+])('routes %s files to the diagram renderer', async (name, type) => {
   const binaryFile = {
     path: `/workspace/project/${name}`,
     name,
@@ -541,7 +545,7 @@ test.each([
   expect(screen.getByTestId('diagram-save-image-button')).toBeInTheDocument()
 })
 
-test('uses the current Wework theme for diagram files', () => {
+test('uses the current Wework theme for diagram files', async () => {
   appearanceMocks.resolvedMode = 'dark'
   const name = 'architecture.mmd'
   const binaryFile = {

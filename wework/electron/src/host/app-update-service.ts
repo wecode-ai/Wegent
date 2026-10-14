@@ -95,6 +95,7 @@ export class AppUpdateService {
 
     this.updater.allowPrerelease = channel === 'beta'
     this.updater.channel = channel === 'beta' ? 'beta' : 'latest'
+    this.updater.allowDowngrade = false
     this.updater.setFeedURL({
       provider: 'generic',
       url: this.updateBaseUrl,

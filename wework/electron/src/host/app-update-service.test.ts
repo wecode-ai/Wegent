@@ -8,7 +8,15 @@ class FakeUpdater extends EventEmitter {
   autoInstallOnAppQuit = true
   disableDifferentialDownload = false
   allowPrerelease = false
-  channel: string | null = null
+  allowDowngrade = false
+  private updateChannel: string | null = null
+  get channel() {
+    return this.updateChannel
+  }
+  set channel(channel: string | null) {
+    this.updateChannel = channel
+    this.allowDowngrade = true
+  }
   setFeedURL = vi.fn()
   checkForUpdates = vi.fn<() => Promise<UpdateCheckResult | null>>()
   downloadUpdate = vi.fn<() => Promise<string[]>>()
@@ -53,6 +61,7 @@ describe('AppUpdateService', () => {
     expect(updater.disableDifferentialDownload).toBe(true)
     expect(updater.channel).toBe('latest')
     expect(updater.allowPrerelease).toBe(false)
+    expect(updater.allowDowngrade).toBe(false)
     expect(updater.setFeedURL).toHaveBeenCalledWith({
       provider: 'generic',
       url: 'https://example.com/wework-updater',

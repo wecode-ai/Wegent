@@ -1401,6 +1401,14 @@ export function createDesktopScenario({
         )
       ),
     ])
+    const environmentButton = '[data-testid="environment-info-button"]'
+    await control.command('waitFor', environmentButton, { timeoutMs: uiTimeoutMs })
+    if (
+      (await control.command('getAttribute', environmentButton, { value: 'aria-expanded' })) ===
+      'false'
+    ) {
+      await control.command('click', environmentButton)
+    }
     await control.command('waitFor', '[data-testid="environment-subagents-section"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -1480,6 +1488,7 @@ export function createDesktopScenario({
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
     appEnvironment: {
       WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
+      WEGENT_RUNTIME_WORK_DEBUG: '1',
     },
 
     async handleHttp(request, response, url) {
@@ -1681,6 +1690,17 @@ export function createDesktopScenario({
         generatedImageStage === 'awaiting-tool-output' &&
         requestContainsToolOutputForCall(body, GENERATED_IMAGE_CALL_ID)
       ) {
+        const output = body.input.find(
+          item => item.type === 'function_call_output' && item.call_id === GENERATED_IMAGE_CALL_ID
+        ).output
+        await writeFile(
+          join(resultDir, 'generated-image-tool-output.json'),
+          JSON.stringify(output, (key, value) =>
+            ['image_url', 'imageUrl', 'result', 'data'].includes(key)
+              ? '[image bytes omitted]'
+              : value
+          )
+        )
         generatedImageStage = 'complete'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(

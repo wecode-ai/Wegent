@@ -121,3 +121,24 @@ test('updates the selected window client after a renderer reload', async t => {
   await register(control, 'main', 'main-2')
   assert.equal(control.activeControlClientId, 'main-2')
 })
+
+test('delivers the runner wait timeout to the renderer and preserves explicit overrides', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+
+  for (const options of [{}, { timeoutMs: 750 }]) {
+    const result = control.command('waitFor', '[data-testid="connector-auth-qr"]', options)
+    const response = await fetch(`${control.controlUrl}/commands?clientId=main-1`)
+    assert.equal(response.status, 200)
+    const command = await response.json()
+    assert.equal(command.timeoutMs, options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS)
+    await post(control, 'started', { id: command.id, clientId: 'main-1' })
+    await post(control, 'results', {
+      id: command.id,
+      clientId: 'main-1',
+      ok: true,
+      value: 'QR code is visible',
+    })
+    assert.equal(await result, 'QR code is visible')
+  }
+})

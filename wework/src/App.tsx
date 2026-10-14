@@ -1,3 +1,4 @@
+import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
 import {
   NotificationTaskSourceBridge,
@@ -6,6 +7,8 @@ import {
 import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
 import {
   Activity,
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -34,7 +37,6 @@ import { RuntimeTaskSystemSleepBridge } from '@/features/workbench/RuntimeTaskSy
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
-import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -149,12 +151,16 @@ import { getDshApps, resolveDshApp, type WeworkDshApp } from '@/features/dsh-run
 import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { useDshTaskHomeModules } from '@/features/dsh-runtime/useDshTaskHomeModules'
 import { dshWorkspaceTabIdFromPath } from '@/features/dsh-runtime/dshWorkspaceTabs'
 import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { deviceSurfaceExtension } from '@extensions/device-surface'
 
 const POPOUT_WINDOW_LABEL = 'popout-window'
+const PopoutWorkbenchPage = lazy(() =>
+  import('@/pages/PopoutWorkbenchPage').then(module => ({ default: module.PopoutWorkbenchPage }))
+)
 
 function isPopoutWindowRuntime() {
   return isElectronRuntime() && getDesktopWindowLabel() === POPOUT_WINDOW_LABEL
@@ -365,6 +371,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
     harnessAppStartupOwner.pending
   const nativeWorkbenchActive =
     nativeWorkbenchRoute && !iframe && !auxiliaryActive && !harnessAppLaunchActive
+  useDshTaskHomeModules(active && nativeWorkbenchActive && inferredNativeKind === 'task')
   const unavailableRouteActive =
     !nativeWorkbenchActive &&
     !iframe &&
@@ -705,7 +712,9 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           onStartupReadyChange={onWorkbenchStartupReadyChange}
         >
           {isElectronRuntime() && <SystemDragBridge />}
-          <PopoutWorkbenchPage />
+          <Suspense fallback={null}>
+            <PopoutWorkbenchPage />
+          </Suspense>
         </WorkbenchProvider>
       </>
     )
@@ -826,6 +835,17 @@ function AppShell() {
   const isPopoutWindow = isPopoutWindowRuntime()
   const currentWindowLabel = isElectron ? getDesktopWindowLabel() : null
   const isMainWindow = currentWindowLabel === 'main'
+  const appGateCompletedRef = useRef(false)
+  useEffect(() => {
+    if (!isMainWindow || appGateCompletedRef.current) return
+    const preferencesLoaded = appPreferences?.loaded === true
+    const completed = !isLoading && preferencesLoaded
+    markDesktopStartupPhase('app-gate', completed ? 'completed' : 'waiting', {
+      authLoading: isLoading,
+      preferencesLoaded,
+    })
+    appGateCompletedRef.current = completed
+  }, [appPreferences?.loaded, isLoading, isMainWindow])
   const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
   const cloudApiBaseUrl = cloudConnection.apiBaseUrl
   const cloudToken = cloudConnection.token

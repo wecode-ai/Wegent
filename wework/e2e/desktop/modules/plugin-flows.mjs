@@ -1,3 +1,9 @@
+import { matchesBundledMarketplaceConfig } from './marketplace-config.mjs'
+import {
+  componentResourceChanges,
+  packagedPluginResourceSnapshot,
+} from './packaged-plugin-resource-integrity.mjs'
+
 import {
   assertMentionRenderedAsToken,
   closeComposerPluginPicker,
@@ -148,6 +154,8 @@ async function createCoreDshPluginFixture(root) {
 }
 
 async function verifyCoreDshPluginManagement({
+  appBinary,
+  appEnvironment,
   control,
   pluginRoot,
   restartDesktopApp,
@@ -183,8 +191,35 @@ async function verifyCoreDshPluginManagement({
     })
   }
   const manifest = async () => JSON.parse(await readFile(manifestPath, 'utf8'))
+  const packagedSnapshot = await packagedPluginResourceSnapshot(appBinary, appEnvironment)
+  const packagedHashes = packagedSnapshot.hashes
+  const assertPackagedResourcesUnchanged = async operation => {
+    const snapshot = await packagedPluginResourceSnapshot(appBinary, appEnvironment)
+    const hashes = snapshot.hashes
+    const changes = Object.fromEntries(
+      Object.keys(packagedHashes).map(id => [
+        id,
+        componentResourceChanges(packagedSnapshot.inventories[id], snapshot.inventories[id]),
+      ])
+    )
+    await writeFile(
+      join(userDataDirectory, `core-plugin-${operation}-resources.json`),
+      `${JSON.stringify({ before: packagedHashes, after: hashes, changes }, null, 2)}\n`
+    )
+    assert.deepEqual(hashes, packagedHashes, `Core plugin ${operation} changed packaged resources`)
+  }
 
   await openManager()
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const events = await fetch(new URL('/plugins/events', initialSnapshot.location), {
+    signal: AbortSignal.timeout(10_000),
+  })
+  await events.body?.cancel()
+  assert.notEqual(
+    events.headers.get('content-type')?.split(';')[0],
+    'text/event-stream',
+    'Production Core DSH must not expose a client hot reload channel'
+  )
   await control.command('fill', '[data-testid="core-dsh-plugin-spec-input"]', {
     value: pluginRoot,
   })
@@ -195,6 +230,7 @@ async function verifyCoreDshPluginManagement({
   })
   assert.equal((await manifest()).dependencies['dsh-core-e2e-plugin'] !== undefined, true)
   assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), true)
+  await assertPackagedResourcesUnchanged('install')
 
   await control.command('click', '[data-testid="core-dsh-plugin-toggle-dsh-core-e2e-plugin"]')
   await waitForSnapshot(
@@ -239,6 +275,7 @@ async function verifyCoreDshPluginManagement({
   )
   assert.equal((await manifest()).dependencies['dsh-core-e2e-plugin'], undefined)
   assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
+  await assertPackagedResourcesUnchanged('uninstall')
 
   await restartDesktopApp()
   await openManager()
@@ -304,16 +341,11 @@ async function initializeBlankCodexHome({ codexHome, control }) {
 
 async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) {
   const configPath = join(codexHome, 'config.toml')
-  const expectedSourceLine = expectedSource ? `source = ${JSON.stringify(expectedSource)}` : null
   const startedAt = Date.now()
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
     if (await pathExists(configPath)) {
       const config = await readFile(configPath, 'utf8')
-      if (
-        config.includes('[marketplaces.wework-personal]') &&
-        config.includes('source_type = "local"') &&
-        (!expectedSourceLine || config.includes(expectedSourceLine))
-      ) {
+      if (matchesBundledMarketplaceConfig(config, expectedSource)) {
         return
       }
     }

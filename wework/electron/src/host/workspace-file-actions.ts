@@ -130,7 +130,7 @@ export function registerWorkspaceFileActions(
   )
   router.register('workspace.copyFileContents', async params => {
     const content = await readFile(await filePath(params), 'utf8')
-    clipboard.writeText(content)
+    await clipboard.writeText(content)
   })
   router.register('workspace.saveFileAs', async params => {
     const path = await filePath(params)

@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useMemo, useState, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -465,20 +466,20 @@ describe('MobileWorkbenchLayout', () => {
     window.dispatchEvent(new Event('resize'))
   })
 
-  function renderAtMobileWidth(ui: ReactNode) {
+  async function renderAtMobileWidth(ui: ReactNode) {
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       writable: true,
       value: 400,
     })
-    return render(ui)
+    return await renderLazy(ui)
   }
 
   test('uses the project selector instead of a static project work shortcut', async () => {
     const onSelectProject = vi.fn()
     const onSelectProjectWorkspace = vi.fn()
 
-    render(
+    await renderLazy(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[]}
@@ -522,7 +523,7 @@ describe('MobileWorkbenchLayout', () => {
   test.each([false, true])(
     'keeps one mobile model selector while unavailable (task: %s)',
     async hasTask => {
-      renderAtMobileWidth(
+      await renderAtMobileWidth(
         <MobileWorkbenchLayout
           state={{
             ...baseState,
@@ -552,8 +553,8 @@ describe('MobileWorkbenchLayout', () => {
     }
   )
 
-  test('does not show the user avatar on the mobile empty chat page', () => {
-    renderAtMobileWidth(
+  test('does not show the user avatar on the mobile empty chat page', async () => {
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[]}
@@ -586,8 +587,8 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('add-context-button')).toHaveClass('h-[52px]')
   })
 
-  test('treats a selected runtime task with an empty transcript as a conversation', () => {
-    renderAtMobileWidth(
+  test('treats a selected runtime task with an empty transcript as a conversation', async () => {
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -612,7 +613,7 @@ describe('MobileWorkbenchLayout', () => {
   test('submits implementation plan confirmation as a user message response on mobile', async () => {
     const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
 
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -646,7 +647,7 @@ describe('MobileWorkbenchLayout', () => {
     const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
     const user = userEvent.setup()
 
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -678,7 +679,7 @@ describe('MobileWorkbenchLayout', () => {
   })
 
   test('ignores the implementation plan confirmation through the pane session on mobile', async () => {
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -708,7 +709,7 @@ describe('MobileWorkbenchLayout', () => {
     )
   })
 
-  test('shows an offline device notice above mobile conversations', () => {
+  test('shows an offline device notice above mobile conversations', async () => {
     const offlineDevice = {
       id: 1,
       device_id: 'offline-device',
@@ -740,7 +741,7 @@ describe('MobileWorkbenchLayout', () => {
       ],
     }
 
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -809,7 +810,7 @@ describe('MobileWorkbenchLayout', () => {
     }
     const setSelectedModel = vi.fn()
 
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[]}
@@ -903,7 +904,7 @@ describe('MobileWorkbenchLayout', () => {
       )
     }
 
-    renderAtMobileWidth(<Harness />)
+    await renderAtMobileWidth(<Harness />)
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
     await userEvent.click(screen.getByTestId('model-control-reasoning-medium'))
@@ -936,7 +937,7 @@ describe('MobileWorkbenchLayout', () => {
     const setSelectedModel = vi.fn()
     const retryFailedMessage = vi.fn().mockResolvedValue(true)
 
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[failedMessage]}
@@ -961,8 +962,8 @@ describe('MobileWorkbenchLayout', () => {
     )
   })
 
-  test('shows the selected project in the mobile empty project selector', () => {
-    render(
+  test('shows the selected project in the mobile empty project selector', async () => {
+    await renderLazy(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -978,14 +979,14 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('github_wegent')
   })
 
-  test('shows the sent message with status while an optimistic worktree is being created', () => {
+  test('shows the sent message with status while an optimistic worktree is being created', async () => {
     const runtimeTask = {
       deviceId: 'device-1',
       workspacePath: '/workspace/project-alpha',
       taskId: 'runtime-worktree-creating',
     }
 
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -1156,7 +1157,7 @@ describe('MobileWorkbenchLayout', () => {
         runtimeWorkApi={runtimeWorkApi}
       />
     )
-    const { rerender } = renderAtMobileWidth(renderLayout('current_workspace'))
+    const { rerender } = await renderAtMobileWidth(renderLayout('current_workspace'))
 
     await new Promise(resolve => window.setTimeout(resolve, 0))
     expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
@@ -1190,7 +1191,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(onCheckoutEnvironmentBranch).not.toHaveBeenCalled()
   })
 
-  test('keeps the conversation chrome fixed while only messages scroll', () => {
+  test('keeps the conversation chrome fixed while only messages scroll', async () => {
     const state = {
       ...baseState,
       currentRuntimeTask: {
@@ -1199,7 +1200,7 @@ describe('MobileWorkbenchLayout', () => {
       },
     }
 
-    render(
+    await renderLazy(
       <MobileWorkbenchLayout
         state={state}
         messages={[
@@ -1269,7 +1270,7 @@ describe('MobileWorkbenchLayout', () => {
     })
     const onBindRuntimeTaskToImSessions = vi.fn().mockResolvedValue(undefined)
 
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -1314,10 +1315,10 @@ describe('MobileWorkbenchLayout', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
-  test('hides continue-in-im action without a mobile runtime task', () => {
+  test('hides continue-in-im action without a mobile runtime task', async () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({ total: 0, items: [] })
 
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[
@@ -1366,7 +1367,7 @@ describe('MobileWorkbenchLayout', () => {
       .mockReturnValueOnce(secondRequest.promise)
     const onBindRuntimeTaskToImSessions = vi.fn().mockResolvedValue(undefined)
 
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -1459,7 +1460,7 @@ describe('MobileWorkbenchLayout', () => {
       .fn()
       .mockRejectedValue(new Error('Missing bind handler'))
 
-    renderAtMobileWidth(
+    await renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -1517,7 +1518,7 @@ describe('MobileWorkbenchLayout', () => {
   })
 
   test('opens project creation as a mobile bottom sheet from the drawer', async () => {
-    render(
+    await renderLazy(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -1555,7 +1556,7 @@ describe('MobileWorkbenchLayout', () => {
   test('opens runtime tasks from the mobile project drawer', async () => {
     const onOpenRuntimeTask = vi.fn()
 
-    render(
+    await renderLazy(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -1646,7 +1647,7 @@ describe('MobileWorkbenchLayout', () => {
     const lifecycleStore = new RuntimeTaskLifecycleStore('mobile-layout-test')
     lifecycleStore.syncRuntimeWork(runningWork)
 
-    render(
+    await renderLazy(
       <RuntimeTaskLifecycleProvider store={lifecycleStore}>
         <MobileWorkbenchLayout
           state={{
@@ -1674,7 +1675,7 @@ describe('MobileWorkbenchLayout', () => {
     const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/.wework/workspace/chats/2026-06-20/hi-1'
 
-    render(
+    await renderLazy(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -1725,7 +1726,7 @@ describe('MobileWorkbenchLayout', () => {
   })
 
   test('limits mobile project runtime tasks to five newest rows', async () => {
-    render(
+    await renderLazy(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -1833,7 +1834,7 @@ describe('MobileWorkbenchLayout', () => {
   })
 
   test('expands mobile project runtime tasks by ten and collapses back to five', async () => {
-    render(
+    await renderLazy(
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -1908,7 +1909,7 @@ describe('MobileWorkbenchLayout', () => {
     const onSelectProject = vi.fn()
     const onUpdateProjectName = vi.fn().mockResolvedValue(undefined)
 
-    render(
+    await renderLazy(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[]}
@@ -1953,7 +1954,7 @@ describe('MobileWorkbenchLayout', () => {
   test('opens a mobile-specific settings page without unreleased plugins navigation', async () => {
     const onOpenPlugins = vi.fn()
 
-    render(
+    await renderLazy(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[]}

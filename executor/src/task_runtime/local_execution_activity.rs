@@ -243,9 +243,9 @@ pub(super) fn ensure_execution_binding(
 }
 
 pub(super) fn repair_missing_execution_activity(
-    connection: &Connection,
+    transaction: &rusqlite::Transaction<'_>,
 ) -> Result<(), TaskRuntimeError> {
-    let ids = connection
+    let ids = transaction
         .prepare(
             "SELECT e.id FROM loop_item_executions e
          JOIN loop_items t ON t.id=e.loop_item_id AND t.deleted_at IS NULL
@@ -254,9 +254,8 @@ pub(super) fn repair_missing_execution_activity(
         )?
         .query_map([], |row| row.get::<_, i64>(0))?
         .collect::<Result<Vec<_>, _>>()?;
-    let transaction = connection.unchecked_transaction()?;
     for id in ids {
-        let execution = execution_row(&transaction, id)?;
+        let execution = execution_row(transaction, id)?;
         let exists: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM loop_item_comments WHERE json_extract(metadata,'$.execution_id')=?1)",
             [id], |row| row.get(0),
@@ -269,7 +268,7 @@ pub(super) fn repair_missing_execution_activity(
                 "running" | "cancel_requested" => ("streaming", ""),
                 _ => ("pending", ""),
             };
-            let comment = create_execution_comment(&transaction, id, status, content)?;
+            let comment = create_execution_comment(transaction, id, status, content)?;
             transaction.execute(
                 "UPDATE loop_item_comments SET created_at=?1,updated_at=?2 WHERE message_id=?3",
                 params![
@@ -280,10 +279,9 @@ pub(super) fn repair_missing_execution_activity(
             )?;
         }
         if execution.start_requested_at.is_some() || execution.started_at.is_some() {
-            ensure_execution_binding(&transaction, id)?;
+            ensure_execution_binding(transaction, id)?;
         }
     }
-    transaction.commit()?;
     Ok(())
 }
 

@@ -1,5 +1,5 @@
 import { PermissionModeSelector as SharedPermissionModeSelector } from '@wegent/collaboration/controls'
-import { createCollaborationTranslator } from '@wegent/collaboration'
+import { createCollaborationTranslator } from '@wegent/collaboration/i18n'
 import type { PermissionModeSelectorProps } from '@wegent/collaboration/controls'
 import { useTranslation } from '@/hooks/useTranslation'
 

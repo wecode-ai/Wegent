@@ -1,10 +1,13 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { hashComponentFileContents } from './component-content-hash.js'
+import type { PackagedExecutorSchema } from './component-update-manager.js'
 
 const execute = promisify(execFile)
 const PROTOCOL_VERSION = 1
 const LAYOUT_VERSION = 1
 const MANIFEST_VERSION = 2
+const packagedSchemas = new Map<string, PackagedExecutorSchema>()
 // macOS can validate a newly installed native binary before its first execution.
 export const EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS = 30_000
 
@@ -29,7 +32,9 @@ export function assertWorkbenchSchema(response: unknown): void {
 }
 
 export async function assertExecutorWorkbenchCompatibility(
-  environment: NodeJS.ProcessEnv
+  environment: NodeJS.ProcessEnv,
+  packagedSchema?: PackagedExecutorSchema,
+  options: { candidateSchema?: PackagedExecutorSchema } = {}
 ): Promise<void> {
   const command = environment.WEWORK_EXECUTOR_PATH?.trim()
   if (!command) throw new Error('Workbench requires an executor binary before Home migration')
@@ -43,6 +48,21 @@ export async function assertExecutorWorkbenchCompatibility(
     throw new Error(
       'Workbench schema verification requires a direct executor binary without wrapper arguments'
     )
+  }
+  let schema = packagedSchema ?? packagedSchemas.get(command)
+  let digest: string | undefined
+  if (!packagedSchema && options.candidateSchema) {
+    digest = await hashComponentFileContents(command)
+    if (options.candidateSchema.sha256 === digest) schema = options.candidateSchema
+  }
+  if (schema) {
+    assertWorkbenchSchema(schema.response)
+    digest ??= await hashComponentFileContents(command)
+    if (digest !== schema.sha256) {
+      throw new Error('Executor Workbench schema checksum mismatch; no Home migration is permitted')
+    }
+    packagedSchemas.set(command, schema)
+    return
   }
   let response: unknown
   try {

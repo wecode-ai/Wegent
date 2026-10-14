@@ -8,7 +8,7 @@ import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
 
-function parseStartupEvents(appLog) {
+export function parseStartupEvents(appLog) {
   const events = []
   for (const match of appLog.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)) {
     const body = match[1]
@@ -26,7 +26,7 @@ function startupEventIndex(events, step, status) {
   return events.findIndex(event => event.step === step && event.status === status)
 }
 
-async function waitForClosedStartupSplash(control) {
+export async function waitForClosedStartupSplash(control) {
   const deadline = Date.now() + SPLASH_CLOSE_TIMEOUT_MS
   let snapshot
 
@@ -41,7 +41,7 @@ async function waitForClosedStartupSplash(control) {
   )
 }
 
-async function waitForStartupLogs(resultDir) {
+export async function waitForStartupLogs(resultDir) {
   const logPath = join(resultDir, 'app.log')
   const deadline = Date.now() + SPLASH_CLOSE_TIMEOUT_MS
   let appLog = ''
@@ -110,6 +110,21 @@ export async function createDesktopScenario({ resultDir }) {
         'executor-start',
         'completed'
       )
+      const homePrepared = startupEventIndex(
+        runtimeStartupEvents,
+        'executor-home-preparation',
+        'completed'
+      )
+      const coreProcessCompleted = startupEventIndex(
+        runtimeStartupEvents,
+        'core-dsh-process-start',
+        'completed'
+      )
+      const rendererLoading = startupEventIndex(
+        runtimeStartupEvents,
+        'primary-renderer-load',
+        'started'
+      )
       const portAllocationStarted = startupEventIndex(
         runtimeStartupEvents,
         'core-dsh-port-allocation',
@@ -136,8 +151,15 @@ export async function createDesktopScenario({ resultDir }) {
         'Core DSH preparation did not overlap managed Executor startup'
       )
       assert.ok(
-        executorCompleted < portAllocationStarted,
-        'Core DSH allocated its port before the managed Executor bound its startup ports'
+        homePrepared >= 0 && homePrepared < executorStarted && homePrepared < portAllocationStarted,
+        'The managed runtime started before Home compatibility preparation completed'
+      )
+      // Endpoint authentication finishes after listeners bind; it is not a port allocation gate.
+      assert.ok(
+        coreProcessCompleted >= 0 &&
+          rendererLoading > coreProcessCompleted &&
+          rendererLoading > executorCompleted,
+        'The workbench loaded before both managed runtimes became ready'
       )
       assert.ok(
         portAllocationStarted <= portAllocationCompleted &&

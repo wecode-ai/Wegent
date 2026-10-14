@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import { retryOperation } from './retry-operation.mjs'
 
 function runCommand(command, args, cwd) {
   return new Promise((resolve, reject) => {
@@ -22,7 +23,13 @@ function runCommand(command, args, cwd) {
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolve(stdout)
-      else reject(new Error(`${command} exited with code ${code ?? 'unknown'}: ${stderr.trim()}`))
+      else
+        reject(
+          Object.assign(
+            new Error(`${command} exited with code ${code ?? 'unknown'}: ${stderr.trim()}`),
+            { stderr }
+          )
+        )
     })
   })
 }
@@ -63,6 +70,37 @@ export function macosCodesignIdentityArguments(identity, keychainPath) {
   return [...macosCodesignKeychainArguments(keychainPath), '--sign', identity]
 }
 
+function isTimestampRequestFailure(error) {
+  if (typeof error?.stderr !== 'string') return false
+  const timestampFailure =
+    /(?:^|:\s*)(?:The timestamp service is not available|A timestamp was expected but was not found)\.$/
+  const lines = error.stderr.trim().split(/\r?\n/)
+  return (
+    timestampFailure.test(lines.at(-1)) &&
+    lines.every(
+      line =>
+        timestampFailure.test(line.trim()) ||
+        /(?:^|:\s*)replacing existing signature$/.test(line.trim())
+    )
+  )
+}
+
+export async function executeMacOsCodesign(
+  args,
+  { execute = runCommand, cwd, logger = console.log, sleepImpl } = {}
+) {
+  return retryOperation(() => execute('codesign', args, cwd), {
+    sleepImpl,
+    shouldRetry: error =>
+      args.includes('--sign') &&
+      args.includes('--timestamp') &&
+      !args.includes('--verify') &&
+      isTimestampRequestFailure(error),
+    onRetry: ({ attempt, attempts }) =>
+      logger(`[codesign] timestamp-service-unavailable attempt=${attempt}/${attempts}`),
+  })
+}
+
 export async function signPreparedMacOsBinaries(
   directory,
   {
@@ -83,7 +121,7 @@ export async function signPreparedMacOsBinaries(
     const args = ['--force', '--timestamp', '--options', 'runtime']
     args.push(...macosCodesignIdentityArguments(identity, keychainPath), candidate)
     logger(`Signing bundled DeepSeek Harness binary: ${path.relative(directory, candidate)}`)
-    await execute('codesign', args, directory)
+    await executeMacOsCodesign(args, { execute, cwd: directory, logger })
     signed.push(candidate)
   }
   return signed

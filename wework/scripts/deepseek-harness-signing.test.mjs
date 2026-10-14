@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
+  executeMacOsCodesign,
   macosCodesignIdentityArguments,
   macosCodesignKeychainArguments,
   macosSigningFingerprint,
@@ -24,6 +25,85 @@ vi.mock('node:fs/promises', async importOriginal => {
 })
 
 const temporaryDirectories = []
+
+describe('executeMacOsCodesign', () => {
+  const args = [
+    '--force',
+    '--sign',
+    'Developer ID Application: Example',
+    '--timestamp',
+    '--options',
+    'runtime',
+    '--preserve-metadata=entitlements',
+    '/private/component',
+  ]
+  const timestampError = (message = 'The timestamp service is not available.') =>
+    Object.assign(new Error('codesign failed'), {
+      stderr: `/private/component: replacing existing signature\n/private/component: ${message}\n`,
+    })
+
+  test.each([
+    'The timestamp service is not available.',
+    'A timestamp was expected but was not found.',
+  ])('repeats identical signing arguments for %s', async message => {
+    const execute = vi
+      .fn()
+      .mockRejectedValueOnce(timestampError(message))
+      .mockRejectedValueOnce(timestampError(message))
+      .mockResolvedValue('signed')
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+    const logger = vi.fn()
+    await expect(
+      executeMacOsCodesign(args, { execute, cwd: '/private', sleepImpl, logger })
+    ).resolves.toBe('signed')
+    expect(execute.mock.calls).toEqual(Array(3).fill(['codesign', args, '/private']))
+    expect(sleepImpl.mock.calls).toEqual([[1_000], [2_000]])
+    expect(logger.mock.calls).toEqual([
+      ['[codesign] timestamp-service-unavailable attempt=1/3'],
+      ['[codesign] timestamp-service-unavailable attempt=2/3'],
+    ])
+  })
+
+  test.each([
+    'The timestamp service is not available.',
+    'A timestamp was expected but was not found.',
+  ])('preserves the final service failure after exhausting attempts for %s', async message => {
+    const error = timestampError(message)
+    const execute = vi.fn().mockRejectedValue(error)
+    await expect(
+      executeMacOsCodesign(args, {
+        execute,
+        sleepImpl: vi.fn().mockResolvedValue(undefined),
+        logger: vi.fn(),
+      })
+    ).rejects.toBe(error)
+    expect(execute).toHaveBeenCalledTimes(3)
+  })
+
+  test.each([
+    ['permission denied', args],
+    ['errSecInternalComponent', args],
+    ['The timestamp service is not available.\ninvalid signature', args],
+    ['invalid signature\nA timestamp was expected but was not found.', args],
+    ['A timestamp was expected but was not found.\ninvalid signature', args],
+    ['A timestamp was expected but was not found.', ['--verify', '--strict', '/private/component']],
+    ['A timestamp was expected but was not found.', ['--sign', 'identity', '/private/component']],
+    ['The timestamp service is not available.', ['--verify', '--strict', '/private/component']],
+    ['The timestamp service is not available.', ['--sign', 'identity', '/private/component']],
+  ])(
+    'rejects %s immediately when the operation is not recoverable',
+    async (stderr, commandArgs) => {
+      const error = Object.assign(new Error('codesign failed'), { stderr })
+      const execute = vi.fn().mockRejectedValue(error)
+      const sleepImpl = vi.fn()
+      await expect(
+        executeMacOsCodesign(commandArgs, { execute, sleepImpl, logger: vi.fn() })
+      ).rejects.toBe(error)
+      expect(execute).toHaveBeenCalledOnce()
+      expect(sleepImpl).not.toHaveBeenCalled()
+    }
+  )
+})
 
 async function createTemporaryDirectory() {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'wework-deepseek-signing-'))

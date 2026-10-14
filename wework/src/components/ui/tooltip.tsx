@@ -1,1 +1,1 @@
-export { Tooltip } from '@wegent/collaboration'
+export { Tooltip } from '@wegent/collaboration/issue-detail/Tooltip'

@@ -4,7 +4,7 @@ import {
   resolveRunnerSelection,
   runnerModelKey,
   type RunnerSelection,
-} from '@wegent/collaboration'
+} from '@wegent/collaboration/agent-form/runnerRouting'
 import type { RunnerEnvironment, RunnerModel } from '@wegent/collaboration'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import { createLocalProjectAutomationApi } from './localProjectAutomations'
@@ -3090,6 +3090,11 @@ export function createRuntimeWorkApiFromIpc(
         runtime: data.runtime,
       })
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      logRuntimeTaskCreateStage('local-create-device-identity-resolved', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        elapsedMs: Date.now() - startedAt,
+      })
       const resolvedData = await resolveLocalRuntimeTaskWorkspace(
         data,
         localDeviceId,

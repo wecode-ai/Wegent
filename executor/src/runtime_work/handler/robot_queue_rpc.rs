@@ -5,6 +5,7 @@
 use super::*;
 use crate::runtime_work::automations::AutomationRunStatus;
 use crate::runtime_work::util::infer_worktree_id;
+use crate::task_runtime::TaskRuntimeError;
 
 static LAST_RUNTIME_STATUS_OBSERVATION: AtomicU64 = AtomicU64::new(0);
 
@@ -91,9 +92,17 @@ impl RuntimeWorkRpcHandler {
                     &[("error", error.to_string())],
                 );
             }
-            let catalog = match store.has_queued_routed_executions() {
-                Ok(true) => match self.runner_catalog().await {
-                    Ok(catalog) => Some(catalog),
+            let claim = |catalog: Option<&Value>| {
+                store.claim_next_execution_with_catalog(
+                    Some(&self.device_id),
+                    &self.device_id,
+                    LOCAL_ISSUE_LEASE_SECONDS,
+                    catalog,
+                )
+            };
+            let admission = match claim(None) {
+                Err(TaskRuntimeError::RunnerCatalogRequired) => match self.runner_catalog().await {
+                    Ok(catalog) => claim(Some(&catalog)),
                     Err(error) => {
                         log_executor_event(
                             "local runner catalog failed",
@@ -102,21 +111,9 @@ impl RuntimeWorkRpcHandler {
                         return;
                     }
                 },
-                Ok(false) => None,
-                Err(error) => {
-                    log_executor_event(
-                        "local queue inspection failed",
-                        &[("error", error.to_string())],
-                    );
-                    return;
-                }
+                result => result,
             };
-            let execution = match store.claim_next_execution_with_catalog(
-                Some(&self.device_id),
-                &self.device_id,
-                LOCAL_ISSUE_LEASE_SECONDS,
-                catalog.as_ref(),
-            ) {
+            let execution = match admission {
                 Ok(Some(execution)) => execution,
                 Ok(None) => return,
                 Err(error) => {

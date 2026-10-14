@@ -15,21 +15,25 @@ import {
 import { useTaskReplyQueue } from '@wegent/collaboration/execution/useTaskReplyQueue'
 import { taskReplyQueueStore } from './taskReplyQueue'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
-import { issueTaskSummaryForMessage, useIssueMentionCandidates } from '@wegent/collaboration'
 import {
+  issueTaskSummaryForMessage,
+  useIssueMentionCandidates,
   IssueActivityFeed,
   IssueActivityThread,
   groupIssueActivityThreads,
   groupIssueTimelineThreads,
-  createCollaborationTranslator,
   compareIssueTimestamps,
   issueThreadActivityTimestamp,
   formatIssueTimestamp,
   IssueStatusHistoryList,
-  type SharedIssueStatusHistoryEntry,
-  type IssueActivityThreadModel,
+} from '@wegent/collaboration/issue-detail'
+import { createCollaborationTranslator } from '@wegent/collaboration/i18n'
+import type {
+  SharedIssueStatusHistoryEntry,
+  IssueActivityThreadModel,
+  CollaborationAgent,
+  CollaborationMember,
 } from '@wegent/collaboration'
-import type { CollaborationAgent, CollaborationMember } from '@wegent/collaboration'
 import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActivityTools'
 import { canApproveIssueExecution } from '@wegent/collaboration/issue-detail/activityApproval'
 import { copyTextToClipboard } from '@/lib/clipboard'

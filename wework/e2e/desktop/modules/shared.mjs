@@ -1294,7 +1294,10 @@ async function visibleModelOptionId(control, targetOptionIds, providerId) {
       `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
     ]
     for (const targetSelector of targetSelectors) {
-      await control.command('scrollIntoView', targetSelector).catch(() => undefined)
+      // Both picker views stay mounted; scrolling a hidden option scrolls the clipped menu itself.
+      await control
+        .command('scrollIntoView', targetSelector, { visible: true })
+        .catch(() => undefined)
       const visibleCount = await control
         .command('getElementCount', targetSelector, { visible: true })
         .then(value => Number(value))
@@ -1395,6 +1398,15 @@ async function ensureModelOptionVisible(
         })
       }
     }
+    menu = JSON.parse(await control.command('snapshot', 'body'))
+    if (menu.testIds.includes('model-selector-empty-state')) {
+      // The recovery picker remains mounted while the initial catalog loads.
+      // Wait for that existing async prerequisite before revealing its options.
+      await control.command('waitFor', '[data-testid="model-selector-empty-state"]', {
+        visible: false,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
     if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
@@ -1408,8 +1420,21 @@ async function ensureModelOptionVisible(
     }
   }
 
+  const diagnostics = []
+  for (const selector of [
+    '[data-testid="model-selector-menu"]',
+    '[data-testid="model-advanced-toggle"]',
+    ...targetOptionIds.map(
+      testId => `[data-testid="${testId}"]${modelProviderSelector(expectedProviderId)}`
+    ),
+  ]) {
+    diagnostics.push({
+      selector,
+      metrics: await control.command('getElementMetrics', selector).catch(error => String(error)),
+    })
+  }
   throw new Error(
-    `Model options ${targetOptionIds.join(', ')} did not become visible${expectedProviderId ? ` for provider ${expectedProviderId}` : ''}`
+    `Model options ${targetOptionIds.join(', ')} did not become visible${expectedProviderId ? ` for provider ${expectedProviderId}` : ''}; diagnostics=${JSON.stringify(diagnostics)}`
   )
 }
 

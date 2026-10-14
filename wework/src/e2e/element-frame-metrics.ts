@@ -7,6 +7,8 @@ export function createElementFrameSampler(root: HTMLElement, selector: string) {
       if (!identities.has(element)) identities.set(element, ++nextIdentity)
       const rect = element.getBoundingClientRect()
       const style = getComputedStyle(element)
+      const track = element.closest('.issue-conversation-drawers')
+      const trackStyle = track ? getComputedStyle(track) : null
       return {
         identity: identities.get(element),
         className: element.className,
@@ -27,6 +29,14 @@ export function createElementFrameSampler(root: HTMLElement, selector: string) {
           style.borderLeftWidth,
         ],
         radius: style.borderRadius,
+        reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+        trackTransition: trackStyle
+          ? { duration: trackStyle.transitionDuration, property: trackStyle.transitionProperty }
+          : null,
+        trackAnimations: (track?.getAnimations() ?? []).map(animation => ({
+          time: animation.currentTime,
+          state: animation.playState,
+        })),
         animations: element.getAnimations().map(animation => ({
           time: animation.currentTime,
           state: animation.playState,

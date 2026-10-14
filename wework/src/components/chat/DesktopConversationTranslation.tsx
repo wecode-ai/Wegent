@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useMemo } from 'react'
-import { ConversationTranslationProvider } from '@wegent/collaboration/conversation'
-import { createCollaborationTranslator } from '@wegent/collaboration'
+import { ConversationTranslationProvider } from '@wegent/collaboration/conversation/ConversationTranslation'
+import { createCollaborationTranslator } from '@wegent/collaboration/i18n'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export function DesktopConversationTranslation({ children }: { children: ReactNode }) {

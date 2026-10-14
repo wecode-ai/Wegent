@@ -1,3 +1,4 @@
+import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 import { mergeDeviceLists } from '@/lib/workbench-device'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -592,6 +593,8 @@ export function useWorkbenchDataRefresh({
     }, 5000)
 
     async function bootstrap() {
+      markDesktopStartupPhase('task-bootstrap', 'started')
+      markDesktopStartupPhase('devices-request', 'started')
       const traceId = createModelLoadingTrace()
       logModelLoading(traceId, 'bootstrap.devices_started')
       const bootstrapRevision = ++workListRefreshRevisionRef.current
@@ -599,10 +602,40 @@ export function useWorkbenchDataRefresh({
         step: 'device-list-load',
         status: 'started',
       })
-      const devicesResult = await timedWorkbenchBootstrapRequest(
+      const devicesRequest = timedWorkbenchBootstrapRequest(
         'devices',
         executorClient.commands.listDevices()
       )
+      const runtimeWorkStartedAt = nowMs()
+      markDesktopStartupPhase('task-list-request', 'started')
+      logModelLoading(traceId, 'bootstrap.tasks_started')
+      console.info('[startup][renderer]', {
+        step: 'task-list-load',
+        status: 'started',
+      })
+      const runtimeWorkRequest = timedWorkbenchBootstrapRequest(
+        'runtimeWork',
+        executorClient.runtime.listRuntimeWork({ preferCached: true })
+      )
+      void devicesRequest.then(result => {
+        markDesktopStartupPhase(
+          'devices-request',
+          result.status === 'fulfilled' ? 'completed' : 'failed',
+          {
+            durationMs: Math.round(nowMs() - startedAt),
+          }
+        )
+      })
+      void runtimeWorkRequest.then(result => {
+        markDesktopStartupPhase(
+          'task-list-request',
+          result.status === 'fulfilled' ? 'completed' : 'failed',
+          {
+            durationMs: Math.round(nowMs() - runtimeWorkStartedAt),
+          }
+        )
+      })
+      const devicesResult = await devicesRequest
       logModelLoading(traceId, 'bootstrap.devices_finished', {
         elapsedMs: Math.round(nowMs() - startedAt),
         ok: devicesResult.status === 'fulfilled',
@@ -641,16 +674,7 @@ export function useWorkbenchDataRefresh({
         standaloneDeviceId,
       })
 
-      const runtimeWorkStartedAt = nowMs()
-      logModelLoading(traceId, 'bootstrap.tasks_started')
-      console.info('[startup][renderer]', {
-        step: 'task-list-load',
-        status: 'started',
-      })
-      void timedWorkbenchBootstrapRequest(
-        'runtimeWork',
-        executorClient.runtime.listRuntimeWork({ preferCached: true })
-      ).then(runtimeWorkResult => {
+      void runtimeWorkRequest.then(runtimeWorkResult => {
         logModelLoading(traceId, 'bootstrap.tasks_received', {
           elapsedMs: Math.round(nowMs() - runtimeWorkStartedAt),
           ok: runtimeWorkResult.status === 'fulfilled',
@@ -691,6 +715,9 @@ export function useWorkbenchDataRefresh({
             ),
           })
           logModelLoading(traceId, 'bootstrap.tasks_dispatched')
+          markDesktopStartupPhase('task-bootstrap', 'completed', {
+            durationMs: Math.round(nowMs() - startedAt),
+          })
         }
         void refreshCloudBackgroundData(devices, runtimeWork, {
           projects: [],

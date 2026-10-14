@@ -65,6 +65,7 @@ export interface SmartAppRuntimeVerifierDependencies {
     environment: NodeJS.ProcessEnv
     script: string
     baseUrl: string
+    cookie?: string
   }) => Promise<{ issues: SmartAppVerificationIssue[] }>
   copyProject: (projectRoot: string, destination: string) => Promise<void>
   reservePort: () => Promise<number>
@@ -125,6 +126,8 @@ export async function verifySmartAppRuntime(
       options.signal
     )
     stage = 'start'
+    let authenticationUrl: string | undefined
+    let authenticationCookie: string | undefined
     runtime = dependencies.createRuntime({
       name: `dsh-smart-app-verification-${options.manifest.name}`,
       url: launch.url,
@@ -135,10 +138,15 @@ export async function verifySmartAppRuntime(
       env: launch.environment,
       logDirectory: options.logDirectory,
       logFileName: 'runtime.log',
+      authenticateBrowserSession: async (url, cookie) => {
+        authenticationUrl = url
+        authenticationCookie = cookie
+      },
     })
     await abortable(runtime.start(), options.signal)
     const page = await dependencies.verifyPage({
       baseUrl: launch.url,
+      authenticationUrl,
       path: options.contract.runtime.path,
       readySelector: options.contract.runtime.readySelector,
       signal: options.signal,
@@ -151,12 +159,13 @@ export async function verifySmartAppRuntime(
           issues: [runtimeIssue('SA-RUNTIME-PROBE-MISSING', 'Remote verification has no probe')],
         }
       }
-      return dependencies.runProbe({
+      return await dependencies.runProbe({
         projectRoot: isolatedProject,
         runtimeRoot: options.runtimeRoot,
         environment,
         script,
         baseUrl: launch.url,
+        cookie: authenticationCookie,
       })
     }
     return { issues: [] }
@@ -184,7 +193,7 @@ async function createIsolatedCredentials(
 ): Promise<void> {
   const dshHome = join(dataDirectory, 'harness-apps', 'instances', installationId)
   await mkdir(dshHome, { recursive: true, mode: 0o700 })
-  await writeFile(join(dshHome, '.credentials.yaml'), 'version: "1"\n', { mode: 0o600 })
+  await writeFile(join(dshHome, '.credentials.yaml'), '{}\n', { mode: 0o600 })
 }
 
 function isolatedVerificationEnvironment(

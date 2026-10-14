@@ -1,3 +1,4 @@
+import { renderLazy } from '@/test/render-lazy'
 import i18n from '@/i18n'
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -1964,7 +1965,7 @@ describe('ToolBlocksDisplay', () => {
     expect(preview).not.toHaveTextContent('First step.')
   })
 
-  test('does not duplicate the generic thinking indicator when live process text is visible', () => {
+  test('does not duplicate the generic thinking indicator when live process text is visible', async () => {
     const textBlock: ProcessingBlock = {
       id: 'text-1',
       subtaskId: 1,
@@ -1974,7 +1975,7 @@ describe('ToolBlocksDisplay', () => {
       createdAt: 1770000000000,
     }
 
-    render(<ToolBlocksDisplay blocks={[textBlock]} isStreaming={true} />)
+    await renderLazy(<ToolBlocksDisplay blocks={[textBlock]} isStreaming={true} />)
 
     expect(screen.getByTestId('process-text-block')).toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()

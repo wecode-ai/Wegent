@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
@@ -97,7 +98,7 @@ describe('MessageList', () => {
           ],
         },
       ]
-      const { rerender } = render(
+      const { rerender } = await renderLazy(
         <Conversation
           {...scrollProps}
           messages={messages}
@@ -143,10 +144,10 @@ describe('MessageList', () => {
     }
   )
 
-  test('renders an ordinary SKILL.md link with its literal label and skill icon after sending', () => {
+  test('renders an ordinary SKILL.md link with its literal label and skill icon after sending', async () => {
     const path = '~/worksapce/skills/test-skill/SKILL.md'
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -176,7 +177,7 @@ describe('MessageList', () => {
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce([{ name: 'test-skill', path, description: '', source: 'codex' }])
     const onOpenLocalSkillFile = vi.fn()
-    render(
+    await renderLazy(
       <ComposerCatalogContext.Provider
         value={{
           appsStore: desktopComposerCatalogStore,
@@ -248,7 +249,7 @@ describe('MessageList', () => {
         />
       </ComposerCatalogContext.Provider>
     )
-    const { rerender } = render(content(oldSource))
+    const { rerender } = await renderLazy(content(oldSource))
     await waitFor(() => expect(oldSource).toHaveBeenCalledOnce())
     rerender(content(newSource))
     await waitFor(() => expect(newSource).toHaveBeenCalledOnce())
@@ -263,9 +264,9 @@ describe('MessageList', () => {
 
   test.each(references.filter(item => item.kind === 'skill'))(
     'renders an unregistered skill without enabling file access: $reference',
-    fixture => {
+    async fixture => {
       const onOpenLocalSkillFile = vi.fn()
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -287,10 +288,10 @@ describe('MessageList', () => {
     }
   )
 
-  test('keeps appended text outside the sent link and opens only the original URL', () => {
+  test('keeps appended text outside the sent link and opens only the original URL', async () => {
     const url = 'https://example.com/1192966660/Riodm8zUo'
     openExternalUrlMock.mockClear()
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -313,9 +314,9 @@ describe('MessageList', () => {
 
   test.each(['http://example.com/file_name?q=a_b#section', 'https://example.com/page'])(
     'opens sent bare URL %s using the configured link handler',
-    url => {
+    async url => {
       openExternalUrlMock.mockClear()
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -335,8 +336,8 @@ describe('MessageList', () => {
     }
   )
 
-  test('renders sent Markdown tables with formatting and the existing table actions', () => {
-    render(
+  test('renders sent Markdown tables with formatting and the existing table actions', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -361,8 +362,8 @@ describe('MessageList', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
   })
 
-  test('keeps runtime content truncation invisible while rendering the retained content', () => {
-    render(
+  test('keeps runtime content truncation invisible while rendering the retained content', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -383,8 +384,8 @@ describe('MessageList', () => {
     expect(screen.queryByText(/加载完整输出/)).not.toBeInTheDocument()
   })
 
-  test('lets complete user and assistant message regions inherit the UI weight', () => {
-    render(
+  test('lets complete user and assistant message regions inherit the UI weight', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -417,7 +418,7 @@ describe('MessageList', () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:workspace-visualization')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -473,7 +474,7 @@ describe('MessageList', () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:chatgpt-visualization')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -507,7 +508,7 @@ describe('MessageList', () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:wework-attachment-visualization')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -542,7 +543,7 @@ describe('MessageList', () => {
   test('offers conversation actions for text selected inside one message body', async () => {
     const onAddSelectionToConversation = vi.fn()
     const onAskSelectionInSidebar = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -570,8 +571,8 @@ describe('MessageList', () => {
     expect(onAskSelectionInSidebar).toHaveBeenCalledWith('response')
   })
 
-  test('does not offer selection actions across message bodies', () => {
-    render(
+  test('does not offer selection actions across message bodies', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -603,7 +604,7 @@ describe('MessageList', () => {
   })
 
   test('reads the final selection after a mouse interaction completes', async () => {
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -633,7 +634,7 @@ describe('MessageList', () => {
   test('offers Electron selection actions for streaming process text before tools', async () => {
     runtimeMock.electron = true
     const onAddSelectionToConversation = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -673,7 +674,7 @@ describe('MessageList', () => {
 
   test('keeps captured selection actions when streaming replaces the selected text node', async () => {
     const onAddSelectionToConversation = vi.fn()
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <MessageList
         messages={[
           {
@@ -723,7 +724,7 @@ describe('MessageList', () => {
   })
 
   test('offers selection actions when the whole message body is selected', async () => {
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -770,7 +771,7 @@ describe('MessageList', () => {
       downloadedFilename = this.download
     })
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -837,7 +838,7 @@ describe('MessageList', () => {
   })
 
   test('uses the translated fallback when a generated image has no revised prompt', async () => {
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -887,7 +888,7 @@ describe('MessageList', () => {
       size: 5,
     })
 
-    const { unmount } = render(
+    const { unmount } = await renderLazy(
       <WorkspaceFileReaderProvider readWorkspaceFileChunk={readWorkspaceFileChunk}>
         <MessageList
           messages={[
@@ -948,10 +949,10 @@ describe('MessageList', () => {
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:generated-workspace-image')
   })
 
-  test('does not render viewed images as final message artifacts', () => {
+  test('does not render viewed images as final message artifacts', async () => {
     const imageUrl = 'data:image/png;base64,aW1hZ2U='
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -999,7 +1000,7 @@ describe('MessageList', () => {
       .mockReturnValue('blob:remote-tool-image')
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
-    const { unmount } = render(
+    const { unmount } = await renderLazy(
       <WorkspaceFileReaderProvider readWorkspaceFileChunk={readWorkspaceFileChunk}>
         <MessageList
           imageTarget={{ deviceId: 'remote-device', workspacePath: '/workspace/project' }}
@@ -1053,7 +1054,7 @@ describe('MessageList', () => {
     const user = userEvent.setup()
     const readWorkspaceFileChunk = vi.fn().mockRejectedValue(new Error('Device is offline'))
 
-    render(
+    await renderLazy(
       <WorkspaceFileReaderProvider readWorkspaceFileChunk={readWorkspaceFileChunk}>
         <MessageList
           imageTarget={{ deviceId: 'remote-device', workspacePath: '/workspace' }}
@@ -1094,8 +1095,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('image-view-preview')).not.toBeInTheDocument()
   })
 
-  test('uses browser-native content visibility without message window placeholders', () => {
-    render(
+  test('uses browser-native content visibility without message window placeholders', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -1124,12 +1125,12 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-assistant').style.containIntrinsicSize).toBe('')
   })
 
-  test('does not use message row content visibility in the desktop app', () => {
+  test('does not use message row content visibility in the desktop app', async () => {
     runtimeMock.electron = true
     const getSelectionSpy = vi.spyOn(document, 'getSelection')
 
     try {
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -1160,7 +1161,7 @@ describe('MessageList', () => {
     }
   })
 
-  test('windows oversized streaming Markdown before mounting every chunk', () => {
+  test('windows oversized streaming Markdown before mounting every chunk', async () => {
     runtimeMock.electron = true
     const intersectionCallbacks: IntersectionObserverCallback[] = []
     class IntersectionObserverMock {
@@ -1181,7 +1182,7 @@ describe('MessageList', () => {
       (_, index) => `### Streaming section ${index + 1}\n\n${'content '.repeat(40)}\n`
     ).join('\n')
 
-    const { container } = render(
+    const { container } = await renderLazy(
       <MessageList
         onRetryFailedMessage={vi.fn()}
         onSwitchModelForFailedMessage={vi.fn()}
@@ -1236,7 +1237,7 @@ describe('MessageList', () => {
     expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
   })
 
-  test('releases eager Markdown chunks after streaming completes', () => {
+  test('releases eager Markdown chunks after streaming completes', async () => {
     runtimeMock.electron = true
     const intersectionCallbacks: IntersectionObserverCallback[] = []
     class IntersectionObserverMock {
@@ -1257,7 +1258,7 @@ describe('MessageList', () => {
       (_, index) => `### Completed section ${index + 1}\n\n${'content '.repeat(40)}\n`
     ).join('\n')
 
-    const { container } = render(
+    const { container } = await renderLazy(
       <MessageList
         messages={[
           {
@@ -1291,7 +1292,7 @@ describe('MessageList', () => {
     expect(chunks[0].querySelector('[data-markdown-window-placeholder]')).not.toBeNull()
   })
 
-  test('keeps a streamed oversized code chunk mounted after completion', () => {
+  test('keeps a streamed oversized code chunk mounted after completion', async () => {
     runtimeMock.electron = true
     const intersectionCallbacks: IntersectionObserverCallback[] = []
     class IntersectionObserverMock {
@@ -1331,7 +1332,7 @@ describe('MessageList', () => {
       createdAt: '2026-09-21T10:00:00Z',
     }
 
-    const { container, rerender } = render(<MessageList messages={[streamingMessage]} />)
+    const { container, rerender } = await renderLazy(<MessageList messages={[streamingMessage]} />)
     const codeNode = container.querySelector('code')
     expect(codeNode).not.toBeNull()
 
@@ -1363,7 +1364,7 @@ describe('MessageList', () => {
     ).toBeNull()
   })
 
-  test('keeps message row containment during a plain text click', () => {
+  test('keeps message row containment during a plain text click', async () => {
     const getSelectionSpy = vi.spyOn(document, 'getSelection')
     getSelectionSpy.mockReturnValue({
       isCollapsed: true,
@@ -1373,7 +1374,7 @@ describe('MessageList', () => {
     } as Selection)
 
     try {
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -1454,7 +1455,7 @@ describe('MessageList', () => {
     ]
 
     try {
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -1491,8 +1492,8 @@ describe('MessageList', () => {
     }
   })
 
-  test('keeps message rows stable during double-click text selection', () => {
-    render(
+  test('keeps message rows stable during double-click text selection', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -1530,7 +1531,7 @@ describe('MessageList', () => {
       })
 
     try {
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -1580,8 +1581,8 @@ describe('MessageList', () => {
     }
   })
 
-  test('renders one assistant turn file changes under its message', () => {
-    render(
+  test('renders one assistant turn file changes under its message', async () => {
+    await renderLazy(
       <MessageList
         devices={[
           {
@@ -1630,11 +1631,11 @@ describe('MessageList', () => {
     expect(screen.getByTestId('file-changes-card')).toHaveTextContent('查看更改')
   })
 
-  test('does not show file change hover diff for the turn currently open in review', () => {
+  test('does not show file change hover diff for the turn currently open in review', async () => {
     vi.useFakeTimers()
     try {
       const onOpenFileChangesReview = vi.fn()
-      render(
+      await renderLazy(
         <MessageList
           fileChangesDiffPreviewDisabledSubtaskId="42"
           devices={[
@@ -1704,7 +1705,7 @@ describe('MessageList', () => {
     }
   })
 
-  test('renders cancelled assistant turns like stopped Codex turns', () => {
+  test('renders cancelled assistant turns like stopped Codex turns', async () => {
     const commandBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 21,
@@ -1715,7 +1716,7 @@ describe('MessageList', () => {
       createdAt: Date.parse('2026-06-11T10:09:18Z'),
     }
 
-    render(
+    await renderLazy(
       <MessageList
         devices={[
           {
@@ -1774,8 +1775,8 @@ describe('MessageList', () => {
     expect(stoppedNotice).not.toHaveClass('border-b')
   })
 
-  test('keeps late cancelled output without rendering it as active thinking', () => {
-    render(
+  test('keeps late cancelled output without rendering it as active thinking', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -1806,8 +1807,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('removes an in-flight reasoning preview when its turn is cancelled', () => {
-    render(
+  test('removes an in-flight reasoning preview when its turn is cancelled', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -1836,8 +1837,8 @@ describe('MessageList', () => {
     expect(screen.queryByText('正在检查取消前的状态。')).not.toBeInTheDocument()
   })
 
-  test('renders tagged proposed plan content as regular assistant markdown', () => {
-    render(
+  test('renders tagged proposed plan content as regular assistant markdown', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -1861,8 +1862,8 @@ describe('MessageList', () => {
     expect(screen.queryByText(/proposed_plan/)).not.toBeInTheDocument()
   })
 
-  test('renders Codex plan implementation user messages as the chosen option label', () => {
-    render(
+  test('renders Codex plan implementation user messages as the chosen option label', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -1888,8 +1889,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
   })
 
-  test('renders answered request user input as an assistant question summary', () => {
-    render(
+  test('renders answered request user input as an assistant question summary', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -1953,7 +1954,7 @@ describe('MessageList', () => {
     ].join('\n')
     stubClipboardWriteText(writeText)
 
-    render(
+    await renderLazy(
       <MessageList
         onOpenAssistantPlan={onOpenAssistantPlan}
         messages={[
@@ -2013,8 +2014,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('assistant-plan-reading-panel')).not.toBeInTheDocument()
   })
 
-  test('keeps processing expanded when a completed response contains a plan', () => {
-    render(
+  test('keeps processing expanded when a completed response contains a plan', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2048,7 +2049,7 @@ describe('MessageList', () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:plan')
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2081,8 +2082,8 @@ describe('MessageList', () => {
     expect(desktopHostMock.invoke).not.toHaveBeenCalled()
   })
 
-  test('renders streaming plan blocks as an assistant plan card', () => {
-    render(
+  test('renders streaming plan blocks as an assistant plan card', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2111,8 +2112,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-plan-streaming-indicator')).toHaveTextContent('正在生成')
   })
 
-  test('renders untagged streaming plan-shaped markdown as regular assistant markdown', () => {
-    render(
+  test('renders untagged streaming plan-shaped markdown as regular assistant markdown', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2140,8 +2141,8 @@ describe('MessageList', () => {
     ).toBeInTheDocument()
   })
 
-  test('hides generic thinking after streaming assistant content becomes visible', () => {
-    render(
+  test('hides generic thinking after streaming assistant content becomes visible', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2160,7 +2161,7 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('shows only the running block after partial content', () => {
+  test('shows only the running block after partial content', async () => {
     const runningSearchBlock: ProcessingBlock = {
       id: 'search-running',
       subtaskId: 1,
@@ -2171,7 +2172,7 @@ describe('MessageList', () => {
       createdAt: 1770000000000,
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2196,8 +2197,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('renders tagged markdown documents as regular assistant markdown instead of a plan card', () => {
-    render(
+  test('renders tagged markdown documents as regular assistant markdown instead of a plan card', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2225,8 +2226,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('产品需求文档示例')
   })
 
-  test('renders streaming tagged markdown documents without a plan card', () => {
-    render(
+  test('renders streaming tagged markdown documents without a plan card', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2252,8 +2253,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('产品需求文档示例')
   })
 
-  test('shows stopped duration from completed time and keeps partial assistant content', () => {
-    render(
+  test('shows stopped duration from completed time and keeps partial assistant content', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2274,7 +2275,7 @@ describe('MessageList', () => {
     expect(screen.queryByText(/已处理/)).not.toBeInTheDocument()
   })
 
-  test('renders stopped assistant process text and activity rows in original order', () => {
+  test('renders stopped assistant process text and activity rows in original order', async () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'process-1',
@@ -2303,7 +2304,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2337,7 +2338,7 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
-  test('counts each edited file in a stopped tool summary', () => {
+  test('counts each edited file in a stopped tool summary', async () => {
     const files = Array.from({ length: 4 }, (_, index) => ({
       path: `src/file-${index + 1}.ts`,
       change_type: 'modified' as const,
@@ -2366,7 +2367,7 @@ describe('MessageList', () => {
       },
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2390,8 +2391,8 @@ describe('MessageList', () => {
     expect(screen.getByLabelText('编辑 4')).toBeInTheDocument()
   })
 
-  test('shows one stopped notice for split stopped assistant turns and keeps guidance visible', () => {
-    render(
+  test('shows one stopped notice for split stopped assistant turns and keeps guidance visible', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2462,8 +2463,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
   })
 
-  test('shows stopped notice without duration when a cancelled assistant turn has no elapsed time', () => {
-    render(
+  test('shows stopped notice without duration when a cancelled assistant turn has no elapsed time', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2482,8 +2483,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-stopped-notice')).not.toHaveTextContent('0s')
   })
 
-  test('uses compact spacing between messages and hover actions', () => {
-    render(
+  test('uses compact spacing between messages and hover actions', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2510,8 +2511,8 @@ describe('MessageList', () => {
     expect(screen.getAllByTestId('message-hover-actions')[0]).toHaveClass('min-h-5')
   })
 
-  test('renders a goal badge on goal-first user messages', () => {
-    render(
+  test('renders a goal badge on goal-first user messages', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2533,8 +2534,8 @@ describe('MessageList', () => {
     )
   })
 
-  test('renders attached comment badges on user messages', () => {
-    render(
+  test('renders attached comment badges on user messages', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2591,8 +2592,8 @@ describe('MessageList', () => {
     })
   }
 
-  test('renders user and assistant messages', () => {
-    const { container } = render(
+  test('renders user and assistant messages', async () => {
+    const { container } = await renderLazy(
       <MessageList
         messages={[
           {
@@ -2619,8 +2620,8 @@ describe('MessageList', () => {
     expect(container.firstElementChild).not.toHaveClass('overflow-x-hidden', 'overflow-x-clip')
   })
 
-  test('does not render blank completed assistant placeholders', () => {
-    render(
+  test('does not render blank completed assistant placeholders', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2661,7 +2662,7 @@ describe('MessageList', () => {
     expect(screen.getByText('ls output')).toBeInTheDocument()
   })
 
-  test('does not render completed assistant reasoning placeholders', () => {
+  test('does not render completed assistant reasoning placeholders', async () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
@@ -2673,7 +2674,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2693,7 +2694,7 @@ describe('MessageList', () => {
     expect(screen.queryByText('正在执行 pwd')).not.toBeInTheDocument()
   })
 
-  test('shows the latest reasoning summary while the assistant turn is streaming', () => {
+  test('shows the latest reasoning summary while the assistant turn is streaming', async () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
@@ -2705,7 +2706,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2730,10 +2731,10 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-live-preview')).not.toBeInTheDocument()
   })
 
-  test('keeps the truncated reasoning preview within the configured maximum length', () => {
+  test('keeps the truncated reasoning preview within the configured maximum length', async () => {
     const content = 'a'.repeat(120)
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2753,7 +2754,7 @@ describe('MessageList', () => {
     expect(preview).toMatch(/\.\.\.$/)
   })
 
-  test('hides the stale reasoning summary once assistant text starts streaming', () => {
+  test('hides the stale reasoning summary once assistant text starts streaming', async () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
@@ -2765,7 +2766,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2784,7 +2785,7 @@ describe('MessageList', () => {
     expect(screen.queryByText('检查运行日志并定位事件边界')).not.toBeInTheDocument()
   })
 
-  test('keeps the latest reasoning summary on the thinking row after a tool completes', () => {
+  test('keeps the latest reasoning summary on the thinking row after a tool completes', async () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
@@ -2805,7 +2806,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2827,7 +2828,7 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('keeps completed process text inside the message-level processing group', () => {
+  test('keeps completed process text inside the message-level processing group', async () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'process-1',
@@ -2849,7 +2850,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2886,8 +2887,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
-  test('renders a later process update below assistant text with the same body font size', () => {
-    render(
+  test('renders a later process update below assistant text with the same body font size', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2937,8 +2938,8 @@ describe('MessageList', () => {
     )
   })
 
-  test('keeps merged subagent activity anchored before later parent output', () => {
-    render(
+  test('keeps merged subagent activity anchored before later parent output', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -2997,8 +2998,8 @@ describe('MessageList', () => {
     expect(screen.getAllByTestId('subagent-activity-inline-group')).toHaveLength(1)
   })
 
-  test('does not restore hidden failed content from runtime display order', () => {
-    render(
+  test('does not restore hidden failed content from runtime display order', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -3042,7 +3043,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
   })
 
-  test('keeps a running tool visible when streamed answer text appears', () => {
+  test('keeps a running tool visible when streamed answer text appears', async () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'tool-1',
@@ -3056,7 +3057,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -3090,7 +3091,7 @@ describe('MessageList', () => {
     expect(screen.getByText('/workspace/project')).toBeInTheDocument()
   })
 
-  test('does not show the turn-wide elapsed time as a tool duration after remount', () => {
+  test('does not show the turn-wide elapsed time as a tool duration after remount', async () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-06-24T08:10:00.000Z'))
@@ -3114,9 +3115,9 @@ describe('MessageList', () => {
           createdAt: '2026-06-24T08:00:00.000Z',
         },
       ]
-      const { unmount } = render(<MessageList messages={restoredMessages} />)
+      const { unmount } = await renderLazy(<MessageList messages={restoredMessages} />)
       unmount()
-      render(<MessageList messages={restoredMessages} />)
+      await renderLazy(<MessageList messages={restoredMessages} />)
 
       const header = screen.getByTestId('processing-summary-header')
       expect(header).toHaveTextContent('调用 1 个工具')
@@ -3127,7 +3128,7 @@ describe('MessageList', () => {
     }
   })
 
-  test('keeps narrative visible but collapses tools before runtime guidance', () => {
+  test('keeps narrative visible but collapses tools before runtime guidance', async () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'process-1',
@@ -3149,7 +3150,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -3177,8 +3178,8 @@ describe('MessageList', () => {
     )
   })
 
-  test('keeps the final processing shell for a processing-only segment before guidance', () => {
-    render(
+  test('keeps the final processing shell for a processing-only segment before guidance', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -3213,8 +3214,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('processing-summary-toggle')).toBeInTheDocument()
   })
 
-  test('keeps processing expanded for the assistant continuation after runtime guidance', () => {
-    render(
+  test('keeps processing expanded for the assistant continuation after runtime guidance', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -3288,7 +3289,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -3319,7 +3320,7 @@ describe('MessageList', () => {
     )
   })
 
-  test('keeps processing expansion state scoped to each conversation', () => {
+  test('keeps processing expansion state scoped to each conversation', async () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'tool-1',
@@ -3341,7 +3342,7 @@ describe('MessageList', () => {
       createdAt: '2026-06-24T08:00:01.000Z',
     })
 
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <MessageList conversationKey="conversation-a" messages={[buildMessage('assistant-a')]} />
     )
 
@@ -3361,8 +3362,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
   })
 
-  test('reserves enough marker gutter for multi-digit ordered lists', () => {
-    const { container } = render(
+  test('reserves enough marker gutter for multi-digit ordered lists', async () => {
+    const { container } = await renderLazy(
       <MessageList
         messages={[
           {
@@ -3384,8 +3385,8 @@ describe('MessageList', () => {
     expect(orderedList).not.toHaveClass('pl-5')
   })
 
-  test('renders assistant markdown headings with the semantic theme color', () => {
-    render(
+  test('renders assistant markdown headings with the semantic theme color', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -3404,8 +3405,8 @@ describe('MessageList', () => {
     expect(screen.getByRole('heading', { level: 3 })).toHaveClass('text-text-primary')
   })
 
-  test('routes assistant markdown links through the configured browser target', () => {
-    render(
+  test('routes assistant markdown links through the configured browser target', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -3426,9 +3427,9 @@ describe('MessageList', () => {
     expect(openExternalUrlMock).toHaveBeenCalledWith('https://github.com/wecode-ai/Wegent')
   })
 
-  test('keeps angle-bracket external link destinations as external links', () => {
+  test('keeps angle-bracket external link destinations as external links', async () => {
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         messages={[
@@ -3452,7 +3453,7 @@ describe('MessageList', () => {
 
   test('routes assistant file-path links to the workspace file panel', async () => {
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         messages={[
@@ -3473,9 +3474,9 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
   })
 
-  test('decodes URL-encoded assistant file paths before opening the workspace file panel', () => {
+  test('decodes URL-encoded assistant file paths before opening the workspace file panel', async () => {
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         messages={[
@@ -3498,9 +3499,9 @@ describe('MessageList', () => {
     )
   })
 
-  test('decodes an encoded relative file path before extracting its line number', () => {
+  test('decodes an encoded relative file path before extracting its line number', async () => {
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         messages={[
@@ -3523,9 +3524,9 @@ describe('MessageList', () => {
     })
   })
 
-  test('routes assistant folder links to the workspace directory panel', () => {
+  test('routes assistant folder links to the workspace directory panel', async () => {
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         messages={[
@@ -3547,9 +3548,9 @@ describe('MessageList', () => {
     })
   })
 
-  test('opens local HTML file links in the Wework built-in browser', () => {
+  test('opens local HTML file links in the Wework built-in browser', async () => {
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         messages={[
@@ -3570,9 +3571,9 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
   })
 
-  test('removes angle brackets from assistant file link destinations', () => {
+  test('removes angle brackets from assistant file link destinations', async () => {
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         messages={[
@@ -3598,11 +3599,11 @@ describe('MessageList', () => {
     )
   })
 
-  test('passes assistant file link line numbers to open-file actions', () => {
+  test('passes assistant file link line numbers to open-file actions', async () => {
     vi.useFakeTimers()
     const onOpenWorkspaceFile = vi.fn()
     try {
-      render(
+      await renderLazy(
         <MessageList
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           messages={[
@@ -3644,8 +3645,8 @@ describe('MessageList', () => {
     }
   })
 
-  test('renders assistant file links with extension-specific Codex-style icons', () => {
-    render(
+  test('renders assistant file links with extension-specific Codex-style icons', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -3670,8 +3671,8 @@ describe('MessageList', () => {
     expect(links[1]).toHaveTextContent('package.json(line 15)')
   })
 
-  test('keeps normal assistant inline code styled as code chips', () => {
-    const { container } = render(
+  test('keeps normal assistant inline code styled as code chips', async () => {
+    const { container } = await renderLazy(
       <MessageList
         messages={[
           {
@@ -3698,7 +3699,7 @@ describe('MessageList', () => {
     const onOpenFileChangesReview = vi.fn()
     const onLoadFileChangesDiff = vi.fn().mockResolvedValue('')
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         onOpenFileChangesReview={onOpenFileChangesReview}
         onLoadFileChangesDiff={onLoadFileChangesDiff}
@@ -3747,7 +3748,7 @@ describe('MessageList', () => {
 
   test('renders Codex memory citations and one-column deduped file references', async () => {
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         messages={[
@@ -3841,7 +3842,7 @@ describe('MessageList', () => {
 
   test('opens a deduped reference card with the absolute path from the assistant link', async () => {
     const onOpenWorkspaceFile = vi.fn()
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         messages={[
@@ -3875,8 +3876,8 @@ describe('MessageList', () => {
     )
   })
 
-  test('waits until streaming finishes before rendering final answer artifacts', () => {
-    render(
+  test('waits until streaming finishes before rendering final answer artifacts', async () => {
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={vi.fn()}
         onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
@@ -3927,7 +3928,7 @@ describe('MessageList', () => {
   })
 
   test('adds deduped document references from turn file changes and expands hidden references', async () => {
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={vi.fn()}
         onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
@@ -4050,8 +4051,8 @@ describe('MessageList', () => {
     ])
   })
 
-  test('renders IM source badge for user messages with channel label', () => {
-    render(
+  test('renders IM source badge for user messages with channel label', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4076,8 +4077,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-source-row')).toContainElement(badge)
   })
 
-  test('renders Discord IM source badge from channel type', () => {
-    render(
+  test('renders Discord IM source badge from channel type', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4098,8 +4099,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-source-badge')).toHaveTextContent('Discord')
   })
 
-  test('does not render IM source badge for assistant or non-IM messages', () => {
-    render(
+  test('does not render IM source badge for assistant or non-IM messages', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4138,8 +4139,8 @@ describe('MessageList', () => {
     ).toBeNull()
   })
 
-  test('renders sent local skill mentions as polished inline tokens', () => {
-    render(
+  test('renders sent local skill mentions as polished inline tokens', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4192,7 +4193,7 @@ describe('MessageList', () => {
       created_at: '2026-05-25T15:08:00.000+08:00',
     }
 
-    render(
+    await renderLazy(
       <AttachmentDownloadProvider fetchAttachmentBlob={fetchAttachmentBlob}>
         <MessageList
           messages={[
@@ -4231,7 +4232,7 @@ describe('MessageList', () => {
       local_preview_url: 'blob:local-sent-image',
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4269,7 +4270,7 @@ describe('MessageList', () => {
       local_preview_url: '/var/folders/tmp/codex-clipboard/screenshot.png',
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4321,7 +4322,7 @@ describe('MessageList', () => {
       local_path: '/Users/me/.wework/workspace/attachments/draft/42/historical.png',
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4363,7 +4364,7 @@ describe('MessageList', () => {
       local_preview_url: '/var/folders/tmp/codex-clipboard/screenshot.png',
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4406,7 +4407,7 @@ describe('MessageList', () => {
       local_preview_url: 'blob:persisted-image',
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4440,7 +4441,7 @@ describe('MessageList', () => {
     runtimeMock.electron = true
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:electron-codex-image')
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4477,7 +4478,7 @@ describe('MessageList', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     stubClipboardWriteText(writeText)
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4504,10 +4505,10 @@ describe('MessageList', () => {
     expect(writeText).toHaveBeenCalledWith('分析下这个图片')
   })
 
-  test('renders Codex local non-image file mentions as compact file chips', () => {
+  test('renders Codex local non-image file mentions as compact file chips', async () => {
     const onOpenWorkspaceFile = vi.fn()
 
-    render(
+    await renderLazy(
       <MessageList
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         messages={[
@@ -4544,8 +4545,8 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/crystal/package.json')
   })
 
-  test('renders file-only Codex mentions without the raw markdown wrapper', () => {
-    render(
+  test('renders file-only Codex mentions without the raw markdown wrapper', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4577,7 +4578,7 @@ describe('MessageList', () => {
     runtimeMock.electron = true
     electronLocalFileMock.read.mockRejectedValueOnce(new Error('file unavailable'))
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4608,7 +4609,7 @@ describe('MessageList', () => {
     runtimeMock.electron = true
     electronLocalFileMock.read.mockRejectedValueOnce(new Error('file unavailable'))
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4635,10 +4636,10 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
   })
 
-  test('does not read transient Codex clipboard images through Electron', () => {
+  test('does not read transient Codex clipboard images through Electron', async () => {
     runtimeMock.electron = true
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4672,7 +4673,7 @@ describe('MessageList', () => {
       .fn()
       .mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
 
-    render(
+    await renderLazy(
       <AttachmentDownloadProvider fetchAttachmentBlob={fetchAttachmentBlob}>
         <MessageList
           messages={[
@@ -4712,7 +4713,7 @@ describe('MessageList', () => {
       URL.createObjectURL = vi.fn(() => 'blob:assistant-local-image')
       URL.revokeObjectURL = vi.fn()
 
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -4739,7 +4740,7 @@ describe('MessageList', () => {
     runtimeMock.electron = true
     electronLocalFileMock.read.mockRejectedValueOnce(new Error('file unavailable'))
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4781,7 +4782,7 @@ describe('MessageList', () => {
       created_at: '2026-05-25T15:08:00.000+08:00',
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4842,7 +4843,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4942,7 +4943,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -4979,7 +4980,7 @@ describe('MessageList', () => {
     expect(previews[0]).toHaveClass('h-20', 'w-20', 'shrink-0', 'rounded-xl', 'object-cover')
   })
 
-  test('renders document attachments in user messages', () => {
+  test('renders document attachments in user messages', async () => {
     const attachment: Attachment = {
       id: 44,
       filename: 'requirements.pdf',
@@ -4990,7 +4991,7 @@ describe('MessageList', () => {
       created_at: '2026-05-25T15:09:00.000+08:00',
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5024,7 +5025,7 @@ describe('MessageList', () => {
         '/Users/me/.wework/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt',
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5064,7 +5065,7 @@ describe('MessageList', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-25T16:00:00.000+08:00'))
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5135,7 +5136,7 @@ describe('MessageList', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     stubClipboardWriteText(writeText)
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5163,7 +5164,7 @@ describe('MessageList', () => {
 
   test('shows edit action only for the final completed user turn and submits edited text', async () => {
     const onEditLastUserMessage = vi.fn().mockResolvedValue(true)
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5245,8 +5246,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('edit-user-message-form')).not.toBeInTheDocument()
   })
 
-  test('renders sent user GitHub links as composer chips and opens them externally', () => {
-    render(
+  test('renders sent user GitHub links as composer chips and opens them externally', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5272,8 +5273,8 @@ describe('MessageList', () => {
     )
   })
 
-  test('renders sent Wegent Sites project links like composer chips', () => {
-    render(
+  test('renders sent Wegent Sites project links like composer chips', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5298,7 +5299,7 @@ describe('MessageList', () => {
   })
 
   test('renders GitHub link chips in the edit form and opens the link edit popover', async () => {
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5335,8 +5336,8 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('link-edit-popover')).toBeInTheDocument()
   })
 
-  test('hides edit action while the final user turn is still streaming', () => {
-    render(
+  test('hides edit action while the final user turn is still streaming', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5367,7 +5368,7 @@ describe('MessageList', () => {
     stubClipboardWriteText(writeText)
     const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行内容`).join('\n')
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5402,8 +5403,8 @@ describe('MessageList', () => {
     expect(writeText).toHaveBeenCalledWith(content)
   })
 
-  test('does not show a collapse control for short user messages', () => {
-    render(
+  test('does not show a collapse control for short user messages', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5423,7 +5424,7 @@ describe('MessageList', () => {
 
   test.each([false, true])(
     'counts the visible conversation title when deciding to collapse (long body: %s)',
-    longBody => {
+    async longBody => {
       const title = '让助手生成两张表格，包含中文、粗体、代码和空单元格。'
       const reference = createConversationMentionReference(title, {
         deviceId: 'local-device',
@@ -5433,7 +5434,7 @@ describe('MessageList', () => {
       const body = longBody ? '需要详细分析。'.repeat(100) : 'n'
       expect(reference.length).toBeGreaterThan(600)
 
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -5456,10 +5457,10 @@ describe('MessageList', () => {
     }
   )
 
-  test('does not collapse long runtime guidance messages', () => {
+  test('does not collapse long runtime guidance messages', async () => {
     const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行引导`).join('\n')
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5478,12 +5479,12 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).not.toHaveClass('max-h-44')
   })
 
-  test('shows only clock time for messages created today', () => {
+  test('shows only clock time for messages created today', async () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-05-25T18:50:00.000+08:00'))
 
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -5504,12 +5505,12 @@ describe('MessageList', () => {
     }
   })
 
-  test('shows weekday and clock time for messages created within seven days', () => {
+  test('shows weekday and clock time for messages created within seven days', async () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-06-29T18:50:00.000+08:00'))
 
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -5529,12 +5530,12 @@ describe('MessageList', () => {
     }
   })
 
-  test('shows date and clock time for messages not created today in the current year', () => {
+  test('shows date and clock time for messages not created today in the current year', async () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-05-25T18:50:00.000+08:00'))
 
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -5554,12 +5555,12 @@ describe('MessageList', () => {
     }
   })
 
-  test('shows year for messages not created this year', () => {
+  test('shows year for messages not created this year', async () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-05-25T18:50:00.000+08:00'))
 
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -5583,7 +5584,7 @@ describe('MessageList', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-25T19:00:00.000+08:00'))
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5648,7 +5649,7 @@ describe('MessageList', () => {
       createdAt: '2026-05-25T18:38:00.000+08:00',
     }
 
-    render(<MessageList messages={[message]} onForkMessage={onForkMessage} />)
+    await renderLazy(<MessageList messages={[message]} onForkMessage={onForkMessage} />)
 
     const button = screen.getByTestId('fork-message-button')
     expect(button).toHaveAttribute('aria-label', '在新任务中继续')
@@ -5663,8 +5664,8 @@ describe('MessageList', () => {
     await waitFor(() => expect(button).not.toBeDisabled())
   })
 
-  test('hides assistant hover actions while the response is streaming', () => {
-    render(
+  test('hides assistant hover actions while the response is streaming', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5683,8 +5684,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('renders only thinking before the first streamed response arrives', () => {
-    render(
+  test('renders only thinking before the first streamed response arrives', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5707,8 +5708,8 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('hides generic thinking once final text starts streaming', () => {
-    render(
+  test('hides generic thinking once final text starts streaming', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5728,7 +5729,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
   })
 
-  test('keeps a reasoning-only timer through final streaming and remount', () => {
+  test('keeps a reasoning-only timer through final streaming and remount', async () => {
     vi.useFakeTimers()
     try {
       const start = Date.parse('2026-09-16T10:00:00Z')
@@ -5756,7 +5757,7 @@ describe('MessageList', () => {
         startedAt: start,
         items: [],
       }
-      const first = render(<MessageList messages={[message]} turns={[runningTurn]} />)
+      const first = await renderLazy(<MessageList messages={[message]} turns={[runningTurn]} />)
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
       act(() => vi.advanceTimersByTime(3000))
       const finalMessage: WorkbenchMessage = {
@@ -5771,7 +5772,9 @@ describe('MessageList', () => {
       act(() => vi.advanceTimersByTime(5000))
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 13秒')
       first.unmount()
-      const restored = render(<MessageList messages={[finalMessage]} turns={[runningTurn]} />)
+      const restored = await renderLazy(
+        <MessageList messages={[finalMessage]} turns={[runningTurn]} />
+      )
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 13秒')
       act(() => vi.advanceTimersByTime(2000))
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 15秒')
@@ -5789,12 +5792,12 @@ describe('MessageList', () => {
     }
   })
 
-  test('counts from the turn start when the first processing activity appears', () => {
+  test('counts from the turn start when the first processing activity appears', async () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-05-25T18:46:08.000+08:00'))
 
-      render(
+      await renderLazy(
         <MessageList
           messages={[
             {
@@ -5834,8 +5837,8 @@ describe('MessageList', () => {
     }
   })
 
-  test('shows thinking in the message list while waiting for the assistant response', () => {
-    render(
+  test('shows thinking in the message list while waiting for the assistant response', async () => {
+    await renderLazy(
       <MessageList
         isWaitingForAssistant
         messages={[
@@ -5857,8 +5860,8 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('shows thinking between active Goal turns after the previous assistant message settles', () => {
-    render(
+  test('shows thinking between active Goal turns after the previous assistant message settles', async () => {
+    await renderLazy(
       <MessageList
         isWaitingForAssistant
         messages={[
@@ -5876,8 +5879,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('keeps the retry card visible while waiting for the retried response', () => {
-    render(
+  test('keeps the retry card visible while waiting for the retried response', async () => {
+    await renderLazy(
       <MessageList
         isWaitingForAssistant
         messages={[
@@ -5905,7 +5908,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('does not show thinking while completed processing activity is visible', () => {
+  test('does not show thinking while completed processing activity is visible', async () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -5917,7 +5920,7 @@ describe('MessageList', () => {
       createdAt: 1770000000000,
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5936,7 +5939,7 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('does not duplicate thinking when live process text is visible', () => {
+  test('does not duplicate thinking when live process text is visible', async () => {
     const processBlock: ProcessingBlock = {
       id: 'text-1',
       subtaskId: 1,
@@ -5946,7 +5949,7 @@ describe('MessageList', () => {
       createdAt: 1770000000000,
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5965,7 +5968,7 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('shows thinking after process text completes while waiting for the next item', () => {
+  test('shows thinking after process text completes while waiting for the next item', async () => {
     const processBlock: ProcessingBlock = {
       id: 'text-1',
       subtaskId: 1,
@@ -5975,7 +5978,7 @@ describe('MessageList', () => {
       createdAt: 1770000000000,
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -5994,7 +5997,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('keeps expanded tool details open while final text streams, then collapses when done', () => {
+  test('keeps expanded tool details open while final text streams, then collapses when done', async () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -6012,7 +6015,7 @@ describe('MessageList', () => {
       status: 'streaming' as const,
       createdAt: '2026-05-25T18:46:00.000+08:00',
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <MessageList
         messages={[
           {
@@ -6113,7 +6116,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
   })
 
-  test('collapses expanded tool details when the completed processing shell is toggled', () => {
+  test('collapses expanded tool details when the completed processing shell is toggled', async () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-final-toggle',
       subtaskId: 1,
@@ -6130,7 +6133,7 @@ describe('MessageList', () => {
       createdAt: '2026-05-25T18:46:00.000+08:00',
       blocks: [completedBlock],
     }
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <MessageList messages={[{ ...message, content: '', status: 'streaming' }]} />
     )
 
@@ -6154,7 +6157,7 @@ describe('MessageList', () => {
     )
   })
 
-  test('keeps an expanded file change open while final text streams and after completion', () => {
+  test('keeps an expanded file change open while final text streams and after completion', async () => {
     const fileChangesBlock: ProcessingBlock = {
       id: 'file-changes-persistence',
       subtaskId: 1,
@@ -6199,7 +6202,7 @@ describe('MessageList', () => {
       createdAt: '2026-05-25T18:46:00.000+08:00',
       blocks: [fileChangesBlock],
     }
-    const { rerender } = render(<MessageList messages={[message]} />)
+    const { rerender } = await renderLazy(<MessageList messages={[message]} />)
 
     fireEvent.click(screen.getByRole('button', { name: /编辑 env/ }))
     expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
@@ -6238,7 +6241,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
   })
 
-  test('keeps an expanded file change open when runtime ordering moves it after text', () => {
+  test('keeps an expanded file change open when runtime ordering moves it after text', async () => {
     const fileChangesBlock: ProcessingBlock = {
       id: 'file-changes-ordered-persistence',
       subtaskId: 1,
@@ -6289,7 +6292,7 @@ describe('MessageList', () => {
         },
       ],
     }
-    const { rerender } = render(<MessageList messages={[message]} />)
+    const { rerender } = await renderLazy(<MessageList messages={[message]} />)
 
     fireEvent.click(screen.getByRole('button', { name: /编辑 env/ }))
     expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
@@ -6338,7 +6341,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
   })
 
-  test('renders process text inside the processing timeline before the following tool', () => {
+  test('renders process text inside the processing timeline before the following tool', async () => {
     const processBlock: ProcessingBlock = {
       id: 'text-1',
       subtaskId: 1,
@@ -6357,7 +6360,7 @@ describe('MessageList', () => {
       createdAt: 1770000000001,
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6378,7 +6381,7 @@ describe('MessageList', () => {
     expect(processText.compareDocumentPosition(runningTool)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
-  test('keeps thinking in the preceding tool preview when process text starts', () => {
+  test('keeps thinking in the preceding tool preview when process text starts', async () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -6397,7 +6400,7 @@ describe('MessageList', () => {
       createdAt: 1770000000001,
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6417,7 +6420,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('process-text-block')).toHaveTextContent('负载均值明显偏高。')
   })
 
-  test('keeps context compaction visible between separate tool groups', () => {
+  test('keeps context compaction visible between separate tool groups', async () => {
     const command = (id: string, createdAt: number): ProcessingBlock => ({
       id,
       subtaskId: 1,
@@ -6436,7 +6439,7 @@ describe('MessageList', () => {
       createdAt: 1770000001000,
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6460,7 +6463,7 @@ describe('MessageList', () => {
     expect(screen.getAllByRole('button', { name: /调用 1 个工具 已处理/ })).toHaveLength(2)
   })
 
-  test('preserves tool summaries between narrative blocks in runtime guidance turns', () => {
+  test('preserves tool summaries between narrative blocks in runtime guidance turns', async () => {
     const files = Array.from({ length: 3 }, (_, index) => ({
       path: `src/edited-${index + 1}.ts`,
       change_type: 'modified' as const,
@@ -6537,7 +6540,7 @@ describe('MessageList', () => {
       },
     ]
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6581,7 +6584,7 @@ describe('MessageList', () => {
     expect(screen.getByText('读取 file-3.ts')).toBeInTheDocument()
   })
 
-  test('does not render process text that duplicates the final assistant content', () => {
+  test('does not render process text that duplicates the final assistant content', async () => {
     const finalTextBlock: ProcessingBlock = {
       id: 'text-final',
       subtaskId: 1,
@@ -6591,7 +6594,7 @@ describe('MessageList', () => {
       createdAt: 1770000000000,
     }
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6611,11 +6614,11 @@ describe('MessageList', () => {
     expect(screen.getAllByText('这是最终回答。')).toHaveLength(1)
   })
 
-  test('renders failed assistant messages in the approved error-card layout', () => {
+  test('renders failed assistant messages in the approved error-card layout', async () => {
     const rawError =
       'API Error: 400 {"error":{"message":"模型 deepseek-v3.1 不支持 Anthropic 协议, model_id: ali-deepseek-v3.1"}}'
 
-    const { container } = render(
+    const { container } = await renderLazy(
       <MessageList
         messages={[
           {
@@ -6660,7 +6663,7 @@ describe('MessageList', () => {
     const user = userEvent.setup()
     const onRetryFailedMessage = vi.fn()
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6687,11 +6690,11 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
   })
 
-  test('classifies hidden raw failed content before generic task status errors', () => {
+  test('classifies hidden raw failed content before generic task status errors', async () => {
     const rawError =
       'API Error: 400 {"error":{"message":"模型 deepseek-v3.1 不支持 Anthropic 协议, model_id: ali-deepseek-v3.1"}}'
 
-    const { container } = render(
+    const { container } = await renderLazy(
       <MessageList
         messages={[
           {
@@ -6718,7 +6721,7 @@ describe('MessageList', () => {
     const user = userEvent.setup()
     const rawError = 'Task failed with status: FAILED'
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6747,7 +6750,7 @@ describe('MessageList', () => {
     const onRetryFailedMessage = vi.fn()
     const onSwitchModelForFailedMessage = vi.fn()
 
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6772,8 +6775,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
   })
 
-  test('uses backend error type before raw error text when rendering failed messages', () => {
-    render(
+  test('uses backend error type before raw error text when rendering failed messages', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6793,9 +6796,9 @@ describe('MessageList', () => {
     expect(screen.queryByText('网络连接失败：请检查网络连接后重试')).not.toBeInTheDocument()
   })
 
-  test('keeps regular long content inside the page while tables and highlighted code scroll locally', () => {
+  test('keeps regular long content inside the page while tables and highlighted code scroll locally', async () => {
     const longToken = 'a'.repeat(120)
-    const { container } = render(
+    const { container } = await renderLazy(
       <MessageList
         messages={[
           {
@@ -6849,8 +6852,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('markdown-code-block')).toHaveClass('overflow-hidden')
   })
 
-  test('limits highlighted code selection to the code body', () => {
-    render(
+  test('limits highlighted code selection to the code body', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6881,7 +6884,7 @@ describe('MessageList', () => {
     'skills/test(draft)/instructions.md',
   ])('renders local skill markdown links in user messages: %s', async skillPath => {
     const onOpenLocalSkillFile = vi.fn()
-    render(
+    await renderLazy(
       <ComposerCatalogContext.Provider
         value={{
           appsStore: desktopComposerCatalogStore,
@@ -6916,10 +6919,10 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
   })
 
-  test('renders a restored GitHub app reference with its brand icon', () => {
+  test('renders a restored GitHub app reference with its brand icon', async () => {
     const reference = '[$GitHub](app://connector_github_sent_icon_test)'
     registerComposerMentionIcon(reference, 'https://example.com/github.png')
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6945,8 +6948,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-user')).not.toHaveTextContent('$GitHub')
   })
 
-  test('renders plugin markdown links in user messages', () => {
-    render(
+  test('renders plugin markdown links in user messages', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -6980,8 +6983,8 @@ describe('MessageList', () => {
     window.history.replaceState({}, '', '/')
   })
 
-  test('renders cloud references in user messages without exposing the internal URI', () => {
-    render(
+  test('renders cloud references in user messages without exposing the internal URI', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -7007,8 +7010,8 @@ describe('MessageList', () => {
     expect(screen.queryByText(/cloud:\/\/projects\/3\/todos/)).not.toBeInTheDocument()
   })
 
-  test('keeps sent issue references styled as native context chips', () => {
-    render(
+  test('keeps sent issue references styled as native context chips', async () => {
+    await renderLazy(
       <MessageList
         messages={[
           {
@@ -7033,10 +7036,10 @@ describe('MessageList', () => {
     expect(screen.queryByText(/wework-issue:\/\//)).not.toBeInTheDocument()
   })
 
-  test('renders conversation references in user messages without exposing the internal URI', () => {
+  test('renders conversation references in user messages without exposing the internal URI', async () => {
     const href =
       'wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22runtime-42%22%7D'
-    render(
+    await renderLazy(
       <MessageList
         messages={[
           {

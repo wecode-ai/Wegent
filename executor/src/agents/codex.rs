@@ -48,6 +48,8 @@ const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_EXECUTOR_SHUTDOWN: &str =
     "codex app-server stopped because the executor is shutting down";
+pub const CODEX_APP_SERVER_PROCESS_EXITED: &str =
+    "codex app-server exited while an active Goal was running";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE: u32 = 720;
@@ -349,16 +351,39 @@ impl CodexAppServerClient {
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self.prepare_request().await?;
-        Self::send_request_and_wait(
+        let diagnostic_start = turn_start_rpc_diagnostic_start(method);
+        log_turn_start_rpc_phase(diagnostic_start, "prepare", "started");
+        let prepared = self
+            .prepare_request_with_process(true, None, diagnostic_start)
+            .await;
+        log_turn_start_rpc_phase(
+            diagnostic_start,
+            "prepare",
+            if prepared.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            },
+        );
+        let prepared = prepared?;
+        let result = Self::send_request_and_wait(
             method,
             params,
             timeout_seconds,
-            request_id,
-            handle,
-            response_rx,
+            prepared,
+            diagnostic_start,
         )
-        .await
+        .await;
+        log_turn_start_rpc_phase(
+            diagnostic_start,
+            "response",
+            if result.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            },
+        );
+        result
     }
 
     async fn request_for_launch_config(
@@ -368,34 +393,33 @@ impl CodexAppServerClient {
         launch_config: &CodexLaunchConfig,
     ) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self
-            .prepare_request_with_process(true, Some(launch_config))
+        let prepared = self
+            .prepare_request_with_process(true, Some(launch_config), None)
             .await?;
-        Self::send_request_and_wait(
-            method,
-            params,
-            timeout_seconds,
-            request_id,
-            handle,
-            response_rx,
-        )
-        .await
+        Self::send_request_and_wait(method, params, timeout_seconds, prepared, None).await
     }
 
     async fn send_request_and_wait(
         method: &str,
         params: Value,
         timeout_seconds: u64,
-        request_id: u64,
-        handle: CodexAppServerHandle,
-        response_rx: oneshot::Receiver<Result<Value, String>>,
+        prepared: (
+            u64,
+            CodexAppServerHandle,
+            oneshot::Receiver<Result<Value, String>>,
+        ),
+        diagnostic_start: Option<Instant>,
     ) -> Result<Value, String> {
+        let (request_id, handle, response_rx) = prepared;
         let message = json!({
             "method": method,
             "id": request_id,
             "params": params,
         });
-        if let Err(error) = handle.write_message(message).await {
+        if let Err(error) = handle
+            .write_message_with_diagnostics(message, diagnostic_start)
+            .await
+        {
             handle.remove_pending(request_id).await;
             return Err(error);
         }
@@ -433,34 +457,27 @@ impl CodexAppServerClient {
         allow_active_turns: bool,
     ) -> Result<bool, String> {
         let runtime_proxy_env = proxy_environment(proxy_url);
-        let process = {
-            let mut state = self.state.lock().await;
-            if runtime_proxy_endpoint_matches(&state.runtime_proxy_env, &runtime_proxy_env) {
-                return Ok(false);
-            }
-            if !allow_active_turns && !state.active_threads.is_empty() {
-                log_codex_environment_change(
-                    "codex runtime proxy update deferred",
-                    "runtime_proxy_update",
-                    &state.runtime_proxy_env,
-                    &runtime_proxy_env,
-                    &state.active_threads,
-                );
-                replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
-                return Ok(true);
-            }
-            replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
-            state.process_environment.clear();
-            state.process.take()
-        };
-        if let Some(process) = process {
-            fail_all_pending(
-                &process.pending,
-                "codex app-server was restarted after its runtime proxy changed".to_owned(),
-            )
-            .await;
-            drop(process);
+        let mut state = self.state.lock().await;
+        if runtime_proxy_endpoint_matches(&state.runtime_proxy_env, &runtime_proxy_env) {
+            return Ok(false);
         }
+        if !allow_active_turns && !state.active_threads.is_empty() {
+            log_codex_environment_change(
+                "codex runtime proxy update deferred",
+                "runtime_proxy_update",
+                &state.runtime_proxy_env,
+                &runtime_proxy_env,
+                &state.active_threads,
+            );
+            replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
+            return Ok(true);
+        }
+        replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
+        state
+            .retire_process(Some(
+                "codex app-server was restarted after its runtime proxy changed",
+            ))
+            .await?;
         Ok(true)
     }
 
@@ -502,40 +519,30 @@ impl CodexAppServerClient {
         run_codex_app_server_turn_on_shared_client(self, request, options).await
     }
 
-    pub async fn restart(&self) {
-        let process = {
-            let mut state = self.state.lock().await;
-            state.process_environment.clear();
-            state.process.take()
-        };
-        let Some(process) = process else {
-            return;
-        };
-        fail_all_pending(
-            &process.pending,
-            "codex app-server was restarted".to_owned(),
-        )
-        .await;
-        drop(process);
+    pub async fn restart(&self) -> Result<(), String> {
+        let mut state = self.state.lock().await;
+        state
+            .retire_process(Some("codex app-server was restarted"))
+            .await
     }
 
-    pub async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
-        let process = {
-            let mut state = self.state.lock().await;
-            let active_turn_count = state.active_threads.values().sum::<usize>();
-            let pending_request_count = match state.process.as_ref() {
-                Some(process) => process.pending.lock().await.len(),
-                None => 0,
-            };
-            if active_turn_count > 0 || pending_request_count > 0 {
-                return Err((active_turn_count, pending_request_count));
-            }
-            state.process_environment.clear();
-            state.process.take()
+    pub async fn restart_if_idle(&self) -> Result<(), CodexIdleMutationError> {
+        let mut state = self.state.lock().await;
+        let active_turn_count = state.active_threads.values().sum::<usize>();
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
         };
-        if let Some(process) = process {
-            drop(process);
+        if active_turn_count > 0 || pending_request_count > 0 {
+            return Err(CodexIdleMutationError::Busy {
+                active_turn_count,
+                pending_request_count,
+            });
         }
+        state
+            .retire_process(None)
+            .await
+            .map_err(CodexIdleMutationError::Update)?;
         Ok(())
     }
 
@@ -572,33 +579,26 @@ impl CodexAppServerClient {
         if changed {
             state.thread_generations.clear();
             state.idle_thread_generations.clear();
-            state.process_environment.clear();
-            drop(state.process.take());
+            state
+                .retire_process(None)
+                .await
+                .map_err(CodexIdleMutationError::Update)?;
         }
         Ok(result)
     }
 
-    async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
-        let process = {
-            let mut state = self.state.lock().await;
-            if state.active_threads.get(thread_id) != Some(&1)
-                || state.active_threads.values().sum::<usize>() != 1
-            {
-                return false;
-            }
-            state.process_environment.clear();
-            state.process.take()
-        };
-        let Some(process) = process else {
-            return false;
-        };
-        fail_all_pending(
-            &process.pending,
-            "codex app-server was restarted after a stalled turn".to_owned(),
-        )
-        .await;
-        drop(process);
-        true
+    async fn restart_stalled_turn_process(&self, thread_id: &str) -> Result<bool, String> {
+        let mut state = self.state.lock().await;
+        if state.active_threads.get(thread_id) != Some(&1)
+            || state.active_threads.values().sum::<usize>() != 1
+            || state.process.is_none()
+        {
+            return Ok(false);
+        }
+        state
+            .retire_process(Some("codex app-server was restarted after a stalled turn"))
+            .await?;
+        Ok(true)
     }
 
     pub async fn steer_turn(
@@ -636,19 +636,6 @@ impl CodexAppServerClient {
             .ok_or_else(|| "turn/steer response missing turnId".to_owned())
     }
 
-    async fn prepare_request(
-        &self,
-    ) -> Result<
-        (
-            u64,
-            CodexAppServerHandle,
-            oneshot::Receiver<Result<Value, String>>,
-        ),
-        String,
-    > {
-        self.prepare_request_with_process(true, None).await
-    }
-
     async fn prepare_existing_request(
         &self,
     ) -> Result<
@@ -659,13 +646,14 @@ impl CodexAppServerClient {
         ),
         String,
     > {
-        self.prepare_request_with_process(false, None).await
+        self.prepare_request_with_process(false, None, None).await
     }
 
     async fn prepare_request_with_process(
         &self,
         start_if_missing: bool,
         launch_config: Option<&CodexLaunchConfig>,
+        diagnostic_start: Option<Instant>,
     ) -> Result<
         (
             u64,
@@ -674,8 +662,15 @@ impl CodexAppServerClient {
         ),
         String,
     > {
+        log_turn_start_rpc_phase(diagnostic_start, "mcp-endpoints", "started");
         ensure_codex_mcp_endpoints().await?;
+        log_turn_start_rpc_phase(diagnostic_start, "mcp-endpoints", "completed");
+        log_turn_start_rpc_phase(diagnostic_start, "state-lock", "started");
         let mut state = self.state.lock().await;
+        log_turn_start_rpc_phase(diagnostic_start, "state-lock", "completed");
+        log_turn_start_rpc_phase(diagnostic_start, "retiring-process", "started");
+        state.finish_retiring_process().await?;
+        log_turn_start_rpc_phase(diagnostic_start, "retiring-process", "completed");
         if state
             .process
             .as_mut()
@@ -703,8 +698,7 @@ impl CodexAppServerClient {
                 pending_request_count,
             )
         {
-            state.process = None;
-            state.process_environment.clear();
+            state.retire_process(None).await?;
         }
         if state.process.is_none() {
             if !start_if_missing {
@@ -731,7 +725,9 @@ impl CodexAppServerClient {
             .expect("persistent Codex app-server should be initialized")
             .handle();
         let (tx, rx) = oneshot::channel();
+        log_turn_start_rpc_phase(diagnostic_start, "pending-registration", "started");
         handle.pending.lock().await.insert(request_id, tx);
+        log_turn_start_rpc_phase(diagnostic_start, "pending-registration", "completed");
         Ok((request_id, handle, rx))
     }
 
@@ -801,6 +797,7 @@ impl CodexAppServerClient {
 
     async fn existing_process(&self) -> Result<CodexAppServerHandle, String> {
         let mut state = self.state.lock().await;
+        state.finish_retiring_process().await?;
         if state
             .process
             .as_mut()
@@ -1020,6 +1017,7 @@ impl CodexAppServerClient {
     ) -> Result<(CodexAppServerHandle, Option<Duration>), String> {
         ensure_codex_mcp_endpoints().await?;
         let mut state = self.state.lock().await;
+        state.finish_retiring_process().await?;
         if state
             .process
             .as_mut()
@@ -1044,8 +1042,7 @@ impl CodexAppServerClient {
                 pending_request_count,
             )
         {
-            state.process = None;
-            state.process_environment.clear();
+            state.retire_process(None).await?;
         }
         if state.process.is_none() {
             let launch_config = CodexLaunchConfig {
@@ -1076,6 +1073,7 @@ impl CodexAppServerClient {
         launch_config: &CodexLaunchConfig,
     ) -> Result<CodexAppServerHandle, String> {
         let mut state = self.state.lock().await;
+        state.finish_retiring_process().await?;
         if state
             .process
             .as_mut()
@@ -1099,8 +1097,7 @@ impl CodexAppServerClient {
                 pending_request_count,
             )
         {
-            state.process = None;
-            state.process_environment.clear();
+            state.retire_process(None).await?;
         }
         if state.process.is_none() {
             let mut process_launch_config = launch_config.clone();
@@ -1231,8 +1228,13 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
     for state in states {
         let mut state = state.lock().await;
         state.executor_shutdown_requested = true;
-        if state.process.take().is_some() {
-            terminated += 1;
+        if state.process.is_some() {
+            match state.retire_process(None).await {
+                Ok(()) => terminated += 1,
+                Err(error) => {
+                    log_executor_event("codex app-server shutdown failed", &[("error", error)])
+                }
+            }
         }
     }
     if terminated > 0 {
@@ -1263,6 +1265,30 @@ struct CodexAppServerSharedState {
     thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
     runtime_proxy_env: BTreeMap<String, String>,
     process_environment: BTreeMap<String, String>,
+}
+
+impl CodexAppServerSharedState {
+    // Keep the process registered and admission locked until its child is reaped.
+    // Cancellation retains the terminating process so the next admission finishes teardown.
+    async fn retire_process(&mut self, pending_error: Option<&str>) -> Result<(), String> {
+        if let Some(process) = self.process.as_mut() {
+            process.terminate(pending_error).await?;
+        }
+        self.process = None;
+        self.process_environment.clear();
+        Ok(())
+    }
+
+    async fn finish_retiring_process(&mut self) -> Result<(), String> {
+        if self
+            .process
+            .as_ref()
+            .is_some_and(|process| process.terminating)
+        {
+            self.retire_process(None).await?;
+        }
+        Ok(())
+    }
 }
 
 impl Default for CodexAppServerSharedState {
@@ -1340,18 +1366,69 @@ impl CodexNotificationHub {
 
 struct CodexAppServerProcess {
     child: Child,
+    terminating: bool,
+    termination_error: Option<String>,
+    termination_task: Option<CodexTerminationTask>,
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
     notifications: CodexNotificationHub,
     reader_task: tokio::task::JoinHandle<()>,
+    #[cfg(test)]
+    teardown_barrier: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
 }
 
 impl CodexAppServerProcess {
+    async fn terminate(&mut self, pending_error: Option<&str>) -> Result<(), String> {
+        if let Some(error) = &self.termination_error {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                return Ok(());
+            }
+            return Err(error.clone());
+        }
+        if let Some(error) = pending_error {
+            fail_all_pending(&self.pending, error.to_owned()).await;
+        }
+        self.reader_task.abort();
+        if !self.terminating {
+            self.terminating = true;
+            self.start_termination();
+        }
+        let result =
+            finish_codex_app_server_termination(&mut self.child, &mut self.termination_task).await;
+        self.termination_error = result.as_ref().err().cloned();
+        result
+    }
+
+    fn start_termination(&mut self) {
+        #[cfg(test)]
+        if let Some((entered, release)) = self.teardown_barrier.take() {
+            let pid = self.child.id();
+            self.termination_task = Some(tokio::task::spawn_blocking(move || {
+                let _ = entered.send(());
+                let _ = release.recv();
+                match pid {
+                    Some(pid) => tests::lifecycle::signal_controlled_child(pid),
+                    None => Ok(()),
+                }
+            }));
+            return;
+        }
+        self.termination_task = start_codex_app_server_termination(&mut self.child);
+    }
+
     fn handle(&self) -> CodexAppServerHandle {
         CodexAppServerHandle {
             stdin: Arc::clone(&self.stdin),
             pending: Arc::clone(&self.pending),
             notifications: self.notifications.clone(),
+        }
+    }
+
+    #[cfg(test)]
+    fn wait_for_teardown_barrier(&mut self) {
+        if let Some((entered, release)) = self.teardown_barrier.take() {
+            let _ = entered.send(());
+            let _ = release.recv();
         }
     }
 
@@ -1362,6 +1439,8 @@ impl CodexAppServerProcess {
 
 impl Drop for CodexAppServerProcess {
     fn drop(&mut self) {
+        #[cfg(test)]
+        self.wait_for_teardown_barrier();
         self.reader_task.abort();
         signal_codex_app_server_child(&mut self.child);
     }
@@ -1376,22 +1455,62 @@ struct CodexAppServerHandle {
 
 impl CodexAppServerHandle {
     async fn write_message(&self, message: Value) -> Result<(), String> {
+        self.write_message_with_diagnostics(message, None).await
+    }
+
+    async fn write_message_with_diagnostics(
+        &self,
+        message: Value,
+        diagnostic_start: Option<Instant>,
+    ) -> Result<(), String> {
         let mut line = serde_json::to_vec(&message)
             .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
         line.push(b'\n');
+        log_turn_start_rpc_phase(diagnostic_start, "stdin-lock", "started");
         let mut stdin = self.stdin.lock().await;
+        log_turn_start_rpc_phase(diagnostic_start, "stdin-lock", "completed");
+        log_turn_start_rpc_phase(diagnostic_start, "request-write", "started");
         stdin
             .write_all(&line)
             .await
             .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))?;
-        stdin
+        let result = stdin
             .flush()
             .await
-            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"))
+            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"));
+        if result.is_ok() {
+            log_turn_start_rpc_phase(diagnostic_start, "request-write", "completed");
+        }
+        result
     }
 
     async fn remove_pending(&self, request_id: u64) {
         self.pending.lock().await.remove(&request_id);
+    }
+}
+
+fn turn_start_rpc_diagnostic_start(method: &str) -> Option<Instant> {
+    if method != "turn/start" {
+        return None;
+    }
+    turn_start_rpc_diagnostic_enabled(method, env::var("VITE_WEWORK_E2E").ok().as_deref())
+        .then(Instant::now)
+}
+
+fn turn_start_rpc_diagnostic_enabled(method: &str, e2e: Option<&str>) -> bool {
+    method == "turn/start" && e2e == Some("true")
+}
+
+fn log_turn_start_rpc_phase(start: Option<Instant>, phase: &'static str, status: &'static str) {
+    if let Some(start) = start {
+        log_executor_event(
+            "codex turn start RPC phase",
+            &[
+                ("phase", phase.to_owned()),
+                ("status", status.to_owned()),
+                ("elapsed_ms", start.elapsed().as_millis().to_string()),
+            ],
+        );
     }
 }
 
@@ -1441,16 +1560,26 @@ async fn start_persistent_codex_app_server(
             Ok((
                 CodexAppServerProcess {
                     child,
+                    terminating: false,
+                    termination_error: None,
+                    termination_task: None,
                     stdin: Arc::new(Mutex::new(stdin)),
                     pending,
                     notifications,
                     reader_task,
+                    #[cfg(test)]
+                    teardown_barrier: None,
                 },
                 next_id,
             ))
         }
         Err(error) => {
-            terminate_codex_app_server_child(&mut child).await;
+            if let Err(cleanup_error) = terminate_codex_app_server_child(&mut child).await {
+                log_executor_event(
+                    "codex app-server initialization cleanup failed",
+                    &[("error", cleanup_error)],
+                );
+            }
             Err(error)
         }
     }
@@ -2356,7 +2485,9 @@ pub async fn run_codex_app_server_turn_with_cancel(
     }
     .await;
 
-    terminate_codex_app_server_child(&mut process.child).await;
+    if let Err(error) = terminate_codex_app_server_child(&mut process.child).await {
+        log_executor_event("codex app-server turn cleanup failed", &[("error", error)]);
+    }
     if let Err(error) = &result {
         let mut failed_fields = fields.clone();
         failed_fields.push(("error", error.clone()));
@@ -2496,13 +2627,16 @@ async fn read_shared_turn_notifications(
             }
             continue;
         };
-        let executor_shutdown_requested =
-            matches!(received, Err(broadcast::error::RecvError::Closed))
-                && client.state.lock().await.executor_shutdown_requested;
+        let executor_shutdown_requested = (matches!(
+            received,
+            Err(broadcast::error::RecvError::Closed)
+        ) || matches!(&received, Ok(message) if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited")))
+            && client.state.lock().await.executor_shutdown_requested;
         let notification = shared_notification_result(
             received,
             last_outcome.clone(),
             executor_shutdown_requested,
+            options.wait_for_goal_continuation && state.goal_is_active(),
         )?;
         let message = match notification {
             SharedNotification::Message(message) => message,
@@ -2523,18 +2657,6 @@ async fn read_shared_turn_notifications(
                 return Ok(outcome);
             }
         };
-        if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
-            if let Some(outcome) = last_outcome {
-                return Ok(outcome);
-            }
-            return Err(message
-                .get("params")
-                .and_then(|params| params.get("message"))
-                .and_then(Value::as_str)
-                .unwrap_or("codex app-server exited before completing the turn")
-                .to_owned());
-        }
-
         if !notification_belongs_to_thread(client, &message, thread_id).await {
             continue;
         }
@@ -2861,7 +2983,10 @@ async fn recover_stalled_shared_turn(
     thread_id: &str,
     timeout_seconds: u64,
 ) -> String {
-    let restarted = client.restart_stalled_turn_process(thread_id).await;
+    let restarted = match client.restart_stalled_turn_process(thread_id).await {
+        Ok(restarted) => restarted,
+        Err(error) => return format!("codex app-server turn made no model or tool progress for {timeout_seconds}s; restart failed: {error}"),
+    };
     log_executor_event(
         "codex shared turn startup stalled",
         &[
@@ -2916,23 +3041,34 @@ fn shared_notification_result(
     result: Result<Value, broadcast::error::RecvError>,
     last_outcome: Option<ExecutionOutcome>,
     executor_shutdown_requested: bool,
+    active_goal: bool,
 ) -> Result<SharedNotification, String> {
-    match result {
-        Ok(message) => Ok(SharedNotification::Message(message)),
-        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-            Ok(SharedNotification::Lagged(skipped))
+    let error = match result {
+        Ok(message)
+            if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") =>
+        {
+            message
+                .get("params")
+                .and_then(|params| params.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("codex app-server exited before completing the turn")
+                .to_owned()
         }
-        Err(broadcast::error::RecvError::Closed) => last_outcome
-            .map(SharedNotification::Completed)
-            .ok_or_else(|| {
-                if executor_shutdown_requested {
-                    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned()
-                } else {
-                    "codex app-server notification stream closed before completing the turn"
-                        .to_owned()
-                }
-            }),
+        Ok(message) => return Ok(SharedNotification::Message(message)),
+        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+            return Ok(SharedNotification::Lagged(skipped));
+        }
+        Err(broadcast::error::RecvError::Closed) => {
+            "codex app-server notification stream closed before completing the turn".to_owned()
+        }
+    };
+    if executor_shutdown_requested {
+        return Err(CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned());
     }
+    if active_goal {
+        return Err(CODEX_APP_SERVER_PROCESS_EXITED.to_owned());
+    }
+    last_outcome.map(SharedNotification::Completed).ok_or(error)
 }
 
 async fn interrupt_shared_turn(
@@ -3454,9 +3590,62 @@ fn configure_codex_windows_no_window(command: &mut Command) {
 #[cfg(not(windows))]
 fn configure_codex_windows_no_window(_command: &mut Command) {}
 
-async fn terminate_codex_app_server_child(child: &mut Child) {
+type CodexTerminationTask = tokio::task::JoinHandle<Result<(), String>>;
+
+fn start_codex_app_server_termination(child: &mut Child) -> Option<CodexTerminationTask> {
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return None;
+    }
+    #[cfg(windows)]
+    if let Some(pid) = child.id() {
+        return Some(tokio::task::spawn_blocking(move || {
+            crate::process::kill_windows_process_tree(pid)
+        }));
+    }
+    #[cfg(not(windows))]
     signal_codex_app_server_child(child);
-    let _ = child.wait().await;
+    None
+}
+
+async fn finish_codex_app_server_termination(
+    child: &mut Child,
+    task: &mut Option<CodexTerminationTask>,
+) -> Result<(), String> {
+    if let Some(pending_task) = task.as_mut() {
+        let result = pending_task.await.map_err(|error| {
+            format!("failed to terminate codex app-server process tree: {error}")
+        })?;
+        *task = None;
+        if let Err(error) = result {
+            let child_state = match child.try_wait() {
+                Ok(Some(_)) => "exited",
+                Ok(None) => "running",
+                Err(_) => "check-failed",
+            };
+            log_executor_event(
+                "codex app-server process tree termination failed",
+                &[("child_state", child_state.to_owned())],
+            );
+            if child_state == "exited" {
+                return Ok(());
+            }
+            return Err(error);
+        }
+    }
+    wait_for_codex_app_server_exit(child).await
+}
+
+async fn terminate_codex_app_server_child(child: &mut Child) -> Result<(), String> {
+    let mut task = start_codex_app_server_termination(child);
+    finish_codex_app_server_termination(child, &mut task).await
+}
+
+async fn wait_for_codex_app_server_exit(child: &mut Child) -> Result<(), String> {
+    child
+        .wait()
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("failed to wait for codex app-server exit: {error}"))
 }
 
 fn signal_codex_app_server_child(child: &mut Child) {
@@ -3477,7 +3666,7 @@ fn signal_codex_app_server_child(child: &mut Child) {
     // whole tree down: the app-server owns tool subprocesses of its own.
     #[cfg(windows)]
     if let Some(process_id) = child.id() {
-        crate::process::kill_windows_process_tree(process_id);
+        let _ = crate::process::kill_windows_process_tree(process_id);
         return;
     }
 

@@ -86,12 +86,13 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
     {
       text: 'WEWORK_DESKTOP_E2E_TASK',
       value: 'local-unread-card',
-      visible: true,
     }
   )
   assert.ok(cardId.startsWith('cloud-todo-card-drop-'))
   const itemId = cardId.slice('cloud-todo-card-drop-'.length)
   const cardSelector = `${boardSurfaceSelector} [data-testid="${cardId}"]`
+  await control.command('scrollIntoViewAsUser', cardSelector)
+  await control.command('waitFor', cardSelector, { visible: true })
   const unreadId = `cloud-todo-card-unread-${itemId}`
   const unreadSelector = `${cardSelector} [data-testid="${unreadId}"]`
   await control.command('waitFor', unreadSelector)

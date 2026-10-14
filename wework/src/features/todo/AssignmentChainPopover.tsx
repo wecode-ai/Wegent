@@ -1,5 +1,5 @@
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
-import { IssueAssignmentHistoryList } from '@wegent/collaboration'
+import { IssueAssignmentHistoryList } from '@wegent/collaboration/issue-detail'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AnchorPopover } from './AnchorPopover'
 import { memberNameById } from './todoShared'

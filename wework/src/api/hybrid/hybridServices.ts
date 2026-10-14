@@ -864,9 +864,7 @@ export function createHybridWorkbenchServices(
           error
         )
       }
-      return mergeKnownDevices(localDevices, cloudDevices) as Awaited<
-        ReturnType<WorkbenchServices['deviceApi']['listDevices']>
-      >
+      return mergeKnownDevices(localDevices, cloudDevices)
     },
   }
 
@@ -1544,7 +1542,8 @@ export function createHybridWorkbenchServices(
     userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
-      listDevices: requestOptions => listCloudDevices(requestOptions?.signal),
+      listDevices: async requestOptions =>
+        mergeKnownDevices(rememberedLocalDevices, await listCloudDevices(requestOptions?.signal)),
       listRuntimeWork: requestOptions => listCloudRuntimeWork(requestOptions?.signal),
     },
     executorClient: createExecutorClientFromApis({

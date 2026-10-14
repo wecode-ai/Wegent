@@ -56,9 +56,13 @@ async function waitForIdle(control, timeoutMs) {
   throw new Error('The AI turn did not finish while its background processes remained running')
 }
 
-async function changeTheme(control, mode) {
+async function changeTheme(control, mode, timeoutMs) {
   await control.command('click', '[data-testid="settings-button"]')
   await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('waitFor', '[data-testid="settings-nav-appearance"]', {
+    visible: true,
+    timeoutMs,
+  })
   await control.command('click', '[data-testid="settings-nav-appearance"]')
   await control.command('click', `[data-testid="appearance-mode-${mode}"]`)
   await control.command('waitFor', `html[data-theme="${mode}"]`)
@@ -95,6 +99,7 @@ export function createDesktopScenario({
   resultDir,
   workspacePath,
   uiTimeoutMs,
+  modelResponseTimeoutMs,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, 'body')
   let active = false
@@ -179,6 +184,7 @@ export function createDesktopScenario({
       await control.command('press', composer, { key: 'Enter' })
       await control.command('waitFor', `${PANE} [data-testid="message-assistant"]`, {
         text: COMPLETE,
+        timeoutMs: modelResponseTimeoutMs,
       })
       const snapshot = await waitForIdle(control, uiTimeoutMs)
       await writeFile(
@@ -221,7 +227,7 @@ export function createDesktopScenario({
       const textarea = '[data-testid="background-terminal-output-panel"] .xterm-helper-textarea'
       await control.command('waitFor', textarea)
       await capture(control, 'background-terminals-03-live-output.png')
-      await changeTheme(control, 'dark')
+      await changeTheme(control, 'dark', uiTimeoutMs)
       await control.command(
         'waitFor',
         '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
@@ -230,7 +236,7 @@ export function createDesktopScenario({
       await capture(control, 'background-terminals-03b-dark-output.png')
       await showSummary(control)
       await capture(control, 'background-terminals-03c-dark-summary.png')
-      await changeTheme(control, 'light')
+      await changeTheme(control, 'light', uiTimeoutMs)
 
       const readyCount = control.readyCount
       await control.command('reloadMainWindow', 'body')

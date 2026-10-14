@@ -190,7 +190,7 @@ describe('Markdown viewport windowing', () => {
     view.unmount()
   })
 
-  test.each([100, -1_400, 2_000])(
+  test.each([100, -600, 1_600])(
     'renders a newly mounted near chunk before asynchronous intersection delivery (top %s)',
     top => {
       const harness = viewportHarness(top)
@@ -200,7 +200,7 @@ describe('Markdown viewport windowing', () => {
       expect(harness.onChunkLayout).toHaveBeenCalled()
       expect(harness.intersections[0].options).toEqual({
         root: harness.root,
-        rootMargin: '1600px 0px',
+        rootMargin: '791px 0px',
       })
     }
   )
@@ -214,6 +214,16 @@ describe('Markdown viewport windowing', () => {
     act(() => harness.scope.getViewportRenders().forEach(renderChunk => renderChunk()))
     expect(view.container.querySelector('[data-markdown-window-placeholder]')).toBeNull()
     expect(harness.onChunkLayout).toHaveBeenCalled()
+  })
+
+  test('does not mount rich content more than one viewport beyond a constrained scroller', () => {
+    const harness = viewportHarness(2_000)
+    const view = harness.mount()
+    expect(view.container.querySelector('[data-markdown-window-placeholder]')).not.toBeNull()
+    expect(view.container.querySelector('[data-rich-markdown]')).toBeNull()
+    harness.geometry.top = 100
+    act(() => harness.scope.getViewportRenders().forEach(renderChunk => renderChunk()))
+    expect(view.container.querySelector('[data-rich-markdown]')).not.toBeNull()
   })
 
   test('ignores an old non-intersection callback after the chunk became visible', () => {

@@ -1,4 +1,5 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { renderLazy } from '@/test/render-lazy'
+import { act, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import '@/styles/globals.css'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -33,7 +34,7 @@ describe('AssistantMarkdown streaming stability', () => {
 
   test.each([true, false])(
     'records bounded Markdown expansion without transcript content (capture at mount: %s)',
-    captureAtMount => {
+    async captureAtMount => {
       runtimeMock.electron = true
       if (captureAtMount) startConversationDiagnosticCapture()
       const recordedEvents = () =>
@@ -65,7 +66,7 @@ describe('AssistantMarkdown streaming stability', () => {
         return { height, width: 600, top, bottom: top + height, left: 0, right: 600 } as DOMRect
       })
       const content = '### Private heading\n\n**PRIVATE transcript marker**'
-      const view = render(
+      const view = await renderLazy(
         <div data-scroll-origin="bottom">
           <div data-index="7">
             <AssistantMarkdown content={content} />
@@ -145,7 +146,7 @@ describe('AssistantMarkdown streaming stability', () => {
     }
   )
 
-  test('does not record diagnostics during normal viewport layout checks', () => {
+  test('does not record diagnostics during normal viewport layout checks', async () => {
     runtimeMock.electron = true
     vi.stubGlobal(
       'IntersectionObserver',
@@ -156,14 +157,14 @@ describe('AssistantMarkdown streaming stability', () => {
     )
     const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
 
-    const view = render(<AssistantMarkdown content="Short paragraph." />)
+    const view = await renderLazy(<AssistantMarkdown content="Short paragraph." />)
     view.unmount()
 
     expect(measure).toHaveBeenCalled()
     expect(getConversationDiagnosticsSnapshot()).toBeNull()
   })
 
-  test('renders complete atomic transcripts when reopening a finished conversation', () => {
+  test('renders complete atomic transcripts when reopening a finished conversation', async () => {
     runtimeMock.electron = true
     vi.stubGlobal(
       'IntersectionObserver',
@@ -176,11 +177,11 @@ describe('AssistantMarkdown streaming stability', () => {
       { length: 24 },
       (_, index) => `Persisted paragraph ${index + 1}. ${'Scrollable content '.repeat(12)}`
     ).join('\n\n')
-    const first = render(<AssistantMarkdown content={content} />)
+    const first = await renderLazy(<AssistantMarkdown content={content} />)
     expect(first.container.querySelectorAll('p')).toHaveLength(24)
     first.unmount()
 
-    const reopened = render(<AssistantMarkdown content={content} />)
+    const reopened = await renderLazy(<AssistantMarkdown content={content} />)
 
     expect(reopened.container.querySelectorAll('p')).toHaveLength(24)
     expect(reopened.container.querySelector('p:last-child')).toHaveTextContent(
@@ -189,7 +190,7 @@ describe('AssistantMarkdown streaming stability', () => {
     expect(reopened.container.querySelector('[data-markdown-window-placeholder]')).toBeNull()
   })
 
-  test('mounts a growing atomic chunk while bounded chunks remain windowed', () => {
+  test('mounts a growing atomic chunk while bounded chunks remain windowed', async () => {
     runtimeMock.electron = true
     vi.stubGlobal(
       'IntersectionObserver',
@@ -198,7 +199,9 @@ describe('AssistantMarkdown streaming stability', () => {
         disconnect() {}
       }
     )
-    const { container, rerender } = render(<AssistantMarkdown content="Short paragraph." />)
+    const { container, rerender } = await renderLazy(
+      <AssistantMarkdown content="Short paragraph." />
+    )
     expect(container.querySelector('[data-markdown-window-placeholder]')).not.toBeNull()
 
     rerender(<AssistantMarkdown content={'Long paragraph. '.repeat(400)} />)
@@ -207,7 +210,7 @@ describe('AssistantMarkdown streaming stability', () => {
   })
 
   test('keeps the code DOM mounted while more lines stream', async () => {
-    const { rerender } = render(
+    const { rerender } = await renderLazy(
       <AssistantMarkdown content={`Before code.\n\n${fencedCode(40)}`} isStreaming />
     )
     const codeBlock = screen.getByTestId('markdown-code-block')
@@ -225,7 +228,9 @@ describe('AssistantMarkdown streaming stability', () => {
 
   test('keeps long highlighted markdown DOM mounted when streaming completes', async () => {
     const content = `Before code.\n\n${fencedCode(90)}`
-    const { container, rerender } = render(<AssistantMarkdown content={content} isStreaming />)
+    const { container, rerender } = await renderLazy(
+      <AssistantMarkdown content={content} isStreaming />
+    )
     const paragraph = container.querySelector('p')
     const codeBlock = screen.getByTestId('markdown-code-block')
     const code = codeBlock.querySelector('code')
@@ -258,7 +263,9 @@ describe('AssistantMarkdown streaming stability', () => {
       { length: 8 },
       (_, index) => `### Section ${index + 1}\n\n${'Windowed content. '.repeat(100)}`
     ).join('\n\n')
-    const { container, rerender } = render(<AssistantMarkdown content={codeContent} isStreaming />)
+    const { container, rerender } = await renderLazy(
+      <AssistantMarkdown content={codeContent} isStreaming />
+    )
     const codeBlock = screen.getByTestId('markdown-code-block')
     const code = codeBlock.querySelector('code')
 

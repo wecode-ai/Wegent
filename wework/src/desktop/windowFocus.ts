@@ -21,11 +21,13 @@ function ensureListenerInstalled() {
   if (initialized) return
   initialized = true
   const generation = ++initializationGeneration
-  publishFocused(document.hasFocus())
-  window.addEventListener('focus', handleFocus)
-  window.addEventListener('blur', handleBlur)
   const subscribeNativeFocus = window.weworkElectronLifecycle?.onWindowFocusChanged
-  if (!subscribeNativeFocus) return
+  if (!subscribeNativeFocus) {
+    publishFocused(document.hasFocus())
+    window.addEventListener('focus', handleFocus)
+    window.addEventListener('blur', handleBlur)
+    return
+  }
   unsubscribeNativeFocus = subscribeNativeFocus(focused => {
     focusRevision += 1
     publishFocused(focused)

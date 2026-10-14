@@ -120,6 +120,17 @@ export function AppIframe({
 
   const revealNativeBrowser = useCallback(() => {
     onReadyRef.current?.()
+    const initialBounds = hostRef.current ? elementBounds(hostRef.current) : null
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    if (initialBounds && activeRef.current) {
+      void setEmbeddedBrowserBounds(
+        reducedMotion ? initialBounds : bootstrapBounds(initialBounds),
+        true,
+        label
+      ).catch(error => {
+        console.error('Failed to show app webview:', error)
+      })
+    }
     const generation = revealGenerationRef.current + 1
     revealGenerationRef.current = generation
     window.requestAnimationFrame(() => {
@@ -127,8 +138,8 @@ export function AppIframe({
         const bounds = hostRef.current ? elementBounds(hostRef.current) : null
         if (!bounds || !activeRef.current) return
         if (revealGenerationRef.current !== generation) return
-        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-          void setEmbeddedBrowserBounds(bounds, true, label).catch(error => {
+        if (reducedMotion) {
+          void setEmbeddedBrowserBounds(bounds, true, label, false, true).catch(error => {
             console.error('Failed to reveal app webview:', error)
           })
           return
@@ -141,7 +152,13 @@ export function AppIframe({
           const progress = Math.min((now - startedAt) / durationMs, 1)
           const eased = 1 - Math.pow(1 - progress, 3)
           const scale = 0.12 + 0.88 * eased
-          void setEmbeddedBrowserBounds(scaledBounds(bounds, scale), true, label).catch(error => {
+          void setEmbeddedBrowserBounds(
+            scaledBounds(bounds, scale),
+            true,
+            label,
+            false,
+            true
+          ).catch(error => {
             console.error('Failed to animate app webview reveal:', error)
           })
           if (progress < 1) window.requestAnimationFrame(animate)
@@ -152,13 +169,15 @@ export function AppIframe({
   }, [label])
 
   const syncNativeBounds = useCallback(
-    async (visible = activeRef.current) => {
+    async (visible = activeRef.current, preserveVisibility = false) => {
       if (!native || !openedRef.current) return
       const bounds = hostRef.current ? elementBounds(hostRef.current) : null
+      const geometryOptions: [] | [false, true] = preserveVisibility && bounds ? [false, true] : []
       await setEmbeddedBrowserBounds(
         bounds ?? { x: 0, y: 0, width: 1, height: 1 },
         visible && Boolean(bounds),
-        label
+        label,
+        ...geometryOptions
       )
     },
     [label, native]
@@ -275,7 +294,7 @@ export function AppIframe({
     if (!native) return
 
     const handleBoundsChange = () => {
-      void syncNativeBounds().catch(error => {
+      void syncNativeBounds(activeRef.current, true).catch(error => {
         console.error('Failed to update app webview bounds:', error)
       })
     }

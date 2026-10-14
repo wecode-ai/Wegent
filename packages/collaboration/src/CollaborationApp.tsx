@@ -255,7 +255,7 @@ export function CollaborationApp({
 
   useEffect(() => {
     if (refreshProjectRequestKey <= 0 || !project) return;
-    void commands.loadProjectSnapshot(project.id);
+    void commands.loadProjectSnapshot(project.id, { fresh: true });
   }, [commands, project?.id, refreshProjectRequestKey]);
 
   useEffect(() => {

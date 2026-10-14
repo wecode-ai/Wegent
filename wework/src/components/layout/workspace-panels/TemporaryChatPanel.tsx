@@ -20,7 +20,7 @@ import {
   type ReactNode,
 } from 'react'
 import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
-import { createCollaborationTranslator } from '@wegent/collaboration'
+import { createCollaborationTranslator } from '@wegent/collaboration/i18n'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import {

@@ -1,7 +1,5 @@
-import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,12 +7,17 @@ import { fileURLToPath } from 'node:url'
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
+import { preparePackagedHarnessRuntimes } from './modules/runtime-assets.mjs'
 import {
   compactInactiveDesktopE2EResults,
   resolveDesktopE2EResultRoot,
 } from './result-retention.mjs'
 import { prepareDesktopE2EBuild } from '../../scripts/lib/desktop-e2e-build.mjs'
 import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
+import { keepVerificationHostAwake } from '../../scripts/lib/verification-power.mjs'
+
+// Keep wall-clock checkpoint deadlines valid on unattended macOS hosts.
+keepVerificationHostAwake()
 
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
@@ -92,6 +95,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'app-update-full': './scenarios/app-update-full.scenario.mjs',
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
+  'startup-preparation': './scenarios/startup-preparation.scenario.mjs',
+  'dsh-runtime-upgrade': './scenarios/dsh-runtime-upgrade.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
@@ -194,6 +199,8 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'app-update-full',
   'component-update',
   'native-window-startup',
+  'startup-preparation',
+  'dsh-runtime-upgrade',
   'native-window-chrome',
   'renderer-storage',
   'tray-lifecycle',
@@ -347,6 +354,7 @@ function checkpointScenarioEnv(env, checkpoint) {
     // Core task flow verifies the native drag-to-popout window. macOS background
     // mode prohibits activation and hides the app when that window is presented.
     // Assignment notification also verifies tag commits through native focus loss.
+
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]
@@ -422,88 +430,12 @@ async function sharedBuildEnvironment(environment = process.env) {
   }
 }
 
-async function fileSha256(path) {
-  const hash = createHash('sha256')
-  await new Promise((resolvePromise, reject) => {
-    const stream = createReadStream(path)
-    stream.on('data', chunk => hash.update(chunk))
-    stream.once('end', resolvePromise)
-    stream.once('error', reject)
-  })
-  return hash.digest('hex')
-}
-
-async function extractArchive(archivePath, destination) {
-  await new Promise((resolvePromise, reject) => {
-    const child = spawn('tar', ['-xzf', archivePath, '-C', destination], {
-      stdio: ['ignore', 'inherit', 'inherit'],
-    })
-    child.once('error', reject)
-    child.once('exit', (code, signal) => {
-      if (code === 0) {
-        resolvePromise()
-        return
-      }
-      reject(
-        new Error(
-          `Core DSH runtime extraction failed: ${signal ? `signal=${signal}` : `exit=${code}`}`
-        )
-      )
-    })
-  })
-}
-
 async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
-  const resourcesRoot = resolve(
-    dirname(appBinary),
-    ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
-  )
-  const resourceRoot = join(resourcesRoot, 'harness-runtime')
-  const catalog = JSON.parse(await readFile(join(resourceRoot, 'runtimes.json'), 'utf8'))
-  const runtimes =
-    catalog.runtimes?.filter(runtime => ['core', 'workbench'].includes(runtime.role)) ?? []
-  const roles = new Set(runtimes.map(runtime => runtime.role))
-  if (!roles.has('core') || !roles.has('workbench')) {
-    throw new Error('Bundled Electron runtime catalog must contain Core and Workbench runtimes')
-  }
-
-  const runtimeRoot = join(parentDirectory, 'harness-runtime')
   const startedAt = Date.now()
-  await mkdir(runtimeRoot, { recursive: true })
-  for (const runtime of runtimes) {
-    if (
-      !/^[0-9a-f]{64}$/.test(runtime.sourceFingerprint) ||
-      !/^[0-9a-f]{64}$/.test(runtime.archiveSha256) ||
-      !Number.isSafeInteger(runtime.archiveBytes) ||
-      runtime.archiveBytes <= 0 ||
-      typeof runtime.assetName !== 'string' ||
-      !runtime.assetName.endsWith('.tar.gz')
-    ) {
-      throw new Error('Bundled Electron runtime descriptor is invalid')
-    }
-
-    const archivePath = join(resourceRoot, runtime.assetName)
-    const archiveMetadata = await stat(archivePath)
-    if (archiveMetadata.size !== runtime.archiveBytes) {
-      throw new Error(`Bundled DSH runtime size mismatch: ${runtime.assetName}`)
-    }
-    if ((await fileSha256(archivePath)) !== runtime.archiveSha256) {
-      throw new Error(`Bundled DSH runtime checksum mismatch: ${runtime.assetName}`)
-    }
-
-    const extractedRoot = join(runtimeRoot, runtime.sourceFingerprint)
-    await mkdir(extractedRoot, { recursive: true })
-    await extractArchive(archivePath, extractedRoot)
-    const identity = JSON.parse(await readFile(join(extractedRoot, 'runtime.json'), 'utf8'))
-    if (
-      identity.dshVersion !== runtime.dshVersion ||
-      identity.role !== runtime.role ||
-      identity.sourceFingerprint !== runtime.sourceFingerprint
-    ) {
-      throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
-    }
-  }
-  await writeFile(join(runtimeRoot, 'runtimes.json'), `${JSON.stringify({ runtimes }, null, 2)}\n`)
+  const runtimeRoot = await preparePackagedHarnessRuntimes(
+    appBinary,
+    join(parentDirectory, 'harness-runtime')
+  )
   console.log(
     `[desktop-e2e] shared harness runtimes ready: duration=${formatDuration(Date.now() - startedAt)}, root=${runtimeRoot}`
   )

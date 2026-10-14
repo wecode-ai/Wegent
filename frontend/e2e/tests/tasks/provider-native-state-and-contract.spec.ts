@@ -445,7 +445,7 @@ test.describe('Provider-native binding state and contracts', () => {
     await knowledge.sendMessage(prompt)
     const taskId = await knowledge.waitForTaskId()
     if (expectedTaskId) expect(taskId).toBe(expectedTaskId)
-    await waitForTaskTerminal(resources.token, taskId)
+    await waitForTaskTerminal(resources.token, taskId, /^COMPLETED/, prompt)
     return getTask(request, resources.token, taskId)
   }
 })

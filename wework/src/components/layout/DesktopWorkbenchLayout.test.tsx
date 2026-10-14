@@ -1,11 +1,12 @@
 import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { StrictMode, useEffect, useMemo, useState } from 'react'
+import { Suspense, StrictMode, useEffect, useMemo, useState } from 'react'
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { createProjectApi } from '@/api/projects'
+import { initialWorkbenchState, workbenchReducer } from '@/features/workbench/workbenchReducer'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AuthContext } from '@/features/auth/useAuth'
 import { AppearanceProvider } from '@/features/appearance'
@@ -87,9 +88,32 @@ import {
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
 
+const filePickerDiagnostic = vi.hoisted(() => ({
+  active: false,
+  selections: [] as { path: string; selectedPaths: string[]; suppressed: boolean }[],
+  selectionCallbackCount: 0,
+}))
+
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
 }))
+const startupMarkdownRenderer = vi.hoisted(() => {
+  let release: () => void = () => {}
+  const pending = new Promise<void>(resolve => {
+    release = resolve
+  })
+  return { enabled: false, pending, release, load: vi.fn() }
+})
+vi.mock(
+  '../../../../packages/collaboration/src/markdown/AssistantMarkdownRenderer',
+  async importOriginal => {
+    if (startupMarkdownRenderer.enabled) {
+      startupMarkdownRenderer.load()
+      await startupMarkdownRenderer.pending
+    }
+    return importOriginal()
+  }
+)
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 const runtimeMocks = vi.hoisted(() => ({ electron: false }))
 const deviceExecuteCommandMock = vi.hoisted(() => vi.fn())
@@ -456,7 +480,8 @@ const automationMocks = vi.hoisted(() => ({
   useNativeDirectoryPicker: true,
 }))
 
-vi.mock('@/e2e/automation', () => ({
+vi.mock('@/e2e/runtime-config', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/e2e/runtime-config')>()),
   shouldUseNativeProjectDirectoryPicker: () => automationMocks.useNativeDirectoryPicker,
 }))
 
@@ -623,12 +648,23 @@ vi.mock('@pierre/trees/react', async () => {
     subscribe: () => () => void
     selectPath: (path: string) => void
     setSearch: (query: string | null) => void
+    resetPaths: (paths: string[]) => void
   }
 
   function selectModelPath(model: MockTreeModel, path: string) {
+    if (filePickerDiagnostic.active) {
+      filePickerDiagnostic.selections.push({
+        path,
+        selectedPaths: [...model.selectedPaths],
+        suppressed: model.selectedPaths[0] === path,
+      })
+    }
     if (model.selectedPaths[0] === path) return
 
     model.selectedPaths = [path]
+    if (filePickerDiagnostic.active && model.onSelectionChange) {
+      filePickerDiagnostic.selectionCallbackCount += 1
+    }
     model.onSelectionChange?.([path])
   }
 
@@ -700,12 +736,15 @@ vi.mock('@pierre/trees/react', async () => {
           setSearch(query: string | null) {
             this.search = query
           },
+          resetPaths(nextPaths: string[]) {
+            this.paths = nextPaths
+            this.selectedPaths = this.selectedPaths.filter(path => nextPaths.includes(path))
+          },
         }
       }
 
       modelRef.current.paths = paths
       modelRef.current.onSelectionChange = onSelectionChange
-      modelRef.current.selectedPaths = initialSelectedPaths ?? modelRef.current.selectedPaths
 
       return { model: modelRef.current }
     },
@@ -736,17 +775,24 @@ vi.mock('./workspace-panels/EmbeddedLocalTerminal', () => ({
     active,
     sessionId,
     testIdsEnabled = true,
+    onContentReady,
   }: {
     active: boolean
     sessionId: string
     testIdsEnabled?: boolean
-  }) => (
-    <div
-      data-testid={testIdsEnabled ? 'embedded-local-terminal' : undefined}
-      data-session-id={sessionId}
-      hidden={!active}
-    />
-  ),
+    onContentReady?: () => void
+  }) => {
+    useEffect(() => {
+      onContentReady?.()
+    }, [onContentReady])
+    return (
+      <div
+        data-testid={testIdsEnabled ? 'embedded-local-terminal' : undefined}
+        data-session-id={sessionId}
+        hidden={!active}
+      />
+    )
+  },
 }))
 
 const createDeviceApiMock = vi.mocked(createDeviceApi)
@@ -904,6 +950,7 @@ describe('DesktopWorkbenchLayout', () => {
   }
 
   beforeEach(async () => {
+    filePickerDiagnostic.active = false
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
     experimentalFeatures.enabled = true
@@ -1895,6 +1942,297 @@ describe('DesktopWorkbenchLayout', () => {
     }
   }
 
+  test('keeps startup blocked until a selected task transcript is restored', async ({
+    onTestFinished,
+  }) => {
+    startupMarkdownRenderer.enabled = true
+    runtimeMocks.electron = true
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'electron',
+      desktopWindowLabel: 'main',
+    }
+    const phaseLog = vi.spyOn(console, 'info')
+    const startupReadyObservations = vi.fn()
+    const invoke = desktopHostMocks.invoke.getMockImplementation()
+    onTestFinished(() => {
+      desktopHostMocks.invoke.mockReset()
+      if (invoke) desktopHostMocks.invoke.mockImplementation(invoke)
+    })
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'renderer.startupReady') {
+        expect.soft(screen.queryByText('Restored startup answer')).toBeVisible()
+        startupReadyObservations(
+          screen.queryByText('Restored startup answer'),
+          phaseLog.mock.calls.slice()
+        )
+      }
+      return invoke?.(capability)
+    })
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(720)
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1000)
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(720)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      bottom: 720,
+      right: 1000,
+      width: 1000,
+      height: 720,
+      toJSON: () => ({}),
+    })
+    const state = {
+      ...baseProps.state,
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'startup-restored',
+        workspacePath: '/workspace/startup',
+      },
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'device-1',
+            deviceName: 'Startup Device',
+            workspacePath: '/workspace/startup',
+            workspaceKind: 'workspace',
+            tasks: [
+              {
+                taskId: 'startup-restored',
+                workspacePath: '/workspace/startup',
+                title: 'Restored startup task',
+                runtime: 'codex',
+                createdAt: '2026-10-13T00:00:00Z',
+                updatedAt: '2026-10-13T00:00:00Z',
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    }
+    const { unmount } = render(
+      <Suspense fallback={<p>Restoring startup renderer</p>}>
+        <DesktopWorkbenchLayout {...baseProps} state={state} isRuntimeTranscriptLoading />
+      </Suspense>
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady', {
+      source: 'task-list',
+    })
+
+    unmount()
+    render(
+      <Suspense fallback={<p>Restoring startup renderer</p>}>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          state={{ ...state, runtimeWork: { ...state.runtimeWork } }}
+          messages={[
+            {
+              id: 'startup-restored-answer',
+              role: 'assistant',
+              content: 'Restored startup answer',
+              status: 'done',
+              createdAt: '2026-10-13T00:00:00Z',
+            },
+          ]}
+        />
+      </Suspense>
+    )
+    await waitFor(() => expect(startupMarkdownRenderer.load).toHaveBeenCalledOnce())
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady', {
+      source: 'task-list',
+    })
+    await act(async () => {
+      startupMarkdownRenderer.release()
+      await vi.dynamicImportSettled()
+    })
+
+    expect(await screen.findByText('Restored startup answer')).toBeVisible()
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady', {
+        source: 'task-list',
+      })
+    })
+    expect(startupReadyObservations).toHaveBeenCalledOnce()
+    const [answerAtStartupReady, phaseCallsAtStartupReady] = startupReadyObservations.mock.calls[0]
+    expect(answerAtStartupReady).toBeVisible()
+    expect(phaseCallsAtStartupReady).toContainEqual([
+      expect.stringMatching(
+        /^\[startup\]\[renderer-phase\] .*"phase":"surface-ready","status":"completed","navigationTimeMs":\d+/
+      ),
+    ])
+  })
+
+  test('reveals an active Harness terminal while a selected task transcript remains loading', async () => {
+    runtimeMocks.electron = true
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'startup-harness-active',
+        harness_id: 'opencode',
+        title: 'Startup Harness',
+        cwd: '/workspace/startup',
+        created_at: 1234,
+        is_primary: true,
+        project_id: null,
+        active: true,
+        model_key: null,
+      },
+    ])
+    const state = {
+      ...baseProps.state,
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'retained-task',
+        workspacePath: '/workspace/startup',
+      },
+      runtimeWork: { projects: [], chats: [], totalTasks: 0 },
+    }
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={state}
+        isRuntimeTranscriptLoading
+        messages={[
+          {
+            id: 'retained-answer',
+            role: 'assistant',
+            content: 'Retained task answer',
+            status: 'done',
+            createdAt: '2026-10-13T00:00:00Z',
+          },
+        ]}
+      />
+    )
+    await screen.findByTestId('local-harness-session-row-startup-harness-active')
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady', {
+      source: 'task-list',
+    })
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('wework:local-harness-sessions-changed', {
+          detail: { openSessionId: 'startup-harness-active' },
+        })
+      )
+    })
+    await waitFor(() => expect(screen.getByTestId('central-harness-terminal')).toBeVisible())
+    await waitFor(() =>
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady', {
+        source: 'task-list',
+      })
+    )
+  })
+
+  test('waits through Harness restoration and reveals its committed recovery error', async () => {
+    runtimeMocks.electron = true
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.18.16',
+      },
+    ])
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'startup-harness-restoring',
+        harness_id: 'opencode',
+        title: 'Restoring Harness',
+        cwd: '/workspace/deleted-startup',
+        created_at: 1234,
+        is_primary: true,
+        project_id: null,
+        active: false,
+        model_key: null,
+      },
+    ])
+    const pathCheck = createDeferred<boolean>()
+    localPathExistsMock.mockReturnValue(pathCheck.promise)
+    const state = {
+      ...baseProps.state,
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'retained-task',
+        workspacePath: '/workspace/startup',
+      },
+      runtimeWork: { projects: [], chats: [], totalTasks: 0 },
+    }
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={state}
+        isRuntimeTranscriptLoading
+        messages={[
+          {
+            id: 'retained-answer',
+            role: 'assistant',
+            content: 'Retained task answer',
+            status: 'done',
+            createdAt: '2026-10-13T00:00:00Z',
+          },
+        ]}
+      />
+    )
+    await screen.findByTestId('local-harness-session-row-startup-harness-restoring')
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('wework:local-harness-sessions-changed', {
+          detail: { openSessionId: 'startup-harness-restoring' },
+        })
+      )
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent('正在恢复')
+    )
+    await waitFor(() =>
+      expect(localPathExistsMock).toHaveBeenCalledWith('/workspace/deleted-startup')
+    )
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady', {
+      source: 'task-list',
+    })
+    await act(async () => {
+      pathCheck.resolve(false)
+    })
+    expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent('原工作区不存在')
+    await waitFor(() =>
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady', {
+        source: 'task-list',
+      })
+    )
+  })
+
+  test('keeps the bootstrap placeholder hidden after a CLI workspace opens before bootstrap completes', async () => {
+    runtimeMocks.electron = true
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'runtime_workspace_opened',
+      deviceId: 'device-1',
+      workspacePath: '/workspace/startup',
+      label: 'Startup workspace',
+    })
+    expect(state.runtimeWork).not.toBeNull()
+    expect(state.isBootstrapping).toBe(true)
+    const { rerender } = render(<DesktopWorkbenchLayout {...baseProps} state={state} />)
+    expect(screen.getByTestId('desktop-workbench-loading')).toBeInTheDocument()
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady', {
+      source: 'task-list',
+    })
+    rerender(<DesktopWorkbenchLayout {...baseProps} state={{ ...state, isBootstrapping: false }} />)
+    await waitFor(() =>
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady', {
+        source: 'task-list',
+      })
+    )
+    expect(screen.queryByTestId('desktop-workbench-loading')).not.toBeInTheDocument()
+  })
+
   test('opens the local-capable board route while cloud is disconnected', () => {
     window.history.pushState({}, '', '/todo')
 
@@ -1919,7 +2257,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
-  test('opens a newly added board tab in the collaboration platform', () => {
+  test('opens a newly added board tab in the collaboration platform', async () => {
     deliveryApiMock.available = true
     const boardTab = {
       id: 'board-new',
@@ -1960,11 +2298,11 @@ describe('DesktopWorkbenchLayout', () => {
       </WorkspaceTabsContext.Provider>
     )
 
-    expect(screen.getByTestId('wework-collaboration-platform')).toBeInTheDocument()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeInTheDocument()
     expect(screen.getByTestId('collaboration-platform-root')).toBeInTheDocument()
   })
 
-  test('routes a retained My Tasks board to the dedicated work-items surface', () => {
+  test('routes a retained My Tasks board to the dedicated work-items surface', async () => {
     deliveryApiMock.available = true
     deliveryApiMock.listCloudProjects.mockResolvedValue({
       items: [
@@ -2025,7 +2363,10 @@ describe('DesktopWorkbenchLayout', () => {
       </WorkspaceTabsContext.Provider>
     )
 
-    expect(screen.getByTestId('cloud-todo-workspace')).toHaveAttribute('data-embedded', 'true')
+    expect(await screen.findByTestId('cloud-todo-workspace')).toHaveAttribute(
+      'data-embedded',
+      'true'
+    )
     expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
   })
 
@@ -4976,7 +5317,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
     expect(listLocalSkills).toHaveBeenCalled()
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
-    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+    expect(await screen.findByTestId('embedded-local-terminal')).toHaveAttribute(
       'data-session-id',
       'local-harness-1'
     )
@@ -7615,6 +7956,60 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('restores the environment after closing the last subagent tab opened from an inline chip while the environment is closed', async () => {
+    renderWorkspacePanelLayout({
+      mainWidth: 1000,
+      currentRuntimeTask: {
+        deviceId: 'workspace-cloud-device',
+        taskId: 'runtime-inline-subagent-panel',
+        workspacePath: '/workspace/project',
+      },
+      onLoadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            id: 'inline-child-answer',
+            role: 'assistant',
+            content: 'Persisted child answer',
+            status: 'done',
+            createdAt: '2026-09-10T08:00:01.000Z',
+          },
+        ],
+      }),
+      messages: [
+        {
+          id: 'assistant-inline-subagent',
+          role: 'assistant',
+          content: '',
+          status: 'done',
+          createdAt: '2026-09-10T08:00:00.000Z',
+          blocks: [
+            {
+              id: 'inline-subagent-thread',
+              subtaskId: 'inline-turn',
+              type: 'subagent',
+              agentThreadId: 'inline-thread',
+              agentType: 'Explorer',
+              description: 'Inspect the runtime event flow',
+              status: 'done',
+              createdAt: 1770000000000,
+              children: [],
+            },
+          ],
+        },
+      ],
+    })
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('subagent-activity-chip'))
+    expect(await screen.findByTestId('subagent-conversation-panel')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('subagent-conversation-back'))
+    expect(screen.getByTestId('subagent-overview-panel')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('right-workspace-subagents-tab-close-button'))
+    expect(screen.queryByTestId('right-workspace-subagents-tab')).not.toBeInTheDocument()
+    expect(screen.getByTestId('environment-subagents-section')).toBeVisible()
+  })
+
   test('expands the right workspace panel without the composer and restores chat', async () => {
     renderWorkspacePanelLayout({
       mainWidth: 1000,
@@ -8807,8 +9202,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
     await waitFor(() =>
@@ -8824,7 +9218,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(
       await within(sideChat).findByTestId('attachment-document-preview-button')
     ).toHaveAccessibleName('queued-attachment.txt')
-    await userEvent.type(sideChatInput, 'queued follow-up')
+    setComposerValue(sideChat, 'queued follow-up')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toBeInTheDocument()
 
@@ -8867,8 +9261,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
 
@@ -8877,7 +9270,7 @@ describe('DesktopWorkbenchLayout', () => {
       | undefined
     act(() => streamHandlers?.onAssistantStart?.())
 
-    await userEvent.type(sideChatInput, 'follow-up during stale state')
+    setComposerValue(sideChat, 'follow-up during stale state')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
 
     await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
@@ -8907,12 +9300,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
 
-    await userEvent.type(sideChatInput, 'queued follow-up')
+    setComposerValue(sideChat, 'queued follow-up')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
       'queued follow-up'
@@ -9724,9 +10116,21 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('workspace-file-breadcrumb-/fixture/repo/backend/app/schemas')
     ).toHaveTextContent('schemas')
 
+    filePickerDiagnostic.active = true
+    filePickerDiagnostic.selections = []
+    filePickerDiagnostic.selectionCallbackCount = 0
+    let secondClickTarget: {
+      connected: boolean
+      popoverState: string | null
+      currentTreeCount: number
+    } | null = null
     const clickPickerEntry = async (name: string) => {
-      const tree = await screen.findByTestId('workspace-file-picker-tree')
       const row = await waitFor(() => {
+        const menus = screen
+          .queryAllByTestId('workspace-file-siblings-menu')
+          .filter(menu => menu.dataset.state === 'open')
+        expect(menus).toHaveLength(1)
+        const tree = within(menus[0]).getByTestId('workspace-file-picker-tree')
         const root = tree.shadowRoot ?? tree
         const candidate = Array.from(
           root.querySelectorAll<HTMLElement>('[data-item-path], button')
@@ -9737,8 +10141,19 @@ describe('DesktopWorkbenchLayout', () => {
             item.textContent === name
         )
         expect(candidate).toBeDefined()
+        expect(candidate!.isConnected).toBe(true)
         return candidate!
       })
+      if (name === 'quick_launch.py') {
+        secondClickTarget = {
+          connected: row.isConnected,
+          popoverState:
+            row
+              .closest('[data-testid="workspace-file-siblings-menu"]')
+              ?.getAttribute('data-state') ?? null,
+          currentTreeCount: screen.queryAllByTestId('workspace-file-picker-tree').length,
+        }
+      }
       fireEvent.click(row)
     }
 
@@ -9755,9 +10170,24 @@ describe('DesktopWorkbenchLayout', () => {
 
     await user.click(screen.getByTestId('workspace-file-name-button'))
     await clickPickerEntry('quick_launch.py')
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-file-name-button')).toHaveTextContent('quick_launch.py')
-    )
+    try {
+      await waitFor(() =>
+        expect(screen.getByTestId('workspace-file-name-button')).toHaveTextContent(
+          'quick_launch.py'
+        )
+      )
+    } catch (error) {
+      console.error('[workspace-file-picker-fixture]', {
+        secondClickTarget,
+        selections: filePickerDiagnostic.selections,
+        selectionCallbackCount: filePickerDiagnostic.selectionCallbackCount,
+        fileReadPaths: readWorkspaceTextFile.mock.calls.map(([, filePath]) => filePath),
+        displayedFile: screen.queryByTestId('workspace-file-name-button')?.textContent ?? null,
+      })
+      throw error
+    } finally {
+      filePickerDiagnostic.active = false
+    }
     expect(screen.getAllByRole('tab', { name: /quick_launch.py|admin.py/ })).toHaveLength(2)
 
     await user.click(screen.getByRole('tab', { name: /admin.py/ }))

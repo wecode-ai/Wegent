@@ -32,7 +32,7 @@ describe('AppIframe', () => {
     embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue(true)
     embeddedBrowserMocks.navigateEmbeddedBrowser.mockClear()
     embeddedBrowserMocks.openEmbeddedBrowser.mockClear()
-    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockReset().mockResolvedValue(undefined)
   })
 
   test('renders iframe with src and title', () => {
@@ -444,6 +444,53 @@ describe('AppIframe', () => {
       )
     )
     boundsSpy.mockRestore()
+  })
+
+  test('preserves an explicit hide while native reveal animation is pending', async () => {
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
+    let visible = true
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockImplementation(
+      (_bounds, requestedVisible, _label, _readyWhenHidden, preserveVisibility = false) => {
+        if (!preserveVisibility) visible = requestedVisible
+        return Promise.resolve()
+      }
+    )
+    const frames: FrameRequestCallback[] = []
+    const frameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => frames.push(callback))
+    const mediaSpy = vi.spyOn(window, 'matchMedia').mockReturnValue({
+      matches: false,
+    } as MediaQueryList)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+    const { unmount } = render(
+      <AppIframe appKey="wegent" src="http://localhost:3000" title="Wegent" />
+    )
+    try {
+      await waitFor(() => expect(frames).toHaveLength(1))
+      for (let index = 0; index < 3; index++) {
+        act(() => frames.shift()?.(performance.now()))
+      }
+      expect(visible).toBe(true)
+      visible = false
+      act(() => frames.shift()?.(performance.now() + 160))
+      expect(visible).toBe(false)
+    } finally {
+      unmount()
+      boundsSpy.mockRestore()
+      mediaSpy.mockRestore()
+      frameSpy.mockRestore()
+    }
   })
 
   test('does not reveal a reduced-motion native webview after cleanup', async () => {

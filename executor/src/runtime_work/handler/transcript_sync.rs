@@ -4,8 +4,9 @@
 
 use super::*;
 use crate::runtime_work::native_transcript::{
-    export_segment, prepare_workspace_paths, remove_restored_transcript, restore_segments,
-    ExportRequest, RestoreSegment, RestoredTranscript, WorkspaceSnapshot,
+    export_segment, is_managed_restored_workspace, prepare_workspace_paths,
+    remove_restored_transcript, restore_segments, ExportRequest, RestoreSegment,
+    RestoredTranscript, WorkspaceSnapshot,
 };
 
 const CLOUD_TRANSCRIPT_HANDLE_KEY: &str = "cloudTranscript";
@@ -222,26 +223,33 @@ impl RuntimeWorkRpcHandler {
         })?
         .map_err(|error| AppIpcError::new("transcript_restore_failed", error))?;
         let link = restored_task_link(&task_id, &transcript_id, &restored);
-        if let Some((workspace_path, thread_id)) = superseded_restore {
-            match remove_restored_transcript(std::path::Path::new(&workspace_path), &thread_id) {
-                Ok(true) => {}
-                Ok(false) => {
-                    let _ =
-                        remove_restored_transcript(&restored.workspace_path, &restored.thread_id);
-                    return Err(AppIpcError::new(
-                        "transcript_restore_failed",
-                        "refusing to replace a transcript outside the managed restore directory",
-                    ));
-                }
-                Err(error) => {
-                    let _ =
-                        remove_restored_transcript(&restored.workspace_path, &restored.thread_id);
-                    return Err(AppIpcError::new("transcript_restore_failed", error));
-                }
-            }
+        if superseded_restore
+            .as_ref()
+            .is_some_and(|(workspace_path, _)| {
+                !is_managed_restored_workspace(std::path::Path::new(workspace_path))
+            })
+        {
+            let _ = remove_restored_transcript(&restored.workspace_path, &restored.thread_id);
+            return Err(AppIpcError::new(
+                "transcript_restore_failed",
+                "refusing to replace a transcript outside the managed restore directory",
+            ));
         }
-        self.upsert_local_task(link);
+        self.store
+            .upsert_task_durably(link.clone())
+            .map_err(|error| {
+                let _ = remove_restored_transcript(&restored.workspace_path, &restored.thread_id);
+                AppIpcError::new(
+                    "transcript_restore_failed",
+                    format!("Failed to persist restored conversation: {error}"),
+                )
+            })?;
+        self.project_runtime_link_status(&link);
         emit_runtime_work_changed(&self.event_tx, &self.device_id, &task_id);
+        if let Some((workspace_path, thread_id)) = superseded_restore {
+            remove_restored_transcript(std::path::Path::new(&workspace_path), &thread_id)
+                .map_err(|error| AppIpcError::new("transcript_restore_cleanup_failed", error))?;
+        }
         Ok(json!({
             "success": true,
             "available": true,
@@ -278,8 +286,9 @@ impl RuntimeWorkRpcHandler {
         let updated = if should_rekey {
             self.store.rekey_task(&task_id, &transcript_id, update)
         } else {
-            self.store.update_task(&task_id, update)
-        };
+            self.store.update_task_durably(&task_id, update)
+        }
+        .map_err(|error| AppIpcError::new("transcript_acknowledge_failed", error.to_string()))?;
         let Some(link) = updated else {
             return Ok(status(&task_id, &transcript_id, false, 0, "task_missing"));
         };

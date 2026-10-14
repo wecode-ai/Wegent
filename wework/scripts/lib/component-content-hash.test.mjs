@@ -23,11 +23,11 @@ afterEach(async () => {
 })
 
 describe('hashComponentPath', () => {
-  test('rejects symbolic links instead of omitting unverified content', async () => {
+  test('rejects absolute symbolic links even when their target is internal', async () => {
     const root = await temporaryDirectory()
     await writeFile(join(root, 'target'), 'content')
     await symlink(join(root, 'target'), join(root, 'link'))
-    await expect(hashComponentPath(root)).rejects.toThrow('Unsupported component tree entry')
+    await expect(hashComponentPath(root)).rejects.toThrow('Component symlink escapes its root')
   })
 
   test('hashes a file by its bytes', async () => {
@@ -53,6 +53,23 @@ describe('hashComponentPath', () => {
       .digest('hex')
 
     await expect(hashComponentPath(root)).resolves.toBe(expected)
+  })
+
+  test('hashes internal runtime symlinks without dereferencing them', async () => {
+    const root = await temporaryDirectory()
+    await mkdir(join(root, 'store'))
+    await writeFile(join(root, 'store', 'package.js'), 'runtime')
+    await symlink('store/package.js', join(root, 'package.js'))
+    const storeHash = sha256(`file:store/package.js\0${sha256('runtime')}\0`)
+    await expect(hashComponentPath(root)).resolves.toBe(
+      sha256(`symlink:package.js\0store/package.js\0directory:store\0${storeHash}\0`)
+    )
+  })
+
+  test('rejects links outside the component', async () => {
+    const root = await temporaryDirectory()
+    await symlink('../outside', join(root, 'package.js'))
+    await expect(hashComponentPath(root)).rejects.toThrow('Component symlink escapes its root')
   })
 })
 

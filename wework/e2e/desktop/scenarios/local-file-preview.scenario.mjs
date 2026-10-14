@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -142,8 +142,12 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(
-        await control.command('getText', '[data-testid="workspace-file-path"]'),
-        join(workspacePath, 'auth.ts'),
+        resolve(
+          await control.command('getAttribute', '[data-testid="workspace-file-path"]', {
+            value: 'title',
+          })
+        ),
+        resolve(workspacePath, 'auth.ts'),
         'The second local file did not replace the retained preview after loading'
       )
       await captureScreenshot(control, 'local-file-preview-01-dark-editor.png', 'body')

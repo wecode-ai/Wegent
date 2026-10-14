@@ -1,3 +1,4 @@
+import { coreCpuProfileValidationCode } from './cpu-profile-summary.js'
 import { ElectronHostClient, ElectronHostError } from './electron-host-client.js'
 import { createWeworkDesktopService, WEWORK_DESKTOP_SERVICE_KEY } from './desktop-service.js'
 
@@ -12,6 +13,28 @@ export async function apply(ctx) {
     onDisconnect: hostDisconnectHandler(ctx),
   })
   await client.start()
+  if (process.env.WEWORK_DSH_MANAGED_ENDPOINT === '1') {
+    ctx.inject(['connection'], endpointCtx => {
+      const url = `http://127.0.0.1:${endpointCtx.webServer.port}/`
+      const publishEndpoint = cpuProfileEndpoint => {
+        const usage = process.resourceUsage()
+        console.info('[startup][core-dsh-endpoint]', {
+          elapsedMs: Math.round(process.uptime() * 1000),
+          ...cpuProfileEndpoint,
+          userCpuMs: Math.round(usage.userCPUTime / 1000),
+          systemCpuMs: Math.round(usage.systemCPUTime / 1000),
+          fsReadBlocks: usage.fsRead,
+          maxRssKiB: usage.maxRSS,
+        })
+        client.reportRuntimeEndpoint(endpointCtx.connection.authenticatedUrl(url))
+      }
+      if (process.env.WEWORK_E2E_CORE_CPU_PROFILE !== '1') {
+        publishEndpoint({})
+        return
+      }
+      return completeStartupCpuProfile().then(publishEndpoint)
+    })
+  }
   const generation = createWeworkDesktopService(client)
   ctx.effect(() => {
     const unprovide = ctx.reflect.provide(WEWORK_DESKTOP_SERVICE_KEY, generation.service)
@@ -70,14 +93,29 @@ async function invoke(req, res, client) {
     methodNotAllowed(res, 'POST')
     return
   }
+  const startedAt = process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1' ? performance.now() : null
+  let traceStorage = false
+  const markStorage = phase => {
+    if (traceStorage && startedAt !== null) {
+      console.info('[startup][core-host-storage]', {
+        phase,
+        durationMs: Math.round(performance.now() - startedAt),
+      })
+    }
+  }
   try {
     const body = await readJsonBody(req)
     if (!isRecord(body) || typeof body.capability !== 'string' || !isRecord(body.params)) {
       throw new ElectronHostError('invalid_params', 'Request must contain capability and params')
     }
+    traceStorage = body.capability === 'rendererStorage.initialize'
+    markStorage('request-body-parsed')
     const result = await client.invoke(body.capability, body.params)
+    markStorage('host-response-received')
     sendJson(res, 200, { ok: true, result: result ?? null })
+    markStorage('http-response-ended')
   } catch (error) {
+    markStorage('failed')
     const normalized =
       error instanceof ElectronHostError
         ? error
@@ -165,4 +203,32 @@ function singleHeader(value) {
 
 function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+export async function completeStartupCpuProfile() {
+  try {
+    const profiler = globalThis[Symbol.for('wework.core.startupCpuProfiler')]
+    if (!profiler) return failedStartupCpuProfile('core_profile_unavailable')
+    return await profiler.complete()
+  } catch (error) {
+    const knownCodes = new Set([
+      'core_profile_stop_failed',
+      'core_profile_summarize_failed',
+      'core_profile_write_failed',
+    ])
+    return failedStartupCpuProfile(
+      knownCodes.has(error?.code) ? error.code : 'core_profile_unknown_failure',
+      coreCpuProfileValidationCode(error?.validationCode)
+    )
+  }
+}
+
+function failedStartupCpuProfile(code, validationCode) {
+  return {
+    cpuProfileClockStatus: 'failed',
+    cpuProfileProcessId: process.pid,
+    cpuProfileSummaryMode: 'before-endpoint',
+    cpuProfileFailureCode: code,
+    ...(validationCode ? { cpuProfileValidationCode: validationCode } : {}),
+  }
 }

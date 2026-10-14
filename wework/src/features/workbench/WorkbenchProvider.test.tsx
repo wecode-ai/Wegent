@@ -1,3 +1,4 @@
+import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
@@ -11,6 +12,8 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+
+vi.mock('@/lib/desktop-startup-phase', () => ({ markDesktopStartupPhase: vi.fn() }))
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import {
   clearPluginMarketplaceCache,
@@ -3493,6 +3496,40 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('fetches runtime work while device bootstrap is pending without exposing stale devices', async () => {
+    const devices = deferred<DeviceInfo[]>()
+    const services = createWorkbenchServices()
+    const listDevices = vi.mocked(services.deviceApi.listDevices)
+    listDevices.mockImplementationOnce(() => devices.promise)
+
+    renderWorkbench(<BootstrapProbe />, services)
+
+    await waitFor(() => expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(markDesktopStartupPhase).toHaveBeenCalledWith('task-list-request', 'completed', {
+        durationMs: expect.any(Number),
+      })
+    )
+    expect(markDesktopStartupPhase).not.toHaveBeenCalledWith(
+      'devices-request',
+      'completed',
+      expect.anything()
+    )
+    expect(screen.getByTestId('startup-ready')).toHaveTextContent('loading')
+    expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
+
+    devices.resolve([])
+
+    await waitFor(() => expect(screen.getByTestId('runtime-total')).toHaveTextContent('3'))
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    expect(markDesktopStartupPhase).toHaveBeenCalledWith('devices-request', 'completed', {
+      durationMs: expect.any(Number),
+    })
+    expect(markDesktopStartupPhase).toHaveBeenCalledWith('task-bootstrap', 'completed', {
+      durationMs: expect.any(Number),
+    })
   })
 
   test('loads task composer catalogs after runtime work bootstrap', async () => {

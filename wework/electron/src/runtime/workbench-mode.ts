@@ -57,14 +57,22 @@ export async function initializeWorkbenchModePreference(
     options.homeDirectory,
     platform
   )
+  const search = new AbortController()
   const probeCommand =
     options.probeCommand ??
     ((command, commandEnvironment) =>
-      probeDevelopmentCommand(command, commandEnvironment, platform))
-  const results = await Promise.all(
-    DEVELOPMENT_COMMANDS.map(command => probeCommand(command, environment))
-  )
-  const mode: WorkbenchMode = results.some(Boolean) ? 'developer' : 'focus'
+      probeDevelopmentCommand(command, commandEnvironment, platform, search.signal))
+  const hasDevelopmentCommand = await new Promise<boolean>((resolve, reject) => {
+    Promise.all(
+      DEVELOPMENT_COMMANDS.map(async command => {
+        if (await probeCommand(command, environment)) {
+          search.abort()
+          resolve(true)
+        }
+      })
+    ).then(() => resolve(false), reject)
+  })
+  const mode: WorkbenchMode = hasDevelopmentCommand ? 'developer' : 'focus'
   await preferences.update({ workbenchMode: mode })
   return mode
 }
@@ -74,17 +82,21 @@ export async function applyWorkbenchModeToCorePlugins(
   plugins: Pick<CoreDshPluginManager, 'list' | 'setEnabled'>
 ): Promise<void> {
   const inventory = await plugins.list()
-  const desiredStates = new Map([
-    [MODE_MANAGED_GIT_PLUGIN, mode === 'developer'],
-    [MODE_MANAGED_FOCUS_HOME_PLUGIN, mode === 'focus'],
-    [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, mode === 'developer'],
-  ])
+  const desiredStates = workbenchModePluginStates(mode)
   for (const plugin of inventory) {
     const shouldEnable = desiredStates.get(plugin.name)
     if (shouldEnable !== undefined && plugin.enabled !== shouldEnable) {
       await plugins.setEnabled(plugin.name, shouldEnable)
     }
   }
+}
+
+export function workbenchModePluginStates(mode: WorkbenchMode): ReadonlyMap<string, boolean> {
+  return new Map([
+    [MODE_MANAGED_GIT_PLUGIN, mode === 'developer'],
+    [MODE_MANAGED_FOCUS_HOME_PLUGIN, mode === 'focus'],
+    [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, mode === 'developer'],
+  ])
 }
 
 function developmentCommandEnvironment(
@@ -114,7 +126,8 @@ function developmentCommandEnvironment(
 export async function probeDevelopmentCommand(
   command: string,
   environment: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform
+  platform: NodeJS.Platform,
+  signal?: AbortSignal
 ): Promise<boolean> {
   const pathValue =
     environment.PATH ??
@@ -134,12 +147,14 @@ export async function probeDevelopmentCommand(
     const unquotedDirectory = directory.trim().replace(/^"(.*)"$/, '$1')
     if (!unquotedDirectory) continue
     for (const extension of extensions) {
+      if (signal?.aborted) return false
       const candidate = normalize(join(unquotedDirectory, `${command}${extension}`))
       if (platform === 'darwin' && command === 'git' && candidate === '/usr/bin/git') {
         continue
       }
       try {
         await access(candidate, platform === 'win32' ? constants.F_OK : constants.X_OK)
+        if (signal?.aborted) return false
         if ((await stat(candidate)).isFile()) return true
       } catch {
         // Continue searching the remaining PATH entries.

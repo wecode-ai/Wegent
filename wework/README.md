@@ -30,6 +30,98 @@ stage and support dark mode and reduced motion. Core DSH has up to 120 seconds
 to become ready. If it times out or another desktop runtime fails to start,
 replace the preparation animation with the concrete error and a retry action.
 
+生产构建将主入口的静态依赖图合并为一个共享模块，减少本地 HTTP
+加载的独立请求。可选 DSH UI 入口和动态导入不纳入该模块，仍按需加载。
+静态资源响应复用一次文件元数据查询结果，避免重复磁盘读取。
+
+Production builds combine the main entry's static dependency graph into one shared
+module to reduce separate local HTTP requests. Optional DSH UI entries and dynamic
+imports stay outside this module and remain demand-loaded. Static asset responses
+reuse one file metadata lookup instead of repeating disk reads.
+
+任务描述编辑器在首次打开编辑区域时加载，避免首屏预加载 BlockNote 及其依赖。
+加载期间保留当前描述和回调，创建与编辑任务继续使用同一套编辑器。
+
+The task description editor loads when its editing area first opens, keeping
+BlockNote and its dependencies out of the initial page load. Pending loading
+retains the current description and callbacks; task creation and editing use
+the same editor.
+
+内置插件组合目录引用不可变组件源，避免在写入 Core profile 前重复复制代码。
+原生准备窗口加载与运行时准备并行执行，两者都完成后才载入工作台。
+工作模式检测与组件准备、两个独立的桌面桥接服务分别并行初始化。
+正常启动直接加载 Core 页面；旧错误页面仅在准备窗口无法显示错误时加载。
+Core 进程使用 `--port 0` 直接绑定系统分配的端口，通过已认证的宿主管道传回实际地址，
+再完成认证并校验全部必需接口，避免预选端口在进程启动前被其他进程占用。
+必需接口并行探测，全部通过后才加载工作台。已校验组件的组合和 profile 复制不再
+计算未使用的内容哈希；组件下载与激活的完整性校验保持不变。
+管道中的会话地址不写入日志，也不等待非首屏插件完成全部启动。
+Core 崩溃自动重启后，工作台在必需接口重新就绪时切换到新地址，更新安全来源并
+恢复固定窗口；Executor 保持运行，旧 Smart app 的运行时选择和缓存保持有效。
+创建或升级 Core profile 时直接写入当前工作模式的插件组合，避免随后启动额外的
+DSH 校验进程来重复调整同一组插件；运行时启动仍校验实际生效的配置。
+Core profile 使用有界并发准备内置插件，代码保留独立副本以继续从 profile 解析依赖，
+静态网页资源使用目录链接。所有插件准备完成后才写入版本标记；任何复制失败都会阻止启动。
+
+The bundled plugin composition references immutable component sources, avoiding
+a duplicate code copy before profile preparation. Native startup windows load
+alongside runtime preparation; the workbench loads only after both complete.
+Workbench mode detection and component preparation run concurrently, as do the
+two independent desktop bridges. Normal startup loads the Core page directly;
+the error page loads only if the preparation window cannot display the error.
+Core binds an OS-assigned port with `--port 0`. The host discovers its actual
+address through the authenticated host pipe before authentication and required
+endpoint checks, eliminating the gap between selecting a port and binding it.
+Required endpoints are probed concurrently; all must pass before the workbench loads.
+Composition and profile copies of verified components omit unused content hashes.
+Component download and activation integrity checks remain in place.
+The session URL stays out of logs, and readiness does not wait for optional plugins.
+After an automatic Core restart, the workbench reloads the ready endpoint, updates
+its allowed origin, and restores fixed windows. The Executor keeps running, and
+existing Smart app runtime requirements and caches remain valid.
+Profile creation and upgrades write the selected workbench mode directly,
+avoiding a separate DSH validation process to adjust the same plugins afterwards.
+Runtime startup still validates the effective configuration. Core profile preparation uses
+bounded concurrency for bundled plugins. Plugin code
+remains an independent copy so dependencies resolve from the profile; static web
+resources use directory links. The version stamp is written only after every plugin
+has finished, and any copy failure prevents startup.
+
+Core 使用标准 pnpm hoisted 依赖布局，减少 Node 模块解析的文件查询；旧运行时
+保留既有归档格式。终端、文件预览、文本编辑器和差异面板在打开时加载，减少首次任务
+列表所需的脚本；本地与云端文件预览复用同一加载入口。
+Core 入口日志记录 CPU 时间、文件读取与内存峰值，用于定位启动耗时。
+
+Core uses pnpm's standard hoisted dependency layout to reduce module-resolution
+file lookups, while legacy runtimes retain their archive format. Terminal, file preview,
+text editor and diff panels load when opened; local and cloud previews share the
+same loading boundary. Core endpoint logs include CPU time, file
+reads and peak memory to diagnose startup latency.
+
+任务快照的增量更新同步当前任务地址与清单，保留本地消息和模型信息，同时补齐
+真实 thread ID 与工作树路径，避免任务完成后继续使用创建时的占位地址。
+
+Incremental task snapshots reconcile the selected address with the worklist,
+preserving local messages and model settings while updating the real thread ID
+and worktree path after task creation.
+
+生产环境同时关闭 DSH 的配置热更新和客户端模块热更新，安装、更新、启停与卸载插件
+均在显式重启后生效，避免安装改写文件时卸载正在使用的工作台。插件开发会话显式开启
+两种热更新，继续支持源码与客户端页面的即时更新。
+
+Production disables both DSH configuration reloads and client module reloads.
+Plugin installation, updates, toggles and removal take effect after an explicit
+restart, preserving the active workbench while package files change. Plugin
+development sessions explicitly enable both reload paths for source and client UI changes.
+
+本地任务数据库在单个事务中完成初始化与迁移，减少首次启动的磁盘同步次数。
+执行活动修复使用同一事务；失败会回滚全部迁移，已是当前结构的数据库继续直接读取。
+
+Local task database initialization and migration run in one transaction, reducing
+disk synchronization during first startup. Execution activity repair shares that
+transaction; failures roll back the entire migration, while current schemas
+retain their direct read path.
+
 启动恢复提供两档重置：“修复启动”重建内置运行环境并清理缓存，保留登录、设置、布局和插件；“重置个人状态”进一步清除登录、设置、布局和已安装插件。两档都保留本地任务、会话、智能应用和项目源码。清理前停止运行时和界面写入，失败后允许再次尝试。
 
 Startup recovery has two reset levels. **Repair startup** rebuilds the managed

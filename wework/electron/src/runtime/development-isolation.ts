@@ -39,18 +39,19 @@ export function isolateDevelopmentEnvironment(
   )
     return
 
+  const { appData, homeDirectory } = options
   const id = createHash('sha256')
     .update(resolve(options.packageRoot, '..', '..'))
     .digest('hex')
     .slice(0, 16)
-  const base = join(options.appData, 'io.wecode.wework.dev')
+  const base = join(appData, 'io.wecode.wework.dev')
   const legacy = join(base, id.slice(0, 12))
   const userData = resolve(
     environment.WEWORK_USER_DATA_DIR?.trim() || (existsSync(legacy) ? legacy : join(base, id))
   )
   assertContained(base, userData)
   const runtime = join(userData, 'runtime-data')
-  const developmentRoot = join(options.homeDirectory, '.wegent', 'development')
+  const developmentRoot = join(homeDirectory, '.wegent', 'development')
   const workbench = join(developmentRoot, 'workbench')
   const desktop = join(workbench, 'wework', 'default')
   const executor = desktop
@@ -80,7 +81,7 @@ export function isolateDevelopmentEnvironment(
   }
   // Native Codex auth is deliberately shared; configuration and task data are not.
   const auth = join(codex, 'auth.json')
-  const nativeAuth = resolve(options.homeDirectory, '.codex', 'auth.json')
+  const nativeAuth = resolve(homeDirectory, '.codex', 'auth.json')
   let nativeAuthLink = false
   try {
     nativeAuthLink =

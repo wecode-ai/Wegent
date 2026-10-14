@@ -1,4 +1,3 @@
-import { ZipArchive } from 'archiver'
 import { createWriteStream } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
@@ -303,6 +302,7 @@ function isRuntimeLogFile(fileName: string): boolean {
 }
 
 async function writeBundleArchive(bundle: PendingBundle, destination: string): Promise<void> {
+  const { ZipArchive } = await import('archiver')
   const incomplete = `${destination}.incomplete`
   await rm(incomplete, { force: true })
   const output = createWriteStream(incomplete, { flags: 'wx' })

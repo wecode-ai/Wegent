@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   invokeDesktopHost: vi.fn(),
@@ -10,6 +10,7 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 }))
 vi.mock('@/lib/runtime-environment', () => ({
   isElectronRuntime: mocks.isElectronRuntime,
+  getDesktopWindowLabel: () => 'main',
 }))
 
 async function loadPersistence() {
@@ -18,6 +19,7 @@ async function loadPersistence() {
 }
 
 describe('desktop localStorage persistence', () => {
+  afterEach(() => vi.restoreAllMocks())
   beforeEach(async () => {
     localStorage.clear()
     sessionStorage.clear()
@@ -27,15 +29,18 @@ describe('desktop localStorage persistence', () => {
   })
 
   it('does nothing outside Electron', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     mocks.isElectronRuntime.mockReturnValue(false)
     const { initializeDesktopLocalStoragePersistence } = await loadPersistence()
 
     await initializeDesktopLocalStoragePersistence()
 
     expect(mocks.invokeDesktopHost).not.toHaveBeenCalled()
+    expect(info).not.toHaveBeenCalled()
   })
 
   it('seeds from the current origin and restores the durable snapshot before use', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     mocks.isElectronRuntime.mockReturnValue(true)
     localStorage.setItem('origin-only', 'stale')
     localStorage.setItem('shared', 'current')
@@ -57,6 +62,44 @@ describe('desktop localStorage persistence', () => {
     expect(localStorage.getItem('origin-only')).toBeNull()
     expect(localStorage.getItem('restored')).toBe('value')
     expect(localStorage.getItem('shared')).toBe('durable')
+    expect(info.mock.calls.map(([message]) => JSON.parse(String(message).split('] ')[1]))).toEqual([
+      {
+        phase: 'renderer-storage-replace',
+        status: 'started',
+        navigationTimeMs: expect.any(Number),
+      },
+      {
+        phase: 'renderer-storage-replace',
+        status: 'completed',
+        navigationTimeMs: expect.any(Number),
+        durationMs: expect.any(Number),
+      },
+    ])
+  })
+
+  it('records synchronous replacement failure and preserves the exception', async () => {
+    mocks.isElectronRuntime.mockReturnValue(true)
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    let restore!: (entries: Record<string, string>) => void
+    mocks.invokeDesktopHost.mockReturnValueOnce(
+      new Promise(resolve => {
+        restore = resolve
+      })
+    )
+    const { initializeDesktopLocalStoragePersistence } = await loadPersistence()
+    const initialization = initializeDesktopLocalStoragePersistence()
+    const failure = new Error('private-storage-failure')
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw failure
+    })
+    restore({ private: 'private-value' })
+    await expect(initialization).rejects.toBe(failure)
+    const phases = info.mock.calls.map(([message]) => JSON.parse(String(message).split('] ')[1]))
+    expect(phases.map(({ phase, status }) => [phase, status])).toEqual([
+      ['renderer-storage-replace', 'started'],
+      ['renderer-storage-replace', 'failed'],
+    ])
+    expect(JSON.stringify(phases)).not.toContain('private')
   })
 
   it('persists set, remove, and clear operations without affecting sessionStorage', async () => {

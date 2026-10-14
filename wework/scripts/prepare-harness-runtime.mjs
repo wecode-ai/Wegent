@@ -23,10 +23,9 @@ import {
   PublishedRuntimeUnavailableError,
 } from './lib/published-runtime-fetch.mjs'
 import { resolveHarnessRuntimeCachePaths } from './lib/harness-runtime-cache.mjs'
+import { harnessRuntimePatchSources } from './lib/harness-runtime-patches.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const coreDshVersion = '0.1.1-rc.2'
-const workbenchDshVersions = new Set(['0.1.0-rc.8'])
 const source = path.join(root, 'harness-runtime')
 const runtimesDirectory = path.join(source, 'runtimes')
 const pluginsDirectory = path.join(source, 'plugins')
@@ -41,6 +40,7 @@ const {
 } = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
 const archiveFormatVersion = 'dsh-runtime-tar-gzip-v8'
+const coreArchiveFormatVersion = 'dsh-runtime-tar-gzip-v9-hoisted'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -125,19 +125,18 @@ async function runtimeSources() {
       if (typeof dshVersion !== 'string' || dshVersion !== packageJson.version) {
         throw new Error(`${directory}/package.json must pin DSH to its package version`)
       }
+      if (!['core', 'workbench'].includes(packageJson.runtimeRole)) {
+        throw new Error(`${directory}/package.json must declare a core or workbench runtimeRole`)
+      }
       return {
         dshVersion,
-        role:
-          dshVersion === coreDshVersion
-            ? 'core'
-            : workbenchDshVersions.has(dshVersion)
-              ? 'workbench'
-              : 'legacy',
+        role: packageJson.runtimeRole,
+        bundled: packageJson.runtimeBundled !== false,
         runtimeRoot,
         entries: [
           { name: 'package.json', content: packageContent },
           { name: 'pnpm-lock.yaml', content: lockContent },
-          ...sharedEntries,
+          ...(await harnessRuntimePatchSources(source, packageJson, sharedEntries)),
           ...pluginEntries,
         ],
         pluginFiles,
@@ -148,7 +147,7 @@ async function runtimeSources() {
 
 function runtimeIdentity(runtime) {
   const sourceFingerprint = createHash('sha256')
-    .update(archiveFormatVersion)
+    .update(runtime.role === 'core' ? coreArchiveFormatVersion : archiveFormatVersion)
     .update('\0')
     .update(process.versions.modules)
     .update('\0')
@@ -321,7 +320,9 @@ async function buildRuntime(runtime) {
         '--virtual-store-dir=node_modules/.pnpm',
         '--package-import-method=copy',
         '--config.enable-global-virtual-store=false',
-        ...(process.platform === 'win32' ? ['--config.node-linker=hoisted'] : []),
+        ...(runtime.role === 'core' || process.platform === 'win32'
+          ? ['--config.node-linker=hoisted']
+          : []),
       ],
       staging
     )
@@ -359,6 +360,7 @@ async function buildRuntime(runtime) {
     const descriptor = {
       dshVersion: runtime.dshVersion,
       role: runtime.role,
+      bundled: runtime.bundled,
       sourceFingerprint: runtime.sourceFingerprint,
       archiveSha256: await sha256(temporaryArchive),
       archiveBytes: (await stat(temporaryArchive)).size,

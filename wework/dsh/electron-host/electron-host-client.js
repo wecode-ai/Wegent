@@ -1,10 +1,28 @@
-import { createReadStream, createWriteStream } from 'node:fs'
+import { createWriteStream } from 'node:fs'
+import { Socket } from 'node:net'
 import { createInterface } from 'node:readline'
 
 export const ELECTRON_HOST_PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
+const inheritedInputs = new Map()
+
+function inheritedInput(fd) {
+  let input = inheritedInputs.get(fd)
+  if (input) return input
+  input = new Socket({
+    fd,
+    readable: true,
+    writable: false,
+    allowHalfOpen: true,
+    autoDestroy: false,
+  })
+  input.unref()
+  input.once('close', () => inheritedInputs.delete(fd))
+  inheritedInputs.set(fd, input)
+  return input
+}
 
 export class ElectronHostError extends Error {
   constructor(code, message, details = {}) {
@@ -44,7 +62,7 @@ export class ElectronHostClient {
     return new ElectronHostClient({
       protocolVersion,
       token,
-      input: createReadStream(null, { fd: requestFd, autoClose: false }),
+      input: inheritedInput(requestFd),
       output: createWriteStream(null, { fd: responseFd, autoClose: false }),
       principal,
       onDisconnect: options.onDisconnect,
@@ -77,6 +95,7 @@ export class ElectronHostClient {
     this.onInputClose = () => {
       this.closeWithError(new ElectronHostError('host_disconnected', 'Electron host pipe closed'))
     }
+    this.onInputError = error => this.closeWithError(normalizeError(error))
     this.onInputEnd = () => {
       this.closeWithError(new ElectronHostError('host_disconnected', 'Electron host pipe ended'))
     }
@@ -89,10 +108,13 @@ export class ElectronHostClient {
       throw new ElectronHostError('client_closed', 'Electron host client is closed')
     }
     this.started = true
+    this.input.ref?.()
     this.lines = createInterface({ input: this.input })
     this.lines.on('line', line => this.handleLine(line))
+    this.lines.on('error', this.onInputError)
     this.input.once('close', this.onInputClose)
     this.input.once('end', this.onInputEnd)
+    this.input.once('error', this.onInputError)
     this.output.once('error', this.onOutputError)
     this.handshake = deferred()
     this.write({
@@ -110,6 +132,10 @@ export class ElectronHostClient {
       protocolVersion: this.protocolVersion,
       capabilities: [...this.capabilities],
     }
+  }
+
+  reportRuntimeEndpoint(url) {
+    this.write({ type: 'runtimeEndpoint', url })
   }
 
   async invoke(capability, params = {}) {
@@ -146,13 +172,20 @@ export class ElectronHostClient {
     if (this.closed) return
     this.closed = true
     this.started = false
+    this.detachInput()
+    this.output.off('error', this.onOutputError)
+    if (!this.output.destroyed) this.output.end()
+    this.rejectPending(new ElectronHostError('client_closed', 'Electron host client stopped'))
+  }
+
+  detachInput() {
     this.lines?.close()
     this.lines = null
     this.input.off('close', this.onInputClose)
     this.input.off('end', this.onInputEnd)
-    this.output.off('error', this.onOutputError)
-    if (!this.output.destroyed) this.output.end()
-    this.rejectPending(new ElectronHostError('client_closed', 'Electron host client stopped'))
+    this.input.off('error', this.onInputError)
+    this.input.pause()
+    this.input.unref?.()
   }
 
   handleLine(rawLine) {
@@ -237,8 +270,7 @@ export class ElectronHostClient {
     this.started = false
     this.handshake?.reject(error)
     this.rejectPending(error)
-    this.lines?.close()
-    this.lines = null
+    this.detachInput()
     this.onDisconnect(error)
   }
 

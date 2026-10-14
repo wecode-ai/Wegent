@@ -64,6 +64,8 @@ core_segments=(
   release-package-startup
   component-update
   native-window-startup
+  startup-preparation
+  dsh-runtime-upgrade
   native-window-chrome
   renderer-storage
   tray-lifecycle
@@ -176,11 +178,13 @@ core_shards=(
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
   rendering-extensions,transcript-sync,background-terminals
-  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
+  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,startup-preparation,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
   collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details
+  # Keep the startup benchmark isolated from concurrent Electron cold starts.
+  dsh-runtime-upgrade
 )
 
 validate_core_shards() {
@@ -985,7 +989,18 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/startup-preparation.scenario.mjs | \
+      wework/scripts/startup-preparation.test.mjs | \
+      wework/electron/src/runtime/initial-runtime-preparation*)
+      select_target "core:startup-preparation"
+      return
+      ;;
+
     # Runtime queue orchestration has an independently bootstrapped checkpoint.
+    wework/e2e/desktop/scenarios/dsh-runtime-upgrade.scenario.mjs)
+      select_target "core:dsh-runtime-upgrade"
+      ;;
+
     wework/e2e/desktop/scenarios/runtime-task-queue.scenario.mjs)
       select_target "core:runtime-task-queue"
       return

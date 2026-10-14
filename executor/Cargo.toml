@@ -63,7 +63,7 @@ tokio-tungstenite = "0.21"
 toml_edit = { version = "0.22", features = ["serde"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

@@ -23,6 +23,8 @@ export class TerminalRuntimeError extends Error {
 
 export class TerminalRuntime {
   #environment
+  #diagnostic
+  #nextSessionSequence = 1
   #events = []
   #listeners = new Set()
   #nextEventSequence = 1
@@ -30,10 +32,16 @@ export class TerminalRuntime {
   #sessions = new Map()
   #spawn
 
-  constructor({ spawn, environment = process.env, platform = process.platform }) {
+  constructor({
+    spawn,
+    environment = process.env,
+    platform = process.platform,
+    diagnostic = () => {},
+  }) {
     if (typeof spawn !== 'function') {
       throw new TypeError('Terminal runtime requires a PTY spawn function')
     }
+    this.#diagnostic = diagnostic
     this.#spawn = spawn
     this.#environment = environment
     this.#platform = platform
@@ -136,6 +144,7 @@ export class TerminalRuntime {
     }
     const session = {
       id: sessionId,
+      diagnosticSequence: this.#nextSessionSequence++,
       pty,
       sequence: 0,
       snapshot: '',
@@ -150,6 +159,12 @@ export class TerminalRuntime {
 
   #snapshot(params) {
     const session = this.#requiredSession(requiredSessionId(params))
+    this.#diagnostic({
+      phase: 'snapshot',
+      sessionSequence: session.diagnosticSequence,
+      sequence: session.sequence,
+      bytes: Buffer.byteLength(session.snapshot),
+    })
     return {
       session_id: session.id,
       sequence: session.sequence,
@@ -165,7 +180,18 @@ export class TerminalRuntime {
     if (Buffer.byteLength(params.data) > MAX_INPUT_BYTES) {
       throw new TerminalRuntimeError('input_too_large', 'Terminal input exceeds size limit', 413)
     }
-    session.pty.write(params.data)
+    const fields = {
+      sessionSequence: session.diagnosticSequence,
+      bytes: Buffer.byteLength(params.data),
+    }
+    this.#diagnostic({ phase: 'input-started', ...fields })
+    try {
+      session.pty.write(params.data)
+      this.#diagnostic({ phase: 'input-completed', ...fields })
+    } catch (error) {
+      this.#diagnostic({ phase: 'input-failed', ...fields })
+      throw error
+    }
     return { session_id: session.id }
   }
 
@@ -212,6 +238,12 @@ export class TerminalRuntime {
   #handleOutput(session, data) {
     if (typeof data !== 'string' || !data) return
     session.sequence += 1
+    this.#diagnostic({
+      phase: 'output',
+      sessionSequence: session.diagnosticSequence,
+      sequence: session.sequence,
+      bytes: Buffer.byteLength(data),
+    })
     session.snapshot = trimUtf8Tail(session.snapshot + data, MAX_SNAPSHOT_BYTES)
     this.#emit('terminal.output', {
       session_id: session.id,

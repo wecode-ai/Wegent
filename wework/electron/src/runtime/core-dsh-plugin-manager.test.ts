@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
+import { parse } from 'yaml'
 import {
   CoreDshPluginManager,
   parseBlockedBuildMatcher,
@@ -8,7 +9,38 @@ import {
 } from './core-dsh-plugin-manager.js'
 import { temporaryDirectory } from './test-helpers.js'
 
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, readFile: vi.fn(actual.readFile) }
+})
+
 describe('CoreDshPluginManager', () => {
+  test('reads each installed package once when listing the real profile inventory', async () => {
+    const fixture = await createFixture()
+    const reads = vi.mocked(readFile)
+    reads.mockClear()
+    try {
+      const plugins = await fixture.manager().list()
+      expect(plugins.map(plugin => plugin.name).sort()).toEqual([
+        '@wegent/dsh-app-wework',
+        'dsh-alpha',
+        'dsh-beta',
+      ])
+      for (const name of ['dsh-alpha', 'dsh-beta', 'plain-runtime-library']) {
+        const path = join(fixture.profileRoot, 'node_modules', name, 'package.json')
+        expect(reads.mock.calls.filter(([file]) => file === path)).toHaveLength(1)
+      }
+      expect(
+        reads.mock.calls.filter(
+          ([file]) => file === join(fixture.profileRoot, '.wework-core-plugins.json')
+        )
+      ).toHaveLength(0)
+    } finally {
+      reads.mockClear()
+      await fixture.remove()
+    }
+  })
+
   test('preserves disabled plugins and bundle order across unrelated updates', async () => {
     const fixture = await createFixture()
     const manager = fixture.manager()
@@ -142,6 +174,12 @@ describe('CoreDshPluginManager', () => {
     expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
       JSON.stringify(source)
     )
+    const patch = parse(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8'))
+    expect(
+      patch
+        .filter((entry: { disabled: boolean }) => !entry.disabled)
+        .map((entry: { id: string }) => entry.id)
+    ).toEqual(['hmr', 'client-hmr'])
     expect(await fixture.userBundles()).toEqual(['dsh-alpha', 'dsh-beta', 'dsh-development'])
     await fixture.remove()
   })

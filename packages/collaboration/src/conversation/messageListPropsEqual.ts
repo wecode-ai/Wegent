@@ -9,6 +9,7 @@ export function areMessageListPropsEqual(
     previous.virtualize !== next.virtualize ? 'virtualize' : null,
     previous.useContentVisibility !== next.useContentVisibility ? 'useContentVisibility' : null,
     previous.onVirtualMeasurement !== next.onVirtualMeasurement ? 'onVirtualMeasurement' : null,
+    previous.onContentReady !== next.onContentReady ? 'onContentReady' : null,
     previous.renderVisualization !== next.renderVisualization ? 'renderVisualization' : null,
     previous.messages !== next.messages ? 'messages' : null,
     previous.scrollElementRef !== next.scrollElementRef ? 'scrollElementRef' : null,

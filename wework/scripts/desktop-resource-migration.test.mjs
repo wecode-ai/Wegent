@@ -317,11 +317,15 @@ describe('desktop resource migration', () => {
       'utf8'
     )
 
-    expect(source).toContain('const packagedResourcesRoot = join(')
-    expect(source).toContain(
-      "const packagedResources = join(packagedResourcesRoot, 'harness-runtime')"
+    const runtimeAssets = await readFile(
+      join(weworkRoot, 'e2e/desktop/modules/runtime-assets.mjs'),
+      'utf8'
     )
-    expect(source).toContain("corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins')")
+    expect(source).toContain('await preparePackagedHarnessRuntimes(appBinary, runtimeRoot)')
+    expect(runtimeAssets).toContain("join(packagedResourcesRoot(appBinary), 'harness-runtime')")
+    expect(source).toContain(
+      "corePluginsRoot: join(packagedResourcesRoot(appBinary), 'wework-core-plugins')"
+    )
     expect(source).toContain('harnessRuntimeRoot: runtimeRoot')
     expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
   })

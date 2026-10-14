@@ -1843,7 +1843,7 @@ describe('ConnectionsSettingsPage', () => {
     await waitFor(() => expect(api.startTerminal).toHaveBeenCalledWith('device-1'))
     expect(openSpy).not.toHaveBeenCalled()
     expect(screen.getByTestId('settings-device-terminal-panel')).toBeInTheDocument()
-    expect(screen.getByTestId('settings-device-remote-terminal')).toHaveAttribute(
+    expect(await screen.findByTestId('settings-device-remote-terminal')).toHaveAttribute(
       'data-session-id',
       'terminal-1'
     )

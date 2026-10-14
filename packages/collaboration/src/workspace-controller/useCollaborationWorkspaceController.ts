@@ -89,6 +89,7 @@ export interface CollaborationWorkspaceControllerCommands {
   ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
+    options?: { fresh?: boolean },
   ): Promise<WorkspaceBoardSnapshot | null>;
   loadMoreExternalColumn(status: string): Promise<void>;
   getIssue(issueId: string): Promise<CollaborationIssue | null>;
@@ -1108,9 +1109,11 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     loadProject,
-    async loadProjectSnapshot(projectId) {
+    async loadProjectSnapshot(projectId, options) {
       const mutationGeneration = projectMutationGeneration(projectId);
       try {
+        // A change event can arrive after the active read took its DB snapshot.
+        if (options?.fresh) await standardSnapshotLoads.get(projectId);
         const project = catalogProjects.find(
           (candidate) => candidate.id === projectId,
         );

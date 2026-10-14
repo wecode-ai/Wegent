@@ -3,7 +3,7 @@ import {
   type ConversationQueuePanelProps,
 } from '@wegent/collaboration/conversation/ConversationQueuePanel'
 import { useTranslation } from '@/hooks/useTranslation'
-import { createCollaborationTranslator } from '@wegent/collaboration'
+import { createCollaborationTranslator } from '@wegent/collaboration/i18n'
 export function ConversationQueuePanel(props: Omit<ConversationQueuePanelProps, 'translate'>) {
   const { i18n } = useTranslation('common')
   return (

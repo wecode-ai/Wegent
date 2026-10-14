@@ -239,13 +239,11 @@ export class CoreDshPluginManager {
 
   private async readInventory(): Promise<CoreDshPlugin[]> {
     const manifest = await this.readManifest()
-    const state = await this.readState(manifest)
     const active = new Set(manifest.dsh?.profile?.bundles ?? [])
     const names = [
       ...new Set([
         ...(manifest.dsh?.profile?.bundles ?? []),
         ...Object.keys(manifest.dependencies ?? {}),
-        ...state.order,
       ]),
     ]
     const plugins = await Promise.all(
@@ -404,6 +402,8 @@ export class CoreDshPluginManager {
       "      - '**/node_modules'",
       "      - '**/.git'",
       '    debounce: 100',
+      '- id: client-hmr',
+      '  disabled: false',
       '',
     ].join('\n')
     await writeFile(join(this.profileRoot, 'cordis.patch.yml'), patch, { mode: 0o600 })

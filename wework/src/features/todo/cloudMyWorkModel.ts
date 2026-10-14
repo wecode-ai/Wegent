@@ -2,8 +2,8 @@ import {
   isLoopItemExecutionActive as isSharedLoopItemExecutionActive,
   isMyWorkExecutionActive as isSharedMyWorkExecutionActive,
   myWorkGroupOf as sharedMyWorkGroupOf,
-  type MyWorkGroupKey,
-} from '@wegent/collaboration'
+} from '@wegent/collaboration/my-work/model'
+import type { MyWorkGroupKey } from '@wegent/collaboration'
 import type { CloudLoopItem, CloudMyWorkItem } from '@/api/deliveries'
 import { isExecutionActive } from './executionStatus'
 

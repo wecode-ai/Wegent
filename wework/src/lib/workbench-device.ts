@@ -166,13 +166,13 @@ export function getExecutorOfflineDeviceId(error?: string | null): string | null
   return deviceId || null
 }
 
-export function mergeDeviceLists(
-  primaryDevices: DeviceInfo[],
-  secondaryDevices: DeviceInfo[]
-): DeviceInfo[] {
-  const merged: DeviceInfo[] = []
+export function mergeDeviceLists<T extends DeviceInfo>(
+  primaryDevices: T[],
+  secondaryDevices: T[]
+): T[] {
+  const merged: T[] = []
 
-  const upsertDevice = (device: DeviceInfo) => {
+  const upsertDevice = (device: T) => {
     let candidate = withRuntimeRoutes(device)
     let insertionIndex = merged.length
     let index = 0
@@ -194,7 +194,7 @@ export function mergeDeviceLists(
   return merged
 }
 
-function withRuntimeRoutes(device: DeviceInfo): DeviceInfo {
+function withRuntimeRoutes<T extends DeviceInfo>(device: T): T {
   return {
     ...device,
     runtime_routes: mergeRuntimeRoutes(device.runtime_routes ?? [], [
@@ -203,7 +203,7 @@ function withRuntimeRoutes(device: DeviceInfo): DeviceInfo {
   }
 }
 
-function mergeRuntimeDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): DeviceInfo {
+function mergeRuntimeDeviceRecord<T extends DeviceInfo>(existing: T, incoming: T): T {
   const preferred = preferDeviceRecord(existing, incoming)
   const fallback = preferred === existing ? incoming : existing
   return {
@@ -219,7 +219,7 @@ function mergeRuntimeDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): D
   }
 }
 
-function preferDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): DeviceInfo {
+function preferDeviceRecord<T extends DeviceInfo>(existing: T, incoming: T): T {
   return deviceRecordPriority(incoming) <= deviceRecordPriority(existing) ? incoming : existing
 }
 

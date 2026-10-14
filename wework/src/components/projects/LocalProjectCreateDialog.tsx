@@ -1,7 +1,7 @@
 import { Folder, FolderPlus, Loader2, X } from 'lucide-react'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
+import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/runtime-config'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'

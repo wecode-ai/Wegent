@@ -1,5 +1,6 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 
 interface PendingStorageUpdate {
   clear: boolean
@@ -35,7 +36,19 @@ export async function initializeDesktopLocalStoragePersistence(): Promise<void> 
       entries: storageEntries(localStorage),
     }
   )
-  replaceStorage(localStorage, durableEntries)
+  const startedAt = performance.now()
+  markDesktopStartupPhase('renderer-storage-replace', 'started')
+  try {
+    replaceStorage(localStorage, durableEntries)
+    markDesktopStartupPhase('renderer-storage-replace', 'completed', {
+      durationMs: performance.now() - startedAt,
+    })
+  } catch (error) {
+    markDesktopStartupPhase('renderer-storage-replace', 'failed', {
+      durationMs: performance.now() - startedAt,
+    })
+    throw error
+  }
   installPersistence(localStorage)
   installed = true
 }

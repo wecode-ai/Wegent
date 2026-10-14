@@ -731,6 +731,10 @@ export function createDesktopScenario({
 
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
+      await control.command('waitFor', '[data-testid="settings-nav-connections"]', {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="settings-nav-connections"]')
       await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
         text: '同步正常',
@@ -758,6 +762,10 @@ export function createDesktopScenario({
       assert.equal(sqliteOutboxCount(deviceBOutboxPath), 1)
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
+      await control.command('waitFor', '[data-testid="settings-nav-connections"]', {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="settings-nav-connections"]')
       await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
         text: '同步已关闭',
@@ -855,6 +863,10 @@ export function createDesktopScenario({
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
+      await control.command('waitFor', '[data-testid="settings-nav-connections"]', {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="settings-nav-connections"]')
       await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
         text: '同步已关闭',

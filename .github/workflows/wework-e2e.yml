@@ -385,7 +385,9 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
+          WEWORK_E2E_CORE_CPU_PROFILE: ${{ contains(matrix.segments, 'dsh-runtime-upgrade') && '1' || '' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
+          WEWORK_E2E_TOML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/smol-toml.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
@@ -400,6 +402,25 @@ jobs:
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
+          case ",$WEWORK_E2E_SEGMENTS," in
+          *,dsh-runtime-upgrade,*)
+            resource_log="$RUNNER_TEMP/wework-startup-runner-resources.log"
+            (
+              while true; do
+                date -u '+[startup-runner-resources] %FT%TZ'
+                for resource in /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu.stat /proc/pressure/cpu /proc/pressure/io; do
+                  if test -r "$resource"; then
+                    echo "$resource"
+                    cat "$resource"
+                  fi
+                done
+                sleep 1
+              done
+            ) > "$resource_log" &
+            resource_monitor_pid=$!
+            trap 'kill "$resource_monitor_pid"; wait "$resource_monitor_pid" || true; cat "$resource_log"' EXIT
+            ;;
+          esac
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
 
@@ -432,7 +453,7 @@ jobs:
     name: Build Windows Wework Desktop Core E2E Artifact
     needs:
       - changes
-    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
+    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -480,13 +501,36 @@ jobs:
         env:
           CI: true
           WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/executor-target
-          WEWORK_EXECUTOR_PROFILE: debug
+          WEWORK_EXECUTOR_PROFILE: release
         run: |
           pnpm --filter wework ai:verify:electron:build
+          runtime_asset_cache="$(node --input-type=module -e "import { resolveSharedHarnessRuntimeAssetCacheRoot } from './wework/scripts/lib/harness-runtime-cache.mjs'; console.log(resolveSharedHarnessRuntimeAssetCacheRoot() + '/harness-runtime-assets')")"
+          node wework/scripts/collect-harness-runtime-release-assets.mjs \
+            "$runtime_asset_cache" \
+            wework/electron/release/WeWork-win32-x64/resources/e2e-runtime-assets \
+            wework/electron/release/WeWork-win32-x64/resources/harness-runtime/runtimes.json
           test -f wework/electron/release/WeWork-win32-x64/WeWork.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
+
+      - name: Verify native Windows runtime compatibility
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: |
+          $compatibilityExitCode = 0
+          cargo test --locked --release --manifest-path executor/Cargo.toml --lib process_environment::tests::windows_registry
+          if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
+          cargo test --locked --release --manifest-path executor/Cargo.toml --lib process::windows_tree_diagnostics::tests
+          if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
+          cargo test --locked --release --manifest-path executor/Cargo.toml --lib agents::git_workspace::tests::clones_execution_repositories_beyond_the_windows_legacy_path_limit
+          if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
+          cargo test --locked --release --manifest-path executor/Cargo.toml --lib runtime_work::store::tests
+          if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
+          cargo test --locked --release --manifest-path executor/Cargo.toml --lib runtime_work::worktrees::tests::manages_worktrees_beyond_the_windows_legacy_path_limit
+          if ($LASTEXITCODE -ne 0) { $compatibilityExitCode = $LASTEXITCODE }
+          exit $compatibilityExitCode
 
       - name: Build Rust Backend Windows E2E gateway
         shell: pwsh
@@ -587,7 +631,7 @@ jobs:
     needs:
       - changes
       - build-wework-desktop-windows-core-e2e
-    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
+    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: windows-latest
     timeout-minutes: 60
     strategy:
@@ -597,6 +641,7 @@ jobs:
 
     steps:
       - name: Checkout code
+        id: checkout
         uses: actions/checkout@v4
         with:
           filter: blob:none
@@ -693,6 +738,7 @@ jobs:
         shell: pwsh
         env:
           CI: true
+          WEWORK_E2E_CORE_CPU_PROFILE: ${{ contains(matrix.segments, 'dsh-runtime-upgrade') && '1' || '' }}
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/WeWork.exe
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe
@@ -732,7 +778,7 @@ jobs:
         run: exit 1
 
       - name: Prune transient Wework desktop E2E caches
-        if: always()
+        if: always() && steps.checkout.outcome == 'success'
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
       - name: Upload Windows Wework desktop E2E diagnostics
@@ -821,6 +867,7 @@ jobs:
         env:
           CI: true
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
+          WEWORK_E2E_TOML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/smol-toml.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
@@ -930,6 +977,7 @@ jobs:
         env:
           CI: true
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
+          WEWORK_E2E_TOML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/smol-toml.cjs
           CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           E2E_COMMAND: ${{ matrix.command }}
           E2E_SEGMENT: ${{ matrix.segment }}
@@ -995,7 +1043,7 @@ jobs:
         env:
           RUN_E2E: ${{ needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all')) }}
+          RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}

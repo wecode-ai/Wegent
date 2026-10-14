@@ -1,4 +1,6 @@
+import { markDesktopStartupPhase } from '@/lib/desktop-startup-phase'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
@@ -16,7 +18,6 @@ import {
   normalizeCloudBackendUrl,
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
-import { EditorView } from '@codemirror/view'
 import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
@@ -56,7 +57,11 @@ import {
   type AppPreferencesPatch,
 } from '@/desktop/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
-import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
+import {
+  getDesktopE2ERuntimeConfig,
+  loadDesktopE2ERuntimeConfig,
+  isWeworkAutomationEnabled,
+} from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
@@ -151,21 +156,7 @@ declare global {
   }
 }
 
-export function isWeworkAutomationEnabled(): boolean {
-  if (getDesktopE2ERuntimeConfig().disabled === true) return false
-  return (
-    import.meta.env.MODE === 'e2e' ||
-    import.meta.env.VITE_WEWORK_E2E === 'true' ||
-    Boolean(getDesktopE2ERuntimeConfig().controlUrl)
-  )
-}
-
-export function shouldUseNativeProjectDirectoryPicker(): boolean {
-  return (
-    !isWeworkAutomationEnabled() ||
-    import.meta.env.VITE_WEWORK_E2E_NATIVE_DIRECTORY_PICKER === 'true'
-  )
-}
+export { isWeworkAutomationEnabled, shouldUseNativeProjectDirectoryPicker } from './runtime-config'
 
 function desktopControlUrl(): string | null {
   if (getDesktopE2ERuntimeConfig().disabled === true) return null
@@ -501,13 +492,17 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
   })
 }
 
-export async function installWeworkAutomationBridge(
+let automationBridgeInstallation: Promise<void> | null = null
+
+export function installWeworkAutomationBridge(
   beforeSeed: Promise<void> = Promise.resolve()
 ): Promise<void> {
-  if (!isWeworkAutomationEnabled() || typeof window === 'undefined') {
-    return
-  }
+  if (!isWeworkAutomationEnabled() || typeof window === 'undefined') return Promise.resolve()
+  automationBridgeInstallation ??= initializeWeworkAutomationBridge(beforeSeed)
+  return automationBridgeInstallation
+}
 
+async function initializeWeworkAutomationBridge(beforeSeed: Promise<void>): Promise<void> {
   if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
   }
@@ -1032,12 +1027,25 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   element.focus()
   const keyboardEvent = parseDesktopControlKey(key)
+  const events: KeyboardEvent[] = []
   for (const type of ['keydown', 'keyup']) {
-    element.dispatchEvent(
-      new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
-    )
+    const event = new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
+    events.push(event)
+    element.dispatchEvent(event)
   }
   await waitForDesktopControlTick()
+  if (keyboardEvent.key === 'Escape') {
+    logRuntimeTaskCreateStage('e2e-escape-dispatched', {
+      selector,
+      windowLabel: getDesktopWindowLabel(),
+      targetConnected: element.isConnected,
+      targetRoot: element.getRootNode() instanceof ShadowRoot ? 'shadow' : 'document',
+      keydownDefaultPrevented: events[0].defaultPrevented,
+      closePromptPresent: Boolean(
+        document.querySelector('[data-testid="runtime-task-close-confirm-overlay"]')
+      ),
+    })
+  }
   return element.textContent?.trim() ?? ''
 }
 
@@ -1401,7 +1409,9 @@ export async function fillDesktopControlElement(element: HTMLElement, value: str
   element.focus()
 
   const codeMirrorRoot = element.closest<HTMLElement>('.cm-editor')
-  const codeMirrorView = codeMirrorRoot ? EditorView.findFromDOM(codeMirrorRoot) : null
+  const codeMirrorView = codeMirrorRoot
+    ? (await import('@codemirror/view')).EditorView.findFromDOM(codeMirrorRoot)
+    : null
   if (codeMirrorView) {
     codeMirrorView.dispatch({
       changes: { from: 0, to: codeMirrorView.state.doc.length, insert: value },
@@ -2160,6 +2170,19 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'performanceSnapshot': {
+      const startedAt = performance.now()
+      const recordPhase = (phase: string) => {
+        if (!isWeworkAutomationEnabled()) return
+        try {
+          console.info('[Wework] Performance snapshot diagnostic', {
+            phase,
+            elapsedMs: Math.round(performance.now() - startedAt),
+          })
+        } catch {
+          // Diagnostics must not affect snapshot results or error propagation.
+        }
+      }
+      recordPhase('entered')
       const debugSnapshot = getWorkbenchDebugSnapshot()
       const currentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
       const runtimeMessages = currentRuntimeTask
@@ -2180,13 +2203,18 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const assistantContentElements = Array.from(
         document.querySelectorAll<HTMLElement>('[data-testid="assistant-message-content"]')
       )
+      recordPhase('host-heap-started')
       const [processMemory, rendererHeap] = await Promise.all([
         navigator.platform.toLowerCase().includes('mac')
           ? invokeDesktopHost('e2e.getProcessSnapshot')
           : null,
         invokeDesktopHost('e2e.getRendererHeapUsage'),
-      ])
-      return JSON.stringify({
+      ]).catch(error => {
+        recordPhase('host-heap-failed')
+        throw error
+      })
+      recordPhase('host-heap-completed')
+      const snapshot = JSON.stringify({
         timestamp: Date.now(),
         domNodeCount: document.getElementsByTagName('*').length,
         assistantDom: {
@@ -2219,6 +2247,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         processMemory,
         rendererHeap,
       })
+      recordPhase('completed')
+      return snapshot
     }
     case 'focusMainWindow':
       await invokeDesktopHost('e2e.focusMainWindow')
@@ -2230,6 +2260,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         phase: 'press',
       })
       return ''
+    case 'setReducedMotion':
+      await invokeDesktopHost('e2e.setReducedMotion', {
+        windowLabel: getDesktopWindowLabel(),
+        reduced: command.enabled === true,
+      })
+      return JSON.stringify({
+        reduced: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      })
     case 'setMainWindowSize': {
       const nextSize = JSON.parse(command.value ?? '{}') as {
         width?: number
@@ -3139,6 +3177,7 @@ async function postDesktopControlStarted(
 }
 
 async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
+  markDesktopStartupPhase('controller-client', 'started')
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
@@ -3147,15 +3186,18 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     })
   let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
+  markDesktopStartupPhase('controller-register', 'started')
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
   })
   if (!readyResponse.ok) {
+    markDesktopStartupPhase('controller-register', 'failed')
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }
 
+  markDesktopStartupPhase('controller-register', 'completed')
   while (true) {
     try {
       const response = await commandRequest

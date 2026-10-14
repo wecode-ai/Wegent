@@ -1,8 +1,6 @@
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
-export {
-  collaborationIssueCardPriorityClasses as priorityBadgeClasses,
-  reorderLaneItems,
-} from '@wegent/collaboration'
+export { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from '@wegent/collaboration/issue-card/priorityBadgeClasses'
+export { reorderLaneItems } from '@wegent/collaboration/board'
 
 export const columns: Array<{ status: CloudLoopItem['status']; label: string }> = [
   { status: 'inbox', label: '收集箱' },

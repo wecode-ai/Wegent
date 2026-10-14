@@ -5,6 +5,22 @@ import {
 } from './smart-app-verification-view.js'
 
 describe('verifySmartAppPage', () => {
+  test('authenticates in the isolated view before loading the clean runtime path', async () => {
+    const fixture = view({ executeJavaScript: vi.fn().mockResolvedValue(true) })
+    const result = await verifySmartAppPage({
+      ...input(),
+      authenticationUrl: 'http://127.0.0.1:4567/?token=fixture-token',
+      createView: fixture.createView,
+    })
+    expect(result).toEqual({ issues: [] })
+    expect(fixture.handle.contents.loadURL).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:4567/?token=fixture-token'
+    )
+    expect(fixture.handle.contents.loadURL).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:4567/')
+    expect(fixture.handle.dispose).toHaveBeenCalledOnce()
+  })
+
   test('loads the declared same-origin path and waits for its selector', async () => {
     const executeJavaScript = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
     const fixture = view({ executeJavaScript })

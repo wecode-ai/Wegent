@@ -18,6 +18,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { CHECKPOINT_TASK_PROMPT, MODEL_PROVIDER_ID } from './shared.mjs'
 import { verifyNativeMcpEnvironment } from './native-mcp-environment.mjs'
 import { verifyNativeAgentMcp } from './native-agent-mcp.mjs'
+import { collectCodexSqliteHealth } from './desktop-startup-diagnostics.mjs'
 import {
   packagedResourcesRoot,
   verifyWorkbenchSchemaCompatibility,
@@ -29,7 +30,31 @@ const ATTACHMENT_PATH = join('workspace', 'attachments', 'workbench-home-e2e.bin
 const ATTACHMENT = Buffer.from([0, 1, 2, 127, 128, 254, 255])
 const NATIVE_SESSION_MARKER = 'WEWORK_MIGRATION_NATIVE_HISTORY_42'
 
-async function runNativeTurn(fixture, home, resumeId) {
+async function recordNativeState(fixture, home, threadId, phase) {
+  let samePhysicalHome = null
+  try {
+    samePhysicalHome = (await realpath(fixture.sourceHome)) === (await realpath(fixture.targetHome))
+  } catch {
+    // A missing bridge is observable before migration and must not create a Home.
+  }
+  const state = await collectCodexSqliteHealth(home, { threadId })
+  const records = (fixture.nativeStateDiagnostics ??= [])
+  records.push({ phase, samePhysicalHome, state })
+  await writeFile(
+    join(fixture.resultDir, 'native-codex-state-diagnostics.json'),
+    JSON.stringify(records, null, 2)
+  )
+}
+
+async function observeNativeState(fixture, home, threadId, phase) {
+  try {
+    if (threadId) await recordNativeState(fixture, home, threadId, phase)
+  } catch {
+    console.warn('[native-codex-state] observation unavailable')
+  }
+}
+
+export async function runNativeTurn(fixture, home, resumeId) {
   const args = resumeId
     ? [
         'exec',
@@ -48,14 +73,22 @@ async function runNativeTurn(fixture, home, resumeId) {
   // Desktop startup may select a different default provider. Native migration
   // probes must keep using the runner's model service when resuming a session.
   args.push('-c', `model_provider=${JSON.stringify(MODEL_PROVIDER_ID)}`)
-  const execution = promisify(execFile)(fixture.codexBinary, args, {
-    cwd: fixture.workspace,
-    env: { ...fixture.environment, CODEX_HOME: home, WEGENT_CODEX_HOME: home },
-    timeout: 120_000,
-    maxBuffer: 4 * 1024 * 1024,
-  })
-  execution.child.stdin.end()
-  const { stdout } = await execution
+  await observeNativeState(fixture, home, resumeId, 'before')
+  let stdout
+  try {
+    const execution = promisify(execFile)(fixture.codexBinary, args, {
+      cwd: fixture.workspace,
+      env: { ...fixture.environment, CODEX_HOME: home, WEGENT_CODEX_HOME: home },
+      timeout: 120_000,
+      maxBuffer: 4 * 1024 * 1024,
+    })
+    execution.child.stdin.end()
+    const result = await execution
+    stdout = result.stdout
+  } catch (error) {
+    await observeNativeState(fixture, home, resumeId, 'failed')
+    throw error
+  }
   const events = stdout
     .trim()
     .split('\n')
@@ -69,6 +102,7 @@ async function runNativeTurn(fixture, home, resumeId) {
   )
   if (resumeId)
     assert.equal(thread, resumeId, 'Native Codex created a new session instead of resuming')
+  await observeNativeState(fixture, home, thread, 'completed')
   return thread
 }
 
@@ -248,7 +282,7 @@ export function createWorkbenchHomeMigrationScenario({
       assert.ok(!seedConfig.includes('mcp_oauth_credentials_store'))
       await writeFile(
         configPath,
-        `${seedConfig}\n[mcp_servers.migration-http]\nurl = "https://example.invalid/mcp"\nenabled = false\n`
+        `mcp_oauth_credentials_store = "file"\n${seedConfig}\n[mcp_servers.migration-http]\nurl = "https://example.invalid/mcp"\nenabled = false\n`
       )
       const authPath = join(seedCodexHome, 'auth.json')
       const auth = await lstat(authPath, { bigint: true })
@@ -317,6 +351,7 @@ export function createWorkbenchHomeMigrationScenario({
         codexBinary: appEnvironment.CODEX_BINARY_PATH,
         environment: { ...appEnvironment },
         workspace,
+        resultDir,
       }
       assert.equal(typeof fixture.codexBinary, 'string')
       fixture.nativeMcpEnvironment = await verifyNativeMcpEnvironment({ fixture, resultDir })

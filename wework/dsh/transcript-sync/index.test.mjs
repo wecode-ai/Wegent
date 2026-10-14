@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import { SyncState, WeworkSync, portablePreferences, resolveApiBaseUrl } from './index.js'
-import { MemorySyncOutbox } from './outbox.js'
+import { MemorySyncOutbox, SqliteSyncOutbox } from './outbox.js'
 
 const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
 
@@ -1098,4 +1098,111 @@ test('does not restore over a transcript with an unresolved local turn', async (
   assert.deepEqual(inspected, ['unrelated'])
   assert.deepEqual(restored, [])
   assert.equal(sync.state.value.transcripts.shared.currentSequence, 2)
+})
+
+test('disabled synchronization opens SQLite only when its first turn must be persisted', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-unused-sync-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'outbox.sqlite3')
+  const syncState = state()
+  syncState.value.enabled = false
+  const outbox = new SqliteSyncOutbox(path)
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox,
+    source: {},
+    target: {},
+    state: syncState,
+    desktop: {},
+  })
+  await sync.start()
+  await assert.rejects(stat(path), { code: 'ENOENT' })
+  await sync.enqueue(turn())
+  assert.equal(outbox.count(), 1)
+  sync.stop()
+  outbox.close()
+  const restarted = new SqliteSyncOutbox(path)
+  assert.equal(restarted.first().turnId, 'turn-1')
+  restarted.close()
+  const unusedPath = join(directory, 'unused.sqlite3')
+  const unused = new SqliteSyncOutbox(unusedPath)
+  const unusedSync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox: unused,
+    source: {},
+    target: {},
+    state: syncState,
+    desktop: {},
+  })
+  await unusedSync.start()
+  unusedSync.stop()
+  unused.close()
+  await assert.rejects(stat(unusedPath), { code: 'ENOENT' })
+})
+
+test('enabled startup restores durable pending turns and preserves delivery failures', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-restored-sync-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  t.mock.method(console, 'error', () => {})
+  const path = join(directory, 'outbox.sqlite3')
+  const previous = new SqliteSyncOutbox(path)
+  previous.enqueue(turn())
+  previous.close()
+  const outbox = new SqliteSyncOutbox(path)
+  assert.equal(outbox.database, undefined)
+  const error = new Error('Original source failure')
+  const restored = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox,
+    target: {},
+    state: state(),
+    desktop: {},
+    source: {
+      async summarize(pending) {
+        restored.push(pending)
+        await sync.setEnabled(false)
+        throw error
+      },
+    },
+  })
+  await assert.rejects(sync.start(), value => value === error)
+  assert.equal(restored.length, 1)
+  assert.equal(restored[0].turnId, 'turn-1')
+  assert.equal(outbox.count(), 1)
+  sync.stop()
+  outbox.close()
+  const restarted = new SqliteSyncOutbox(path)
+  assert.equal(restarted.first().turnId, 'turn-1')
+  restarted.close()
+})
+
+test('disabled status initializes storage and reports existing pending turns', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-status-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'outbox.sqlite3')
+  const previous = new SqliteSyncOutbox(path)
+  previous.enqueue(turn())
+  previous.close()
+  const outbox = new SqliteSyncOutbox(path)
+  const syncState = state()
+  syncState.value.enabled = false
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox,
+    source: {},
+    target: {},
+    state: syncState,
+    desktop: {},
+  })
+  await sync.start()
+  assert.equal(outbox.database, undefined)
+  assert.equal(sync.service().status().pendingTurns, 1)
+  assert.equal(outbox.first().turnId, 'turn-1')
+  sync.stop()
+  outbox.close()
 })
