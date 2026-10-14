@@ -79,6 +79,7 @@ export const DESKTOP_CHECKPOINTS = [
   'app-update-full',
   'component-update',
   'native-window-startup',
+  'startup-preparation',
   'dsh-runtime-upgrade',
   'native-window-chrome',
   'renderer-storage',

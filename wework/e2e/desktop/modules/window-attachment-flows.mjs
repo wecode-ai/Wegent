@@ -68,7 +68,7 @@ const MODEL_RESPONSE_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 // The desktop stop budget is five seconds; a runtime that can exit on its own
 // must beat it, otherwise the app force-kills the tree and the window hangs.
-const RUNTIME_SELF_EXIT_TIMEOUT_MS = 4_000
+export const RUNTIME_SELF_EXIT_TIMEOUT_MS = 4_000
 
 async function waitForProcessExit(processId, message) {
   const startedAt = Date.now()
@@ -79,7 +79,7 @@ async function waitForProcessExit(processId, message) {
   throw new Error(message)
 }
 
-async function waitForProcessExitWithin(processId, timeoutMs, message) {
+export async function waitForProcessExitWithin(processId, timeoutMs, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     if (!processIsAlive(processId)) return Date.now() - startedAt

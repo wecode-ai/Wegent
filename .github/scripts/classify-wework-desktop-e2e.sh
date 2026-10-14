@@ -64,6 +64,7 @@ core_segments=(
   release-package-startup
   component-update
   native-window-startup
+  startup-preparation
   dsh-runtime-upgrade
   native-window-chrome
   renderer-storage
@@ -177,7 +178,7 @@ core_shards=(
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
   rendering-extensions,transcript-sync,background-terminals
-  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
+  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,startup-preparation,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
@@ -985,6 +986,13 @@ classify_wework_path() {
       wework/src/components/chat/FileChangesReviewPanel* | \
       wework/e2e/desktop/scenarios/local-file-preview.scenario.mjs)
       select_target "core:local-file-preview"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/startup-preparation.scenario.mjs | \
+      wework/scripts/startup-preparation.test.mjs | \
+      wework/electron/src/runtime/initial-runtime-preparation*)
+      select_target "core:startup-preparation"
       return
       ;;
 

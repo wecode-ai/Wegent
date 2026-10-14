@@ -8,7 +8,7 @@ import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
 
-function parseStartupEvents(appLog) {
+export function parseStartupEvents(appLog) {
   const events = []
   for (const match of appLog.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)) {
     const body = match[1]

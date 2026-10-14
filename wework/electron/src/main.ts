@@ -79,6 +79,7 @@ import {
 } from './host/window-presentation.js'
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
+import { createInitialRuntimePreparation } from './runtime/initial-runtime-preparation.js'
 import { isolateDevelopmentEnvironment } from './runtime/development-isolation.js'
 import { prepareDevelopmentHistory } from './runtime/development-history-migration.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
@@ -339,6 +340,9 @@ let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
 let startupRecovery: StartupRecoveryService | null = null
 let startupRuntimeEnvironment: NodeJS.ProcessEnv | null = null
+let initialEnvironmentPreparation: ReturnType<
+  typeof createInitialRuntimePreparation<NodeJS.ProcessEnv>
+> | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
 let startupComponentUpdate: Promise<void> | null = null
 let pluginDevelopment: PluginDevelopmentManager | null = null
@@ -1285,6 +1289,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   await startupSplashWindow.loadFile(resolve(packageRoot, 'dist/shell/startup-splash/index.html'), {
     query: { theme: startupTheme },
   })
+  if (quitting) return
   logStartupStep('startup-splash-load', 'completed')
   logStartupStep('startup-splash-show', 'started')
   await startupSplash.show()
@@ -1514,6 +1519,7 @@ function installIpc(): void {
 }
 
 async function shutdown(): Promise<void> {
+  await initialEnvironmentPreparation?.settled()
   pluginDevelopmentChildRuntime?.stopWatcher()
   await pluginDevelopmentChildRuntime?.writeState('stopping')
   await logRetention.stop()
@@ -1592,6 +1598,9 @@ function downloadsDirectory(): string {
 
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
+  if (!initialEnvironmentPreparation) {
+    throw new Error('Desktop environment preparation is unavailable')
+  }
   logStartupStep('runtime-configure', 'started')
   const updatesPreparation = Promise.allSettled([prepareAppUpdateService()])
   const [modeResult, environmentResult] = await Promise.allSettled([
@@ -1603,14 +1612,9 @@ async function configureDesktopRuntime(): Promise<void> {
       })
       logStartupStep('workbench-mode-initialize', 'completed')
     })(),
-    (async () => {
-      logStartupStep('desktop-environment', 'started')
-      const environment = await desktopEnvironment()
-      startupRuntimeEnvironment = environment
-      logStartupStep('desktop-environment', 'completed')
-      return environment
-    })(),
+    initialEnvironmentPreparation.take(),
   ])
+  if (quitting) return
   if (modeResult.status === 'rejected') throw modeResult.reason
   if (environmentResult.status === 'rejected') throw environmentResult.reason
   const environment = environmentResult.value
@@ -1639,6 +1643,7 @@ async function configureDesktopRuntime(): Promise<void> {
   const runtimeRendererStorage = rendererStorage
   logStartupStep('runtime-preferences-read', 'started')
   const codexSubscriptionPreferences = await preferences.read()
+  if (quitting) return
   logStartupStep('runtime-preferences-read', 'completed')
   // The Electron PreferencesStore returns raw JSON without normalization, so an
   // absent field (e.g. a fresh install or a user who never toggled it) must fall
@@ -1984,6 +1989,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (browserResult.status === 'rejected') throw browserResult.reason
   if (controlResult.status === 'rejected') throw controlResult.reason
   if (corePreparationResult.status === 'rejected') throw corePreparationResult.reason
+  if (quitting) return
   environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = browserResult.value
   Object.assign(environment, embeddedBrowserBridge.environment())
   trayNativeStatus = new TrayNativeStatusController({
@@ -2029,6 +2035,7 @@ function notifyRuntimeChanged(): void {
 }
 
 function startDesktopRuntime(createStartupWindow?: () => Promise<void>): Promise<void> {
+  if (quitting) return Promise.resolve()
   if (runtimeStartPromise) return runtimeStartPromise
   logStartupStep('desktop-runtime-start', 'started')
   runtimePhase = 'initializing'
@@ -2039,6 +2046,7 @@ function startDesktopRuntime(createStartupWindow?: () => Promise<void>): Promise
     const preparations = await Promise.allSettled([
       (async () => {
         await configureDesktopRuntime()
+        if (quitting) return
         logStartupStep('core-dsh-start', 'started')
         await desktopRuntime?.start()
         logStartupStep('core-dsh-start', 'completed')
@@ -2048,15 +2056,20 @@ function startDesktopRuntime(createStartupWindow?: () => Promise<void>): Promise
     for (const preparation of preparations) {
       if (preparation.status === 'rejected') throw preparation.reason
     }
+    if (quitting) return
     trayNativeStatus?.start()
     await loadPrimaryDshView()
+    if (quitting) return
     await restoreFixedWorkspaceWindows()
+    if (quitting) return
     logStartupStep('component-update-confirmation', 'started')
     await componentUpdates?.confirmStartup()
+    if (quitting) return
     logStartupStep('component-update-confirmation', 'completed')
     runtimePhase = 'ready'
     pluginDevelopmentChildRuntime?.startWatcher()
     await pluginDevelopmentChildRuntime?.writeState('ready')
+    if (quitting) return
     logStartupStep('desktop-runtime-start', 'completed')
     startupTelemetrySuccess.markRuntimeReady()
     if (!pluginDevelopmentInstance && shouldStageDesktopComponentUpdates(process.env)) {
@@ -2075,6 +2088,7 @@ function startDesktopRuntime(createStartupWindow?: () => Promise<void>): Promise
     }
   })()
     .catch(async error => {
+      if (quitting) return
       const failurePublished = startupTelemetry.fail('desktop_runtime')
       try {
         if (await componentUpdates?.rollbackStartup()) {
@@ -2123,8 +2137,11 @@ function startDesktopRuntime(createStartupWindow?: () => Promise<void>): Promise
 }
 
 if (hasSingleInstanceLock) {
+  preferences = new PreferencesStore(app.getPath('userData'))
+  initialEnvironmentPreparation = createInitialRuntimePreparation(desktopEnvironment)
   logStartupStep('electron-ready', 'started')
   app.whenReady().then(async () => {
+    if (quitting) return
     logStartupStep('electron-ready', 'completed')
     if (process.platform === 'darwin' && app.dock && developmentDockIdentity) {
       syncDockBadge(app.dock, 0, developmentDockIdentity.badge)
@@ -2132,13 +2149,13 @@ if (hasSingleInstanceLock) {
     }
     logStartupStep('log-retention-start', 'started')
     await logRetention.start()
+    if (quitting) return
     logStartupStep('log-retention-start', 'completed')
     if (keepE2EWindowInBackground) {
       app.hide()
       app.dock?.hide()
       dockVisible = false
     }
-    preferences = new PreferencesStore(app.getPath('userData'))
     rendererStorage = new RendererStorageStore(app.getPath('userData'))
     logStartupStep('desktop-stores-create', 'completed')
     if (!pluginDevelopmentInstance) {
@@ -2149,9 +2166,10 @@ if (hasSingleInstanceLock) {
     cloudCredentials = new CloudCredentialService(app.getPath('userData'))
     startupRecovery = new StartupRecoveryService({
       rendererStorage,
-      preferences,
+      preferences: requiredPreferences(),
       cloudCredentials,
       prepareCleanup: async () => {
+        await initialEnvironmentPreparation?.settled()
         await runtimeStartPromise
         await startupComponentUpdate
         await prepareApplicationShutdown()
@@ -2217,7 +2235,8 @@ if (hasSingleInstanceLock) {
       createdTrayManager.create()
       trayManager = createdTrayManager
     }
-    const startupPreferences = await preferences.read()
+    const startupPreferences = await requiredPreferences().read()
+    if (quitting) return
     logStartupStep('startup-preferences-read', 'completed')
     try {
       popoutShortcut?.configure(resolvePopoutShortcut(startupPreferences))
@@ -2252,6 +2271,7 @@ function reportLogCleanup(result: LogCleanupResult): void {
 }
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
+  logStartupStep('desktop-environment', 'started')
   const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
   const configuredComponentResourcesRoot = process.env.WEWORK_COMPONENT_RESOURCES_ROOT?.trim()
   const componentResourcesRoot =
@@ -2354,6 +2374,8 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     )
     logStartupStep('development-history', 'completed')
   }
+  startupRuntimeEnvironment = environment
+  logStartupStep('desktop-environment', 'completed')
   return environment
 }
 
