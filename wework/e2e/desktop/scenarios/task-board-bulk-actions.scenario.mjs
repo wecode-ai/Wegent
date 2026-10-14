@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
+import { waitForBlankConversation } from '../modules/memory-tool-flows.mjs'
 import {
   assistantMessage,
   createSse,
@@ -54,7 +55,7 @@ async function createCompletedTask(control, prompt, completion, timeoutMs) {
   await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]', {
     timeoutMs,
   })
-  await control.command('waitFor', COMPOSER, { timeoutMs })
+  await waitForBlankConversation(control, COMPOSER)
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await control.command('fill', COMPOSER, { value: prompt })
   await control.command('press', COMPOSER, { key: 'Enter' })

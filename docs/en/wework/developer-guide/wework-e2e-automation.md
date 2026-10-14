@@ -366,6 +366,18 @@ produce a fabricated failed-action result. E2E Electron logs retain loopback req
 network error codes without headers or query parameters. Windows failure artifacts include
 `windows-network-diagnostics.json` with TCP state and process connection counts, excluding addresses,
 to diagnose Winsock resource exhaustion.
+Task-board bulk actions confirm that the blank conversation is active before each input;
+the editor node alone is insufficient. Goal restart fixtures observe one running task and
+one queued task before releasing the model response occupying the single execution slot.
+Work-list refreshes preserve the device owning an opened workspace so an earlier response
+cannot replace a newly selected cloud workspace. Diagnostics record project-selection
+reducer actions and IDs, draft scopes and parent acknowledgement revisions, Codex app-server
+process IDs and initialization exit states, and failed Windows process-tree termination states.
+Codex app-server restarts and configuration changes hold the admission lock until the old process exits before admitting a new process.
+Failure artifacts include `codex-sqlite-diagnostics.json` with isolated database file sizes,
+read-only integrity results, and SQLite error codes; conversation tables are never queried.
+Failed executor compatibility queries record elapsed time, exit code, signal and termination status
+without child output, command paths or environment variables.
 Desktop fixtures bind the workspace root to their temporary Home and remove other inherited
 workspace path overrides, avoiding stale test or personal worktrees. Turn preparation failures
 record their error code and reason instead of leaving only a UI timeout.

@@ -133,6 +133,7 @@ import {
 
 import { matrixCaseId } from './response-protocol.mjs'
 import { collectWindowsNetworkDiagnostics } from './windows-network-diagnostics.mjs'
+import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -4493,6 +4494,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
   } catch (error) {
     testFailed = true
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
+    await writeFile(
+      join(resultDir, 'codex-sqlite-diagnostics.json'),
+      `${JSON.stringify(await collectCodexSqliteDiagnostics(codexSqliteHome), null, 2)}\n`,
+      'utf8'
+    )
     if (networkDiagnostics) {
       await writeFile(
         join(resultDir, 'windows-network-diagnostics.json'),

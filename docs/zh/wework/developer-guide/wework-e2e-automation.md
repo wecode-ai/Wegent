@@ -309,6 +309,15 @@ Windows 同时保留 `electron.log`，用于定位 renderer 连接之前的原�
 E2E 的 Electron 日志保留 loopback 请求的网络错误码和路径，不记录请求头或查询参数。
 Windows 失败产物中的 `windows-network-diagnostics.json` 只记录 TCP 状态与进程的连接数量，
 用于定位 Winsock 资源不足，不包含连接地址。
+任务看板批量操作在每次输入前确认空会话已经激活，不能只等待编辑器节点存在。
+Goal 重启场景必须同时观察一个任务运行、另一个任务排队后，再释放占用单槽的模型响应。
+工作列表刷新保留已打开工作区的执行设备，防止较早的刷新结果覆盖新的云端工作区选择。
+诊断记录项目选择的 reducer 动作和 ID、输入草稿所属会话及父层确认版本，以及 Codex
+app-server 的启动进程 ID、初始化失败时的退出状态和 Windows 进程树终止失败状态。
+Codex app-server 的重启和配置变更持有任务准入锁，等待旧进程退出后才允许新进程启动。
+失败产物 `codex-sqlite-diagnostics.json` 记录隔离 SQLite 文件大小、只读完整性检查结果
+和 SQLite 错误码，不读取会话表内容。Executor 兼容性查询失败仅记录耗时、退出码、信号和终止标记，
+不记录子进程输出、命令路径或环境变量。
 
 Executor 在创建 Tokio 运行时之前配置回环地址的 `NO_PROXY`，避免连接期间在异步线程中
 修改进程环境。启动场景验证 Executor 先就绪、Core DSH 后启动，并确认实际监听端口有效。

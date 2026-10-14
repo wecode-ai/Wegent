@@ -989,6 +989,24 @@ function upsertPreparedRuntimeWorkspace(
 }
 
 export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
+  const next = reduceWorkbenchState(state, action)
+  if (state.currentProject !== next.currentProject || action.type.startsWith('project_')) {
+    debugRuntimeSidebarState('project-selection-transition', {
+      action: action.type,
+      previousProjectId: state.currentProject?.id ?? null,
+      nextProjectId: next.currentProject?.id ?? null,
+      projectIds: next.projects.map(project => project.id),
+      runtimeProjectIds: next.runtimeWork?.projects.map(project =>
+        runtimeProjectUiId(project.project)
+      ),
+      selectedDeviceWorkspaceId: next.selectedDeviceWorkspaceId,
+      standaloneChatKey: next.standaloneChatKey,
+    })
+  }
+  return next
+}
+
+function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
     case 'bootstrapped': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
@@ -1052,7 +1070,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           currentRuntimeTask
         ),
         standaloneDeviceId:
-          action.standaloneDeviceId === undefined
+          state.standaloneWorkspacePath || action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
         standaloneWorkspacePath:
@@ -1082,7 +1100,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           state.runtimeWork
         ),
         standaloneDeviceId:
-          action.standaloneDeviceId === undefined
+          state.standaloneWorkspacePath || action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
         standaloneWorkspacePath:
