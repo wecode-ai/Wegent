@@ -185,21 +185,15 @@ async function verifyModelProxyRestartRecovery({
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const followUpRequest = control.awaitNextScenarioRequest(
-    'model_proxy_restart',
-    WORKBENCH_READY_TIMEOUT_MS
-  )
-  await sendPromptWithButton(
-    control,
-    composerSelector,
-    MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
-    WORKBENCH_READY_TIMEOUT_MS
-  )
-  await withTimeout(
-    followUpRequest,
-    WORKBENCH_READY_TIMEOUT_MS,
-    'The model service did not receive the post-restart model proxy request'
-  )
+  await Promise.all([
+    control.awaitNextScenarioRequest('model_proxy_restart', WORKBENCH_READY_TIMEOUT_MS),
+    sendPromptWithButton(
+      control,
+      composerSelector,
+      MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
+      WORKBENCH_READY_TIMEOUT_MS
+    ),
+  ])
   await control.command(
     'waitFor',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,

@@ -360,6 +360,11 @@ registering request listeners before sending with the shared 30-second model-req
 The stream-recovery scenario selects its registered fixture model before the first send;
 the composer appearing does not establish model-catalog readiness. It still verifies that
 streaming continues during renderer reload and restores the complete output.
+Post-restart follow-ups wait for the send control to become enabled before sending Enter once;
+stable composer text does not establish restored model-catalog readiness. The model request and
+send action are awaited together so either failure follows the normal diagnostics and cleanup
+path instead of an unhandled Promise rejection exiting Node without a failure snapshot.
+The ordinary send-control wait retains the 10-second step limit.
 The overload cancellation phase selects its fixture model independently for the new conversation.
 Action execution and result acknowledgement are separate: an acknowledgement failure must not
 produce a fabricated failed-action result. E2E Electron logs retain loopback request paths and

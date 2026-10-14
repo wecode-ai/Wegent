@@ -123,6 +123,11 @@ async function sendPromptWithButton(
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs,
   })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+    { enabled: true, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   await control.command('press', selector, { key: 'Enter', timeoutMs })
   if (confirmCloudModelCatalogSync) {
     await control.command('waitFor', '[data-testid="cloud-model-catalog-sync-dialog"]', {
