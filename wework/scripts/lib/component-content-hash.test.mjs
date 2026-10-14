@@ -25,8 +25,13 @@ afterEach(async () => {
 describe('hashComponentPath', () => {
   test('rejects symbolic links instead of omitting unverified content', async () => {
     const root = await temporaryDirectory()
-    await writeFile(join(root, 'target'), 'content')
-    await symlink(join(root, 'target'), join(root, 'link'))
+    await mkdir(join(root, 'target'))
+    await writeFile(join(root, 'target', 'content.txt'), 'content')
+    await symlink(
+      join(root, 'target'),
+      join(root, 'link'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
     await expect(hashComponentPath(root)).rejects.toThrow('Unsupported component tree entry')
   })
 
@@ -38,14 +43,14 @@ describe('hashComponentPath', () => {
     await expect(hashComponentPath(path)).resolves.toBe(sha256('signed component'))
   })
 
-  test('hashes directory entries in stable path order', async () => {
+  test('preserves installed updater digests with native nested paths', async () => {
     const root = await temporaryDirectory()
     await mkdir(join(root, 'nested'))
     await writeFile(join(root, 'z.txt'), 'last')
     await writeFile(join(root, 'nested', 'a.txt'), 'first')
 
     const nestedHash = createHash('sha256')
-      .update(`file:nested/a.txt\0${sha256('first')}\0`)
+      .update(`file:${join('nested', 'a.txt')}\0${sha256('first')}\0`)
       .digest('hex')
     const expected = createHash('sha256')
       .update(`directory:nested\0${nestedHash}\0`)
