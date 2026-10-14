@@ -26,6 +26,7 @@ import {
   resultDir,
 } from '../modules/shared.mjs'
 import {
+  openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
@@ -147,8 +148,7 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
       timeoutMs,
     }
   )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
     value: PROJECT,
   })

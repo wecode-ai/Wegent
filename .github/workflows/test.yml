@@ -80,6 +80,12 @@ jobs:
       - name: Install runtime dependencies for index-to-query contract tests
         run: uv sync --project knowledge_runtime --frozen
 
+      - name: Guard approved collaboration permission invariants
+        working-directory: ./backend
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest tests/test_collaboration_permission_guard.py tests/api/test_collaboration_permission_contract.py tests/api/test_collaboration_permission_resources.py tests/api/test_workspace_shared_agents.py tests/models/test_collaboration_permission_compatibility.py tests/test_startup_migration_failure.py tests/services/test_runner_routing.py -n 0
+
       - name: Run backend tests
         working-directory: ./backend
         env:
@@ -131,6 +137,12 @@ jobs:
         env:
           TEAM_NAMESPACE_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
         run: uv run pytest integration_checks/test_team_namespace_collation_mysql.py -n 0
+
+      - name: Verify populated legacy MySQL collaboration permission compatibility
+        working-directory: backend
+        env:
+          COLLABORATION_PERMISSION_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+        run: uv run pytest integration_checks/test_collaboration_permission_mysql.py -n 0
 
   test-executor:
     name: Test Executor
@@ -365,6 +377,11 @@ jobs:
 
       - name: Run chat core tests
         run: pnpm --filter @wegent/chat-core test
+
+      - name: Verify shared collaboration types and permission UI regressions
+        run: |
+          pnpm --filter @wegent/collaboration build
+          pnpm --filter @wegent/collaboration test
 
       - name: Run frontend tests
         env:

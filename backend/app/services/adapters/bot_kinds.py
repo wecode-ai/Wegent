@@ -1023,7 +1023,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     )
 
         # Get related components
-        ghost, shell, model = self._get_bot_components(db, bot, user_id)
+        ghost, shell, model = self._get_bot_components(
+            db, bot, bot.user_id, viewer_id=user_id
+        )
         if "default_knowledge_base_refs" in update_data:
             self._validate_default_knowledge_bases(
                 db,
@@ -1073,6 +1075,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             shell = get_shell_by_name(db, new_shell_name, user_id)
 
         if "agent_config" in update_data:
+            bot_crd = Bot.model_validate(bot.json)
             new_agent_config = update_data["agent_config"]
             logger.info(f"[DEBUG] Updating agent_config: {new_agent_config}")
 

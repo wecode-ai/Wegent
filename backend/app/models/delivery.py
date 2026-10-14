@@ -16,21 +16,43 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    case,
+    cast,
     event,
     inspect,
     or_,
     select,
 )
 from sqlalchemy.engine import Connection
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.orm import column_property
 from sqlalchemy.sql import func
 
 from app.core.provider_credentials import mask_provider_config
 from app.db.base import Base
+from app.models.resource_member import ResourceMember
 from shared.models.db.types import big_integer_id_type
 
 
 def _numeric_id() -> str:
     return str(secrets.randbelow(9_000_000_000_000_000_000) + 1)
+
+
+def project_parent_relationships():
+    """Project containment remains in the relationship table used by v1."""
+    return (
+        select(
+            ResourceMember.resource_id.label("project_id"),
+            cast(func.min(ResourceMember.entity_id), Integer).label("workspace_id"),
+        )
+        .where(
+            ResourceMember.resource_type == "CloudProject",
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.status == "approved",
+        )
+        .group_by(ResourceMember.resource_id)
+        .having(func.count(func.distinct(ResourceMember.entity_id)) == 1)
+    )
 
 
 class LoopNode(Base):
@@ -158,6 +180,42 @@ class LoopNode(Base):
 
 class CloudProject(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "project"}
+
+    # Old and new backends use the same containment records. Ambiguous parents
+    # provide no authority; neither membership nor creation implies a parent.
+    workspace_id = column_property(
+        select(
+            case(
+                (
+                    func.count(func.distinct(ResourceMember.entity_id)) == 1,
+                    cast(func.min(ResourceMember.entity_id), Integer),
+                ),
+                else_=None,
+            )
+        )
+        .where(
+            ResourceMember.resource_type == "CloudProject",
+            ResourceMember.resource_id == cast(LoopNode.id, Integer),
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.status == "approved",
+        )
+        .correlate_except(ResourceMember)
+        .scalar_subquery()
+    )
+
+    @hybrid_property
+    def membership_mode(self) -> str:
+        return (self.metadata_json or {}).get("membership_mode", "inherit")
+
+    @membership_mode.setter
+    def membership_mode(self, value: str) -> None:
+        self.metadata_json = {**(self.metadata_json or {}), "membership_mode": value}
+
+    @membership_mode.expression
+    def membership_mode(cls):
+        return func.coalesce(
+            cls.metadata_json["membership_mode"].as_string(), "inherit"
+        )
 
     @property
     def tags(self) -> list[str]:

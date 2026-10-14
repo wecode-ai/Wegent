@@ -12,6 +12,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
   selectCloudAgentModel,
@@ -188,8 +189,7 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
     timeoutMs
   )
 
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
     value: PROJECT,
   })

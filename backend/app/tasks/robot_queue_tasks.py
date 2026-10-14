@@ -13,6 +13,7 @@ import logging
 import socketio
 from prometheus_client import Counter, Gauge
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
@@ -59,6 +60,9 @@ def scan_robot_queue(self) -> dict:
         if not acquired:
             return {"status": "skipped", "reason": "lock_held_by_another_instance"}
         with get_db_session() as db:
+            from app.services.collaboration_revocation import sweep_revoked_work
+
+            emit_runtime_cancels(sweep_revoked_work(db))
             requeued, unknown = loop_item_execution_service.recovery_scan(db)
             ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="requeued").inc(requeued)
             ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="unknown").inc(unknown)
@@ -112,6 +116,7 @@ def _queued_devices(db) -> list[tuple[int, str]]:
     ).all()
     devices = {(int(row[0]), str(row[1])) for row in bound_rows if row[0] and row[1]}
     devices.update(_unbound_queue_devices(db))
+    devices.update(_routed_queue_devices(db))
     from app.services.workspace_cleanup_intents import due_execution_targets
 
     devices.update(due_execution_targets(db))
@@ -130,6 +135,7 @@ def _unbound_queue_devices(db) -> set[tuple[int, str]]:
             LoopItemExecution.status == "queued",
             LoopItemExecution.execution_environment.in_(("local", "cloud")),
             LoopItemExecution.execution_device_id == "",
+            ~LoopItemExecution.uses_runner_routing,
         )
         .distinct()
     ).all()
@@ -177,6 +183,46 @@ def _unbound_queue_devices(db) -> set[tuple[int, str]]:
         and (device := devices_by_id.get(device_id)) is not None
         and int(device.user_id) == int(owner_user_id)
         and runtime_device_route_id(device)
+    }
+
+
+def _routed_queue_devices(db: Session) -> set[tuple[int, str]]:
+    """Wake eligible runners using their owner, not the Issue assigner's identity."""
+
+    from app.services.runner_routing import eligible_runner, visible_environment_ids
+
+    executions = (
+        db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.status == "queued",
+            LoopItemExecution.execution_device_id == "",
+            LoopItemExecution.uses_runner_routing,
+        )
+        .all()
+    )
+    candidate_ids = {
+        execution.id: visible_environment_ids(
+            db, execution.assigner_user_id, execution.cloud_project_id
+        )
+        for execution in executions
+    }
+    device_ids = {device_id for ids in candidate_ids.values() for device_id in ids}
+    devices = {
+        device.id: device
+        for device in db.query(Kind).filter(
+            Kind.id.in_(device_ids),
+            Kind.kind == "Device",
+            Kind.namespace == "default",
+            Kind.is_active.is_(True),
+        )
+    }
+    return {
+        (int(device.user_id), runtime_device_route_id(device))
+        for execution in executions
+        for device_id in candidate_ids[execution.id]
+        if (device := devices.get(device_id)) is not None
+        and runtime_device_route_id(device)
+        and eligible_runner(db, execution, device)
     }
 
 

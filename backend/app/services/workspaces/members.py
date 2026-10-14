@@ -39,10 +39,11 @@ class WorkspaceMemberService:
             .all()
         )
         members = [_member_values(member, member_user) for member, member_user in rows]
-        if not any(
-            member["user_id"] == workspace.created_by_user_id for member in members
-        ):
-            creator = db.get(User, workspace.created_by_user_id)
+        for entry in members:
+            if entry["user_id"] == workspace.owner_user_id:
+                entry["role"] = BaseRole.Owner.value
+        if not any(member["user_id"] == workspace.owner_user_id for member in members):
+            creator = db.get(User, workspace.owner_user_id)
             if creator is not None:
                 members.insert(
                     0,
@@ -63,7 +64,7 @@ class WorkspaceMemberService:
         user_id: int,
         values: WorkspaceMemberCreate,
     ) -> dict[str, object]:
-        require_workspace_role(db, workspace_id, user_id, BaseRole.Maintainer)
+        access = require_workspace_role(db, workspace_id, user_id, BaseRole.Maintainer)
         target = db.get(User, values.user_id)
         if target is None or not target.is_active:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
@@ -73,7 +74,28 @@ class WorkspaceMemberService:
             user_id=target.id,
             role=values.role,
         )
+        if target.id == access.workspace.owner_user_id:
+            raise HTTPException(
+                409, "Use ownership transfer to change the Workspace owner"
+            )
+        member.role = (
+            "Reporter" if values.role == BaseRole.Viewer else values.role.value
+        )
+        db.flush()
+        from app.services.collaboration_revocation import (
+            revoke_unauthorized_project_work,
+        )
+        from app.services.loop_item_executions.cancellation import (
+            request_execution_cancellations,
+        )
+
+        pending = [
+            run
+            for project_id in project_ids_for_workspace(db, workspace_id)
+            for run in revoke_unauthorized_project_work(db, project_id, target.id)
+        ]
         db.commit()
+        request_execution_cancellations(pending)
         db.refresh(member)
         return _member_values(member, target)
 
@@ -88,13 +110,29 @@ class WorkspaceMemberService:
         workspace = require_workspace_role(
             db, workspace_id, user_id, BaseRole.Maintainer
         ).workspace
-        if member_user_id == workspace.created_by_user_id:
+        if member_user_id == workspace.owner_user_id:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Workspace owner is immutable"
             )
         member, target = _get_member(db, workspace_id, member_user_id)
-        member.role = values.role.value
+        member.role = (
+            "Reporter" if values.role == BaseRole.Viewer else values.role.value
+        )
+        db.flush()
+        from app.services.collaboration_revocation import (
+            revoke_unauthorized_project_work,
+        )
+        from app.services.loop_item_executions.cancellation import (
+            request_execution_cancellations,
+        )
+
+        pending = [
+            run
+            for project_id in project_ids_for_workspace(db, workspace_id)
+            for run in revoke_unauthorized_project_work(db, project_id, member_user_id)
+        ]
         db.commit()
+        request_execution_cancellations(pending)
         db.refresh(member)
         return _member_values(member, target)
 
@@ -108,25 +146,11 @@ class WorkspaceMemberService:
         workspace = require_workspace_role(
             db, workspace_id, user_id, BaseRole.Maintainer
         ).workspace
-        if member_user_id == workspace.created_by_user_id:
+        if member_user_id == workspace.owner_user_id:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Workspace owner cannot be removed"
             )
         project_ids = project_ids_for_workspace(db, workspace.id)
-        owned_project = (
-            db.query(CloudProject.id)
-            .filter(
-                CloudProject.id.in_(project_ids),
-                CloudProject.created_by_user_id == member_user_id,
-                CloudProject.status == "active",
-            )
-            .first()
-        )
-        if owned_project is not None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Transfer or archive the member's Projects before removal",
-            )
         member, _ = _get_member(db, workspace_id, member_user_id)
         (
             db.query(ResourceMember)
@@ -139,7 +163,21 @@ class WorkspaceMemberService:
             .delete(synchronize_session=False)
         )
         db.delete(member)
+        db.flush()
+        from app.services.collaboration_revocation import (
+            revoke_unauthorized_project_work,
+        )
+        from app.services.loop_item_executions.cancellation import (
+            request_execution_cancellations,
+        )
+
+        pending = [
+            run
+            for project_id in project_ids
+            for run in revoke_unauthorized_project_work(db, project_id, member_user_id)
+        ]
         db.commit()
+        request_execution_cancellations(pending)
 
     def ensure_human_member(
         self,
@@ -147,7 +185,7 @@ class WorkspaceMemberService:
         *,
         workspace_id: int,
         user_id: int,
-        role: BaseRole = BaseRole.Reporter,
+        role: BaseRole = BaseRole.Viewer,
     ) -> ResourceMember:
         return ensure_human_member(
             db,
@@ -162,7 +200,7 @@ def ensure_human_member(
     *,
     workspace_id: int,
     user_id: int,
-    role: BaseRole = BaseRole.Reporter,
+    role: BaseRole = BaseRole.Viewer,
 ) -> ResourceMember:
     member = (
         db.query(ResourceMember)
@@ -179,24 +217,26 @@ def ensure_human_member(
             resource_type=ResourceType.WORKSPACE.value,
             resource_id=workspace_id,
             entity_id=str(user_id),
-            role=role.value,
+            role=BaseRole.Maintainer.value if role == BaseRole.Owner else role.value,
             status=MemberStatus.APPROVED.value,
         )
         db.add(member)
     else:
         member.status = MemberStatus.APPROVED.value
         if role == BaseRole.Owner:
-            member.role = BaseRole.Owner.value
+            member.role = BaseRole.Maintainer.value
     return member
 
 
 def _member_values(member: ResourceMember, user: User) -> dict[str, object]:
+    from app.services.cloud_project_visibility import collaboration_role
+
     return {
         "id": member.id,
         "user_id": user.id,
         "user_name": user.user_name,
         "email": user.email,
-        "role": member.role,
+        "role": collaboration_role(member.role),
     }
 
 

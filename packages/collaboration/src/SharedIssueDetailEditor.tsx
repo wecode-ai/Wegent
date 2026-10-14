@@ -86,6 +86,8 @@ import type {
 import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
 import { TagEditor } from "./issue-detail/TagEditor";
 import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
+import { IssuePropertyRow as RailProp } from "./issue-detail/IssuePropertyRow";
+import { IssueAssignmentHistoryDisclosure } from "./issue-detail/IssueAssignmentHistoryDisclosure";
 import { localizeStandardStatuses } from "./i18n";
 import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
 import { useCollaborationPortalTheme } from "./theme";
@@ -518,56 +520,6 @@ function AvatarMark({
       )}
     >
       {name.slice(0, 1).toUpperCase()}
-    </span>
-  );
-}
-
-function RailProp({
-  label,
-  children,
-  control,
-  testId,
-  clickable = Boolean(control),
-  valueClassName,
-  wrapValue = false,
-}: {
-  label: string;
-  children: ReactNode;
-  control?: ReactNode;
-  testId?: string;
-  clickable?: boolean;
-  valueClassName?: string;
-  wrapValue?: boolean;
-}) {
-  return (
-    <span
-      data-testid={testId}
-      className="task-detail-rail-prop relative flex min-w-0 items-center gap-2"
-    >
-      <span className="task-detail-rail-key w-[64px] shrink-0 text-xs font-medium leading-5 text-text-muted">
-        {label}
-      </span>
-      <span
-        className={cn(
-          "task-detail-rail-value flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium leading-5 text-text-primary",
-          wrapValue ? "overflow-visible" : "truncate",
-          clickable && "group relative",
-          valueClassName,
-        )}
-      >
-        {clickable ? (
-          <span className="pointer-events-none absolute -inset-x-1.5 -inset-y-[3px] rounded-md transition group-hover:bg-muted" />
-        ) : null}
-        <span
-          className={cn(
-            "task-detail-rail-value-content relative flex min-w-0 items-center gap-1.5",
-            wrapValue ? "w-full overflow-visible" : "truncate",
-          )}
-        >
-          {children}
-        </span>
-        {control}
-      </span>
     </span>
   );
 }
@@ -1565,7 +1517,7 @@ export function TodoEditor(props: TodoEditorProps) {
     props.canAssign ??
     (project !== undefined &&
       (item === null || item.can_view_detail !== false) &&
-      canAssignCollaborationIssue(project, item ?? undefined));
+      canAssignCollaborationIssue(project));
   const canManageIssueSecurity =
     project !== undefined && canManageCollaborationIssueSecurity(project);
   const assigneeChanged =
@@ -2307,21 +2259,30 @@ export function TodoEditor(props: TodoEditorProps) {
                 },
               ]
             : []),
-          ...projectMembers.map((member) => ({
-            value: `user:${member.user_id}` as IssueAssigneeTarget,
-            label: member.user_name,
-            group: t("todo.members", "成员"),
-          })),
+          ...projectMembers
+            .filter(
+              (member) =>
+                member.can_be_assignee !== false && member.role !== "Viewer",
+            )
+            .map((member) => ({
+              value: `user:${member.user_id}` as IssueAssigneeTarget,
+              label: member.user_name,
+              group: t("todo.members", "成员"),
+            })),
           ...projectAgents.map((agent) => ({
             value: `agent:${agent.id}` as IssueAssigneeTarget,
             label: agent.name,
             group: t("todo.agents", "机器人"),
           })),
-          ...wegentTeams.map((team) => ({
-            value: `team:${team.id}` as IssueAssigneeTarget,
-            label: team.displayName || team.name,
-            group: t("todo.agent_teams", "Wegent 智能体"),
-          })),
+          ...wegentTeams
+            .filter((team) =>
+              projectAgents.some((agent) => agent.teamId === team.id),
+            )
+            .map((team) => ({
+              value: `team:${team.id}` as IssueAssigneeTarget,
+              label: team.displayName || team.name,
+              group: t("todo.agent_teams", "Wegent 智能体"),
+            })),
         ]}
       />
     </>
@@ -2592,7 +2553,7 @@ export function TodoEditor(props: TodoEditorProps) {
         valueClassName="overflow-visible"
       >
         <span
-          className="flex min-w-0 items-center"
+          className="task-detail-property-collaborators flex min-w-0 items-center"
           data-testid="cloud-todo-collaborators"
         >
           {collaboratorPreview.map((collaborator, index) => (
@@ -2696,9 +2657,6 @@ export function TodoEditor(props: TodoEditorProps) {
         className="task-detail-workspace-properties"
         data-testid="cloud-todo-current-assignment"
       >
-        <h3 className="task-detail-workspace-properties-title">
-          {t("todo.more_properties", "更多信息")}
-        </h3>
         <div className="task-detail-workspace-properties-grid">
           <RailProp
             label={t("todo.issue_priority", "优先级")}
@@ -2732,28 +2690,20 @@ export function TodoEditor(props: TodoEditorProps) {
           </RailProp>
           {railProps}
           {showAssignee ? (
-            <RailProp label={t("todo.assignment", "指派")} clickable={false}>
-              {item.assignment_history?.length ? (
-                <button
-                  ref={assignmentChainTriggerRef}
-                  type="button"
-                  data-testid="cloud-todo-assignment-chain-trigger"
-                  aria-label={t(
-                    "todo.assignment_chain_trigger",
-                    "查看指派详情",
-                  )}
-                  aria-expanded={assignmentChainOpen}
-                  onClick={() => setAssignmentChainOpen((current) => !current)}
-                  className="task-detail-workspace-prop-link"
-                >
-                  {t("todo.assignment_chain_trigger", "查看指派详情")}
-                </button>
-              ) : (
+            item.assignment_history?.length ? (
+              <IssueAssignmentHistoryDisclosure
+                key={item.id}
+                entries={item.assignment_history}
+                memberName={(userId) => memberNameById(projectMembers, userId)}
+                translate={t}
+              />
+            ) : (
+              <RailProp label={t("todo.assignment", "指派")} clickable={false}>
                 <span className="text-text-muted">
                   {t("todo.none", "暂无")}
                 </span>
-              )}
-            </RailProp>
+              </RailProp>
+            )
           ) : null}
         </div>
       </section>
@@ -4378,7 +4328,7 @@ export function TodoEditor(props: TodoEditorProps) {
           </>
         ) : null}
       </section>
-      {assignmentChainOpen && item?.assignment_history?.length
+      {!workspacePanel && assignmentChainOpen && item?.assignment_history?.length
         ? (extensions?.renderAssignmentHistory?.({
             anchor: assignmentChainTriggerRef.current,
             entries: item.assignment_history,

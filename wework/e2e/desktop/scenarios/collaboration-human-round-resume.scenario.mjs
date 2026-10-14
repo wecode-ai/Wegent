@@ -15,6 +15,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import {
+  openDirectProjectCreation,
   selectCloudAgentModel,
   selectCollaborationDomain,
   waitForTestIdByText,
@@ -179,8 +180,7 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
     '端上创建 Workspace 未持久化',
     uiTimeoutMs
   )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+  await openDirectProjectCreation(control, CONTENT)
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
     value: PROJECT,
   })

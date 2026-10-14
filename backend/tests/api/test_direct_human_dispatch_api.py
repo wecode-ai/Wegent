@@ -15,6 +15,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
+from tests.utils.collaboration import authorize_project
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -32,6 +33,7 @@ def direct_human_project(test_db: Session, test_user: User) -> CloudProject:
         created_by_user_id=test_user.id,
         storage_prefix=f"projects/{public_id}",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)

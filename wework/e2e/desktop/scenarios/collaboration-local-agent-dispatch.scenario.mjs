@@ -13,7 +13,6 @@ import { verifyExecutionActivityOrder } from '../modules/issue-execution-activit
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
-  openProjectAgentCreator,
   selectProjectRunnerModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
@@ -57,7 +56,18 @@ async function addLocalAgent(control, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
 
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await openProjectAgentCreator(control, scoped('[data-testid="project-agent-add"]'), timeoutMs)
+  await control.command('click', scoped('[data-testid="project-agent-add"]'))
+  await control.command('waitFor', '[data-testid="project-agent-wegent-team"]', { timeoutMs })
+  const existingAgents = await control.command(
+    'getText',
+    '[data-testid="project-agent-wegent-team"]'
+  )
+  assert.ok(
+    existingAgents.includes('当前设备智能体'),
+    'The current-device Agent must remain selectable'
+  )
+  await control.command('click', '[data-testid="project-agent-mode-create"]')
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', { timeoutMs })
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: AGENT,
   })

@@ -31,6 +31,7 @@ from app.schemas.project_chat import (
     LoopItemExecutionBatchItem,
     LoopItemExecutionStatusQuery,
 )
+from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 
 def test_runtime_write_back_authorizes_execution_owner(
@@ -94,6 +95,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         metadata_json={},
         next_item_number=2,
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     manager = ProjectChatAgent(
@@ -105,6 +107,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         created_by_user_id=test_user.id,
         metadata_json={"wegent_team_id": 1001},
     )
+    authorize_project_agent(test_db, manager)
     worker = ProjectChatAgent(
         id=f"worker-{uuid4().hex}",
         cloud_project_id=project.id,
@@ -114,6 +117,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         created_by_user_id=test_user.id,
         metadata_json={"wegent_team_id": 1002},
     )
+    authorize_project_agent(test_db, worker)
     group = {
         "id": "group-1",
         "leader": {"kind": "agent", "id": "1001"},

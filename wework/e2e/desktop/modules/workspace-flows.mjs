@@ -42,6 +42,33 @@ export function inProjectCreateDialog(selector = '') {
   return selector ? `${dialog} ${selector}` : dialog
 }
 
+export async function openDirectProjectCreation(
+  control,
+  contentSelector,
+  testId = 'collaboration-workspace-project-create'
+) {
+  const trigger = `${contentSelector} [data-testid="${testId}"]`
+  await control.command('waitFor', trigger, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', trigger, { value: 'aria-haspopup' }),
+    null,
+    'A single project creation method must be a direct action'
+  )
+  await control.command('click', trigger)
+  await control.command('waitFor', inProjectCreateDialog(), {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${testId}-menu"]`)),
+    0,
+    'A single project creation method must not open an intermediate menu'
+  )
+}
+
 export async function selectCollaborationDomain(control, contentSelector, domain) {
   assert.ok(domain === 'local' || domain === 'cloud', `Unknown collaboration domain: ${domain}`)
   await control.command(

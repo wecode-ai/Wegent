@@ -33,6 +33,7 @@ import type { CollaborationTranslate } from "../i18n";
 import { CollaborationApp } from "../CollaborationApp";
 import { ProjectLoadingSkeleton } from "../project-shell";
 import { ActionMenu } from "../controls/ActionMenu";
+import { ProjectCreationAction } from "./ProjectCreationAction";
 import { IssueExecutionEnvironmentNotice } from "../execution-environment/IssueExecutionEnvironmentNotice";
 import { useProjectExecutionEnvironmentReadiness } from "../execution-environment/issueEnvironmentReadiness";
 import { canAccessCollaborationProjectView } from "../permissions";
@@ -2653,69 +2654,6 @@ function FirstProjectStarter({
   );
 }
 
-function ProjectCreationAction({
-  className,
-  messages,
-  onSelect,
-  supportsLocalImport,
-  testId,
-}: {
-  className: string;
-  messages: PlatformMessages;
-  onSelect(mode: "blank" | "folder" | "existing"): void;
-  supportsLocalImport: boolean;
-  testId: string;
-}) {
-  const optionTestIds =
-    testId === "collaboration-workspace-project-create"
-      ? {
-          blank: "collaboration-workspace-project-create-blank",
-          folder: "collaboration-workspace-project-import-folder",
-          existing: "collaboration-workspace-project-open-existing",
-        }
-      : {
-          blank: `${testId}-blank`,
-          folder: `${testId}-folder`,
-          existing: `${testId}-existing`,
-        };
-  return (
-    <ActionMenu
-      ariaLabel={messages.addProject}
-      icon={Plus}
-      items={[
-        {
-          label: messages.blankProject,
-          icon: SquarePen,
-          testId: optionTestIds.blank,
-          onSelect: () => onSelect("blank"),
-        },
-        ...(supportsLocalImport
-          ? [
-              {
-                label: messages.addFolder,
-                icon: FolderPlus,
-                testId: optionTestIds.folder,
-                onSelect: () => onSelect("folder"),
-              },
-              {
-                label: messages.importExistingProject,
-                icon: FolderOpen,
-                testId: optionTestIds.existing,
-                onSelect: () => onSelect("existing"),
-              },
-            ]
-          : []),
-      ]}
-      menuTestId={`${testId}-menu`}
-      placement="bottom-end"
-      showTriggerTooltip={false}
-      testId={testId}
-      triggerClassName={`${className} collaboration-project-create-trigger`}
-      triggerLabel={messages.addProject}
-    />
-  );
-}
-
 function IssueHomeLauncher({
   messages,
   projects,
@@ -3061,6 +2999,15 @@ function RootTeamEditor({
       throw new Error("Workspace API is unavailable");
     }
     return {
+      transferOwnership: api.workspaces.transferOwnership
+        ? async (userId, version) => {
+            await api.workspaces!.transferOwnership!(workspace.id, {
+              userId,
+              version,
+            });
+            await onCreated();
+          }
+        : undefined,
       searchUsers: (query) => api.members.searchUsers(query),
       addMember: (userId, role) =>
         api.workspaces!.addMember(workspace.id, { userId, role }),
@@ -4234,6 +4181,7 @@ export function CollaborationPlatformApp({
                   />
                   <button
                     type="button"
+                    className="collaboration-platform-secondary-button"
                     data-testid="collaboration-workspace-starter-configure-agents"
                     onClick={() =>
                       navigateWithin(host, {
@@ -4248,6 +4196,7 @@ export function CollaborationPlatformApp({
                   {workspace.location === "cloud" ? (
                     <button
                       type="button"
+                      className="collaboration-platform-secondary-button"
                       data-testid="collaboration-workspace-starter-invite-members"
                       onClick={() =>
                         navigateWithin(host, {

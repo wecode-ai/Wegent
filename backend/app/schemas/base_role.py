@@ -19,6 +19,8 @@ Role Hierarchy (highest to lowest):
 
 from enum import Enum
 
+COLLABORATION_ROLE_ALIASES = {"Owner": "Maintainer", "Reporter": "Viewer"}
+
 
 class BaseRole(str, Enum):
     """

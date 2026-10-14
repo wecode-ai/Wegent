@@ -4,6 +4,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
+import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
 import {
   verifyIssueDetailPropertyUi,
   verifyNewDiscussionComposerUi,
@@ -16,6 +17,7 @@ import {
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import {
+  openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
@@ -264,14 +266,7 @@ export function createDesktopScenario({
         await capture(control, 'collaboration-shared-core-02-workspace-created.png')
 
         const projectName = `${PROJECT_NAME}-${process.pid}`
-        await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-project-create"]')
-        )
-        await control.command(
-          'click',
-          '[data-testid="collaboration-workspace-project-create-blank"]'
-        )
+        await openDirectProjectCreation(control, ACTIVE_WORKBENCH_SELECTOR)
         await control.command(
           'waitFor',
           scoped('[data-testid="collaboration-project-name-input"]'),
@@ -323,6 +318,7 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
+        await verifyCollaborationMemberSettings(control, { scoped, owner, request, project })
 
         // Creation authorizes the current runner; this recovery case needs an unassigned project.
         const initialEnvironments = await request(

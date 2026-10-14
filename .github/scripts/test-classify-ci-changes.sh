@@ -294,6 +294,14 @@ EOF
 
 assert_case "docs only" "$all_false" "docs/zh/index.md"
 
+permission_contract_expected="${all_false/backend=false/backend=true}"
+assert_case "Chinese permission contract runs backend guards" "$permission_contract_expected" \
+  "docs/zh/wegent/developer-guide/collaboration-permissions.md"
+assert_case "English permission contract runs backend guards" "$permission_contract_expected" \
+  "docs/en/wegent/developer-guide/collaboration-permissions.md"
+assert_case "architecture transaction runs backend guards" "$permission_contract_expected" \
+  ".live-architecture/transactions/tx-permission-contract.json"
+
 collaboration_package=$(
   cat <<'EOF'
 backend=false

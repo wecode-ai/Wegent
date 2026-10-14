@@ -317,11 +317,15 @@ async def initialize_project_execution_environment(
 @router.get("/{project_id}/chat-agents", response_model=list[ProjectChatAgentView])
 def list_project_chat_agents(
     project_id: int,
+    include_archived: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> list[ProjectChatAgentView]:
     return project_chat_service.list_agents(
-        db, user_id=current_user.id, project_id=str(project_id)
+        db,
+        user_id=current_user.id,
+        project_id=str(project_id),
+        include_archived=include_archived,
     )
 
 

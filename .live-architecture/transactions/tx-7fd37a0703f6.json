@@ -1,0 +1,117 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000003",
+  "changes": [
+    {
+      "action": "create",
+      "change_id": "chg-f8da0560f968",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/issue-detail/IssuePropertiesPopover.tsx"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Issue metadata editor: portaled theme surface owns heading, compact regular-weight fields, viewport constraints and keyboard dismissal; editor retains metadata state and permission guards",
+      "subject": "arch://wegent/ui/aab71205",
+      "timestamp": "2026-10-14T09:33:41Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-6eb316fdfe41",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/issue-detail/IssuePropertiesPopover.tsx",
+        "packages/collaboration/src/issue-detail/IssuePropertiesPopover.css",
+        "packages/collaboration/src/SharedIssueDetailEditor.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Popover now owns accessible heading and typography, uses standard ellipsis icon, neutral compact rows, non-overlapping participant controls and viewport/touch limits; metadata persistence and permissions remain in the editor",
+      "subject": "arch://wegent/ui/aab71205",
+      "timestamp": "2026-10-14T09:41:26Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-e87de5cd925d",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/issue-detail/IssuePropertiesPopover.test.tsx",
+        "wework/src/features/todo/TodoEditor.test.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Regression cases cover scoped theme typography, accessible heading, Escape blur commit and focus restoration, actual tag persistence and read-only controls",
+      "subject": "arch://wegent/test/aab71206",
+      "timestamp": "2026-10-14T09:41:26Z"
+    },
+    {
+      "action": "add-edge",
+      "change_id": "chg-2422cdaf29a3",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/SharedIssueDetailEditor.tsx"
+      ],
+      "object": "arch://wegent/ui/aab71205",
+      "plane": "model",
+      "predicate": "contains",
+      "reason": "Shared Issue editor renders the metadata properties popover",
+      "relationship_id": "rel://d6aaf66ac76e430fa97cd0106c17f69dd37859db48e704f62be6c37f019fc03e",
+      "subject": "arch://wegent/ui/287398da",
+      "timestamp": "2026-10-14T09:44:02Z"
+    },
+    {
+      "action": "add-edge",
+      "change_id": "chg-f37f609a0541",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/issue-detail/IssuePropertiesPopover.test.tsx"
+      ],
+      "object": "arch://wegent/ui/aab71205",
+      "plane": "implementation",
+      "predicate": "verifies",
+      "reason": "Focused tests verify accessible metadata surface and persistence boundaries",
+      "relationship_id": "rel://6a7b10ebc272374e7fee89f5daf33b4eeb1571e24e0bb653f3d8611720c0902f",
+      "subject": "arch://wegent/test/aab71206",
+      "timestamp": "2026-10-14T09:44:04Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-bf40bfd23edc",
+      "confidence": 1.0,
+      "evidence": [
+        ".live-architecture/evidence/issue-properties-popover.md"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "64 focused tests, three TypeScript checks, scoped lint/format/typography checks and light/dark/mobile component visual inspection passed; no Electron or deployment claim",
+      "subject": "arch://wegent/ui/aab71205",
+      "timestamp": "2026-10-14T09:45:07Z"
+    }
+  ],
+  "created_at": "2026-10-14T09:32:19Z",
+  "id": "tx-7fd37a0703f6",
+  "intent": "Redesign the Issue more-properties popover to match shared application typography and compact neutral controls, preserving metadata editing and permissions",
+  "merged_revision": "A00000004",
+  "read_set": [
+    "arch://wegent/test/aab71206",
+    "arch://wegent/ui/287398da",
+    "arch://wegent/ui/aab71205"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-10-14T09:45:32Z",
+  "write_set": [
+    "arch://wegent/test/aab71206",
+    "arch://wegent/ui/aab71205",
+    "rel://6a7b10ebc272374e7fee89f5daf33b4eeb1571e24e0bb653f3d8611720c0902f",
+    "rel://d6aaf66ac76e430fa97cd0106c17f69dd37859db48e704f62be6c37f019fc03e"
+  ]
+}

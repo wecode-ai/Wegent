@@ -96,7 +96,7 @@ describe("collaboration permissions", () => {
     });
   });
 
-  it("lets developers and the Issue creator change the assignee", () => {
+  it("lets members assign and denies read-only creators", () => {
     expect(
       canAssignCollaborationIssue({
         access_role: "Maintainer",
@@ -115,21 +115,9 @@ describe("collaboration permissions", () => {
         project_store: "backend",
       }),
     ).toBe(false);
-    expect(
-      canAssignCollaborationIssue(
-        { access_role: "Viewer", project_store: "backend", current_user_id: 7 },
-        { created_by_user_id: 7 },
-      ),
-    ).toBe(true);
-    expect(
-      canAssignCollaborationIssue(
-        { access_role: "Viewer", project_store: "backend", current_user_id: 7 },
-        { created_by_user_id: 8 },
-      ),
-    ).toBe(false);
   });
 
-  it("gives the creator assignee control without granting content editing", () => {
+  it("does not grant creators assignment control outside their role", () => {
     expect(
       getCollaborationIssueActionPermissions(
         {
@@ -146,7 +134,7 @@ describe("collaboration permissions", () => {
     ).toEqual({
       canEdit: false,
       canComment: false,
-      canAssign: true,
+      canAssign: false,
       canStartWork: false,
     });
   });

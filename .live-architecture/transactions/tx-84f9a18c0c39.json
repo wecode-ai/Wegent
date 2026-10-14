@@ -1,0 +1,101 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000008",
+  "changes": [
+    {
+      "action": "update",
+      "change_id": "chg-a32dc31c658a",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/platform/ProjectCreationAction.tsx"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Project creation renders a direct native button for one available command and the shared ActionMenu for multiple commands. The same component serves workspace header, workspace starter and global first-project entry. Workspace ownership selection and form submission remain in the controller.",
+      "subject": "arch://wegent/ui/617dc728",
+      "timestamp": "2026-10-14T11:30:13Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-4426e24e5a8e",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/platform/ProjectCreationAction.tsx",
+        "packages/collaboration/src/platform/CollaborationPlatformApp.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Extracted the existing project creation action and changed only its single-option presentation and invocation; retained trigger and multi-option selectors and all creation modes.",
+      "subject": "arch://wegent/ui/617dc728",
+      "timestamp": "2026-10-14T11:30:14Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-70cce65b3d44",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/platform/ProjectCreationAction.test.tsx",
+        "packages/collaboration/src/platform/CollaborationPlatformApp.test.tsx",
+        "wework/e2e/desktop/modules/workspace-flows.mjs"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Nine action-component tests cover three single-action entry selectors and all local import options from header/starter; integration tests assert both cloud controls directly open the form while retaining multi-space ownership selection. Six existing CI scenarios assert direct creation and absence of an intermediate menu.",
+      "subject": "arch://wegent/test/546c88a4",
+      "timestamp": "2026-10-14T11:31:20Z"
+    },
+    {
+      "action": "add-edge",
+      "change_id": "chg-76cfe9bf2fce",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/platform/ProjectCreationAction.test.tsx"
+      ],
+      "object": "arch://wegent/ui/617dc728",
+      "plane": "implementation",
+      "predicate": "verifies",
+      "reason": "Creation entry regressions verify direct single-choice invocation and multi-choice menus at shared entry points",
+      "relationship_id": "rel://aef278f6d43a9b0cc916b4de934310daf689de70a6a848c8ee71f7a93bb3c259",
+      "subject": "arch://wegent/test/546c88a4",
+      "timestamp": "2026-10-14T11:32:52Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-57be645a6c1d",
+      "confidence": 1.0,
+      "evidence": [
+        ".live-architecture/evidence/project-creation-action.md"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "122 tests across action and full platform flows passed; shared/desktop/web TypeScript checks, nine-file ESLint, formatting, diff and E2E syntax checks passed. CI flow source was updated, but E2E and real Electron were not executed.",
+      "subject": "arch://wegent/ui/617dc728",
+      "timestamp": "2026-10-14T11:33:57Z"
+    }
+  ],
+  "created_at": "2026-10-14T10:31:40Z",
+  "id": "tx-84f9a18c0c39",
+  "intent": "Use a direct project-create action when only blank creation is available; preserve dropdown menus for multiple creation methods at all shared entry points",
+  "merged_revision": "A00000009",
+  "read_set": [
+    "arch://wegent/test/546c88a4",
+    "arch://wegent/ui/287398da",
+    "arch://wegent/ui/617dc728"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-10-14T11:34:56Z",
+  "write_set": [
+    "arch://wegent/test/546c88a4",
+    "arch://wegent/ui/617dc728",
+    "rel://aef278f6d43a9b0cc916b4de934310daf689de70a6a848c8ee71f7a93bb3c259"
+  ]
+}

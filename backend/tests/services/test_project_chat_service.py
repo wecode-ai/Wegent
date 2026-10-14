@@ -65,6 +65,7 @@ from app.services.project_chat.service import (
 )
 from app.services.runtime_work_service import upsert_device_workspace
 from tests.services.test_loop_item_assignment import _make_member
+from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 
 def create_project(test_db: Session, user: User) -> CloudProject:
@@ -78,6 +79,7 @@ def create_project(test_db: Session, user: User) -> CloudProject:
         storage_prefix=f"projects/{public_id}",
         metadata_json={},
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
@@ -89,6 +91,7 @@ def create_project(test_db: Session, user: User) -> CloudProject:
         status="active",
         metadata_json={"runtime": "codex"},
     )
+    authorize_project_agent(test_db, agent)
     test_db.add(agent)
     test_db.commit()
     return project
@@ -468,7 +471,7 @@ def test_project_supports_multiple_robots_without_embedded_runtime_config(
         request=ProjectChatAgentCreate(
             name="Cloud Reviewer",
             execution_mode="auto",
-            visibility="private",
+            visibility="public",
         ),
     )
 
@@ -483,7 +486,7 @@ def test_project_supports_multiple_robots_without_embedded_runtime_config(
     assert by_id[first.id].execution_device_id is None
     assert by_id[first.id].max_concurrent_executions == 3
     assert by_id[second.id].execution_mode == "auto"
-    assert by_id[second.id].visibility == "private"
+    assert by_id[second.id].visibility == "public"
     assert by_id[second.id].execution_device_id is None
     assert by_id[second.id].max_concurrent_executions == 1
     assert by_id[second.id].created_by_user_id == test_user.id
@@ -575,10 +578,13 @@ def test_update_agent_to_wegent_clears_codex_project_binding(
     agent.created_by_user_id = test_user.id
     agent.device_id = "local-dev-1"
     test_db.commit()
-    monkeypatch.setattr(
-        "app.services.project_automation_domain.runnable_wegent_team",
-        lambda db, user_id, team_id: object(),
+    from tests.utils.agent_resources import create_runnable_wegent_team
+    from tests.utils.collaboration import authorize_resource
+
+    team = create_runnable_wegent_team(
+        test_db, user_id=test_user.id, name_prefix="updated-agent"
     )
+    authorize_resource(test_db, project, team)
 
     updated = project_chat_service.update_agent(
         test_db,
@@ -588,17 +594,17 @@ def test_update_agent_to_wegent_clears_codex_project_binding(
         request=ProjectChatAgentUpdate(
             version=agent.version,
             runtime="wegent",
-            wegent_team_id=7,
+            wegent_team_id=team.id,
         ),
     )
 
     assert updated.runtime == "wegent"
-    assert updated.wegent_team_id == 7
+    assert updated.wegent_team_id == team.id
     assert updated.execution_device_id is None
     assert updated.local_project_id is None
 
 
-def test_list_agents_filters_visibility_for_other_members(
+def test_list_agents_shows_enabled_bindings_and_masks_private_configuration(
     test_db: Session, test_user: User
 ) -> None:
     from app.models.resource_member import MemberStatus, ResourceMember
@@ -612,7 +618,7 @@ def test_list_agents_filters_visibility_for_other_members(
         project_id=project.id,
         request=ProjectChatAgentCreate(
             name="Private",
-            visibility="private",
+            visibility="public",
         ),
     )
     admin_bot = project_chat_service.create_agent(
@@ -621,7 +627,7 @@ def test_list_agents_filters_visibility_for_other_members(
         project_id=project.id,
         request=ProjectChatAgentCreate(
             name="Admin",
-            visibility="creator_admin",
+            visibility="public",
         ),
     )
     public_bot = project_chat_service.create_agent(
@@ -684,7 +690,7 @@ def test_list_agents_filters_visibility_for_other_members(
             test_db, user_id=member.id, project_id=project.id
         )
     }
-    assert set(member_agents) == {public_bot.id}
+    assert set(member_agents) == {public_bot.id, admin_bot.id, private_bot.id, "12"}
     assert member_agents[public_bot.id].mcp_servers == {"private-repository": {}}
 
     admin_agents = {
@@ -694,7 +700,7 @@ def test_list_agents_filters_visibility_for_other_members(
         )
     }
     assert {public_bot.id, admin_bot.id, "12"} <= set(admin_agents)
-    assert private_bot.id not in admin_agents
+    assert private_bot.id in admin_agents
     assert admin_agents[public_bot.id].mcp_servers == {"private-repository": {}}
 
     creator_agents = {
@@ -3416,7 +3422,7 @@ def test_related_task_visitor_can_use_visible_task_chat_only(
             resource_id=int(project.id),
             entity_type="authenticated_users",
             entity_id="*",
-            role="Developer",
+            role="Viewer",
             status=MemberStatus.APPROVED.value,
         )
     )
@@ -3457,33 +3463,35 @@ def test_related_task_visitor_can_use_visible_task_chat_only(
         user_id=visitor.id,
         request=ProjectChatSubscribe(projectId=project.id, taskId=visible_task.id),
     )
-    visitor_message = project_chat_service.send(
-        test_db,
-        user_id=visitor.id,
-        user_name=visitor.user_name,
-        request=ProjectChatSend(
-            clientMessageId=str(uuid.uuid4()),
-            projectId=project.id,
-            taskId=visible_task.id,
-            content="Visitor reply",
-        ),
-    )
-
     assert [message.message_id for message in messages] == [
         owner_message.message.message_id
     ]
-    assert visitor_message.message.content == "Visitor reply"
-    project_chat_service.start_agent_response(
-        test_db,
-        user_id=visitor.id,
-        request=ProjectChatAgentStart(
-            projectId=project.id,
-            taskId=visible_task.id,
-            agentId="12",
-            runtimeDeviceId="related-visitor-device",
-            runtimeTaskId="related-visitor-runtime-task",
-        ),
-    )
+    with pytest.raises(HTTPException) as denied:
+        project_chat_service.send(
+            test_db,
+            user_id=visitor.id,
+            user_name=visitor.user_name,
+            request=ProjectChatSend(
+                clientMessageId=str(uuid.uuid4()),
+                projectId=project.id,
+                taskId=visible_task.id,
+                content="Rejected reply",
+            ),
+        )
+    assert denied.value.status_code == 403
+    with pytest.raises(HTTPException) as denied_execution:
+        project_chat_service.start_agent_response(
+            test_db,
+            user_id=visitor.id,
+            request=ProjectChatAgentStart(
+                projectId=project.id,
+                taskId=visible_task.id,
+                agentId="12",
+                runtimeDeviceId="visitor-device",
+                runtimeTaskId="visitor-task",
+            ),
+        )
+    assert denied_execution.value.status_code == 403
     with pytest.raises(HTTPException) as hidden:
         project_chat_service.subscribe(
             test_db,

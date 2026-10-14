@@ -967,12 +967,18 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
             "project_key": "RELATED",
             "name": "Related tasks only",
             "visibility": "public",
-            "public_access": {"role": "Developer"},
+            "public_access": {"role": "Viewer"},
             "default_issue_security": "related",
         },
     )
     assert project_response.status_code == 201
     project = project_response.json()
+    granted = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/members",
+        headers=_auth(test_token),
+        json={"user_id": visitor.id, "role": "Developer"},
+    )
+    assert granted.status_code == 201
     owner_item = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(test_token),
@@ -1482,7 +1488,7 @@ def test_public_github_project_enforces_issue_ownership(
             "project_key": "publicgh",
             "name": "Public GitHub",
             "visibility": "public",
-            "public_access": {"role": "Developer"},
+            "public_access": {"role": "Viewer"},
             "default_issue_security": "related",
             "task_provider": "github",
             "provider_config": {
@@ -1491,6 +1497,12 @@ def test_public_github_project_enforces_issue_ownership(
             },
         },
     ).json()
+    granted = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/members",
+        headers=_auth(test_token),
+        json={"user_id": visitor.id, "role": "Developer"},
+    )
+    assert granted.status_code == 201
 
     listed = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
@@ -2406,7 +2418,7 @@ def test_cloud_project_codex_agent_requires_explicit_project_environment(
     )
 
 
-def test_cloud_project_wegent_agent_does_not_grant_team_to_workspace(
+def test_cloud_project_agent_requires_explicit_resource_sharing(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -2434,6 +2446,12 @@ def test_cloud_project_wegent_agent_does_not_grant_team_to_workspace(
         f"/api/v1/cloud-projects/{project['id']}/chat-agents",
         headers=_auth(test_token),
         json=agent_payload,
+    )
+    assert created.status_code == 422
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={**agent_payload, "shareWithWorkspace": True},
     )
     assert created.status_code == 201, created.text
     agent = created.json()
@@ -2465,7 +2483,7 @@ def test_cloud_project_wegent_agent_does_not_grant_team_to_workspace(
             ResourceMember.entity_id == str(project["workspace_id"]),
         )
         .count()
-        == 0
+        == 1
     )
 
 
@@ -2494,6 +2512,22 @@ def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
         headers=_auth(test_token),
         json={"project_key": "automation", "name": "Project automation"},
     ).json()
+    from app.models.delivery import CloudProject
+    from tests.utils.collaboration import authorize_resource
+
+    authorize_resource(
+        test_db,
+        test_db.get(CloudProject, project["id"]),
+        test_db.query(Kind)
+        .filter_by(
+            kind="Device",
+            name="automation-cloud-device",
+            namespace="default",
+            user_id=test_user.id,
+        )
+        .one(),
+    )
+    test_db.commit()
     runtime_profile = test_client.post(
         "/api/v1/runtime-profiles",
         headers=_auth(test_token),
@@ -2584,6 +2618,22 @@ def test_cloud_project_manual_automation_queues_for_local_executor_pull(
         headers=_auth(test_token),
         json={"project_key": "autolocal", "name": "Local automation"},
     ).json()
+    from app.models.delivery import CloudProject
+    from tests.utils.collaboration import authorize_resource
+
+    authorize_resource(
+        test_db,
+        test_db.get(CloudProject, project["id"]),
+        test_db.query(Kind)
+        .filter_by(
+            kind="Device",
+            name="automation-local-device",
+            namespace="default",
+            user_id=test_user.id,
+        )
+        .one(),
+    )
+    test_db.commit()
     runtime_profile = test_client.post(
         "/api/v1/runtime-profiles",
         headers=_auth(test_token),
@@ -2698,7 +2748,7 @@ def test_cloud_project_owner_can_manage_members(
         json={"capability_description": "Owns product scope and priorities"},
     )
     assert owner_updated.status_code == 200
-    assert owner_updated.json()["role"] == "Owner"
+    assert owner_updated.json()["role"] == "Maintainer"
     members = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(test_token),
@@ -2747,7 +2797,7 @@ def test_public_project_does_not_expose_member_emails_to_nonmembers(
             "project_key": "PUBLICEMAIL",
             "name": "Public member privacy",
             "visibility": "public",
-            "public_access": {"role": "Developer"},
+            "public_access": {"role": "Viewer"},
         },
     ).json()
     assert (

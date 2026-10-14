@@ -1,0 +1,66 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000005",
+  "changes": [
+    {
+      "action": "create",
+      "change_id": "chg-79455906e240",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/platform/platform.css"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Standard workspace actions share 36px desktop minimum height, 8px radius and 16px icons; primary/secondary differ in emphasis and content width. Existing mobile targets remain 44px.",
+      "subject": "arch://wegent/ui/617dc728",
+      "timestamp": "2026-10-14T10:20:25Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-80b2180239bf",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/platform/platform.css",
+        "packages/collaboration/src/platform/base.css"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Aligned the existing platform secondary button geometry with primary project creation controls; changed only height, radius and icon dimensions. No component behavior, permissions or translation changed.",
+      "subject": "arch://wegent/ui/617dc728",
+      "timestamp": "2026-10-14T10:20:25Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-8556601fd89c",
+      "confidence": 1.0,
+      "evidence": [
+        ".live-architecture/evidence/workspace-action-sizing.md"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Measured equal 36px desktop and 44px mobile heights, equal 16px icons, 8px radius and 14px/445 typography; typography guard and scoped whitespace checks passed.",
+      "subject": "arch://wegent/ui/617dc728",
+      "timestamp": "2026-10-14T10:21:18Z"
+    }
+  ],
+  "created_at": "2026-10-14T10:18:16Z",
+  "id": "tx-0a9e862a96f0",
+  "intent": "Diagnose and align the workspace header Settings and New Project action sizes using the shared standard button geometry",
+  "merged_revision": "A00000006",
+  "read_set": [
+    "arch://wegent/ui/287398da"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-10-14T10:21:33Z",
+  "write_set": [
+    "arch://wegent/ui/617dc728"
+  ]
+}

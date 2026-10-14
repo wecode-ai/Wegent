@@ -1,0 +1,35 @@
+{
+  "observed_at": "2026-10-14T09:09:01.056988+00:00",
+  "environment": "existing local development gateway and Python upstream",
+  "operations": "SELECT, HTTP GET, WebSocket auth and read-only subscriptions; no message send",
+  "database": {
+    "project_count": 49,
+    "active_project_count": 29,
+    "original_parent_relationships": 49,
+    "alembic_head": "f3a7c9e1b2d4",
+    "unused_parent_columns_null_count": 49,
+    "unused_backup_rows": 0
+  },
+  "http": {
+    "/api/v1/cloud-projects": {
+      "status": 200,
+      "count": 27
+    },
+    "/api/v1/workspaces": {
+      "status": 200,
+      "count": 2
+    }
+  },
+  "websocket": {
+    "8004": {
+      "authenticated": true,
+      "project_subscription": true,
+      "issue_subscription": true
+    },
+    "8000": {
+      "authenticated": true,
+      "project_subscription": true,
+      "issue_subscription": true
+    }
+  }
+}

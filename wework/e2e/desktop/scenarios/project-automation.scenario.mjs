@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  openDirectProjectCreation,
   inProjectCreateDialog,
   selectCloudAgentModel,
   selectCollaborationDomain,
@@ -235,14 +236,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           scoped('[data-testid="collaboration-workspace-nav-projects"]')
         )
-        await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-project-create"]')
-        )
-        await control.command(
-          'click',
-          '[data-testid="collaboration-workspace-project-create-blank"]'
-        )
+        await openDirectProjectCreation(control, ACTIVE_WORKBENCH_SELECTOR)
         await control.command('waitFor', inProjectCreateDialog(), { timeoutMs: uiTimeoutMs })
         await control.command(
           'fill',

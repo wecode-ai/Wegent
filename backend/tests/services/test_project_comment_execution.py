@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -16,6 +17,11 @@ from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import ProjectChatCommentExecution, ProjectChatSend
 from app.services.project_chat.comment_execution import execute_comment
 from app.services.project_chat.service import project_chat_service
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 @pytest.fixture
@@ -28,6 +34,7 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
         created_by_user_id=owner.id,
         metadata_json={},
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     grant = ResourceMember(
@@ -47,6 +54,7 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
         status="active",
         metadata_json={"runtime": "codex", "visibility": "creator_admin"},
     )
+    authorize_project_agent(test_db, agent)
     issue = LoopItem(
         id="member-issue",
         cloud_project_id=str(project.id),
@@ -56,6 +64,17 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
         status="in_review",
         metadata_json={},
     )
+    device = Kind(
+        kind="Device",
+        name="admin-cloud",
+        namespace="default",
+        user_id=owner.id,
+        is_active=True,
+        json={"spec": {"deviceType": "cloud"}},
+    )
+    test_db.add(device)
+    test_db.flush()
+    authorize_resource(test_db, project, device)
     test_db.add_all([grant, agent, issue])
     test_db.flush()
     execution = LoopItemExecution(
@@ -169,7 +188,7 @@ async def test_member_reply_uses_original_owner_and_session_once(scenario):
         project_chat_service.list_agents(
             s.db, user_id=s.member.id, project_id=str(s.project.id)
         )
-        == []
+        != []
     )
     request = comment(s)
     first = await execute_comment(s.db, user_id=s.member.id, request=request)
@@ -322,16 +341,18 @@ async def test_new_comment_queues_hidden_agent_once_in_its_own_thread(
 
 
 @pytest.mark.asyncio
-async def test_cannot_mention_unassigned_hidden_agent(scenario):
+async def test_cannot_mention_unassigned_disabled_agent(scenario):
     s = scenario
     s.issue.assignee_agent_id = ""
+    s.agent.status = "archived"
     s.db.commit()
-    request = comment(
-        s, reply=False, mentions=[{"type": "agent", "id": s.agent.id, "label": "Codex"}]
-    )
     with pytest.raises(HTTPException) as exc:
-        await execute_comment(s.db, user_id=s.member.id, request=request)
-    assert exc.value.status_code == 403
+        comment(
+            s,
+            reply=False,
+            mentions=[{"type": "agent", "id": s.agent.id, "label": "Codex"}],
+        )
+    assert exc.value.status_code == 409
     s.rpc.assert_not_called()
 
 
@@ -456,16 +477,6 @@ async def test_new_root_preserves_real_queue_owner_and_comment_intent(scenario):
     from app.models.kind import Kind
 
     s = scenario
-    s.db.add(
-        Kind(
-            kind="Device",
-            name="admin-cloud",
-            namespace="default",
-            user_id=s.owner.id,
-            is_active=True,
-            json={"spec": {"deviceType": "cloud"}, "metadata": {"name": "admin-cloud"}},
-        )
-    )
     s.agent.device_id = "admin-cloud"
     s.agent.metadata_json = {
         **s.agent.metadata_json,
@@ -747,17 +758,18 @@ async def test_routed_reply_queues_offline_and_keeps_the_original_session(
     db = scenario.db
     original = db.query(LoopItemExecution).first()
     agent = db.get(ProjectChatAgent, original.agent_id)
+    original.execution_environment = "cloud"
     model = {"runtime": "codex", "provider": "openai", "model_id": "native-model"}
-    device = Kind(
-        kind="Device",
-        name="admin-cloud",
-        namespace="default",
-        user_id=original.executor_owner_user_id,
-        is_active=True,
-        json={"spec": {"deviceType": "cloud"}},
+    device = (
+        db.query(Kind)
+        .filter_by(
+            kind="Device",
+            name="admin-cloud",
+            namespace="default",
+            user_id=original.executor_owner_user_id,
+        )
+        .one()
     )
-    db.add(device)
-    db.flush()
     save_catalog(
         db,
         device,
@@ -843,3 +855,25 @@ async def test_routed_reply_queues_offline_and_keeps_the_original_session(
     )
     assert compiled["executionRequest"]["new_session"] is False
     assert compiled["runtimeAction"] == "send"
+
+
+@pytest.mark.asyncio
+async def test_cp13_cp16_comment_continuation_rechecks_current_device_grants(scenario):
+    s = scenario
+    source = (
+        s.db.query(ResourceMember)
+        .filter_by(
+            resource_type="Device",
+            entity_type="workspace",
+            entity_id=str(s.project.workspace_id),
+        )
+        .one()
+    )
+    s.db.delete(source)
+    s.db.commit()
+    request = comment(s)
+    with pytest.raises(HTTPException) as denied:
+        await execute_comment(s.db, user_id=s.member.id, request=request)
+    assert denied.value.status_code == 403
+    s.rpc.assert_not_awaited()
+    s.compiler.assert_not_called()

@@ -1,0 +1,67 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000006",
+  "changes": [
+    {
+      "action": "update",
+      "change_id": "chg-52f36177e066",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/platform/platform.css",
+        "packages/collaboration/src/platform/CollaborationPlatformApp.tsx"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Onboarding actions reuse standard secondary button geometry, independently of flex-row stretching and wrapping. Remove the local 32px button style; ensure all starter actions have 44px mobile touch targets.",
+      "subject": "arch://wegent/ui/617dc728",
+      "timestamp": "2026-10-14T10:25:51Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-3c6316cc718e",
+      "confidence": 1.0,
+      "evidence": [
+        "packages/collaboration/src/platform/platform.css",
+        "packages/collaboration/src/platform/CollaborationPlatformApp.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Reused standard platform secondary buttons for configure-agent and invite-member actions, deleted the local 32px rule, centered the wrapping action row and extended the existing 44px mobile action rule to starter buttons; retained selectors and navigation callbacks.",
+      "subject": "arch://wegent/ui/617dc728",
+      "timestamp": "2026-10-14T10:27:40Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-df6ac9946c62",
+      "confidence": 1.0,
+      "evidence": [
+        ".live-architecture/evidence/starter-action-sizing.md"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Three focused onboarding interaction cases, shared TypeScript build, typography and whitespace checks passed. Measured all three controls at 36px desktop and 44px mobile, including wrapped member invitation.",
+      "subject": "arch://wegent/ui/617dc728",
+      "timestamp": "2026-10-14T10:28:51Z"
+    }
+  ],
+  "created_at": "2026-10-14T10:24:25Z",
+  "id": "tx-f43d9c444a01",
+  "intent": "Diagnose starter action sizing and reuse the standard secondary button style for agent configuration and member invitation; align each action independently on desktop and mobile",
+  "merged_revision": "A00000008",
+  "read_set": [
+    "arch://wegent/ui/287398da"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-10-14T10:29:18Z",
+  "write_set": [
+    "arch://wegent/ui/617dc728"
+  ]
+}

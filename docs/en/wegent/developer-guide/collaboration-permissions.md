@@ -1,0 +1,149 @@
+---
+sidebar_position: 36
+---
+
+# Collaboration permission architecture and invariants
+
+Spaces define the administrative boundary. Projects inherit space membership by default. Resources participate through explicit use grants and project bindings. Lists and mutations share one server-side authorization policy. This document is a human-approved product contract, protected by tests.
+
+```mermaid
+flowchart TD
+    User[User] -->|membership and role| Space[Space]
+    Space -->|unique parent| Project[Project]
+    User -->|direct invitation| Project
+    Project --> Issue[Issue]
+    Issue --> Results[Comments, deliveries, executions and sessions]
+    Owner[Resource owner] -->|use grant| Catalog[Space resource catalog]
+    Catalog -->|project administrator enables| Binding[Project resource binding]
+    Binding --> Agent[Agent]
+    Binding --> Runner[Execution device]
+```
+
+## Roles and inheritance
+
+The three administrative roles are administrator (`Maintainer`), member (`Developer`) and read-only member (`Viewer`). Ownership is a separate space relation. The read-only `Owner` response label is derived from that relation and cannot be assigned through membership APIs. Creating a project explicitly adds its creator as a project administrator; creator identity is audit information.
+
+| Space identity | Inherited project | Restricted project |
+| --- | --- | --- |
+| Owner | Administrator | Administrator |
+| Administrator | Administrator | Administrator |
+| Member | Member | Direct invitation required |
+| Read-only member | Read-only member | Direct invitation required |
+| Project guest | Direct grant | Direct grant |
+
+Effective permissions are the union of active inheritance and direct grants. A lower direct role cannot override inherited administration. Public reading does not make visitors eligible project participants.
+
+## Protected contracts
+
+| ID | Invariant |
+| --- | --- |
+| CP01 | A project has exactly one active parent space; containment is separate from membership. |
+| CP02 | Space owners and administrators administer all child projects, including restricted projects, regardless of creator. |
+| CP03 | Ordinary projects inherit members and viewers; restricted projects stop those two sources. |
+| CP04 | Project invitations never grant access to parent members, resources or sibling projects. |
+| CP05 | Effective permission is a union of valid sources; pending, rejected, invalid, inactive and archived sources grant nothing. |
+| CP06 | Creator, assignee, group leader and runner identity do not grant human administration. |
+| CP07 | Viewers can read authorized spaces and projects but cannot edit, comment, assign or execute. |
+| CP08 | Project rosters include inherited and direct members, effective/direct roles and sources. Inherited roles are read-only. |
+| CP09 | Enabled shared agents are visible to project readers; explicit private definitions remain creator-only for visibility and use; readiness problems have explicit states and reasons. |
+| CP10 | Resource use never grants source-definition editing or access to private credentials. |
+| CP11 | Agent and device use requires valid use authority and an enabled project binding; valid legacy installations retain authority only within their original project, without granting catalog or source-definition access. |
+| CP12 | Fixed, pooled and user-selected routing do not bypass project resource authorization. |
+| CP13 | Lists, details, creation, updates, assignment, comment execution, automation and claims use the same policy. |
+| CP14 | Issue reads check project access before open/related security; project administrators can read all child Issues. |
+| CP15 | Execution checks Issue access, execution capability, binding and resource grant. Snapshots are not durable authority. |
+| CP16 | Revocation prevents new dispatch and claims; running work requests cancellation and waits for Runtime confirmation. |
+| CP17 | Removing a space member revokes membership and all direct child-project grants; further guest access needs a new invitation. |
+| CP18 | Removing a space resource grant invalidates every child binding while preserving history and exposing the reason. |
+| CP19 | Space ownership can transfer without changing historical creator identity; project administration is independent of creator. |
+| CP20 | Authorization exposes sources and denial reasons; the UI cannot grant capabilities rejected by the server. |
+
+## Resources and execution
+
+Sharing delegates use, not source editing. Project administrators manage bindings and allowed project configuration; resource editors manage the original definition. Actor, definition owner, device owner and Runtime identity remain separate. Model and connector credentials retain their original access rules. Project session reads authorize one bound Issue session, never the owner's entire device catalog.
+
+Queued work revalidates current permission at claim time. Device liveness, model readiness and capacity are execution conditions, not permission sources. All routing policies use the project's authorized device set.
+
+## Management surfaces
+
+- Space settings: members, projects, shared agents/devices, space groups and ownership transfer.
+- Project settings: membership mode, effective roster and sources, guests, enabled resources, groups, automation and Issue security.
+- Personal resources: source definitions, devices, credentials and sharing grants.
+
+## Storage and mixed-version compatibility
+
+This implementation adds no tables or columns and requires no bulk data or role rewrite. Project containment continues to use the existing approved `CloudProject → workspace` relationship in `resource_members`, retaining its original Owner label. `workspace_id` is a query property. Reads require exactly one parent; missing or ambiguous containment grants nothing.
+
+Membership mode uses `membership_mode` in existing project metadata JSON, defaulting to `inherit`. New projects also write the original parent relationship understood by old backends. Missing fields in old requests preserve new settings. An old backend that replaces an entire JSON object can still discard newer settings; old code does not enforce the new policy.
+
+Legacy human Owner roles normalize to Maintainer and Reporter to Viewer on read and request handling, without rewriting existing grants. Actual space ownership remains `Kind.user_id`. A new space Viewer is stored as Reporter for old space queries; project Viewer remains Viewer. A legacy public Developer grant supplies only Viewer on the new backend and retains its original stored value.
+
+Resource versions have explicit boundaries:
+
+- New bindings carry `authorization_version: 2`. Inline definitions require `Workspace → project_agent` grants, CRD Agents require `Team → workspace` grants, and devices require space and project use relationships.
+- Unmarked legacy bindings retain their original project installation authority. CRD sources must belong to the recorded installer, with existing builtin behavior retained. A fixed device must be explicitly recorded in that legacy binding, active, and owned by its installer. Owning unrelated devices grants nothing and does not expose space catalogs.
+- Revoking legacy resource use on the new backend first converts affected bindings to explicit authorization, or records fixed-device revocation in project JSON, before removing the grant. Revoked resources cannot reuse the legacy path. Modern bindings and pending, rejected or invalid explicit grants cannot use this path.
+
+Legacy `creator_admin` input remains accepted, while shared bindings follow project visibility. Explicit `private` remains creator-only for visibility and use; another project administrator cannot publish that definition. Credentials are not shared. Ownership transfer captures a missing historical creator only during that operation, without bulk backfill.
+
+| Client / backend | Boundary |
+| --- | --- |
+| Old client / new backend | Old role and Agent fields are accepted; original containment stays readable; the new backend enforces the unified policy. |
+| New client / old backend | Missing `owner_user_id` hides transfer; missing `membership_mode` hides mode settings; catalogs require verified space access. |
+| Old client / old backend | Original tables and APIs remain usable with the original policy. |
+| Mixed backend versions | Storage compatibility does not upgrade old authorization code. Route permission-sensitive APIs to the new backend, or backport the same policy, before relying on new guarantees. |
+
+Local private projects retain owner authority offline. Shared cloud operations use server-side relationships.
+
+## Incident and recovery evidence
+
+Development startup automatically runs Alembic. The original permission migration was automatically applied while under development and failed serializing backup data. MySQL retained completed DDL while rolling back project-parent backfill. Startup swallowed the failure, and queries against the empty new parent column hid projects. The earlier claim that no real database had been migrated was inaccurate.
+
+Read-only inspection confirmed all 49 original projects and 49 parent relationships remained, including 29 active projects. No project deletion occurred. The new migration has been withdrawn, original relationship queries restored, and Alembic head is `f3a7c9e1b2d4`. Two unused columns and an empty backup table left by the interrupted attempt are deliberately retained and ignored. Recovery performed no further DDL, bulk data rewrite or role rewrite. Any later cleanup is a separate database operation.
+
+Real development HTTP checks returned 200 with 27 authorized projects and two spaces for admin. Python and gateway WebSocket authentication and project subscription both succeeded. The UI now resubscribes after an initial connection failure and clears the error on success, with cleanup on unmount and Issue changes.
+
+Development startup now aborts on migration failure instead of serving an incomplete schema.
+
+## Implementation and regression protection
+
+`collaboration_permissions.py` supplies roles, sources and denial reasons. `cloud_project_visibility.py` implements equivalent list queries. `collaboration_revocation.py` revalidates current Issue, Agent, group, Runtime profile and device authority for durable work.
+
+Regression entry points:
+
+- Role matrices and resource contracts: `test_collaboration_permission_contract.py`, `test_collaboration_permission_resources.py`, and `test_workspace_shared_agents.py`.
+- Claims, assignment, comments and queues: execution, runner routing, assignment and comment service tests.
+- Existing-schema compatibility: `test_collaboration_permission_compatibility.py`; CI's `integration_checks/test_collaboration_permission_mysql.py` covers populated old databases and unused interrupted-DDL leftovers.
+- Startup failure: `test_startup_migration_failure.py`.
+- Contract protection: `test_collaboration_permission_guard.py` verifies the approved CP fingerprint and per-rule coverage. The original fingerprint is archived at `.live-architecture/contracts/collaboration-permissions-A00000002.md`. CP09 and CP11 reflect the user's added compatibility requirement, preserving private choices and existing project installations.
+- Shared UI: inherited sources, guests, membership mode, ownership transfer, absent old-backend capabilities, binding reactivation and chat recovery.
+
+Permission changes must update the corresponding rule, architecture transaction and tests. Semantic changes require user authorization. Never weaken assertions, skip cases or add administrator exceptions to conceal a violation. Tests use isolated databases, deterministic encryption and mocked external services; passing them does not claim deployment or live Runtime execution.
+
+## Verification record
+
+Final verification is rerun against the no-DDL implementation. Counts from the withdrawn migration implementation are historical. The full backend suite already includes the focused permission tests.
+
+<!-- final-validation-record -->
+
+Reproduce the backend suite with `cd backend && uv run pytest tests/ -n 4 -q --assert=plain --tb=line --show-capture=no`. The dedicated permission step is in `.github/workflows/test.yml`; shared tests use `pnpm --filter @wegent/collaboration test`. MySQL checks use an isolated temporary container.
+
+E2E and `ai:verify` were not run. No deployment was performed. The real development database was affected by automatic migration as documented above.
+
+## Architecture ledger
+
+Initial transaction `tx-7bdab78637cc` is at revision `A00000002`. Recovery transaction `tx-b6334c5994c6` preserves that history and records the added compatibility constraint, automatic migration incident, no-DDL storage design, chat recovery and new verification evidence. `projections/` contains generated JSON and Mermaid views.
+
+| Entity | Stable ID |
+| --- | --- |
+| Space | `arch://wegent/domain/6d0bb441` |
+| Project | `arch://wegent/domain/2f391a06` |
+| Agent, device and group resources | `arch://wegent/domain/9e54c378` |
+| Permission service | `arch://wegent/service/04839d2f` |
+| Revocation service | `arch://wegent/service/ccd5381b` |
+| Shared UI | `arch://wegent/ui/287398da` |
+| Withdrawn migration (historical) | `arch://wegent/data/f0244dd2` |
+| Existing relationships and JSON | `arch://wegent/data/compat-storage-e27a` |
+| Chat recovery | `arch://wegent/service/project-chat-socket-e27a` |
+| CP contract | `arch://wegent/contract/c635908b` |
+| Regression guard | `arch://wegent/test/94f7802d` |

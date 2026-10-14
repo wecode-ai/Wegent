@@ -1,0 +1,166 @@
+.task-detail-more-menu-trigger {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  color: rgb(var(--color-text-secondary));
+  background: transparent;
+  cursor: pointer;
+}
+
+.task-detail-more-menu-trigger:hover,
+.task-detail-more-menu-trigger[data-state='open'] {
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-muted));
+}
+
+.task-detail-more-menu-popover {
+  width: 280px;
+  max-width: min(calc(100vw - 16px), var(--radix-popover-content-available-width));
+  max-height: min(520px, calc(100dvh - 16px), var(--radix-popover-content-available-height));
+  overflow-y: auto;
+  border: 0.5px solid rgb(var(--color-border));
+  border-radius: 12px;
+  padding: 8px;
+  background: rgb(var(--color-popover) / 98%);
+  color: rgb(var(--color-text-primary));
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  line-height: 1.5;
+  box-shadow: 0 8px 24px -6px rgb(0 0 0 / 14%);
+  backdrop-filter: blur(12px);
+}
+
+.task-detail-more-menu-title {
+  margin: 0 6px 4px;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid rgb(var(--color-border) / 60%);
+  font-size: var(--text-base);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* Portals leave the workspace layout ancestry; field density belongs here. */
+.task-detail-more-menu-popover .task-detail-workspace-properties {
+  margin: 0;
+}
+
+.task-detail-more-menu-popover .task-detail-workspace-properties-grid {
+  gap: 2px;
+}
+
+.task-detail-more-menu-popover .task-detail-rail-prop {
+  min-height: 34px;
+  gap: 8px;
+  padding: 4px 6px;
+}
+
+.task-detail-more-menu-popover .task-detail-rail-key {
+  width: 76px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  font-weight: inherit;
+  line-height: 1.5;
+}
+
+.task-detail-more-menu-popover .task-detail-rail-value {
+  font-size: var(--text-sm);
+  font-weight: inherit;
+  line-height: 1.5;
+}
+
+.task-detail-more-menu-popover .task-detail-workspace-tag {
+  min-height: 26px;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: inherit;
+}
+
+.task-detail-more-menu-popover .task-detail-tag-editor input,
+.task-detail-more-menu-popover .task-detail-tag-suggestions button {
+  font-size: var(--text-sm);
+  font-weight: inherit;
+}
+
+.task-detail-more-menu-popover .task-detail-tag-editor input {
+  min-height: 26px;
+}
+
+.task-detail-more-menu-popover .task-detail-tag-editor > span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.task-detail-more-menu-popover .task-detail-property-collaborators {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.task-detail-more-menu-popover
+  .task-detail-workspace-properties-grid
+  .task-detail-property-collaborators
+  > button {
+  display: flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0;
+  border-radius: 50%;
+}
+
+.task-detail-more-menu-popover .task-detail-property-collaborators > button > span {
+  font-weight: 500;
+}
+
+.task-detail-more-menu-danger {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  border: 0;
+  border-top: 1px solid rgb(var(--color-border) / 60%);
+  border-radius: 0 0 6px 6px;
+  padding: 8px 6px 4px;
+  color: rgb(var(--color-destructive));
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-detail-more-menu-danger:hover {
+  background: rgb(var(--color-destructive) / 6%);
+}
+
+.task-detail-more-menu-trigger:focus-visible,
+.task-detail-more-menu-popover button:focus-visible,
+.task-detail-more-menu-popover select:focus-visible {
+  outline: 2px solid rgb(var(--color-focus) / 70%);
+  outline-offset: 2px;
+}
+
+@media (max-width: 767px) {
+  .task-detail-more-menu-trigger {
+    width: 44px;
+    height: 44px;
+  }
+
+  .task-detail-more-menu-popover .task-detail-rail-prop,
+  .task-detail-more-menu-popover input,
+  .task-detail-more-menu-popover select,
+  .task-detail-more-menu-popover button {
+    min-height: 44px;
+  }
+
+  .task-detail-more-menu-popover button {
+    min-width: 44px;
+  }
+}
