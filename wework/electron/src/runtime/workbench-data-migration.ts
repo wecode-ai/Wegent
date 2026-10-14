@@ -2,18 +2,26 @@ import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import { renameWorkbenchData } from './workbench-data-rename.js'
+
 interface EntryMigration {
   source: string
   target: string
   journal: string
+  mutableFile?: boolean
 }
 
-interface Journal extends EntryMigration {
-  version: 1
+interface FileIdentity {
   device: string
   inode: string
+}
+
+interface Journal extends EntryMigration, FileIdentity {
+  version: 1
   directory: boolean
   completed?: true
+  hardLink?: true
+  replacement?: FileIdentity
 }
 
 function stat(path: string): fs.BigIntStats | undefined {
@@ -25,7 +33,7 @@ function stat(path: string): fs.BigIntStats | undefined {
   }
 }
 
-function owns(path: string, journal: Journal): boolean {
+function owns(path: string, journal: FileIdentity & { directory?: boolean }): boolean {
   const entry = stat(path)
   return (
     !!entry &&
@@ -50,24 +58,77 @@ function readJournal(options: EntryMigration): Journal | undefined {
     typeof journal.inode !== 'string' ||
     !/^\d+$/.test(journal.device) ||
     !/^\d+$/.test(journal.inode) ||
-    (journal.completed !== undefined && journal.completed !== true)
+    (journal.completed !== undefined && journal.completed !== true) ||
+    (journal.hardLink !== undefined && (journal.hardLink !== true || journal.directory)) ||
+    (journal.replacement !== undefined &&
+      (!journal.replacement ||
+        !options.mutableFile ||
+        journal.directory ||
+        !journal.completed ||
+        typeof journal.replacement.device !== 'string' ||
+        typeof journal.replacement.inode !== 'string' ||
+        !/^\d+$/.test(journal.replacement.device) ||
+        !/^\d+$/.test(journal.replacement.inode)))
   )
     throw new Error('Invalid application data migration journal')
   return journal
 }
 
 function bridge(options: EntryMigration, directory: boolean): void {
-  fs.symlinkSync(options.target, options.source, directory ? 'junction' : 'file')
+  if (process.platform === 'win32' && !directory) fs.linkSync(options.target, options.source)
+  else fs.symlinkSync(options.target, options.source, directory ? 'junction' : 'file')
 }
 
-function complete(journal: Journal): void {
-  if (journal.directory || journal.completed) return
+function replaceJournal(journal: Journal): void {
   const temporary = `${journal.journal}.${randomUUID()}.tmp`
-  fs.writeFileSync(temporary, JSON.stringify({ ...journal, completed: true }), {
+  fs.writeFileSync(temporary, JSON.stringify(journal), {
     flag: 'wx',
     mode: 0o600,
   })
-  fs.renameSync(temporary, journal.journal)
+  renameWorkbenchData(temporary, journal.journal)
+}
+
+function complete(journal: Journal): void {
+  if (!journal.directory && !journal.completed) replaceJournal({ ...journal, completed: true })
+}
+
+// Atomic configuration writes replace the destination inode. Persist its new
+// identity before replacing the owned legacy alias so interrupted refreshes recover.
+function refreshMutableFileBridge(options: EntryMigration, journal: Journal): boolean {
+  if (
+    process.platform !== 'win32' ||
+    !options.mutableFile ||
+    journal.directory ||
+    !journal.completed
+  )
+    return false
+  const destination = stat(options.target)
+  if (!destination?.isFile()) return false
+  const original = stat(options.source)
+  let replacement = journal.replacement
+  if (!replacement) {
+    if ((original && !owns(options.source, journal)) || owns(options.target, journal)) return false
+    replacement = { device: destination.dev.toString(), inode: destination.ino.toString() }
+    journal = { ...journal, replacement }
+    replaceJournal(journal)
+  }
+  if (
+    !owns(options.target, replacement) ||
+    (original && !owns(options.source, journal) && !owns(options.source, replacement))
+  )
+    throw new Error(`Application data migration conflict: ${options.source}`)
+  const temporary = `${options.source}.migration-file-bridge`
+  const pending = stat(temporary)
+  if (pending && !owns(temporary, replacement))
+    throw new Error('Application data migration temporary file conflict')
+  if (!original || !owns(options.source, replacement)) {
+    if (!pending) fs.linkSync(options.target, temporary)
+    renameWorkbenchData(temporary, options.source)
+  } else if (pending) fs.unlinkSync(temporary)
+  const completed = { ...journal, ...replacement }
+  delete completed.replacement
+  replaceJournal(completed)
+  return true
 }
 
 // Recover only the missing alias before Electron creates its single-instance files.
@@ -80,6 +141,12 @@ export function recoverWorkbenchDataBridge(options: EntryMigration): void {
     (!owns(options.target, journal) && !(journal.completed && !journal.directory))
   )
     return
+  if (process.platform === 'win32' && !journal.directory) {
+    if (!stat(options.target)) return
+    if (refreshMutableFileBridge(options, journal)) return
+    if (!owns(options.target, journal))
+      throw new Error('Application data migration target identity changed')
+  }
   try {
     bridge(options, journal.directory)
   } catch (error) {
@@ -104,7 +171,7 @@ function preserveRelativeLinks(directory: string): void {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
       fs.symlinkSync(`${dirname(path)}${sep}${target}`, temporary, directory ? 'dir' : 'file')
-      fs.renameSync(temporary, path)
+      renameWorkbenchData(temporary, path)
     }
   }
 }
@@ -157,6 +224,7 @@ export function migrateWorkbenchDataEntry(options: EntryMigration): void {
       device: original.dev.toString(),
       inode: original.ino.toString(),
       directory: original.isDirectory(),
+      ...(process.platform === 'win32' && original.isFile() ? { hardLink: true as const } : {}),
     }
     fs.mkdirSync(dirname(journalPath), { recursive: true, mode: 0o700 })
     const temporary = `${journalPath}.${randomUUID()}.tmp`
@@ -179,9 +247,25 @@ export function migrateWorkbenchDataEntry(options: EntryMigration): void {
       return
     }
   }
+  // Existing native aliases require completion or our publication intent, plus
+  // matching file identities. Pending mutable refreshes must be recovered below.
+  if (
+    !journal.directory &&
+    !journal.replacement &&
+    (journal.completed || journal.hardLink) &&
+    owns(source, journal) &&
+    owns(target, journal)
+  ) {
+    complete(journal)
+    return
+  }
+  if (refreshMutableFileBridge(options, journal)) return
   // SQLite may remove both an old sidecar alias and its migrated destination after use.
   // Only a previously published file bridge can be recreated without the initial inode.
   if (!original && journal.completed && !journal.directory) {
+    if (process.platform === 'win32' && !stat(target)) return
+    if (process.platform === 'win32' && !owns(target, journal))
+      throw new Error('Application data migration target identity changed')
     bridge(options, false)
     return
   }
@@ -189,13 +273,18 @@ export function migrateWorkbenchDataEntry(options: EntryMigration): void {
     if (!owns(source, journal) || stat(target)) {
       throw new Error(`Application data migration conflict: ${source}`)
     }
+    if (process.platform === 'win32' && !journal.directory && !journal.hardLink) {
+      journal = { ...journal, hardLink: true }
+      replaceJournal(journal)
+    }
     fs.mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
     if (journal.directory) preserveRelativeLinks(source)
-    // Check link privileges before moving any data; never fall back to copying.
+    // Prove native alias publication before moving data; never copy credentials.
     const probe = `${source}.migration-${randomUUID()}`
-    fs.symlinkSync(target, probe, journal.directory ? 'junction' : 'file')
+    if (process.platform === 'win32' && !journal.directory) fs.linkSync(source, probe)
+    else fs.symlinkSync(target, probe, journal.directory ? 'junction' : 'file')
     fs.unlinkSync(probe)
-    fs.renameSync(source, target)
+    renameWorkbenchData(source, target)
   }
   if (!owns(target, journal)) throw new Error('Application data migration target identity changed')
   bridge(options, journal.directory)
