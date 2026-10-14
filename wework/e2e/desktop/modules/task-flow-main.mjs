@@ -1199,6 +1199,8 @@ async function main() {
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       modelResponseTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),
+      recordScenarioRequest: (scenario, request) =>
+        control.recordScenarioRequest(scenario, request),
       workbenchReadyTimeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       workspacePath,
     })

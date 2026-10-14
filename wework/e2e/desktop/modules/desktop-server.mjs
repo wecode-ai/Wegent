@@ -1330,9 +1330,16 @@ class DesktopE2EServer {
     }
 
     const url = new URL(request.url ?? '/', this.url)
-    this.httpRequests.push({
+    const requestDiagnostic = {
       method: request.method ?? 'UNKNOWN',
       pathname: url.pathname,
+      startedAtUnixMs: Date.now(),
+    }
+    this.httpRequests.push(requestDiagnostic)
+    response.once('finish', () => {
+      requestDiagnostic.finishedAtUnixMs = Date.now()
+      requestDiagnostic.durationMs =
+        requestDiagnostic.finishedAtUnixMs - requestDiagnostic.startedAtUnixMs
     })
     if (await this.handleControlRoute(request, response, url)) return
     try {

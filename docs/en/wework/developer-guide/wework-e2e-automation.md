@@ -360,6 +360,7 @@ registering request listeners before sending with the shared 30-second model-req
 Background guidance uses the same model-stage budget for real tool output and subsequent model
 requests. A native tool can yield a still-running session after ten seconds; this tool phase
 must not use the ordinary UI-step limit.
+The message-order scenario waits for the current turn's SSE response to finish sending with the model-stage budget, then uses the unchanged ten-second UI budget for its message content. The recorded response number must match the current turn. HTTP diagnostics retain request start, finish, and duration so Codex execution delays are not mistaken for missing virtual rows.
 The stream-recovery scenario selects its registered fixture model before the first send;
 the composer appearing does not establish model-catalog readiness. It still verifies that
 streaming continues during renderer reload and restores the complete output.
@@ -640,6 +641,10 @@ Cloud Issue change notifications must invalidate an in-flight older board snapsh
 Platform E2E services must start etcd and MinIO before Milvus. The GitHub runner pulls and starts containers sequentially in configuration order. Placing MinIO after Milvus can leave its DNS name unavailable during Milvus initialization while later images are being pulled. Health checks run after all containers have started and cannot repair this startup ordering.
 
 Desktop E2E `clickWhenEnabled` starts the existing ten-second conversation layout diagnostic window. Milestone and failure artifacts retain `conversation-diagnostics` JSON with virtual ranges, message measurements, and scroll positions. These records contain no message text and do not change UI waits or business assertions. Compare them with `workbench-debug.json` when a completed message is missing from the rendered conversation.
+
+Opening project settings waits for and clicks the current project's edit or rename action directly. The sidebar chooses its menu identifier from the project's state owner and source; a snapshot taken before the menu renders cannot determine that action. Cloud project save, restart, and restored-settings assertions remain unchanged.
+
+During local macOS verification of cloud project state files, a running ChatGPT or Codex desktop application activates the existing state-write guard. A runner whose HOME and Codex Home are both inside its isolated test-result directory can use `WEGENT_FORCE_CODEX_GLOBAL_STATE_OPLOG_FLUSH=1` to verify that state reaches disk.
 
 CI can run Wework E2E as a separate job:
 
