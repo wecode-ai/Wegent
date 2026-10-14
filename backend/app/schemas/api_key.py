@@ -7,7 +7,7 @@ API Key schemas for request/response validation.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -51,7 +51,7 @@ class APIKeyListResponse(BaseModel):
 
 
 class APIKeyLookupRequest(BaseModel):
-    """Request schema for looking up an API key's owner."""
+    """Request schema for looking up an API key's identity."""
 
     api_key: str = Field(..., min_length=1, description="Raw API key to look up")
 
@@ -60,7 +60,12 @@ class APIKeyLookupResponse(BaseModel):
     """Response schema for an API key lookup."""
 
     exists: bool
-    user_name: Optional[str] = None
+    user_name: Optional[str] = Field(
+        default=None, description="Service key name or personal key owner's username"
+    )
+    key_type: Optional[Literal["service", "personal"]] = Field(
+        default=None, description="Valid key type; null when the lookup does not match"
+    )
 
 
 # Service Key Schemas
