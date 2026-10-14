@@ -82,7 +82,7 @@ Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、�
 
 ### Codex 原始模型 Catalog
 
-Wework 的模型路由、Catalog 编辑和保存校验共用同一份原始 Catalog 基线。配置了可读取的自定义上游时使用上游 `/models`；否则通过当前 Codex 二进制的 `debug models --bundled` 导出完整内置 Catalog，并在 executor 进程内缓存成功结果。Wework 的额外模型只按 slug 补入缺失条目，不覆盖 Codex 原始字段。
+Wework 的模型路由、Catalog 编辑和保存校验共用同一份原始 Catalog 基线。配置了可读取的自定义上游时使用上游 `/models`；没有上游或上游目录不可用时，通过当前 Codex 二进制的 `debug models --bundled` 导出完整内置 Catalog，并在 executor 进程内缓存成功结果。上游目录失败会记录原因，不阻塞仅支持推理接口的服务商。Wework 的额外模型只按 slug 补入缺失条目，不覆盖 Codex 原始字段。
 
 用户修改以字段差异保存在设备本地的 `capabilities/model-catalog-overrides.json`，恢复默认会删除对应差异。路由在原始基线上应用差异后再生成视觉委托条目。导出失败会明确报错，不会用不完整的 Wework 模型清单替代原始 Catalog。
 

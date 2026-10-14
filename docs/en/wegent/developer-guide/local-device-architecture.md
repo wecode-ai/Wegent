@@ -82,7 +82,7 @@ Backend connectivity is optional, not a required dependency for the local app. W
 
 ### Original Codex Model Catalog
 
-Wework model routing, Catalog editing, and save validation share one original Catalog baseline. A configured readable custom upstream supplies `/models`; otherwise the executor exports the complete bundled Catalog with the current Codex binary's `debug models --bundled` command and caches successful results for its process lifetime. Additional Wework models fill missing slugs without replacing original Codex fields.
+Wework model routing, Catalog editing, and save validation share one original Catalog baseline. A configured readable custom upstream supplies `/models`; when no upstream exists or its catalog is unavailable, the executor exports the complete bundled Catalog with the current Codex binary's `debug models --bundled` command and caches successful results for its process lifetime. Upstream catalog failures are logged without blocking providers that only support inference endpoints. Additional Wework models fill missing slugs without replacing original Codex fields.
 
 User changes are stored as field differences in the device-local `capabilities/model-catalog-overrides.json`; restoring defaults removes those differences. Routing applies them to the original baseline before deriving vision delegation entries. Export failures report an error instead of substituting an incomplete Wework model list.
 

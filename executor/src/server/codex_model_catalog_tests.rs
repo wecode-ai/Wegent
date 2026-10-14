@@ -4,6 +4,14 @@
 
 use super::*;
 
+#[test]
+fn rejects_malformed_catalog_without_replacing_it_with_base_models() {
+    let mut catalog = json!({ "data": [] });
+    let original = catalog.clone();
+    assert!(merge_base_models(&mut catalog).is_err());
+    assert_eq!(catalog, original);
+}
+
 fn catalog() -> Value {
     let mut catalog = json!({
         "models": base_models()
@@ -51,7 +59,7 @@ printf '%s' '{"models":[{"slug":"gpt-6.1-sol","context_window":400000,"native_fi
     let mut catalog = export_bundled_catalog(&binary, home.path())
         .await
         .expect("native bundled catalog");
-    merge_base_models(&mut catalog);
+    merge_base_models(&mut catalog).unwrap();
     let models = catalog["models"].as_array().expect("models");
     assert_eq!(
         models
@@ -259,7 +267,7 @@ fn merge_derives_vision_from_the_effective_upstream_base_profile() {
         }]
     });
 
-    merge_base_models(&mut catalog);
+    merge_base_models(&mut catalog).unwrap();
     apply_catalog_overrides(&mut catalog, &read_catalog_overrides());
     append_catalog_vision_sidecars(&mut catalog);
 

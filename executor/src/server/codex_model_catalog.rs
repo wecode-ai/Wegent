@@ -544,6 +544,13 @@ async fn upstream_catalog(client_version: Option<&str>) -> Result<Option<Value>,
             );
         }
     };
+    if !catalog.get("models").is_some_and(Value::is_array) {
+        return stale_catalog_or_error(
+            cache.as_ref(),
+            &upstream_id,
+            "upstream /models must contain a models array".to_owned(),
+        );
+    }
     *cache = Some(CatalogCacheEntry {
         upstream_id,
         catalog: catalog.clone(),
@@ -601,11 +608,18 @@ fn configured_catalog_upstream() -> Option<(String, String)> {
 }
 
 async fn load_baseline_catalog(client_version: Option<&str>) -> Result<Value, String> {
-    let mut catalog = match upstream_catalog(client_version).await? {
-        Some(catalog) => catalog,
-        None => bundled_catalog().await?.clone(),
+    let mut catalog = match upstream_catalog(client_version).await {
+        Ok(Some(catalog)) => catalog,
+        Ok(None) => bundled_catalog().await?.clone(),
+        Err(error) => {
+            log_executor_event(
+                "codex router upstream model catalog unavailable",
+                &[("error", error)],
+            );
+            bundled_catalog().await?.clone()
+        }
     };
-    merge_base_models(&mut catalog);
+    merge_base_models(&mut catalog)?;
     Ok(catalog)
 }
 
@@ -645,11 +659,11 @@ async fn export_bundled_catalog(binary: &str, home: &Path) -> Result<Value, Stri
     Ok(catalog)
 }
 
-fn merge_base_models(catalog: &mut Value) {
-    let Some(upstream_models) = catalog.get_mut("models").and_then(Value::as_array_mut) else {
-        *catalog = json!({ "models": base_models() });
-        return;
-    };
+fn merge_base_models(catalog: &mut Value) -> Result<(), String> {
+    let upstream_models = catalog
+        .get_mut("models")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "Codex model catalog must contain a models array".to_owned())?;
     for capability_model in base_models() {
         let slug = capability_model.get("slug").and_then(Value::as_str);
         if !upstream_models
@@ -659,6 +673,7 @@ fn merge_base_models(catalog: &mut Value) {
             upstream_models.push(capability_model);
         }
     }
+    Ok(())
 }
 
 fn apply_catalog_overrides(catalog: &mut Value, overrides: &[CatalogOverride]) {

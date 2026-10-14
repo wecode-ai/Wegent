@@ -376,7 +376,7 @@ const MODEL_PROVIDER_ID = 'wework-e2e'
 const CUSTOM_TOOL_INPUT_DESCRIPTION =
   'Raw string input for the original custom tool. Put only the tool input in this field, preserve every character exactly, and follow the original definition embedded in the function description. Do not add Markdown fences or explanatory text.'
 const DEFAULT_MODEL_ID = 'gpt-5.6-luna'
-const DEFAULT_MODEL_LABEL = 'GPT 5.6 Luna'
+const DEFAULT_MODEL_LABEL = 'GPT-5.6 Luna'
 const LOCAL_MODEL_CASES = [
   {
     protocol: 'responses',
