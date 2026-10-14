@@ -2753,11 +2753,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       )
       phase = 'initial-task'
-      await sendPrompt(control, composerSelector, TASK_PROMPT)
-      const initialTaskRequest = await withTimeout(
-        control.awaitScenarioRequest('initial'),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'The model service did not receive the initial task request'
+      const initialTaskRequest = await sendPromptUntilScenarioRequest(
+        control,
+        composerSelector,
+        TASK_PROMPT,
+        'initial'
       )
       const runningTaskSnapshot = await waitForSnapshot(
         control,

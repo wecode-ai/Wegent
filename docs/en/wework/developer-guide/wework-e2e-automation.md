@@ -353,8 +353,10 @@ before the renderer connects.
 Migration fixtures isolate workbench data through `HOME` and preserve the operating
 system's `USERPROFILE`. The controller acknowledges each action before polling for
 the next command, keeping pending long polls out of the result acknowledgement path.
-System proxy scenarios use the model-stage budget for model requests and retain
-10-second ordinary UI steps.
+System proxy scenarios and the initial task-status synchronization request use the
+model-stage budget for model requests and retain 10-second ordinary UI steps.
+Initial tasks and follow-up messages reuse `sendPromptUntilScenarioRequest`,
+registering request listeners before sending with the shared 30-second model-request limit.
 Desktop fixtures bind the workspace root to their temporary Home and remove other inherited
 workspace path overrides, avoiding stale test or personal worktrees. Turn preparation failures
 record their error code and reason instead of leaving only a UI timeout.
