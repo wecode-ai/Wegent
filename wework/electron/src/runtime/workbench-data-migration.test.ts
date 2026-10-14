@@ -200,6 +200,76 @@ test('recreates a completed file bridge after SQLite removes both sidecar entrie
   expect(() => migrateWorkbenchDataEntry(options)).toThrow('conflict')
 })
 
+function completedHardLink() {
+  const options = {
+    ...entry(),
+    source: join(root, 'old/app-ipc.addr'),
+    target: join(root, 'new/app-ipc.addr'),
+  }
+  write(options.target, 'original')
+  fs.mkdirSync(join(options.source, '..'), { recursive: true })
+  fs.linkSync(options.target, options.source)
+  const identity = fs.statSync(options.target, { bigint: true })
+  const journal = {
+    ...options,
+    version: 1,
+    device: identity.dev.toString(),
+    inode: identity.ino.toString(),
+    directory: false,
+    completed: true,
+  }
+  write(options.journal, JSON.stringify(journal))
+  return { options, journal }
+}
+
+test('restarts a completed hard-link migration without changing either alias or its journal', () => {
+  const { options } = completedHardLink()
+  const journal = fs.readFileSync(options.journal, 'utf8')
+  vi.mocked(fs.symlinkSync)
+    .mockClear()
+    .mockImplementation(() => {
+      throw Object.assign(new Error('symlink privilege unavailable'), { code: 'EPERM' })
+    })
+  migrateWorkbenchDataEntry(options)
+  migrateWorkbenchDataEntry(options)
+  expect(fs.readFileSync(options.journal, 'utf8')).toBe(journal)
+  expect(fs.statSync(options.source).ino).toBe(fs.statSync(options.target).ino)
+  expect(fs.readFileSync(options.source, 'utf8')).toBe('original')
+  expect(fs.symlinkSync).not.toHaveBeenCalled()
+})
+
+test.each(['source', 'target'] as const)(
+  'rejects a completed hard-link migration after replacing the %s file',
+  side => {
+    const { options } = completedHardLink()
+    fs.unlinkSync(options[side])
+    write(options[side], 'replacement')
+    expect(() => migrateWorkbenchDataEntry(options)).toThrow('conflict')
+    expect(fs.readFileSync(options[side], 'utf8')).toBe('replacement')
+    expect(fs.readFileSync(options[side === 'source' ? 'target' : 'source'], 'utf8')).toBe(
+      'original'
+    )
+  }
+)
+
+test.each(['missing', 'incomplete', 'different-identity'])(
+  'rejects a completed hard-link pair with a %s journal',
+  state => {
+    const { options, journal } = completedHardLink()
+    if (state === 'missing') fs.unlinkSync(options.journal)
+    else {
+      const value =
+        state === 'incomplete'
+          ? { ...journal, completed: undefined }
+          : { ...journal, inode: (BigInt(journal.inode) + 1n).toString() }
+      fs.writeFileSync(options.journal, JSON.stringify(value))
+    }
+    expect(() => migrateWorkbenchDataEntry(options)).toThrow('conflict')
+    expect(fs.readFileSync(options.source, 'utf8')).toBe('original')
+    expect(fs.readFileSync(options.target, 'utf8')).toBe('original')
+  }
+)
+
 test('moves browser partitions, preferences, logs and updater cache before stores open', () => {
   const source = join(root, 'appData/app')
   const desktop = join(root, 'workbench/wework/app')

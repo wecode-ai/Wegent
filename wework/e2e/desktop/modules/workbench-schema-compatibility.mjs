@@ -128,6 +128,31 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       assert.notEqual(freshPrepared.WEGENT_CODEX_HOME, path.join(freshExecutorHome, 'codex'));
       assert.equal(await fs.realpath(path.join(freshExecutorHome, 'codex')), await fs.realpath(freshPrepared.WEGENT_CODEX_HOME));
       assert.deepEqual(await fs.readdir(freshPrepared.WEGENT_CODEX_HOME), []);
+      if (process.platform === 'win32') {
+        // Reproduce an installation that already completed migration with a file hard link.
+        const source = path.join(freshExecutorHome, 'app-ipc.addr');
+        const target = path.join(freshPrepared.WEGENT_EXECUTOR_HOME, 'app-ipc.addr');
+        const state = path.join(freshPrepared.WEGENT_EXECUTOR_HOME, 'migrations', 'executor-data-v1');
+        const journal = path.join(state, Buffer.from('app-ipc.addr').toString('hex') + '.json');
+        await fs.writeFile(target, 'synthetic-ipc-address');
+        await fs.link(target, source);
+        const identity = await fs.stat(target, { bigint: true });
+        const record = JSON.stringify({ source, target, journal, version: 1, directory: false,
+          completed: true, device: identity.dev.toString(), inode: identity.ino.toString() });
+        await fs.writeFile(journal, record);
+        await fs.writeFile(path.join(state, 'entries.json'), JSON.stringify(['app-ipc.addr']));
+        for (let restart = 0; restart < 2; restart++) {
+          await prepareWorkbenchEnvironment({
+            environment: { HOME: freshHome, USERPROFILE: freshHome, PATH: input.path,
+              SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
+              WEWORK_EXECUTOR_PATH: input.executor },
+            metadata, homeDirectory: freshHome,
+          });
+          assert.equal(await fs.readFile(journal, 'utf8'), record);
+          assert.equal(await fs.readFile(source, 'utf8'), 'synthetic-ipc-address');
+          assert.equal((await fs.stat(source, { bigint: true })).ino, identity.ino);
+        }
+      }
       const home = path.join(input.root, 'must-remain-absent');
       const environment = { PATH: input.path, HOME: home, WEWORK_EXECUTOR_PATH: input.executor };
       await assertExecutorWorkbenchCompatibility(environment);
@@ -202,6 +227,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
         packagedFallbackPreservesSharedComponentIndex: true,
         developmentHomeIsolatedWithNativeAuthLink: true,
         emptyCodexHomeMigratedWithoutCredentials: true,
+        completedFileHardlinksPreserved: process.platform === 'win32' ? true : undefined,
       }));
       app.exit(0);
     })().catch(error => { console.error(error.stack); app.exit(1); });

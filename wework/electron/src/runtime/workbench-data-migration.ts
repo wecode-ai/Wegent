@@ -179,6 +179,12 @@ export function migrateWorkbenchDataEntry(options: EntryMigration): void {
       return
     }
   }
+  // Windows installations may already have published file bridges as hard links.
+  // Accept only completed, journal-owned aliases of the exact same file; never
+  // adopt two independent files or overwrite an atomically replaced destination.
+  if (!journal.directory && journal.completed && owns(source, journal) && owns(target, journal)) {
+    return
+  }
   // SQLite may remove both an old sidecar alias and its migrated destination after use.
   // Only a previously published file bridge can be recreated without the initial inode.
   if (!original && journal.completed && !journal.directory) {
