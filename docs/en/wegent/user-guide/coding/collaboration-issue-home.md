@@ -24,12 +24,12 @@ The `collaboration-local-agent-dispatch` desktop regression checks that the owne
 
 ## Work on an Issue assigned to me
 
-When a native cloud project Issue is assigned directly to one member, they can open it from **Collaboration → My Work → Assigned to me** or the project board. Wework sends a desktop notification when another member assigns it. This workflow does not apply to external task sources or Issues owned by robots or collaboration groups.
+When a native cloud project Issue is assigned directly to one member, they can open it from **Collaboration → Inbox** or the project board. Wework sends a desktop notification when another member assigns it. This workflow does not apply to external task sources or Issues owned by robots or collaboration groups.
 
 1. Select **Start work** to move the Issue to **In progress**. The only required input is **Work result**; comments and attachments remain optional.
 2. If useful, select **Ask AI for help** to create a linked task. AI produces a draft but never submits the Issue for you. Select **Use draft**, then check and edit the result.
 3. Select **Submit for review** and confirm. The Issue moves to **Pending review**, and the result is saved in the project conversation. You can also fill in the result directly without using AI.
-4. The original assigner can find the Issue under **My Work → To review** and choose **Accept work** or **Request changes**. A reason is needed only when requesting changes. If the original assigner cannot review, a project Owner or Maintainer can do so.
+4. The original assigner can find the Issue under **Inbox** and choose **Accept work** or **Request changes**. A reason is needed only when requesting changes. If the original assigner cannot review, a project Owner or Maintainer can do so.
 5. Acceptance moves the Issue to **Completed**. Requested changes return it to **In progress** so the assignee can revise the existing result and submit again.
 
 These actions record status history and project activity and notify the relevant members. Reassignment clears the previous review result. Use these actions to advance the status of human-owned work. **Human processing** in Project settings explains the workflow, reviewer, and AI draft behavior; it does not introduce another set of rules to fill in.
@@ -57,3 +57,11 @@ Archiving a parent Issue also archives its child Issues so the active task tree 
 Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only in the test Executor home. Failures retain runner logs; tests do not skip or retry to hide failures.
 
 `pnpm --filter wework e2e:desktop --segment collaboration-issue-archive` uses a real local project to verify that incomplete Issues cannot be archived, along with single archive and restore, batch archive, and archive-drawer updates.
+
+## Web project views
+
+Projects support Board, Calendar, Gantt, Table, Files, and Project settings. Calendar and Gantt selections persist in the URL across reloads and opening or closing Issue details. Project board cards and their drag previews display no unread dot or unread highlight.
+
+The collaboration sidebar no longer includes My Work or Run Center. Their former URLs return to collaboration home. Open Issues that need action or review from Inbox or the project board.
+
+Web regression: `pnpm --dir frontend exec playwright test collaboration/collaboration-project-views.spec.ts --project=chromium`. The existing Chromium CI suite includes this file. It uses real workspaces, projects, and unread Issues created by another member, then archives its fixtures.
