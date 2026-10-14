@@ -360,6 +360,12 @@ registering request listeners before sending with the shared 30-second model-req
 The stream-recovery scenario selects its registered fixture model before the first send;
 the composer appearing does not establish model-catalog readiness. It still verifies that
 streaming continues during renderer reload and restores the complete output.
+The overload cancellation phase selects its fixture model independently for the new conversation.
+Action execution and result acknowledgement are separate: an acknowledgement failure must not
+produce a fabricated failed-action result. E2E Electron logs retain loopback request paths and
+network error codes without headers or query parameters. Windows failure artifacts include
+`windows-network-diagnostics.json` with TCP state and process connection counts, excluding addresses,
+to diagnose Winsock resource exhaustion.
 Desktop fixtures bind the workspace root to their temporary Home and remove other inherited
 workspace path overrides, avoiding stale test or personal worktrees. Turn preparation failures
 record their error code and reason instead of leaving only a UI timeout.

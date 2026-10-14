@@ -304,6 +304,11 @@ Windows 同时保留 `electron.log`，用于定位 renderer 连接之前的原�
 并使用共享的 30 秒模型请求时限。
 流恢复场景在首次发送前显式选择已注册的 fixture 模型；编辑器出现不代表模型目录已就绪。
 模型选择完成后，仍验证流式回复在 renderer 重载期间继续执行并恢复完整输出。
+过载恢复场景的新会话取消阶段也单独选择 fixture 模型，不继承上一会话的模型状态。
+动作执行与结果回传分别记录：回传失败不能再次发送伪造的动作失败结果。
+E2E 的 Electron 日志保留 loopback 请求的网络错误码和路径，不记录请求头或查询参数。
+Windows 失败产物中的 `windows-network-diagnostics.json` 只记录 TCP 状态与进程的连接数量，
+用于定位 Winsock 资源不足，不包含连接地址。
 
 Executor 在创建 Tokio 运行时之前配置回环地址的 `NO_PROXY`，避免连接期间在异步线程中
 修改进程环境。启动场景验证 Executor 先就绪、Core DSH 后启动，并确认实际监听端口有效。

@@ -714,6 +714,20 @@ function registerDshWindowLabel(contents: WebContents, label: string): void {
 }
 
 function installDshWindowLabelHeaders(): void {
+  if (process.env.VITE_WEWORK_E2E === 'true') {
+    session.defaultSession.webRequest.onErrorOccurred(
+      { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
+      details => {
+        console.error('[desktop-e2e-network-error]', {
+          at: new Date().toISOString(),
+          path: new URL(details.url).pathname,
+          method: details.method,
+          error: details.error,
+          webContentsId: details.webContentsId,
+        })
+      }
+    )
+  }
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const label =
       typeof details.webContentsId === 'number'

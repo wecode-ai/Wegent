@@ -3179,9 +3179,30 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       }
       const command = (await response.json()) as DesktopControlCommand
       await postDesktopControlStarted(url, command, clientId)
+      let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
-        await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
+        result = { id: command.id, clientId, ok: true, value }
+      } catch (error) {
+        result = {
+          id: command.id,
+          clientId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
+      try {
+        await postDesktopControlResult(url, result)
+      } catch (error) {
+        console.error('[Wework] Desktop E2E result acknowledgement failed:', {
+          commandId: command.id,
+          action: command.action,
+          actionSucceeded: result.ok,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        throw error
+      }
+      if (result.ok) {
         if (command.action === 'closeMainWindowToTray') {
           await invokeDesktopHost('e2e.hideMainWindow')
         } else if (command.action === 'requestMainWindowClose') {
@@ -3196,13 +3217,6 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           window.location.reload()
           return
         }
-      } catch (error) {
-        await postDesktopControlResult(url, {
-          id: command.id,
-          clientId,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        })
       }
       commandRequest = pollForCommand()
     } catch (error) {

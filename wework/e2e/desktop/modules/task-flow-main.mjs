@@ -132,6 +132,7 @@ import {
 } from './resilience-flows.mjs'
 
 import { matrixCaseId } from './response-protocol.mjs'
+import { collectWindowsNetworkDiagnostics } from './windows-network-diagnostics.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -4491,6 +4492,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     testFailed = true
+    const networkDiagnostics = collectWindowsNetworkDiagnostics()
+    if (networkDiagnostics) {
+      await writeFile(
+        join(resultDir, 'windows-network-diagnostics.json'),
+        `${JSON.stringify(networkDiagnostics, null, 2)}\n`,
+        'utf8'
+      )
+    }
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,

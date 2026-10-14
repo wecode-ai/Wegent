@@ -8,9 +8,54 @@ import {
 afterEach(() => {
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('Electron desktop E2E automation', () => {
+  test('does not turn an acknowledgement failure into a failed UI action', async () => {
+    const button = document.createElement('button')
+    button.dataset.testid = 'control-acknowledgement-button'
+    const clicked = vi.fn()
+    button.onclick = clicked
+    document.body.append(button)
+    const results: Array<{ ok: boolean }> = []
+    let polls = 0
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        polls += 1
+        if (polls > 1) return new Promise<Response>(() => {})
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'acknowledgement-click',
+              action: 'click',
+              selector: '[data-testid="control-acknowledgement-button"]',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) {
+        results.push(JSON.parse(String(options?.body)))
+        return Promise.reject(new TypeError('Failed to fetch'))
+      }
+      return Promise.resolve(new Response('{}'))
+    })
+    void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    try {
+      await vi.waitFor(() => expect(polls).toBe(2))
+      expect(clicked).toHaveBeenCalledOnce()
+      expect(results).toHaveLength(1)
+      expect(results[0].ok).toBe(true)
+      expect(console.error).toHaveBeenCalledWith(
+        '[Wework] Desktop E2E result acknowledgement failed:',
+        expect.objectContaining({ action: 'click', actionSucceeded: true })
+      )
+    } finally {
+      button.remove()
+    }
+  })
+
   test('acknowledges a completed action before polling for another command', async () => {
     const button = document.createElement('button')
     button.dataset.testid = 'control-ordering-button'
