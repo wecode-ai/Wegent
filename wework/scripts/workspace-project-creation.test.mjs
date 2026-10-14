@@ -3,6 +3,7 @@ import { test } from 'vitest'
 import {
   openDirectProjectCreation,
   openProjectAgentCreator,
+  expandCollaborationWorkspace,
 } from '../e2e/desktop/modules/workspace-flows.mjs'
 
 function projectCreationControl({ menuTrigger = false, menuCount = 0, dialogError } = {}) {
@@ -102,4 +103,40 @@ test('does not open an Agent form when the creation choice is unavailable', asyn
     error => error === failure
   )
   assert.equal(calls.length, 2)
+})
+
+test.each(['true', 'false'])(
+  'ensures a workspace is open from its initial aria-expanded=%s state',
+  async expanded => {
+    const calls = []
+    const control = {
+      async command(action, selector, options) {
+        calls.push({ action, selector, options })
+        if (action === 'getAttribute') return expanded
+      },
+    }
+    const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
+    await expandCollaborationWorkspace(control, toggle)
+    assert.equal(calls.filter(call => call.action === 'click').length, expanded === 'false' ? 1 : 0)
+    assert.deepEqual(calls.at(-1), {
+      action: 'waitFor',
+      selector: `${toggle}[aria-expanded="true"]`,
+      options: { visible: true, timeoutMs: 10000 },
+    })
+  }
+)
+
+test('rejects a workspace toggle without a declared expanded state', async () => {
+  const calls = []
+  const control = {
+    async command(action) {
+      calls.push(action)
+      if (action === 'getAttribute') return ''
+    },
+  }
+  await assert.rejects(
+    expandCollaborationWorkspace(control, '[data-testid="workspace-toggle"]'),
+    /must expose its expanded state/
+  )
+  assert.ok(!calls.includes('click'))
 })

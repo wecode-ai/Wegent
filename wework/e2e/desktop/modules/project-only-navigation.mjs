@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { expandCollaborationWorkspace } from './workspace-flows.mjs'
 
 export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
   let backendUrl = ''
@@ -120,10 +121,6 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
         )
       }
       await assertParent()
-      await control.command(
-        'click',
-        scoped(`[data-testid="collaboration-workspace-toggle-${workspace.id}"]`)
-      )
       for (const project of projects.slice(0, 2)) {
         await control.command(
           'click',
@@ -140,10 +137,16 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs }) {
           scoped('[data-testid="collaboration-workspace-nav-projects"]')
         )
         await assertParent()
-        await control.command(
-          'click',
-          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`)
+        await expandCollaborationWorkspace(
+          control,
+          scoped(`[data-testid="collaboration-workspace-toggle-${workspace.id}"]`),
+          uiTimeoutMs
         )
+        const projectSelector = scoped(
+          `[data-testid="collaboration-workspace-project-${project.id}"]`
+        )
+        await control.command('waitFor', projectSelector, { visible: true, timeoutMs: uiTimeoutMs })
+        await control.command('click', projectSelector)
         await control.command('waitFor', scoped('[data-testid="cloud-project-header"]'), {
           text: project.name,
           timeoutMs: uiTimeoutMs,

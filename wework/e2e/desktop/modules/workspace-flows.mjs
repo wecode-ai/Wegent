@@ -101,6 +101,26 @@ export async function selectCollaborationDomain(control, contentSelector, domain
   )
 }
 
+export async function expandCollaborationWorkspace(
+  control,
+  toggleSelector,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  await control.command('waitFor', toggleSelector, { visible: true, timeoutMs })
+  const expanded = await control.command('getAttribute', toggleSelector, {
+    value: 'aria-expanded',
+  })
+  assert.ok(
+    expanded === 'true' || expanded === 'false',
+    'A workspace toggle must expose its expanded state'
+  )
+  if (expanded === 'false') await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="true"]`, {
+    visible: true,
+    timeoutMs,
+  })
+}
+
 export async function waitForTestIdByText(
   control,
   contentSelector,

@@ -532,11 +532,14 @@
       "evidence": [
         ".live-architecture/evidence/collaboration-pr-integration-20261014.md",
         ".live-architecture/evidence/project-only-navigation-20261014.md",
+        ".live-architecture/evidence/project-only-navigation-ci-repair-20261014.md",
         "backend/tests/api/test_collaboration_permission_contract.py",
         "backend/tests/test_collaboration_permission_guard.py",
         "docs/zh/wegent/developer-guide/collaboration-permissions.md",
         "packages/collaboration/src/platform/CollaborationPlatformApp.test.tsx",
-        "wework/e2e/desktop/modules/project-only-navigation.mjs"
+        "wework/e2e/desktop/modules/project-only-navigation.mjs",
+        "wework/e2e/desktop/modules/workspace-flows.mjs",
+        "wework/scripts/workspace-project-creation.test.mjs"
       ],
       "id": "arch://wegent/test/94f7802d",
       "planes": [
@@ -714,5 +717,5 @@
     }
   ],
   "plane": null,
-  "revision": "A00000014"
+  "revision": "A00000015"
 }
