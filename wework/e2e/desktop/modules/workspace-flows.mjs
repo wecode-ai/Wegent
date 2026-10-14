@@ -231,28 +231,20 @@ export async function selectCloudAgentModel(
   )
 }
 
-export async function openProjectAgentCreator(control, addSelector, timeoutMs) {
+export async function openProjectAgentCreator(
+  control,
+  addSelector,
+  timeoutMs,
+  editorTestId = 'cloud-project-chat-agent-editor'
+) {
   await control.command('clickWhenEnabled', addSelector, { timeoutMs })
-  const editorSelector = '[data-testid="cloud-project-chat-agent-editor"]'
-  const modeSelectors = [
-    '[data-testid="project-agent-mode-create-card"]',
-    '[data-testid="project-agent-mode-create"]',
-  ]
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < timeoutMs) {
-    if (Number(await control.command('getElementCount', editorSelector)) > 0) {
-      return
-    }
-    for (const modeSelector of modeSelectors) {
-      if (Number(await control.command('getElementCount', modeSelector)) > 0) {
-        await control.command('click', modeSelector)
-        await control.command('waitFor', editorSelector, { timeoutMs })
-        return
-      }
-    }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  throw new Error('The project Agent creator did not open')
+  const createMode = '[data-testid="project-agent-mode-create-card"]'
+  await control.command('waitFor', createMode, { visible: true, timeoutMs })
+  await control.command('click', createMode)
+  await control.command('waitFor', `[data-testid="${editorTestId}"]`, {
+    visible: true,
+    timeoutMs,
+  })
 }
 
 export async function configureFirstProjectExecutionEnvironment(

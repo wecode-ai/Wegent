@@ -9,6 +9,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
 import {
   authHeaders,
   clearToolScenario,
@@ -165,6 +166,8 @@ test.describe('Collaboration agent execution', () => {
   }, testInfo) => {
     expect(project?.id).toBeTruthy()
     const projectId = project!.id
+    await page.goto(`/collaboration/workspaces/${workspace!.id}/projects/${projectId}`)
+    await initializeProjectExecutionEnvironment(page)
     const agent = await createProjectAgentThroughUi(page, request, projectId)
     const agentCase: AgentCase = {
       agent,

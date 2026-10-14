@@ -561,10 +561,14 @@
     {
       "active": true,
       "evidence": [
+        ".live-architecture/evidence/pr3910-agent-flow-20261014.md",
         ".live-architecture/evidence/pr3910-ci-repair-20261014.md",
         "backend/tests/api/test_collaboration_permission_resources.py",
+        "frontend/e2e/tests/collaboration/collaboration-agent-execution.spec.ts",
         "frontend/e2e/utils/collaboration-test-support.ts",
         "packages/collaboration/src/issue-detail/IssueProjectChatThread.test.tsx",
+        "wework/e2e/desktop/modules/board-reply-model.mjs",
+        "wework/e2e/desktop/modules/workspace-flows.mjs",
         "wework/scripts/workspace-project-creation.test.mjs"
       ],
       "id": "arch://wegent/test/ci3910-creation-e27a",
@@ -704,5 +708,5 @@
     }
   ],
   "plane": null,
-  "revision": "A00000012"
+  "revision": "A00000013"
 }

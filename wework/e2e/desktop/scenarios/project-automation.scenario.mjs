@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   openDirectProjectCreation,
+  openProjectAgentCreator,
   inProjectCreateDialog,
   selectCloudAgentModel,
   selectCollaborationDomain,
@@ -333,12 +334,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           scoped('[data-testid="collaboration-project-settings-agents"][aria-current="page"]'),
           { timeoutMs: uiTimeoutMs }
         )
-        await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-          timeoutMs: uiTimeoutMs,
-        })
+        await openProjectAgentCreator(
+          control,
+          scoped('[data-testid="project-agent-add"]'),
+          uiTimeoutMs,
+          'wework-agent-resource-creator'
+        )
         const agentDialogSnapshot = JSON.parse(
           await control.command('snapshot', '[data-testid="wework-agent-resource-creator"]')
         )

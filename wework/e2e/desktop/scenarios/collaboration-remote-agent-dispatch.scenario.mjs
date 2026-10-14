@@ -27,6 +27,7 @@ import {
 } from '../modules/shared.mjs'
 import {
   openDirectProjectCreation,
+  openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
@@ -169,10 +170,12 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
 
 async function createAgent(control, request, projectId, timeoutMs, environmentId) {
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+  await openProjectAgentCreator(
+    control,
+    scoped('[data-testid="project-agent-add"]'),
     timeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', { timeoutMs })
+    'wework-agent-resource-creator'
+  )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: AGENT })
   await selectCloudAgentModel(control, request, MODEL, timeoutMs, environmentId)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {

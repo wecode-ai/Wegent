@@ -16,6 +16,7 @@ import {
 import { selectE2EModel } from '../modules/shared.mjs'
 import {
   openDirectProjectCreation,
+  openProjectAgentCreator,
   selectCloudAgentModel,
   selectCollaborationDomain,
   waitForTestIdByText,
@@ -205,12 +206,12 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
 }
 
 async function createAgent(control, request, projectId, name, prompt, uiTimeoutMs) {
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-    timeoutMs: uiTimeoutMs,
-  })
+  await openProjectAgentCreator(
+    control,
+    scoped('[data-testid="project-agent-add"]'),
+    uiTimeoutMs,
+    'wework-agent-resource-creator'
+  )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: name })
   await selectCloudAgentModel(control, request, MODEL, uiTimeoutMs)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', { value: prompt })

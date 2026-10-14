@@ -13,6 +13,7 @@ import {
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   openDirectProjectCreation,
+  openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
   selectCloudAgentModel,
@@ -210,12 +211,12 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
 
 async function addAgent(control, request, projectId, name, prompt, timeoutMs, environmentId) {
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+  await openProjectAgentCreator(
+    control,
+    scoped('[data-testid="project-agent-add"]'),
     timeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-    timeoutMs,
-  })
+    'wework-agent-resource-creator'
+  )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', {
     value: name,
   })
