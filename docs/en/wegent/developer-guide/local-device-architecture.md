@@ -80,6 +80,12 @@ The Electron layer does not retain an event journal, generate sequences, or impl
 
 Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend Socket.IO channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App and core DSH over the local App IPC endpoint and Backend over Socket.IO. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
 
+### Original Codex Model Catalog
+
+Wework model routing, Catalog editing, and save validation share one original Catalog baseline. A configured readable custom upstream supplies `/models`; otherwise the executor exports the complete bundled Catalog with the current Codex binary's `debug models --bundled` command and caches successful results for its process lifetime. Additional Wework models fill missing slugs without replacing original Codex fields.
+
+User changes are stored as field differences in the device-local `capabilities/model-catalog-overrides.json`; restoring defaults removes those differences. Routing applies them to the original baseline before deriving vision delegation entries. Export failures report an error instead of substituting an incomplete Wework model list.
+
 ### Cross-Component Request Log Correlation
 
 Wework generates a request ID when a request enters a cross-process or cross-service boundary and reuses it in downstream logs for that request. This field diagnoses one request only. It does not replace task IDs, device IDs, thread IDs, or OpenTelemetry trace IDs, and it must not be used to infer business state.

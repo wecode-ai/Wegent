@@ -80,6 +80,12 @@ Electron 层不保存事件日志、不生成序号，也不实现重放或合�
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本地 app IPC 端点服务 Wework App 和 core DSH，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
+### Codex 原始模型 Catalog
+
+Wework 的模型路由、Catalog 编辑和保存校验共用同一份原始 Catalog 基线。配置了可读取的自定义上游时使用上游 `/models`；否则通过当前 Codex 二进制的 `debug models --bundled` 导出完整内置 Catalog，并在 executor 进程内缓存成功结果。Wework 的额外模型只按 slug 补入缺失条目，不覆盖 Codex 原始字段。
+
+用户修改以字段差异保存在设备本地的 `capabilities/model-catalog-overrides.json`，恢复默认会删除对应差异。路由在原始基线上应用差异后再生成视觉委托条目。导出失败会明确报错，不会用不完整的 Wework 模型清单替代原始 Catalog。
+
 ### 跨组件请求日志关联
 
 Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在同一次请求的后续日志中复用它。该字段只用于诊断单次请求，不替代任务 ID、设备 ID、线程 ID 或 OpenTelemetry trace ID，也不能用于推断业务状态。
