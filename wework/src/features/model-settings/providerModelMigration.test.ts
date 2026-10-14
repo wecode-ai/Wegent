@@ -13,13 +13,15 @@ import {
 import { replaceProviderModelConfigs } from './providerModelState'
 
 const invoke = vi.hoisted(() => vi.fn())
+const subscribe = vi.hoisted(() => vi.fn())
 const trace = vi.hoisted(() =>
   vi.fn(async (_phase: string, operation: () => Promise<unknown>) => operation())
 )
 vi.mock('@/lib/desktop-startup-phase', () => ({ traceDesktopStartupPhase: trace }))
+vi.mock('@/lib/runtime-environment', () => ({ isElectronRuntime: () => true }))
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: invoke,
-  subscribeDesktopHostEvents: vi.fn(),
+  subscribeDesktopHostEvents: subscribe,
 }))
 let providers: ModelProvider[]
 let revision: string
@@ -33,6 +35,7 @@ beforeEach(() => {
   failSave = false
   mismatch = false
   invoke.mockReset()
+  subscribe.mockClear()
   trace.mockClear()
   invoke.mockImplementation(async (method, args) => {
     if (method === 'modelConfiguration.read')
@@ -50,6 +53,120 @@ beforeEach(() => {
       }
     throw new Error(`Unexpected method: ${method}`)
   })
+})
+
+describe('Initial storage restoration barrier', () => {
+  async function isolatedConfiguration() {
+    vi.resetModules()
+    return import('./providerModelConfiguration')
+  }
+
+  function heldRestore() {
+    let resolve!: () => void
+    let reject!: (error: Error) => void
+    const ready = new Promise<void>((success, failure) => {
+      resolve = success
+      reject = failure
+    })
+    return { ready, resolve, reject }
+  }
+
+  test('reads the independent host configuration while restoration is held without publishing', async () => {
+    const config = await isolatedConfiguration()
+    const restore = heldRestore()
+    const initializing = config.initializeProviderModelConfiguration(restore.ready)
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('modelConfiguration.read'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(invoke.mock.calls.map(([method]) => method)).toEqual(['modelConfiguration.read'])
+    expect(config.getProviderConfigurationState()).toEqual({ snapshot: null, error: null })
+    saveLocalModelConfig({ id: 'restored', modelId: 'restored', baseUrl: 'https://relay.example' })
+    restore.resolve()
+    await initializing
+    expect(invoke.mock.calls.map(([method]) => method)).toEqual([
+      'modelConfiguration.read',
+      'modelConfiguration.save',
+      'modelConfiguration.read',
+      'modelConfiguration.runtime',
+    ])
+    expect(config.getProviderConfigurationState().snapshot?.revision).toBe('saved')
+    expect(listLegacyLocalModelConfigs()).toEqual([])
+  })
+
+  test('observes an early host rejection but publishes its existing error only after restoration', async () => {
+    const config = await isolatedConfiguration()
+    const restore = heldRestore()
+    invoke.mockRejectedValue(new Error('Read failed'))
+    const initializing = config.initializeProviderModelConfiguration(restore.ready)
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(config.getProviderConfigurationState().error).toBeNull()
+    restore.resolve()
+    await initializing
+    expect(config.getProviderConfigurationState().error).toBe('Read failed')
+    expect(invoke).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not migrate, invoke runtime, or publish when restoration fails', async () => {
+    const config = await isolatedConfiguration()
+    const restore = heldRestore()
+    const initializing = config.initializeProviderModelConfiguration(restore.ready)
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1))
+    const failure = new Error('Storage failed')
+    restore.reject(failure)
+    await expect(initializing).rejects.toBe(failure)
+    expect(subscribe).not.toHaveBeenCalled()
+    expect(invoke.mock.calls.map(([method]) => method)).toEqual(['modelConfiguration.read'])
+    expect(config.getProviderConfigurationState()).toEqual({ snapshot: null, error: null })
+  })
+
+  test('keeps a superseding reload behind the same restoration barrier', async () => {
+    const config = await isolatedConfiguration()
+    const restore = heldRestore()
+    let reads = 0
+    invoke.mockImplementation(async method => {
+      if (method === 'modelConfiguration.read')
+        return { revision: ++reads === 1 ? 'old' : 'new', providers: [], loadedAt: '' }
+      if (method === 'modelConfiguration.runtime') return { revision: 'new', models: [] }
+      throw new Error('Unexpected method')
+    })
+    const initializing = config.initializeProviderModelConfiguration(restore.ready)
+    const reloading = config.reloadProviderConfiguration()
+    await vi.waitFor(() => expect(reads).toBe(2))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(invoke.mock.calls.map(([method]) => method)).toEqual([
+      'modelConfiguration.read',
+      'modelConfiguration.read',
+    ])
+    expect(config.getProviderConfigurationState().snapshot).toBeNull()
+    restore.resolve()
+    await Promise.all([initializing, reloading])
+    expect(config.getProviderConfigurationState().snapshot?.revision).toBe('new')
+    expect(
+      invoke.mock.calls.filter(([method]) => method === 'modelConfiguration.runtime')
+    ).toHaveLength(1)
+  })
+
+  test.each(['save', 'choose'] as const)(
+    'holds %s until restored and preserves restoration failure identity',
+    async operation => {
+      const config = await isolatedConfiguration()
+      const restore = heldRestore()
+      const initializing = config.initializeProviderModelConfiguration(restore.ready)
+      const changing =
+        operation === 'save'
+          ? config.saveProviderConfiguration('first', [])
+          : config.chooseProviderConfiguration()
+      const outcome = changing.catch(error => error)
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(invoke.mock.calls.map(([method]) => method)).toEqual(['modelConfiguration.read'])
+      const failure = new Error('Storage failed')
+      restore.reject(failure)
+      expect(await outcome).toBe(failure)
+      await expect(initializing).rejects.toBe(failure)
+      expect(subscribe).not.toHaveBeenCalled()
+      expect(invoke.mock.calls.map(([method]) => method)).toEqual(['modelConfiguration.read'])
+    }
+  )
 })
 
 describe('Automatic legacy model migration', () => {

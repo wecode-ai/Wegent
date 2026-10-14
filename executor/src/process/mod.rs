@@ -48,6 +48,8 @@ pub(crate) use windows_batch::shell_command as windows_shell_command;
 
 pub(crate) mod debug_stdout;
 mod stream_diagnostics;
+#[cfg(any(windows, test))]
+mod windows_tree_diagnostics;
 use debug_stdout::line as debug_claude_stdout_line;
 #[cfg(test)]
 use debug_stdout::{
@@ -794,6 +796,7 @@ pub(crate) fn kill_windows_process_tree(pid: u32) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let process_id = pid;
     let pid = pid.to_string();
     let output = std::process::Command::new("taskkill")
         .args(["/PID", pid.as_str(), "/T", "/F"])
@@ -817,6 +820,10 @@ pub(crate) fn kill_windows_process_tree(pid: u32) -> Result<(), String> {
                 ("error", error.clone()),
                 ("stderr_kind", stderr_kind.to_owned()),
                 ("stderr_bytes", stderr_bytes.to_string()),
+                (
+                    "process_tree",
+                    windows_tree_diagnostics::capture_json(process_id),
+                ),
             ],
         );
     }

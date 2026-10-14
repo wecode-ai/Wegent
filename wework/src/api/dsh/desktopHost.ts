@@ -54,12 +54,15 @@ export async function invokeDesktopHost<Result>(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ capability, params }),
     })
-  const storageInitialization = capability === 'rendererStorage.initialize'
-  const response = await (storageInitialization
-    ? traceDesktopStartupPhase('renderer-storage-request', request)
-    : request())
-  const body = (await (storageInitialization
-    ? traceDesktopStartupPhase('renderer-storage-response-body', () => response.json())
+  const phases =
+    capability === 'rendererStorage.initialize'
+      ? (['renderer-storage-request', 'renderer-storage-response-body'] as const)
+      : capability === 'preferences.get'
+        ? (['preferences-request', 'preferences-response-body'] as const)
+        : null
+  const response = await (phases ? traceDesktopStartupPhase(phases[0], request) : request())
+  const body = (await (phases
+    ? traceDesktopStartupPhase(phases[1], () => response.json())
     : response.json())) as {
     ok?: boolean
     result?: Result

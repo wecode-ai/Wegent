@@ -105,14 +105,19 @@ function renderStartupFailure(container: HTMLElement, error: unknown): void {
 const desktopStorageReady = (async () => {
   markDesktopStartupPhase('renderer-storage-initialize', 'started')
   try {
-    await traceDesktopStartupPhase(
+    const restored = traceDesktopStartupPhase(
       'renderer-storage-restore',
       initializeDesktopLocalStoragePersistence
     )
-    await traceDesktopStartupPhase(
-      'provider-model-initialize',
-      initializeProviderModelConfiguration
+    const models = traceDesktopStartupPhase('provider-model-initialize', () =>
+      initializeProviderModelConfiguration(restored)
+    ).then(
+      () => ({ status: 'fulfilled' as const }),
+      error => ({ status: 'rejected' as const, error })
     )
+    await restored
+    const result = await models
+    if (result.status === 'rejected') throw result.error
     markDesktopStartupPhase('renderer-storage-initialize', 'completed')
     return null
   } catch (error) {

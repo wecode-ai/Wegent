@@ -347,3 +347,23 @@ ARM renderer 存储恢复约 1874 毫秒：响应头等待 1006 毫秒、响应�
 [本轮正式 macOS x64](https://github.com/wecode-ai/Wegent/actions/runs/38491931903/job/115618996489) 最终构建及上传成功，启用原自定义 notarization，原联网 ticket 校验完成；上轮 -1005 未复现。成功日志不区分已存在 ticket 校验与新 Accepted/staple 分支，因此不宣称新提交已 Accepted。该工作流仅 ARM 执行正式包 E2E，x64 对应步骤 skipped，不能用构建成功代替场景验证。未另行重跑、增加尝试或绕过校验。
 
 插件清单 readInventory 的 readState 结果只用于 names 集合，但 readState.order 始终属于 manifest 已覆盖的 bundles/dependencies，故删除该读取及重复集合项，保留变更操作所需状态和顺序语义。真实磁盘 readFile spy 在旧实现复现同包读取两次；删除后每包只读一次、状态文件零次，该 fixture 总读取 9→5。两组相关测试 30 项、Electron 类型、lint 和格式通过。本地插件 E2E 构建早于此删除，不作为它的真实应用证据；后续 pre-push/CI 覆盖。原 CI 该阶段仅约 11/25/43 毫秒，不能声称此删除解决多秒启动超时。
+
+### `9491003f4` 验证与首次模型读取并行
+
+本轮 Tests、Lint、Auth、平台 E2E 和策略检查通过。Wework 两组完整日志共 8883 项通过：Electron 1143、renderer 3856/3884，四项既有 skip 未增加，无断言错误或未处理异常。Linux 桌面 35 分片中 34 成功，仅 [Core19](https://github.com/wecode-ai/Wegent/actions/runs/38501340313/job/115651119683) 严格冷启动 5897 毫秒失败，后续旧版、缓存及模板阶段未执行。页面加载及加载后同一主 renderer 的 CPU 增量为 1150/710 毫秒，browser 为 360/490、utility 为 130/210、第二 renderer 为 170/130；没有 GPU 记录，不凭进程类别认定第二 renderer 是启动页。
+
+[正式 ARM](https://github.com/wecode-ai/Wegent/actions/runs/38501349527/job/115648903726) 严格冷启动 12081 毫秒失败，原发布、组件更新、应用更新三个场景通过。页面加载开始至实际就绪的 4552 毫秒内，相同五个 Electron PID 累计 CPU 增量合计 4507 毫秒，主 renderer 为 2410 毫秒。系统三核累计非 idle 约 98.5%，不能据此识别其余 CPU 消耗来源或扣除预算。artifact 上传的 ENTRYNOTSUPPORTED 是非阻塞 ZIP 警告，随后上传和 Prune 均成功，不作为进程清理失败。
+
+[Windows 第 16 组](https://github.com/wecode-ai/Wegent/actions/runs/38501340313/job/115655648564) 五场景通过，执行流恢复 17 秒通过；plugin-development 初始 bundled upgrades 未就绪。日志链为自定义模型目录写入成功、显式 app-server restart、taskkill 退出 128 且 child_state=running、reconciliation 失败。本次失败 session 没有 connectors.clear，不能把无变化 clear 修复外推为此链已解决。278 字节 stderr 只保留固定 termination-failed 分类，尚不能判断具体原生 Reason。[Windows 第 19 组](https://github.com/wecode-ai/Wegent/actions/runs/38501340313/job/115655648655) 严格冷启动 14175 毫秒失败，旧版后续阶段未执行。
+
+本轮 Linux renderer 存储恢复约 302 毫秒，随后模型宿主读取约 377 毫秒；宿主读取只依赖原生配置文件及安全存储，与 renderer 旧版 localStorage 恢复独立。因此仅提前发起宿主只读请求，迁移、运行时投影、版本校验、旧条目移除和发布仍等待原存储恢复。保存和文件选择入口同样等待恢复；恢复失败保留原启动错误界面，不发布未恢复目录。复用原初始化及 reload 代际，不新增缓存、RPC 或就绪条件。六项新增用例在旧实现受控失败；修改后迁移 12 项、adapter 9 项、偏好/存储 26 项共 47 项通过，renderer 类型、lint、格式与独立审查通过。此并行最多移除这两个独立操作的串行重叠，不代表跨平台五秒目标已达成；尤其不据此解释 Windows 新增偏好等待。
+
+当前源码重新构建的原注册 dsh-runtime-upgrade E2E 单次运行，严格冷启动 10667 毫秒失败，未重跑；旧版兼容阶段被原断言阻断。真实 renderer 日志证实存储恢复与宿主读取同时开始，分别约 303/302.7 毫秒，随后迁移 0.1、runtime 14.6，总初始化 317.8 毫秒。此结果验证并行接线，不能当作严格启动或旧版兼容通过。原 finally 完成后所属进程为空，认证链接为零。
+
+为定位 Windows 新偏好等待，沿用现 rendererStorage 诊断，仅为 preferences.get 增加固定 request 与 response-body 两阶段。保留原 fetch、JSON 解码、Provider 发布和错误对象，不输出 capability 参数或响应内容；未知请求不新增诊断。三项新增用例在旧实现受控失败，修改后 transport/startup-phase 共 30 项通过，renderer 类型、lint 和格式通过。该诊断晚于上述本地 E2E 构建，未据该包声称真实验证，下一轮 CI 才提供实际阶段数据。
+
+本轮 Windows 19 分片最终 17 成功、仅第 16/19 组失败。第 18 组三个远程协作场景分别 4 分 33 秒、1 分 20 秒、1 分 22 秒通过，原断言不变，清理 65 项临时资源；没有遗漏其他失败分片。
+
+原生终止失败后新增一次只读进程快照及零超时状态查询，仅记录目标/相关 PID、父 PID、固定 running/exited/查询失败类别和 Win32 数字错误码或退出码；句柄均释放，不记录名称、路径、命令或 stderr 原文。不改 taskkill 参数、终止、等待、重试或原错误返回。快照及后续查询不能排除 PID 复用，不据此单独认定原进程树身份。四项纯关系/错误回归、Clippy、格式通过；同一生产模块及真实 Windows 子进程回归在 x86_64-pc-windows-msvc 下通过 cargo check --tests，但本机未执行 Windows 原生 API。原生第五项已纳入现有 Windows producer 兼容测试步骤，实际运行结果待下一轮 CI。
+
+最终复查补充：首轮 reload 完成后、注册原生事件订阅之前再确认恢复成功，恢复失败时 initializer 拒绝原错误且不启动事件轮询。三个失败边界用例明确断言零订阅，原四组共 47 项再次通过。上述真实应用构建先于此最后边界修正；该修正的本地证据为这些定向回归，不能把旧包结果当作最终源码完整应用验证。

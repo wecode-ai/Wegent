@@ -7,6 +7,8 @@ type DesktopStartupPhase =
   | 'renderer-storage-request'
   | 'renderer-storage-response-body'
   | 'renderer-storage-replace'
+  | 'preferences-request'
+  | 'preferences-response-body'
   | 'provider-model-initialize'
   | 'provider-model-read'
   | 'provider-model-migration'

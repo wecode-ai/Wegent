@@ -28,6 +28,7 @@ interface ProviderConfigurationState {
 let state: ProviderConfigurationState = { snapshot: null, error: null }
 const listeners = new Set<() => void>()
 let initialized: Promise<void> | null = null
+let storageRestored: Promise<void> = Promise.resolve()
 let reloadSequence = 0
 let latestReload: Promise<void> = Promise.resolve()
 let migrationWrite: Promise<unknown> | null = null
@@ -165,9 +166,16 @@ export async function reloadProviderConfiguration(): Promise<void> {
 
 async function loadProviderConfiguration(sequence: number): Promise<void> {
   try {
-    let snapshot = await traceDesktopStartupPhase('provider-model-read', () =>
-      invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
-    )
+    const [restored, read] = await Promise.allSettled([
+      storageRestored,
+      traceDesktopStartupPhase('provider-model-read', () =>
+        invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
+      ),
+    ])
+    // Startup owns restoration failures; never touch or publish an unrestored catalog.
+    if (restored.status === 'rejected') return
+    if (read.status === 'rejected') throw read.reason
+    let snapshot = read.value
     if (sequence !== reloadSequence) return
     if (snapshot.error) throw new Error(snapshot.error)
     const legacy = listLegacyLocalModelConfigs()
@@ -210,10 +218,12 @@ async function loadProviderConfiguration(sequence: number): Promise<void> {
 }
 
 /** Initialize the desktop configuration once and subscribe to native revision notifications. */
-export function initializeProviderModelConfiguration(): Promise<void> {
+export function initializeProviderModelConfiguration(restored?: Promise<void>): Promise<void> {
   if (!isElectronRuntime()) return Promise.resolve()
+  if (!initialized && restored) storageRestored = restored
   initialized ??= (async () => {
     await reloadProviderConfiguration()
+    await storageRestored
     subscribeDesktopHostEvents(event => {
       if (event.type === 'model-configuration.changed') void reloadProviderConfiguration()
     })
@@ -226,6 +236,7 @@ export async function saveProviderConfiguration(
   revision: string,
   providers: Array<ModelProvider | PublicModelProvider>
 ): Promise<void> {
+  await storageRestored
   await invokeDesktopHost('modelConfiguration.save', { revision, providers })
   await reloadProviderConfiguration()
   if (state.error) throw new Error(state.error)
@@ -233,6 +244,7 @@ export async function saveProviderConfiguration(
 
 /** Bind a selected file through the host and reload only when selection succeeds. */
 export async function chooseProviderConfiguration(): Promise<void> {
+  await storageRestored
   const result = await invokeDesktopHost('modelConfiguration.choose')
   if (result) await reloadProviderConfiguration()
 }
