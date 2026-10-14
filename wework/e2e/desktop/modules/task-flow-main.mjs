@@ -4552,17 +4552,29 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       'utf8'
     )
     try {
-      const [snapshot, composerDiagnostics, composerFocus, workbenchDebug] = await Promise.all([
+      const [
+        snapshot,
+        composerDiagnostics,
+        composerFocus,
+        workbenchDebug,
+        conversationDiagnostics,
+      ] = await Promise.all([
         control.command('snapshot', 'body', { timeoutMs: 5000 }),
         control.command('getComposerDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getComposerFocusSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getWorkbenchDebugSnapshot', 'body', { timeoutMs: 5000 }),
+        control.command('getConversationDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
       ])
       await Promise.all([
         writeFile(join(resultDir, 'ui-snapshot.json'), `${snapshot}\n`, 'utf8'),
         writeFile(join(resultDir, 'composer-diagnostics.json'), `${composerDiagnostics}\n`, 'utf8'),
         writeFile(join(resultDir, 'composer-focus.json'), `${composerFocus}\n`, 'utf8'),
         writeFile(join(resultDir, 'workbench-debug.json'), `${workbenchDebug}\n`, 'utf8'),
+        writeFile(
+          join(resultDir, 'conversation-diagnostics.json'),
+          `${conversationDiagnostics}\n`,
+          'utf8'
+        ),
       ])
     } catch {
       // Preserve the original test failure when the WebView can no longer answer diagnostics.

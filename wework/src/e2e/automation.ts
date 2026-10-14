@@ -30,6 +30,7 @@ import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
+  startConversationDiagnosticCapture,
 } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
 import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
@@ -2786,6 +2787,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return element.textContent?.trim() ?? ''
     }
     case 'clickWhenEnabled': {
+      startConversationDiagnosticCapture()
       await waitForDesktopControlElement({ ...command, enabled: true })
       const element = findDesktopControlElements(command.selector).find(
         desktopControlElementEnabled

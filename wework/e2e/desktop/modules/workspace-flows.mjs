@@ -615,6 +615,17 @@ const HARNESS_MILESTONE_SCREENSHOTS = new Set([
 ])
 
 async function captureVerificationScreenshot(control, name, selector = 'body') {
+  const conversationDiagnostics = await control.command(
+    'getConversationDiagnosticsSnapshot',
+    'body'
+  )
+  if (conversationDiagnostics !== 'null') {
+    await writeFile(
+      join(resultDir, `${name}.conversation-diagnostics.json`),
+      `${conversationDiagnostics}\n`,
+      'utf8'
+    )
+  }
   const screenshotMode = process.env.WEWORK_E2E_SCREENSHOTS
   if (screenshotMode === 'final' && !name.endsWith('04-task-completed-after-reopen.png')) {
     return null

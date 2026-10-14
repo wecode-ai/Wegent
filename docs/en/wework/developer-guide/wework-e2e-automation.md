@@ -639,6 +639,8 @@ Cloud Issue change notifications must invalidate an in-flight older board snapsh
 
 Platform E2E services must start etcd and MinIO before Milvus. The GitHub runner pulls and starts containers sequentially in configuration order. Placing MinIO after Milvus can leave its DNS name unavailable during Milvus initialization while later images are being pulled. Health checks run after all containers have started and cannot repair this startup ordering.
 
+Desktop E2E `clickWhenEnabled` starts the existing ten-second conversation layout diagnostic window. Milestone and failure artifacts retain `conversation-diagnostics` JSON with virtual ranges, message measurements, and scroll positions. These records contain no message text and do not change UI waits or business assertions. Compare them with `workbench-debug.json` when a completed message is missing from the rendered conversation.
+
 CI can run Wework E2E as a separate job:
 
 ```bash

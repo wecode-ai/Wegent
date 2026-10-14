@@ -559,6 +559,8 @@ const route = await app.route();
 
 平台 E2E 的 service 顺序必须先启动 etcd 和 MinIO，再启动 Milvus。GitHub runner 按配置顺序逐一拉取并启动容器；如果将 MinIO 放在 Milvus 后面，后续镜像拉取可能让 Milvus 在依赖 DNS 尚不存在时初始化并退出。健康检查在全部容器启动后才执行，不能修复这一启动顺序问题。
 
+桌面 E2E 的 `clickWhenEnabled` 会开启既有的 10 秒对话布局诊断窗口。阶段产物和失败产物保留 `conversation-diagnostics` JSON，记录虚拟列表范围、消息测量和滚动位置；诊断不包含消息正文，也不改变 UI 等待或业务断言。定位“消息状态已完成但正文未显示”时，应同时核对这些布局记录与 `workbench-debug.json`。
+
 CI 可以把 Wework E2E 作为独立 job：
 
 ```bash
