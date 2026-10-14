@@ -73,7 +73,7 @@ describe('project chat message ordering', () => {
   })
 
   it.each(['completed', 'failed', 'cancelled'] as const)(
-    'does not reopen a %s agent message with a late active acknowledgement',
+    'keeps the %s result in both acknowledgement delivery orders',
     status => {
       const terminal = { ...live, status }
       const lateAck = {
@@ -83,6 +83,7 @@ describe('project chat message ordering', () => {
         updatedAt: '2026-10-14T10:57:42Z',
       }
       expect(mergeProjectChatMessages([terminal], [lateAck])).toEqual([terminal])
+      expect(mergeProjectChatMessages([lateAck], [terminal])).toEqual([terminal])
     }
   )
 
@@ -95,6 +96,16 @@ describe('project chat message ordering', () => {
       ])
     }
   )
+
+  it('still ignores an older terminal snapshot after the terminal transition', () => {
+    const completed = { ...live, status: 'completed' as const }
+    const stale = {
+      ...completed,
+      content: 'Old result',
+      updatedAt: '2026-10-14T10:57:40Z',
+    }
+    expect(mergeProjectChatMessages([completed], [stale])).toEqual([completed])
+  })
 
   it('accepts a shorter nonempty streaming snapshot', () => {
     const replacement = { ...live, content: 'Live' }

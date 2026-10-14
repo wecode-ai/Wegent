@@ -165,18 +165,17 @@ export function mergeProjectChatMessages(
     }
     const order = compareIssueTimestamps(message.updatedAt, previous.updatedAt)
     const agent = previous.sender.type === 'agent' && message.sender.type === 'agent'
-    // Snapshots and request acknowledgements can arrive after live updates.
-    if (
-      order < 0 ||
-      (agent && isExecutionTerminal(previous.status) && !isExecutionTerminal(message.status))
-    ) {
+    const previousTerminal = isExecutionTerminal(previous.status)
+    const incomingTerminal = isExecutionTerminal(message.status)
+    const terminalTransition = agent && !previousTerminal && incomingTerminal
+    // Snapshots and acknowledgements can arrive after live updates. A turn's
+    // terminal result wins even when an acknowledgement has a later timestamp.
+    if ((order < 0 && !terminalTransition) || (agent && previousTerminal && !incomingTerminal)) {
       continue
     }
     // Active status projections carry empty placeholders, not content deletions.
     const content =
-      agent && !isExecutionTerminal(message.status) && !message.content
-        ? previous.content
-        : message.content
+      agent && !incomingTerminal && !message.content ? previous.content : message.content
     byId.set(message.messageId, { ...previous, ...message, content })
   }
   return Array.from(byId.values()).sort((left, right) => left.sequenceNumber - right.sequenceNumber)

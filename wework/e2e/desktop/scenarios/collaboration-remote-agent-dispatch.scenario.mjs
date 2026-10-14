@@ -372,6 +372,43 @@ async function verifyManualSessionReply(
     bindings.map(binding => [binding.device_id, binding.task_id]).sort(),
     'The reply created a new task instead of continuing the bound session'
   )
+  await waitForValue(
+    () => readProjectChatMessages(cloud, issueId, timeoutMs),
+    messages =>
+      messages.some(
+        message =>
+          message.messageId === replyId &&
+          message.status === 'completed' &&
+          message.content.trim() === CONTINUATION_RESULT
+      ),
+    'The completed reply was not persisted before refreshing its Issue',
+    timeoutMs
+  )
+  const completedIssue = await request(`/api/v1/loop-items/${issueId}`)
+  const refreshedTitle = `${completedIssue.title} · refreshed`
+  const refreshedIssue = await request(`/api/v1/loop-items/${issueId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ version: completedIssue.version, title: refreshedTitle }),
+  })
+  assert.ok(refreshedIssue.version > completedIssue.version)
+  assert.equal(refreshedIssue.status, completedIssue.status)
+  await waitForValue(
+    () => control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+    value => value === refreshedTitle,
+    'The Issue update did not refresh the open activity view',
+    timeoutMs
+  )
+  await control.command('waitFor', content, {
+    text: CONTINUATION_RESULT,
+    stableMs: 500,
+    timeoutMs,
+  })
+  assert.equal((await control.command('getText', content)).trim(), CONTINUATION_RESULT)
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="cloud-task-activity-execution-badge-${replyId}"]`),
+    { text: '已完成', stableMs: 500, timeoutMs }
+  )
   await control.command('scrollIntoView', content)
   await captureScreenshot(control, 'remote-agent-dispatch-04-manual-reply-completed.png', CONTENT)
 }
