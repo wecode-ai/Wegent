@@ -273,7 +273,8 @@ Linux CI 的插件开发分片通过 GDB 启动受 Electron 管理的 Executor�
 Windows 插件安装诊断还会记录 pnpm 操作前后的应用资源目录状态、目录链接目标和
 文件数量；静态资源读取失败时会记录父目录链接状态，用于定位资源缺失发生的阶段。
 Windows worktree 命令通过现有 `.git` 和 `commondir` 解析结果显式传入
-`GIT_COMMON_DIR`，让 checkout 子进程在加载仓库配置前找到共享对象目录。
+`GIT_COMMON_DIR`，让 checkout 子进程在加载仓库配置前找到共享对象目录；传给 Git 的路径
+先移除 Windows verbatim 前缀，避免 Git 拼接 `/config` 后形成无效的扩展路径。
 Windows 会话索引使用 `FileRenameInfoEx` 的 POSIX 替换语义发布新文件，保证旧读者仍能
 读取完整旧索引、新读者立即看到新索引。原生 CI 覆盖持有旧文件句柄时连续替换及长路径替换。
 

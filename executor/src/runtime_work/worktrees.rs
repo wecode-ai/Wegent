@@ -1179,7 +1179,9 @@ fn configure_git_common_dir(command: &mut Command, _path: &Path) {
     if let Some((_, _, common_dir)) = super::util::git_metadata_directories(_path) {
         // Git for Windows disables long paths until repository config is loaded.
         // Its checkout child must find shared objects before reading commondir.
-        command.env("GIT_COMMON_DIR", common_dir);
+        // Git appends slash-separated config paths, which verbatim Windows
+        // paths do not normalize. Pass the ordinary path to its path layer.
+        command.env("GIT_COMMON_DIR", strip_windows_verbatim_prefix(&common_dir));
     }
 }
 
@@ -2979,7 +2981,10 @@ mod tests {
         let worktree = root.path().join("managed/workspace");
         fs::create_dir_all(worktree.parent().unwrap()).unwrap();
 
-        add_git_worktree(&source, &worktree, None).unwrap();
+        // Production preflight canonicalizes paths, adding a verbatim prefix
+        // on Windows. Exercise that path through repository config discovery.
+        let repository = repository_info(&source).unwrap();
+        add_git_worktree(&repository.repo_root, &worktree, None).unwrap();
 
         assert!(
             source
@@ -2993,6 +2998,10 @@ mod tests {
             "base\n"
         );
         git_output(&worktree, &["status", "--porcelain"], None).unwrap();
+        assert_eq!(
+            repository_info(&worktree).unwrap().git_common_dir,
+            repository.git_common_dir
+        );
         remove_git_worktree(&worktree).unwrap();
         assert!(!worktree.exists());
     }
