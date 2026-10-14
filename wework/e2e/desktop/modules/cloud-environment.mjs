@@ -264,7 +264,6 @@ class LocalNevisSandboxService {
   }
 
   async start() {
-    this.port = await reservePort()
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => {
         if (response.headersSent) {
@@ -277,8 +276,9 @@ class LocalNevisSandboxService {
     })
     await new Promise((resolvePromise, reject) => {
       this.server.once('error', reject)
-      this.server.listen(this.port, '127.0.0.1', resolvePromise)
+      this.server.listen(0, '127.0.0.1', resolvePromise)
     })
+    this.port = this.server.address().port
     this.endpoint = `http://127.0.0.1:${this.port}`
   }
 
@@ -1703,4 +1703,9 @@ async function verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment) 
   )
 }
 
-export { RealCloudEnvironment, startRedisServer, verifyLocalExecutorUsesCloudSocketUrl }
+export {
+  LocalNevisSandboxService,
+  RealCloudEnvironment,
+  startRedisServer,
+  verifyLocalExecutorUsesCloudSocketUrl,
+}
