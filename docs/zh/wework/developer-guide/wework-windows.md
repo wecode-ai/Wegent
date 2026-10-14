@@ -85,7 +85,7 @@ pnpm --filter wework ai:verify:electron:build
 
 `.github/workflows/wework-e2e.yml` 会在 `windows-latest` 上构建该原生应用，并让
 Windows Desktop Core E2E 复用 Linux 的同一份 Core 分片矩阵。完整回归会运行全部
-17 个 Core 分片；路径分类只选中部分 checkpoint 时，两个平台仍运行完全相同的已选
+18 个 Core 分片；路径分类只选中部分 checkpoint 时，两个平台仍运行完全相同的已选
 分片。Windows 路径、盘符、UNC 路径、命名管道和 `.exe` sidecar 行为必须由这个
 Windows job 验证，其他平台的通过结果不能替代它。
 
@@ -93,6 +93,8 @@ Windows CI 缓存 pnpm store，每次安装时重建依赖链接，不恢复 `no
 目录链接。E2E 使用随构建产物打包的 Socket.IO 客户端。远程设备 HOME 查询会将
 Git Bash 的路径转换为 Windows 原生路径；文件预览断言使用界面规范化的路径。
 技能目录在 Windows 使用绝对目标的 junction，Unix 使用相对符号链接。
+生成图片的工作区引用移除 Rust canonicalize 产生的 Windows 扩展路径前缀，
+避免 renderer 将其误解析为 POSIX 路径。
 
 正式安装器、代码签名和 Electron YAML 更新清单由
 `.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。

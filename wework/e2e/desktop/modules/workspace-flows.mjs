@@ -107,6 +107,15 @@ export async function selectWhenOptionAvailable(control, selector, value, timeou
   await control.command('select', selector, { value })
 }
 
+export async function selectCollaborationProjectView(control, contentSelector, view) {
+  const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
+  if (Number(await control.command('getElementCount', compact)) > 0) {
+    await control.command('select', compact, { value: view })
+  } else {
+    await control.command('click', `${contentSelector} [data-testid="collaboration-tab-${view}"]`)
+  }
+}
+
 /** Native fixtures require an explicit environment; automatic routing is cloud-only. */
 export async function selectProjectRunnerModel(control, timeoutMs) {
   const prefix = 'cloud-project-chat-agent'
@@ -840,7 +849,7 @@ async function verifyWorkspaceIssueCreation(control) {
     boardContentSelector,
     DEFAULT_STEP_TIMEOUT_MS
   )
-  await control.command('click', `${boardContentSelector} [data-testid="collaboration-tab-board"]`)
+  await selectCollaborationProjectView(control, boardContentSelector, 'board')
 
   const createIssueSelector = `${boardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${boardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
@@ -1507,10 +1516,7 @@ async function verifyExistingTaskBoardAssociation(
     activeBoardContentSelector,
     DEFAULT_STEP_TIMEOUT_MS
   )
-  await control.command(
-    'click',
-    `${activeBoardContentSelector} [data-testid="collaboration-tab-board"]`
-  )
+  await selectCollaborationProjectView(control, activeBoardContentSelector, 'board')
   await control.command(
     'waitFor',
     `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`,

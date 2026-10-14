@@ -80,6 +80,10 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   await control.command('waitFor', boardSurfaceSelector, {
     visible: true,
   })
+  await control.command(
+    'scrollIntoView',
+    `${boardSurfaceSelector} [data-testid="cloud-todo-column-in_review"]`
+  )
   const cardId = await control.command(
     'markElementWithText',
     `${boardSurfaceSelector} [data-testid^="cloud-todo-card-drop-"]`,

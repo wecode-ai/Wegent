@@ -3146,7 +3146,7 @@ class DesktopE2EServer {
       )
       const tool = selectShellToolCommand(
         body,
-        `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
+        `node -e "process.stdout.write(process.env.WEGENT_SKILL_USER_NAME || '')"`,
         this.cloudWorkspacePath,
         { yieldTimeMs: 10_000 }
       )

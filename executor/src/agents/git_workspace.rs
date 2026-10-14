@@ -824,6 +824,9 @@ fn push_git_clone_failure_fields(
     ));
     fields.push(("stdout_len", stdout.len().to_string()));
     fields.push(("stderr_len", stderr.len().to_string()));
+    if let Some(line) = stderr.lines().rev().find(|line| !line.trim().is_empty()) {
+        fields.push(("stderr_last_line", git_output_summary(line)));
+    }
 
     let stdout = git_output_summary(stdout);
     if !stdout.is_empty() {

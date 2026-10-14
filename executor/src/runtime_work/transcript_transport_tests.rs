@@ -62,6 +62,19 @@ fn old_requests_keep_the_old_contract_and_unknown_versions_fail() {
 }
 
 #[test]
+fn large_transcripts_publish_and_restore_beyond_windows_max_path() {
+    let root = tempfile::tempdir().unwrap();
+    let mut directory = root.path().to_path_buf();
+    while directory.to_string_lossy().len() <= 260 {
+        directory.push("long-transcript-directory");
+    }
+    let source = large_transcript();
+    let packet = encode(&directory, source.clone()).unwrap();
+    assert!(packet["transfer"]["nextOffset"].is_number());
+    assert_eq!(restore(packet, &directory), source);
+}
+
+#[test]
 fn large_utf8_and_structured_outputs_round_trip_in_bounded_chunks() {
     let root = tempfile::tempdir().unwrap();
     let source = large_transcript();

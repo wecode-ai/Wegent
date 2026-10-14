@@ -118,10 +118,14 @@ export async function createDesktopScenario({
         timeoutMs: workbenchReadyTimeoutMs,
       })
       const statePath = join(electronUserDataDirectory, 'managed-components', 'state.json')
-      await waitFor(async () => {
-        const state = await readJson(statePath)
-        return state.pending?.components?.weworkCorePlugins?.contentSha256 === contentSha256
-      }, 'The component update was not staged')
+      await waitFor(
+        async () => {
+          const state = await readJson(statePath)
+          return state.pending?.components?.weworkCorePlugins?.contentSha256 === contentSha256
+        },
+        'The component update was not staged',
+        workbenchReadyTimeoutMs
+      )
 
       const staged = await readJson(statePath)
       for (const [id, component] of Object.entries(staged.pending.components)) {

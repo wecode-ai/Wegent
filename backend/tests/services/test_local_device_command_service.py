@@ -2489,6 +2489,7 @@ async def test_execute_configured_device_command_routes_remote_home_directory_co
     """Remote devices should use their submitted device ID for dispatch."""
     from app.schemas.device import DeviceType
     from app.services.device import command_service
+    from app.services.device.command_registry import DEFAULT_LOCAL_DEVICE_COMMANDS
 
     execute_mock = AsyncMock(
         return_value={
@@ -2534,7 +2535,10 @@ async def test_execute_configured_device_command_routes_remote_home_directory_co
         DeviceType.REMOTE,
     )
     assert execute_mock.await_args.kwargs["device_id"] == "remote-device"
-    assert execute_mock.await_args.kwargs["command"] == "printenv HOME"
+    assert (
+        execute_mock.await_args.kwargs["command"]
+        == DEFAULT_LOCAL_DEVICE_COMMANDS["home_dir"].command
+    )
 
 
 @pytest.mark.asyncio
