@@ -1211,6 +1211,12 @@ class RealCloudEnvironment {
     })
   }
 
+  get runtimeWorkspaceRoot() {
+    const root = this.remoteExecutorEnv?.LOCAL_WORKSPACE_ROOT
+    assert.ok(root, 'The cloud Executor workspace root is not configured')
+    return root
+  }
+
   async runtimeTask(taskId) {
     const work = await this.runtimeWork()
     const workspaces = [

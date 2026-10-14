@@ -19,6 +19,10 @@ import {
 import { WORKTREE_CHECKPOINTS, verifyCloudWorktreeCheckpoint } from './cloud-worktree-flows.mjs'
 import { verifyCloudDeviceLifecycleFlow } from './cloud-device-lifecycle-flow.mjs'
 import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
+import {
+  createCloudAttachmentVerification,
+  verifyCloudWorkspacePathMentions,
+} from './cloud-attachment-flow.mjs'
 
 import {
   verifyActiveGoalIdleUnreadLifecycle,
@@ -154,8 +158,8 @@ async function createCloudProjectFixture(control, workspacePath) {
     projectMenusBeforeCreate,
     'The cloud checkpoint project was not shown in the sidebar'
   )
-  const projectId = projectMenuTestId.slice('project-menu-'.length)
-  const projectRowSelector = `[data-testid="project-row-${projectId}"]`
+  const projectUiId = projectMenuTestId.slice('project-menu-'.length)
+  const projectRowSelector = `[data-testid="project-row-${projectUiId}"]`
   await control.command(
     'clickWhenEnabled',
     `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
@@ -168,7 +172,7 @@ async function createCloudProjectFixture(control, workspacePath) {
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   return {
     composerSelector: ACTIVE_COMPOSER_SELECTOR,
-    projectId,
+    projectUiId,
     projectRowSelector,
   }
 }
@@ -456,47 +460,6 @@ async function waitForGitCloneProject(control, previousProjectMenus, targetPath,
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(message)
-}
-
-async function verifyCloudWorkspacePathMentions({ composerSelector, control, workspacePath }) {
-  const folderName = 'cloud-context-folder'
-  const folderPath = join(workspacePath, folderName)
-  await mkdir(folderPath, { recursive: true })
-  await writeFile(join(folderPath, 'nested.txt'), 'cloud workspace path context\n')
-
-  await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
-  await control.command('fill', composerSelector, { value: `@${folderName}` })
-  await control.command('clickElementWithText', '[data-testid^="workspace-mention-option-"]', {
-    text: folderName,
-  })
-  const folderChipSelector = `[data-testid="composer-path-chip-${folderName}"]`
-  await control.command('waitFor', folderChipSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  assert.equal(
-    await control.command('getAttribute', folderChipSelector, {
-      value: 'data-composer-path-kind',
-    }),
-    'folder',
-    'The cloud workspace folder mention was not rendered as a folder reference'
-  )
-
-  await control.command('fill', composerSelector, { value: '@auth' })
-  await control.command('clickElementWithText', '[data-testid^="workspace-mention-option-"]', {
-    text: 'auth.ts',
-  })
-  const fileChipSelector = '[data-testid="composer-path-chip-auth-ts"]'
-  await control.command('waitFor', fileChipSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  assert.equal(
-    await control.command('getAttribute', fileChipSelector, {
-      value: 'data-composer-path-kind',
-    }),
-    'file',
-    'The cloud workspace file mention was not rendered as a file reference'
-  )
 }
 
 async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
@@ -818,7 +781,7 @@ async function verifyCloudCheckpoint({
     return
   }
 
-  const { composerSelector, projectRowSelector } = await createCloudProjectFixture(
+  const { composerSelector, projectRowSelector, projectUiId } = await createCloudProjectFixture(
     control,
     workspacePath
   )
@@ -939,7 +902,15 @@ async function verifyCloudCheckpoint({
       })
       return
     }
-    case 'workspace-attachments':
+    case 'workspace-attachments': {
+      const verification = createCloudAttachmentVerification({
+        cloudEnvironment,
+        composerSelector,
+        control,
+        projectRowSelector,
+        projectUiId,
+        workspacePath,
+      })
       setPhase('cloud-files-outside-workspace')
       await verifyCloudFileAccessOutsideWorkspace({ cloudEnvironment, workspacePath })
       setPhase('cloud-attachment-sidebar')
@@ -949,14 +920,22 @@ async function verifyCloudCheckpoint({
         appIdentifier,
         composerSelector,
         control,
-        runtimeWorkspaceRoot: dirname(workspacePath),
+        ...verification,
         workspacePath,
       })
       setPhase('cloud-pasted-zip')
-      await verifyPastedZipAttachment({ composerSelector, control })
+      await verifyPastedZipAttachment({
+        composerSelector,
+        control,
+        prepareConversation: verification.prepareConversation,
+      })
       setPhase('cloud-workspace-path-mentions')
-      await verifyCloudWorkspacePathMentions({ composerSelector, control, workspacePath })
+      await verifyCloudWorkspacePathMentions(
+        { composerSelector, control, workspacePath },
+        verification.prepareConversation
+      )
       return
+    }
     case 'rendering-extensions':
       setPhase('cloud-tool-block-order')
       await verifyToolBlockChronologicalOrder({ composerSelector, control })
