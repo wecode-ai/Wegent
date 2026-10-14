@@ -1191,7 +1191,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 10px;
   color: rgb(var(--color-text-secondary));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
   font-size: 13px;
 }
 
@@ -1711,6 +1711,7 @@
 }
 
 .collaboration-resource-dialog {
+  color: rgb(var(--color-text-primary));
   width: min(520px, 100%);
   overflow: hidden;
   border: 1px solid rgb(var(--color-border));
@@ -1733,7 +1734,7 @@
   width: min(760px, calc(100vw - 32px));
   max-height: min(760px, calc(100vh - 40px));
   flex-direction: column;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-team-settings-header {
@@ -1766,7 +1767,7 @@
   min-height: 0;
   padding: 0;
   overflow: hidden;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-detail-dialog {
@@ -1794,7 +1795,7 @@
   border: 0;
   border-bottom: 1px solid rgb(var(--color-border));
   border-radius: 0;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-dialog-section-title {
@@ -1844,7 +1845,7 @@
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-detail-dialog .collaboration-group-detail-tabs {
@@ -1852,7 +1853,7 @@
   box-sizing: border-box;
   flex-shrink: 0;
   padding: 0 24px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-detail-dialog .collaboration-group-detail-tab-panel {
@@ -1862,7 +1863,7 @@
   flex: 1;
   padding: 22px 24px 24px;
   overflow-y: auto;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-detail-dialog .collaboration-group-people-editor {
@@ -1877,7 +1878,7 @@
   flex-shrink: 0;
   padding: 14px 24px;
   border-top: 1px solid rgb(var(--color-border));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-resource-dialog > header h2 {
@@ -2206,7 +2207,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
   padding: 24px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-workspace-starter > small {
@@ -2583,7 +2584,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
   margin-bottom: 18px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-resource-form > label {
@@ -2671,7 +2672,7 @@
   padding: 20px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 14px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-create-dialog {
@@ -2683,7 +2684,7 @@
   padding: 0;
   border-color: rgb(var(--color-border) / 0.8);
   border-radius: 16px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
   box-shadow:
     0 24px 64px rgb(0 0 0 / 18%),
     0 2px 8px rgb(0 0 0 / 8%);
@@ -2773,14 +2774,14 @@
   flex: 1;
   flex-direction: column;
   overflow: hidden;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-create-content {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-create-panel {
@@ -2788,7 +2789,7 @@
   align-content: start;
   gap: 20px;
   padding: 20px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-create-actions {
@@ -2797,7 +2798,7 @@
   box-sizing: border-box;
   padding: 11px 20px;
   border-top: 1px solid rgb(var(--color-border));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-people-editor,
@@ -2860,7 +2861,7 @@
   padding: 10px 12px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 10px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-roster {
@@ -2932,7 +2933,7 @@
   padding: 0 12px;
   border: 1px dashed rgb(var(--color-border));
   border-radius: 10px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-person {
@@ -3007,7 +3008,7 @@
   border-radius: 7px;
   outline: 0;
   color: rgb(var(--color-text-primary));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
   font: inherit;
   font-size: 12px;
 }
@@ -3077,16 +3078,17 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   color: rgb(var(--color-text-primary));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-people-picker {
+  color: rgb(var(--color-text-primary));
   z-index: 100;
   width: min(292px, calc(100vw - 32px));
   padding: 6px;
   border: 1px solid rgb(var(--color-border) / 0.9);
   border-radius: 10px;
-  background: #fff;
+  background: rgb(var(--color-popover));
   box-shadow:
     0 16px 40px rgb(0 0 0 / 16%),
     0 2px 8px rgb(0 0 0 / 8%);
@@ -3107,7 +3109,7 @@
   border-radius: 8px;
   outline: 0;
   color: rgb(var(--color-text-primary));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
   font: inherit;
   font-size: 12px;
 }
@@ -3220,15 +3222,13 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   color: rgb(var(--color-text-primary));
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-create-actions .collaboration-primary-button {
   min-height: 34px;
   padding: 6px 14px;
   border-radius: 8px;
-  color: #fff;
-  background: rgb(var(--color-text-primary));
 }
 
 .collaboration-group-create-actions .collaboration-primary-button:disabled {
@@ -3267,7 +3267,7 @@
 .collaboration-group-create-fields input {
   min-height: 40px;
   border-radius: 9px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-field-grid input,
@@ -3310,7 +3310,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
   margin-top: 12px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-card {
@@ -3321,7 +3321,7 @@
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  background: #fff;
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-group-card + .collaboration-group-card {
@@ -4028,7 +4028,9 @@
   margin-top: 18px;
 }
 
-.collaboration-resource-dialog footer button {
+.collaboration-resource-dialog
+  footer
+  button:not(.collaboration-primary-button) {
   min-height: 34px;
   padding: 0 14px;
   border: 1px solid rgb(var(--color-border));
