@@ -422,6 +422,7 @@ export interface RuntimeRollbackRequest extends RuntimeSendRequest {
 
 export interface RuntimeCompactRequest {
   address: RuntimeTaskAddress
+  modelSelection?: ModelSelectionConfig | null
 }
 
 export type {

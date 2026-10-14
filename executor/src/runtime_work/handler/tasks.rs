@@ -4,6 +4,7 @@
 
 #[cfg(test)]
 use super::context_compaction::context_compaction_outcome;
+use super::context_compaction::context_compaction_request;
 use super::context_compaction::wait_for_context_compaction;
 use super::*;
 
@@ -1617,10 +1618,8 @@ impl RuntimeWorkRpcHandler {
             ));
         };
 
-        let client = match self
-            .codex_app_server
-            .for_request(&runtime_event_request_from_link(&link))
-        {
+        let request = context_compaction_request(&link, &payload)?;
+        let client = match self.codex_app_server.for_request(&request) {
             Ok(client) => client,
             Err(error) => return Ok(task_action_failure(&link, error)),
         };
@@ -1629,7 +1628,7 @@ impl RuntimeWorkRpcHandler {
         client
             .run_owned_thread_action(thread_id.clone(), async move {
                 handler
-                    .compact_codex_task(&action_client, &link, &local_task_id, &thread_id)
+                    .compact_codex_task(&action_client, &link, &local_task_id, &thread_id, request)
                     .await
             })
             .await
@@ -1642,6 +1641,7 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         local_task_id: &str,
         thread_id: &str,
+        request: ExecutionRequest,
     ) -> Result<Value, AppIpcError> {
         let thread_id = match self
             .resume_codex_thread_with_client(client, link, thread_id)
@@ -1650,7 +1650,6 @@ impl RuntimeWorkRpcHandler {
             Ok(resumed_thread_id) => resumed_thread_id,
             Err(error) => return Ok(task_action_failure(link, error)),
         };
-        let request = runtime_event_request_from_link(link);
         // The compaction turn answers through the local model route, which only
         // exists while a turn that registered it is alive. Register it for the
         // duration of this action so compacting an idle thread still reaches a

@@ -2790,11 +2790,40 @@ export function createRuntimeWorkApiFromIpc(
       const localDeviceId = await resolveDeviceId({ address: data.address })
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
         .address as RuntimeTaskAddress
+      // Persisted execution profiles are redacted. Rebuild the selected model
+      // with current credentials, just as a continuation or fork does.
+      const handle = recordValue(normalizedAddress.runtimeHandle)
+      const selection =
+        data.modelSelection ?? modelSelectionValue(handle.modelSelection ?? handle.model_selection)
+      let modelConfig: Record<string, unknown> | undefined
+      if (selection?.modelName) {
+        if (
+          !(await prepareRuntimeModel({
+            deviceId: localDeviceId,
+            modelId: selection.modelName,
+          }))
+        ) {
+          throw modelCatalogSyncCancelled()
+        }
+        modelConfig = await applyRuntimeModelOptions(
+          localRuntimeModelConfig(
+            'codex',
+            requireLocalCodexCatalog,
+            selection.modelName,
+            selection.modelType,
+            selection.options,
+            options.cloudModelGateway
+          ),
+          selection.options,
+          resolveProxy
+        )
+      }
       return request(
         'runtime.tasks.compact',
         {
           taskId: normalizedAddress.taskId,
           address: normalizedAddress,
+          ...(modelConfig ? { modelConfig } : {}),
         },
         localDeviceId
       )
