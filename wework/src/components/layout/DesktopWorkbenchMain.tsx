@@ -50,6 +50,7 @@ import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
+  findNativeLocalWorkbenchDevice,
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceNamesById,
@@ -3003,7 +3004,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     paneSession.status.workspaceCreationKind
   )
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
-  const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
+  const nativeLocalDevice =
+    !currentProject && !currentRuntimeTask
+      ? findNativeLocalWorkbenchDevice(devices, activeDeviceId)
+      : null
+  const activeDevice = nativeLocalDevice ?? findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(activeDevice && isClaudeCodeDevice(activeDevice))
   const currentRuntimeUsesCodex =
     (runtimeTaskSummary?.runtime ?? currentRuntimeTask?.runtime ?? 'codex').toLowerCase() ===

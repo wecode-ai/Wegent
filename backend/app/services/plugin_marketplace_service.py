@@ -103,6 +103,7 @@ from app.services.plugin_upstream_fetch import (
     fetch_upstream_package,
     validate_upstream_url,
 )
+from shared.telemetry.decorators import trace_sync
 
 SEMVER_PATTERN = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
@@ -543,6 +544,7 @@ class PluginMarketplaceService:
         db.refresh(installed)
         return self._kind_to_installed(installed)
 
+    @trace_sync("plugin_marketplace.auto_update_batch", "backend.plugin_marketplace")
     def auto_update_batch(
         self, db: Session, *, user_id: int
     ) -> PluginAutoUpdateBatchResponse:
@@ -580,8 +582,9 @@ class PluginMarketplaceService:
                     version=release.version,
                 )
             )
-        if updated:
-            db.commit()
+        # Even an empty batch holds InnoDB range locks from the locking read.
+        # Release them before a concurrent install can delay request cleanup.
+        db.commit()
         return PluginAutoUpdateBatchResponse(
             updated=updated,
             updatedCount=len(updated),

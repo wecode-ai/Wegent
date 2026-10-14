@@ -3,6 +3,57 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 describe('workbenchReducer', () => {
+  test('moves a fresh composer source selection to the new primary after refresh', () => {
+    const project = {
+      id: 7,
+      key: 'owner',
+      name: 'Project',
+      source: 'remote_project',
+      ownerDeviceId: 'remote',
+      ownerProjectKey: 'owner',
+      roots: [{ kind: 'local', path: '/old' }],
+    }
+    const oldWorkspace = {
+      id: 11,
+      deviceId: 'remote',
+      workspacePath: '/old',
+      available: true,
+      tasks: [],
+    }
+    const state = {
+      ...initialWorkbenchState,
+      currentProject: { id: 7, name: 'Project', tasks: [] },
+      selectedDeviceWorkspaceId: 11,
+      runtimeWork: {
+        projects: [{ project, deviceWorkspaces: [oldWorkspace] }],
+        chats: [],
+        totalTasks: 0,
+      },
+    }
+    const next = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { ...project, roots: [{ kind: 'local', path: '/new' }] },
+            deviceWorkspaces: [{ ...oldWorkspace, id: 22, workspacePath: '/new' }],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+    expect(next.selectedDeviceWorkspaceId).toBe(22)
+    const existing = workbenchReducer(
+      {
+        ...state,
+        currentRuntimeTask: { taskId: 'existing', deviceId: 'remote', workspacePath: '/old' },
+      },
+      { type: 'runtime_work_refreshed', runtimeWork: next.runtimeWork! }
+    )
+    expect(existing.selectedDeviceWorkspaceId).toBe(11)
+    expect(existing.currentRuntimeTask?.workspacePath).toBe('/old')
+  })
   test('applies a local project mutation response before the next list refresh', () => {
     const state = {
       ...initialWorkbenchState,
@@ -14,6 +65,7 @@ describe('workbenchReducer', () => {
               key: 'local-project:demo',
               name: 'Demo',
               source: 'local_project',
+              ownerDeviceId: 'local-device',
               roots: [{ kind: 'local', path: '/old' }],
               aiSettings: {
                 instructions: 'Old instructions',
@@ -31,6 +83,7 @@ describe('workbenchReducer', () => {
 
     const next = workbenchReducer(state, {
       type: 'runtime_local_project_updated',
+      deviceId: 'local-device',
       projectKey: 'local-project:demo',
       name: 'Renamed demo',
       roots: ['/new'],

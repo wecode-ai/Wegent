@@ -20,6 +20,7 @@ export function DeviceVersionBadge({
   const { t } = useTranslation('common')
   const currentVersion = formatDeviceVersion(device.executor_version)
   const latestVersion = formatDeviceVersion(device.latest_version)
+  const isRemote = device.device_type === 'remote'
   const updateLabel = t('workbench.connection_upgrade_version_tooltip', {
     current: currentVersion,
     latest: latestVersion,
@@ -30,7 +31,7 @@ export function DeviceVersionBadge({
       <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary">
         {currentVersion}
       </span>
-      {device.update_available === true ? (
+      {device.update_available === true && !isRemote ? (
         <Tooltip
           label={updateLabel}
           side="bottom"

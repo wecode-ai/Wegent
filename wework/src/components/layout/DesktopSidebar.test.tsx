@@ -5286,6 +5286,159 @@ describe('DesktopSidebar', () => {
     expect(projectSpaceApi.listCloudProjects).not.toHaveBeenCalled()
   })
 
+  test.each([
+    ['remote', 'relay', '2.0.21'],
+    ['cloud', 'runtime', '2.0.21'],
+    ['remote', 'relay', undefined],
+    ['cloud', 'runtime', undefined],
+  ] as const)(
+    'keeps an online %s project editable through its %s owner alias according to executor version %s',
+    async (deviceType, ownerAlias, executorVersion) => {
+      const pluginApi = {
+        readState: vi.fn().mockResolvedValue({ marketplaceItems: [] }),
+        installAvailablePlugin: vi.fn(),
+      }
+      const save = vi.fn().mockResolvedValue(undefined)
+      const listDirectories = vi.fn().mockResolvedValue([])
+      const canonicalDevice = {
+        device_id: 'executor',
+        socket_device_id: 'relay',
+        runtime_instance_id: 'runtime',
+        device_type: deviceType,
+        status: 'online',
+        name: 'Owner',
+        executor_version: executorVersion,
+      }
+      const projectWork = {
+        project: {
+          id: 7,
+          key: 'real',
+          sidebarStateKey: 'mirror',
+          ownerDeviceId: ownerAlias,
+          ownerProjectKey: 'real',
+          stateDeviceId: 'local-device',
+          name: 'Device project',
+          source: 'remote_project',
+          roots: [{ kind: 'local', path: '/owner' }],
+        },
+        deviceWorkspaces: [
+          {
+            deviceId: 'executor',
+            remoteHostId: 'relay',
+            workspaceSource: 'remote',
+            workspacePath: '/owner',
+            available: true,
+            tasks: [],
+          },
+        ],
+      }
+      const projectDevicePluginApi = vi.fn().mockReturnValue(pluginApi)
+      renderSidebar({
+        projects: [],
+        devices: [canonicalDevice] as never,
+        runtimeWork: { projects: [projectWork], chats: [], totalTasks: 0 },
+        onUpdateLocalRuntimeProject: save,
+        onListDeviceDirectories: listDirectories,
+        projectDevicePluginApi,
+      })
+      await userEvent.click(screen.getByTestId('project-menu-7'))
+      await userEvent.click(screen.getByTestId('rename-project-7'))
+      expect(screen.getByTestId('save-local-project-button')).toBeEnabled()
+      expect(screen.queryByTestId('project-device-offline')).not.toBeInTheDocument()
+      if (executorVersion === undefined) {
+        expect(screen.getByTestId('local-project-name-input')).toBeEnabled()
+        expect(screen.getByTestId('add-local-project-folders')).toBeDisabled()
+        expect(screen.getByTestId('project-folders-upgrade-hint')).toBeVisible()
+        await userEvent.click(screen.getByTestId('local-project-settings-ai-tab'))
+        expect(screen.getByTestId('local-project-instructions-input')).toBeDisabled()
+        await userEvent.click(screen.getByTestId('local-project-settings-basic-tab'))
+        fireEvent.change(screen.getByTestId('local-project-name-input'), {
+          target: { value: 'Renamed alias project' },
+        })
+        await userEvent.click(screen.getByTestId('save-local-project-button'))
+        await waitFor(() =>
+          expect(save).toHaveBeenCalledWith({
+            deviceId: ownerAlias,
+            projectKey: 'real',
+            name: 'Renamed alias project',
+            roots: ['/owner'],
+          })
+        )
+        expect(listDirectories).not.toHaveBeenCalled()
+        expect(projectDevicePluginApi).toHaveBeenCalledWith(ownerAlias)
+        return
+      }
+      await userEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
+      await waitFor(() =>
+        expect(pluginApi.readState).toHaveBeenCalledWith({
+          mergeAllMarketplaces: true,
+          refresh: true,
+        })
+      )
+      await userEvent.click(screen.getByTestId('local-project-settings-basic-tab'))
+      await userEvent.click(screen.getByTestId('add-local-project-folders'))
+      expect(screen.getByTestId('local-project-folder-picker')).toBeInTheDocument()
+      await waitFor(() => expect(listDirectories).toHaveBeenCalledWith('executor', '/owner'))
+      await userEvent.click(screen.getByTestId('save-local-project-button'))
+      await waitFor(() =>
+        expect(save).toHaveBeenCalledWith(
+          expect.objectContaining({ deviceId: ownerAlias, projectKey: 'real', roots: ['/owner'] })
+        )
+      )
+      expect(projectDevicePluginApi).toHaveBeenCalledWith(ownerAlias)
+    }
+  )
+
+  test.each(['remote', 'cloud'])(
+    'opens full project settings for an offline %s device',
+    async deviceType => {
+      const user = userEvent.setup()
+      const projectDevicePluginApi = vi.fn()
+      renderSidebar({
+        projects: [],
+        devices: [
+          { device_id: 'owner', device_type: deviceType, status: 'offline', name: 'Owner' },
+        ] as never,
+        runtimeWork: {
+          projects: [
+            {
+              project: {
+                id: 7,
+                key: 'real',
+                sidebarStateKey: 'mirror',
+                source: 'remote_project',
+                stateDeviceId: 'local-device',
+                ownerDeviceId: 'owner',
+                ownerProjectKey: 'real',
+                name: 'Device project',
+                roots: [{ kind: 'local', path: '/owner' }],
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'owner',
+                  remoteHostId: 'owner',
+                  workspaceSource: 'remote',
+                  workspacePath: '/owner',
+                  available: false,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        },
+        onUpdateLocalRuntimeProject: vi.fn(),
+        projectDevicePluginApi,
+      })
+      await user.click(screen.getByTestId('project-menu-7'))
+      await user.click(screen.getByTestId('rename-project-7'))
+      expect(screen.getByTestId('local-project-edit-dialog')).toBeInTheDocument()
+      expect(screen.getByTestId('save-local-project-button')).toBeDisabled()
+      expect(projectDevicePluginApi).toHaveBeenCalledWith('owner')
+    }
+  )
+
   test('creates a permanent worktree from a runtime project', async () => {
     const user = userEvent.setup()
     const onCreatePermanentWorktree = vi.fn().mockResolvedValue(undefined)

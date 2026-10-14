@@ -84,6 +84,23 @@ impl RuntimeWorkRpcHandler {
                             AppIpcError::new("bad_request", "remote project remotePath is required")
                         })?,
                     label: string_field(item, "label"),
+                    project_key: string_field(item, "projectKey"),
+                    roots: item
+                        .get("roots")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect(),
+                    default_project_space: item
+                        .get("defaultProjectSpace")
+                        .filter(|value| !value.is_null())
+                        .cloned(),
+                    ai_settings: item
+                        .get("aiSettings")
+                        .filter(|value| !value.is_null())
+                        .cloned(),
                 })
             })
             .collect::<Result<Vec<_>, AppIpcError>>()?;

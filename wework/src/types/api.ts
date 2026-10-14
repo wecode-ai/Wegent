@@ -576,6 +576,10 @@ export interface RuntimeRemoteProjectRegistration {
   hostId: string
   remotePath: string
   label?: string | null
+  projectKey?: string | null
+  roots?: string[]
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
+  aiSettings?: RuntimeProjectAiSettings | null
 }
 
 export interface RuntimeRemoteProjectsSyncRequest {

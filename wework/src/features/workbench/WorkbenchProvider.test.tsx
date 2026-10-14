@@ -19,6 +19,10 @@ import {
 import { writePluginInventory } from '@/features/plugins/pluginInventory'
 import { emptyPluginComponents } from '@/features/plugins/slimPluginComponents'
 import { LOCAL_USER } from '@/api/local/localSession'
+import {
+  qualifyLocalRuntimeSource,
+  qualifyLocalRuntimeWork,
+} from '@/lib/local-runtime-sidebar-identity'
 import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
 import i18n from '@/i18n'
 import {
@@ -34,6 +38,7 @@ import { buildAutomationTaskOptions } from '@/features/automations/automationDra
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
+import { ChatInput } from '@/components/chat/ChatInput'
 import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
 import {
   RUNTIME_RETRY_CONTINUATION_PROMPT,
@@ -89,6 +94,7 @@ import type {
   LocalDeviceApp,
   ProjectWithTasks,
   RuntimeTaskAddress,
+  RuntimeLocalProjectUpsertRequest,
   RuntimeTaskCreateResponse,
   RuntimeGoal,
   RuntimeGoalGetResponse,
@@ -312,6 +318,7 @@ function createRemoteProjectSyncServices(
     createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
   ]
   return createWorkbenchServices({
+    getLocalRuntimeSidebarIdentity: createLocalSidebarIdentityMock(),
     deviceApi: {
       listDevices: vi.fn().mockResolvedValue(devices),
     } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
@@ -629,6 +636,14 @@ function canonicalTranscriptTurnsFromMessages(
     appendUser(getTurn(`fixture-turn:${user.id}`), user)
   }
   return turns
+}
+
+function createLocalSidebarIdentityMock() {
+  return vi.fn().mockResolvedValue({
+    deviceId: 'local-device',
+    runtimeInstanceId: 'local-runtime',
+    provenance: 'local-ipc',
+  })
 }
 
 function createWorkbenchServices(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices {
@@ -2844,16 +2859,19 @@ describe('WorkbenchProvider runtime tasks', () => {
       running: true,
       ready: true,
       deviceId: 'local-device',
+      runtimeInstanceId: 'local-runtime',
     })
     localExecutorMocks.getLocalExecutorStatus.mockResolvedValue({
       running: true,
       ready: true,
       deviceId: 'local-device',
+      runtimeInstanceId: 'local-runtime',
     })
     localExecutorMocks.ensureLocalExecutorStarted.mockResolvedValue({
       running: true,
       ready: true,
       deviceId: 'local-device',
+      runtimeInstanceId: 'local-runtime',
     })
     localExecutorMocks.requestLocalExecutor.mockImplementation(async (method: string) => {
       if (method === 'runtime.tasks.list') {
@@ -2914,7 +2932,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     expect(screen.getByTestId('project-count')).toHaveTextContent('0')
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
-    expect(localExecutorMocks.ensureLocalExecutorStarted).toHaveBeenCalled()
+    expect(localExecutorMocks.ensureLocalExecutorAvailable).toHaveBeenCalledWith({ refresh: true })
     expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.tasks.list', {
       preferCached: true,
     })
@@ -7631,31 +7649,39 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
-        createRuntimeWork({
-          projects: [
-            {
-              project: { key: '/workspace/project-alpha', id: 7, name: 'Wegent', active: true },
-              deviceWorkspaces: [
-                {
-                  id: 22,
-                  projectId: 7,
-                  deviceId: 'device-1',
-                  deviceName: 'Local Device',
-                  deviceStatus: 'online',
-                  workspacePath: '/workspace/project-alpha',
-                  mapped: true,
-                  available: true,
-                  tasks: [],
-                },
-              ],
-            },
-          ],
-          totalTasks: 0,
-        })
+        qualifyLocalRuntimeWork(
+          createRuntimeWork({
+            projects: [
+              {
+                project: { key: '/workspace/project-alpha', id: 7, name: 'Wegent', active: true },
+                deviceWorkspaces: [
+                  {
+                    id: 22,
+                    projectId: 7,
+                    deviceId: 'device-1',
+                    deviceName: 'Local Device',
+                    deviceStatus: 'online',
+                    workspacePath: '/workspace/project-alpha',
+                    mapped: true,
+                    available: true,
+                    tasks: [],
+                  },
+                ],
+              },
+            ],
+            totalTasks: 0,
+          }),
+          { deviceId: 'device-1', runtimeInstanceId: 'local-runtime', provenance: 'local-ipc' }
+        )
       ),
       activateRuntimeProject,
     })
     const services = createWorkbenchServices({
+      getLocalRuntimeSidebarIdentity: vi.fn().mockResolvedValue({
+        deviceId: 'device-1',
+        runtimeInstanceId: 'local-runtime',
+        provenance: 'local-ipc',
+      }),
       deviceApi: {
         listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
       } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
@@ -7668,11 +7694,20 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
     )
     await waitFor(() =>
-      expect(activateRuntimeProject).toHaveBeenCalledWith({
-        deviceId: 'device-1',
-        projectKey: '/workspace/project-alpha',
-        workspacePath: '/workspace/project-alpha',
-      })
+      expect(activateRuntimeProject).toHaveBeenCalledWith(
+        {
+          deviceId: 'device-1',
+          projectKey: '/workspace/project-alpha',
+          workspacePath: '/workspace/project-alpha',
+        },
+        {
+          localSidebarIdentity: {
+            deviceId: 'device-1',
+            runtimeInstanceId: 'local-runtime',
+            provenance: 'local-ipc',
+          },
+        }
+      )
     )
   })
 
@@ -8644,109 +8679,653 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('uses local project AI settings for a new conversation', async () => {
-    const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(
-        createRuntimeWork({
-          projects: [
-            {
-              project: {
-                id: 7,
-                key: 'project-7',
-                name: 'Wegent',
-                source: 'local_project',
-                aiSettings: {
-                  instructions: 'Run focused project tests.',
-                  modelSelection: {
-                    modelName: 'project-model',
-                    modelType: 'runtime',
-                    options: { reasoning: 'medium' },
-                  },
-                  plugins: [
-                    {
-                      id: 'quality-gate@team-market',
-                      pluginName: 'quality-gate',
-                      marketplaceId: 'team-market',
-                      displayName: 'Quality Gate',
+  test.each(['local_project', 'remote_project'])(
+    'uses %s AI settings for a new conversation',
+    async source => {
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn().mockResolvedValue(
+          createRuntimeWork({
+            projects: [
+              {
+                project: {
+                  id: 7,
+                  key: 'project-7',
+                  name: 'Wegent',
+                  source,
+                  ownerDeviceId: 'device-1',
+                  ownerProjectKey: 'project-7',
+                  stateDeviceId: source === 'remote_project' ? 'local-device' : 'device-1',
+                  ...(source === 'remote_project' ? { sidebarStateKey: 'remote-sidebar' } : {}),
+                  roots: [{ kind: 'local', path: '/workspace/project-alpha' }],
+                  aiSettings: {
+                    instructions: 'Run focused project tests.',
+                    modelSelection: {
+                      modelName: 'project-model',
+                      modelType: 'runtime',
+                      options: { reasoning: 'medium' },
                     },
-                  ],
+                    plugins: [
+                      {
+                        id: 'quality-gate@team-market',
+                        pluginName: 'quality-gate',
+                        marketplaceId: 'team-market',
+                        displayName: 'Quality Gate',
+                      },
+                    ],
+                  },
+                },
+                deviceWorkspaces: [
+                  {
+                    deviceId: 'device-1',
+                    deviceName: 'Project Device',
+                    deviceStatus: 'online',
+                    workspacePath: '/workspace/project-alpha',
+                    mapped: true,
+                    available: true,
+                    tasks: [],
+                  },
+                ],
+              },
+            ],
+            totalTasks: 0,
+          })
+        ),
+        createRuntimeTask: vi.fn(async request => ({
+          accepted: true,
+          deviceId: request.deviceId,
+          taskId: request.taskId,
+          workspacePath: request.workspacePath,
+          runtime: 'codex',
+        })),
+        getRuntimeTranscript: vi.fn(async (address: RuntimeTranscriptRequest) => ({
+          taskId: address.taskId,
+          workspacePath: address.workspacePath,
+          runtime: 'codex',
+          messages: [],
+        })),
+      })
+      const services = createWorkbenchServices({
+        modelApi: {
+          listModels: vi.fn().mockResolvedValue({
+            data: [
+              {
+                name: 'project-model',
+                type: 'runtime',
+                provider: 'local',
+                config: {
+                  weworkModelKind: 'codex-provider',
+                  ui: {
+                    family: 'codex-provider',
+                    reasoningEfforts: ['low', 'medium', 'high'],
+                  },
                 },
               },
-              deviceWorkspaces: [
-                {
-                  deviceId: 'device-1',
-                  deviceName: 'Project Device',
-                  deviceStatus: 'online',
-                  workspacePath: '/workspace/project-alpha',
-                  mapped: true,
-                  available: true,
-                  tasks: [],
-                },
-              ],
-            },
-          ],
-          totalTasks: 0,
+            ],
+          }),
+        },
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      } as Partial<WorkbenchServices>)
+
+      if (source === 'remote_project') {
+        const remoteDevice = createDevice({
+          device_id: 'device-1',
+          device_type: 'cloud',
+          status: 'online',
         })
-      ),
-      createRuntimeTask: vi.fn(async request => ({
-        accepted: true,
-        deviceId: request.deviceId,
-        taskId: request.taskId,
-        workspacePath: request.workspacePath,
-        runtime: 'codex',
-      })),
-      getRuntimeTranscript: vi.fn(async (address: RuntimeTranscriptRequest) => ({
-        taskId: address.taskId,
-        workspacePath: address.workspacePath,
-        runtime: 'codex',
-        messages: [],
-      })),
-    })
-    const services = createWorkbenchServices({
-      modelApi: {
-        listModels: vi.fn().mockResolvedValue({
-          data: [
+        services.deviceApi.listDevices = vi.fn().mockResolvedValue([remoteDevice])
+        services.cloudBackgroundApi = {
+          listTeams: vi.fn().mockResolvedValue([]),
+          listDevices: vi.fn().mockResolvedValue([remoteDevice]),
+          listRuntimeWork: runtimeWorkApi.listRuntimeWork,
+        }
+      }
+      renderWorkbench(<ProjectSendProbe />, services, { isConnected: source === 'remote_project' })
+
+      await userEvent.click(await screen.findByText('select project'))
+      await userEvent.click(screen.getByText('set input'))
+      await userEvent.click(screen.getByText('send'))
+
+      await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+      expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelId: 'project-model',
+          modelType: 'runtime',
+          modelOptions: expect.objectContaining({ reasoning: 'medium' }),
+          projectInstructions: 'Run focused project tests.',
+          projectPlugins: [
             {
-              name: 'project-model',
-              type: 'runtime',
-              provider: 'local',
-              config: {
-                weworkModelKind: 'codex-provider',
-                ui: {
-                  family: 'codex-provider',
-                  reasoningEfforts: ['low', 'medium', 'high'],
-                },
-              },
+              id: 'quality-gate@team-market',
+              pluginName: 'quality-gate',
+              marketplaceId: 'team-market',
+              displayName: 'Quality Gate',
             },
           ],
-        }),
-      },
-      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
-    } as Partial<WorkbenchServices>)
+        })
+      )
+    }
+  )
 
-    renderWorkbench(<ProjectSendProbe />, services)
-
-    await userEvent.click(await screen.findByText('select project'))
-    await userEvent.click(screen.getByText('set input'))
-    await userEvent.click(screen.getByText('send'))
-
-    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
-    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        modelId: 'project-model',
-        modelType: 'runtime',
-        modelOptions: expect.objectContaining({ reasoning: 'medium' }),
-        projectInstructions: 'Run focused project tests.',
-        projectPlugins: [
+  test.each([
+    { deviceType: 'cloud', source: 'remote_project', ambiguousExclusion: false },
+    { deviceType: 'remote', source: 'remote_project', ambiguousExclusion: false },
+    { deviceType: 'cloud', source: 'legacy_root', ambiguousExclusion: false },
+    { deviceType: 'remote', source: 'legacy_root', ambiguousExclusion: false },
+    { deviceType: 'cloud', source: 'remote_project', ambiguousExclusion: true },
+  ] as const)(
+    'projects confirmed $deviceType $source owner alias defaults into the composer after each save outcome (ambiguous exclusion=$ambiguousExclusion)',
+    async ({ deviceType, source, ambiguousExclusion }) => {
+      const aiSettings = {
+        modelSelection: { modelName: 'project-model', modelType: 'runtime' as const },
+        quickPhrases: [
           {
-            id: 'quality-gate@team-market',
-            pluginName: 'quality-gate',
-            marketplaceId: 'team-market',
-            displayName: 'Quality Gate',
+            id: 'project-review',
+            title: 'Review saved project',
+            content: 'Review project constraints',
+            mode: 'normal' as const,
           },
         ],
+      }
+      const initialWork = createRuntimeWork({
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: 'project-7',
+              name: 'Wegent',
+              source,
+              ownerDeviceId: 'owner-id',
+              ownerProjectKey: 'project-7',
+              sidebarStateKey: source === 'remote_project' ? 'mirror-7' : undefined,
+              stateDeviceId: source === 'remote_project' ? 'local-device' : 'owner-id',
+              roots: [{ kind: 'local', path: '/workspace/project-alpha' }],
+            },
+            deviceWorkspaces: [
+              {
+                deviceId: 'owner-id',
+                remoteHostId: 'owner-id',
+                workspaceSource: 'remote',
+                workspacePath: '/workspace/project-alpha',
+                mapped: true,
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'existing-task',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Existing task',
+                    runtime: 'codex',
+                    modelSelection: { modelName: 'override-model', modelType: 'runtime' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
       })
+      if (ambiguousExclusion)
+        initialWork.projects.push({
+          project: {
+            id: 8,
+            key: 'removed-key',
+            name: 'Removed project',
+            source: 'remote_project',
+            sidebarStateKey: 'removed-mirror',
+            stateDeviceId: 'local-device',
+            ownerDeviceId: 'removed-owner',
+            ownerProjectKey: 'removed-key',
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'removed-owner',
+              remoteHostId: 'removed-alias',
+              workspaceSource: 'remote',
+              workspacePath: '/removed',
+              mapped: true,
+              available: true,
+              tasks: [],
+            },
+          ],
+        })
+      let ownerWork = initialWork
+      let mirroredWork = initialWork
+      let saveOutcome: 'unconfirmed' | 'mirror-failure' | 'success' = 'unconfirmed'
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        removeRuntimeWorkspace: vi.fn(async () => {
+          ownerWork = {
+            ...ownerWork,
+            projects: ownerWork.projects.filter(work => work.project.id !== 8),
+          }
+          mirroredWork = {
+            ...mirroredWork,
+            projects: mirroredWork.projects.filter(work => work.project.id !== 8),
+          }
+          return { accepted: true }
+        }),
+        listRuntimeWork: vi
+          .fn()
+          .mockImplementation(async (options?: { deviceId?: string }) =>
+            options?.deviceId ? ownerWork : mirroredWork
+          ),
+        upsertLocalRuntimeProject: vi
+          .fn()
+          .mockImplementation(async (data: RuntimeLocalProjectUpsertRequest) => {
+            if (saveOutcome === 'unconfirmed') return { ...data, accepted: true, aiSettings: null }
+            ownerWork = {
+              ...ownerWork,
+              projects: ownerWork.projects.map(work => ({
+                ...work,
+                project: {
+                  ...work.project,
+                  name: data.name,
+                  source: 'local_project',
+                  sidebarStateKey: undefined,
+                  stateDeviceId: 'owner-id',
+                  aiSettings: data.aiSettings,
+                  defaultProjectSpace: data.defaultProjectSpace,
+                },
+              })),
+            }
+            return { ...data, accepted: true }
+          }),
+        syncRuntimeRemoteProjects: vi.fn().mockImplementation(async () => {
+          if (saveOutcome === 'mirror-failure') throw new Error('Mirror unavailable')
+          mirroredWork = ownerWork
+          return { accepted: true }
+        }),
+      })
+      const owner = createDevice({
+        device_id: 'owner-id',
+        socket_device_id: 'owner-socket',
+        runtime_instance_id: 'owner-runtime',
+        device_type: deviceType,
+        executor_version: '2.0.21',
+        is_default: false,
+      })
+      const local = createDevice({
+        id: 2,
+        device_id: 'local-device',
+        runtime_instance_id: 'local-runtime',
+        device_type: 'local',
+      })
+      let devices = [
+        local,
+        owner,
+        ...(ambiguousExclusion
+          ? [
+              createDevice({
+                id: 3,
+                device_id: 'removed-owner',
+                socket_device_id: 'removed-alias',
+                runtime_instance_id: 'removed-runtime',
+                device_type: 'remote',
+                is_default: false,
+              }),
+            ]
+          : []),
+      ]
+      const models: UnifiedModel[] = ['global-model', 'project-model', 'override-model'].map(
+        name => ({
+          name,
+          type: 'runtime',
+          provider: 'local',
+          config: { weworkModelKind: 'codex-provider', ui: { family: 'codex-provider' } },
+        })
+      )
+      const services = createWorkbenchServices({
+        getLocalRuntimeSidebarIdentity: createLocalSidebarIdentityMock(),
+        deviceApi: {
+          listDevices: vi.fn().mockImplementation(async () => devices),
+        } as WorkbenchServices['deviceApi'],
+        modelApi: { listModels: vi.fn().mockResolvedValue({ data: models }) },
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+        cloudBackgroundApi: {
+          listTeams: vi.fn().mockResolvedValue([]),
+          listDevices: vi
+            .fn()
+            .mockImplementation(async () =>
+              devices.filter(device => device.device_type !== 'local')
+            ),
+          listRuntimeWork: vi.fn().mockImplementation(async () => ownerWork),
+        },
+      })
+      function SavedDefaultsComposerProbe() {
+        const workbench = useWorkbench()
+        const [result, setResult] = useState('idle')
+        return (
+          <>
+            <span data-testid="saved-default-model">
+              {workbench.projectChat.selectedModel?.name}
+            </span>
+            <span data-testid="saved-default-source">
+              {
+                workbench.state.runtimeWork?.projects.find(work => work.project.id === 7)?.project
+                  .source
+              }
+            </span>
+            <span data-testid="saved-default-result">{result}</span>
+            <span data-testid="saved-default-project-ids">
+              {workbench.state.runtimeWork?.projects
+                .map(work => `${work.project.id}:${work.project.ownerProjectKey}`)
+                .join('|')}
+            </span>
+            <button type="button" onClick={() => workbench.selectProjectWorkspace(7, null)}>
+              select defaults project
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setResult('saving')
+                void workbench
+                  .updateLocalRuntimeProject({
+                    deviceId: 'owner-socket',
+                    projectKey: 'project-7',
+                    name: 'Wegent',
+                    roots: ['/workspace/project-alpha'],
+                    aiSettings,
+                    defaultProjectSpace: null,
+                  })
+                  .then(
+                    () => setResult('saved'),
+                    error => setResult(error.message)
+                  )
+              }}
+            >
+              save defaults
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void workbench.openRuntimeTask({
+                  deviceId: 'owner-id',
+                  taskId: 'existing-task',
+                  workspacePath: '/workspace/project-alpha',
+                })
+              }
+            >
+              open existing defaults task
+            </button>
+            <button type="button" onClick={() => workbench.startNewProjectChat(7)}>
+              new defaults conversation
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void workbench.removeProject(8).then(
+                  () => setResult('removed'),
+                  error => setResult(error.message)
+                )
+              }
+            >
+              remove defaults exclusion
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void workbench.refreshWorkLists().then(
+                  () => setResult('refreshed'),
+                  error => setResult(error.message)
+                )
+              }
+            >
+              refresh defaults devices
+            </button>
+            <ChatInput
+              value=""
+              onChange={() => {}}
+              onSubmit={() => {}}
+              disabled={false}
+              variant="desktop"
+              projectChat={workbench.projectChat}
+              projectWork={{
+                projects: workbench.state.projects,
+                devices: workbench.state.devices,
+                currentProject: workbench.state.currentProject,
+                runtimeWork: workbench.state.runtimeWork,
+                currentRuntimeTask: workbench.state.currentRuntimeTask,
+                executionMode: workbench.projectExecutionMode,
+                onSelectProject: workbench.selectProject,
+                onSelectStandaloneDevice: workbench.selectStandaloneDevice,
+                onExecutionModeChange: workbench.setProjectExecutionMode,
+              }}
+            />
+          </>
+        )
+      }
+      render(
+        <WorkbenchProvider
+          user={{
+            id: 1,
+            user_name: 'alice',
+            email: 'a@b.c',
+            preferences: {
+              wework_new_chat_model_selection: { modelName: 'global-model', modelType: 'runtime' },
+            },
+          }}
+          services={services}
+          syncRemoteProjects={false}
+        >
+          <SavedDefaultsComposerProbe />
+        </WorkbenchProvider>
+      )
+      if (ambiguousExclusion) {
+        await waitFor(() =>
+          expect(screen.getByTestId('saved-default-project-ids')).toHaveTextContent('8:removed-key')
+        )
+      }
+      await userEvent.click(await screen.findByText('select defaults project'))
+      await waitFor(() =>
+        expect(screen.getByTestId('saved-default-model')).toHaveTextContent('global-model')
+      )
+      await userEvent.click(screen.getByText('save defaults'))
+      await waitFor(() =>
+        expect(screen.getByTestId('saved-default-result')).not.toHaveTextContent('saving')
+      )
+      expect(screen.getByTestId('saved-default-model')).toHaveTextContent('global-model')
+      await userEvent.click(screen.getByTestId('quick-phrase-button'))
+      expect(
+        screen.queryByTestId('project-quick-phrase-option-project-review')
+      ).not.toBeInTheDocument()
+      await userEvent.keyboard('{Escape}')
+      expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalled()
+      if (ambiguousExclusion) {
+        expect(screen.getByTestId('saved-default-project-ids')).toHaveTextContent('8:removed-key')
+        await userEvent.click(screen.getByText('remove defaults exclusion'))
+        await waitFor(() =>
+          expect(screen.getByTestId('saved-default-result')).toHaveTextContent('removed')
+        )
+        devices = [
+          ...devices,
+          createDevice({
+            id: 4,
+            device_id: 'conflicting-owner',
+            socket_device_id: 'removed-alias',
+            runtime_instance_id: 'conflicting-runtime',
+            device_type: 'remote',
+            is_default: false,
+          }),
+        ]
+        await userEvent.click(screen.getByText('refresh defaults devices'))
+        await waitFor(() =>
+          expect(screen.getByTestId('saved-default-result')).toHaveTextContent('refreshed')
+        )
+      }
+      saveOutcome = 'mirror-failure'
+      await userEvent.click(screen.getByText('save defaults'))
+      await waitFor(() =>
+        expect(screen.getByTestId('saved-default-result')).toHaveTextContent(
+          ambiguousExclusion ? 'ambiguous-executor-identity:removed-alias' : 'Mirror unavailable'
+        )
+      )
+      await waitFor(() =>
+        expect(screen.getByTestId('saved-default-model')).toHaveTextContent('project-model')
+      )
+      expect(screen.getByTestId('saved-default-source')).toHaveTextContent(
+        source === 'legacy_root' ? 'local_project' : 'remote_project'
+      )
+      await userEvent.click(screen.getByTestId('quick-phrase-button'))
+      expect(
+        await screen.findByTestId('project-quick-phrase-option-project-review')
+      ).toHaveTextContent('Review saved project')
+      await userEvent.keyboard('{Escape}')
+      expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenLastCalledWith(
+        expect.objectContaining({ deviceId: 'owner-socket' })
+      )
+      if (ambiguousExclusion) {
+        expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalled()
+        expect(screen.getByTestId('saved-default-result')).toHaveTextContent(
+          '项目设置已保存到所属设备，但侧边栏同步失败'
+        )
+        devices = devices.filter(device => device.device_id !== 'conflicting-owner')
+        await userEvent.click(screen.getByText('refresh defaults devices'))
+        await waitFor(() =>
+          expect(screen.getByTestId('saved-default-result')).toHaveTextContent('refreshed')
+        )
+      } else
+        expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            projects: [expect.objectContaining({ hostId: 'owner-id', aiSettings })],
+          }),
+          expect.anything()
+        )
+      await userEvent.click(screen.getByText('open existing defaults task'))
+      await waitFor(() =>
+        expect(screen.getByTestId('saved-default-model')).toHaveTextContent('override-model')
+      )
+      saveOutcome = 'success'
+      await userEvent.click(screen.getByText('save defaults'))
+      await waitFor(() =>
+        expect(screen.getByTestId('saved-default-result')).toHaveTextContent('saved')
+      )
+      expect(screen.getByTestId('saved-default-model')).toHaveTextContent('override-model')
+      await userEvent.click(screen.getByText('new defaults conversation'))
+      await waitFor(() =>
+        expect(screen.getByTestId('saved-default-model')).toHaveTextContent('project-model')
+      )
+      await userEvent.click(screen.getByTestId('quick-phrase-button'))
+      expect(
+        await screen.findByTestId('project-quick-phrase-option-project-review')
+      ).toHaveTextContent('Review saved project')
+    }
+  )
+
+  test('rejects an unqualified remote project save when its owner address and project key collide with native IPC', async () => {
+    const identity = {
+      deviceId: 'current-app-ipc',
+      runtimeInstanceId: 'current-runtime',
+      provenance: 'local-ipc' as const,
+    }
+    const native = qualifyLocalRuntimeSource(
+      createDevice({
+        device_id: identity.deviceId,
+        runtime_instance_id: identity.runtimeInstanceId,
+        device_type: 'local',
+        executor_version: '2.0.21',
+      }),
+      identity
     )
+    const historical = createDevice({
+      id: 2,
+      device_id: identity.deviceId,
+      runtime_instance_id: 'historical-runtime',
+      device_type: 'remote',
+      is_default: false,
+      executor_version: '2.0.21',
+    })
+    const work = createRuntimeWork({
+      projects: ['native', 'remote'].map((source, index) => ({
+        project: {
+          id: 7 + index,
+          key:
+            source === 'remote'
+              ? 'wegent-remote:current-app-ipc:same-project-key'
+              : 'same-project-key',
+          name: `${source} project`,
+          source: source === 'remote' ? 'remote_project' : 'local_project',
+          ownerDeviceId: identity.deviceId,
+          ownerProjectKey: 'same-project-key',
+          roots: [{ kind: 'local', path: `/workspace/${source}` }],
+        },
+        deviceWorkspaces: [
+          {
+            deviceId: identity.deviceId,
+            workspacePath: `/workspace/${source}`,
+            workspaceSource: source === 'remote' ? 'remote' : 'local',
+            mapped: true,
+            available: true,
+            tasks: [],
+          },
+        ],
+        totalTasks: 0,
+      })),
+      totalTasks: 0,
+    })
+    work.projects[0].project = qualifyLocalRuntimeSource(work.projects[0].project, identity)
+    work.projects[0].deviceWorkspaces[0] = qualifyLocalRuntimeSource(
+      work.projects[0].deviceWorkspaces[0],
+      identity
+    )
+    const upsert = vi.fn().mockResolvedValue({ accepted: true })
+    const projectPlugins = vi.fn()
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([native, historical]),
+      } as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn().mockResolvedValue(work),
+        upsertLocalRuntimeProject: upsert,
+      }) as WorkbenchServices['runtimeWorkApi'],
+      projectDevicePluginApi: projectPlugins,
+    })
+    function SaveProbe() {
+      const workbench = useWorkbench()
+      const [result, setResult] = useState('pending')
+      return (
+        <>
+          <span data-testid="colliding-project-ready">
+            {workbench.state.runtimeWork ? 'ready' : 'loading'}
+          </span>
+          <span data-testid="colliding-project-save-result">{result}</span>
+          <button
+            type="button"
+            data-testid="save-colliding-remote-project-button"
+            onClick={() =>
+              void workbench
+                .updateLocalRuntimeProject({
+                  deviceId: identity.deviceId,
+                  projectKey: 'same-project-key',
+                  name: 'Edited remote project',
+                  roots: ['/workspace/remote'],
+                })
+                .then(
+                  () => setResult('saved'),
+                  () => setResult('rejected')
+                )
+            }
+          >
+            Save colliding remote project
+          </button>
+        </>
+      )
+    }
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={services}
+        syncRemoteProjects={false}
+        loadTaskComposerCatalogs={false}
+      >
+        <SaveProbe />
+      </WorkbenchProvider>
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('colliding-project-ready')).toHaveTextContent('ready')
+    )
+    await userEvent.click(screen.getByText('Save colliding remote project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('colliding-project-save-result')).toHaveTextContent('rejected')
+    )
+    expect(upsert).not.toHaveBeenCalled()
+    expect(projectPlugins).not.toHaveBeenCalled()
   })
 
   test('restores the local project default after a task-specific model override', async () => {
@@ -10529,12 +11108,14 @@ describe('WorkbenchProvider runtime tasks', () => {
     const localDevice = createDevice({
       id: 31,
       device_id: 'device-local',
+      runtime_instance_id: 'shared-runtime',
       name: 'This Mac',
       device_type: 'local',
     })
     const cloudDevice = createDevice({
       id: 32,
       device_id: 'device-cloud',
+      runtime_instance_id: 'shared-runtime',
       name: 'Cloud Device',
       device_type: 'cloud',
     })
@@ -11288,6 +11869,283 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('mutation-project-order')).toHaveTextContent('Offline Remote Project')
   })
 
+  test.each([false, true])(
+    'does not re-register a removed host with opaque local state %s while another project save waits in the same queue',
+    async opaqueLocalState => {
+      let holdRefresh = false
+      const localRemoval = deferred<{ accepted: boolean }>()
+      const delayedRefresh = deferred<RuntimeWorkListResponse>()
+      const initialWork = qualifyLocalRuntimeWork(
+        createRuntimeWork({
+          projects: [7, 8].map(id => ({
+            project: {
+              id,
+              key: opaqueLocalState && id === 7 ? 'mirror-7' : 'shared-key',
+              sidebarStateKey: 'mirror-' + id,
+              ownerDeviceId: 'alias-' + id,
+              ownerProjectKey: opaqueLocalState && id === 7 ? undefined : 'shared-key',
+              name: 'Project ' + id,
+              source: 'remote_project',
+              stateDeviceId: 'local-device',
+              roots: [{ kind: 'local', path: '/srv/shared' }],
+            },
+            deviceWorkspaces: [
+              {
+                deviceId: 'remote-' + id,
+                remoteHostId: 'alias-' + id,
+                workspaceSource: 'remote',
+                workspacePath: '/srv/shared',
+                mapped: true,
+                available: true,
+                tasks: [],
+              },
+            ],
+            totalTasks: 0,
+          })),
+          totalTasks: 0,
+        }),
+        { deviceId: 'local-device', runtimeInstanceId: 'local-runtime', provenance: 'local-ipc' }
+      )
+      let localWork = initialWork
+      let ownerWork = initialWork
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        listRuntimeWork: vi
+          .fn()
+          .mockImplementation((options?: { deviceId?: string }) =>
+            options?.deviceId
+              ? Promise.resolve(ownerWork)
+              : holdRefresh
+                ? delayedRefresh.promise
+                : Promise.resolve(localWork)
+          ),
+        removeRuntimeWorkspace: vi
+          .fn()
+          .mockResolvedValueOnce({ accepted: true })
+          .mockImplementationOnce(() => localRemoval.promise),
+        upsertLocalRuntimeProject: vi
+          .fn()
+          .mockImplementation(async (data: RuntimeLocalProjectUpsertRequest) => {
+            ownerWork = createRuntimeWork({
+              projects: [
+                {
+                  project: {
+                    key: data.projectKey,
+                    name: data.name,
+                    source: 'local_project',
+                    stateDeviceId: data.deviceId,
+                    roots: data.roots.map(path => ({ kind: 'local', path })),
+                    aiSettings: data.aiSettings,
+                    defaultProjectSpace: data.defaultProjectSpace,
+                  },
+                  deviceWorkspaces: [
+                    {
+                      deviceId: data.deviceId,
+                      workspacePath: data.roots[0],
+                      tasks: [],
+                      available: true,
+                    },
+                  ],
+                },
+              ],
+            })
+            return { ...data, accepted: true }
+          }),
+      })
+      const services = createWorkbenchServices({
+        getLocalRuntimeSidebarIdentity: createLocalSidebarIdentityMock(),
+        deviceApi: {
+          listDevices: vi.fn().mockResolvedValue([
+            createDevice({
+              device_id: 'local-device',
+              runtime_instance_id: 'local-runtime',
+              device_type: 'local',
+            }),
+            ...(opaqueLocalState
+              ? [
+                  createDevice({
+                    id: 99,
+                    device_id: 'history-local-alias',
+                    app_device_id: 'local-device',
+                    runtime_instance_id: 'historical-runtime',
+                    device_type: 'remote',
+                    status: 'offline',
+                    is_default: false,
+                  }),
+                ]
+              : []),
+            ...[7, 8].map(id =>
+              createDevice({
+                device_id: 'remote-' + id,
+                socket_device_id: 'alias-' + id,
+                device_type: 'remote',
+                executor_version: '2.0.21',
+                is_default: false,
+              })
+            ),
+          ]),
+        } as WorkbenchServices['deviceApi'],
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+        cloudBackgroundApi: {
+          listTeams: vi.fn().mockResolvedValue([]),
+          listDevices: vi.fn().mockResolvedValue([
+            ...[7, 8].map(id =>
+              createDevice({
+                device_id: 'remote-' + id,
+                socket_device_id: 'alias-' + id,
+                device_type: 'remote',
+                executor_version: '2.0.21',
+                is_default: false,
+              })
+            ),
+            ...(opaqueLocalState
+              ? [
+                  createDevice({
+                    id: 99,
+                    device_id: 'history-local-alias',
+                    app_device_id: 'local-device',
+                    runtime_instance_id: 'historical-runtime',
+                    device_type: 'remote',
+                    status: 'offline',
+                    is_default: false,
+                  }),
+                ]
+              : []),
+          ]),
+          listRuntimeWork: vi.fn().mockResolvedValue(initialWork),
+        },
+      })
+      let removePromise: Promise<unknown> | undefined
+      let savePromise: Promise<unknown> | undefined
+      function ConcurrentProjectMutationProbe() {
+        const workbench = useWorkbench()
+        return (
+          <>
+            <span data-testid="concurrent-projects">
+              {workbench.state.runtimeWork?.projects.length ?? 0}
+            </span>
+            <button type="button" onClick={() => void workbench.refreshWorkLists()}>
+              refresh replaced runtime
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                holdRefresh = true
+                removePromise = workbench.removeProject(7)
+              }}
+            >
+              remove host A
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                savePromise = workbench.updateLocalRuntimeProject({
+                  deviceId: 'alias-8',
+                  projectKey: 'shared-key',
+                  name: 'Edited B',
+                  roots: ['/srv/edited'],
+                  defaultProjectSpace: null,
+                  aiSettings: { instructions: 'New defaults' },
+                })
+                void savePromise.catch(() => undefined)
+              }}
+            >
+              save host B
+            </button>
+          </>
+        )
+      }
+      render(
+        <WorkbenchProvider
+          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+          services={services}
+          syncRemoteProjects={false}
+        >
+          <ConcurrentProjectMutationProbe />
+        </WorkbenchProvider>
+      )
+      await waitFor(() => expect(screen.getByTestId('concurrent-projects')).toHaveTextContent('2'))
+      await userEvent.click(screen.getByText('remove host A'))
+      await waitFor(() => expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledTimes(2))
+      await userEvent.click(screen.getByText('save host B'))
+      await waitFor(() => expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenCalledTimes(1))
+      expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalled()
+      await act(async () => {
+        localRemoval.resolve({ accepted: true })
+      })
+      try {
+        await waitFor(() =>
+          expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
+        )
+        await waitFor(() =>
+          expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1)
+        )
+        expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledWith(
+          {
+            deviceId: 'local-device',
+            projects: [
+              expect.objectContaining({
+                id: 'mirror-8',
+                hostId: 'alias-8',
+                projectKey: 'shared-key',
+                label: 'Edited B',
+                roots: ['/srv/edited'],
+                aiSettings: { instructions: 'New defaults' },
+              }),
+            ],
+          },
+          {
+            localSidebarIdentity: {
+              deviceId: 'local-device',
+              runtimeInstanceId: 'local-runtime',
+              provenance: 'local-ipc',
+            },
+          }
+        )
+      } finally {
+        await act(async () => {
+          delayedRefresh.resolve({
+            ...initialWork,
+            projects: initialWork.projects.filter(work => work.project.id === 8),
+          })
+          await Promise.all([removePromise, savePromise])
+        })
+      }
+      {
+        const replacementIdentity = {
+          deviceId: 'local-device',
+          runtimeInstanceId: 'replacement-runtime',
+          provenance: 'local-ipc' as const,
+        }
+        vi.mocked(services.getLocalRuntimeSidebarIdentity!).mockResolvedValue(replacementIdentity)
+        const replacementWork = structuredClone(initialWork)
+        if (opaqueLocalState) {
+          replacementWork.projects = replacementWork.projects.filter(work => work.project.id === 8)
+        }
+        replacementWork.projects.find(work => work.project.id === 8)!.project.name = 'Replacement B'
+        localWork = qualifyLocalRuntimeWork(replacementWork, replacementIdentity)
+        holdRefresh = false
+        vi.mocked(services.cloudBackgroundApi!.listRuntimeWork).mockResolvedValue(localWork)
+        await userEvent.click(screen.getByText('refresh replaced runtime'))
+        await waitFor(() =>
+          expect(screen.getByTestId('concurrent-projects')).toHaveTextContent(
+            opaqueLocalState ? '1' : '2'
+          )
+        )
+        await userEvent.click(screen.getByText('save host B'))
+        await act(async () => {
+          await savePromise
+        })
+        expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(2)
+        expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            projects: [expect.objectContaining({ id: 'mirror-8', label: 'Edited B' })],
+          }),
+          { localSidebarIdentity: replacementIdentity }
+        )
+      }
+    }
+  )
+
   test('renames and removes remote projects from both the remote executor and local Codex index', async () => {
     const initialRemoteProjectSync = deferred<{ accepted: boolean; deviceId: string }>()
     const remoteRuntimeWork = createRuntimeWork({
@@ -11330,6 +12188,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         .mockResolvedValue({ accepted: true, deviceId: 'local-device' }),
     })
     const services = createWorkbenchServices({
+      getLocalRuntimeSidebarIdentity: createLocalSidebarIdentityMock(),
       deviceApi: {
         listDevices: vi
           .fn()
@@ -11440,6 +12299,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       listRuntimeWork: vi.fn().mockResolvedValue(remoteRuntimeWork),
     })
     const services = createWorkbenchServices({
+      getLocalRuntimeSidebarIdentity: createLocalSidebarIdentityMock(),
       deviceApi: {
         listDevices: vi
           .fn()
@@ -11495,6 +12355,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       listRuntimeWork: vi.fn().mockResolvedValue(remoteRuntimeWork),
     })
     const services = createWorkbenchServices({
+      getLocalRuntimeSidebarIdentity: createLocalSidebarIdentityMock(),
       deviceApi: {
         listDevices: vi
           .fn()
@@ -11526,6 +12387,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       listRuntimeWork: vi.fn().mockImplementation(async () => currentWork),
     })
     const services = createWorkbenchServices({
+      getLocalRuntimeSidebarIdentity: createLocalSidebarIdentityMock(),
       deviceApi: {
         listDevices: vi
           .fn()
@@ -11575,17 +12437,30 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     view.rerender(provider(true))
     await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(2))
-    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith({
-      deviceId: 'local-device',
-      projects: [
-        {
-          id: 'remote-project-id',
-          hostId: 'remote-device',
-          remotePath: '/srv/project-alpha',
-          label: 'Beta',
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith(
+      {
+        deviceId: 'local-device',
+        projects: [
+          {
+            id: 'remote-project-id',
+            hostId: 'remote-device',
+            remotePath: '/srv/project-alpha',
+            label: 'Beta',
+            projectKey: '/srv/project-alpha',
+            roots: ['/srv/project-alpha'],
+            aiSettings: null,
+            defaultProjectSpace: null,
+          },
+        ],
+      },
+      {
+        localSidebarIdentity: {
+          deviceId: 'local-device',
+          runtimeInstanceId: 'local-runtime',
+          provenance: 'local-ipc',
         },
-      ],
-    })
+      }
+    )
   })
 
   test('retries a queued remote project sync canceled while the tab is inactive', async () => {
@@ -11599,6 +12474,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         .mockResolvedValue({ accepted: true, deviceId: 'local-device' }),
     })
     const services = createWorkbenchServices({
+      getLocalRuntimeSidebarIdentity: createLocalSidebarIdentityMock(),
       deviceApi: {
         listDevices: vi
           .fn()
@@ -11641,17 +12517,72 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     view.rerender(provider(true))
     await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(2))
-    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith({
-      deviceId: 'local-device',
-      projects: [
-        {
-          id: 'remote-project-id',
-          hostId: 'remote-device',
-          remotePath: '/srv/project-alpha',
-          label: 'Beta',
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith(
+      {
+        deviceId: 'local-device',
+        projects: [
+          {
+            id: 'remote-project-id',
+            hostId: 'remote-device',
+            remotePath: '/srv/project-alpha',
+            label: 'Beta',
+            projectKey: '/srv/project-alpha',
+            roots: ['/srv/project-alpha'],
+            aiSettings: null,
+            defaultProjectSpace: null,
+          },
+        ],
+      },
+      {
+        localSidebarIdentity: {
+          deviceId: 'local-device',
+          runtimeInstanceId: 'local-runtime',
+          provenance: 'local-ipc',
         },
-      ],
+      }
+    )
+  })
+
+  test('revokes a queued background mirror when the local IPC runtime is replaced', async () => {
+    const initialSync = deferred<{ accepted: boolean; deviceId: string }>()
+    let currentWork = createRemoteProjectRuntimeWork('Alpha')
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockImplementation(async () => currentWork),
+      syncRuntimeRemoteProjects: vi.fn().mockReturnValue(initialSync.promise),
     })
+    const services = createRemoteProjectSyncServices(runtimeWorkApi, () => currentWork)
+    const readIdentity = vi.fn().mockResolvedValue({
+      deviceId: 'local-device',
+      runtimeInstanceId: 'old-runtime',
+      provenance: 'local-ipc',
+    })
+    services.getLocalRuntimeSidebarIdentity = readIdentity
+    renderWorkbench(<RuntimeProjectMutationProbe />, services)
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1))
+    currentWork = createRemoteProjectRuntimeWork('Beta')
+    await userEvent.click(screen.getByText('refresh runtime projects'))
+    await waitFor(() => expect(readIdentity.mock.calls.length).toBeGreaterThanOrEqual(3))
+    readIdentity.mockResolvedValue({
+      deviceId: 'local-device',
+      runtimeInstanceId: 'replacement-runtime',
+      provenance: 'local-ipc',
+    })
+    await act(async () => initialSync.resolve({ accepted: true, deviceId: 'local-device' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-error')).toHaveTextContent(
+        'local-sidebar-runtime-changed'
+      )
+    )
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects.mock.calls).not.toContainEqual([
+      expect.objectContaining({ projects: [expect.objectContaining({ label: 'Beta' })] }),
+      {
+        localSidebarIdentity: {
+          deviceId: 'local-device',
+          runtimeInstanceId: 'old-runtime',
+          provenance: 'local-ipc',
+        },
+      },
+    ])
   })
 
   test('does not cache a rejected remote project sync response as completed', async () => {
@@ -11755,17 +12686,30 @@ describe('WorkbenchProvider runtime tasks', () => {
       initialSync.reject(new Error('Older remote project sync failed'))
     })
     await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(2))
-    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith({
-      deviceId: 'local-device',
-      projects: [
-        {
-          id: 'remote-project-id',
-          hostId: 'remote-device',
-          remotePath: '/srv/project-alpha',
-          label: 'Alpha',
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith(
+      {
+        deviceId: 'local-device',
+        projects: [
+          {
+            id: 'remote-project-id',
+            hostId: 'remote-device',
+            remotePath: '/srv/project-alpha',
+            label: 'Alpha',
+            projectKey: '/srv/project-alpha',
+            roots: ['/srv/project-alpha'],
+            aiSettings: null,
+            defaultProjectSpace: null,
+          },
+        ],
+      },
+      {
+        localSidebarIdentity: {
+          deviceId: 'local-device',
+          runtimeInstanceId: 'local-runtime',
+          provenance: 'local-ipc',
         },
-      ],
-    })
+      }
+    )
   })
 
   test('archives a worktree task without prompting and preserves a snapshot', async () => {

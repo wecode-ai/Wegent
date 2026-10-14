@@ -386,15 +386,30 @@ export function getKnownLocalExecutorDeviceId(): string | null {
   )
 }
 
-export function ensureLocalExecutorAvailable(): Promise<LocalExecutorStatus> {
-  if (availableLocalExecutorStatus && isExecutorHealthy(availableLocalExecutorStatus)) {
+export function ensureLocalExecutorAvailable(
+  options: { refresh?: boolean } = {}
+): Promise<LocalExecutorStatus> {
+  if (
+    !options.refresh &&
+    availableLocalExecutorStatus &&
+    isExecutorHealthy(availableLocalExecutorStatus)
+  ) {
     return Promise.resolve(availableLocalExecutorStatus)
   }
-  if (!ensureLocalExecutorAvailablePromise) {
+  if (options.refresh || !ensureLocalExecutorAvailablePromise) {
     const epoch = localExecutorIdentityEpoch
     const availability = describeDshExecutor()
       .then(description => {
         ensureLocalExecutorIdentityUnchanged(epoch)
+        if (
+          availableLocalExecutorStatus &&
+          (availableLocalExecutorStatus.runtimeInstanceId !== description.runtime_instance_id ||
+            availableLocalExecutorStatus.deviceId !== description.device_id)
+        ) {
+          localExecutorIdentityEpoch += 1
+          initializedLocalExecutorStatus = null
+          ensureLocalExecutorStartedPromise = null
+        }
         const status: LocalExecutorStatus = {
           running: true,
           ready: true,

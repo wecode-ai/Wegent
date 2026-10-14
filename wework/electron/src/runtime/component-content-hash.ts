@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, readdir } from 'node:fs/promises'
-import { join, posix } from 'node:path'
+import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 const MAX_FILE_READS = 8
@@ -35,7 +35,8 @@ async function hashTree(
   entries.sort((left, right) => left.name.localeCompare(right.name))
   const contents = await Promise.all(
     entries.map(async entry => {
-      const child = posix.join(relative, entry.name)
+      // Preserve the digest format used by installed platform-native updaters.
+      const child = join(relative, entry.name)
       if (entry.isDirectory())
         return `directory:${child}\0${await hashTree(root, child, hashFile)}\0`
       if (entry.isFile()) return `file:${child}\0${await hashFile(join(root, child))}\0`

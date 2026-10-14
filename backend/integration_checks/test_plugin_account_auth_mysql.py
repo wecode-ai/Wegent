@@ -33,6 +33,7 @@ from app.services.plugin_account_connections import (
 from app.services.plugin_auth_execution import PluginAuthExecutionService
 from app.services.plugin_auth_transfers import PluginAuthTransferService
 from app.services.plugin_credential_cipher import PluginCredentialCipher
+from app.services.plugin_marketplace_service import PluginMarketplaceService
 from app.services.plugin_oauth_operations import PluginOAuthOperations
 
 CREDENTIAL = SecretStr(
@@ -209,6 +210,49 @@ def test_simultaneous_enrollment_creates_only_one_account(context):
     assert race(context, enroll, enroll) == ["ok", "plugin_auth_revision_conflict"]
     with context.sessions() as db:
         assert len(context.accounts.list_connections(db, user_id=context.user_id)) == 1
+
+
+def test_empty_auto_update_batch_does_not_block_install_before_session_cleanup(context):
+    with context.sessions() as poll_db:
+        result = PluginMarketplaceService().auto_update_batch(
+            poll_db, user_id=context.user_id
+        )
+        assert result.updatedCount == 0
+
+        # Keep the polling request session open, as happens when an async install
+        # blocks the event loop before FastAPI can clean up another request.
+        with poll_db.get_bind().connect() as connection:
+            original_timeout = connection.scalar(
+                text("SELECT @@SESSION.innodb_lock_wait_timeout")
+            )
+            connection.commit()
+            try:
+                connection.execute(text("SET SESSION innodb_lock_wait_timeout = 2"))
+                connection.commit()
+                with context.sessions(bind=connection) as install_db:
+                    installed = Kind(
+                        user_id=context.user_id,
+                        kind="InstalledPlugin",
+                        namespace="default",
+                        name="concurrent-marketplace-install",
+                        json={"spec": {}},
+                        is_active=True,
+                    )
+                    install_db.add(installed)
+                    install_db.commit()
+                    assert installed.id is not None
+            finally:
+                connection.rollback()
+                connection.execute(
+                    text("SET SESSION innodb_lock_wait_timeout = :timeout"),
+                    {"timeout": original_timeout},
+                )
+                connection.commit()
+                assert (
+                    connection.scalar(text("SELECT @@SESSION.innodb_lock_wait_timeout"))
+                    == original_timeout
+                )
+                connection.commit()
 
 
 def test_simultaneous_device_registration_keeps_one_runtime_identity(context):

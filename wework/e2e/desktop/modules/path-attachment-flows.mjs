@@ -106,11 +106,12 @@ async function verifyComposerEditorScroll({ composerSelector, control }) {
   await control.command('fill', composerSelector, { value: '' })
 }
 
-async function verifyPastedZipAttachment({ composerSelector, control }) {
+async function verifyPastedZipAttachment({ composerSelector, control, prepareConversation }) {
   control.setScenario('pasted_zip_attachment')
   await control.command('snapshot', 'body')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await prepareConversation?.()
   const shortPaste = 'test\n'.repeat(999)
   await control.command('pasteText', composerSelector, { value: shortPaste })
   assert.equal(await control.command('getValue', composerSelector), shortPaste)

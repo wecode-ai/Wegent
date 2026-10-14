@@ -114,10 +114,18 @@ export interface RuntimeInteractiveSessionCapability {
   terminal?: boolean
 }
 
+export interface RuntimeProjectEditingCapability {
+  multiRoots?: boolean | null
+  aiSettings?: boolean | null
+  defaultProjectSpace?: boolean | null
+  plugins?: boolean | null
+}
+
 export interface RuntimeFeatureSet {
   schemaVersion: number
   interactiveSessions?: RuntimeInteractiveSessionCapability | null
   worktrees?: RuntimeWorktreeCapability | null
+  projectEditing?: RuntimeProjectEditingCapability | null
   [feature: string]: unknown
 }
 

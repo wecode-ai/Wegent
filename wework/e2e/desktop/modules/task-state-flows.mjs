@@ -10,6 +10,7 @@ import { inputUserMessageTexts } from './desktop-server.mjs'
 import { assertConversationTextOrder } from './conversation-navigation.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
+import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
 
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -522,15 +523,6 @@ async function assertRuntimeTaskOrderRemainsStable(
     )
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-}
-
-function findRuntimeWorkTask(runtimeWork, taskId) {
-  const workspaces = Array.isArray(runtimeWork.workspaces)
-    ? runtimeWork.workspaces
-    : Object.values(runtimeWork.workspaces ?? {})
-  return workspaces
-    .flatMap(workspace => (Array.isArray(workspace.tasks) ? workspace.tasks : []))
-    .find(task => task.taskId === taskId || task.task_id === taskId)
 }
 
 async function verifyRuntimeTaskOrderAndUnreadVisibility({

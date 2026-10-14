@@ -183,6 +183,9 @@ pub(crate) fn workspace_response(
                 workspace_json["projectKind"] = Value::String(workspace.project_kind.clone());
                 workspace_json["projectSource"] = Value::String(workspace.project_source.clone());
                 workspace_json["projectRoots"] = json!(workspace.project_roots);
+                if let Some(owner_project_key) = workspace.owner_project_key.as_ref() {
+                    workspace_json["ownerProjectKey"] = json!(owner_project_key);
+                }
                 if let Some(order) = workspace.project_sidebar_order {
                     workspace_json["projectSidebarOrder"] = json!(order);
                 }
@@ -254,6 +257,31 @@ mod tests {
             group_project_key: project_key.map(str::to_owned),
             ..RuntimeTaskLink::default()
         }
+    }
+
+    #[test]
+    fn workspace_response_preserves_full_remote_project_settings() {
+        let mut remote = project("sidebar-entry", Some("host-a"));
+        remote.owner_project_key = Some("owner-key".to_owned());
+        remote.project_roots = vec!["/srv/work".to_owned(), "/srv/second".to_owned()];
+        remote.default_project_space = Some(json!({"kind": "local", "id": 42}));
+        remote.project_ai_settings = Some(json!({
+            "instructions": "Project guidance",
+            "modelSelection": {"modelId": "project-model"},
+            "quickPhrases": [{"id": "phrase", "title": "Review", "content": "Review", "mode": "plan"}],
+            "plugins": [{"id": "plugin", "pluginName": "plugin", "marketplaceId": "market", "displayName": "Plugin"}]
+        }));
+        let rows = workspace_response(Vec::new(), vec![remote.clone()]);
+        assert_eq!(rows[0]["ownerProjectKey"], "owner-key");
+        assert_eq!(rows[0]["projectRoots"], json!(remote.project_roots));
+        assert_eq!(
+            rows[0]["defaultProjectSpace"],
+            remote.default_project_space.unwrap()
+        );
+        assert_eq!(
+            rows[0]["projectAiSettings"],
+            remote.project_ai_settings.unwrap()
+        );
     }
 
     #[test]

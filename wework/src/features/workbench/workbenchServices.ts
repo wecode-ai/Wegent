@@ -1,3 +1,5 @@
+import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
+import type { LocalRuntimeSidebarIdentity } from '@/lib/local-runtime-sidebar-identity'
 import { createDeviceApi } from '@/api/devices'
 import type { createRuntimeComposerApi } from '@wegent/chat-core/runtime-composer-api'
 import type { createLocalProjectAutomationApi } from '@/api/local/localProjectAutomations'
@@ -153,6 +155,8 @@ export interface LocalDecisionRouterApi {
 }
 
 export interface WorkbenchServices {
+  /** Read the current healthy local IPC identity, independently of the device catalog. */
+  getLocalRuntimeSidebarIdentity?: () => Promise<LocalRuntimeSidebarIdentity | null>
   agentResourceApi?: ReturnType<typeof createAgentResourceApi>
   teamApi: ReturnType<typeof createTeamApi>
   modelApi: ModelApi
@@ -201,6 +205,7 @@ export interface WorkbenchServices {
   localExecutionServices?: Pick<WorkbenchServices, 'runtimeWorkApi' | 'deviceApi'>
   composerCatalogApi?: Pick<ReturnType<typeof createRuntimeComposerApi>, 'readCatalog'>
   pluginApi?: ProjectPluginCatalogApi
+  projectDevicePluginApi?: (deviceId: string) => ProjectDevicePluginApi
   automationApi?: AutomationApi
   attachmentApi?: {
     uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
