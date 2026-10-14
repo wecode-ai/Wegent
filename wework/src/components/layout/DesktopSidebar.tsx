@@ -53,7 +53,9 @@ import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Tooltip } from '@/components/ui/tooltip'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
+import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDialog'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
@@ -291,8 +293,8 @@ interface DesktopSidebarProps {
     projectKey: string
     name: string
     roots: string[]
-    defaultProjectSpace: RuntimeProjectSpaceRef | null
-    aiSettings: RuntimeProjectAiSettings | null
+    defaultProjectSpace?: RuntimeProjectSpaceRef | null
+    aiSettings?: RuntimeProjectAiSettings | null
   }) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -307,6 +309,7 @@ interface DesktopSidebarProps {
   onStartGitCloneProject?: (deviceId: string, input: CloneGitRepositoryInput) => void
   onRetryGitCloneOperation?: (operation: GitCloneProjectOperation) => void
   onDismissGitCloneOperation?: (operationId: string) => void
+  projectDevicePluginApi?: (deviceId: string) => ProjectDevicePluginApi
   projectSpaceApis?: ProjectSpaceApi[]
   models?: UnifiedModel[]
   onOpenSettings: (options?: OpenSettingsOptions) => void
@@ -2865,11 +2868,9 @@ function ProjectItem({
                   onSelect: toggleProjectPinned,
                 },
                 {
-                  label:
-                    runtimeProjectWork?.project.stateDeviceId === sidebarStateDeviceId &&
-                    runtimeProjectWork?.project.source !== 'remote_project'
-                      ? t('workbench.edit_project', '编辑项目')
-                      : t('workbench.rename_project', '重命名项目'),
+                  label: runtimeProjectWork
+                    ? t('workbench.edit_project', '编辑项目')
+                    : t('workbench.rename_project', '重命名项目'),
                   icon: Edit3,
                   testId:
                     runtimeProjectWork?.project.stateDeviceId === sidebarStateDeviceId &&
@@ -3210,6 +3211,7 @@ export function DesktopSidebar({
   onRetryGitCloneOperation,
   onDismissGitCloneOperation,
   projectSpaceApis,
+  projectDevicePluginApi,
   models = [],
   onOpenSettings,
   onLogout,
@@ -3225,7 +3227,6 @@ export function DesktopSidebar({
   onPointerLeave,
   onToggleSidebar,
 }: DesktopSidebarProps) {
-  const localProjectPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
@@ -3296,12 +3297,20 @@ export function DesktopSidebar({
     useState<StandaloneRemoteDialogIntent>('project')
   const [renamingProject, setRenamingProject] = useState<ProjectWithTasks | null>(null)
   const [editingLocalProject, setEditingLocalProject] = useState<RuntimeProjectWork | null>(null)
+  const editingProjectWork = editingLocalProject
+    ? (runtimeWork?.projects.find(
+        item => runtimeProjectUiId(item.project) === runtimeProjectUiId(editingLocalProject.project)
+      ) ?? editingLocalProject)
+    : null
+  const editingProjectOwnerId = editingProjectWork
+    ? getRuntimeProjectOwner(editingProjectWork).deviceId
+    : ''
+  const editingProjectPluginApi = useMemo(
+    () => (editingProjectOwnerId ? projectDevicePluginApi?.(editingProjectOwnerId) : undefined),
+    [projectDevicePluginApi, editingProjectOwnerId]
+  )
   const openProjectEditor = (project: ProjectWithTasks, projectWork?: RuntimeProjectWork) => {
-    if (
-      projectWork?.project.stateDeviceId === sidebarStateDeviceId &&
-      projectWork?.project.source !== 'remote_project' &&
-      onUpdateLocalRuntimeProject
-    ) {
+    if (projectWork && onUpdateLocalRuntimeProject) {
       setEditingLocalProject(projectWork)
       return
     }
@@ -5204,21 +5213,17 @@ export function DesktopSidebar({
           />
           <LocalProjectEditDialog
             open={editingLocalProject !== null}
-            projectWork={editingLocalProject}
-            device={
-              devices.find(
-                device =>
-                  device.device_id ===
-                  (editingLocalProject?.project.stateDeviceId ||
-                    editingLocalProject?.deviceWorkspaces[0]?.deviceId)
-              ) ?? null
-            }
+            projectWork={editingProjectWork}
+            device={findWorkbenchDevice(
+              devices,
+              editingProjectWork ? getRuntimeProjectOwner(editingProjectWork).deviceId : null
+            )}
             onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
             projectSpaceApis={experimentalFeaturesEnabled ? projectSpaceApis : undefined}
             models={models}
-            pluginApi={localProjectPluginApi}
+            pluginApi={editingProjectPluginApi}
             onClose={() => setEditingLocalProject(null)}
             onSave={data =>
               onUpdateLocalRuntimeProject

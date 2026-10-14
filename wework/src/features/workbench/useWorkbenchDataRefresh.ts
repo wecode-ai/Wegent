@@ -1,3 +1,4 @@
+import { updateRuntimeWorkProject, type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
 import { mergeDeviceLists } from '@/lib/workbench-device'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -1005,8 +1006,43 @@ export function useWorkbenchDataRefresh({
       return createCommand()
     }, [services.deviceApi])
 
+  const updateRuntimeProject = useCallback(
+    (update: RuntimeProjectUpdate) => {
+      workListRefreshRevisionRef.current += 1
+      cloudBackgroundRequestControllerRef.current?.abort()
+      const projectUpdate = (work: RuntimeWorkListResponse) =>
+        updateRuntimeWorkProject(work, update, devicesRef.current)
+      if (localRuntimeWorkRef.current)
+        localRuntimeWorkRef.current = projectUpdate(localRuntimeWorkRef.current)
+      if (runtimeWorkRef.current) runtimeWorkRef.current = projectUpdate(runtimeWorkRef.current)
+      cachedRemoteRuntimeWorkRef.current = {
+        userId: user.id,
+        runtimeWork: writeCachedRemoteRuntimeWork(
+          user.id,
+          projectUpdate(cachedRemoteRuntimeWorkRef.current.runtimeWork)
+        ),
+      }
+      const cloud = clearCloudRuntimeSync(cloudRuntimeStateRef.current)
+      updateCloudRuntimeState({
+        ...cloud,
+        current: cloud.current
+          ? { ...cloud.current, runtimeWork: projectUpdate(cloud.current.runtimeWork) }
+          : null,
+        lastGood: cloud.lastGood
+          ? { ...cloud.lastGood, runtimeWork: projectUpdate(cloud.lastGood.runtimeWork) }
+          : null,
+      })
+      dispatch({ type: 'runtime_local_project_updated', ...update })
+    },
+    [dispatch, updateCloudRuntimeState, user.id]
+  )
+
+  const getRuntimeWorkSnapshot = useCallback(() => runtimeWorkRef.current, [])
+
   return {
     cloudWorkStatus,
+    getRuntimeWorkSnapshot,
+    updateRuntimeProject,
     markRuntimeTasksArchived,
     markRuntimeProjectRemoved,
     refreshWorkLists,

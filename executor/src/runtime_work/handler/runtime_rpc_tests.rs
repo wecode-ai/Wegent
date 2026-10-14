@@ -1,0 +1,58 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use super::*;
+
+#[test]
+fn remote_app_server_rpc_rejects_methods_outside_plugin_allowlist() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let handler = RuntimeWorkRpcHandler::new("device-1", "unused-codex-binary");
+
+            let error = handler
+                .handle_runtime_rpc(json!({
+                    "method": "runtime.codex.app_server.request",
+                    "payload": {"method": "thread/new", "params": {}}
+                }))
+                .await
+                .unwrap_err();
+
+            assert_eq!(error.code, "unsupported_codex_app_server_method");
+            assert_eq!(
+                error.message,
+                "Unsupported Codex app-server method: thread/new"
+            );
+        });
+}
+
+#[test]
+fn remote_app_server_rpc_requires_inner_method() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let handler = RuntimeWorkRpcHandler::new("device-1", "unused-codex-binary");
+
+            let error = handler
+                .handle_runtime_rpc(json!({
+                    "method": "runtime.codex.app_server.request",
+                    "payload": {"params": {}}
+                }))
+                .await
+                .unwrap_err();
+
+            assert_eq!(error.code, "bad_request");
+            assert_eq!(error.message, "method is required");
+        });
+}

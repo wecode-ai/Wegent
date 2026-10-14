@@ -4,6 +4,7 @@ import { sendPrompt } from './conversation-navigation.mjs'
 import { verifyConversationShortcuts } from './conversation-shortcuts.mjs'
 
 import { ensureTaskRowVisible, waitForScenarioRequestCount } from './memory-tool-flows.mjs'
+import { waitForCompletedRuntimeTaskThread } from './runtime-task-evidence.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -1159,9 +1160,12 @@ async function verifyWorktreeCreationStatus({
   const beforeRestart = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const currentTask = currentRuntimeTaskFromDebugSnapshot(beforeRestart)
   const restoredTaskId = currentTask?.taskId
-  const threadId = currentTask?.threadId ?? currentTask?.runtimeHandle?.threadId
   assert.ok(restoredTaskId, 'The project task must be selected before restarting')
-  assert.ok(threadId, 'The project task must expose its Codex thread before rollout recovery')
+  const threadId = await waitForCompletedRuntimeTaskThread(
+    control,
+    restoredTaskId,
+    DEFAULT_STEP_TIMEOUT_MS
+  )
   const rolloutPath = await findCodexRollout(join(executorHome, 'codex', 'sessions'), threadId)
   assert.ok(rolloutPath, 'The project task rollout was not persisted before recovery')
   const rollout = await readFile(rolloutPath, 'utf8')
