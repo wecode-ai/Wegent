@@ -838,7 +838,7 @@ fn push_git_clone_failure_fields(
     }
 }
 
-fn git_output_summary(output: &str) -> String {
+pub(crate) fn git_output_summary(output: &str) -> String {
     let sanitized = output
         .split_whitespace()
         .map(redact_git_output_fragment)

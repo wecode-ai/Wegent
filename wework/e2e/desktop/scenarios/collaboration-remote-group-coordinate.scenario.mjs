@@ -188,6 +188,14 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
     timeoutMs
   )
 
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="collaboration-workspace-project-create"]'),
+    {
+      visible: true,
+      timeoutMs,
+    }
+  )
   await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
   await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
   await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {

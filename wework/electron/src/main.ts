@@ -127,6 +127,7 @@ import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-star
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import { redactLog } from './runtime/rotating-log.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import {
   isTrustedIsolatedSurfaceAttachment,
@@ -411,7 +412,13 @@ app.on('web-contents-created', (_event, contents) => {
       isMainFrame,
     })
   })
-  contents.on('console-message', (_event, _level, message) => {
+  contents.on('console-message', (_event, level, message) => {
+    if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
+      console.warn('[renderer-error]', {
+        webContentsId: contents.id,
+        message: redactLog(message).slice(0, 4096),
+      })
+    }
     void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write runtime diagnostics', error)
     })

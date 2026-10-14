@@ -766,6 +766,21 @@ fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
     }
 
     if let Err(error) = replace_file(&temp_path, index_path) {
+        crate::logging::log_executor_event(
+            "runtime work index replacement failed",
+            &[
+                ("source", temp_path.display().to_string()),
+                ("destination", index_path.display().to_string()),
+                ("os_error", format!("{:?}", error.raw_os_error())),
+                (
+                    "destination_readonly",
+                    format!(
+                        "{:?}",
+                        fs::metadata(index_path).map(|metadata| metadata.permissions().readonly())
+                    ),
+                ),
+            ],
+        );
         return Err(clean_up_temp_file(
             &temp_path,
             io_error_with_context("replace runtime work index", index_path, error),

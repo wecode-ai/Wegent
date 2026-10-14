@@ -1172,7 +1172,18 @@ fn command_result(output: std::process::Output) -> Result<String, String> {
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned());
     }
-    Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    crate::logging::log_executor_event(
+        "runtime worktree git command failed",
+        &[
+            ("exit_code", output.status.to_string()),
+            (
+                "stderr",
+                crate::agents::git_workspace::git_output_summary(&stderr),
+            ),
+        ],
+    );
+    Err(stderr.trim().to_owned())
 }
 
 #[derive(Clone, Debug)]
