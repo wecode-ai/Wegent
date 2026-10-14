@@ -158,6 +158,7 @@ import {
   assertLocalRuntimeSidebarIdentity,
   localRuntimeSidebarIdentity,
   isInvalidLocalRuntimeIdentityError,
+  qualifyLocalRuntimeSource,
   qualifyLocalRuntimeWork,
   type LocalRuntimeSidebarOptions,
   type LocalRuntimeSidebarIdentity,
@@ -591,7 +592,7 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
   const online = status.running && status.ready !== false && !status.error
   const device = {
     id: 0,
-    device_id: status.deviceId || LOCAL_DEVICE_ID,
+    device_id: localDeviceIdFromStatus(status),
     name: 'Local Executor',
     status: online ? ('online' as const) : ('offline' as const),
     is_default: true,
@@ -608,7 +609,9 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
     bind_shell: 'claudecode' as const,
     runtime_transfer_host: null,
   }
-  return device
+  return online && status.deviceId?.trim() && status.runtimeInstanceId?.trim()
+    ? qualifyLocalRuntimeSource(device, localRuntimeSidebarIdentity(status))
+    : device
 }
 
 function localDeviceIdFromStatus(status: LocalExecutorStatus | null | undefined): string {

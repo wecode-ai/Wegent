@@ -1,6 +1,9 @@
 import * as codexPlugins from './codexPlugins'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
-import { qualifyLocalRuntimeWork } from '@/lib/local-runtime-sidebar-identity'
+import {
+  getLocalRuntimeSourceIdentity,
+  qualifyLocalRuntimeWork,
+} from '@/lib/local-runtime-sidebar-identity'
 import {
   readCachedRemoteRuntimeWork,
   writeCachedRemoteRuntimeWork,
@@ -2187,6 +2190,40 @@ describe('createLocalAppServices', () => {
       createdAt: 1780000000000,
       updatedAt: 1780000060000,
       recencyAt: 1780000050000,
+    })
+  })
+
+  test('qualifies native local device snapshots with their current IPC runtime identity', async () => {
+    const available = vi.fn().mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'current-ipc',
+      runtimeInstanceId: 'current-runtime',
+    })
+    const services = createLocalAppServices({
+      available,
+      request: vi.fn().mockResolvedValue({ runtimeWorktrees: {} }),
+      subscribe: vi.fn(),
+    })
+    const [current] = await services.deviceApi.listDevices()
+    expect(getLocalRuntimeSourceIdentity(current)).toEqual({
+      deviceId: 'current-ipc',
+      runtimeInstanceId: 'current-runtime',
+      provenance: 'local-ipc',
+    })
+    expect(getLocalRuntimeSourceIdentity(JSON.parse(JSON.stringify(current)))).toBeUndefined()
+
+    available.mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'replacement-ipc',
+      runtimeInstanceId: 'replacement-runtime',
+    })
+    const [replacement] = await services.deviceApi.listDevices()
+    expect(getLocalRuntimeSourceIdentity(replacement)).toEqual({
+      deviceId: 'replacement-ipc',
+      runtimeInstanceId: 'replacement-runtime',
+      provenance: 'local-ipc',
     })
   })
 

@@ -100,6 +100,21 @@ export function runtimeProjectTargetKey(
   return JSON.stringify([identityKey, projectKey])
 }
 
+export function getRuntimeProjectLocalOwnerIdentity(
+  projectWork: RuntimeProjectWork,
+  ownerDeviceId: string
+): LocalRuntimeSidebarIdentity | undefined {
+  const source = getLocalRuntimeSourceIdentity(projectWork.project)
+  return projectWork.project.source !== 'remote_project' &&
+    projectWork.project.kind !== 'remote' &&
+    source?.deviceId === ownerDeviceId &&
+    !projectWork.deviceWorkspaces.some(
+      workspace => workspace.remoteHostId || workspace.workspaceSource === 'remote'
+    )
+    ? source
+    : undefined
+}
+
 export function runtimeProjectSyncTargetKey(
   target: RuntimeProjectSyncTarget,
   devices: WorkbenchDeviceResolver,

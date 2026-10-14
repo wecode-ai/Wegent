@@ -341,10 +341,16 @@ export function useWorkbenchProjectActions({
           throw new Error(t('workbench.project_runtime_changed'))
         }
       }
-      const existing = findOwnedRuntimeProject(getRuntimeWorkSnapshot(), device, data.projectKey)
+      const existing = findOwnedRuntimeProject(
+        getRuntimeWorkSnapshot(),
+        device,
+        data.projectKey,
+        state.devices
+      )
       if (!existing) throw new Error(t('workbench.project_owner_unresolved'))
       const update = await saveProjectOnOwningRuntime(data, {
         device,
+        devices: state.devices,
         projectWork: existing,
         runtime: executorClient.runtime,
         pluginApi: services.projectDevicePluginApi?.(data.deviceId),

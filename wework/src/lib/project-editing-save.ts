@@ -14,7 +14,11 @@ import {
   type ProjectEditingCapabilities,
 } from './project-editing-capabilities'
 import { getRuntimeProjectOwner } from './runtime-project-state'
-import { workbenchDeviceMatchesId } from './workbench-device'
+import { createWorkbenchDeviceResolver, workbenchDeviceMatchesId } from './workbench-device'
+import {
+  getRuntimeProjectLocalOwnerIdentity,
+  runtimeProjectTargetKey,
+} from './runtime-project-identity'
 import type { RuntimeProjectUpdate } from './runtime-project-update'
 
 export interface ProjectEditingSave {
@@ -59,16 +63,29 @@ export function projectRoots(project: RuntimeProjectRef): string[] {
 export function findOwnedRuntimeProject(
   work: RuntimeWorkListResponse | null | undefined,
   device: DeviceInfo,
-  projectKey: string
+  projectKey: string,
+  devices: DeviceInfo[]
 ) {
-  return work?.projects.find(project => {
-    const owner = getRuntimeProjectOwner(project)
-    return owner.projectKey === projectKey && workbenchDeviceMatchesId(device, owner.deviceId)
+  const owners = createWorkbenchDeviceResolver(devices)
+  const target = runtimeProjectTargetKey(device.device_id, projectKey, owners)
+  const matches = work?.projects.filter(projectWork => {
+    const owner = getRuntimeProjectOwner(projectWork)
+    return (
+      owner.projectKey === projectKey &&
+      runtimeProjectTargetKey(
+        owner.deviceId,
+        owner.projectKey,
+        owners,
+        getRuntimeProjectLocalOwnerIdentity(projectWork, owner.deviceId)
+      ) === target
+    )
   })
+  return matches?.length === 1 ? matches[0] : undefined
 }
 
 interface ProjectEditingSaveContext {
   device: DeviceInfo
+  devices: DeviceInfo[]
   projectWork: RuntimeProjectWork
   runtime: ExecutorRuntimeClient
   pluginApi?: ProjectDevicePluginApi
@@ -215,7 +232,7 @@ export async function saveProjectOnOwningRuntime(
     requireExplicitProjectRoots: capabilities.multiRoots,
   })
   context.ensureSameRuntime()
-  const saved = findOwnedRuntimeProject(ownerWork, context.device, data.projectKey)
+  const saved = findOwnedRuntimeProject(ownerWork, context.device, data.projectKey, context.devices)
   if (!saved) throw new Error(context.messages.mismatch)
   return confirmedProjectUpdate(request, saved, context, capabilities)
 }

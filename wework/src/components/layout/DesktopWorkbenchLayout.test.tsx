@@ -52,6 +52,7 @@ import {
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
+import { qualifyLocalRuntimeSource } from '@/lib/local-runtime-sidebar-identity'
 import { setActiveKeybindings } from '@/lib/keybindings'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
@@ -5736,6 +5737,57 @@ describe('DesktopWorkbenchLayout', () => {
     expect(usagePanel).not.toHaveClass('pl-12')
     expect(within(usagePanel).queryByRole('progressbar')).not.toBeInTheDocument()
   })
+
+  test.each(['online', 'offline'] as const)(
+    'keeps project creation and the composer mounted when a %s historical runtime shares the current IPC address',
+    async status => {
+      const identity = {
+        deviceId: 'current-app-ipc',
+        runtimeInstanceId: 'current-runtime',
+        provenance: 'local-ipc' as const,
+      }
+      const localDevice = qualifyLocalRuntimeSource(
+        {
+          ...createLocalSkillDevice(),
+          device_id: identity.deviceId,
+          runtime_instance_id: identity.runtimeInstanceId,
+        },
+        identity
+      )
+      const state = {
+        ...baseProps.state,
+        standaloneDeviceId: identity.deviceId,
+        devices: [localDevice],
+      }
+      const view = render(<DesktopWorkbenchLayout {...baseProps} state={state} />)
+      expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
+
+      view.rerender(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          state={{
+            ...state,
+            devices: [
+              {
+                ...localDevice,
+                id: 77,
+                name: 'Historical remote alias',
+                device_type: 'remote',
+                is_default: false,
+                status,
+                runtime_instance_id: 'historical-runtime',
+              },
+              localDevice,
+            ],
+          }}
+        />
+      )
+
+      expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+      await userEvent.click(screen.getByTestId('projects-create-button'))
+      expect(screen.getByTestId('project-create-remote-option')).toBeInTheDocument()
+    }
+  )
 
   test('opens the project create dialog with grouped local and cloud choices', async () => {
     const onRefreshDevices = vi.fn().mockResolvedValue(undefined)

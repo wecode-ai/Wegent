@@ -1,7 +1,9 @@
 import { getRuntimeProjectOwner } from './runtime-project-state'
 import { createWorkbenchDeviceResolver } from './workbench-device'
-import { runtimeProjectTargetKey } from './runtime-project-identity'
-import { getLocalRuntimeSourceIdentity } from './local-runtime-sidebar-identity'
+import {
+  getRuntimeProjectLocalOwnerIdentity,
+  runtimeProjectTargetKey,
+} from './runtime-project-identity'
 import type {
   DeviceInfo,
   RuntimeProjectAiSettings,
@@ -30,16 +32,7 @@ export function updateRuntimeWorkProject(
     ...work,
     projects: work.projects.map(projectWork => {
       const owner = getRuntimeProjectOwner(projectWork)
-      const source = getLocalRuntimeSourceIdentity(projectWork.project)
-      const localOwner =
-        projectWork.project.source !== 'remote_project' &&
-        projectWork.project.kind !== 'remote' &&
-        source?.deviceId === owner.deviceId &&
-        !projectWork.deviceWorkspaces.some(
-          workspace => workspace.remoteHostId || workspace.workspaceSource === 'remote'
-        )
-          ? source
-          : undefined
+      const localOwner = getRuntimeProjectLocalOwnerIdentity(projectWork, owner.deviceId)
       if (
         owner.projectKey !== update.projectKey ||
         runtimeProjectTargetKey(owner.deviceId, owner.projectKey, owners, localOwner) !==

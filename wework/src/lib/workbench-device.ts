@@ -1,4 +1,5 @@
 import { isAppDevice, isCloudDevice, isRemoteDevice } from './device-capabilities'
+import { getLocalRuntimeSourceIdentity } from './local-runtime-sidebar-identity'
 import type {
   DeviceInfo,
   DeviceRuntimeRoute,
@@ -59,10 +60,39 @@ export function resolveLocalWorkbenchDeviceId(
   return defaultDevice?.device_id ?? normalized
 }
 
+/** Resolve the current native IPC address only when its source proves the runtime. */
+export function findNativeLocalWorkbenchDevice(
+  devices: DeviceInfo[],
+  deviceId: string | null | undefined
+) {
+  if (!deviceId) return null
+
+  const normalized = deviceId.trim()
+  const nativeLocalDevices = devices.filter(device => {
+    const identity = getLocalRuntimeSourceIdentity(device)
+    return (
+      device.device_type === 'local' &&
+      identity?.provenance === 'local-ipc' &&
+      identity.deviceId === normalized &&
+      device.device_id === identity.deviceId &&
+      Boolean(identity.runtimeInstanceId) &&
+      device.runtime_instance_id === identity.runtimeInstanceId
+    )
+  })
+  return nativeLocalDevices.length === 1 ? nativeLocalDevices[0] : null
+}
+
 export function findWorkbenchDevice(devices: DeviceInfo[], deviceId: string | null | undefined) {
   if (!deviceId) return null
 
-  const resolved = createWorkbenchDeviceResolver(devices).resolve(deviceId)
+  let resolved: DeviceInfo | null
+  try {
+    resolved = createWorkbenchDeviceResolver(devices).resolve(deviceId.trim())
+  } catch (error) {
+    // Ambiguous addresses are unavailable in the UI; writes keep the strict resolver.
+    if (error instanceof AmbiguousExecutorIdentityError) return null
+    throw error
+  }
   if (resolved) return resolved
 
   if (!isLocalWorkbenchDeviceAlias(deviceId)) return null

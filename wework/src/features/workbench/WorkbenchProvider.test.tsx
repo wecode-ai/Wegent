@@ -19,7 +19,10 @@ import {
 import { writePluginInventory } from '@/features/plugins/pluginInventory'
 import { emptyPluginComponents } from '@/features/plugins/slimPluginComponents'
 import { LOCAL_USER } from '@/api/local/localSession'
-import { qualifyLocalRuntimeWork } from '@/lib/local-runtime-sidebar-identity'
+import {
+  qualifyLocalRuntimeSource,
+  qualifyLocalRuntimeWork,
+} from '@/lib/local-runtime-sidebar-identity'
 import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
 import i18n from '@/i18n'
 import {
@@ -9204,6 +9207,126 @@ describe('WorkbenchProvider runtime tasks', () => {
       ).toHaveTextContent('Review saved project')
     }
   )
+
+  test('rejects an unqualified remote project save when its owner address and project key collide with native IPC', async () => {
+    const identity = {
+      deviceId: 'current-app-ipc',
+      runtimeInstanceId: 'current-runtime',
+      provenance: 'local-ipc' as const,
+    }
+    const native = qualifyLocalRuntimeSource(
+      createDevice({
+        device_id: identity.deviceId,
+        runtime_instance_id: identity.runtimeInstanceId,
+        device_type: 'local',
+        executor_version: '2.0.21',
+      }),
+      identity
+    )
+    const historical = createDevice({
+      id: 2,
+      device_id: identity.deviceId,
+      runtime_instance_id: 'historical-runtime',
+      device_type: 'remote',
+      is_default: false,
+      executor_version: '2.0.21',
+    })
+    const work = createRuntimeWork({
+      projects: ['native', 'remote'].map((source, index) => ({
+        project: {
+          id: 7 + index,
+          key:
+            source === 'remote'
+              ? 'wegent-remote:current-app-ipc:same-project-key'
+              : 'same-project-key',
+          name: `${source} project`,
+          source: source === 'remote' ? 'remote_project' : 'local_project',
+          ownerDeviceId: identity.deviceId,
+          ownerProjectKey: 'same-project-key',
+          roots: [{ kind: 'local', path: `/workspace/${source}` }],
+        },
+        deviceWorkspaces: [
+          {
+            deviceId: identity.deviceId,
+            workspacePath: `/workspace/${source}`,
+            workspaceSource: source === 'remote' ? 'remote' : 'local',
+            mapped: true,
+            available: true,
+            tasks: [],
+          },
+        ],
+        totalTasks: 0,
+      })),
+      totalTasks: 0,
+    })
+    work.projects[0].project = qualifyLocalRuntimeSource(work.projects[0].project, identity)
+    work.projects[0].deviceWorkspaces[0] = qualifyLocalRuntimeSource(
+      work.projects[0].deviceWorkspaces[0],
+      identity
+    )
+    const upsert = vi.fn().mockResolvedValue({ accepted: true })
+    const projectPlugins = vi.fn()
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([native, historical]),
+      } as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn().mockResolvedValue(work),
+        upsertLocalRuntimeProject: upsert,
+      }) as WorkbenchServices['runtimeWorkApi'],
+      projectDevicePluginApi: projectPlugins,
+    })
+    function SaveProbe() {
+      const workbench = useWorkbench()
+      const [result, setResult] = useState('pending')
+      return (
+        <>
+          <span data-testid="colliding-project-ready">
+            {workbench.state.runtimeWork ? 'ready' : 'loading'}
+          </span>
+          <span data-testid="colliding-project-save-result">{result}</span>
+          <button
+            type="button"
+            data-testid="save-colliding-remote-project-button"
+            onClick={() =>
+              void workbench
+                .updateLocalRuntimeProject({
+                  deviceId: identity.deviceId,
+                  projectKey: 'same-project-key',
+                  name: 'Edited remote project',
+                  roots: ['/workspace/remote'],
+                })
+                .then(
+                  () => setResult('saved'),
+                  () => setResult('rejected')
+                )
+            }
+          >
+            Save colliding remote project
+          </button>
+        </>
+      )
+    }
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={services}
+        syncRemoteProjects={false}
+        loadTaskComposerCatalogs={false}
+      >
+        <SaveProbe />
+      </WorkbenchProvider>
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('colliding-project-ready')).toHaveTextContent('ready')
+    )
+    await userEvent.click(screen.getByText('Save colliding remote project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('colliding-project-save-result')).toHaveTextContent('rejected')
+    )
+    expect(upsert).not.toHaveBeenCalled()
+    expect(projectPlugins).not.toHaveBeenCalled()
+  })
 
   test('restores the local project default after a task-specific model override', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
