@@ -544,11 +544,11 @@ async fn upstream_catalog(client_version: Option<&str>) -> Result<Option<Value>,
             );
         }
     };
-    if !catalog.get("models").is_some_and(Value::is_array) {
+    if let Err(error) = validate_catalog(&catalog) {
         return stale_catalog_or_error(
             cache.as_ref(),
             &upstream_id,
-            "upstream /models must contain a models array".to_owned(),
+            format!("upstream /models: {error}"),
         );
     }
     *cache = Some(CatalogCacheEntry {
@@ -653,13 +653,28 @@ async fn export_bundled_catalog(binary: &str, home: &Path) -> Result<Value, Stri
     }
     let catalog: Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("Invalid Codex bundled catalog: {error}"))?;
-    if !catalog.get("models").is_some_and(Value::is_array) {
-        return Err("Codex bundled catalog must contain a models array".to_owned());
-    }
+    validate_catalog(&catalog)?;
     Ok(catalog)
 }
 
+fn validate_catalog(catalog: &Value) -> Result<(), String> {
+    let models = catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Codex model catalog must contain a models array".to_owned())?;
+    if models.iter().any(|model| {
+        !model
+            .get("slug")
+            .and_then(Value::as_str)
+            .is_some_and(|slug| !slug.trim().is_empty())
+    }) {
+        return Err("Codex model catalog entries must contain a nonempty string slug".to_owned());
+    }
+    Ok(())
+}
+
 fn merge_base_models(catalog: &mut Value) -> Result<(), String> {
+    validate_catalog(catalog)?;
     let upstream_models = catalog
         .get_mut("models")
         .and_then(Value::as_array_mut)

@@ -12,6 +12,23 @@ fn rejects_malformed_catalog_without_replacing_it_with_base_models() {
     assert_eq!(catalog, original);
 }
 
+#[test]
+fn rejects_uneditable_model_entries_before_merging() {
+    for model in [
+        Value::Null,
+        json!({}),
+        json!({"slug": " "}),
+        json!({"slug": 42}),
+    ] {
+        let mut catalog = json!({"models": [model]});
+        let original = catalog.clone();
+        assert!(merge_base_models(&mut catalog).is_err());
+        assert_eq!(catalog, original);
+    }
+    assert!(validate_catalog(&json!({"models": []})).is_ok());
+    assert!(validate_catalog(&json!({"models": [{"slug": "gpt-6.1-sol"}]})).is_ok());
+}
+
 fn catalog() -> Value {
     let mut catalog = json!({
         "models": base_models()
