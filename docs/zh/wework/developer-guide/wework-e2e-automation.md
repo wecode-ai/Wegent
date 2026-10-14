@@ -600,3 +600,7 @@ Linux 与 Windows 桌面以及 macOS 内存 E2E，即使 PR 的改动路径通�
 Wework E2E。
 
 登录后流程应在测试前通过后端 API 创建测试用户和测试数据，再使用真实登录或真实 token 注入。不要在 Playwright 中 mock 后端 HTTP 响应。
+
+### 本地项目场景的就绪条件
+
+`createSingleRootLocalProject` 必须等待新项目成为 workbench 当前项目，不能只以创建弹窗消失或旧输入框仍可见作为就绪条件。云端上下文与运行历史场景还要通过 `selectE2EModel` 明确选择已注册的模型，再输入首条消息；其上下文阻塞、附件、历史恢复与任务移动断言保持完整。

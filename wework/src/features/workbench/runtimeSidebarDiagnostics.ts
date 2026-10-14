@@ -8,7 +8,7 @@ export function debugRuntimeSidebarState(event: string, details: Record<string, 
   )
     return
 
-  console.info('[Wework] Runtime sidebar state', {
+  console.debug('[Wework] Runtime sidebar state', {
     event,
     ...details,
   })

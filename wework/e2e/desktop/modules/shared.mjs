@@ -1470,6 +1470,13 @@ async function createSingleRootLocalProject(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await confirmLocalProjectName(control, name)
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot'))
+    if (snapshot.workbench?.currentProject?.name === name) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`The created local project did not become the active composer project: ${name}`)
 }
 
 async function selectE2EModel(

@@ -36,7 +36,9 @@ function Consumer() {
 }
 function fixture(
   predict: Predict,
-  context: ReplyPredictionSource | null = source,
+  context:
+    | (ReplyPredictionSource & { activeTurnId?: string | null; completedAt?: number })
+    | null = source,
   { blocked = false, enabled = true, copies = 1, available = true, taskModel = 'task-a' } = {}
 ) {
   let api = apis.get(predict)
@@ -67,8 +69,18 @@ function fixture(
               selectTask: () =>
                 context
                   ? {
-                      task: { updatedAt: context.revision },
-                      turn: { id: context.latestTurnId },
+                      task: {
+                        updatedAt: context.revision,
+                        completedAt: context.completedAt ?? 1000,
+                        runtimeHandle: { lastTurnId: context.latestTurnId },
+                      },
+                      turn: {
+                        latestId: context.latestTurnId,
+                        id:
+                          context.activeTurnId === undefined
+                            ? context.latestTurnId
+                            : context.activeTurnId,
+                      },
                       derived: { isBusy: context.busy },
                       interactionStatus: null,
                     }
@@ -157,6 +169,33 @@ describe('reply prediction provider', () => {
     expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
     rerender(fixture(predict, source, { enabled: false }))
     expect(predict.mock.calls[0][0].signal?.aborted).toBe(true)
+  })
+
+  it('keeps a completed-turn prediction when a task refresh clears the active turn ID', async () => {
+    let resolve!: (result: { suggestion: string }) => void
+    const predict = vi.fn<Predict>(
+      () =>
+        new Promise(done => {
+          resolve = done
+        })
+    )
+    const { rerender } = render(fixture(predict))
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+    rerender(fixture(predict, { ...source, activeTurnId: null, revision: 'metadata-update' }))
+    expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
+    expect(predict).toHaveBeenCalledTimes(1)
+    resolve({ suggestion: '请继续' })
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+  })
+
+  it('waits for the confirmed turn identity before requesting a prediction', async () => {
+    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
+    const { rerender } = render(fixture(predict, { ...source, latestTurnId: undefined }))
+    expect(predict).not.toHaveBeenCalled()
+    rerender(fixture(predict))
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(predict).toHaveBeenCalledWith(expect.objectContaining({ latestTurnId: 'turn-1' }))
   })
 
   it('does not predict an unbound project comment', () => {

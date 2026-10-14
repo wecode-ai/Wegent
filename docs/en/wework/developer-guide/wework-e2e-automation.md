@@ -691,3 +691,7 @@ On macOS, pre-push checks use `caffeinate -is -w` to remain awake while running;
 the assertion ends automatically with the hook, avoiding sleep-induced test timeouts.
 
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.
+
+### Readiness for Local Project Scenarios
+
+`createSingleRootLocalProject` must wait until the new project is the workbench’s current project. Closing the creation dialog or finding an older composer is insufficient. The cloud-context and running-history scenarios also select a registered model explicitly through `selectE2EModel` before entering the first message. Their stalled-context, attachment, history recovery, and task-move assertions remain intact.
