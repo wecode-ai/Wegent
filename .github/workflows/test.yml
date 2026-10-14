@@ -400,6 +400,12 @@ jobs:
       - name: Run chat core tests
         run: pnpm --filter @wegent/chat-core test
 
+      - name: Run collaboration workspace controller tests
+        run: >-
+          pnpm --filter @wegent/collaboration test
+          src/workspace-controller/useCollaborationWorkspaceController.test.ts
+          src/CollaborationApp.test.tsx
+
       - name: Run frontend tests
         env:
           NEXT_TELEMETRY_DISABLED: 1

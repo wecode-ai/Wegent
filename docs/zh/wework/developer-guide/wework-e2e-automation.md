@@ -553,6 +553,12 @@ const route = await app.route();
 
 ## CI 建议
 
+本地列表启动读取和手动刷新共享同一版本号。启动读取若已被后续刷新取代，必须在写入列表和发起云端同步之前一并退出，避免过期启动请求重新开启同步并覆盖已选择的本地项目。原任务发现 E2E 的执行模式和本地运行断言保持不变。
+
+云端 Issue 变化通知必须使正在读取的旧看板快照失效，并发起通知后的读取。使用共享控制器的 `loadProjectSnapshot(projectId, { invalidate: true })` 复用既有变更版本保护，避免连续取消指派、重新指派时，第二条通知复用第一条通知的旧请求。普通重复读取仍可合并。控制器的并发回归由 Frontend CI 执行，原人工 Issue E2E 保留 10 秒 UI 等待。
+
+平台 E2E 的 service 顺序必须先启动 etcd 和 MinIO，再启动 Milvus。GitHub runner 按配置顺序逐一拉取并启动容器；如果将 MinIO 放在 Milvus 后面，后续镜像拉取可能让 Milvus 在依赖 DNS 尚不存在时初始化并退出。健康检查在全部容器启动后才执行，不能修复这一启动顺序问题。
+
 CI 可以把 Wework E2E 作为独立 job：
 
 ```bash

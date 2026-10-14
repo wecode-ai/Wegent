@@ -4038,6 +4038,30 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('4')
   })
 
+  test('does not restart cloud sync from a superseded bootstrap task read', async () => {
+    const bootstrapRuntimeWork = deferred<RuntimeWorkListResponse>()
+    const cloudRuntimeWork = vi.fn().mockResolvedValue(createRuntimeWork())
+    const listRuntimeWork = vi
+      .fn()
+      .mockImplementationOnce(() => bootstrapRuntimeWork.promise)
+      .mockResolvedValueOnce(createRuntimeWork({ totalTasks: 4 }))
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+      cloudBackgroundApi: { listRuntimeWork: cloudRuntimeWork },
+    })
+
+    renderWorkbench(<BootstrapProbe />, services)
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh work lists' }))
+    await waitFor(() => expect(cloudRuntimeWork).toHaveBeenCalledOnce())
+
+    await act(async () => {
+      bootstrapRuntimeWork.resolve(createRuntimeWork())
+      await bootstrapRuntimeWork.promise
+    })
+    expect(cloudRuntimeWork).toHaveBeenCalledOnce()
+  })
+
   test('clears composer plugin apps after plugin state refresh returns no current-device installs', async () => {
     setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
