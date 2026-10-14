@@ -4289,7 +4289,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(trigger.querySelector(".lucide-chevron-down")).toBeNull();
     await click(trigger);
     expect(portalByTestId("collaboration-project-create-dialog")).toBeTruthy();
-    expect(document.body.querySelector(`[data-testid="${testId}-menu"]`)).toBeNull();
+    expect(
+      document.body.querySelector(`[data-testid="${testId}-menu"]`),
+    ).toBeNull();
     expect(api.projects.create).not.toHaveBeenCalled();
   });
 
@@ -4473,6 +4475,100 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect(api.workspaces!.listMembers).not.toHaveBeenCalled();
       expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
       expect(container.querySelector('[role="alert"]')).toBeNull();
+    },
+  );
+
+  it.each([
+    { role: "Viewer" as const, visibility: "public" as const },
+    { role: "Viewer" as const, visibility: "private" as const },
+    { role: "Developer" as const, visibility: "private" as const },
+    { role: "Maintainer" as const, visibility: "private" as const },
+    { role: "RestrictedAnalyst" as const, visibility: "private" as const },
+  ])(
+    "preserves $visibility project-only $role navigation across workspace switching",
+    async ({ role, visibility }) => {
+      const guestProject = {
+        ...project,
+        access_role: role,
+        visibility,
+        workspace_context: {
+          id: workspace.id,
+          public_id: "parent-public",
+          name: workspace.name,
+        },
+      };
+      const { api } = createApi({
+        initialWorkspaces: [localWorkspace, groupWorkspace],
+        initialProjects: [guestProject],
+      });
+      api.workspaces!.get = vi.fn(async (id) => {
+        const accessible = [localWorkspace, groupWorkspace].find(
+          (candidate) => candidate.id === id,
+        );
+        if (!accessible) throw new Error("Parent workspace access denied");
+        return accessible;
+      });
+      const renderProject = vi.fn(
+        (context: CollaborationProjectRendererContext) => (
+          <div
+            data-testid="project-only-content"
+            data-role={context.project.access_role}
+          >
+            Project content
+          </div>
+        ),
+      );
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{ ...initialLocation, workspaceId: groupWorkspace.id }}
+          renderProject={renderProject}
+        />,
+      );
+      await click(byTestId(`collaboration-workspace-toggle-${workspace.id}`));
+      const assertGuestNavigation = () => {
+        const parent = byTestId(`collaboration-workspace-tree-${workspace.id}`);
+        expect(parent.textContent).toContain(workspace.name);
+        expect(
+          parent.querySelector(
+            '[data-testid="collaboration-project-parent-workspace-context"]',
+          )?.tagName,
+        ).toBe("DIV");
+        expect(
+          parent.querySelector(".collaboration-workspace-actions"),
+        ).toBeNull();
+        expect(
+          byTestId(`collaboration-workspace-project-${project.id}`),
+        ).toBeTruthy();
+      };
+      assertGuestNavigation();
+      await click(
+        byTestId(`collaboration-workspace-home-${localWorkspace.id}`),
+      );
+      assertGuestNavigation();
+      await click(byTestId("collaboration-workspace-nav-projects"));
+      assertGuestNavigation();
+      await click(
+        byTestId(`collaboration-workspace-home-${groupWorkspace.id}`),
+      );
+      assertGuestNavigation();
+      await click(
+        byTestId(`collaboration-workspace-home-${localWorkspace.id}`),
+      );
+      await click(byTestId(`collaboration-workspace-project-${project.id}`));
+      expect(byTestId("project-only-content")).toBeTruthy();
+      expect(renderProject.mock.calls.at(-1)?.[0].project.access_role).toBe(
+        role,
+      );
+      expect(api.workspaces!.get).not.toHaveBeenCalledWith(workspace.id);
+      expect(api.workspaces!.listMembers).not.toHaveBeenCalledWith(
+        workspace.id,
+      );
+      expect(api.workspaces!.listAgents).not.toHaveBeenCalledWith(workspace.id);
+      expect(
+        api.workspaces!.listExecutionEnvironments,
+      ).not.toHaveBeenCalledWith(workspace.id);
+      expect(api.workspaces!.addMember).not.toHaveBeenCalled();
     },
   );
 

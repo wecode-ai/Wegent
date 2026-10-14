@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
+import { createProjectOnlyNavigationRegression } from '../modules/project-only-navigation.mjs'
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
@@ -82,6 +83,7 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const boardReplyModel = createBoardReplyModelRegression({ executorHome, uiTimeoutMs })
+  const projectOnlyNavigation = createProjectOnlyNavigationRegression({ uiTimeoutMs })
   let backendUrl = ''
   let authToken = ''
   let owner = null
@@ -144,6 +146,7 @@ export function createDesktopScenario({
       authToken = cloud.authToken
       owner = await request('/api/users/me')
       await request('/api/admin/setup-complete', { method: 'POST' })
+      await projectOnlyNavigation.prepare(cloud, owner)
     },
 
     setCloudEnvironment(environment) {
@@ -189,6 +192,8 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-01-all-workspaces.png')
+        await projectOnlyNavigation.verify(control, scoped)
+        await capture(control, 'collaboration-shared-core-project-only-navigation.png')
 
         await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
         const deviceRow = scoped(`[data-testid="collaboration-devices-row-${remoteDevice.id}"]`)
@@ -738,12 +743,20 @@ export function createDesktopScenario({
           workbenchReadyTimeoutMs,
         })
       } finally {
-        await archiveFixture()
+        try {
+          await archiveFixture()
+        } finally {
+          await projectOnlyNavigation.cleanup()
+        }
       }
     },
 
     async cleanup() {
-      await archiveFixture()
+      try {
+        await archiveFixture()
+      } finally {
+        await projectOnlyNavigation.cleanup()
+      }
     },
 
     diagnostics() {

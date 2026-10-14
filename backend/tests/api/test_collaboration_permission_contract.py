@@ -115,9 +115,22 @@ def test_cp02_cp03_cp05_role_union_and_restricted_projects(
         )
 
 
-def test_cp04_project_guest_does_not_inherit_upward(test_client, scope):
-    invite(test_client, scope, "Maintainer", project=True)
+@pytest.mark.parametrize("role", ["Viewer", "Developer", "Maintainer"])
+def test_cp04_project_guest_does_not_inherit_upward(test_client, scope, role):
+    invite(test_client, scope, role, project=True)
     wid = scope["space"]["id"]
+    pid = scope["project"]["id"]
+    detail = test_client.get(f"/api/v1/cloud-projects/{pid}", headers=scope["member"])
+    assert detail.status_code == 200
+    assert detail.json()["access_role"] == role
+    assert detail.json()["workspace_context"]["id"] == wid
+    workspace_ids = {
+        row["id"]
+        for row in test_client.get(
+            "/api/v1/workspaces", headers=scope["member"]
+        ).json()["items"]
+    }
+    assert wid not in workspace_ids
     for path in ("", "/members", "/agents", "/execution-environments"):
         assert (
             test_client.get(
@@ -136,6 +149,11 @@ def test_cp04_project_guest_does_not_inherit_upward(test_client, scope):
         ).status_code
         == 404
     )
+    listed_projects = test_client.get(
+        "/api/v1/cloud-projects", headers=scope["member"]
+    ).json()["items"]
+    assert pid in {row["id"] for row in listed_projects}
+    assert sibling["id"] not in {row["id"] for row in listed_projects}
 
 
 def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_client, scope):

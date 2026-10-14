@@ -661,31 +661,16 @@ function CollaborationPlatformNavigation({
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
 }) {
-  const domainWorkspaces = workspaces;
-  const domainWorkspaceIds = useMemo(
-    () => new Set(domainWorkspaces.map((workspace) => workspace.id)),
-    [domainWorkspaces],
-  );
-  const domainProjects = useMemo(
-    () =>
-      projects.filter(
-        (project) =>
-          (Boolean(project.workspace_id) &&
-            domainWorkspaceIds.has(project.workspace_id!)) ||
-          (project.project_store === "local" ? "local" : "cloud") === domain,
-      ),
-    [domain, domainWorkspaceIds, projects],
-  );
   const { workspaces: navigationWorkspaces, projectsByWorkspace } = useMemo(
     () =>
       buildWorkspaceNavigation(
-        domainWorkspaces,
-        domainProjects,
+        workspaces,
+        projects,
         workspaceNavigationContext,
       ),
-    [domainProjects, domainWorkspaces, workspaceNavigationContext],
+    [projects, workspaces, workspaceNavigationContext],
   );
-  const selectedProjectWorkspaceId = domainProjects.find(
+  const selectedProjectWorkspaceId = projects.find(
     (project) => project.id === host.location.projectId,
   )?.workspace_id;
   const selectedWorkspaceId =
@@ -4257,11 +4242,7 @@ export function CollaborationPlatformApp({
       host={host}
       messages={messages}
       workspaces={state.workspaces}
-      workspaceNavigationContext={
-        collaborationDomain === "cloud"
-          ? state.workspaceNavigationContext
-          : null
-      }
+      workspaceNavigationContext={state.workspaceNavigationContext}
       projects={state.navigationProjects}
       navigationIncomplete={state.navigationIncomplete}
       onRetryNavigation={commands.reload}

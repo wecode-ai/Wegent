@@ -66,6 +66,8 @@ Queued work revalidates current permission at claim time. Device liveness, model
 
 ## Management surfaces
 
+Users with project access and no parent-space access can still open their authorized projects from the unified sidebar. The parent supplies a grouping label only: it grants no space home, settings, membership, resource catalog or unauthorized sibling access. Public Viewers and directly invited project guests follow the same rule. Switching local/cloud spaces or reopening the current space does not change the authorized global project navigation.
+
 - Space settings: members, projects, shared agents/devices, space groups and ownership transfer.
 - Project settings: membership mode, effective roster and sources, guests, enabled resources, groups, automation and Issue security.
 - Personal resources: source definitions, devices, credentials and sharing grants.

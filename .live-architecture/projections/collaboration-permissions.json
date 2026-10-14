@@ -531,8 +531,12 @@
       "active": true,
       "evidence": [
         ".live-architecture/evidence/collaboration-pr-integration-20261014.md",
+        ".live-architecture/evidence/project-only-navigation-20261014.md",
+        "backend/tests/api/test_collaboration_permission_contract.py",
         "backend/tests/test_collaboration_permission_guard.py",
-        "docs/zh/wegent/developer-guide/collaboration-permissions.md"
+        "docs/zh/wegent/developer-guide/collaboration-permissions.md",
+        "packages/collaboration/src/platform/CollaborationPlatformApp.test.tsx",
+        "wework/e2e/desktop/modules/project-only-navigation.mjs"
       ],
       "id": "arch://wegent/test/94f7802d",
       "planes": [
@@ -621,11 +625,13 @@
       "evidence": [
         ".live-architecture/evidence/pr-permission-request-followup.md",
         ".live-architecture/evidence/pr3910-ci-repair-20261014.md",
+        ".live-architecture/evidence/project-only-navigation-20261014.md",
         "docs/zh/wegent/developer-guide/collaboration-permissions.md",
         "docs/zh/wegent/developer-guide/project-member-settings.md",
         "packages/collaboration/src/SharedIssueDetailEditor.tsx",
         "packages/collaboration/src/issue-detail/useIssueProjectChat.ts",
         "packages/collaboration/src/permissions.ts",
+        "packages/collaboration/src/platform/CollaborationPlatformApp.tsx",
         "packages/collaboration/src/platform/WorkspaceResourceConfiguration.tsx",
         "packages/collaboration/src/project-agent-config/ProjectAgentConfiguration.tsx",
         "packages/collaboration/src/project-manage/ProjectManageView.tsx",
@@ -708,5 +714,5 @@
     }
   ],
   "plane": null,
-  "revision": "A00000013"
+  "revision": "A00000014"
 }
