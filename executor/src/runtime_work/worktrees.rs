@@ -1086,14 +1086,11 @@ fn add_git_worktree(source: &Path, target: &Path, git_ref: Option<&str>) -> Resu
 }
 
 fn remove_git_worktree(path: &Path) -> Result<(), String> {
+    let path = std::path::absolute(path).map_err(|error| error.to_string())?;
     let value = path.to_str().ok_or("Invalid worktree path")?;
-    let common_dir = git_common_dir(path)?;
-    let mut command = git_command();
-    command
-        .arg("--git-dir")
-        .arg(common_dir)
-        .args(["worktree", "remove", "--force", value]);
-    command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
+    let common_dir = git_common_dir(&path)?;
+    let mut command = git_common_dir_command(&common_dir);
+    command.args(["worktree", "remove", "--force", value]);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
@@ -1124,13 +1121,12 @@ fn remove_empty_directory(path: &Path) -> Result<(), String> {
 }
 
 fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> Result<(), String> {
+    let path = std::path::absolute(path).map_err(|error| error.to_string())?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let mut command = git_command();
+    let mut command = git_common_dir_command(git_common_dir);
     command
-        .arg("--git-dir")
-        .arg(git_common_dir)
         .args(["worktree", "add", "--detach"])
         .arg(path)
         .arg(reference);
@@ -1139,13 +1135,24 @@ fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> 
 }
 
 fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), String> {
-    let mut command = git_command();
-    command
-        .arg("--git-dir")
-        .arg(git_common_dir)
-        .args(["update-ref", "-d", reference]);
+    let mut command = git_common_dir_command(git_common_dir);
+    command.args(["update-ref", "-d", reference]);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
+}
+
+fn git_common_dir_command(common_dir: &Path) -> Command {
+    let mut command = git_command();
+    // Git rejects an explicit GIT_DIR longer than PATH_MAX - 40 before loading
+    // core.longpaths. Enter the directory and identify it with a short name.
+    command.current_dir(common_dir).args(["--git-dir", "."]);
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR");
+    #[cfg(windows)]
+    command.env("GIT_COMMON_DIR", strip_windows_verbatim_prefix(common_dir));
+    command
 }
 
 fn git_command() -> Command {
@@ -3002,6 +3009,18 @@ mod tests {
             repository_info(&worktree).unwrap().git_common_dir,
             repository.git_common_dir
         );
+        remove_git_worktree(&worktree).unwrap();
+        assert!(!worktree.exists());
+
+        let reference = "refs/wegent/long-path-regression";
+        git_output(&source, &["update-ref", reference, "HEAD"], None).unwrap();
+        restore_git_worktree(&repository.git_common_dir, &worktree, reference).unwrap();
+        assert_eq!(
+            fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        delete_snapshot_ref(&repository.git_common_dir, reference).unwrap();
+        assert!(!git_ref_exists(&source, reference).unwrap());
         remove_git_worktree(&worktree).unwrap();
         assert!(!worktree.exists());
     }

@@ -325,8 +325,13 @@ Windows worktree commands set `GIT_COMMON_DIR` from the existing `.git` and
 `commondir` parser so checkout children find shared objects before loading repository config.
 Paths passed to Git omit the Windows verbatim prefix, allowing its slash-separated
 `/config` suffix to be normalized by the Windows path layer.
+Worktree removal, restoration, and snapshot-ref cleanup use `--git-dir .` inside
+the common Git directory, avoiding Git's explicit-directory length rejection before
+configuration loads. Worktree target paths remain absolute.
 Windows conversation indexes use POSIX replacement semantics with `FileRenameInfoEx`:
 existing readers retain the complete old index, and new readers see the newly published index.
+The destination parent is canonicalized to retain the long-path prefix for the direct
+Win32 call, including initial index creation.
 Native CI covers repeated replacements with open readers and replacements beyond `MAX_PATH`.
 
 Executor configures loopback `NO_PROXY` before creating the Tokio runtime, avoiding

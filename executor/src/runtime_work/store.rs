@@ -815,6 +815,13 @@ fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
 
     let source = OpenOptions::new().access_mode(DELETE).open(source)?;
     let destination = std::path::absolute(destination)?;
+    // Rust's filesystem layer expands long paths, but this direct Win32 call
+    // needs the canonical parent's verbatim prefix even for a new index.
+    let destination = fs::canonicalize(index_parent(&destination))?.join(
+        destination.file_name().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "index path has no file name")
+        })?,
+    );
     let name = destination
         .as_os_str()
         .encode_wide()
