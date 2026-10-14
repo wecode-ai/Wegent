@@ -181,11 +181,6 @@ export default function CorrectionModeToggle({
                   : t('chat:correction.user_model')}
               </span>
             )}
-            renderModelMeta={model =>
-              model.modelId ? (
-                <span className="block truncate text-xs text-text-muted">{model.modelId}</span>
-              ) : null
-            }
           />
         )}
       </DialogContent>

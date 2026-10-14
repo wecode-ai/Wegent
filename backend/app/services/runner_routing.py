@@ -123,6 +123,8 @@ def supports_model(device: Kind, model: ModelIdentity) -> bool:
 
 
 def save_catalog(db: Session, device: Kind, value: RunnerCatalog) -> None:
+    # Preserve configuration changed while a capability report was in flight.
+    db.refresh(device, attribute_names=["json"], with_for_update=True)
     payload = dict(device.json or {})
     spec = dict(payload.get("spec") or {})
     spec["runnerCatalog"] = value.model_dump()

@@ -735,7 +735,15 @@ export function useWorkbenchRuntimeMessaging({
         },
       })
       try {
-        const response = await executorClient.runtime.compactRuntimeTask({ address })
+        const continuation = await prepareRuntimeContinuationModel(
+          { address, message: '' },
+          state.runtimeWork,
+          () => executorClient.runtime.listRuntimeWork()
+        )
+        const response = await executorClient.runtime.compactRuntimeTask({
+          address,
+          modelSelection: continuation.modelSelection,
+        })
         if (!response.accepted) {
           throw new Error(response.error || '压缩上下文失败')
         }
@@ -790,7 +798,7 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
     },
-    [executorClient, lifecycleStore, refreshWorkLists, reportError]
+    [executorClient, lifecycleStore, refreshWorkLists, reportError, state.runtimeWork]
   )
 
   const cancelRuntimePaneTask = useCallback(

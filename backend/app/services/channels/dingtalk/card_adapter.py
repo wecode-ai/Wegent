@@ -7,7 +7,11 @@ import logging
 from typing import Any, Protocol
 from uuid import uuid4
 
-from app.schemas.dingtalk_card import DingTalkChatCardConfig
+from app.schemas.dingtalk_card import (
+    AUTO_LAYOUT_PARAM,
+    DingTalkChatCardConfig,
+    auto_layout_param,
+)
 from app.services.channels.dingtalk.card_binding import mark_card_ready
 from app.services.channels.dingtalk.card_transport import (
     DingTalkCardTransport,
@@ -107,6 +111,10 @@ class TemplateChatCardAdapter:
                     "outTrackId": self._out_track_id,
                     "cardData": {
                         "cardParamMap": {
+                            # A reply card is the channel's own card: the wide
+                            # layout has to ride on the instance, and an operator
+                            # supplied value still wins over this default.
+                            AUTO_LAYOUT_PARAM: auto_layout_param(),
                             **self.config.initial_data,
                             **(
                                 {self.config.follow_up_status_key: "idle"}

@@ -58,6 +58,7 @@ from app.api.endpoints import (
     subtasks,
     system_skills,
     token_issuers,
+    user_mcp_oauth,
     users,
     utils,
     web_scraper,
@@ -162,6 +163,8 @@ api_router.include_router(
     prefix="/connector-runtime",
     tags=["connector-runtime"],
 )
+api_router.include_router(user_mcp_oauth.router, tags=["mcp-oauth"])
+api_router.include_router(user_mcp_oauth.public_router, tags=["mcp-oauth"])
 api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(

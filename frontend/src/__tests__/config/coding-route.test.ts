@@ -33,6 +33,7 @@ const baseConfig: RuntimeConfig = {
   bindGroupSteps: '{"variables":{"botName":"机器人"},"steps":[]}',
   appVersion: 'dev',
   weworkCodeUrl: '',
+  modelSelectionGuideUrl: '',
 }
 
 describe('coding route helpers', () => {

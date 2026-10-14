@@ -1,7 +1,6 @@
 """Connect the existing local login entry to account-owned authentication."""
 
 import hashlib
-import time
 
 from sqlalchemy.orm import Query, Session
 
@@ -250,15 +249,7 @@ class PluginAuthLocalLifecycleService:
             }
         }
         db.flush()
-        for row in self._intents(db, user_id, source, request.connector_slug).all():
-            spec = row.json["spec"]
-            if (
-                spec.get("local_login")
-                and spec["binding"] == binding
-                and spec["expires_at"] > time.time()
-            ):
-                return
-        intent = self.migrations.create(
+        self.migrations.create(
             db,
             user_id=user_id,
             request=PluginMigrationCreate(
@@ -267,13 +258,9 @@ class PluginAuthLocalLifecycleService:
                 device_id=device_id,
                 expected_revision=0,
             ),
+            automatic=True,
+            local_login=True,
         )
-        row = self.migrations._query(db, user_id, intent.id).first()
-        if row is not None:
-            row.json = {
-                "spec": {**row.json["spec"], "automatic": True, "local_login": True}
-            }
-        db.flush()
 
 
 plugin_auth_local_lifecycle = PluginAuthLocalLifecycleService(

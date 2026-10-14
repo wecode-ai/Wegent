@@ -923,6 +923,28 @@ describe('runtimeConversationCache', () => {
     expect(statuses.some(status => status.id === 'agent-0')).toBe(false)
   })
 
+  test.each(['paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const)(
+    'accepts a same-time Goal transition to %s and back to active',
+    status => {
+      const goal = {
+        threadId: 'thread-1',
+        objective: 'Finish the fix',
+        status: 'active' as const,
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 10,
+        createdAt: 1,
+        updatedAt: 3,
+      }
+      setRuntimeConversationGoal(address, goal)
+      setRuntimeConversationGoal(address, { ...goal, status })
+      expect(getRuntimeConversationMetadata(address).goal?.status).toBe(status)
+
+      setRuntimeConversationGoal(address, goal)
+      expect(getRuntimeConversationMetadata(address).goal?.status).toBe('active')
+    }
+  )
+
   test('does not let an older active Goal snapshot overwrite completion', () => {
     setRuntimeConversationGoal(address, {
       threadId: 'thread-1',

@@ -108,6 +108,8 @@ flowchart LR
 
 The direction is one-way: Execution → Message/Automation/Workflow projections. A message, `metadata.ai_state`, board lane, or UI cannot decide Execution state.
 
+Executor pulls first probe for this Runtime's unconfirmed claim without locks, then lock and revalidate an existing claim by primary key. An empty probe proceeds directly to normal claiming without locking a queue range, avoiding deadlocks with the Issue-first claim lock order.
+
 `D` has one configuration source. Occupancy is neither the sum nor the maximum of two unrelated counters. It is merged by Runtime task identity: `O = Runtime active + durable capacity rows whose runtime_task_id is absent from active_task_ids`. A robot process visible to both layers is counted once, while manual Runtime work and claimed work not yet seen by Runtime are both retained. Runtime remains the hard physical limit for chat, robots, and automations together. “Run now” can only move a queued task to the front; it cannot start task D+1.
 
 Capacity is live Runtime state and is never persisted into Device Kind as fact. Local claim reads it through App IPC. Cloud Runtime reports `limit/active/active_task_ids/queued/runtimeInstanceId` into the existing Redis online record under its TTL. Every active count must have one unique non-empty task ID. Missing, expired, incomplete, or mismatched observations stop claim. Claim APIs reject caller-supplied `deviceCapacity` and have no fixed-constant fallback.

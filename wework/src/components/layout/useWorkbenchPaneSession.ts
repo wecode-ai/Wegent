@@ -1,3 +1,4 @@
+import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import {
   transcriptRangeFromPage,
   mergeTranscriptRanges,
@@ -124,7 +125,6 @@ import {
   runtimeConversationHydrationHasUpdates,
   runtimeConversationKey,
   restoreOptimisticallyInterruptedRuntimeConversation,
-  setRuntimeConversationGoal,
   settleRuntimeConversationAcceptedMessage,
   subscribeRuntimeConversation,
   subscribeRuntimeTransportReplaced,
@@ -702,11 +702,7 @@ export function useWorkbenchPaneSession({
               goalStatus: loadedGoal?.status ?? null,
             })
           }
-          setRuntimeConversationGoal(runtimeTaskLoadTarget.address, resolvedGoal)
-          lifecycleStore.goalStatusReceived(
-            runtimeTaskLoadTarget.address,
-            resolvedGoal?.status ?? null
-          )
+          syncRuntimeGoal(lifecycleStore, runtimeTaskLoadTarget.address, resolvedGoal)
           if (loadedGoal?.status === 'active') {
             void refreshWorkListsRef.current().catch(() => undefined)
           }
@@ -2072,8 +2068,7 @@ export function useWorkbenchPaneSession({
                 return false
               }
               setInput('')
-              setRuntimeConversationGoal(currentRuntimeTask, response.goal)
-              lifecycleStore.goalStatusReceived(currentRuntimeTask, response.goal.status)
+              syncRuntimeGoal(lifecycleStore, currentRuntimeTask, response.goal)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, baseMessage])
               await sendQueuedMessageAsGuidance(baseMessage, true)
@@ -2086,8 +2081,7 @@ export function useWorkbenchPaneSession({
             }
             if (paneIsBusy) {
               setInput('')
-              setRuntimeConversationGoal(currentRuntimeTask, draftGoal)
-              lifecycleStore.goalStatusReceived(currentRuntimeTask, draftGoal.status)
+              syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, queuedMessage])
               return true
@@ -2105,8 +2099,7 @@ export function useWorkbenchPaneSession({
             }
             if (result.accepted) {
               setInput('')
-              setRuntimeConversationGoal(currentRuntimeTask, draftGoal)
-              lifecycleStore.goalStatusReceived(currentRuntimeTask, draftGoal.status)
+              syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
               setCodeCommentContexts([])
             } else {
@@ -2864,8 +2857,7 @@ export function useWorkbenchPaneSession({
         })
         if (!response.accepted) return false
 
-        setRuntimeConversationGoal(currentRuntimeTask, response.goal)
-        lifecycleStore.goalStatusReceived(currentRuntimeTask, response.goal.status)
+        syncRuntimeGoal(lifecycleStore, currentRuntimeTask, response.goal)
         if (response.goal.status === 'active') {
           await refreshWorkLists()
         }
@@ -2988,8 +2980,7 @@ export function useWorkbenchPaneSession({
       const response = await clearRuntimeGoal(currentRuntimeTask)
       if (!response.accepted) return false
 
-      setRuntimeConversationGoal(currentRuntimeTask, null)
-      lifecycleStore.goalStatusReceived(currentRuntimeTask, null)
+      syncRuntimeGoal(lifecycleStore, currentRuntimeTask, null)
       await refreshWorkLists()
       return true
     } catch (error) {

@@ -864,6 +864,7 @@
     "workspace_tab_cloud": "云端工作",
     "workspace_tab_close": "关闭 {{title}}",
     "workspace_tab_open_new_window": "在新窗口中打开",
+    "workspace_tab_return_to_main": "移回主窗口",
     "workspace_tab_close_others": "关闭其他标签页",
     "create_project": "创建项目",
     "close_dialog": "关闭",
