@@ -552,7 +552,12 @@ jobs = YAML.load_file(ARGV[0])['jobs']
   ['workbench-mode', 'native-window-startup'].each do |segment|
     abort "#{name} must install Electron for #{segment}" unless step['if'].include?("contains(matrix.segments, '#{segment}')")
   end
-  abort "#{name} must use the locked Electron toolchain" unless step['run'] == 'pnpm --dir wework/electron install --frozen-lockfile'
+  expected_commands = [
+    'pnpm --dir wework/electron install --frozen-lockfile',
+    %q{pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"}
+  ]
+  commands = step['run'].lines.map(&:strip).reject(&:empty?)
+  abort "#{name} must install and verify the locked Electron toolchain" unless commands == expected_commands
 end
 RUBY
 then
