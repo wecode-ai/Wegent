@@ -511,11 +511,9 @@ export function createDesktopScenario({
       })
       await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       const hydrationStartedAt = Date.now()
-      const performanceSnapshot = JSON.parse(
-        await control.command('performanceSnapshot', 'body', {
-          timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
-        })
-      )
+      await control.command('getWorkbenchDebugSnapshot', 'body', {
+        timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
+      })
       assert.ok(
         Date.now() - hydrationStartedAt < HYDRATION_RESPONSE_TIMEOUT_MS,
         'Hydrating a long running transcript blocked the renderer'

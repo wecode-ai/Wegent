@@ -1,5 +1,6 @@
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPromptWithButton } from './conversation-navigation.mjs'
+import { collectWindowsProcessIdentity } from '../process-lifecycle.mjs'
 
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -147,6 +148,9 @@ async function verifyModelProxyRestartRecovery({
   const executorBeforeRestart = await waitForExecutorRuntimeEvidence(control, executorLogPath)
   const executorProcessIdBeforeRestart = executorBeforeRestart.processIds.at(-1)
   assert.ok(executorProcessIdBeforeRestart, 'The original executor process ID was not recorded')
+  const executorIdentityBeforeRestart = collectWindowsProcessIdentity(
+    executorProcessIdBeforeRestart
+  )
 
   await restartDesktopApp()
 
@@ -162,8 +166,16 @@ async function verifyModelProxyRestartRecovery({
     executorProcessIdBeforeRestart,
     'Restarting Wework reused the executor process with the old model proxy registry'
   )
+  const originalExecutorIsAlive = processIsAlive(executorProcessIdBeforeRestart)
+  if (originalExecutorIsAlive) {
+    console.error('[desktop-e2e] executor restart process identities', {
+      before: executorIdentityBeforeRestart,
+      originalAfterRestart: collectWindowsProcessIdentity(executorProcessIdBeforeRestart),
+      replacementAfterRestart: collectWindowsProcessIdentity(executorProcessIdAfterRestart),
+    })
+  }
   assert.equal(
-    processIsAlive(executorProcessIdBeforeRestart),
+    originalExecutorIsAlive,
     false,
     'The original executor remained alive after Wework restarted'
   )
