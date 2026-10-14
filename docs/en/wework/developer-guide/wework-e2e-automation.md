@@ -343,6 +343,13 @@ settings controls are scrolled into view. Git fixtures disable automatic line-en
 conversion, and queue/sidebar fixtures explicitly select the test model without weakening
 behavioral assertions. CI verifies the development Electron binary during setup so its
 first import does not download it inside a scenario.
+
+Remote collaboration initializes the execution environment catalog through the real
+Backend and verifies authorization for the remote device before opening the Agent form.
+Native model catalog initialization does not consume the form's 10-second UI step budget.
+On desktop startup failures, `scenario-state.json` records application launch and exit
+times and exit codes. Windows also retains `electron.log` to diagnose native failures
+before the renderer connects.
 Desktop fixtures bind the workspace root to their temporary Home and remove other inherited
 workspace path overrides, avoiding stale test or personal worktrees. Turn preparation failures
 record their error code and reason instead of leaving only a UI timeout.

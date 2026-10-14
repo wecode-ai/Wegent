@@ -1173,6 +1173,7 @@ async function main() {
   })
   const modelSwitchVerification = []
   let app
+  const applicationProcessHistory = []
   let appBundlePath
   let blockingNetworkProxy
   let cloudEnvironment
@@ -1402,7 +1403,12 @@ async function main() {
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     const electronLaunchArguments = resolveElectronLaunchArguments({
-      extraArguments: desktopScenario?.electronLaunchArguments ?? [],
+      extraArguments: [
+        ...(process.platform === 'win32'
+          ? ['--enable-logging=file', `--log-file=${join(resultDir, 'electron.log')}`]
+          : []),
+        ...(desktopScenario?.electronLaunchArguments ?? []),
+      ],
     })
     const launchWorkingDirectory = desktopScenario?.launchWorkingDirectory ?? weworkDir
     if (desktopScenario?.launchWorkingDirectory) {
@@ -1415,6 +1421,15 @@ async function main() {
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
+      })
+      const processState = { pid: child.pid, launchedAt: new Date().toISOString() }
+      applicationProcessHistory.push(processState)
+      child.once('error', error => {
+        processState.error = error.message
+        control.fail(error)
+      })
+      child.once('exit', (code, signal) => {
+        Object.assign(processState, { code, signal, exitedAt: new Date().toISOString() })
       })
       await markDesktopE2EResultActive(resultDir, {
         applicationProcessId: child.pid,
@@ -4486,6 +4501,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       `${JSON.stringify(
         {
           phase,
+          applicationProcessHistory,
           scenario: control.scenario,
           modelStage: control.modelStage,
           localProtocolStates: Object.fromEntries(
