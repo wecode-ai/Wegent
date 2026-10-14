@@ -1086,9 +1086,9 @@ fn add_git_worktree(source: &Path, target: &Path, git_ref: Option<&str>) -> Resu
 }
 
 fn remove_git_worktree(path: &Path) -> Result<(), String> {
-    let path = std::path::absolute(path).map_err(|error| error.to_string())?;
+    ensure_concrete_absolute_path(path, "Worktree path")?;
     let value = path.to_str().ok_or("Invalid worktree path")?;
-    let common_dir = git_common_dir(&path)?;
+    let common_dir = git_common_dir(path)?;
     let mut command = git_common_dir_command(&common_dir);
     command.args(["worktree", "remove", "--force", value]);
     let output = command.output().map_err(|error| error.to_string())?;
@@ -1121,7 +1121,7 @@ fn remove_empty_directory(path: &Path) -> Result<(), String> {
 }
 
 fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> Result<(), String> {
-    let path = std::path::absolute(path).map_err(|error| error.to_string())?;
+    ensure_concrete_absolute_path(path, "Worktree path")?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
