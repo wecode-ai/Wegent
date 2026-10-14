@@ -49,7 +49,6 @@ export function createCloudAttachmentVerification({
         projectUiId,
         deviceId: CLOUD_DEVICE_ID,
         workspacePath,
-        deviceWorkspaceId: workspace.id ?? null,
       })
     },
     verifySubmittedTask: () => readCloudAttachmentTask(control, cloudEnvironment, workspacePath),

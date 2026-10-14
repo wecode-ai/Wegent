@@ -45,7 +45,7 @@ export function findOwnedRuntimeTask(runtimeWork, deviceId, taskId) {
 
 export function assertCloudAttachmentProjectSelection(
   selection,
-  { projectUiId, deviceId, workspacePath, deviceWorkspaceId = null }
+  { projectUiId, deviceId, workspacePath }
 ) {
   const project = selection?.currentProject
   assert.equal(String(project?.id), String(projectUiId), 'The cloud project UI identity changed')
@@ -54,11 +54,6 @@ export function assertCloudAttachmentProjectSelection(
     project.config?.workspace?.localPath?.replace(/\/+$/, ''),
     workspacePath.replace(/\/+$/, ''),
     'The cloud project workspace changed'
-  )
-  assert.equal(
-    selection.selectedDeviceWorkspaceId ?? null,
-    deviceWorkspaceId,
-    'The cloud device workspace selection changed'
   )
   assert.equal(selection.currentRuntimeTask, null, 'The cloud composer retained an existing task')
 }

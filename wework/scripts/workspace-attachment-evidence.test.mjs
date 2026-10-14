@@ -1,11 +1,15 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import filesystem from 'node:fs/promises'
-import { syncBuiltinESMExports } from 'node:module'
+import * as filesystem from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { createCloudAttachmentVerification } from '../e2e/desktop/modules/cloud-attachment-flow.mjs'
+import {
+  CLOUD_DEVICE_ID,
+  DEFAULT_MODEL_LABEL,
+  MODEL_PROVIDER_ID,
+} from '../e2e/desktop/modules/shared.mjs'
 
 import {
   assertCloudAttachmentProjectSelection,
@@ -13,6 +17,21 @@ import {
   findOwnedRuntimeProject,
   findOwnedRuntimeTask,
 } from '../e2e/desktop/modules/workspace-attachment-evidence.mjs'
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal()
+  const operations = {
+    readdir: vi.fn(actual.readdir),
+    readFile: vi.fn(actual.readFile),
+    writeFile: vi.fn(actual.writeFile),
+  }
+  return {
+    ...actual,
+    ...operations,
+    // Vite's jsdom import interop reads named Node imports from the default export.
+    default: { ...actual.default, ...operations },
+  }
+})
 
 const deviceId = 'cloud-device'
 const filename = 'same-name-attachment.png'
@@ -38,8 +57,9 @@ async function writeAttachment(root, taskId, bytes = image) {
 }
 
 afterEach(async () => {
-  vi.restoreAllMocks()
-  syncBuiltinESMExports()
+  vi.mocked(filesystem.readdir).mockReset()
+  vi.mocked(filesystem.readFile).mockReset()
+  vi.mocked(filesystem.writeFile).mockReset()
   vi.useRealTimers()
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true })))
 })
@@ -73,7 +93,6 @@ describe('cloud attachment filesystem deadline', () => {
         reachedOperation()
         return new Promise(() => {})
       })
-      syncBuiltinESMExports()
       const result = observe(
         fileVerification(root).verifyTaskAttachments(taskIds.map(taskId => ({ taskId })))
       )
@@ -100,7 +119,6 @@ describe('cloud attachment filesystem deadline', () => {
       reachedWrite()
       return new Promise(resolve => setTimeout(resolve, elapsedMs))
     })
-    syncBuiltinESMExports()
     const result = observe(
       fileVerification(root).verifyTaskAttachments(taskIds.map(taskId => ({ taskId })))
     )
@@ -131,7 +149,6 @@ describe('cloud attachment filesystem deadline', () => {
       reachedWrite()
       return new Promise(resolve => setTimeout(resolve, 5_000))
     })
-    syncBuiltinESMExports()
     const result = observe(
       fileVerification(root).verifyTaskAttachments(taskIds.map(taskId => ({ taskId })))
     )
@@ -294,6 +311,83 @@ describe('cloud attachment task ownership', () => {
       /wrong device.*local-device/
     )
   })
+
+  test('prepares the cloud composer with a synthetic renderer workspace ID and null backend ID', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const workspacePath = '/cloud/project'
+    const selection = {
+      currentProject: {
+        id: 823954920,
+        config: {
+          execution: { deviceId: CLOUD_DEVICE_ID },
+          workspace: { localPath: workspacePath },
+        },
+      },
+      selectedDeviceWorkspaceId: 823954920,
+      currentRuntimeTask: null,
+    }
+    const verification = createCloudAttachmentVerification({
+      cloudEnvironment: {
+        runtimeWork: async () => ({
+          projects: [
+            {
+              project: { key: `${CLOUD_DEVICE_ID}:${workspacePath}` },
+              deviceWorkspaces: [
+                { id: null, deviceId: CLOUD_DEVICE_ID, workspacePath, available: true },
+              ],
+            },
+          ],
+        }),
+      },
+      control: {
+        command: async command => {
+          if (command === 'getWorkbenchDebugSnapshot')
+            return JSON.stringify({ workbench: selection })
+          if (command === 'getText') return DEFAULT_MODEL_LABEL
+          if (command === 'getAttribute') return MODEL_PROVIDER_ID
+          return ''
+        },
+      },
+      composerSelector: '[data-testid="composer"]',
+      projectRowSelector: '[data-testid="project-menu-823954920"]',
+      projectUiId: '823954920',
+      workspacePath,
+    })
+
+    const result = observe(verification.prepareConversation())
+    await vi.advanceTimersByTimeAsync(10_000)
+    const outcome = await result
+    expect(outcome.error).toBeUndefined()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  test.each([
+    ['another workspace', '/cloud/another-project', null, /workspace changed/],
+    ['an existing task', '/cloud/project', { taskId: taskIds[0] }, /retained an existing task/],
+  ])(
+    'rejects a composer for %s despite a matching cloud project and device',
+    (_name, path, task, message) => {
+      const selection = {
+        currentProject: {
+          id: 716972942,
+          config: {
+            execution: { deviceId },
+            workspace: { localPath: path },
+          },
+        },
+        currentRuntimeTask: task,
+      }
+
+      expect(() =>
+        assertCloudAttachmentProjectSelection(selection, {
+          projectUiId: '716972942',
+          deviceId,
+          workspacePath: '/cloud/project',
+        })
+      ).toThrow(message)
+    }
+  )
 
   test('accepts the observed UI project ID rather than a backend project ID', () => {
     const selection = {
