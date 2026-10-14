@@ -300,7 +300,6 @@ ARM renderer 存储恢复约 1874 毫秒：响应头等待 1006 毫秒、响应�
 
 进一步细分 native loader 采样仅使用官方包边界内六个固定操作名；记录最近祖先上下文，不等于 native require 的独占 CPU，不输出动态函数或路径。分类缓存仅在单次摘要内按实际访问节点懒求值，避免每个 sample 重复执行路径分类，保留原摘要字段与样本校验。49 节点、12 层共享祖先、2400 samples 的交替基准中，既有实现约 19.9 毫秒，增加分类但未缓存约 73.5 毫秒，缓存后约 2.4 毫秒，既有字段逐项相同。这只证明摘要计算开销下降，不替代严格冷启动结果；新的细分数据须下一轮 CI 验证。
 
-
 ### `4812ee602` 验证与启动等待取证
 
 [Linux Core19](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115585933440) 完整原流程通过：严格冷启动 4687 毫秒、缓存重启 4409 毫秒。旧运行时下载一次、manifest 字节不变、离线缓存复用、Core 重启后旧 Smart app 恢复及四种模板全部通过。三份 CPU 摘要对应三个端点，零缺失，Prune 通过。Tests、Lint、平台 E2E、Auth 和策略通过；Electron 1100 项、renderer 两分片 3850/3884 项通过，四项既有 skip 未增加。Windows 产物原生兼容与网关构建已通过，其场景仍须完整结果。
@@ -311,26 +310,21 @@ ARM renderer 存储恢复约 1874 毫秒：响应头等待 1006 毫秒、响应�
 
 快捷短语现在复用既有 AppPreferencesProvider，删除多个输入框各自重复读取偏好及注册同类 listener 的逻辑；独立使用仍保留原有加载和事件行为，不增加全局缓存。真实 Provider 多消费者测试在旧实现复现重复读取（两项失败），修改后 6 项 hook 与 3 项 Provider 测试、renderer 类型和 lint 通过，包括事件优先于未完成初读及卸载清理。上述真实 Electron 工作台验证也覆盖修改后的启动。这不能证明 ARM 后续某次 395 毫秒偏好读取已消除，更不能宣称跨平台 `<5s` 已完成。
 
-
 本轮 Windows [第 9 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955653)、[第 14 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955847)、[第 15 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955648) 完整日志分别证实 7、7、6 个原场景通过，包括两轮协作、真实启动恢复和 running-conversation-history。历史恢复原 3000 毫秒断言保留，未重跑；通过不能倒推上轮 5.48 秒的唯一原因。
 
 [正式 macOS x64 构建](https://github.com/wecode-ai/Wegent/actions/runs/38480832768/job/115582837821) 在 Apple stapler validate 的既有三次尝试中均遇到 CloudKit NSURLErrorDomain -1005 连接中断，最终 xcrun 退出 68；尚未进入正式包 E2E。没有签名无效或票据被拒绝的证据，日志也不能区分前置已有票据检查与最终校验。源码已识别传输错误并在原次数后失败；不删除联网校验、不增加重试或另行重跑以获得绿色结果。外部票据服务连接故障仍是本轮构建的实际阻塞，不能宣称已修复。
-
 
 最新 [Windows 第 19 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955883) 严格冷启动 7800 毫秒仍失败：配置 1030 毫秒、Core 到端点 3735 毫秒、页面加载 1167 毫秒、加载后就绪 1441 毫秒。Core 端点 uptime 3623 毫秒，累计 user/system CPU 合计 4296 毫秒；同一 renderer 页面 CPU 增量 1388 毫秒、随后 933 毫秒，均包含多线程。native loader 固定操作中未知归属约 996 毫秒采样，loadPrebuild 仅 13.7 毫秒、物化 4.8 毫秒、hash 1.3 毫秒，不能把未知部分归为这些操作。renderer 存储响应头/体等待 287.7/432.1 毫秒，宿主存储 6 毫秒、响应 7 毫秒；没有证据表明宿主存储是该等待的主因。CPU 一摘要/一端点/零缺失、Prune 和临时清理通过，旧版和缓存阶段因严格检查失败未执行。
 
 最新 [Windows 第 7 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955634) 原 context-compaction 37 秒通过，明确 Responses 前置条件的修改获得实际 Windows 闭环；其他三个板关联/状态场景通过。新失败来自 task-status-sync 的初始模型请求未收到：已明确选择模型、Enter 提交、草稿清空且真实任务 running，正确路由和 MCP ready 已记录，Executor 的 turn/start 调用仅记录 request started，原请求等待已超时；该日志早于准备和写入边界，尚不能证明请求已写入 Codex。它不同于未提交请求的 fixture，尚无证据可修改原断言或等待预算；继续定位该调用链。
 
-
 [Windows 第 16 组](https://github.com/wecode-ai/Wegent/actions/runs/38480826547/job/115595955599) 本轮 plugin-development 50 秒通过，但不倒推旧 taskkill 128 根因已修。新失败为 executor-stream-recovery 未收到请求：模型目录在真实 Enter 时仍为 isSelectionReady=false、modelCount=0，1619 毫秒后才就绪；生产提交函数按现有门槛拒绝提交，草稿保留、无任务和模型请求，与日志一致。原场景仅等待 editor 存在，未建立发送前模型前置条件。只复用 selectE2EModel 在 fill 前等待并选择场景要求的 Responses 模型，保留 Enter、原 partial、reload、completion、settled 和全部预算。原注册场景单次真实本地 E2E 49 秒通过，无断言错误；finally 清理 17 项，所属进程为空、认证链接为零、隔离应用已移除。未通过重跑或修改生产提交门槛取得通过。
-
 
 为定位该请求等待，删除仅单调用的 prepare_request 空壳，复用现有日志与既有 VITE_WEWORK_E2E=true 开关，仅为 turn/start 记录准备、MCP 端点、状态锁、退役进程、pending 注册、stdin 锁、写入和响应的固定阶段及单调累计毫秒。其他方法不读取该环境开关，非 E2E 不记录；无请求参数、ID、模型、路径或错误原文，也不启用完整 stream debug。原 await 顺序、超时位置、响应及错误传递保持。两项 all-features 聚焦测试通过，真实 stdio 四种开关/成功/错误组合的返回一致、子进程全部 wait；Clippy、格式通过。此诊断用于下一轮实际边界证据，尚未修复第 7 组阻塞或跨平台启动预算。
 
-
 ### `3e8f0d115` 验证与 Electron 进程 CPU
 
-本轮 Tests、Lint、Auth 与策略检查通过。Wework 两组完整日志共 8858 项通过：Electron 1118 项、renderer 3856/3884 项，四项既有 skip 未增加，无 AssertionError 或未处理错误。Windows 完整桌面分片尚待其共享制品完成，不能用原生兼容性验证通过代替场景结果。
+本轮 Tests、Lint、Auth 与策略检查通过。Wework 两组完整日志共 8858 项通过：Electron 1118 项、renderer 3856/3884 项，四项既有 skip 未增加，无 AssertionError 或未处理错误。Windows 19 个桌面分片已完成：17 个成功，第 16、19 组失败；共享制品的原生兼容与网关构建通过。
 
 [Linux Core19](https://github.com/wecode-ai/Wegent/actions/runs/38491922073/job/115621452335) 严格冷启动 5836 毫秒失败：配置 811 毫秒、Core 2783 毫秒、页面加载 773 毫秒、加载后就绪 1211 毫秒。Cookie 安装等待 724 毫秒，但实现已使用 Promise.all，并无串行重复工作证据。Core 端点实际 uptime 1992 毫秒、累计 CPU 1361 毫秒；同一 renderer 的加载与加载后 CPU 增量为 700/410 毫秒。后续旧版、缓存重启阶段未执行，清理和 Prune 通过。不能把前轮 4687 毫秒通过或两次墙钟差当作本轮代码因果证据。
 
@@ -341,3 +335,15 @@ ARM renderer 存储恢复约 1874 毫秒：响应头等待 1006 毫秒、响应�
 22 项新增与 23 项既有聚焦测试、Electron 类型、lint 和格式检查通过。单次隔离真实 Electron 验证达到工作台，三个原边界采集到五个进程，合计 2425/3409/4461 毫秒，与各安全记录相符。stop 返回零，所属进程为空、认证链接为零。函数级 renderer Profiler 未加入：当前打包粒度不能定位 React/i18n 具体热点，额外采样与构建接线尚无可行动证据价值。此次仅补充诊断，不宣称启动预算已修复。
 
 启动页初始路径已等于第零阶段目标且速度为零，原 animateMorph 在首次 1150 毫秒目标变化前仍逐帧计算并重写三条相同 SVG 路径。删除这段重复帧，在首次实际目标变化时才启动原来的单一 spring 循环；后续变形、文案、恢复、超时及减少动态效果设置保留。执行真实 splash.js 的受控 RAF 回归在旧源码复现失败，修正后 23 项 startup-splash 测试通过，覆盖两帧 animationReady、初始单次绘制、实际变形和后续阶段不重复启动循环。原注册 native-window-startup E2E 单次 49 秒通过、无断言错误、清理 18 项临时文件；所属进程和认证链接均为零。此修改仅消除已证实的恒等重写，不能把此前 GPU CPU 总量归为这些帧，也不能据此宣布跨平台预算已达标。
+
+[本轮 Windows 第 7 组](https://github.com/wecode-ai/Wegent/actions/runs/38491922073/job/115628798689) 五个原场景全部通过，原初始模型请求 10 秒预算不变；不能据此宣称前轮请求阻塞根因已修。第 9、14、15 组的 20 个原场景全部通过，历史恢复原 3000 毫秒断言保留。[第 16 组](https://github.com/wecode-ai/Wegent/actions/runs/38491922073/job/115628798861) 的 executor-stream-recovery 23 秒通过，明确模型前置条件获得 Windows 实际验证；其余四个场景通过，plugin-development 仍失败。原生日志证实 taskkill 退出 255 后 child_state=running，因此不能当作已退出成功。139 字节的 stderr 已被安全归类为 termination-failed，没有保留原文，不能推断具体 Reason。新增精确固定 Reason 分类仅改诊断，19 项聚焦终止测试与 Clippy 通过，非零退出和实际 child 状态门槛不变。
+
+[本轮 Windows 第 19 组](https://github.com/wecode-ai/Wegent/actions/runs/38491922073/job/115628798831) 严格冷启动 8165 毫秒仍失败：配置 1147 毫秒、Core 到端点 3837 毫秒、页面加载 1148 毫秒、加载后就绪 1583 毫秒。Core 累计 user/system CPU 合计 4468 毫秒，renderer 加载及加载后 CPU 增量为 1383/994 毫秒。native loader 约 955 毫秒采样仍未知归属，不能归因于 loadPrebuild、物化或 hash。CPU 摘要与端点各一份、零缺失，Prune 和临时清理通过；后续旧版、缓存和模板场景未执行，跨平台 `<5s` 仍未达成。
+
+连接器 clear 的现有 config/batchWrite 会首次启动 Codex app-server，随后无条件增加能力版本；下一次请求因此尝试退役刚启动的进程。实际第 16 组 clear 与 ensureStarted 时间重叠，idle-env-restart 在插件 reconciliation 请求之前，变化键仅为 WEGENT_CAPABILITY_REVISION。隔离实例源码未复制旧授权或技能，但没有启动前磁盘快照，因此不把现场 taskkill 255 的具体原生原因当作已证明。修复仅在成功且确认持久授权、MCP 项和托管技能均无变化时保留版本；真实撤权、未知配置状态、原配置 RPC 错误及可能部分删除仍失效，断云 clear 和原错误传递保留。受控真实 stdio 回归在旧无条件版本更新下启动三次（要求一次），修复后连续 clear/读取只启动一次并显式停止子进程。
+
+连接器 10 项 all-features 聚焦测试、Clippy 和格式检查通过。原注册 plugin-development E2E 单次 64 秒通过，无断言错误；清理 32 项临时文件，所属测试进程、认证链接和隔离应用均为零。此本地结果覆盖连接器修复，真实 Windows 的原生失败仍需新一轮 CI 验证。
+
+[本轮正式 macOS x64](https://github.com/wecode-ai/Wegent/actions/runs/38491931903/job/115618996489) 最终构建及上传成功，启用原自定义 notarization，原联网 ticket 校验完成；上轮 -1005 未复现。成功日志不区分已存在 ticket 校验与新 Accepted/staple 分支，因此不宣称新提交已 Accepted。该工作流仅 ARM 执行正式包 E2E，x64 对应步骤 skipped，不能用构建成功代替场景验证。未另行重跑、增加尝试或绕过校验。
+
+插件清单 readInventory 的 readState 结果只用于 names 集合，但 readState.order 始终属于 manifest 已覆盖的 bundles/dependencies，故删除该读取及重复集合项，保留变更操作所需状态和顺序语义。真实磁盘 readFile spy 在旧实现复现同包读取两次；删除后每包只读一次、状态文件零次，该 fixture 总读取 9→5。两组相关测试 30 项、Electron 类型、lint 和格式通过。本地插件 E2E 构建早于此删除，不作为它的真实应用证据；后续 pre-push/CI 覆盖。原 CI 该阶段仅约 11/25/43 毫秒，不能声称此删除解决多秒启动超时。

@@ -94,7 +94,7 @@ impl ConnectorRuntime {
         if let Err(error) = self.write_mcp_config(true).await {
             let rollback_result = match &previous {
                 Some(previous_config) => persist_connector_gateway_config(previous_config),
-                None => clear_connector_gateway_config(),
+                None => clear_connector_gateway_config().map(|_| ()),
             };
             match rollback_result {
                 Ok(()) => {
@@ -129,8 +129,9 @@ impl ConnectorRuntime {
         }
         self.cloud.write().await.take();
         self.synced_apps.write().await.clear();
-        clear_connector_gateway_config()
+        let authorization_removed = clear_connector_gateway_config()
             .map_err(|error| AppIpcError::new("connector_authorization_clear_failed", error))?;
+        let mcp_was_configured = connector_mcp_is_configured();
         let config_result = self.write_mcp_config(false).await;
         drop(_mutation);
         let _activation = capability_activation::activate().await;
@@ -142,10 +143,12 @@ impl ConnectorRuntime {
                 "stale": true,
             }));
         }
-        let skills_result = materialize_skills(&skills_root(), &[]);
-        capability_activation::mark_changed();
-        config_result?;
-        skills_result?;
+        finish_connector_clear(
+            &skills_root(),
+            authorization_removed,
+            mcp_was_configured,
+            config_result,
+        )?;
         Ok(json!({ "configured": false }))
     }
 
@@ -303,7 +306,57 @@ fn advance_revision(revision: &AtomicU64, next: u64) -> bool {
     true
 }
 
+fn connector_mcp_is_configured() -> Result<bool, AppIpcError> {
+    let config_path = crate::agents::wework_codex_home().join("config.toml");
+    let content = match fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(AppIpcError::new(
+                "connector_mcp_config_failed",
+                error.to_string(),
+            ))
+        }
+    };
+    let config = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|error| AppIpcError::new("connector_mcp_config_failed", error.to_string()))?;
+    Ok(config
+        .get("mcp_servers")
+        .and_then(|servers| servers.get("wegent_apps"))
+        .is_some())
+}
+
+fn finish_connector_clear(
+    skills_root: &Path,
+    authorization_removed: bool,
+    mcp_was_configured: Result<bool, AppIpcError>,
+    config_result: Result<(), AppIpcError>,
+) -> Result<(), AppIpcError> {
+    let mut changed = authorization_removed;
+    let skills_result = materialize_skills_with_changes(skills_root, &[], &mut changed);
+    // Keep the previous conservative invalidation if the persisted state cannot
+    // be inspected, or if a failed config write may already have changed it.
+    if config_result.is_err() || mcp_was_configured.unwrap_or(true) {
+        changed = true;
+    }
+    if changed {
+        capability_activation::mark_changed();
+    }
+    config_result?;
+    skills_result?;
+    Ok(())
+}
+
 fn materialize_skills(skills_root: &Path, apps: &[Value]) -> Result<Value, AppIpcError> {
+    materialize_skills_with_changes(skills_root, apps, &mut false)
+}
+
+fn materialize_skills_with_changes(
+    skills_root: &Path,
+    apps: &[Value],
+    changed: &mut bool,
+) -> Result<Value, AppIpcError> {
     fs::create_dir_all(skills_root).map_err(|error| {
         AppIpcError::new(
             "connector_skill_sync_failed",
@@ -364,13 +417,14 @@ fn materialize_skills(skills_root: &Path, apps: &[Value]) -> Result<Value, AppIp
             "skillPath": skill_path.display().to_string(),
         }));
     }
-    remove_inactive_skills(skills_root, &active_dirs)?;
+    remove_inactive_skills(skills_root, &active_dirs, changed)?;
     Ok(json!({ "apps": materialized }))
 }
 
 fn remove_inactive_skills(
     skills_root: &Path,
     active_dirs: &HashSet<String>,
+    changed: &mut bool,
 ) -> Result<(), AppIpcError> {
     let Ok(entries) = fs::read_dir(skills_root) else {
         return Ok(());
@@ -381,6 +435,9 @@ fn remove_inactive_skills(
             && !active_dirs.contains(&name)
             && entry.path().join(".wegent-connector").is_file()
         {
+            // A recursive removal can fail after removing part of the skill.
+            // Preserve invalidation on that error path as well.
+            *changed = true;
             fs::remove_dir_all(entry.path()).map_err(|error| {
                 AppIpcError::new("connector_skill_sync_failed", error.to_string())
             })?;
@@ -392,6 +449,153 @@ fn remove_inactive_skills(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn connector_clear_does_not_retire_the_process_started_by_config_write() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const FIXTURE_HOME: &str = "WEGENT_CONNECTOR_CLEAR_FIXTURE_HOME";
+        if let Some(root) = env::var_os(FIXTURE_HOME) {
+            let root = PathBuf::from(root);
+            // The test binary's startup hook removes inherited executor homes.
+            // This isolated single-test subprocess sets its own before Tokio starts.
+            unsafe { env::set_var("WEGENT_EXECUTOR_HOME", root.join("executor")) };
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let client = CodexAppServerClient::new(root.join("codex").to_string_lossy());
+                let connectors = ConnectorRuntime::new(client.clone());
+                let result = async {
+                    connectors.clear(json!({"syncRevision":1})).await?;
+                    client
+                        .request("config/read", json!({}))
+                        .await
+                        .map_err(|error| AppIpcError::new("fixture_rpc", error))?;
+                    connectors.clear(json!({"syncRevision":2})).await?;
+                    client
+                        .request("config/read", json!({}))
+                        .await
+                        .map_err(|error| AppIpcError::new("fixture_rpc", error))?;
+                    Ok::<_, AppIpcError>(())
+                }
+                .await;
+                client.restart().await.unwrap();
+                result.unwrap();
+                assert_eq!(
+                    fs::read_to_string(root.join("codex.pids"))
+                        .unwrap()
+                        .lines()
+                        .count(),
+                    1
+                );
+            });
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("codex");
+        fs::write(
+            &binary,
+            r#"#!/bin/sh
+printf '%s\n' "$$" >> "$0.pids"
+while IFS= read -r line; do
+  request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  if [ -n "$request_id" ]; then printf '{"id":%s,"result":{}}\n' "$request_id"; fi
+done
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        let output = std::process::Command::new(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime_work::connectors::tests::connector_clear_does_not_retire_the_process_started_by_config_write",
+                "--nocapture",
+            ])
+            .env(FIXTURE_HOME, root.path())
+            .env("WEGENT_CODEX_HOME", root.path().join("home"))
+            .env("CODEX_HOME", root.path().join("home"))
+            .env("WEGENT_EXECUTOR_HOME", root.path().join("executor"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn connector_clear_preserves_the_started_process_revision_when_disk_state_is_empty() {
+        let _environment = crate::test_env::lock();
+        let temp = tempfile::tempdir().unwrap();
+        let skills = temp.path().join("skills");
+        let process_revision = capability_activation::revision();
+        finish_connector_clear(&skills, false, Ok(false), Ok(())).unwrap();
+        assert_eq!(capability_activation::revision(), process_revision);
+        finish_connector_clear(&skills, false, Ok(false), Ok(())).unwrap();
+        assert_eq!(capability_activation::revision(), process_revision);
+    }
+
+    #[test]
+    fn connector_clear_invalidates_real_persisted_state_and_is_then_idempotent() {
+        let _environment = crate::test_env::lock();
+        for (authorization_removed, mcp_was_configured, managed_skill) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let skills = temp.path().join("skills");
+            let managed = skills.join("wegent-connector-tickets");
+            if managed_skill {
+                fs::create_dir_all(&managed).unwrap();
+                fs::write(managed.join(".wegent-connector"), "managed\n").unwrap();
+                fs::write(managed.join("SKILL.md"), "persisted skill").unwrap();
+            }
+            let previous = capability_activation::revision();
+            finish_connector_clear(
+                &skills,
+                authorization_removed,
+                Ok(mcp_was_configured),
+                Ok(()),
+            )
+            .unwrap();
+            assert!(!managed.exists());
+            assert_eq!(capability_activation::revision(), previous + 1);
+            finish_connector_clear(&skills, false, Ok(false), Ok(())).unwrap();
+            assert_eq!(capability_activation::revision(), previous + 1);
+        }
+    }
+
+    #[test]
+    fn connector_clear_preserves_errors_and_invalidates_successful_partial_cleanup() {
+        let _environment = crate::test_env::lock();
+        let temp = tempfile::tempdir().unwrap();
+        let skills = temp.path().join("skills");
+        let managed = skills.join("wegent-connector-tickets");
+        fs::create_dir_all(&managed).unwrap();
+        fs::write(managed.join(".wegent-connector"), "managed\n").unwrap();
+        let previous = capability_activation::revision();
+        let error = finish_connector_clear(
+            &skills,
+            false,
+            Ok(true),
+            Err(AppIpcError::new(
+                "original_config_error",
+                "original failure",
+            )),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "original_config_error");
+        assert_eq!(error.message, "original failure");
+        assert!(!managed.exists());
+        assert_eq!(capability_activation::revision(), previous + 1);
+        let blocked = temp.path().join("blocked");
+        fs::write(&blocked, "not a directory").unwrap();
+        let error = finish_connector_clear(&blocked, false, Ok(false), Ok(())).unwrap_err();
+        assert_eq!(error.code, "connector_skill_sync_failed");
+        assert_eq!(capability_activation::revision(), previous + 1);
+    }
 
     #[test]
     fn mcp_child_uses_the_executor_instance_home() {

@@ -118,11 +118,11 @@ pub(crate) fn persist_connector_gateway_config(
     persist_connector_gateway_config_to(&connector_gateway_config_path(), config)
 }
 
-pub(crate) fn clear_connector_gateway_config() -> Result<(), String> {
+pub(crate) fn clear_connector_gateway_config() -> Result<bool, String> {
     let path = connector_gateway_config_path();
     match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(format!("Failed to remove {}: {error}", path.display())),
     }
 }

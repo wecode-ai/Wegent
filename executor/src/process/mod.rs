@@ -826,7 +826,12 @@ pub(crate) fn kill_windows_process_tree(pid: u32) -> Result<(), String> {
 #[cfg(any(windows, test))]
 fn windows_taskkill_error_kind(stderr: &[u8]) -> &'static str {
     let message = String::from_utf8_lossy(stderr).to_ascii_lowercase();
-    if message.contains("access is denied") {
+    if message
+        .lines()
+        .any(|line| line.trim() == "reason: there is no running instance of the task.")
+    {
+        "no-running-instance"
+    } else if message.contains("access is denied") {
         "access-denied"
     } else if message.contains("not found") {
         "not-found"
@@ -1908,6 +1913,22 @@ mod tests {
                 b"ERROR: The process could not be terminated.",
                 "termination-failed",
             ),
+            (
+                b"ERROR: The process with PID 1234 (child process of PID 5678) could not be terminated.\r\nReason: There is no running instance of the task.\r\n",
+                "no-running-instance",
+            ),
+            (
+                b"ERROR: private-path secret-token could not be terminated.\r\nReason: Access is denied.\r\n",
+                "access-denied",
+            ),
+            (
+                b"ERROR: private-path secret-token could not be terminated.\r\nReason: private-path https://private.example/secret-token\r\n",
+                "termination-failed",
+            ),
+            (
+                b"ERROR: private-path could not be terminated.\r\nReason: private-token there is no running instance of the task.\r\n",
+                "termination-failed",
+            ),
             (b"", "empty"),
             (b"private-path secret-token localized message", "unknown"),
             (b"\xff\xfe private-path secret-token", "unknown"),
@@ -1930,13 +1951,15 @@ mod tests {
         use std::os::unix::process::ExitStatusExt;
         #[cfg(windows)]
         use std::os::windows::process::ExitStatusExt;
-        #[cfg(unix)]
-        let status = std::process::ExitStatus::from_raw(7 << 8);
-        #[cfg(windows)]
-        let status = std::process::ExitStatus::from_raw(7);
-        assert!(windows_process_tree_termination_result(Ok(status))
-            .unwrap_err()
-            .contains("taskkill failed with exit status"));
+        for code in [7, 128, 255] {
+            #[cfg(unix)]
+            let status = std::process::ExitStatus::from_raw(code << 8);
+            #[cfg(windows)]
+            let status = std::process::ExitStatus::from_raw(code);
+            assert!(windows_process_tree_termination_result(Ok(status))
+                .unwrap_err()
+                .contains("taskkill failed with exit status"));
+        }
     }
 
     #[test]
