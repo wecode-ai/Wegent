@@ -326,3 +326,18 @@ ARM renderer 存储恢复约 1874 毫秒：响应头等待 1006 毫秒、响应�
 
 
 为定位该请求等待，删除仅单调用的 prepare_request 空壳，复用现有日志与既有 VITE_WEWORK_E2E=true 开关，仅为 turn/start 记录准备、MCP 端点、状态锁、退役进程、pending 注册、stdin 锁、写入和响应的固定阶段及单调累计毫秒。其他方法不读取该环境开关，非 E2E 不记录；无请求参数、ID、模型、路径或错误原文，也不启用完整 stream debug。原 await 顺序、超时位置、响应及错误传递保持。两项 all-features 聚焦测试通过，真实 stdio 四种开关/成功/错误组合的返回一致、子进程全部 wait；Clippy、格式通过。此诊断用于下一轮实际边界证据，尚未修复第 7 组阻塞或跨平台启动预算。
+
+
+### `3e8f0d115` 验证与 Electron 进程 CPU
+
+本轮 Tests、Lint、Auth 与策略检查通过。Wework 两组完整日志共 8858 项通过：Electron 1118 项、renderer 3856/3884 项，四项既有 skip 未增加，无 AssertionError 或未处理错误。Windows 完整桌面分片尚待其共享制品完成，不能用原生兼容性验证通过代替场景结果。
+
+[Linux Core19](https://github.com/wecode-ai/Wegent/actions/runs/38491922073/job/115621452335) 严格冷启动 5836 毫秒失败：配置 811 毫秒、Core 2783 毫秒、页面加载 773 毫秒、加载后就绪 1211 毫秒。Cookie 安装等待 724 毫秒，但实现已使用 Promise.all，并无串行重复工作证据。Core 端点实际 uptime 1992 毫秒、累计 CPU 1361 毫秒；同一 renderer 的加载与加载后 CPU 增量为 700/410 毫秒。后续旧版、缓存重启阶段未执行，清理和 Prune 通过。不能把前轮 4687 毫秒通过或两次墙钟差当作本轮代码因果证据。
+
+[正式 ARM](https://github.com/wecode-ai/Wegent/actions/runs/38491931903/job/115618996358) 严格冷启动 10950 毫秒仍失败；原发布、组件更新、应用更新分别 33 秒、1 分 24 秒、1 分 27 秒通过。五份 CPU 摘要对应五个端点、零缺失，Prune 通过。系统三个 CPU 在各启动区间累计计时中约 98.6–100% 非 idle；这不识别消耗来源，不能归因于外部任务、App Nap 或 runner 环境，更不能扣除预算。Core 端点累计 CPU 1765 毫秒；同一 renderer 页面加载 2055 毫秒、CPU 920 毫秒，加载后就绪 2438 毫秒、CPU 614 毫秒。旧版后续阶段未执行，跨平台 `<5s` 尚未完成。
+
+现有 renderer 数值不足以识别其他 Electron 进程的消耗。仅在既有 CPU profile 开关下，复用同一次 getAppMetrics 结果，补充全部 Electron 进程的安全 PID、累计 CPU 毫秒和 browser/renderer/gpu/utility/other 固定类别及合计，不读取进程名称、服务名称、命令或路径，不增加查询、计时器或等待。无效计数或任一进程数值缺失时，不输出部分合计。每次快照独立记录身份，进程退出或替换时不能直接对合计作差，Core/Executor 也不属于该 Electron 合计。
+
+22 项新增与 23 项既有聚焦测试、Electron 类型、lint 和格式检查通过。单次隔离真实 Electron 验证达到工作台，三个原边界采集到五个进程，合计 2425/3409/4461 毫秒，与各安全记录相符。stop 返回零，所属进程为空、认证链接为零。函数级 renderer Profiler 未加入：当前打包粒度不能定位 React/i18n 具体热点，额外采样与构建接线尚无可行动证据价值。此次仅补充诊断，不宣称启动预算已修复。
+
+启动页初始路径已等于第零阶段目标且速度为零，原 animateMorph 在首次 1150 毫秒目标变化前仍逐帧计算并重写三条相同 SVG 路径。删除这段重复帧，在首次实际目标变化时才启动原来的单一 spring 循环；后续变形、文案、恢复、超时及减少动态效果设置保留。执行真实 splash.js 的受控 RAF 回归在旧源码复现失败，修正后 23 项 startup-splash 测试通过，覆盖两帧 animationReady、初始单次绘制、实际变形和后续阶段不重复启动循环。原注册 native-window-startup E2E 单次 49 秒通过、无断言错误、清理 18 项临时文件；所属进程和认证链接均为零。此修改仅消除已证实的恒等重写，不能把此前 GPU CPU 总量归为这些帧，也不能据此宣布跨平台预算已达标。

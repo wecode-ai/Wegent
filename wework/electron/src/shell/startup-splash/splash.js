@@ -54,7 +54,7 @@ const isChinese = navigator.language.toLowerCase().startsWith('zh')
 const currentPaths = stages[0].paths.map(path => [...path])
 const velocities = stages[0].paths.map(path => path.map(() => 0))
 let stageIndex = prefersReducedMotion ? stages.length - 1 : 0
-let previousTime = performance.now()
+let previousTime = null
 let slowStartup = false
 let startupFailed = false
 let failedPluginName = null
@@ -278,9 +278,12 @@ if (prefersReducedMotion) {
 } else {
   paintPaths(currentPaths)
   updateCopy(stageIndex, false)
-  requestAnimationFrame(animateMorph)
   window.setInterval(() => {
     stageIndex = (stageIndex + 1) % stages.length
+    if (previousTime === null) {
+      previousTime = performance.now()
+      requestAnimationFrame(animateMorph)
+    }
     if (!slowStartup && !startupFailed) updateCopy(stageIndex, true)
   }, 1150)
 }

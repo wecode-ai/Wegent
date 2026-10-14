@@ -1,9 +1,6 @@
 import './host/process-output-bootstrap.js'
-import {
-  logStartupStep,
-  rendererStartupCpuDetails,
-  runSynchronousStartupStep,
-} from './host/startup-step.js'
+import { startupProcessCpuDetails } from './host/startup-process-cpu.js'
+import { logStartupStep, runSynchronousStartupStep } from './host/startup-step.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 import { installDshBrowserSession } from './host/dsh-browser-session.js'
@@ -764,11 +761,11 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   if (!desktopRuntime.state().ready) return
   if (primaryDshLoaded) return
   const contents = mainWindow.webContents
-  const rendererCpuDetails = () =>
-    rendererStartupCpuDetails(process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1', contents, () =>
+  const startupCpuDetails = () =>
+    startupProcessCpuDetails(process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1', contents, () =>
       app.getAppMetrics()
     )
-  logStartupStep('primary-renderer-load', 'started', rendererCpuDetails())
+  logStartupStep('primary-renderer-load', 'started', startupCpuDetails())
   rendererHealth.loading()
   const dshUrl = desktopRuntime.coreDshUrl()
   if (!securedDshContents.has(contents)) {
@@ -779,7 +776,7 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     primaryDshLoaded = true
     runtimeError = null
     rendererHealth.ready()
-    logStartupStep('primary-renderer-load', 'completed', rendererCpuDetails())
+    logStartupStep('primary-renderer-load', 'completed', startupCpuDetails())
     void contents
       .executeJavaScript(
         `(() => {
@@ -1831,7 +1828,7 @@ async function configureDesktopRuntime(): Promise<void> {
             if (!mainWindow || mainWindow.isDestroyed()) return
             logStartupStep('renderer-startup-ready', 'completed', {
               source,
-              ...rendererStartupCpuDetails(
+              ...startupProcessCpuDetails(
                 process.env.WEWORK_E2E_CORE_CPU_PROFILE === '1',
                 mainWindow.webContents,
                 () => app.getAppMetrics()

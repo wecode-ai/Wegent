@@ -119,6 +119,84 @@ class FakeSplashElement {
 }
 
 describe('StartupSplash', () => {
+  test.each([false, true])(
+    'paints the initial icon once and starts one morph loop only after a stage change (reduced motion: %s)',
+    async reducedMotion => {
+      const electronRoot =
+        basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
+      const script = await readFile(
+        join(electronRoot, 'src', 'shell', 'startup-splash', 'splash.js'),
+        'utf8'
+      )
+      const elements = new Map<
+        string,
+        FakeSplashElement & { setAttribute: ReturnType<typeof vi.fn> }
+      >()
+      const element = (selector: string) => {
+        const existing = elements.get(selector)
+        if (existing) return existing
+        const created = Object.assign(new FakeSplashElement(), { setAttribute: vi.fn() })
+        elements.set(selector, created)
+        return created
+      }
+      let now = 0
+      let frames: Array<(time: number) => void> = []
+      const intervals: Array<() => void> = []
+      const requestAnimationFrame = (callback: (time: number) => void) => frames.push(callback)
+      const tick = (time: number) => {
+        now = time
+        const pending = frames
+        frames = []
+        pending.forEach(callback => callback(time))
+      }
+      runInNewContext(script, {
+        document: {
+          activeElement: null,
+          body: element('body'),
+          documentElement: element('documentElement'),
+          querySelector: element,
+          querySelectorAll: () => [element('dot1'), element('dot2'), element('dot3')],
+        },
+        HTMLElement: FakeSplashElement,
+        navigator: { language: 'en-US' },
+        performance: { now: () => now },
+        requestAnimationFrame,
+        window: {
+          addEventListener: vi.fn(),
+          matchMedia: () => ({ matches: reducedMotion }),
+          requestAnimationFrame,
+          setInterval: (callback: () => void) => intervals.push(callback),
+          setTimeout: vi.fn(),
+        },
+      })
+      const primary = element('#morph-primary').setAttribute
+      const initialPath = primary.mock.calls[0]
+      tick(16)
+      tick(32)
+      tick(1100)
+      expect(element('documentElement').dataset.animationReady).toBe('true')
+      expect(primary).toHaveBeenCalledTimes(1)
+      expect(frames).toHaveLength(0)
+      if (reducedMotion) {
+        expect(intervals).toHaveLength(0)
+        return
+      }
+      expect(intervals).toHaveLength(1)
+      now = 1150
+      intervals[0]()
+      expect(frames).toHaveLength(1)
+      tick(1166)
+      expect(primary).toHaveBeenCalledTimes(2)
+      expect(primary.mock.calls[1]).not.toEqual(initialPath)
+      expect(frames).toHaveLength(1)
+      intervals[0]()
+      expect(frames).toHaveLength(1)
+      tick(1182)
+      expect(primary).toHaveBeenCalledTimes(3)
+      expect(frames).toHaveLength(1)
+    }
+  )
+
   test('ships a visible loading animation that reports readiness after two frames', async () => {
     const electronRoot =
       basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
