@@ -103,10 +103,10 @@ export function createDesktopScenario() {
       await control.command('clickWhenEnabled', RESTORE)
       await waitForSnapshot(
         control,
-        snapshot => !snapshot.text.includes('已自定义'),
-        'Restoring the native Catalog did not clear customization',
-        undefined,
-        ROW
+        snapshot =>
+          snapshot.testIds.includes(`codex-official-model-row-openai-${MODEL_ID}`) &&
+          !snapshot.text.includes('已自定义'),
+        'Restoring the native Catalog did not restore its row without customization'
       )
       const restored = (await readCatalog()).find(entry => entry.slug === MODEL_ID)
       assert.deepEqual(restored.effective, baseline)

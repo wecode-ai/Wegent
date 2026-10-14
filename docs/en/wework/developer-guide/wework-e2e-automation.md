@@ -357,6 +357,9 @@ System proxy scenarios and the initial task-status synchronization request use t
 model-stage budget for model requests and retain 10-second ordinary UI steps.
 Initial tasks and follow-up messages reuse `sendPromptUntilScenarioRequest`,
 registering request listeners before sending with the shared 30-second model-request limit.
+Background guidance uses the same model-stage budget for real tool output and subsequent model
+requests. A native tool can yield a still-running session after ten seconds; this tool phase
+must not use the ordinary UI-step limit.
 The stream-recovery scenario selects its registered fixture model before the first send;
 the composer appearing does not establish model-catalog readiness. It still verifies that
 streaming continues during renderer reload and restores the complete output.
@@ -364,7 +367,11 @@ Post-restart follow-ups wait for the send control to become enabled before sendi
 stable composer text does not establish restored model-catalog readiness. The model request and
 send action are awaited together so either failure follows the normal diagnostics and cleanup
 path instead of an unhandled Promise rejection exiting Node without a failure snapshot.
+Model-request waits stop polling when their budget expires, leaving no active poll timers.
 The ordinary send-control wait retains the 10-second step limit.
+Restoring native model-catalog defaults temporarily unmounts model rows while refreshing.
+The scenario observes the stable page until the original row returns without its customization
+marker, then verifies native data and the persisted override file.
 The overload cancellation phase selects its fixture model independently for the new conversation.
 Action execution and result acknowledgement are separate: an acknowledgement failure must not
 produce a fabricated failed-action result. E2E Electron logs retain loopback request paths and

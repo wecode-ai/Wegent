@@ -997,17 +997,17 @@ class DesktopE2EServer {
   }
 
   async awaitScenarioRequestCount(scenario, count, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
-    const waitForCount = (async () => {
-      while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {
-        await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    const deadline = Date.now() + timeoutMs
+    while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) {
+        throw new Error(`Timed out waiting for ${count} ${scenario} scenario requests`)
       }
-      return this.scenarioRequests.get(scenario).at(-1)
-    })()
-    return withTimeout(
-      this.guard(waitForCount),
-      timeoutMs,
-      `Timed out waiting for ${count} ${scenario} scenario requests`
-    )
+      await this.guard(
+        new Promise(resolvePromise => setTimeout(resolvePromise, Math.min(50, remainingMs)))
+      )
+    }
+    return this.guard(Promise.resolve(this.scenarioRequests.get(scenario).at(-1)))
   }
 
   releaseInitialToolExecution() {

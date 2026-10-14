@@ -40,6 +40,7 @@ import {
   MULTIMODAL_VISION_COMPLETION_TEXT,
   MULTIMODAL_VISION_PROMPT,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+  MODEL_REQUEST_TIMEOUT_MS,
   QUEUED_FOLLOW_UP,
   QUEUE_CLEAR_INITIAL,
   QUEUE_CLEAR_MANUAL,
@@ -437,11 +438,7 @@ async function verifyBackgroundGuidanceNavigation({
 
   control.holdInitialCompletionResponse()
   control.releaseInitialToolExecution()
-  await withTimeout(
-    control.awaitScenarioRequestCount('initial', 2),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The background task did not report its tool output before guidance'
-  )
+  await control.awaitScenarioRequestCount('initial', 2, MODEL_REQUEST_TIMEOUT_MS)
   await withTimeout(
     (async () => {
       while (control.modelStage !== 'awaiting_guidance') {
@@ -455,11 +452,7 @@ async function verifyBackgroundGuidanceNavigation({
   await control.command('fill', composerSelector, { value: BACKGROUND_GUIDANCE })
   await control.command('click', '[data-testid="send-mode-menu-button"]')
   await control.command('click', '[data-testid="guide-current-turn-option"]')
-  await withTimeout(
-    control.awaitScenarioRequestCount('initial', 3),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The guided background task did not continue after guidance was applied'
-  )
+  await control.awaitScenarioRequestCount('initial', 3, MODEL_REQUEST_TIMEOUT_MS)
   assert.equal(
     await control.command('getValue', composerSelector),
     '',
