@@ -3,11 +3,11 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import { hashComponentPath } from '../../../scripts/lib/component-content-hash.mjs'
 
-const MARKER_NAME = 'e2e-component-update.marker'
+const MARKER_NAME = join('e2e-component-update', 'nested', 'marker.txt')
 
 export async function createDesktopScenario({
   electronUserDataDirectory,
@@ -30,6 +30,7 @@ export async function createDesktopScenario({
   await cp(join(resourcesRoot, packaged.components.weworkCorePlugins.path), source, {
     recursive: true,
   })
+  await mkdir(dirname(join(source, MARKER_NAME)), { recursive: true })
   await writeFile(join(source, MARKER_NAME), 'component update activated\n')
   await createTarArchive(source, archive)
   const archiveBytes = await readFile(archive)
@@ -153,16 +154,19 @@ export async function createDesktopScenario({
           : null
       }, 'The component update was not confirmed after restart')
       assert.equal(state.pending, undefined)
-      await readFile(
-        join(
-          electronUserDataDirectory,
-          'managed-components',
-          'blobs',
-          'weworkCorePlugins',
-          archiveSha256,
-          MARKER_NAME
+      assert.equal(
+        await readFile(
+          join(
+            electronUserDataDirectory,
+            'managed-components',
+            'blobs',
+            'weworkCorePlugins',
+            archiveSha256,
+            MARKER_NAME
+          ),
+          'utf8'
         ),
-        'utf8'
+        'component update activated\n'
       )
       const appLog = await readFile(join(resultDir, 'app.log'), 'utf8')
       assert.doesNotMatch(appLog, /\[runtime\] startup failed/)
