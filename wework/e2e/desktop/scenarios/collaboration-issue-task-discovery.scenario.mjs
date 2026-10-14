@@ -4,6 +4,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import {
   reloadMainWindow,
+  selectCollaborationProjectView,
   selectCollaborationDomain,
   waitForWorkbenchDebugState,
 } from '../modules/workspace-flows.mjs'
@@ -94,7 +95,7 @@ export function createDesktopScenario({
       'waitFor',
       scoped(`[data-testid="collaboration-project-execution-environment-${device.id}"]`)
     )
-    await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+    await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
     await control.command('waitFor', scoped('[data-testid="human-issue-ai-assist"]'))
     await control.command('click', scoped('[data-testid="human-issue-ai-assist"]'))

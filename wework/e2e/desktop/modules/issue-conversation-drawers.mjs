@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { getSingleElementMetrics } from './conversation-layout.mjs'
 import { join, resultDir, writeFile } from './shared.mjs'
 
-async function sampleDrawerMotion(control, scope, action, direction, timeoutMs) {
+async function sampleDrawerMotion(control, scope, action, direction, timeoutMs, reduced = false) {
   await control.command(
     'startElementMetricsSampling',
     scope('[data-testid="issue-drawer-workspace"]'),
@@ -21,7 +21,7 @@ async function sampleDrawerMotion(control, scope, action, direction, timeoutMs) 
     await new Promise(resolve => setTimeout(resolve, 30))
   } while (!sample.done)
   await writeFile(
-    join(resultDir, `issue-drawers-${direction}-frames.json`),
+    join(resultDir, `issue-drawers-${direction}${reduced ? '-reduced' : ''}-frames.json`),
     JSON.stringify(sample, null, 2)
   )
   const frames = sample.frames.map(frame => ({
@@ -39,6 +39,7 @@ async function sampleDrawerMotion(control, scope, action, direction, timeoutMs) 
   for (const [index, frame] of frames.entries()) {
     const { detail, conversation } = frame
     assert.ok(detail && conversation, 'Both track surfaces must remain mounted')
+    assert.equal(detail.reducedMotion, reduced, 'Drawer motion must use the requested preference')
     assert.equal(detail.identity, first.identity, 'The Issue surface must not remount')
     assert.ok(
       Math.abs(detail.width - first.width) <= 1,
@@ -74,19 +75,30 @@ async function sampleDrawerMotion(control, scope, action, direction, timeoutMs) 
     )
     const elapsed = frame.time - previous.time
     assert.ok(elapsed >= 0, 'Drawer frame timestamps must be monotonic')
+    if (reduced) {
+      assert.equal(detail.trackTransition, 'none', 'Reduced motion must disable track transitions')
+      assert.equal(detail.trackAnimations.length, 0, 'Reduced motion must not run animations')
+    } else {
+      assert.ok(
+        Math.abs(movement) <= ((detail.width + 8) * 4 * elapsed) / 220 + 2,
+        'The shared track jumped instead of sliding'
+      )
+    }
+  }
+  assert.notEqual(first.left, last.left, 'Opening and closing must move the drawer track')
+  if (reduced) {
+    assert.equal(intermediateFrames, 0, 'Reduced motion must move directly to the final layout')
+  } else {
     assert.ok(
-      Math.abs(movement) <= ((detail.width + 8) * 4 * elapsed) / 220 + 2,
-      'The shared track jumped instead of sliding'
+      intermediateFrames > 0,
+      `The ${direction} transition must include visible intermediate frames`
     )
   }
-  assert.ok(
-    intermediateFrames > 0,
-    `The ${direction} transition must include visible intermediate frames`
-  )
 }
 
 // The caller owns a real Issue with at least one completed comment execution.
 export async function verifyIssueConversationDrawers(control, scope, timeoutMs) {
+  await control.command('setReducedMotion', 'body', { value: 'no-preference' })
   const detail = scope('[data-testid="cloud-todo-detail"]')
   const chat = scope('[data-testid="ai-chat-modal"]')
   const detailSurface = scope('.issue-drawer-detail')
@@ -196,4 +208,24 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
   await control.command('press', scope('[data-testid="ai-chat-modal-close"]'), { key: 'Escape' })
   await control.command('waitFor', chat, { visible: false, timeoutMs })
   await control.command('waitFor', detail, { timeoutMs })
+  await control.command('setReducedMotion', 'body', { value: 'reduce' })
+  await sampleDrawerMotion(
+    control,
+    scope,
+    () => control.command('click', executionBadge),
+    'open',
+    timeoutMs,
+    true
+  )
+  await control.command('waitFor', chat, { timeoutMs })
+  await sampleDrawerMotion(
+    control,
+    scope,
+    () => control.command('click', scope('[data-testid="ai-chat-modal-back"]')),
+    'close',
+    timeoutMs,
+    true
+  )
+  await control.command('waitFor', chat, { visible: false, timeoutMs })
+  await control.command('setReducedMotion', 'body', { value: 'system' })
 }

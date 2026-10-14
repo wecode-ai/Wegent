@@ -538,3 +538,16 @@ fn git_clone_failure_fields_include_diagnostics_without_credentials() {
         .any(|(_, value)| value.contains("glpat-secret")));
     assert!(!fields.iter().any(|(_, value)| value.contains("ghp_secret")));
 }
+
+#[test]
+fn git_clone_diagnostics_keep_failure_after_a_long_destination_path() {
+    let mut fields = Vec::new();
+    let stderr = format!(
+        "Cloning into '{}'/project...\nfatal: could not create work tree dir: Filename too long",
+        "nested-directory/".repeat(30)
+    );
+    push_git_clone_failure_fields(&mut fields, Some(128), "", &stderr);
+    assert!(fields
+        .iter()
+        .any(|(key, value)| *key == "stderr" && value.ends_with("Filename too long")));
+}

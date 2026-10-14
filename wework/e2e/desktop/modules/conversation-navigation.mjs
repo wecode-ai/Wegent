@@ -880,6 +880,11 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
 }
 
 async function verifyEnvironmentPanelScrollStability(control) {
+  const previousSize = JSON.parse(
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1600, height: 900 }),
+    })
+  )
   const scrollFrameSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-scroll-frame"]`
   const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   const environmentPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-container"]`
@@ -1018,6 +1023,7 @@ async function verifyEnvironmentPanelScrollStability(control) {
     })
   )
   await captureVerificationScreenshot(control, 'environment-panel-scroll-03-downward.png')
+  await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
 }
 
 async function reopenCurrentTurnNavigationTask(

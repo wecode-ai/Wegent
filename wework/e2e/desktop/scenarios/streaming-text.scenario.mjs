@@ -1256,6 +1256,11 @@ export function createDesktopScenario({
   }
 
   const verifySubagentStreamingPanel = async control => {
+    const previousSize = JSON.parse(
+      await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1600, height: 900 }),
+      })
+    )
     await openNewChatWithE2EModel(control, uiTimeoutMs)
 
     await control.command('fill', COMPOSER_SELECTOR, { value: SUBAGENT_PROMPT })
@@ -1471,6 +1476,7 @@ export function createDesktopScenario({
     )
     await captureSubagent(control, 'streaming-text-subagent-06-restored-history.png')
     await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
+    await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
   }
 
   return {

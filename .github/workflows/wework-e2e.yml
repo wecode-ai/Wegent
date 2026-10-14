@@ -730,6 +730,15 @@ jobs:
         if: always() && steps.windows-core-e2e.outcome == 'failure'
         run: node .github/scripts/report-wework-desktop-e2e-failures.mjs
 
+      - name: Upload Windows standard-user process logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-windows-${{ matrix.id }}-standard-user-logs
+          path: .ci-artifacts/windows-standard-user/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Fail Windows Wework desktop Core shard E2E
         if: always() && steps.windows-core-e2e.outcome == 'failure'
         run: exit 1

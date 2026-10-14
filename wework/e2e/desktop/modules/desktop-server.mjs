@@ -92,6 +92,7 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  DESKTOP_READY_TIMEOUT_MS,
   DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
   DESKTOP_CONTROL_RESULT_GRACE_MS,
   DESKTOP_CONTROL_SERVER_PORT,
@@ -750,13 +751,22 @@ class DesktopE2EServer {
     )
   }
 
-  awaitReadyAfter(readyCount) {
+  async awaitReadyAfter(readyCount, timeoutMs = DESKTOP_READY_TIMEOUT_MS) {
     if (this.readyCount > readyCount) return this.guard(Promise.resolve(this.ready))
-    return this.guard(
-      new Promise(resolvePromise => {
-        this.readyWaiters.push({ readyCount, resolve: resolvePromise })
-      })
-    )
+    let waiter
+    const ready = new Promise(resolvePromise => {
+      waiter = { readyCount, resolve: resolvePromise }
+      this.readyWaiters.push(waiter)
+    })
+    try {
+      return await withTimeout(
+        this.guard(ready),
+        timeoutMs,
+        `Timed out waiting for desktop readiness after event ${readyCount}`
+      )
+    } finally {
+      this.readyWaiters = this.readyWaiters.filter(candidate => candidate !== waiter)
+    }
   }
 
   awaitBlockedCloudRequest(pathname) {

@@ -96,6 +96,13 @@ Git Bash 的路径转换为 Windows 原生路径；文件预览断言使用界�
 生成图片的工作区引用移除 Rust canonicalize 产生的 Windows 扩展路径前缀，
 避免 renderer 将其误解析为 POSIX 路径。
 
+普通用户 CI 进程的 stdout/stderr 会实时转发，并独立保存到
+`.ci-artifacts/windows-standard-user/`，避免其他运行时文件被锁定时丢失进程日志。
+新桌面窗口的就绪握手使用已有的 180 秒启动预算；缺少就绪事件会明确失败并保存
+诊断，而不是一直等到整个 CI job 被终止。
+抽屉 E2E 分别通过 Electron 的媒体偏好控制验证正常动画与减少动态效果，结束后恢复
+系统偏好。固定环境面板场景会显式建立足够宽的窗口，避免误测窄窗口的浮动面板。
+
 正式安装器、代码签名和 Electron YAML 更新清单由
 `.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。
 

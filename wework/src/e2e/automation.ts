@@ -1789,6 +1789,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return stripAppBasePath(window.location.pathname)
     case 'getNativeWindowState':
       return JSON.stringify(await invokeDesktopHost('window.getState'))
+    case 'setReducedMotion':
+      await invokeDesktopHost('e2e.setReducedMotion', { preference: command.value })
+      return ''
     case 'getStartupSplashSnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getStartupSplashSnapshot'))
     case 'getTraySnapshot':

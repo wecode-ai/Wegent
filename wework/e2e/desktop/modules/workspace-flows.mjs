@@ -1315,34 +1315,21 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
   assert.ok(boardCardId.startsWith('cloud-todo-card-drop-'))
   const boardItemId = boardCardId.slice('cloud-todo-card-drop-'.length)
   const boardCardSelector = `${activeBoardContentSelector} [data-testid="${boardCardId}"]`
-  const openTaskTestId = `cloud-todo-card-open-task-${boardItemId}`
-  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  await control.command(
-    'click',
-    `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`,
-    {
-      visible: true,
-    }
-  )
-  if (!snapshot.testIds.includes(openTaskTestId)) {
-    await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    return
-  }
+  const openTaskSelector = `${boardCardSelector} [data-testid="cloud-todo-card-open-task-${boardItemId}"]`
+  const selector =
+    Number(await control.command('getElementCount', openTaskSelector)) > 0
+      ? openTaskSelector
+      : `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`
+  await control.command('scrollIntoView', selector)
+  await control.command('click', selector, { visible: true })
   await control.command(
     'waitFor',
-    `[data-testid="cloud-todo-card-progress-popup-${boardItemId}"]`,
+    `${activeBoardContentSelector} [data-testid="cloud-todo-detail"]`,
     {
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command('click', `[data-testid="${openTaskTestId}"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
 }
 
 async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {

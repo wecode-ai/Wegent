@@ -108,6 +108,16 @@ directories use junctions with absolute targets; Unix uses relative symbolic lin
 Generated image workspace references remove the Windows extended path prefix
 returned by Rust canonicalize so the renderer does not parse it as a POSIX path.
 
+Standard-user CI processes forward stdout/stderr live and keep separate logs in
+`.ci-artifacts/windows-standard-user/`, preserving process output when other
+runtime files remain locked. New desktop window readiness handshakes use the
+existing 180-second startup budget. Missing readiness events fail explicitly
+and save diagnostics instead of waiting for the entire CI job to be terminated.
+Drawer E2E uses Electron media preferences to verify both normal animation and
+reduced motion, then restores the system preference. Docked environment panel
+scenarios explicitly establish a wide window rather than exercising the narrow
+window's floating popover.
+
 `.github/workflows/wework-app.yml` creates the signed installer and Electron
 YAML update manifest on `windows-latest`.
 
