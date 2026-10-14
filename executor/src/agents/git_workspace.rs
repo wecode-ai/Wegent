@@ -433,7 +433,11 @@ async fn clone_repo(
     let mut command = Command::new("git");
     clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
+    #[cfg(windows)]
+    command.args(["-c", "core.longpaths=true"]);
     command.arg("clone");
+    #[cfg(windows)]
+    command.args(["--config", "core.longpaths=true"]);
     let branch = branch_name(request);
     if let Some(branch) = branch.as_deref() {
         command.arg("--branch").arg(branch).arg("--single-branch");

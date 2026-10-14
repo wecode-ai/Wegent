@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+trap 'printf "CI cache policy tests failed at line %s\n" "$LINENO" >&2' ERR
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 workflow_dir="$script_dir/../workflows"

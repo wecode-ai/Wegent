@@ -95,6 +95,9 @@ Git Bash 的路径转换为 Windows 原生路径；文件预览断言使用界�
 技能目录在 Windows 使用绝对目标的 junction，Unix 使用相对符号链接。
 生成图片的工作区引用移除 Rust canonicalize 产生的 Windows 扩展路径前缀，
 避免 renderer 将其误解析为 POSIX 路径。
+Windows 工作区克隆会启用并保存 `core.longpaths=true`，确保 Git 模板文件及后续
+操作支持长路径。Core DSH 和智能工作台插件安装使用各自 DSH Home 内的
+`pnpm-store`，避免跨盘默认 store 指向管理员创建的只读 SQLite 缓存。
 
 普通用户 CI 进程的 stdout/stderr 会实时转发，并独立保存到
 `.ci-artifacts/windows-standard-user/`，避免其他运行时文件被锁定时丢失进程日志。

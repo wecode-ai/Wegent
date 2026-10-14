@@ -290,7 +290,7 @@ export async function verifyNativeAgentMcp({
         'Native Codex must execute in the unified workspace'
       )
       assert.equal(
-        await readFile(join(workspace, 'README.md'), 'utf8'),
+        (await readFile(join(workspace, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'),
         'synthetic workspace repository\n'
       )
       const fileResponse = await fetch(
@@ -300,7 +300,10 @@ export async function verifyNativeAgentMcp({
         }
       )
       assert.equal(fileResponse.status, 200)
-      assert.equal(await fileResponse.text(), 'synthetic workspace repository\n')
+      assert.equal(
+        (await fileResponse.text()).replaceAll('\r\n', '\n'),
+        'synthetic workspace repository\n'
+      )
       const treeResponse = await fetch(
         `http://127.0.0.1:${port}/filesystem/list-dir?path=/workspace/61000`,
         { signal: AbortSignal.timeout(10_000) }

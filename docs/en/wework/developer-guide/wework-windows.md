@@ -107,6 +107,10 @@ native Windows paths; preview assertions use normalized UI paths. Windows skill
 directories use junctions with absolute targets; Unix uses relative symbolic links.
 Generated image workspace references remove the Windows extended path prefix
 returned by Rust canonicalize so the renderer does not parse it as a POSIX path.
+Windows workspace clones enable and persist `core.longpaths=true` for Git
+template files and subsequent operations. Core DSH and Smart app plugin installs
+use a `pnpm-store` inside their own DSH Home, avoiding cross-drive default stores
+whose SQLite cache was created by an administrator.
 
 Standard-user CI processes forward stdout/stderr live and keep separate logs in
 `.ci-artifacts/windows-standard-user/`, preserving process output when other

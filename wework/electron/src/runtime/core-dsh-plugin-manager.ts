@@ -358,21 +358,19 @@ export class CoreDshPluginManager {
   private async runPnpm(args: string[]): Promise<void> {
     const command = this.options.nodeCommand
     const pnpmEntry = join(this.options.runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+    const commandArgs = runtimeNodeArgs(this.options.environment, [
+      pnpmEntry,
+      '--store-dir',
+      join(this.options.dshHome, 'pnpm-store'),
+      ...args,
+    ])
     try {
-      await this.runCommand(
-        command,
-        runtimeNodeArgs(this.options.environment, [pnpmEntry, ...args]),
-        this.pnpmCommandOptions()
-      )
+      await this.runCommand(command, commandArgs, this.pnpmCommandOptions())
     } catch (error) {
       const matcher = parseBlockedBuildMatcher(commandOutput(error))
       if (!matcher) throw commandError('pnpm', error)
       await allowBuild(this.profileRoot, matcher)
-      await this.runCommand(
-        command,
-        runtimeNodeArgs(this.options.environment, [pnpmEntry, ...args]),
-        this.pnpmCommandOptions()
-      ).catch(reason => {
+      await this.runCommand(command, commandArgs, this.pnpmCommandOptions()).catch(reason => {
         throw commandError('pnpm', reason)
       })
     }

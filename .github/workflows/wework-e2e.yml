@@ -401,6 +401,16 @@ jobs:
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
+          if [[ ",$WEWORK_E2E_SEGMENTS," == *",plugin-development,"* ]]; then
+            apt-get update
+            apt-get install -y --no-install-recommends gdb
+            WEWORK_E2E_EXECUTOR_REAL_BIN=/bin/bash \
+              WEGENT_APP_IPC_ENDPOINT=diagnostic-fd-check \
+              .github/scripts/run-wework-executor-with-gdb.sh \
+              -c 'test -r /proc/self/fd/3' 3</dev/null
+            export WEWORK_E2E_EXECUTOR_REAL_BIN="$WEWORK_E2E_EXECUTOR_BIN"
+            export WEWORK_E2E_EXECUTOR_BIN="$GITHUB_WORKSPACE/.github/scripts/run-wework-executor-with-gdb.sh"
+          fi
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
 

@@ -304,7 +304,10 @@ async function initializeBlankCodexHome({ codexHome, control }) {
 
 async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) {
   const configPath = join(codexHome, 'config.toml')
-  const expectedSourceLine = expectedSource ? `source = ${JSON.stringify(expectedSource)}` : null
+  // toml_edit uses literal strings for paths containing Windows separators.
+  const expectedSourceLines = expectedSource
+    ? [`source = ${JSON.stringify(expectedSource)}`, `source = '${expectedSource}'`]
+    : []
   const startedAt = Date.now()
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
     if (await pathExists(configPath)) {
@@ -312,7 +315,7 @@ async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) 
       if (
         config.includes('[marketplaces.wework-personal]') &&
         config.includes('source_type = "local"') &&
-        (!expectedSourceLine || config.includes(expectedSourceLine))
+        (!expectedSource || expectedSourceLines.some(line => config.includes(line)))
       ) {
         return
       }

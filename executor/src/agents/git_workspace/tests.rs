@@ -78,6 +78,60 @@ pub(super) fn create_local_repository(
 }
 
 #[test]
+fn clones_and_reuses_repositories_beyond_windows_max_path() {
+    let _lock = crate::test_env::lock();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let source = create_local_repository(directory.path(), "source", "fixture.txt", "fixture");
+        let mut destination = directory.path().join("destination");
+        for index in 0..6 {
+            destination = destination.join(format!("{index}-{}", "workspace".repeat(6)));
+        }
+        assert!(
+            destination
+                .join(".git/hooks/fsmonitor-watchman.sample")
+                .to_string_lossy()
+                .len()
+                > 260
+        );
+
+        clone_repo(
+            &ExecutionRequest::default(),
+            source.to_str().unwrap(),
+            &destination,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(destination.join("fixture.txt")).unwrap(),
+            "fixture"
+        );
+        assert_test_git_success(
+            "git status after long-path clone",
+            StdCommand::new("git")
+                .arg("-C")
+                .arg(&destination)
+                .args(["status", "--porcelain"]),
+        );
+        #[cfg(windows)]
+        {
+            let output = run_test_git(
+                StdCommand::new("git")
+                    .arg("-C")
+                    .arg(&destination)
+                    .args(["config", "core.longpaths"]),
+            );
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+        }
+    });
+}
+
+#[test]
 fn unified_workspace_clones_reuses_and_exposes_the_same_logical_tree() {
     let _lock = crate::test_env::lock();
     let runtime = tokio::runtime::Builder::new_current_thread()
