@@ -357,6 +357,9 @@ System proxy scenarios and the initial task-status synchronization request use t
 model-stage budget for model requests and retain 10-second ordinary UI steps.
 Initial tasks and follow-up messages reuse `sendPromptUntilScenarioRequest`,
 registering request listeners before sending with the shared 30-second model-request limit.
+The stream-recovery scenario selects its registered fixture model before the first send;
+the composer appearing does not establish model-catalog readiness. It still verifies that
+streaming continues during renderer reload and restores the complete output.
 Desktop fixtures bind the workspace root to their temporary Home and remove other inherited
 workspace path overrides, avoiding stale test or personal worktrees. Turn preparation failures
 record their error code and reason instead of leaving only a UI timeout.
