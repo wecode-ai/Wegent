@@ -2196,6 +2196,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             0
           ),
           markdownChunkCount: document.querySelectorAll('[data-markdown-window-chunk]').length,
+          markdownChunks: Array.from(
+            document.querySelectorAll<HTMLElement>('[data-markdown-window-chunk]')
+          ).map(element => ({
+            descendantCount: element.getElementsByTagName('*').length,
+            placeholder: Boolean(element.querySelector('[data-markdown-window-placeholder]')),
+            top: element.getBoundingClientRect().top,
+            height: element.getBoundingClientRect().height,
+          })),
         },
         activeRuntimeAssistant: activeAssistantMessage
           ? {

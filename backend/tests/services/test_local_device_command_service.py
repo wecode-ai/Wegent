@@ -553,6 +553,40 @@ def test_turn_file_changes_revert_applies_plain_workspace_add_sequence(tmp_path)
     assert not (workspace / "note.txt").exists()
 
 
+@pytest.mark.parametrize("platform", ["Linux", "Darwin", "MINGW64_NT", "MSYS_NT"])
+def test_home_directory_command_returns_native_device_path(tmp_path, platform):
+    from app.services.device.command_registry import DEFAULT_LOCAL_DEVICE_COMMANDS
+
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    uname = tools / "uname"
+    uname.write_text('#!/bin/sh\nprintf "%s\\n" "$TEST_PLATFORM"\n')
+    uname.chmod(0o755)
+    cygpath = tools / "cygpath"
+    cygpath.write_text(
+        '#!/bin/sh\n[ "$1" = "-w" ] && [ "$2" = "$HOME" ] || exit 1\n'
+        'printf "%s\\n" "D:\\agent home"\n'
+    )
+    cygpath.chmod(0o755)
+    home = "/d/agent home" if platform.startswith(("MINGW", "MSYS")) else "/agent home"
+
+    result = subprocess.run(
+        shlex.split(DEFAULT_LOCAL_DEVICE_COMMANDS["home_dir"].command),
+        env={
+            **os.environ,
+            "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+            "HOME": home,
+            "TEST_PLATFORM": platform,
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    expected = "D:\\agent home" if platform.startswith(("MINGW", "MSYS")) else home
+    assert result.stdout.strip() == expected
+
+
 def test_local_device_command_registry_default_includes_diagnostic_commands():
     """Default command registry should include basic diagnostic commands."""
     from app.core.config import Settings
@@ -679,7 +713,8 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert ls_definition.command == "ls -a"
     assert ls_definition.post_processor == "file_list"
     assert home_dir_definition is not None
-    assert home_dir_definition.command == "printenv HOME"
+    assert 'cygpath -w "$HOME"' in home_dir_definition.command
+    assert 'printf "%s\\n" "$HOME"' in home_dir_definition.command
     assert home_dir_definition.post_processor is None
     assert project_workspace_root_definition is not None
     assert "WEGENT_EXECUTOR_PROJECTS_DIR" in project_workspace_root_definition.command

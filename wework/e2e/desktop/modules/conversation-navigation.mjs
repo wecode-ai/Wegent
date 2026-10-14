@@ -892,6 +892,10 @@ async function verifyEnvironmentPanelScrollStability(control) {
       )
     ) === 0
   ) {
+    await control.command('waitFor', environmentButtonSelector, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await control.command('click', environmentButtonSelector, { visible: true })
   }
   await control.command(

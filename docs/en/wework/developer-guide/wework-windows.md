@@ -100,6 +100,12 @@ same selected shards. Windows path, drive-letter, UNC, named-pipe, and `.exe`
 sidecar behavior must be verified by this Windows job and cannot be inferred
 from another platform passing.
 
+Windows CI caches the pnpm store and rebuilds dependency links on every install
+instead of restoring archived `node_modules` links. E2E uses the Socket.IO client
+bundled with the build artifact. Remote HOME queries convert Git Bash paths to
+native Windows paths; preview assertions use normalized UI paths. Windows skill
+directories use junctions with absolute targets; Unix uses relative symbolic links.
+
 `.github/workflows/wework-app.yml` creates the signed installer and Electron
 YAML update manifest on `windows-latest`.
 

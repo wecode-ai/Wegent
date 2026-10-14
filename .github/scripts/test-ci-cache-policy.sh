@@ -337,6 +337,11 @@ if ! grep -Fq "$docker_cache_ref" "$workflow_dir/e2e-tests.yml" ||
 fi
 
 node_action="$action_dir/setup-node-workspace/action.yml"
+if ! grep -Fq "if: runner.os != 'Windows'" "$node_action" ||
+  ! grep -Fq "if: runner.os == 'Windows' || steps.workspace-cache.outputs.cache-hit != 'true'" "$node_action" ||
+  ! grep -Fq 'node-24-pnpm-store-v1-' "$node_action"; then
+  fail "Windows must rebuild dependency links from the pnpm store instead of archiving node_modules"
+fi
 workspace_manifests="hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'frontend/package.json', 'wework/package.json', 'packages/*/package.json')"
 # GitHub expressions are matched literally in action source.
 # shellcheck disable=SC2016

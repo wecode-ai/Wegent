@@ -105,6 +105,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
       const reviewColumn = '[data-testid="cloud-todo-column-in_review"]'
       const completedColumn = '[data-testid="cloud-todo-column-completed"]'
+      await control.command('scrollIntoView', reviewColumn)
       await control.command('waitFor', reviewColumn, {
         text: TASK_PREFIX,
         visible: true,

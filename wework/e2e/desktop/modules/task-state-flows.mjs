@@ -925,6 +925,7 @@ async function verifyBackgroundCompletionRestore({
   await control.command('click', taskViewMenuButton)
   await control.command('click', '[data-testid="runtime-task-view-board"]')
   const completedColumnSelector = '[data-testid="cloud-todo-column-in_review"]'
+  await control.command('scrollIntoView', completedColumnSelector)
   await control.command('waitFor', completedColumnSelector, {
     text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
     visible: true,

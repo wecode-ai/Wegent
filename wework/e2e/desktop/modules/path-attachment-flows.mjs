@@ -477,7 +477,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
   await control.command('click', '[data-testid="right-workspace-file-option"]')
   await control.command('waitFor', '[data-testid="workspace-file-path"]', {
-    text: workspacePath,
+    text: workspacePath.replaceAll('\\', '/'),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', `[data-item-path="${DROPPED_PATH_FILE_NAME}"]`, {
