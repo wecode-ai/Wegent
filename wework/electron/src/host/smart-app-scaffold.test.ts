@@ -100,8 +100,7 @@ describe('scaffoldSmartApp', () => {
       expect(client).toContain("name: 'root'")
       expect(client).toContain('data-testid')
       expect(client).toContain('smart-app-ready')
-      expect(bundlePatch).toContain('id: ui-conversation\n  disabled: true')
-      expect(bundlePatch).toContain('id: ui-sidebar\n  disabled: true')
+      expect(bundlePatch).not.toContain('disabled: true')
     } else {
       expect(bundleManifest.exports).not.toHaveProperty('./client')
       expect(bundleManifest.dsh).not.toHaveProperty('client')

@@ -4,6 +4,10 @@ sidebar_position: 13
 
 # Wework DSH Runtime
 
+Ordinary Core plugin management disables client hot reload and applies changes on
+explicit restart. Plugin development enables hot reload separately, so package
+installation cannot remount the desktop merely by replacing unchanged client files.
+
 This directory defines the reproducible, multi-version DeepSeek Harness
 runtimes used by Wework. It never reads or modifies a user's personal `~/.dsh`
 profile.

@@ -151,7 +151,7 @@ async function writeBundle(
   })
   await writeFile(
     join(bundle, 'cordis.patch.yml'),
-    `${capabilities.client ? disabledDefaultWebModules() : ''}- insert:\n    - id: ${input.name}\n      name: '${packageName}'\n`
+    `- insert:\n    - id: ${input.name}\n      name: '${packageName}'\n`
   )
   const indexSource = capabilities.host
     ? `import { applyHost } from './host.js'\n\nexport const name = '${input.name}'\nexport const inject = []\nexport const apply = applyHost\n`
@@ -178,18 +178,6 @@ async function writeBundle(
   }
 }
 
-function disabledDefaultWebModules(): string {
-  return [
-    'ui-conversation',
-    'ui-sidebar',
-    'ui-settings-general',
-    'ui-settings-models',
-    'ui-settings-plugin-inventory',
-  ]
-    .map(id => `- id: ${id}\n  disabled: true\n`)
-    .join('')
-}
-
 async function writeProjectTools(
   input: SmartAppScaffoldInput,
   bundlePath: string,
@@ -210,7 +198,7 @@ async function writeProjectTools(
   if (capabilities.remote) {
     await writeFile(
       join(input.path, 'scripts', 'runtime-probe.mjs'),
-      "const baseUrl = process.env.SMART_APP_BASE_URL\nif (!baseUrl) throw new Error('SMART_APP_BASE_URL is required')\nconst response = await fetch(new URL('/', baseUrl))\nif (!response.ok) throw new Error(`Smart App returned HTTP ${response.status}`)\n"
+      "const baseUrl = process.env.SMART_APP_BASE_URL\nif (!baseUrl) throw new Error('SMART_APP_BASE_URL is required')\nconst response = await fetch(new URL('/', baseUrl), { headers: process.env.SMART_APP_COOKIE ? { cookie: process.env.SMART_APP_COOKIE } : {} })\nif (!response.ok) throw new Error(`Smart App returned HTTP ${response.status}`)\n"
     )
   }
   await writeFile(

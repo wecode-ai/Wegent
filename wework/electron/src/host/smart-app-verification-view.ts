@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
+import { copyDshBrowserAuthentication } from '../runtime/dsh-browser-auth.js'
 import type { SmartAppVerificationIssue } from './smart-app-verification-types.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
@@ -93,21 +94,7 @@ async function createElectronVerificationView(
 ): Promise<SmartAppVerificationViewHandle> {
   const { BrowserWindow, session } = await import('electron')
   const isolatedSession = session.fromPartition(partition, { cache: false })
-  // Transfer only DSH's authority-bound authentication cookie into the disposable session.
-  const name = `dsh-auth-${createHash('sha256').update(new URL(baseUrl).host).digest('base64url')}`
-  const cookies = await session.defaultSession.cookies.get({ url: baseUrl, name })
-  for (const cookie of cookies) {
-    await isolatedSession.cookies.set({
-      url: baseUrl,
-      name: cookie.name,
-      value: cookie.value,
-      path: cookie.path,
-      httpOnly: cookie.httpOnly,
-      secure: cookie.secure,
-      sameSite: cookie.sameSite,
-      expirationDate: cookie.expirationDate,
-    })
-  }
+  await copyDshBrowserAuthentication(session.defaultSession, isolatedSession, baseUrl)
   const window = new BrowserWindow({
     show: false,
     webPreferences: {

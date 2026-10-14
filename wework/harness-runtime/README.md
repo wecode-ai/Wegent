@@ -15,6 +15,8 @@ sidebar_position: 13
 - 同一版本通过清单中的 `wework.runtimeRoles` 声明角色，复用依赖锁文件，
   分别生成 Core 和 Workbench 资产；角色参与指纹计算，避免资产和物化目录碰撞。
 - 每个版本在 `runtimes/<version>` 中拥有独立的精确依赖和锁文件。
+- 普通 Core 插件管理关闭客户端热重载，安装、启停和卸载后通过显式重启生效；
+  插件开发模式单独开启热重载，避免依赖安装重写文件元数据时意外重建桌面界面。
 - `wework/scripts/prepare-harness-runtime.mjs` 为每个版本生成独立、不可变的运行时资产。
 
 Core 资产的 `runtime.json` 标记 `role: core`，并自带

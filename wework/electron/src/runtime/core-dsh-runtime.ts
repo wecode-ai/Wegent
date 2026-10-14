@@ -378,7 +378,11 @@ async function prepareProfile(options: {
     { mode: 0o600 }
   )
   await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
-  await writeFile(join(profileRoot, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
+  // Package installation replaces client files even when their bytes are unchanged.
+  // Production plugin changes take effect on explicit restart, without remounting the UI.
+  await writeFile(join(profileRoot, 'cordis.patch.yml'), '- id: client-hmr\n  disabled: true\n', {
+    mode: 0o600,
+  })
   await ensureCoreWorkspace(workspacePath)
   for (const packageName of managedDependencyNames) {
     const source = options.runtime.pluginRoots[packageName]

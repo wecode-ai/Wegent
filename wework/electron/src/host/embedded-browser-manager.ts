@@ -1,3 +1,4 @@
+import { copyDshBrowserAuthentication } from '../runtime/dsh-browser-auth.js'
 import {
   app,
   BrowserWindow,
@@ -1249,6 +1250,13 @@ export class EmbeddedBrowserManager {
       }
       entry.previewDisplayUrl = navigation.kind === 'preview' ? navigation.displayUrl : null
       entry.previewSourceUrl = navigation.kind === 'preview' ? navigation.sourceUrl : null
+      if (entry.contents.session === session.fromPartition(EMBEDDED_BROWSER_PARTITION)) {
+        await copyDshBrowserAuthentication(
+          session.defaultSession,
+          entry.contents.session,
+          navigation.displayUrl
+        )
+      }
       await entry.contents.loadURL(navigation.displayUrl)
     } catch (error) {
       if (!entry.navigationError) {
