@@ -5,6 +5,9 @@ import { basename, dirname, join } from 'node:path'
 import { hashComponentPath } from './component-content-hash.js'
 import { copyComponentTree } from './component-copy.js'
 
+export type PackagedSnapshotStep = 'snapshot-copy' | 'snapshot-verify-existing' | 'snapshot-publish'
+type TraceSnapshotStep = <T>(step: PackagedSnapshotStep, operation: () => Promise<T>) => Promise<T>
+
 export async function copyComponentSnapshot(
   source: string,
   target: string,
@@ -21,23 +24,35 @@ export async function copyComponentSnapshot(
   return { entryPath, contentSha256: await hashComponentPath(destination) }
 }
 
-export async function cachePackagedComponent(root: string, version: string, source: string) {
+export async function cachePackagedComponent(
+  root: string,
+  version: string,
+  source: string,
+  traceStep: TraceSnapshotStep = (_step, operation) => operation()
+) {
   await mkdir(root, { recursive: true, mode: 0o700 })
   const temporary = join(root, `${process.pid}.${randomUUID()}.tmp`)
   try {
     // Hash the independent snapshot once, including post-signing binary bytes.
-    const snapshot = await copyComponentSnapshot(source, temporary)
+    const snapshot = await traceStep('snapshot-copy', () =>
+      copyComponentSnapshot(source, temporary)
+    )
     const target = join(root, snapshot.contentSha256)
-    let matches = false
-    try {
-      matches =
-        (await hashComponentPath(join(target, snapshot.entryPath))) === snapshot.contentSha256
-    } catch {
-      // Missing or invalid snapshots are replaced only after the new copy is complete.
-    }
+    const matches = await traceStep('snapshot-verify-existing', async () => {
+      try {
+        return (
+          (await hashComponentPath(join(target, snapshot.entryPath))) === snapshot.contentSha256
+        )
+      } catch {
+        // Missing or invalid snapshots are replaced only after the new copy is complete.
+        return false
+      }
+    })
     if (!matches) {
-      await rm(target, { recursive: true, force: true })
-      await rename(temporary, target)
+      await traceStep('snapshot-publish', async () => {
+        await rm(target, { recursive: true, force: true })
+        await rename(temporary, target)
+      })
     }
     return {
       ...snapshot,

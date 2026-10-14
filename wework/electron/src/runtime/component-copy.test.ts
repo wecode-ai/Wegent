@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink } from 'node:fs/promises'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +6,63 @@ import { expect, test, vi } from 'vitest'
 import * as componentHashes from './component-content-hash.js'
 import { hashComponentPath } from './component-content-hash.js'
 import { copyComponentTree } from './component-copy.js'
-import { copyComponentSnapshot } from './component-snapshot.js'
+import { cachePackagedComponent, copyComponentSnapshot } from './component-snapshot.js'
+
+test('traces independent snapshots and reuses an already verified publication', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-component-snapshot-phases-'))
+  const source = join(root, 'private-source')
+  const events: string[] = []
+  const trace = async <T>(step: string, operation: () => Promise<T>): Promise<T> => {
+    events.push(step)
+    return operation()
+  }
+  try {
+    await mkdir(source)
+    await writeFile(join(source, 'runtime.js'), 'independent runtime')
+    const first = await cachePackagedComponent(join(root, 'cache'), '1.0.0', source, trace)
+    expect(events).toEqual(['snapshot-copy', 'snapshot-verify-existing', 'snapshot-publish'])
+    events.length = 0
+    const second = await cachePackagedComponent(join(root, 'cache'), '1.0.0', source, trace)
+    expect(events).toEqual(['snapshot-copy', 'snapshot-verify-existing'])
+    expect(second).toEqual(first)
+    await rm(source, { recursive: true })
+    expect(await readFile(join(root, 'cache', first.archiveSha256, 'runtime.js'), 'utf8')).toBe(
+      'independent runtime'
+    )
+    expect((await readdir(join(root, 'cache'))).sort()).toEqual([first.archiveSha256])
+    expect(JSON.stringify(events)).not.toContain('private-source')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('snapshot diagnostics preserve the original copy error and remove temporary data', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-component-snapshot-error-'))
+  const steps: string[] = []
+  let originalError: unknown
+  try {
+    const result = cachePackagedComponent(
+      join(root, 'cache'),
+      '1.0.0',
+      join(root, 'missing'),
+      async (step, operation) => {
+        steps.push(step)
+        try {
+          return await operation()
+        } catch (error) {
+          originalError = error
+          throw error
+        }
+      }
+    )
+    await expect(result).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(result).rejects.toBe(originalError)
+    expect(steps).toEqual(['snapshot-copy'])
+    expect(await readdir(join(root, 'cache'))).toEqual([])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test('avoids reading copied contents when the caller does not consume a digest', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-component-copy-no-hash-'))

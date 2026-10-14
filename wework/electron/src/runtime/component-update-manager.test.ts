@@ -415,6 +415,7 @@ describe('ComponentUpdateManager', () => {
       'download-headers',
       'download-body',
       'archive-verification',
+      'tar-module-load',
       'archive-extraction',
       'content-verification',
       'publish',
@@ -422,6 +423,21 @@ describe('ComponentUpdateManager', () => {
     for (const event of steps().filter(event => event.status === 'completed')) {
       expect(event.durationMs).toBeGreaterThanOrEqual(0)
     }
+    expect(
+      events
+        .filter(
+          event =>
+            event.event === 'component-stage-step' &&
+            event.id === 'coreDsh' &&
+            event.status === 'completed'
+        )
+        .map(event => event.step)
+    ).toEqual([
+      'snapshot-copy',
+      'snapshot-verify-existing',
+      'snapshot-publish',
+      'packaged-snapshot',
+    ])
     expect(JSON.stringify(events)).not.toContain(updateBaseUrl)
   })
 

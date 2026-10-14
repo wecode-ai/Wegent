@@ -19,7 +19,11 @@ import { cloudFetch } from '../host/cloud-http.js'
 import { pipeline } from 'node:stream/promises'
 import { publishImmutableDirectory } from './immutable-directory.js'
 import { hashComponentPath, fileSha256 as sha256 } from './component-content-hash.js'
-import { cachePackagedComponent, copyComponentSnapshot } from './component-snapshot.js'
+import {
+  cachePackagedComponent,
+  copyComponentSnapshot,
+  type PackagedSnapshotStep,
+} from './component-snapshot.js'
 import { createFileOperationQueue } from './file-operation-queue.js'
 import { copyComponentTree } from './component-copy.js'
 export { hashComponentPath } from './component-content-hash.js'
@@ -356,7 +360,8 @@ export class ComponentUpdateManager {
                 cachePackagedComponent(
                   this.componentRoot(id, ''),
                   component.version,
-                  reusablePaths[id]
+                  reusablePaths[id],
+                  (step, operation) => this.componentStageStep(id, step, operation)
                 )
               )
               this.log({ event: 'component-reused', id, reason: 'packaged-snapshot' })
@@ -793,9 +798,9 @@ export class ComponentUpdateManager {
           throw new Error(`Component archive checksum mismatch: ${id}`)
         }
       })
+      await mkdir(temporary, { recursive: true, mode: 0o700 })
+      const { x } = await this.componentStageStep(id, 'tar-module-load', () => import('tar'))
       await this.componentStageStep(id, 'archive-extraction', async () => {
-        await mkdir(temporary, { recursive: true, mode: 0o700 })
-        const { x } = await import('tar')
         await x({ cwd: temporary, file: archive, gzip: true, strict: true })
       })
       await this.componentStageStep(id, 'content-verification', async () => {
@@ -825,9 +830,11 @@ export class ComponentUpdateManager {
       | 'download-headers'
       | 'download-body'
       | 'archive-verification'
+      | 'tar-module-load'
       | 'archive-extraction'
       | 'content-verification'
-      | 'publish',
+      | 'publish'
+      | PackagedSnapshotStep,
     operation: () => Promise<T>
   ): Promise<T> {
     const started = performance.now()

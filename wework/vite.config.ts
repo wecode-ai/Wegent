@@ -70,9 +70,13 @@ const logger = createLogger()
 const defaultWarn = logger.warn.bind(logger)
 const browserExternalPackages = ['/avsc/', '/ag-psd/', '/jszip/', '/@ljheee/xmind-parser/']
 
-function preserveDshUiEntryExports() {
+function preserveDshUiEntryExports(): Plugin {
+  let base = appBasePath
   return {
     name: 'wework-preserve-dsh-ui-entry-exports',
+    configResolved(config) {
+      base = config.base
+    },
     options(options: {
       preserveEntrySignatures?: false | 'strict' | 'allow-extension' | 'exports-only'
     }) {
@@ -83,6 +87,26 @@ function preserveDshUiEntryExports() {
     },
     generateBundle(_options: unknown, bundle: Record<string, DshUiOutput>) {
       attachDshUiEntryStylesheets(bundle)
+    },
+    transformIndexHtml: {
+      order: 'post',
+      handler(_html, context) {
+        const coreApp = Object.values(context.bundle ?? {}).find(
+          entry => entry.type === 'chunk' && entry.isEntry && entry.name === 'wework-ui-core-apps'
+        )
+        if (!coreApp) return
+        return [
+          {
+            tag: 'link',
+            attrs: {
+              rel: 'modulepreload',
+              crossorigin: '',
+              href: `${base}${coreApp.fileName}`,
+            },
+            injectTo: 'head',
+          },
+        ]
+      },
     },
   }
 }
