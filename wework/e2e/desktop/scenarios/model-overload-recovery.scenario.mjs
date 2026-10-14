@@ -179,7 +179,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
     async verify(control) {
       active = true
       await createSingleRootLocalProject(control, workspacePath, 'model-overload-recovery')
-      await selectE2EModel(control, undefined, undefined, WORKBENCH)
+      await selectE2EModel(control, undefined, 'GPT-5.6 Luna', WORKBENCH)
       await control.command('fill', COMPOSER, { value: PROMPT })
       await control.command('press', COMPOSER, { key: 'Enter' })
       await waitUntil(
