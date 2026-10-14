@@ -627,3 +627,5 @@ Wework E2E。
 `createSingleRootLocalProject` 必须等待新项目成为 workbench 当前项目，不能只以创建弹窗消失或旧输入框仍可见作为就绪条件。云端上下文与运行历史场景还要通过 `selectE2EModel` 明确选择已注册的模型，再输入首条消息；其上下文阻塞、附件、历史恢复与任务移动断言保持完整。
 
 运行历史场景的 3 秒响应性门禁使用工作台快照，不将 `performanceSnapshot` 内强制 GC 的调试协议耗时算作 UI 阻塞；完整历史、分页、传输与内存断言仍保留。Windows 重启检查保持旧执行器必须退出的断言，并记录指定 PID 的进程名与启动时间，以及 `taskkill` 的退出码和输出，以区分未退出的执行器与复用的 PID；不采集进程命令行或环境变量。
+
+Windows 重启门禁按 PID、进程名和创建时间核对进程实例，而不是在新应用启动后仅按旧 PID 判断。PID 相同但创建时间不同属于新实例；原实例仍存活时必须失败，身份查询失败或缺失创建时间同样失败。保留原模型代理重建、会话恢复和续写断言，以及原 UI 超时。参见 [Windows 进程句柄与标识](https://learn.microsoft.com/en-us/windows/win32/procthread/process-handles-and-identifiers)。

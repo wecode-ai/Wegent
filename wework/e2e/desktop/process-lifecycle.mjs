@@ -108,6 +108,30 @@ export function processIsAlive(processId) {
   return true
 }
 
+export function processInstanceMatches(expected, actual) {
+  const validate = identity => {
+    if (
+      !identity ||
+      !Number.isInteger(identity.Id) ||
+      identity.Id <= 0 ||
+      typeof identity.ProcessName !== 'string' ||
+      !identity.ProcessName ||
+      typeof identity.StartedAt !== 'string' ||
+      !Number.isFinite(Date.parse(identity.StartedAt))
+    ) {
+      throw new Error('Process identity requires a PID, process name and creation time')
+    }
+  }
+  validate(expected)
+  if (actual === null) return false
+  validate(actual)
+  return (
+    expected.Id === actual.Id &&
+    expected.ProcessName === actual.ProcessName &&
+    expected.StartedAt === actual.StartedAt
+  )
+}
+
 export function collectWindowsProcessIdentity(processId) {
   if (process.platform !== 'win32') return null
   if (!Number.isInteger(processId) || processId <= 0) {
@@ -124,9 +148,13 @@ export function collectWindowsProcessIdentity(processId) {
     { encoding: 'utf8', timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true }
   )
   if (result.status !== 0) {
-    return { status: result.status, errorCode: result.error?.code ?? null }
+    throw new Error(
+      `Windows process identity query failed: status=${result.status}, error=${result.error?.code ?? 'none'}`
+    )
   }
-  return result.stdout.trim() ? JSON.parse(result.stdout) : []
+  const identity = result.stdout.trim() ? JSON.parse(result.stdout) : null
+  if (identity !== null) processInstanceMatches(identity, identity)
+  return identity
 }
 
 export function processGroupIsAlive(processGroupId) {
