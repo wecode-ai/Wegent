@@ -93,6 +93,7 @@ async function waitForFileContent(filePath, expectedContent, timeoutMs) {
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   return {
     async verify(control) {
+      const fileTabsSelector = '[role="tab"][data-testid^="right-workspace-file-tab"]'
       const breadcrumbDirectory = join(workspacePath, 'breadcrumb-fixture')
       await mkdir(breadcrumbDirectory, { recursive: true })
       await writeFile(join(breadcrumbDirectory, 'first.ts'), 'export const first = 1\n')
@@ -108,7 +109,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
-      const primary = process.platform === 'win32' ? 'Control' : 'Meta'
+      const primary = process.platform === 'darwin' ? 'Meta' : 'Control'
       await control.command('nativePress', COMPOSER_SELECTOR, { key: `${primary}+Alt+F` })
       await control.command('waitFor', '[data-testid="workspace-file-tree-pierre"]', {
         timeoutMs: uiTimeoutMs,
@@ -207,6 +208,11 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('nativePress', BROWSER_URL_SELECTOR, {
         key: `${primary}+Alt+F`,
       })
+      await control.command(
+        'waitFor',
+        '[data-testid="right-workspace-file-tab"][aria-selected="true"]'
+      )
+      await control.command('click', `${fileTabsSelector}[title$="auth.ts"]`)
       await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
         text: 'export const authenticated = false',
       })
@@ -234,7 +240,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
       })
       await waitForMissing(control, '[data-testid="workspace-file-directory-menu"]', uiTimeoutMs)
-      const fileTabsSelector = '[role="tab"][data-testid^="right-workspace-file-tab"]'
       await control.command('waitFor', `${fileTabsSelector}[title$="auth.ts"]`, {
         timeoutMs: uiTimeoutMs,
       })

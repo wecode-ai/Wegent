@@ -45,8 +45,12 @@ describe('right workspace shortcuts', () => {
     }
   )
 
-  test.each(shortcuts)('opens $action on Windows', ({ code, action }) => {
-    vi.mocked(getPlatform).mockReturnValueOnce('win')
+  test.each(
+    (['win', 'linux'] as const).flatMap(platform =>
+      shortcuts.map(shortcut => ({ platform, ...shortcut }))
+    )
+  )('opens $action on $platform', ({ platform, code, action }) => {
+    vi.mocked(getPlatform).mockReturnValueOnce(platform)
     const { options } = renderShortcuts()
     fireEvent.keyDown(window, {
       key: code.slice(-1).toLowerCase(),
@@ -162,11 +166,37 @@ describe('right workspace shortcuts', () => {
     }
   })
 
-  test('opens the browser with the displayed Command+T shortcut', () => {
-    const { options } = renderShortcuts()
-    fireEvent.keyDown(window, { key: 't', code: 'KeyT', metaKey: true })
-    expect(options.onSelectBrowser).toHaveBeenCalledOnce()
-  })
+  test.each(['mac', 'win', 'linux'] as const)(
+    'opens the browser with the displayed primary+T shortcut on %s',
+    platform => {
+      vi.mocked(getPlatform).mockReturnValueOnce(platform)
+      const { options } = renderShortcuts()
+      fireEvent.keyDown(window, {
+        key: 't',
+        code: 'KeyT',
+        metaKey: platform === 'mac',
+        ctrlKey: platform !== 'mac',
+      })
+      expect(options.onSelectBrowser).toHaveBeenCalledOnce()
+    }
+  )
+
+  test.each(shortcuts)(
+    'leaves Command shortcuts unhandled on Linux: $action',
+    ({ code, action }) => {
+      vi.mocked(getPlatform).mockReturnValueOnce('linux')
+      const { options } = renderShortcuts()
+      expect(
+        fireEvent.keyDown(window, {
+          key: code.slice(-1).toLowerCase(),
+          code,
+          metaKey: true,
+          altKey: true,
+        })
+      ).toBe(true)
+      expect(options[action]).not.toHaveBeenCalled()
+    }
+  )
 
   test.each([
     { key: 'a', code: 'KeyA' },

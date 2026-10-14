@@ -511,7 +511,7 @@ export function createDesktopScenario({
       })
       await waitForRuntimeSource(control, sourceTaskId, taskTimeoutMs)
 
-      const primary = process.platform === 'win32' ? 'Control' : 'Meta'
+      const primary = process.platform === 'darwin' ? 'Meta' : 'Control'
       await control.command('waitFor', ACTIVE_COMPOSER, { visible: true, timeoutMs: uiTimeoutMs })
       await control.command('nativePress', ACTIVE_COMPOSER, { key: `${primary}+Alt+S` })
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })

@@ -102,7 +102,7 @@ import {
 } from './rightWorkspaceDshSidebar'
 
 function getRightWorkspaceShortcuts(platform: ReturnType<typeof getPlatform>) {
-  if (platform === 'win') {
+  if (platform !== 'mac') {
     return {
       review: 'Alt+Ctrl+R',
       browser: 'Ctrl+T',

@@ -25,7 +25,7 @@ export function useRightWorkspaceShortcuts({
   onSelectChat,
   onSelectFiles,
 }: RightWorkspaceShortcutOptions) {
-  const primary = getPlatform() === 'win' ? 'Control' : 'Command'
+  const primary = getPlatform() === 'mac' ? 'Command' : 'Control'
 
   useEffect(() => {
     if (!active) return
