@@ -228,6 +228,8 @@ export interface ElectronE2EHost {
   traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
   scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
+  showMain: () => Promise<void>
+  closeWorkspace: (label: string) => void
   openPopoutTaskInMain: (taskAddressId: string) => void
   popoutWindowSnapshot: () => {
     bounds: { width: number; height: number } | null
@@ -292,6 +294,10 @@ export function createElectronCapabilityRouter(
     traySnapshot: () => null,
     scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
+    showMain: () => Promise.reject(new Error('Main window is unavailable')),
+    closeWorkspace: () => {
+      throw new Error('Workspace windows are unavailable')
+    },
     openPopoutTaskInMain: () => undefined,
     popoutWindowSnapshot: () => ({
       bounds: null,
@@ -762,6 +768,10 @@ export function createElectronCapabilityRouter(
     e2eHost.setPopoutMode(mode)
   })
   router.register('window.showPopout', () => e2eHost.showPopout())
+  router.register('window.showMain', () => e2eHost.showMain())
+  router.register('window.closeWorkspace', params =>
+    e2eHost.closeWorkspace(stringParam(params, 'label'))
+  )
   router.register('window.minimize', () => requiredWindow(window).minimize())
   router.register('window.toggleMaximize', () => {
     const target = requiredWindow(window)
@@ -832,6 +842,7 @@ export function createElectronCapabilityRouter(
     if (typeof updated.preventSleepWhileTasksRunning === 'boolean') {
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
     }
+    desktopServices.events.publish('preferences.changed', updated)
     return updated
   })
   router.register('weworkSync.request', params => {
@@ -988,6 +999,8 @@ export function createElectronCapabilityRouter(
       modelBaseUrl: nullableStringParam(params, 'modelBaseUrl'),
       contextBaseUrl: nullableStringParam(params, 'contextBaseUrl'),
       contextToken: nullableStringParam(params, 'contextToken'),
+      decisionBaseUrl: nullableStringParam(params, 'decisionBaseUrl'),
+      decisionProtocolVersion: nullableNumberParam(params, 'decisionProtocolVersion'),
     })
   )
   router.register('smartApps.stop', params =>
@@ -1061,6 +1074,15 @@ export function createElectronCapabilityRouter(
   )
   router.register('smartApps.takeContextToken', params =>
     requiredSmartApps(smartApps).takeContextToken(stringParam(params, 'installationId'))
+  )
+  router.register('smartApps.storeDecisionToken', params =>
+    requiredSmartApps(smartApps).storeDecisionToken(
+      stringParam(params, 'installationId'),
+      stringParam(params, 'token')
+    )
+  )
+  router.register('smartApps.takeDecisionToken', params =>
+    requiredSmartApps(smartApps).takeDecisionToken(stringParam(params, 'installationId'))
   )
   return router
 }

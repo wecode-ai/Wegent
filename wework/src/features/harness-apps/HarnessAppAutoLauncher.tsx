@@ -6,10 +6,13 @@ import {
   failHarnessAppLaunch,
 } from '@/features/harness-apps/harnessAppLaunchState'
 import {
+  harnessAppDecisionScope,
   registerHarnessAppTab,
   storeHarnessAppContextToken,
+  storeHarnessAppDecisionToken,
   storeHarnessAppProxyToken,
   takeHarnessAppContextToken,
+  takeHarnessAppDecisionToken,
   takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
@@ -86,8 +89,11 @@ export function HarnessAppAutoLauncher({
         }
 
         beginHarnessAppLaunch(installationId, installation.manifest.displayName, retry)
+        const decisionApi = services.localDecisionRouterApi
+        const decisionGranted = installation.grantedCapabilities?.decisionModel === true
         let proxyToken: string | null = null
         let contextToken: string | null = null
+        let decisionToken: string | null = null
         let started = false
         try {
           const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', model)
@@ -98,20 +104,39 @@ export function HarnessAppAutoLauncher({
           }
           proxyToken = launch.proxyToken
           contextToken = launch.context?.token ?? null
-          const running = launch.context
-            ? await harnessAppsApi.start(
-                installationId,
-                launch.baseUrl,
-                launch.context.baseUrl,
-                launch.context.token
+          let decision: { baseUrl: string; protocolVersion: number } | null = null
+          if (decisionGranted) {
+            if (!decisionApi) {
+              throw new Error(
+                t('workbench.smart_apps_decision_router_unavailable', '智能工作台决策路由不可用')
               )
-            : await harnessAppsApi.start(installationId, launch.baseUrl)
+            }
+            // Register the decision route before starting the app; if this fails
+            // the app never sees a half-configured router.
+            const decisionLaunch = await decisionApi.resolveLaunch(
+              harnessAppDecisionScope(installationId)
+            )
+            decisionToken = decisionLaunch.token
+            decision = {
+              baseUrl: decisionLaunch.baseUrl,
+              protocolVersion: decisionLaunch.protocolVersion,
+            }
+          }
+          const running = await harnessAppsApi.start({
+            installationId,
+            modelBaseUrl: launch.baseUrl,
+            contextBaseUrl: launch.context?.baseUrl ?? null,
+            contextToken: launch.context?.token ?? null,
+            decisionBaseUrl: decision?.baseUrl ?? null,
+            decisionProtocolVersion: decision?.protocolVersion ?? null,
+          })
           started = true
           if (!running.webUrl) {
             throw new Error(t('workbench.smart_apps_missing_web_url', '智能工作台没有返回可用地址'))
           }
           await storeHarnessAppProxyToken(installationId, launch.proxyToken)
           if (contextToken) await storeHarnessAppContextToken(installationId, contextToken)
+          if (decisionToken) await storeHarnessAppDecisionToken(installationId, decisionToken)
           registerHarnessAppTab(running)
           notifyHarnessAppInstallationsChanged({
             type: 'updated',
@@ -126,6 +151,7 @@ export function HarnessAppAutoLauncher({
             unregisterHarnessAppTab(installationId)
             await takeHarnessAppProxyToken(installationId)
             await takeHarnessAppContextToken(installationId)
+            await takeHarnessAppDecisionToken(installationId)
           }
           if (proxyToken) {
             await services.localHarnessModelApi?.unregisterProxy(proxyToken).catch(() => undefined)
@@ -134,6 +160,9 @@ export function HarnessAppAutoLauncher({
             await services.localHarnessModelApi
               ?.unregisterContext(contextToken)
               .catch(() => undefined)
+          }
+          if (decisionToken) {
+            await decisionApi?.unregister(decisionToken).catch(() => undefined)
           }
           if (!cancelled) {
             failHarnessAppLaunch(
@@ -173,7 +202,15 @@ export function HarnessAppAutoLauncher({
     return () => {
       cancelled = true
     }
-  }, [attempt, installationId, modelOptions, onStartupSettled, services.localHarnessModelApi, t])
+  }, [
+    attempt,
+    installationId,
+    modelOptions,
+    onStartupSettled,
+    services.localDecisionRouterApi,
+    services.localHarnessModelApi,
+    t,
+  ])
 
   return null
 }

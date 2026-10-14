@@ -37,25 +37,10 @@ export function IssueExecutionEnvironmentNotice({
             "todo.issue_environment_notice_offline",
             "运行设备离线，暂时无法执行 AI 任务。可以继续创建和人工处理 Issue。",
           )
-        : readiness.kind === "preparing"
-          ? translate(
-              "todo.issue_environment_notice_preparing",
-              "项目环境正在初始化，AI 执行需等待环境就绪。可以继续创建和人工处理 Issue。",
-            )
-          : readiness.kind === "error"
-            ? translate(
-                "todo.issue_environment_notice_error",
-                "项目环境初始化失败，AI 执行前需修复。可以继续创建和人工处理 Issue。",
-              )
-            : readiness.kind === "unknown"
-              ? translate(
-                  "todo.issue_environment_notice_unknown",
-                  "暂时无法检查项目执行环境，不影响创建和人工处理 Issue。",
-                )
-              : translate(
-                  "todo.issue_environment_notice_uninitialized",
-                  "项目环境尚未初始化。AI 执行前需要初始化，不影响创建和人工处理 Issue。",
-                );
+        : translate(
+            "todo.issue_environment_notice_unknown",
+            "暂时无法检查项目执行环境，不影响创建和人工处理 Issue。",
+          );
   const actionLabel =
     readiness.kind === "unknown"
       ? translate("todo.issue_environment_notice_retry", "重新检查")
@@ -79,7 +64,7 @@ export function IssueExecutionEnvironmentNotice({
           <span className="ml-1">
             {translate(
               "todo.issue_environment_notice_contact_manager",
-              "如需初始化，请联系项目 Owner 或 Maintainer。",
+              "如需配置执行环境，请联系项目 Owner 或 Maintainer。",
             )}
           </span>
         ) : null}

@@ -87,6 +87,7 @@ export function validateSmartAppManifest(value: unknown): WorkbenchAppManifest {
   validateRuntimeRequirements(manifest)
   validatePackageDeclarations(manifest)
   validatePluginDeclarations(manifest)
+  validateCapabilityDeclarations(manifest)
   return manifest
 }
 
@@ -301,6 +302,29 @@ function validatePluginDeclarations(manifest: WorkbenchAppManifest): void {
       )
     }
     pluginSpecs.add(spec)
+  }
+}
+
+// Capability requests live in the plugin manifest, not in smart-app.verify.json,
+// which only understands host/client/remote.
+const MANIFEST_CAPABILITY_FIELDS = new Set(['decisionModel'])
+
+function validateCapabilityDeclarations(manifest: WorkbenchAppManifest): void {
+  const capabilities = manifest.capabilities
+  if (capabilities === undefined) return
+  if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) {
+    throw validationError('SA-MANIFEST-CAPABILITIES', 'Smart app capabilities must be an object')
+  }
+  for (const [key, value] of Object.entries(capabilities as Record<string, unknown>)) {
+    if (!MANIFEST_CAPABILITY_FIELDS.has(key)) {
+      throw validationError('SA-MANIFEST-CAPABILITIES', `Unknown Smart app capability: ${key}`)
+    }
+    if (typeof value !== 'boolean') {
+      throw validationError(
+        'SA-MANIFEST-CAPABILITIES',
+        `Smart app capability ${key} must be a boolean`
+      )
+    }
   }
 }
 

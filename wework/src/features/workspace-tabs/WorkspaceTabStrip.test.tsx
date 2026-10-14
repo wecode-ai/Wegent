@@ -9,7 +9,10 @@ import { WorkspaceTabStrip } from './WorkspaceTabStrip'
 import { createWorkspaceTab, workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
 
 const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
+const returnWorkspaceTabToMain = vi.fn().mockResolvedValue(undefined)
+const closeEmptyWorkspaceWindow = vi.fn().mockResolvedValue(undefined)
 const updateAppPreferences = vi.hoisted(() => vi.fn())
+const getAppPreferences = vi.hoisted(() => vi.fn())
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 const listHarnessApps = vi.hoisted(() => vi.fn().mockResolvedValue([]))
 
@@ -17,11 +20,15 @@ vi.mock('@/desktop/appPreferences', async importOriginal => {
   const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
   return {
     ...actual,
+    getAppPreferences,
     updateAppPreferences: (patch: AppPreferencesPatch) => updateAppPreferences(patch),
   }
 })
 
 vi.mock('./workspaceWindow', () => ({
+  WORKSPACE_TAB_RETURN_PREFIX: 'wework.workspaceTabReturn.v1:',
+  returnWorkspaceTabToMain: (tab: unknown) => returnWorkspaceTabToMain(tab),
+  closeEmptyWorkspaceWindow: () => closeEmptyWorkspaceWindow(),
   openWorkspaceTabWindow: (tab: unknown, options?: unknown) =>
     options === undefined ? openWorkspaceTabWindow(tab) : openWorkspaceTabWindow(tab, options),
 }))
@@ -88,7 +95,10 @@ describe('WorkspaceTabStrip', () => {
   beforeEach(() => {
     localStorage.clear()
     openWorkspaceTabWindow.mockClear()
+    returnWorkspaceTabToMain.mockReset().mockResolvedValue(undefined)
+    closeEmptyWorkspaceWindow.mockReset().mockResolvedValue(undefined)
     updateAppPreferences.mockReset()
+    getAppPreferences.mockReset().mockResolvedValue(defaultAppPreferences)
     updateAppPreferences.mockImplementation(async (patch: AppPreferencesPatch) => ({
       ...defaultAppPreferences,
       ...patch,
@@ -393,6 +403,86 @@ describe('WorkspaceTabStrip', () => {
       ],
       startupWorkspaceTabId: defaultAppPreferences.startupWorkspaceTabId,
     })
+  })
+
+  test('offers return only in detached windows and moves the selected tab', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
+      desktopWindowLabel: 'workspace-detached-task',
+    }
+    const user = userEvent.setup()
+    renderStrip()
+    fireEvent.contextMenu(screen.getByRole('tab', { name: '任务' }))
+    await user.click(screen.getByTestId('workspace-tab-return-to-main'))
+    expect(returnWorkspaceTabToMain).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'task', title: '任务' })
+    )
+    await waitFor(() => expect(screen.queryByRole('tab', { name: '任务' })).toBeNull())
+    expect(closeEmptyWorkspaceWindow).not.toHaveBeenCalled()
+  })
+
+  test('does not offer return in the main window', () => {
+    renderStrip()
+    fireEvent.contextMenu(screen.getByRole('tab', { name: '任务' }))
+    expect(screen.queryByTestId('workspace-tab-return-to-main')).toBeNull()
+  })
+
+  test('pins against the latest preferences and replaces a stale detached assignment', async () => {
+    const user = userEvent.setup()
+    renderStrip()
+    const id = screen
+      .getByRole('tab', { name: '任务' })
+      .getAttribute('data-testid')!
+      .replace('workspace-tab-select-', '')
+    getAppPreferences.mockResolvedValue({
+      ...defaultAppPreferences,
+      fixedWorkspaceTabs: [
+        ...defaultAppPreferences.fixedWorkspaceTabs,
+        { id, kind: 'task', title: '任务', contentRoute: '/', windowLabel: 'workspace-old' },
+      ],
+    })
+    fireEvent.contextMenu(screen.getByRole('tab', { name: '任务' }))
+    await user.click(screen.getByTestId('workspace-tab-pin'))
+    await waitFor(() => expect(updateAppPreferences).toHaveBeenCalledOnce())
+    const patch = updateAppPreferences.mock.calls[0][0] as AppPreferencesPatch
+    expect(patch.fixedWorkspaceTabs?.filter(tab => tab.id === id)).toEqual([
+      { id, kind: 'task', title: '任务', contentRoute: '/' },
+    ])
+  })
+
+  test('closes the detached window after returning its last tab', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
+      desktopWindowLabel: 'workspace-only-task',
+    }
+    localStorage.setItem(
+      workspaceTabsStorageKey('strip-test'),
+      JSON.stringify({
+        activeTabId: 'only-task',
+        tabs: [{ id: 'only-task', kind: 'task', title: '任务', contentRoute: '/' }],
+      })
+    )
+    const user = userEvent.setup()
+    renderStrip()
+    fireEvent.contextMenu(screen.getByTestId('workspace-tab-select-only-task'))
+    await user.click(screen.getByTestId('workspace-tab-return-to-main'))
+    await waitFor(() => expect(closeEmptyWorkspaceWindow).toHaveBeenCalledOnce())
+    expect(screen.queryByTestId('workspace-tab-select-only-task')).toBeNull()
+  })
+
+  test('retains the tab when the main window cannot accept it', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
+      desktopWindowLabel: 'workspace-detached-task',
+    }
+    returnWorkspaceTabToMain.mockRejectedValueOnce(new Error('Main window unavailable'))
+    const user = userEvent.setup()
+    renderStrip()
+    fireEvent.contextMenu(screen.getByRole('tab', { name: '任务' }))
+    await user.click(screen.getByTestId('workspace-tab-return-to-main'))
+    await waitFor(() => expect(returnWorkspaceTabToMain).toHaveBeenCalledOnce())
+    expect(screen.getByRole('tab', { name: '任务' })).toBeInTheDocument()
+    expect(closeEmptyWorkspaceWindow).not.toHaveBeenCalled()
   })
 
   test('keeps a pinned tab assigned to its detached workspace window', async () => {

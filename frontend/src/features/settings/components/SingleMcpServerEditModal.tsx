@@ -25,6 +25,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { CodeMirrorEditor } from '@/components/common/CodeMirrorEditor'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { mcpProviderApis, type MCPTestResponse } from '@/apis/mcpProviders'
+import { normalizeMcpServers, parseMcpConfig, stringifyMcpConfig } from '../utils/mcpConfig'
 
 interface SingleMcpServerEditModalProps {
   open: boolean
@@ -104,18 +105,16 @@ const SingleMcpServerEditModal: React.FC<SingleMcpServerEditModalProps> = ({
       setUrl((serverConfig.url as string) || (serverConfig.base_url as string) || '')
       setHeaders(serverConfig.headers ? JSON.stringify(serverConfig.headers, null, 2) : '')
       setExtraFields(extractExtraFields(serverConfig))
-      setJsonContent(JSON.stringify(serverConfig, null, 2))
+      setJsonContent(stringifyMcpConfig({ mcpServers: { [serverName]: serverConfig } }))
       setJsonError(false)
       setEditMode('form')
       setTestStatus('idle')
       setTestResult(null)
       setShowTools(false)
     }
-  }, [open, serverConfig])
+  }, [open, serverName, serverConfig])
 
-  // Sync form fields → JSON when in form mode
-  useEffect(() => {
-    if (editMode !== 'form') return
+  const buildFormConfig = useCallback((): Record<string, unknown> => {
     const config: Record<string, unknown> = { ...extraFields, type }
     if (type === 'stdio') {
       if (command.trim()) config.command = command.trim()
@@ -137,9 +136,16 @@ const SingleMcpServerEditModal: React.FC<SingleMcpServerEditModalProps> = ({
         // Invalid JSON headers, skip
       }
     }
-    setJsonContent(JSON.stringify(config, null, 2))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return config
   }, [type, command, args, url, headers, extraFields])
+
+  const parseJsonServerConfig = useCallback((): Record<string, unknown> => {
+    const servers = normalizeMcpServers(parseMcpConfig(jsonContent))
+    if (Object.keys(servers).length !== 1 || !Object.hasOwn(servers, serverName)) {
+      throw new Error('Expected the current MCP server configuration')
+    }
+    return servers[serverName] as Record<string, unknown>
+  }, [jsonContent, serverName])
 
   const handleJsonChange = useCallback((value: string) => {
     setJsonContent(value)
@@ -152,57 +158,31 @@ const SingleMcpServerEditModal: React.FC<SingleMcpServerEditModalProps> = ({
       if (mode === 'form' && editMode === 'json') {
         // Sync JSON → form fields
         try {
-          const parsed = JSON.parse(jsonContent)
-          if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-            setType((parsed.type as string) || 'stdio')
-            setCommand((parsed.command as string) || '')
-            const parsedArgs = Array.isArray(parsed.args)
-              ? (parsed.args as string[]).join('\n')
-              : ''
-            setArgs(parsedArgs)
-            setUrl((parsed.url as string) || (parsed.base_url as string) || '')
-            setHeaders(parsed.headers ? JSON.stringify(parsed.headers, null, 2) : '')
-            setExtraFields(extractExtraFields(parsed))
-          }
+          const parsed = parseJsonServerConfig()
+          setType((parsed.type as string) || 'stdio')
+          setCommand((parsed.command as string) || '')
+          const parsedArgs = Array.isArray(parsed.args) ? (parsed.args as string[]).join('\n') : ''
+          setArgs(parsedArgs)
+          setUrl((parsed.url as string) || (parsed.base_url as string) || '')
+          setHeaders(parsed.headers ? JSON.stringify(parsed.headers, null, 2) : '')
+          setExtraFields(extractExtraFields(parsed))
         } catch {
-          // Keep current form state if JSON is invalid
+          setJsonError(true)
+          return
         }
+      } else if (mode === 'json' && editMode === 'form') {
+        setJsonContent(stringifyMcpConfig({ mcpServers: { [serverName]: buildFormConfig() } }))
       }
+      setJsonError(false)
       setEditMode(mode)
     },
-    [editMode, jsonContent]
+    [editMode, parseJsonServerConfig, serverName, buildFormConfig]
   )
 
   // Build current config from either form fields or JSON content
   const buildCurrentConfig = useCallback((): Record<string, unknown> => {
-    if (editMode === 'json') {
-      try {
-        return JSON.parse(jsonContent)
-      } catch {
-        return {}
-      }
-    }
-    const config: Record<string, unknown> = { ...extraFields, type }
-    if (type === 'stdio') {
-      if (command.trim()) config.command = command.trim()
-      const parsedArgs = args
-        .split('\n')
-        .map(a => a.trim())
-        .filter(Boolean)
-      if (parsedArgs.length > 0) config.args = parsedArgs
-    } else {
-      if (url.trim()) config.url = url.trim()
-    }
-    if (headers.trim()) {
-      try {
-        const parsedHeaders = JSON.parse(headers)
-        if (Object.keys(parsedHeaders).length > 0) config.headers = parsedHeaders
-      } catch {
-        /* skip */
-      }
-    }
-    return config
-  }, [editMode, jsonContent, type, command, args, url, headers, extraFields])
+    return editMode === 'json' ? parseJsonServerConfig() : buildFormConfig()
+  }, [editMode, parseJsonServerConfig, buildFormConfig])
 
   const handleTest = useCallback(async () => {
     setTestStatus('loading')
@@ -228,42 +208,12 @@ const SingleMcpServerEditModal: React.FC<SingleMcpServerEditModalProps> = ({
   }, [buildCurrentConfig, serverName])
 
   const handleSave = useCallback(() => {
-    if (editMode === 'json') {
-      try {
-        const parsed = JSON.parse(jsonContent)
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          setJsonError(true)
-          return
-        }
-        onSave(parsed)
-      } catch {
-        setJsonError(true)
-      }
-    } else {
-      const config: Record<string, unknown> = { ...extraFields, type }
-      if (type === 'stdio') {
-        if (command.trim()) config.command = command.trim()
-        const parsedArgs = args
-          .split('\n')
-          .map(a => a.trim())
-          .filter(Boolean)
-        if (parsedArgs.length > 0) config.args = parsedArgs
-      } else {
-        if (url.trim()) config.url = url.trim()
-      }
-      if (headers.trim()) {
-        try {
-          const parsedHeaders = JSON.parse(headers)
-          if (Object.keys(parsedHeaders).length > 0) {
-            config.headers = parsedHeaders
-          }
-        } catch {
-          // Invalid JSON headers, ignore
-        }
-      }
-      onSave(config)
+    try {
+      onSave(buildCurrentConfig())
+    } catch {
+      setJsonError(true)
     }
-  }, [editMode, jsonContent, type, command, args, url, headers, extraFields, onSave])
+  }, [buildCurrentConfig, onSave])
 
   const isHttpType = type === 'http' || type === 'streamable-http' || type === 'sse'
 

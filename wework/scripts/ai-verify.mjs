@@ -143,6 +143,7 @@ Options:
   --packaged true           Launch the packaged app instead of Electron source mode
   --rollout PATH            Copy a real JSONL history into the isolated Rollout replay project
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
+  --window LABEL            Target window label (defaults to main)
   --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
                             click-at, seed-local-project, archive-local-project,
                             paste-paths, or drop-paths
@@ -484,11 +485,17 @@ export function monitorAppProcess(app, pending, onExit) {
   })
 }
 
+export function takeWindowCommand(queue, windowLabel) {
+  const index = queue.findIndex(command => command.windowLabel === windowLabel)
+  return index < 0 ? null : queue.splice(index, 1)[0]
+}
+
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
   const pending = new Map()
   let ready = null
+  const readyByClientId = new Map()
   let app = null
   let appExit = null
   let shutdownPromise = null
@@ -504,10 +511,12 @@ async function runServer(sessionPath, token) {
       if (!authorized(request, token)) return json(response, 401, { error: 'Unauthorized' })
       if (request.method === 'POST' && url.pathname === '/ready') {
         ready = await readBody(request)
+        readyByClientId.set(ready.clientId, ready)
         return json(response, 200, { ok: true })
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
-        const command = queue.shift()
+        const client = readyByClientId.get(url.searchParams.get('clientId'))
+        const command = takeWindowCommand(queue, client?.windowLabel)
         if (command) return json(response, 200, command)
         response.writeHead(204, corsHeaders)
         return response.end()
@@ -555,7 +564,7 @@ async function runServer(sessionPath, token) {
         const result = new Promise((resolvePromise, reject) =>
           pending.set(id, { resolve: resolvePromise, reject })
         )
-        const nextCommand = { id, ...command }
+        const nextCommand = { id, windowLabel: 'main', ...command }
         queue.push(nextCommand)
         try {
           return json(response, 200, {
@@ -833,6 +842,7 @@ async function main() {
   const effectiveTimeoutMs = resolveCommandTimeout(options.timeout)
   const value = await request(session, session.token, '/command', 'POST', {
     action,
+    windowLabel: options.window ?? 'main',
     selector,
     target: options.target,
     value: dropFilePath ? (await readFile(dropFilePath)).toString('base64') : options.value,

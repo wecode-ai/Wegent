@@ -38,6 +38,7 @@ from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage, project_chat_message_key
 from app.models.user import User
 from app.schemas.plugin_config import validate_non_secret_plugin_configs
+from app.schemas.project_chat import ProjectChatWorkspaceBindingView
 from app.schemas.runtime_work import RuntimeTaskCreateRequest
 from app.services.loop_item_executions.notification import notify_execution_lifecycle
 from app.services.loop_item_executions.profile import (
@@ -47,6 +48,8 @@ from app.services.loop_item_executions.profile import (
 )
 from app.services.loop_item_executions.runtime_identity import (
     execution_conversation_task_id,
+    execution_runtime_task_id,
+    runtime_task_id_for,
 )
 from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
 from app.services.workspaces.storage import workspace_id_for_project
@@ -121,17 +124,6 @@ SYNC_PENDING = "pending"
 SYNC_IN_SYNC = "in_sync"
 SYNC_STALE = "stale"
 SYNC_DIVERGED = "diverged"
-
-# Canonical runtime task identity. The backend owns the name so every channel
-# (cloud RPC, local App puller) reports the same task id and events always
-# match the execution row before any output can arrive.
-RUNTIME_TASK_ID_PREFIX = "codex-queue"
-
-
-def runtime_task_id_for(execution_id: int) -> str:
-    """Return the canonical runtime task id for one execution."""
-
-    return f"{RUNTIME_TASK_ID_PREFIX}-{execution_id}"
 
 
 def runtime_device_identity_ids(
@@ -474,6 +466,18 @@ def _matches_issue_device_affinity(
 ) -> bool:
     """Keep every execution of one Issue on its latest claimed device."""
 
+    from app.services.device.identity import resolve_owned_device_alias
+    from app.services.runner_routing import issue_binding
+
+    try:
+        bound = issue_binding(db, execution.loop_item_id)
+    except HTTPException:
+        return False
+    if bound:
+        runner = resolve_owned_device_alias(
+            db, user_id=owner_user_id, device_id=submitted_device_id
+        )
+        return runner is not None and str(runner.id) == bound
     affinity_device_id = _issue_runtime_device(
         db,
         loop_item_id=execution.loop_item_id,
@@ -496,6 +500,14 @@ def _execution_is_claimable_by_device(
 ) -> bool:
     """Apply default-owner access, optional project allowlist, and affinity."""
 
+    if execution.uses_runner_routing:
+        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.runner_routing import eligible_runner
+
+        runner = resolve_owned_device_alias(
+            db, user_id=owner_user_id, device_id=submitted_device_id
+        )
+        return runner is not None and eligible_runner(db, execution, runner)
     if not execution.execution_device_id and not _project_allows_device(
         db,
         cloud_project_id=execution.cloud_project_id,
@@ -569,16 +581,16 @@ def _agent_text_produced(db: Session, execution: LoopItemExecution) -> bool | No
         )
     else:
         return None
-    message = (
-        db.query(ProjectChatMessage)
-        .filter(
-            *identity,
-            ProjectChatMessage.sender_type == "agent",
-            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-            func.length(func.trim(ProjectChatMessage.content)) > 0,
-        )
-        .first()
-    )
+    query = db.query(ProjectChatMessage)
+    trigger_id = execution.runtime_origin_context.get("comment_trigger_message_id")
+    if trigger_id:
+        query = query.filter(ProjectChatMessage.trigger_message_id == trigger_id)
+    message = query.filter(
+        *identity,
+        ProjectChatMessage.sender_type == "agent",
+        loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        func.length(func.trim(ProjectChatMessage.content)) > 0,
+    ).first()
     return message is not None
 
 
@@ -710,7 +722,7 @@ class LoopItemExecutionService:
         )
         if runtime == "wegent":
             selected_environment = "wegent"
-        elif device_id:
+        elif device_id and not config.get("execution_policy"):
             from app.services.loop_item_executions.profile import (
                 wework_execution_environment,
             )
@@ -734,6 +746,26 @@ class LoopItemExecutionService:
             "capability_mode": config.get("capability_mode"),
             "workspace_policy": (profile_metadata.get("workspace_policy") or "project"),
         }
+        if runtime != "wegent" and config.get("execution_policy"):
+            from app.services.runner_routing import resolve_routing
+
+            routing = resolve_routing(
+                db,
+                config=config,
+                project_id=cloud_project_id,
+                issue_id=loop_item_id,
+                user_id=assigner_user_id,
+                selection=effective_context.get("runner_selection"),
+                automatic=bool(effective_context.get("run_id")),
+            )
+            runtime_selection["runner_routing"] = routing.snapshot()
+            # Native selectors and the actual owner are materialized at claim time.
+            runtime_selection.update(
+                model=routing.model.model_id, model_type="runtime", model_options={}
+            )
+            configured_model = routing.model.model_id
+            device_id = None
+            owner_user_id = assigner_user_id
         workspace_binding_required = "workspace_binding" in effective_context
         waiting_runtime = runtime != "wegent" and not runtime_configuration_complete(
             execution_device_id=device_id,
@@ -824,6 +856,16 @@ class LoopItemExecutionService:
             requires_approval=False,
             runtime_selection={
                 "executor_kind": "collaboration_group_dispatch",
+                **(
+                    {
+                        "runner_routing": dispatch_context["runner_routing"],
+                        "group_runner_requirements": dispatch_context[
+                            "group_runner_requirements"
+                        ],
+                    }
+                    if dispatch_context.get("runner_routing")
+                    else {}
+                ),
             },
         )
 
@@ -1010,7 +1052,7 @@ class LoopItemExecutionService:
         )
         db.add(row)
         db.flush()
-        row.runtime_task_id = runtime_task_id_for(row.id)
+        row.runtime_task_id = execution_runtime_task_id(row)
         if (
             not waiting_runtime
             and executor_type not in {"wegent_team", "collaboration_group_dispatch"}
@@ -1158,15 +1200,19 @@ class LoopItemExecutionService:
             )
         now = utcnow()
         origin_context = row.runtime_origin_context
-        needs_runtime = not row.team_id and not runtime_configuration_complete(
-            execution_device_id=row.execution_device_id,
-            model=row.runtime_selection.get("model"),
-            require_model=(
-                row.executor_type != "generic_robot"
-                and row.runtime_selection.get("capability_mode") != "follow_device"
-            ),
-            workspace_binding_required="workspace_binding" in origin_context,
-            workspace_binding=origin_context.get("workspace_binding"),
+        needs_runtime = (
+            not row.uses_runner_routing
+            and not row.team_id
+            and not runtime_configuration_complete(
+                execution_device_id=row.execution_device_id,
+                model=row.runtime_selection.get("model"),
+                require_model=(
+                    row.executor_type != "generic_robot"
+                    and row.runtime_selection.get("capability_mode") != "follow_device"
+                ),
+                workspace_binding_required="workspace_binding" in origin_context,
+                workspace_binding=origin_context.get("workspace_binding"),
+            )
         )
         row.status = STATUS_WAITING_RUNTIME if needs_runtime else STATUS_QUEUED
         if not needs_runtime:
@@ -1455,7 +1501,10 @@ class LoopItemExecutionService:
         query = (
             db.query(LoopItemExecution)
             .filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id,
+                or_(
+                    LoopItemExecution.executor_owner_user_id == owner_user_id,
+                    LoopItemExecution.uses_runner_routing,
+                ),
                 LoopItemExecution.agent_id == agent_id,
                 or_(
                     and_(
@@ -1495,6 +1544,15 @@ class LoopItemExecutionService:
         ):
             return None
 
+        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.runner_routing import claim_routing
+
+        runner = resolve_owned_device_alias(
+            db, user_id=owner_user_id, device_id=execution_device_id
+        )
+        if runner is None or not claim_routing(db, candidate, runner):
+            db.rollback()
+            return None
         now = utcnow()
         claimed = (
             db.query(LoopItemExecution)
@@ -1514,14 +1572,20 @@ class LoopItemExecutionService:
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
                     "runtime_device_id": submitted_execution_device_id,
                     "runtime_instance_id": runtime_instance_id,
-                    "runtime_task_id": runtime_task_id_for(candidate.id),
+                    "runtime_task_id": execution_runtime_task_id(candidate),
                     "version": LoopItemExecution.version + 1,
                 }
             )
         )
-        db.commit()
         if claimed != 1:
+            db.rollback()
             return None
+        db.refresh(candidate)
+        if candidate.uses_runner_routing:
+            from app.services.runner_routing import bind_claimed_runner
+
+            bind_claimed_runner(db, candidate, runner)
+        db.commit()
         db.refresh(candidate)
         return candidate
 
@@ -1550,7 +1614,10 @@ class LoopItemExecutionService:
             submitted_device_id=execution_device_id,
         )
         queue_filters = (
-            LoopItemExecution.executor_owner_user_id == owner_user_id,
+            or_(
+                LoopItemExecution.executor_owner_user_id == owner_user_id,
+                LoopItemExecution.uses_runner_routing,
+            ),
             or_(
                 and_(
                     LoopItemExecution.execution_device_id.in_(execution_device_ids),
@@ -1590,6 +1657,15 @@ class LoopItemExecutionService:
         )
         if candidate is None:
             return None
+        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.runner_routing import claim_routing
+
+        runner = resolve_owned_device_alias(
+            db, user_id=owner_user_id, device_id=execution_device_id
+        )
+        if runner is None or not claim_routing(db, candidate, runner):
+            db.rollback()
+            return None
         now = utcnow()
         claimed_runtime_device_id = runtime_device_id or submitted_execution_device_id
         claimed = (
@@ -1610,14 +1686,20 @@ class LoopItemExecutionService:
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
                     "runtime_device_id": claimed_runtime_device_id,
                     "runtime_instance_id": runtime_instance_id,
-                    "runtime_task_id": runtime_task_id_for(candidate.id),
+                    "runtime_task_id": execution_runtime_task_id(candidate),
                     "version": LoopItemExecution.version + 1,
                 }
             )
         )
-        db.commit()
         if claimed != 1:
+            db.rollback()
             return None
+        db.refresh(candidate)
+        if candidate.uses_runner_routing:
+            from app.services.runner_routing import bind_claimed_runner
+
+            bind_claimed_runner(db, candidate, runner)
+        db.commit()
         db.refresh(candidate)
         return candidate
 
@@ -1757,7 +1839,7 @@ class LoopItemExecutionService:
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status != STATUS_CLAIMED:
             return None
-        if runtime_task_id != runtime_task_id_for(row.id):
+        if runtime_task_id != execution_runtime_task_id(row):
             return None
         if row.runtime_device_id not in {"", runtime_device_id}:
             return None
@@ -1850,7 +1932,7 @@ class LoopItemExecutionService:
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status not in CAPACITY_STATUSES:
             return None
-        expected_task_id = runtime_task_id_for(row.id)
+        expected_task_id = execution_runtime_task_id(row)
         if runtime_task_id and runtime_task_id != expected_task_id:
             logger.warning(
                 "[LoopItemExecution] Rejected heartbeat Runtime identity mismatch "
@@ -1895,7 +1977,7 @@ class LoopItemExecutionService:
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status != STATUS_CLAIMED:
             return None
-        if runtime_task_id != runtime_task_id_for(row.id):
+        if runtime_task_id != execution_runtime_task_id(row):
             return None
         if row.runtime_device_id not in {"", runtime_device_id}:
             return None
@@ -2277,7 +2359,7 @@ class LoopItemExecutionService:
             retry = self._new_retry_attempt(previous, queued_at=now)
             db.add(retry)
             db.flush()
-            retry.runtime_task_id = runtime_task_id_for(retry.id)
+            retry.runtime_task_id = execution_runtime_task_id(retry)
             self._set_automation_run_status(db, retry, "queued")
             db.commit()
             db.refresh(retry)
@@ -3276,7 +3358,7 @@ class LoopItemExecutionService:
         project = db.get(CloudProject, execution.cloud_project_id)
         if project is not None and project.task_provider in {"github", "gitlab"}:
             view = external_loop_item_provider.task_view(
-                db, execution.loop_item_id, user_id
+                db, execution.loop_item_id, execution.assigner_user_id or user_id
             )
             return TaskContext(**view)
         item = db.get(LoopItem, execution.loop_item_id)
@@ -3337,6 +3419,17 @@ class LoopItemExecutionService:
     ) -> dict[str, Any]:
         """Build either an App intent or a materialized Executor payload."""
 
+        if execution.uses_runner_routing:
+            from app.services.runner_routing import active_device, eligible_runner
+
+            environment_id = execution.runtime_selection.get("resolved_environment_id")
+            device = active_device(db, environment_id) if environment_id else None
+            if device is None or not eligible_runner(db, execution, device):
+                raise WeworkRuntimeConfigurationError(
+                    "RUNNER_CONFIGURATION_CONFLICT: runner authorization or model "
+                    "support changed before execution could start"
+                )
+
         if execution.executor_type == "collaboration_group_dispatch":
             dispatch_request = execution.execution_intent.get("dispatch_request")
             if (
@@ -3389,6 +3482,11 @@ class LoopItemExecutionService:
                 db=db,
                 user_id=execution.executor_owner_user_id,
                 request=request,
+                **(
+                    {"execution_user_id": execution.assigner_user_id}
+                    if execution.uses_runner_routing
+                    else {}
+                ),
             ).payload
             member_runtime_profiles = self._collaboration_member_runtime_profiles(
                 db,
@@ -3449,6 +3547,11 @@ class LoopItemExecutionService:
                 db=db,
                 user_id=execution.executor_owner_user_id,
                 request=request,
+                **(
+                    {"execution_user_id": execution.assigner_user_id}
+                    if execution.uses_runner_routing
+                    else {}
+                ),
             )
             execution_request = compiled.payload.get("executionRequest")
             model_config = (
@@ -3501,6 +3604,25 @@ class LoopItemExecutionService:
                     else 0
                 ),
             )
+            if execution.runtime_origin_context.get("comment_continue_task_id"):
+                compiled.payload["executionRequest"]["new_session"] = False
+                compiled.payload.update(
+                    {
+                        "runtimeAction": "send",
+                        "queueIfBusy": True,
+                        "clientUserMessageId": execution.runtime_origin_context[
+                            "comment_trigger_message_id"
+                        ],
+                    }
+                )
+                if execution.runtime_origin_context.get("dispatch_role") == "manager":
+                    compiled.payload["runtimeHandle"] = (
+                        self._collaboration_manager_reply_handle(
+                            db,
+                            execution=execution,
+                            executor_device_id=executor_device_id,
+                        )
+                    )
             return compiled.payload
         except HTTPException as exc:
             raise WeworkRuntimeConfigurationError(str(exc.detail)) from exc
@@ -3517,6 +3639,58 @@ class LoopItemExecutionService:
             raise WeworkRuntimeConfigurationError(
                 f"Execution model '{model_label}' is unavailable"
             ) from exc
+
+    def _collaboration_manager_reply_handle(
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        executor_device_id: str | None,
+    ) -> dict[str, Any]:
+        """Rebuild transient group profiles for the existing manager session."""
+        from app.services.collaboration_group_execution import (
+            collaboration_group_snapshot_for_dispatch,
+        )
+
+        context = execution.runtime_origin_context
+        dispatch = db.get(
+            LoopItemExecution, context.get("collaboration_dispatch_execution_id")
+        )
+        item = db.get(LoopItem, execution.loop_item_id)
+        if (
+            dispatch is None
+            or dispatch.executor_type != "collaboration_group_dispatch"
+            or dispatch.loop_item_id != execution.loop_item_id
+            or dispatch.cloud_project_id != execution.cloud_project_id
+            or dispatch.runtime_origin_context.get("dispatch_id")
+            != context.get("dispatch_id")
+            or item is None
+            or not executor_device_id
+        ):
+            raise WeworkRuntimeConfigurationError(
+                "The collaboration manager dispatch is unavailable"
+            )
+        collaboration_group_snapshot_for_dispatch(item=item, execution=dispatch)
+        task = self.resolve_task_context(
+            db, execution=execution, user_id=execution.assigner_user_id
+        )
+        if task is None:
+            raise WeworkRuntimeConfigurationError(
+                "The collaboration Issue is unavailable"
+            )
+        return {
+            "collaborationDispatchTaskId": dispatch.runtime_task_id,
+            "collaborationManagerContext": context.get("execution_prompt"),
+            "collaborationMemberRuntimeProfiles": (
+                self._collaboration_member_runtime_profiles(
+                    db,
+                    execution=execution,
+                    task=task,
+                    origin_context=context,
+                    executor_device_id=executor_device_id,
+                )
+            ),
+        }
 
     def _collaboration_member_runtime_profiles(
         self,
@@ -3601,6 +3775,17 @@ class LoopItemExecutionService:
                 ),
                 execution_prompt="Collaboration member task",
             )
+            if execution.uses_runner_routing:
+                from app.services.runner_routing import profile_for_runner
+
+                requirements = execution.runtime_selection.get(
+                    "group_runner_requirements", {}
+                ).get(agent.id)
+                if requirements is None:
+                    raise WeworkRuntimeConfigurationError(
+                        "Configure every group member's environment and model policies"
+                    )
+                profile = profile_for_runner(db, profile, execution, requirements)
             template_task_id = (
                 f"{execution.runtime_task_id or runtime_task_id_for(execution.id)}"
                 f"-member-profile-{agent.id}"
@@ -3622,10 +3807,19 @@ class LoopItemExecutionService:
             )
             payload = compile_runtime_task_create(
                 db=db,
-                user_id=int(
-                    agent.created_by_user_id or execution.executor_owner_user_id
+                user_id=(
+                    execution.executor_owner_user_id
+                    if execution.uses_runner_routing
+                    else int(
+                        agent.created_by_user_id or execution.executor_owner_user_id
+                    )
                 ),
                 request=request,
+                **(
+                    {"execution_user_id": execution.assigner_user_id}
+                    if execution.uses_runner_routing
+                    else {}
+                ),
             ).payload
             self._detach_collaboration_member_payload(payload)
             profiles.append(
@@ -3690,6 +3884,10 @@ class LoopItemExecutionService:
                 model_options_override=origin_context.get("model_options"),
                 workspace_binding_override=origin_context.get("workspace_binding"),
             )
+            if execution.uses_runner_routing:
+                from app.services.runner_routing import profile_for_runner
+
+                profile = profile_for_runner(db, profile, execution)
             assigned_prompt = origin_context.get("execution_prompt")
             if isinstance(assigned_prompt, str) and assigned_prompt.strip():
                 profile = replace(profile, execution_prompt=assigned_prompt)
@@ -3715,7 +3913,10 @@ class LoopItemExecutionService:
                 if runtime_profile is not None
                 else agent.created_by_user_id or 0
             )
-            if owner_user_id != execution.executor_owner_user_id:
+            if (
+                not execution.uses_runner_routing
+                and owner_user_id != execution.executor_owner_user_id
+            ):
                 raise WeworkRuntimeConfigurationError(
                     "Selected Runtime owner no longer matches the queued execution"
                 )
@@ -3742,6 +3943,10 @@ class LoopItemExecutionService:
                 model_options_override=origin_context.get("model_options"),
                 workspace_binding_override=origin_context.get("workspace_binding"),
             )
+            if execution.uses_runner_routing:
+                from app.services.runner_routing import profile_for_runner
+
+                profile = profile_for_runner(db, profile, execution)
             assigned_prompt = origin_context.get("execution_prompt")
             if isinstance(assigned_prompt, str) and assigned_prompt.strip():
                 profile = replace(profile, execution_prompt=assigned_prompt)
@@ -3989,6 +4194,7 @@ class LoopItemExecutionService:
                 "runtime_source": execution.runtime_selection.get("runtime_source"),
                 "can_select_runtime": (
                     execution.executor_owner_user_id == viewer_user_id
+                    and not execution.uses_runner_routing
                     and execution.status in {"waiting_runtime", "queued"}
                 ),
                 "waiting_runtime_reason": (
@@ -4380,7 +4586,17 @@ class LoopItemExecutionService:
         row = db.get(LoopItemExecution, execution_id)
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
-        if row.executor_owner_user_id != user_id:
+        agent = (
+            db.get(ProjectChatAgent, row.agent_id)
+            if row.uses_runner_routing and row.agent_id
+            else None
+        )
+        approving_user_id = (
+            agent.created_by_user_id
+            if agent is not None
+            else row.executor_owner_user_id
+        )
+        if approving_user_id != user_id:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 "Only the executor owner can approve or reject this run",

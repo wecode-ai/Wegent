@@ -4,6 +4,25 @@
 
 use super::*;
 
+pub(super) fn context_compaction_request(
+    link: &RuntimeTaskLink,
+    payload: &Value,
+) -> Result<ExecutionRequest, AppIpcError> {
+    let mut request = runtime_event_request_from_link(link);
+    if let Some(model_config) = payload.get("modelConfig") {
+        if !model_config.is_object() || model_config.as_object().is_some_and(Map::is_empty) {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "modelConfig must be a non-empty object",
+            ));
+        }
+        // The stored profile intentionally has no credentials or default headers.
+        // Model-consuming actions receive a freshly materialized configuration.
+        request.model_config = model_config.clone();
+    }
+    Ok(request)
+}
+
 pub(super) async fn wait_for_context_compaction(
     mut route_notification: impl FnMut(&Value),
     mut notifications: broadcast::Receiver<Value>,
@@ -136,6 +155,70 @@ pub(super) fn context_compaction_outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compaction_uses_fresh_model_credentials_without_persisting_them() {
+        let original = ExecutionRequest {
+            model_config: json!({
+                "model_id": "selected-model",
+                "base_url": "https://cloud.example/v1",
+                "api_key": "old-token",
+                "default_headers": {"X-Wegent-Model-Namespace": "default"}
+            }),
+            ..ExecutionRequest::default()
+        };
+        let mut handle = json!({});
+        store_runtime_execution_request(&mut handle, &original);
+        assert!(handle["executionRequest"]["model_config"]
+            .get("api_key")
+            .is_none());
+        let link = RuntimeTaskLink::new_imported(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Title".to_owned(),
+            "codex".to_owned(),
+            handle,
+            Value::Null,
+        );
+        let mut fresh_config = original.model_config.clone();
+        fresh_config["api_key"] = json!("new-token");
+        let request =
+            context_compaction_request(&link, &json!({"modelConfig": fresh_config})).unwrap();
+        assert_eq!(request.model_config, fresh_config);
+        assert_eq!(request.task_id, "task-1");
+        assert_eq!(request.subtask_id, "task-1-context-compact");
+        assert_eq!(
+            request.project_workspace_path.as_deref(),
+            Some("/tmp/project")
+        );
+        assert!(!serde_json::to_string(&link).unwrap().contains("new-token"));
+    }
+
+    #[test]
+    fn compaction_preserves_native_config_and_rejects_invalid_materialization() {
+        let link = RuntimeTaskLink::new_imported(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Title".to_owned(),
+            "codex".to_owned(),
+            json!({}),
+            Value::Null,
+        );
+        assert_eq!(
+            context_compaction_request(&link, &json!({}))
+                .unwrap()
+                .model_config,
+            runtime_event_request_from_link(&link).model_config
+        );
+        for config in [json!(null), json!({}), json!("invalid")] {
+            assert_eq!(
+                context_compaction_request(&link, &json!({"modelConfig": config}))
+                    .unwrap_err()
+                    .code,
+                "bad_request"
+            );
+        }
+    }
 
     #[tokio::test(start_paused = true)]
     async fn keeps_waiting_for_native_completion_after_the_former_timeout() {

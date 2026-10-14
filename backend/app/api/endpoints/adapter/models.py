@@ -450,6 +450,7 @@ def _public_model_to_recommendation(model: dict) -> dict:
         "displayName": model.get("displayName"),
         "provider": model.get("provider"),
         "modelId": model.get("model_id"),
+        "capability": model.get("capability"),
         "modelCategoryType": model.get("model_category_type", "llm"),
         "isAdvanced": model.get("is_advanced", False),
     }

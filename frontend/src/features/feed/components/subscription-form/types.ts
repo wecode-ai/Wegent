@@ -28,6 +28,7 @@ export interface SubscriptionModel {
   displayName?: string | null
   provider?: string
   modelId?: string
+  capability?: string | null
   type?: string
   modelGroup?: string | null
   modelSubGroup?: string | null

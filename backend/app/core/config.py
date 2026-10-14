@@ -265,6 +265,12 @@ class Settings(BaseSettings):
     GITHUB_OAUTH_SCOPES: str = "repo read:org workflow"
     CONNECTOR_OAUTH_STATE_SECRET: str = ""
     CONNECTOR_OAUTH_SESSION_TTL_SECONDS: int = 600
+    # User-level MCP OAuth for provider servers such as DingTalk. These servers
+    # expose RFC 9728 protected-resource metadata and an RFC 8414 authorization
+    # server, so the platform authorizes and refreshes tokens on the user's behalf.
+    MCP_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/mcp-oauth/callback"
+    MCP_OAUTH_STATE_SECRET: str = ""
+    MCP_OAUTH_SESSION_TTL_SECONDS: int = 600
     # Dedicated versioned plugin credential keyring; validated only when used.
     WEWORK_PLUGIN_CREDENTIAL_KEYS: SecretStr = Field(default=SecretStr(""), repr=False)
     WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: str = ""

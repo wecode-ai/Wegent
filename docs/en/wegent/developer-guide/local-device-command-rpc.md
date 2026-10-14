@@ -99,9 +99,20 @@ Because commands run on the user's machine, callers must treat this API as high 
 
 Callers should bind these commands to the current LocalTask's `deviceId + workspacePath`, not to the central Task API. This keeps review and revert on the same device and workspace that produced the artifact even when the runtime task has no `TaskResource`/`Subtask` rows.
 
-### Workspace File Command Roots
+### Workspace File Access
 
-`workspace_tree` and `workspace_read_text_file` reject any path outside an allowed workspace root. The Backend derives the allowed roots per request (never trusting a client-supplied `WEGENT_WORKSPACE_ROOTS`) from two sources for the user and device: WeWork projects whose workspace `source` is `local_path` or `device_path`, and runtime `DeviceWorkspace` mappings. `local_path` represents a directory on the user's local executor. `device_path` represents a sandbox directory bound to a specific cloud or remote device. The runtime mapping lets runtime-local tasks browse and preview files in their own workspace even when no project config points at that directory.
+`workspace_tree`, `workspace_read_text_file`, and `workspace_read_file_chunk` can browse and read any directory on the device without requiring registration as a project or task workspace. This applies to local, cloud, and remote devices; WeWork local IPC and Backend command RPC follow the same rule.
+
+```mermaid
+flowchart LR
+    WeWork -->|Local device| IPC[Executor IPC]
+    WeWork -->|Cloud or remote device| Backend[Backend checks device ownership]
+    Backend --> RPC[Socket.IO command RPC]
+    IPC --> Files[Read requested directory under OS permissions]
+    RPC --> Files
+```
+
+File access no longer uses the `WEGENT_WORKSPACE_ROOTS` allowlist or queries project configuration, `DeviceWorkspace` mappings, or `runtime.tasks.list` to authorize directories. The Backend still checks device ownership, supported commands, and online status before dispatch. Reads remain subject to the target device process's operating-system permissions. File names must resolve within the requested directory, and file-size, chunking, and timeout limits remain unchanged.
 
 ## Executor Behavior
 

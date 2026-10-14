@@ -103,7 +103,7 @@ async fn codex_agent_home_preserves_spaces_in_environment_and_config_paths() {
     assert!(home.join("runtime/tasks/spaces.json").is_file());
 }
 
-async fn codex_bot_home_requires_account_identity_before_starting_native_process() {
+async fn codex_bot_home_requires_user_identity_but_not_backend_url() {
     let _lock = env_lock().await;
     let root = tempfile::tempdir().unwrap();
     let _workbench = EnvGuard::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
@@ -119,10 +119,6 @@ async fn codex_bot_home_requires_account_identity_before_starting_native_process
         ..ExecutionRequest::default()
     };
     assert!(matches!(engine.run(request.clone()).await,
-        ExecutionOutcome::Failed { ref message } if message.contains("backend identity")));
-    assert!(!log.exists());
-    request.backend_url = Some("https://backend.example".to_owned());
-    assert!(matches!(engine.run(request.clone()).await,
         ExecutionOutcome::Failed { ref message } if message.contains("user identity")));
     assert!(!log.exists());
     request.extra.insert("user_id".to_owned(), json!(7));
@@ -132,6 +128,11 @@ async fn codex_bot_home_requires_account_identity_before_starting_native_process
     request.extra.insert("team_name".to_owned(), json!("design"));
     assert!(matches!(engine.run(request).await, ExecutionOutcome::Completed { .. }));
     assert!(log.exists());
+    let home = root.path().join("agents/user7/default/design");
+    assert!(home.join("runtime/tasks/identity-contract.json").is_file());
+    let marker: Value = serde_json::from_slice(&fs::read(home.join("agent.json")).unwrap()).unwrap();
+    assert_eq!(marker["user_id"], "7");
+    assert!(marker.get("backend_url").is_none());
 }
 
 async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {

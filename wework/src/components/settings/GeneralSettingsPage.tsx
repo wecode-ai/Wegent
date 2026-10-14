@@ -1,3 +1,4 @@
+import { DefaultRunnerSetting } from './DefaultRunnerSetting'
 import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 import { useContext, useEffect, useState } from 'react'
 import {
@@ -523,6 +524,7 @@ export function GeneralSettingsPage() {
           {t('workbench.general_settings_title')}
         </div>
         <SettingsGroup className="rounded-xl !bg-background">
+          <DefaultRunnerSetting />
           <SettingsRow
             label={t('workbench.general_settings_mode')}
             description={t('workbench.general_settings_mode_description')}

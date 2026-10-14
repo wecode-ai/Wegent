@@ -86,6 +86,11 @@ const mocks = vi.hoisted(() => {
     teamApi: { source: 'local' },
   }
 
+  const localDecisionRouterApi = {
+    resolveLaunch: vi.fn(),
+    unregister: vi.fn(),
+  }
+
   const localServices = {
     replyPredictionApi: { predict: vi.fn().mockResolvedValue({ suggestion: '继续' }) },
     composerCatalogApi: { readCatalog: vi.fn() },
@@ -117,6 +122,7 @@ const mocks = vi.hoisted(() => {
       listRuntimeWork: localListRuntimeWork,
       createRuntimeTask: localCreateRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
+      cleanRuntimeBackgroundTerminals: vi.fn(),
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: localSearchRuntimeWork,
       getWorktreeCapabilities: localGetWorktreeCapabilities,
@@ -127,6 +133,7 @@ const mocks = vi.hoisted(() => {
       archiveProjectConversations: localArchiveProjectConversations,
     },
     automationApi: localAutomationApi,
+    localDecisionRouterApi,
     userApi: { updateCurrentUser: localUpdateCurrentUser },
     attachmentApi: {
       uploadAttachment: localUploadAttachment,
@@ -240,6 +247,7 @@ const mocks = vi.hoisted(() => {
     localDeleteAttachment,
     cloudUploadAttachment,
     localAutomationApi,
+    localDecisionRouterApi,
     captureLocalAppOptions,
     captureRuntimeIpcOptions,
     captureAutomationIpcOptions,
@@ -260,9 +268,9 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@/api/local/localServices', () => ({
-  createLocalAppServices: (options: unknown) => {
+  createLocalAppServices: (options: { materializeRuntimeTask?: unknown } | undefined) => {
     mocks.captureLocalAppOptions(options)
-    return options === undefined ? mocks.localOnlyServices : mocks.localServices
+    return options?.materializeRuntimeTask ? mocks.localServices : mocks.localOnlyServices
   },
   createAutomationApiFromIpc: (
     request: (
@@ -1717,6 +1725,124 @@ describe('createHybridWorkbenchServices', () => {
     expect(runtimeWork?.totalTasks).toBe(1)
   })
 
+  it.each([
+    ['online', 'runtime-other'],
+    ['offline', 'runtime-other'],
+    ['online', undefined],
+    ['offline', undefined],
+  ] as const)(
+    'starts local tasks when a %s app registration shares the address with runtime %s',
+    async (status, runtimeInstanceId) => {
+      const local = {
+        id: 0,
+        device_id: 'electron-current',
+        name: 'Local Executor',
+        status: 'online' as const,
+        is_default: true,
+        device_type: 'local' as const,
+        runtime_instance_id: 'runtime-current',
+      }
+      mocks.localListDevices.mockResolvedValue([local])
+      mocks.cloudListDevices.mockResolvedValue([
+        {
+          ...local,
+          id: 1,
+          device_type: 'app',
+          app_device_id: local.device_id,
+          socket_device_id: 'app-record-1',
+          runtime_instance_id: runtimeInstanceId,
+          status,
+        },
+        {
+          ...local,
+          id: 2,
+          device_type: 'app',
+          app_device_id: local.device_id,
+          socket_device_id: 'app-record-2',
+        },
+      ])
+      const services = createServices()
+      await services.deviceApi.listDevices()
+      await services.cloudBackgroundApi!.listDevices!()
+      const devices = await services.deviceApi.listDevices()
+      expect(devices).toHaveLength(1)
+      expect(devices[0].runtime_routes).toEqual(
+        expect.arrayContaining([expect.objectContaining({ runtime_device_id: 'app-record-2' })])
+      )
+      expect(devices[0].runtime_routes).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ runtime_device_id: 'app-record-1' })])
+      )
+      mocks.localCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'local-task' })
+      for (const deviceId of [local.device_id, 'app-record-2']) {
+        const request = { deviceId, runtime: 'codex' as const, message: 'run' }
+        await expect(services.runtimeWorkApi!.createRuntimeTask(request)).resolves.toMatchObject({
+          accepted: true,
+          taskId: 'local-task',
+        })
+      }
+      expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(2)
+      await expect(
+        services.runtimeWorkApi!.createRuntimeTask({
+          deviceId: 'app-record-1',
+          runtime: 'codex',
+          message: 'run',
+        })
+      ).rejects.toThrow('executor-not-found:app-record-1')
+      expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(2)
+      expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps APP-alias recovery on the validated local runtime while it is offline', async () => {
+    const local = {
+      id: 0,
+      device_id: 'electron-current',
+      name: 'Local Executor',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'local' as const,
+      runtime_instance_id: 'runtime-current',
+    }
+    mocks.localListDevices.mockResolvedValue([local])
+    mocks.cloudListDevices.mockResolvedValue([
+      { ...local, id: 2, device_type: 'app', socket_device_id: 'app-record-2' },
+    ])
+    const services = createServices()
+    await services.deviceApi.listDevices()
+    await services.cloudBackgroundApi!.listDevices!()
+    mocks.localListDevices.mockResolvedValue([{ ...local, status: 'offline' }])
+    const [device] = await services.deviceApi.listDevices()
+    expect(device.status).toBe('offline')
+    const address = { deviceId: 'app-record-2', taskId: 'task-1' }
+    const rollback = { address, message: '' }
+    mocks.localServices.runtimeWorkApi.rollbackRuntimeTask.mockRejectedValueOnce(
+      new Error('Local IPC offline')
+    )
+    mocks.localServices.runtimeWorkApi.cleanRuntimeBackgroundTerminals.mockRejectedValueOnce(
+      new Error('Local IPC offline')
+    )
+
+    await expect(
+      services.runtimeWorkApi!.createRuntimeTask({
+        deviceId: address.deviceId,
+        runtime: 'codex',
+        message: 'run',
+      })
+    ).rejects.toThrow('executor-offline')
+    await expect(services.runtimeWorkApi!.rollbackRuntimeTask(rollback)).rejects.toThrow(
+      'Local IPC offline'
+    )
+    await expect(
+      services.runtimeWorkApi!.cleanRuntimeBackgroundTerminals!(address)
+    ).rejects.toThrow('Local IPC offline')
+    expect(mocks.localServices.runtimeWorkApi.rollbackRuntimeTask).toHaveBeenCalledWith(rollback)
+    expect(mocks.localServices.runtimeWorkApi.cleanRuntimeBackgroundTerminals).toHaveBeenCalledWith(
+      address
+    )
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+    expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
+  })
+
   it('forwards the delivery fence to the selected runtime adapter', async () => {
     const services = createServices()
     await services.deviceApi.listDevices()
@@ -2554,5 +2680,19 @@ describe('createHybridWorkbenchServices', () => {
         syncConfiguredModelCatalog: true,
       })
     )
+  })
+
+  test('routes decision router registration through the local Executor only', async () => {
+    const services = createServices()
+
+    expect(services.localDecisionRouterApi).toBe(mocks.localServices.localDecisionRouterApi)
+    expect(services.localDecisionRouterApi).toBeDefined()
+
+    const launch = { token: 't', baseUrl: 'http://127.0.0.1:1/v1/decision-router/t' }
+    mocks.localDecisionRouterApi.resolveLaunch.mockResolvedValue(launch)
+    await expect(services.localDecisionRouterApi!.resolveLaunch('smart-app:42')).resolves.toBe(
+      launch
+    )
+    expect(mocks.localDecisionRouterApi.resolveLaunch).toHaveBeenCalledWith('smart-app:42')
   })
 })

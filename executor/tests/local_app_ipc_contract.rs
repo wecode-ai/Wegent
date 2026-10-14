@@ -1617,24 +1617,26 @@ async fn app_ipc_lists_and_reads_workspace_files_locally() {
 }
 
 #[tokio::test]
-async fn app_ipc_rejects_workspace_files_outside_allowed_roots() {
+async fn app_ipc_reads_workspace_files_outside_previous_allowed_roots() {
     let allowed_workspace = unique_dir("workspace-files-allowed");
     fs::create_dir_all(&allowed_workspace).unwrap();
     let allowed_workspace = fs::canonicalize(allowed_workspace).unwrap();
-    let blocked_workspace = unique_dir("workspace-files-blocked");
-    fs::create_dir_all(&blocked_workspace).unwrap();
-    let blocked_workspace = fs::canonicalize(blocked_workspace).unwrap();
+    let external_directory = unique_dir("workspace-files-external");
+    fs::create_dir_all(&external_directory).unwrap();
+    let external_directory = fs::canonicalize(external_directory).unwrap();
+    fs::write(external_directory.join("sunset.png"), b"image").unwrap();
     let server = AppIpcServer::new();
 
     let response = server
         .handle_line(
             &json!({
                 "type": "request",
-                "id": "req-blocked-tree",
+                "id": "req-external-file",
                 "method": "device.execute_command",
                 "params": {
-                    "command_key": "workspace_tree",
-                    "path": blocked_workspace.display().to_string(),
+                    "command_key": "workspace_read_file_chunk",
+                    "path": external_directory.display().to_string(),
+                    "args": ["sunset.png", "0"],
                     "env": {"WEGENT_WORKSPACE_ROOTS": allowed_workspace.display().to_string()},
                 }
             })
@@ -1644,14 +1646,14 @@ async fn app_ipc_rejects_workspace_files_outside_allowed_roots() {
         .unwrap();
 
     assert_eq!(response["ok"], true);
-    assert_eq!(response["result"]["success"], false);
+    assert_eq!(response["result"]["success"], true);
     assert_eq!(
-        response["result"]["error"],
-        json!("Workspace path is outside allowed workspace roots")
+        response["result"]["stdout"]["content_base64"],
+        json!("aW1hZ2U=")
     );
 
     let _ = fs::remove_dir_all(allowed_workspace);
-    let _ = fs::remove_dir_all(blocked_workspace);
+    let _ = fs::remove_dir_all(external_directory);
 }
 
 #[tokio::test]

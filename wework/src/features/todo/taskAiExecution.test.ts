@@ -163,6 +163,63 @@ async function runWith(
 }
 
 describe('startTaskAiRun model resolution', () => {
+  it('queues manual reruns through the same runner resolver as comments', async () => {
+    const client = createClient()
+    const comment: ProjectChatMessage = {
+      ...agentMessage,
+      messageId: 'rerun-comment',
+      sender: { type: 'user', id: 'user-1', name: 'User' },
+      type: 'text',
+      content: 'Run the assigned Issue',
+      status: 'completed',
+    }
+    vi.mocked(client.send).mockResolvedValue(comment)
+    client.executeTaskComment = vi.fn(async () => [agentMessage])
+    const runtime = createRuntime()
+    const onMessages = vi.fn()
+    const onError = vi.fn()
+    const input = {
+      client,
+      runtime,
+      services: {},
+      project,
+      task,
+      agent: agent(null),
+      prompt: comment.content,
+      messages: [],
+      onMessages,
+      onError,
+      startFailedText: '启动失败',
+    }
+
+    await expect(startTaskAiRun(input)).resolves.toBe(true)
+
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: task.id,
+        mentions: [{ type: 'agent', id: 'agent-1', label: 'Project AI' }],
+        replyToMessageId: null,
+        model: null,
+      })
+    )
+    expect(client.executeTaskComment).toHaveBeenCalledWith({
+      projectId: project.id,
+      taskId: task.id,
+      triggerMessageId: comment.messageId,
+      attachmentIds: [],
+    })
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(client.startAgentResponse).not.toHaveBeenCalled()
+    expect(onMessages).toHaveBeenLastCalledWith([agentMessage])
+    expect(onError).not.toHaveBeenCalled()
+
+    vi.mocked(client.executeTaskComment).mockRejectedValueOnce(new Error('Runner access revoked'))
+    await expect(startTaskAiRun({ ...input, trigger: comment })).resolves.toBe(false)
+    expect(client.send).toHaveBeenCalledTimes(1)
+    expect(onError).toHaveBeenCalledWith('Runner access revoked')
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+  })
+
   it('materializes the assigned Team instead of dropping its model and shell defaults', async () => {
     const { runtime } = await run({
       agent: { ...agent(null), runtime: 'wegent', wegentTeamId: 1880 },

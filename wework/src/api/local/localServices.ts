@@ -1,3 +1,11 @@
+import { requestRunnerSelection } from '@/lib/runner-selection'
+import {
+  cloudRunnerModels,
+  resolveRunnerSelection,
+  runnerModelKey,
+  type RunnerSelection,
+} from '@wegent/collaboration'
+import type { RunnerEnvironment, RunnerModel } from '@wegent/collaboration'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import { createLocalProjectAutomationApi } from './localProjectAutomations'
 import {
@@ -11,6 +19,7 @@ import {
 import type { InstalledPlugin } from '@wegent/chat-core/installed-plugin-types'
 import { codexRuntimeModels } from '@wegent/chat-core/runtime-model-catalog'
 import type {
+  LocalDecisionRouterLaunch,
   LocalProjectSpaceApi,
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
@@ -136,7 +145,7 @@ import type {
 } from '@/types/automation'
 import type { WorkspaceTextFileResponse, WorkspaceTreeResponse } from '@/types/workspace-files'
 import {
-  ensureLocalExecutorAvailable,
+  getLocalExecutorStatus,
   ensureLocalExecutorStarted,
   requestLocalExecutor,
   subscribeLocalExecutorEvents,
@@ -262,6 +271,7 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
       apiFormat: config.apiFormat,
       upstreamApiFormat: config.apiFormat,
       ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
+      ...(config.maxOutputTokens ? { max_output_tokens: config.maxOutputTokens } : {}),
       ui: {
         family,
         ...(group ? { familyLabel: group } : {}),
@@ -316,6 +326,7 @@ type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>
 type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
+  listCloudModels?: () => Promise<UnifiedModel[]>
   listCloudInstalledPlugins?: (deviceId: string) => Promise<InstalledPlugin[]>
   available?: () => Promise<LocalExecutorStatus>
   ensure?: () => Promise<LocalExecutorStatus>
@@ -504,6 +515,56 @@ function runtimeExecutionUser(
 
 function cloudConnectionRequired(name: string): never {
   throw new Error(`${name} requires cloud connection`)
+}
+
+/** Executor reply for `runtime.decision_proxy.register`. */
+interface DecisionProxyRegistration {
+  token?: unknown
+  baseUrl?: unknown
+  protocolVersion?: unknown
+}
+
+const DECISION_ROUTER_LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+const DECISION_ROUTER_PROTOCOL_VERSION = 1
+
+/**
+ * Validates the Executor's decision route reply.
+ *
+ * The base URL is the only address the Smart App ever learns about it, so it
+ * must stay on loopback and carry no credentials, query, or fragment.
+ */
+function normalizeDecisionRouterLaunch(
+  registration: DecisionProxyRegistration
+): LocalDecisionRouterLaunch {
+  const token = typeof registration?.token === 'string' ? registration.token.trim() : ''
+  if (!token) {
+    throw new Error('Wework decision router did not return a route token')
+  }
+  if (registration?.protocolVersion !== DECISION_ROUTER_PROTOCOL_VERSION) {
+    throw new Error('Wework decision router protocol version is not supported')
+  }
+  const rawBaseUrl = typeof registration?.baseUrl === 'string' ? registration.baseUrl.trim() : ''
+  let baseUrl: URL
+  try {
+    baseUrl = new URL(rawBaseUrl)
+  } catch {
+    throw new Error('Wework decision router base URL is not a valid URL')
+  }
+  if (
+    baseUrl.protocol !== 'http:' ||
+    !DECISION_ROUTER_LOOPBACK_HOSTS.has(baseUrl.hostname) ||
+    Boolean(baseUrl.username) ||
+    Boolean(baseUrl.password) ||
+    Boolean(baseUrl.search) ||
+    Boolean(baseUrl.hash)
+  ) {
+    throw new Error('Wework decision router base URL must be a loopback address')
+  }
+  return {
+    token,
+    baseUrl: rawBaseUrl,
+    protocolVersion: DECISION_ROUTER_PROTOCOL_VERSION,
+  }
 }
 
 function modelCatalogSyncCancelled(): Error {
@@ -962,7 +1023,9 @@ function localRuntimeModelConfig(
   modelOptions?: Record<string, string>,
   cloudModelGateway?: CloudModelGateway
 ): Record<string, unknown> {
-  const localModel = findLocalModelConfigByModelName(modelName)
+  if (modelOptions?.runnerModelProvider)
+    return { model_id: modelName, model_provider: modelOptions.runnerModelProvider }
+  const localModel = isCloudModelType(modelType) ? null : findLocalModelConfigByModelName(modelName)
   if (localModel) {
     if (!localModel.enabled) {
       throw new Error('Local model is disabled')
@@ -995,6 +1058,7 @@ function localRuntimeModelConfig(
       provider_name: localModel.displayName,
       display_name: localModel.displayName,
       ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
+      ...(localModel.maxOutputTokens ? { max_output_tokens: localModel.maxOutputTokens } : {}),
       web_search: localModel.webSearchMode ?? 'disabled',
       image_generation: localModel.imageGenerationEnabled === true,
       ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
@@ -1011,11 +1075,11 @@ function localRuntimeModelConfig(
     }
   }
 
-  if (modelName?.startsWith(LOCAL_MODEL_NAME_PREFIX)) {
+  if (!isCloudModelType(modelType) && modelName?.startsWith(LOCAL_MODEL_NAME_PREFIX)) {
     throw new Error('Local model is no longer configured')
   }
 
-  if (modelName?.startsWith(STALE_CODEX_PROVIDER_MODEL_PREFIX)) {
+  if (!isCloudModelType(modelType) && modelName?.startsWith(STALE_CODEX_PROVIDER_MODEL_PREFIX)) {
     throw new Error('Codex config.toml provider is no longer configured')
   }
 
@@ -1032,6 +1096,30 @@ function localRuntimeModelConfig(
     const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
+    const gatewayConfig = {
+      model: 'openai',
+      model_id: modelName,
+      wework_model_kind: 'cloud',
+      api_format: RESPONSES_API_FORMAT,
+      protocol: OPENAI_RESPONSES_PROTOCOL,
+      upstream_api_format: upstreamApiFormat,
+      base_url: cloudModelGateway.baseUrl,
+      api_key: cloudModelGateway.apiKey,
+      default_headers: {
+        'X-Wegent-Model-Type': modelType,
+        'X-Wegent-Model-Namespace': namespace,
+        'X-Wegent-Model-User-Id': resourceUserId,
+        'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
+        'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
+      },
+      ...(Number.isFinite(contextWindow) && contextWindow > 0
+        ? { model_context_window: contextWindow }
+        : {}),
+      ...(Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
+        ? { max_output_tokens: maxOutputTokens }
+        : {}),
+    }
+    if (runtime === 'claude_code') return gatewayConfig
     const nativeByDefault = upstreamApiFormat === 'openai-responses'
     const codexRequestMode = modelOptions?.[CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION] ?? 'auto'
     if (
@@ -1052,32 +1140,12 @@ function localRuntimeModelConfig(
     const primaryCodexCatalogModelId =
       modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
     return {
-      model: 'openai',
-      model_id: modelName,
-      wework_model_kind: 'cloud',
+      ...gatewayConfig,
       codex_catalog_model_id: primaryCodexCatalogModelId,
-      api_format: RESPONSES_API_FORMAT,
-      upstream_api_format: upstreamApiFormat,
       codex_request_mode: codexRequestMode,
       native_tool_search: nativeToolSearch,
       native_namespace_tools: nativeNamespaceTools,
       tool_profile: 'custom',
-      protocol: OPENAI_RESPONSES_PROTOCOL,
-      base_url: cloudModelGateway.baseUrl,
-      api_key: cloudModelGateway.apiKey,
-      default_headers: {
-        'X-Wegent-Model-Type': modelType,
-        'X-Wegent-Model-Namespace': namespace,
-        'X-Wegent-Model-User-Id': resourceUserId,
-        'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
-        'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
-      },
-      ...(Number.isFinite(contextWindow) && contextWindow > 0
-        ? { model_context_window: contextWindow }
-        : {}),
-      ...(Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
-        ? { max_output_tokens: maxOutputTokens }
-        : {}),
       ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
@@ -2722,11 +2790,40 @@ export function createRuntimeWorkApiFromIpc(
       const localDeviceId = await resolveDeviceId({ address: data.address })
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
         .address as RuntimeTaskAddress
+      // Persisted execution profiles are redacted. Rebuild the selected model
+      // with current credentials, just as a continuation or fork does.
+      const handle = recordValue(normalizedAddress.runtimeHandle)
+      const selection =
+        data.modelSelection ?? modelSelectionValue(handle.modelSelection ?? handle.model_selection)
+      let modelConfig: Record<string, unknown> | undefined
+      if (selection?.modelName) {
+        if (
+          !(await prepareRuntimeModel({
+            deviceId: localDeviceId,
+            modelId: selection.modelName,
+          }))
+        ) {
+          throw modelCatalogSyncCancelled()
+        }
+        modelConfig = await applyRuntimeModelOptions(
+          localRuntimeModelConfig(
+            'codex',
+            requireLocalCodexCatalog,
+            selection.modelName,
+            selection.modelType,
+            selection.options,
+            options.cloudModelGateway
+          ),
+          selection.options,
+          resolveProxy
+        )
+      }
       return request(
         'runtime.tasks.compact',
         {
           taskId: normalizedAddress.taskId,
           address: normalizedAddress,
+          ...(modelConfig ? { modelConfig } : {}),
         },
         localDeviceId
       )
@@ -3460,7 +3557,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       }))
     },
   }
-  const available = deps.available ?? deps.ensure ?? ensureLocalExecutorAvailable
+  const available = deps.available ?? deps.ensure ?? getLocalExecutorStatus
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
@@ -3624,27 +3721,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       assertCommandSuccess(response, 'Failed to list skills')
       return decodeRuntimeSkills(response.stdout)
     },
-    async listWorkspaceEntries(
-      _deviceId: string,
-      path: string,
-      workspaceRoot = path
-    ): Promise<WorkspaceTreeResponse> {
-      return listWorkspaceEntries(workspaceRoot, path)
+    async listWorkspaceEntries(_deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
+      return listWorkspaceEntries(path)
     },
     async readWorkspaceTextFile(
       _deviceId: string,
-      filePath: string,
-      workspaceRoot: string
+      filePath: string
     ): Promise<WorkspaceTextFileResponse> {
-      return readWorkspaceTextFile(workspaceRoot, filePath)
+      return readWorkspaceTextFile(filePath)
     },
-    async readWorkspaceFileChunk(
-      _deviceId: string,
-      filePath: string,
-      offset: number,
-      workspaceRoot: string
-    ) {
-      return readWorkspaceFileChunk(workspaceRoot, filePath, offset)
+    async readWorkspaceFileChunk(_deviceId: string, filePath: string, offset: number) {
+      return readWorkspaceFileChunk(filePath, offset)
     },
     async writeWorkspaceTextFile(
       deviceId: string,
@@ -3688,7 +3775,36 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   // Local project-space identity is the local session user, not the connected
   // cloud account. The approval/creator checks compare against LOCAL_USER, so
   // robots created with the cloud user id would never be approvable locally.
-  const localProjectChatAgentApi = createLocalProjectChatAgentApi(request, LOCAL_USER.id)
+  const listRunnerEnvironments = async (projectId?: string): Promise<RunnerEnvironment[]> => {
+    const device = localDeviceFromStatus(await bootstrapStatus())
+    const catalog = await request<{
+      models: RunnerModel[]
+      runtimes: RunnerEnvironment['runtimes']
+      errors?: string[]
+    }>('runtime.runner.catalog')
+    const projects = projectId ? await deliveryApi.listCloudProjects() : null
+    const project = projects?.items.find(item => String(item.id) === projectId)
+    return [
+      {
+        id: device.device_id,
+        device_key: device.device_id,
+        name: device.name,
+        owner_type: 'user',
+        owner_id: String(LOCAL_USER.id),
+        status: device.status === 'online' ? 'online' : 'offline',
+        project_authorized: Boolean(project?.execution_environment?.devices?.[device.device_id]),
+        models: catalog.models,
+        runtimes: catalog.runtimes,
+        catalog_error: catalog.errors?.join(', ') || null,
+      },
+    ]
+  }
+  const localProjectChatAgentApi = createLocalProjectChatAgentApi(
+    request,
+    LOCAL_USER.id,
+    listRunnerEnvironments,
+    deps.listCloudModels
+  )
   const assignmentRequestWithLocalDevice: RequestWithLocalDevice = (method, data) =>
     request(method, data as Record<string, unknown>)
   const assignmentModels = (agent: LocalProjectChatAgent) => {
@@ -3717,8 +3833,50 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     project: CloudProject,
     task: CloudLoopItem,
     group?: NonNullable<CloudProject['collaboration_groups']>[number],
-    selectedModel = assignmentModels(agent)[0]
+    selectedModel = assignmentModels(agent)[0],
+    runnerSelection?: RunnerSelection
   ) => {
+    const environments = agent.executionPolicy ? await listRunnerEnvironments(projectId) : []
+    const modelRequirement =
+      agent.modelPolicy?.mode === 'fixed' ? agent.modelPolicy.model : runnerSelection?.model
+    const cloudModels =
+      agent.executionPolicy && (!modelRequirement || modelRequirement.source === 'cloud')
+        ? await (deps.listCloudModels?.() ?? Promise.resolve([]))
+        : []
+    let routing: ReturnType<typeof resolveRunnerSelection> | null = null
+    if (agent.executionPolicy && agent.modelPolicy) {
+      const input = {
+        environments,
+        cloudModels: cloudRunnerModels(cloudModels),
+        executionPolicy: agent.executionPolicy,
+        modelPolicy: agent.modelPolicy,
+        runtime: agent.runtime,
+        selection: runnerSelection,
+        boundEnvironmentId: task.runner_binding?.environment_id,
+        defaultEnvironmentId: getLocalUser().preferences?.default_execution_target,
+      }
+      try {
+        routing = resolveRunnerSelection(input)
+      } catch (error) {
+        if (
+          runnerSelection ||
+          !(error instanceof Error) ||
+          !/^(RUNNER_SELECTION_REQUIRED|RUNNER_MODEL_REQUIRED):/.test(error.message)
+        )
+          throw error
+        const selection = await requestRunnerSelection({
+          environments,
+          cloud_models: cloudModels,
+          cloud_only: agent.executionPolicy.mode !== 'fixed',
+          runtime: agent.runtime,
+          execution_policy: task.runner_binding
+            ? { mode: 'fixed', environment_id: task.runner_binding.environment_id }
+            : agent.executionPolicy,
+          model_policy: agent.modelPolicy,
+        })
+        routing = resolveRunnerSelection({ ...input, selection })
+      }
+    }
     const preparedEnvironments = Object.entries(project.execution_environment?.devices ?? {})
       .flatMap(([deviceId, state]) => {
         const workspacePath = state.workspace_path?.trim()
@@ -3739,11 +3897,29 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           right.preparedAt.localeCompare(left.preparedAt) ||
           left.deviceId.localeCompare(right.deviceId)
       )
-    const preparedEnvironment = preparedEnvironments[0]
-    if (!preparedEnvironment) {
-      throw new Error('项目执行环境尚未初始化，请先在项目设置中初始化环境')
-    }
-    const { deviceId, workspacePath } = preparedEnvironment
+    const preparedEnvironment = preparedEnvironments.find(
+      item =>
+        !routing || routing.candidates.some(candidate => candidate.device_key === item.deviceId)
+    )
+    const deviceId =
+      preparedEnvironment?.deviceId ??
+      routing?.candidates[0]?.device_key ??
+      (await getLocalDeviceId())
+    const workspacePath = preparedEnvironment?.workspacePath
+    const environment = routing?.candidates.find(item => item.device_key === deviceId)
+    const nativeModel = environment?.models.find(
+      item =>
+        routing?.model.source !== 'cloud' && runnerModelKey(item) === runnerModelKey(routing!.model)
+    )
+    const cloudModel =
+      routing?.model.source === 'cloud'
+        ? cloudModels.find(item =>
+            cloudRunnerModels([item]).some(
+              candidate => runnerModelKey(candidate) === runnerModelKey(routing!.model)
+            )
+          )
+        : null
+    const cloudFields = cloudModel ? selectedModelExecutionFields(cloudModel, {}) : null
     const groupContext = group
       ? [
           `协作小组：${group.name}`,
@@ -3764,7 +3940,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     ]
       .filter(Boolean)
       .join('\n\n')
-    return createLocalRuntimeTaskPayload(
+    const payload = await createLocalRuntimeTaskPayload(
       {
         runtime: agent.runtime,
         taskId: `${itemId}-${role}-${agent.id}`,
@@ -3772,10 +3948,16 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         message,
         deviceId,
         workspacePath,
+        standaloneChatWorkspace: !workspacePath,
         runtimeProjectName: project.name,
-        runtimeWorkspaceRoots: [workspacePath],
-        modelId: selectedModel?.name,
-        modelType: selectedModel?.type ?? null,
+        runtimeWorkspaceRoots: workspacePath ? [workspacePath] : [],
+        modelId: nativeModel?.local_model_id ?? cloudFields?.modelId ?? selectedModel?.name,
+        modelOptions: nativeModel
+          ? { runnerModelProvider: nativeModel.provider }
+          : cloudFields?.modelOptions,
+        modelType: nativeModel
+          ? 'runtime'
+          : (cloudFields?.modelType ?? selectedModel?.type ?? null),
         additionalSkills: agent.additionalSkills.map(skill => ({
           name: skill.name,
           namespace: skill.namespace,
@@ -3809,9 +3991,26 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       true,
       deps.materializeRuntimeTask
     )
+    return routing
+      ? {
+          ...payload,
+          runnerRouting: {
+            ...routing,
+            candidates: undefined,
+            environment_id: environment!.id,
+            account_label: nativeModel?.account_label ?? 'cloud_gateway',
+          },
+        }
+      : payload
   }
   const deliveryApi: LocalProjectSpaceApi = createLocalDeliveryApi(request, {
-    async prepareAssignmentExecutionPayload({ projectId, itemId, assigneeType, assigneeId }) {
+    async prepareAssignmentExecutionPayload({
+      projectId,
+      itemId,
+      assigneeType,
+      assigneeId,
+      runnerSelection,
+    }) {
       const [projects, task] = await Promise.all([
         deliveryApi.listCloudProjects(),
         deliveryApi.getLoopItem(itemId),
@@ -3835,7 +4034,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         if (!agent || agent.status !== 'active') {
           throw new Error(`Local agent '${assigneeId}' is unavailable`)
         }
-        return assignmentRuntimePayload(projectId, itemId, agent, 'direct', project, task)
+        return assignmentRuntimePayload(
+          projectId,
+          itemId,
+          agent,
+          'direct',
+          project,
+          task,
+          undefined,
+          undefined,
+          runnerSelection
+        )
       }
       const group = (project.collaboration_groups ?? []).find(
         candidate => candidate.id === assigneeId
@@ -3848,10 +4057,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           if (!agent || agent.status !== 'active') {
             throw new Error(`Collaboration member '${memberId}' is unavailable`)
           }
-          const modelRuntimeProfiles = await Promise.all(
-            assignmentModels(agent).map(async selectedModel => ({
-              modelId: selectedModel.name,
-              runtimePayload: await assignmentRuntimePayload(
+          const routedPayload = agent.executionPolicy
+            ? await assignmentRuntimePayload(
                 projectId,
                 itemId,
                 agent,
@@ -3859,10 +4066,27 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
                 project,
                 task,
                 group,
-                selectedModel
-              ),
-            }))
-          )
+                undefined,
+                runnerSelection
+              )
+            : null
+          const modelRuntimeProfiles = routedPayload
+            ? [{ modelId: routedPayload.modelId as string, runtimePayload: routedPayload }]
+            : await Promise.all(
+                assignmentModels(agent).map(async selectedModel => ({
+                  modelId: selectedModel.name,
+                  runtimePayload: await assignmentRuntimePayload(
+                    projectId,
+                    itemId,
+                    agent,
+                    'member',
+                    project,
+                    task,
+                    group,
+                    selectedModel
+                  ),
+                }))
+              )
           return {
             memberIds: [memberId],
             agentId: agent.id,
@@ -3886,7 +4110,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
                 'manager',
                 project,
                 task,
-                group
+                group,
+                undefined,
+                runnerSelection
               )
             })()
           : null
@@ -3902,6 +4128,28 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
   const localProjectChatClient = createLocalProjectChatClient(request, {
     currentUser: LOCAL_USER,
+    async prepareExecution({ projectId, taskId, agentId, text, runnerSelection }) {
+      const [projects, task, agents] = await Promise.all([
+        deliveryApi.listCloudProjects(),
+        deliveryApi.getLoopItem(taskId),
+        localProjectChatAgentApi.list(projectId),
+      ])
+      const project = projects.items.find(item => String(item.id) === projectId)
+      const agent = agents.find(item => item.id === agentId && item.status === 'active')
+      if (!project || !agent) throw new Error('Project or agent is unavailable')
+      const payload = await assignmentRuntimePayload(
+        projectId,
+        taskId,
+        agent,
+        'direct',
+        project,
+        task,
+        undefined,
+        undefined,
+        runnerSelection as RunnerSelection | undefined
+      )
+      return { ...payload, message: text }
+    },
   })
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)
@@ -4186,6 +4434,21 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
       async unregisterContext(token: string) {
         await request('runtime.harness_context.unregister', { token })
+      },
+    },
+    localDecisionRouterApi: {
+      async resolveLaunch(scope?: string) {
+        await ensureStatus()
+        // Only the scope is caller-supplied. The upstream URL, the credential,
+        // and the model catalogue stay in Executor-controlled configuration.
+        const registration = await request<DecisionProxyRegistration>(
+          'runtime.decision_proxy.register',
+          { scope: scope?.trim() || `decision:${crypto.randomUUID()}` }
+        )
+        return normalizeDecisionRouterLaunch(registration)
+      },
+      async unregister(token: string) {
+        await request('runtime.decision_proxy.unregister', { token })
       },
     },
     localProjectChatClient,

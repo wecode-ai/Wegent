@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
-import { mkdir, readdir, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 
 import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
 import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
@@ -70,6 +72,8 @@ const SUBAGENT_WAIT_CALL_ID = 'wework-subagent-wait'
 const SUBAGENT_CHILD_TOOL_CALL_ID = 'wework-subagent-child-tool'
 const SUBAGENT_CHILD_PROMPT = 'Inspect the child event stream and report the routing result.'
 const SUBAGENT_CHILD_TOOL_MARKER = 'WEWORK_DESKTOP_E2E_SUBAGENT_TOOL'
+const SUBAGENT_CHILD_REASONING = 'WEWORK_DESKTOP_E2E_SUBAGENT_REASONING'
+const SUBAGENT_CHILD_COMMENTARY = 'WEWORK_DESKTOP_E2E_SUBAGENT_COMMENTARY'
 const SUBAGENT_CHILD_TOOL_TIMEOUT_MS = 10_000
 const SUBAGENT_CHILD_STARTUP_TIMEOUT_MS = 60_000
 const SUBAGENT_CHILD_TOOL_START = `${SUBAGENT_CHILD_TOOL_MARKER}_START`
@@ -1284,6 +1288,17 @@ export function createDesktopScenario({
       text: SUBAGENT_CHILD_TOOL_MARKER,
       timeoutMs: subagentToolRenderTimeoutMs,
     })
+    for (const text of [SUBAGENT_CHILD_REASONING, SUBAGENT_CHILD_COMMENTARY]) {
+      await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+        text,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(text),
+        false,
+        'The child process content leaked into the root conversation'
+      )
+    }
     await control.command(
       'waitFor',
       '[data-testid="subagent-conversation-scroll"] [data-testid="tool-block-duration"]',
@@ -1331,6 +1346,12 @@ export function createDesktopScenario({
       text: SUBAGENT_PARENT_COMPLETION,
       timeoutMs: uiTimeoutMs,
     })
+    for (const text of [SUBAGENT_CHILD_REASONING, SUBAGENT_CHILD_COMMENTARY]) {
+      await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+        text,
+        timeoutMs: uiTimeoutMs,
+      })
+    }
     assert.equal(
       (await control.command('getText', '[data-testid="subagent-conversation-scroll"]')).includes(
         SUBAGENT_PARENT_COMPLETION
@@ -1409,6 +1430,17 @@ export function createDesktopScenario({
       text: SUBAGENT_CHILD_PARTIAL,
       timeoutMs: uiTimeoutMs,
     })
+    for (const text of [SUBAGENT_CHILD_REASONING, SUBAGENT_CHILD_COMMENTARY]) {
+      await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+        text,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(text),
+        false,
+        'The restored child process content leaked into the root conversation'
+      )
+    }
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
       text: SUBAGENT_PARENT_COMPLETION,
       timeoutMs: uiTimeoutMs,
@@ -1452,6 +1484,26 @@ export function createDesktopScenario({
       WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
     },
 
+    async prepareApp({ appEnvironment, codexHome }) {
+      const { stdout } = await promisify(execFile)(
+        appEnvironment.CODEX_BINARY_PATH,
+        ['debug', 'models', '--bundled'],
+        { env: appEnvironment, timeout: 10_000, maxBuffer: 8 * 1024 * 1024 }
+      )
+      const catalog = JSON.parse(stdout)
+      const model = catalog.models.find(entry => entry.slug === DEFAULT_MODEL_ID)
+      assert.ok(model, 'The rendering fixture model is missing from the native catalog')
+      // Rendering assertions exercise direct tools with the shared fixture label.
+      model.tool_mode = 'direct'
+      model.use_responses_lite = false
+      model.display_name = DEFAULT_MODEL_LABEL
+      const catalogPath = join(codexHome, 'rendering-model-catalog.json')
+      await writeFile(catalogPath, JSON.stringify(catalog))
+      const configPath = join(codexHome, 'config.toml')
+      const config = await readFile(configPath, 'utf8')
+      await writeFile(configPath, `model_catalog_json = ${JSON.stringify(catalogPath)}\n${config}`)
+    },
+
     async handleHttp(request, response, url) {
       if (!active) return false
       if (
@@ -1487,6 +1539,11 @@ export function createDesktopScenario({
       if (isCollaborationSubagentRequest(request.headers)) {
         resolveSubagentChildRequestStarted()
         if (subagentChildStage === 'initial') {
+          const commentary = streamingEvents(
+            `${responseId}-commentary`,
+            SUBAGENT_CHILD_COMMENTARY,
+            'commentary'
+          )
           const tool = selectShellTool(
             body,
             workspacePath,
@@ -1498,6 +1555,10 @@ export function createDesktopScenario({
           response.end(
             sse([
               responseCreated(responseId),
+              ...reasoningEvents(`${responseId}-reasoning`, SUBAGENT_CHILD_REASONING, 8),
+              ...commentary.start.slice(1),
+              ...textDeltaEvents(commentary.itemId, SUBAGENT_CHILD_COMMENTARY),
+              ...commentary.finish.slice(0, -1),
               ...functionCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool.name, tool.arguments),
               responseCompleted(responseId),
             ])

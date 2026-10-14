@@ -61,7 +61,9 @@ def _require_manager_dispatch(
         (
             execution
             for execution in dispatches
-            if str(_dispatch_context(execution).get("dispatch_id") or "") == dispatch_id
+            if execution.executor_type == "collaboration_group_dispatch"
+            and str(_dispatch_context(execution).get("dispatch_id") or "")
+            == dispatch_id
         ),
         None,
     )
@@ -103,6 +105,7 @@ def apply_collaboration_manager_decision(
     target_status: str,
     reason: str,
     comment: str = "",
+    manager_runtime_task_id: str | None = None,
 ) -> CollaborationManagerDecision:
     """Atomically persist the manager-owned status transition and comment."""
 
@@ -183,6 +186,19 @@ def apply_collaboration_manager_decision(
             status="completed",
         )
         db.add(message)
+        db.flush()
+        from app.services.project_chat.runtime_binding import (
+            bind_collaboration_manager_activity,
+        )
+
+        if manager_runtime_task_id:
+            message.metadata_json = {
+                **message.metadata_json,
+                "manager_runtime_task_id": manager_runtime_task_id,
+            }
+        bind_collaboration_manager_activity(
+            db, dispatch=dispatch, activity=message, item=item
+        )
     db.commit()
     db.refresh(item)
     if message is not None:

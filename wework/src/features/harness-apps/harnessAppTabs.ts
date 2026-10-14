@@ -77,3 +77,20 @@ export function takeHarnessAppContextToken(installationId: string): Promise<stri
 export function storeHarnessAppContextToken(installationId: string, token: string): Promise<void> {
   return invokeDesktopHost<void>('smartApps.storeContextToken', { installationId, token })
 }
+
+export function takeHarnessAppDecisionToken(installationId: string): Promise<string | null> {
+  return invokeDesktopHost<string | null>('smartApps.takeDecisionToken', { installationId })
+}
+
+export function storeHarnessAppDecisionToken(installationId: string, token: string): Promise<void> {
+  return invokeDesktopHost<void>('smartApps.storeDecisionToken', { installationId, token })
+}
+
+/**
+ * Route scope for the decision router. It carries the installation id and a
+ * random suffix so concurrent launches never share a route, and it never
+ * embeds anything the user typed.
+ */
+export function harnessAppDecisionScope(installationId: string): string {
+  return `smart-app:${installationId}:${crypto.randomUUID()}`
+}

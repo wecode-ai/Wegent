@@ -16,9 +16,6 @@ export type ProjectExecutionEnvironmentReadinessKind =
   | "ready"
   | "unassigned"
   | "offline"
-  | "uninitialized"
-  | "preparing"
-  | "error"
   | "unknown";
 
 export interface ProjectExecutionEnvironmentReadiness {
@@ -28,70 +25,19 @@ export interface ProjectExecutionEnvironmentReadiness {
 
 const EMPTY_ENVIRONMENTS: CollaborationExecutionEnvironment[] = [];
 
-function environmentDeviceKey(
-  environment: CollaborationExecutionEnvironment,
-): string {
-  return environment.device_key?.trim() ?? String(environment.device_id ?? "");
-}
-
 export function resolveProjectExecutionEnvironmentReadiness(
-  project: Pick<
-    CollaborationProject,
-    "project_store" | "execution_environment"
-  >,
   environments: CollaborationExecutionEnvironment[],
 ): ProjectExecutionEnvironmentReadiness {
   if (environments.length === 0) {
     return { kind: "unassigned", environments };
   }
 
-  const deviceStates = project.execution_environment?.devices ?? {};
-  const stateFor = (environment: CollaborationExecutionEnvironment) =>
-    deviceStates[environmentDeviceKey(environment)];
-  const hasRunnableEnvironment = environments.some((environment) => {
-    const deviceState = stateFor(environment);
-    return (
-      environment.status === "online" &&
-      deviceState?.status === "ready" &&
-      Boolean(deviceState.workspace_path?.trim())
-    );
-  });
-  if (hasRunnableEnvironment) return { kind: "ready", environments };
-
-  if (
-    environments.some(
-      (environment) =>
-        environment.status === "provisioning" ||
-        stateFor(environment)?.status === "preparing",
-    )
-  ) {
-    return { kind: "preparing", environments };
+  // Directory preparation belongs to each run; it is not a prerequisite for
+  // submitting work to an authorized, online runner.
+  if (environments.some((environment) => environment.status === "online")) {
+    return { kind: "ready", environments };
   }
-  if (
-    environments.some(
-      (environment) =>
-        environment.status === "error" ||
-        stateFor(environment)?.status === "error",
-    )
-  ) {
-    return { kind: "error", environments };
-  }
-
-  const hasPreparedOfflineEnvironment = environments.some((environment) => {
-    const deviceState = stateFor(environment);
-    return (
-      environment.status !== "online" &&
-      deviceState?.status === "ready" &&
-      Boolean(deviceState.workspace_path?.trim())
-    );
-  });
-  if (
-    hasPreparedOfflineEnvironment ||
-    environments.every((environment) => environment.status !== "online")
-  ) {
-    return { kind: "offline", environments };
-  }
-  return { kind: "uninitialized", environments };
+  return { kind: "offline", environments };
 }
 
 export function useProjectExecutionEnvironmentReadiness({
@@ -126,22 +72,11 @@ export function useProjectExecutionEnvironmentReadiness({
     }
     const revision = ++requestRevision.current;
     try {
-      const [latestProject, environments] = await Promise.all([
-        api.projects.get(project.id),
-        api.projects.listExecutionEnvironments(project.id),
-      ]);
-      const readinessProject =
-        latestProject.version > project.version
-          ? latestProject
-          : latestProject.version < project.version
-            ? project
-            : (latestProject.execution_environment ?? null)
-              ? latestProject
-              : project;
-      const nextReadiness = resolveProjectExecutionEnvironmentReadiness(
-        readinessProject,
-        environments,
+      const environments = await api.projects.listExecutionEnvironments(
+        project.id,
       );
+      const nextReadiness =
+        resolveProjectExecutionEnvironmentReadiness(environments);
       if (revision === requestRevision.current) {
         setReadiness(nextReadiness);
       }
@@ -168,10 +103,7 @@ export function useProjectExecutionEnvironmentReadiness({
     readinessProjectId.current = project.id;
     setReadiness((current) =>
       sameProject && current.environments.length > 0
-        ? resolveProjectExecutionEnvironmentReadiness(
-            project,
-            current.environments,
-          )
+        ? resolveProjectExecutionEnvironmentReadiness(current.environments)
         : { kind: "loading", environments: EMPTY_ENVIRONMENTS },
     );
     void refresh();

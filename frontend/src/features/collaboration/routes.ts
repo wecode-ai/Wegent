@@ -13,9 +13,7 @@ const ROOT_PATHS: Record<CollaborationPlatformRootView, string> = {
   agents: '/collaboration/agents',
   teams: '/collaboration/teams',
   devices: '/collaboration/devices',
-  'my-work': '/collaboration/my-work',
   inbox: '/collaboration/inbox',
-  runs: '/collaboration/runs',
 }
 
 export function collaborationRootViewForPath(

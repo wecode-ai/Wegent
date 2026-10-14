@@ -21,6 +21,7 @@ const cancelRuntimeTask = vi.fn()
 const bindTask = vi.fn()
 const updateLoopItem = vi.fn()
 const getLoopItem = vi.fn()
+const markLoopItemRead = vi.fn()
 const approveLoopItemRun = vi.fn()
 const rejectLoopItemRun = vi.fn()
 const cancelCloudAutomationRun = vi.fn()
@@ -78,6 +79,7 @@ const workbenchServices = {
     bindTask,
     updateLoopItem,
     getLoopItem,
+    markLoopItemRead,
     approveLoopItemRun,
     rejectLoopItemRun,
     unbindTask: vi.fn(),
@@ -217,6 +219,7 @@ const agentMessage: ProjectChatMessage = {
 
 describe('TaskActivityView', () => {
   beforeEach(() => {
+    HTMLElement.prototype.scrollTo = vi.fn()
     paneExecution.running = false
     clearRuntimeConversationCacheForTests()
     replyQueueStoreMock.value = new TaskReplyQueueStore({
@@ -257,6 +260,7 @@ describe('TaskActivityView', () => {
     bindTask.mockReset()
     updateLoopItem.mockReset()
     getLoopItem.mockReset()
+    markLoopItemRead.mockReset()
     approveLoopItemRun.mockReset()
     rejectLoopItemRun.mockReset()
     cancelCloudAutomationRun.mockReset()
@@ -1278,6 +1282,59 @@ describe('TaskActivityView', () => {
       )
     )
   }, 10_000)
+
+  it('persists the visible Issue activity cursor without reading offscreen comments', async () => {
+    const task = {
+      id: 'WEG-1',
+      title: 'Unread activities',
+      status: 'inbox',
+      version: 1,
+      is_unread: true,
+      activity_read_sequence: 1,
+    }
+    // Content revisions are acknowledged independently from the activity cursor.
+    const updated = { ...task, is_unread: false, activity_read_sequence: 2 }
+    markLoopItemRead.mockResolvedValue(updated)
+    const onTaskUpdated = vi.fn()
+    const messages = [1, 2, 3].map(sequence => ({
+      ...userMessage,
+      sequenceNumber: sequence,
+      messageId: `read-message-${sequence}`,
+      content: `Activity ${sequence}`,
+    }))
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages, latestSequence: 3, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(),
+      startAgentResponse: vi.fn(),
+      failAgentResponse: vi.fn(),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      const sequence = Number(this.getAttribute('data-activity-sequence'))
+      const top = sequence === 3 ? 500 : 0
+      const height = sequence ? 100 : 400
+      return { top, bottom: top + height, height, left: 0, right: 400, width: 400 } as DOMRect
+    })
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={task as never}
+        onTaskUpdated={onTaskUpdated}
+        statusHistory={[{ from_status: '', to_status: 'inbox', at: '2026-10-13T00:00:00Z' }]}
+        issueTimeline
+        linear
+      />
+    )
+    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2))
+    expect(markLoopItemRead).not.toHaveBeenCalledWith(task.id, 3)
+    expect(onTaskUpdated).toHaveBeenCalledWith(updated)
+  })
 
   it('shows parent comments from oldest to newest without scrolling on load', async () => {
     const older = {

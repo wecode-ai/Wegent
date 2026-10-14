@@ -278,6 +278,56 @@ describe("shared Issue threads", () => {
     ).toBeNull();
   });
 
+  it("renders a manager answer inside the human reply thread", () => {
+    const reply = {
+      ...message,
+      messageId: "human-reply",
+      rootMessageId: message.messageId,
+      replyToMessageId: message.messageId,
+      sender: { type: "user" as const, id: "7", name: "Member" },
+      content: "Please explain the decision",
+      sequenceNumber: 2,
+    };
+    const answer = {
+      ...message,
+      messageId: "manager-answer",
+      rootMessageId: message.messageId,
+      replyToMessageId: reply.messageId,
+      content: "The manager continued the original conversation",
+      metadata: { dispatch_role: "manager", run_status: "completed" },
+      sequenceNumber: 3,
+    };
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              metadata: {
+                dispatch_role: "manager",
+                activity_type: "manager_status_comment",
+              },
+            },
+            replies: [reply, answer],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+    expect(
+      container.querySelector('[data-testid="collaboration-chat-replies-root"]')
+        ?.textContent,
+    ).toContain(answer.content);
+    expect(
+      container.querySelectorAll(
+        '[data-testid="collaboration-chat-card-root"]',
+      ),
+    ).toHaveLength(1);
+  });
+
   it("renders an optional manager status comment as comment content", () => {
     act(() =>
       root.render(

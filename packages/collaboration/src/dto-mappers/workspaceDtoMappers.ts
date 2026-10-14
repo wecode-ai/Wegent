@@ -342,12 +342,14 @@ export function mapCollaborationExecutionEnvironmentDto(
     row.device_id ?? row.deviceId ?? row.resource_id ?? row.resourceId,
   );
   const deviceKey = nullableString(row.device_key ?? row.deviceKey);
+  const appDeviceId = nullableString(row.app_device_id ?? row.appDeviceId);
   const ownerType =
     (row.owner_type ?? row.ownerType) === "workspace" ? "workspace" : "user";
   return {
     id: String(resourceId ?? deviceId ?? deviceKey ?? row.id),
     ...(deviceId == null ? {} : { device_id: deviceId }),
     ...(deviceKey == null ? {} : { device_key: deviceKey }),
+    ...(appDeviceId == null ? {} : { app_device_id: appDeviceId }),
     name: String(row.name ?? ""),
     kind:
       (row.kind ?? row.environment_type ?? row.environmentType) === "cloud_host"

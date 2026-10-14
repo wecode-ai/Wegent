@@ -13,7 +13,9 @@ const mocks = vi.hoisted(() => ({
   openTab: vi.fn(),
   register: vi.fn(),
   takeContextToken: vi.fn(),
+  takeDecisionToken: vi.fn(),
   takeProxyToken: vi.fn(),
+  unregisterDecision: vi.fn(),
   unregister: vi.fn(),
   unregisterContext: vi.fn(),
   unregisterProxy: vi.fn(),
@@ -30,6 +32,7 @@ vi.mock('./harnessAppTabs', async importOriginal => {
     openHarnessAppTab: mocks.openTab,
     registerHarnessAppTab: mocks.register,
     takeHarnessAppContextToken: mocks.takeContextToken,
+    takeHarnessAppDecisionToken: mocks.takeDecisionToken,
     takeHarnessAppProxyToken: mocks.takeProxyToken,
     unregisterHarnessAppTab: mocks.unregister,
   }
@@ -48,6 +51,9 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
     projectChat: { models: [model] },
     services: {
+      localDecisionRouterApi: {
+        unregister: mocks.unregisterDecision,
+      },
       localHarnessModelApi: {
         unregisterProxy: mocks.unregisterProxy,
         unregisterContext: mocks.unregisterContext,
@@ -110,7 +116,9 @@ describe('useHarnessAppManagement', () => {
     mocks.openTab.mockReset()
     mocks.register.mockReset()
     mocks.takeContextToken.mockReset().mockResolvedValue(null)
+    mocks.takeDecisionToken.mockReset().mockResolvedValue(null)
     mocks.takeProxyToken.mockReset().mockResolvedValue(null)
+    mocks.unregisterDecision.mockReset().mockResolvedValue(undefined)
     mocks.unregister.mockReset()
     mocks.unregisterContext.mockReset()
     mocks.unregisterProxy.mockReset()
@@ -167,6 +175,35 @@ describe('useHarnessAppManagement', () => {
     })
 
     expect(mocks.api.update).toHaveBeenCalledWith(installed.id, { modelKey: 'next-model' })
+    expect(onRefresh).toHaveBeenCalled()
+  })
+
+  test('releases the decision route when the app stops', async () => {
+    mocks.takeDecisionToken.mockResolvedValue('decision-token')
+    const { result } = renderManagement([running])
+
+    await act(async () => {
+      expect(await result.current.stop(running)).toBe(true)
+    })
+
+    expect(mocks.takeDecisionToken).toHaveBeenCalledWith(running.id)
+    expect(mocks.unregisterDecision).toHaveBeenCalledWith('decision-token')
+  })
+
+  test('still releases the other routes when one unregister fails', async () => {
+    mocks.takeProxyToken.mockResolvedValue('proxy-token')
+    mocks.takeContextToken.mockResolvedValue('context-token')
+    mocks.takeDecisionToken.mockResolvedValue('decision-token')
+    mocks.unregisterProxy.mockRejectedValue(new Error('proxy route already gone'))
+    const { result } = renderManagement([running])
+
+    await act(async () => {
+      expect(await result.current.stop(running)).toBe(true)
+    })
+
+    expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
+    expect(mocks.unregisterContext).toHaveBeenCalledWith('context-token')
+    expect(mocks.unregisterDecision).toHaveBeenCalledWith('decision-token')
     expect(onRefresh).toHaveBeenCalled()
   })
 })

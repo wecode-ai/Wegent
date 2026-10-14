@@ -13,7 +13,12 @@ fn rules(project: &LoopItem) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-pub(super) fn validate_rules(value: &Value) -> Result<(), TaskRuntimeError> {
+pub(super) fn validate_rules(
+    connection: &Connection,
+    project_id: &str,
+    metadata: &Value,
+    value: &Value,
+) -> Result<(), TaskRuntimeError> {
     let rules = value
         .as_array()
         .ok_or_else(|| TaskRuntimeError::Invalid("automation rules must be an array".into()))?;
@@ -30,6 +35,32 @@ pub(super) fn validate_rules(value: &Value) -> Result<(), TaskRuntimeError> {
             return Err(TaskRuntimeError::Invalid(
                 "unsupported local automation target".into(),
             ));
+        }
+        if rule["enabled"] != false && text(rule, "targetKind") == "agent" {
+            let agent = get_item_from(connection, text(rule, "targetId"), "chat_agent")?
+                .ok_or_else(|| {
+                    TaskRuntimeError::Invalid("Automation agent is unavailable".into())
+                })?;
+            super::super::runner_routing::validate_automation(
+                &agent.metadata,
+                &rule["runnerSelection"],
+            )?;
+        }
+        if rule["enabled"] != false && text(rule, "targetKind") == "collaboration_group" {
+            let group = metadata["collaboration_groups"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|group| group["id"] == rule["targetId"])
+                .ok_or_else(|| {
+                    TaskRuntimeError::Invalid("Automation group is unavailable".into())
+                })?;
+            for agent in runner_dispatch::group_agents(connection, project_id, group)? {
+                super::super::runner_routing::validate_automation(
+                    &agent.metadata,
+                    &rule["runnerSelection"],
+                )?;
+            }
         }
         match text(rule, "triggerType") {
             "schedule" => {
@@ -210,7 +241,7 @@ fn dispatch(
                 target_id,
                 &agent,
                 task.priority.as_deref().unwrap_or("none"),
-                json!({"message":message, "automation_run_id":run_id}),
+                json!({"message":message, "automation_run_id":run_id, "runnerSelection": rule["runnerSelection"]}),
             )?;
             connection.execute(
                 "UPDATE loop_items
@@ -219,6 +250,26 @@ fn dispatch(
                  WHERE id=?3",
                 params![target_id, now(), task_id],
             )?;
+        }
+        "collaboration_group" => {
+            let group = collaboration_group(project, target_id)?;
+            let execution = dispatch_collaboration_group_assignment(
+                connection,
+                CollaborationGroupExecutionInput {
+                    item_id: task_id,
+                    project_id: &project.id,
+                    group: &group,
+                    issue_title: task.title.as_deref().unwrap_or_default(),
+                    issue_description: &task.description,
+                    issue_status: task.status.as_deref(),
+                    priority: task.priority.as_deref().unwrap_or("none"),
+                    payload: json!({"automation_run_id":run_id,"runnerSelection":rule["runnerSelection"]}),
+                },
+            )?;
+            let mut metadata = task.metadata.clone();
+            metadata["collaboration_group"] = group;
+            connection.execute("UPDATE loop_items SET metadata=?1, assignee_agent_id=NULL, assignee_user_id=NULL, status=?2, version=version+1, updated_at=?3 WHERE id=?4",
+                params![metadata.to_string(), if execution.is_some() {"in_progress"} else {"todo"}, now(), task_id])?;
         }
         _ => {
             return Err(TaskRuntimeError::Invalid(

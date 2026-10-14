@@ -255,7 +255,7 @@
       "prompt_placeholder": "For example: You are a product analysis assistant who reviews requirements, identifies risks, and recommends next steps.",
       "prompt_help": "Describe its role, tasks, constraints, and response style.",
       "advanced_title": "Advanced configuration",
-      "advanced_description": "Agent description, entry points, coding repository, and interaction copy",
+      "advanced_description": "Collaboration mode, entry points, and interaction settings",
       "agent_description_label": "Agent description",
       "agent_description_placeholder": "Briefly describe this agent",
       "name_required": "Enter an agent name",

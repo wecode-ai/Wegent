@@ -12,8 +12,9 @@ import {
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCloudAgentModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
@@ -32,6 +33,10 @@ const FIRST_TASK = `远程采集运行证据-${process.pid}`
 const SECOND_TASK = `远程独立复核结论-${process.pid}`
 const THIRD_TASK = `远程补充最终验收证据-${process.pid}`
 const MARKER = `REMOTE_GROUP_COORDINATE_${process.pid}`
+const MANAGER_REPLY = `${MARKER} 请负责人继续说明最终结论。`
+const MANAGER_REPLY_RESULT = '负责人已收到你的回复，并沿用原协作小组会话继续回答。'
+const MEMBER_REPLY = `${MARKER} 请采集成员继续检查 CPU。`
+const MEMBER_REPLY_RESULT = '采集成员已收到你的回复，并沿用原成员会话继续回答 CPU 情况。'
 const MANAGER_REQUEST_CONTEXT = 'You are the manager for one project Issue.'
 const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，全部返回后由负责人继续决策。`
 const CALLS = {
@@ -42,6 +47,20 @@ const CALLS = {
 
 function scoped(selector) {
   return `${CONTENT} ${selector}`
+}
+
+async function replyToActivity(control, cardTestId, text) {
+  const messageId = cardTestId.slice('cloud-task-activity-card-'.length)
+  await control.command('scrollIntoView', scoped(`[data-testid="${cardTestId}"]`))
+  await control.command(
+    'click',
+    scoped(`[data-testid="cloud-task-activity-reply-toggle-${messageId}"]`)
+  )
+  const composer = scoped('[data-testid="issue-reply-composer"]')
+  await control.command('fill', `${composer} [data-testid="cloud-task-activity-composer"]`, {
+    value: text,
+  })
+  await control.command('clickWhenEnabled', `${composer} [data-testid="send-message-button"]`)
 }
 
 function writeEvents(response, responseId, events) {
@@ -78,27 +97,6 @@ async function waitForValue(load, predicate, message, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
-}
-
-async function selectOptionByLabel(control, selector, label, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let options = []
-  while (Date.now() < deadline) {
-    const count = Number(await control.command('getElementCount', `${selector} option`))
-    options = []
-    for (let index = 1; index <= count; index += 1) {
-      const option = `${selector} option:nth-child(${index})`
-      const optionLabel = await control.command('getText', option)
-      const value = await control.command('getAttribute', option, { value: 'value' })
-      options.push({ label: optionLabel, value })
-      if (optionLabel === label) {
-        await control.command('select', selector, { value })
-        return
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`Option ${label} was not available in ${selector}: ${JSON.stringify(options)}`)
 }
 
 function managerToolEvents(body, toolName, toolCallId, argumentsValue) {
@@ -210,12 +208,8 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
   )
 }
 
-async function addAgent(control, request, projectId, name, prompt, timeoutMs) {
-  await control.command(
-    'click',
-    scoped('[data-testid="collaboration-project-settings-participants"]')
-  )
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-agents"]'))
+async function addAgent(control, request, projectId, name, prompt, timeoutMs, environmentId) {
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
     timeoutMs,
   })
@@ -225,7 +219,7 @@ async function addAgent(control, request, projectId, name, prompt, timeoutMs) {
   await control.command('fill', '[data-testid="wework-agent-display-name"]', {
     value: name,
   })
-  await selectOptionByLabel(control, '[data-testid="wework-agent-model"]', MODEL, timeoutMs)
+  await selectCloudAgentModel(control, request, MODEL, timeoutMs, environmentId)
   await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
     value: prompt,
   })
@@ -254,7 +248,7 @@ async function addAgent(control, request, projectId, name, prompt, timeoutMs) {
 }
 
 async function createCoordinateGroup(control, request, projectId, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-groups"]'))
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-groups"]'))
   await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
   await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
     timeoutMs,
@@ -484,6 +478,8 @@ export async function createDesktopScenario({
   let collectorAgentId = ''
   let reviewerAgentId = ''
   let managerRuns = 0
+  let managerReplyRequests = 0
+  let memberReplyRequests = 0
   let childRequests = 0
   let childCompletions = 0
   let releaseFirstChild
@@ -553,6 +549,12 @@ export async function createDesktopScenario({
       const requestRole = collaborationRequestRole(body)
       assert.ok(requestRole, '协作调度请求没有携带明确的 manager/member 请求上下文')
       if (requestRole === 'member') {
+        if (requestText.includes(MEMBER_REPLY)) {
+          memberReplyRequests += 1
+          assert.ok(requestText.includes(FIRST_TASK), '成员回复丢失了原分配任务上下文')
+          writeEvents(response, responseId, [assistantMessage(MEMBER_REPLY_RESULT)])
+          return true
+        }
         childRequests += 1
         const childOrdinal = requestText.includes(FIRST_TASK)
           ? 1
@@ -583,6 +585,12 @@ export async function createDesktopScenario({
       }
 
       assert.equal(requestRole, 'manager', '非成员请求没有携带负责人请求上下文')
+      if (['complete', 'replied'].includes(parentStage) && requestText.includes(MANAGER_REPLY)) {
+        managerReplyRequests += 1
+        parentStage = 'replied'
+        writeEvents(response, responseId, [assistantMessage(MANAGER_REPLY_RESULT)])
+        return true
+      }
       if (requestContainsToolOutput(body, CALLS.updateStatus)) {
         parentStage = 'complete'
         writeEvents(response, responseId, [
@@ -707,7 +715,7 @@ export async function createDesktopScenario({
       })
       await selectCollaborationDomain(control, CONTENT, 'cloud')
       project = await createWorkspaceAndProject(control, request, uiTimeoutMs)
-      await initializeFirstProjectExecutionEnvironment(
+      await configureFirstProjectExecutionEnvironment(
         control,
         CONTENT,
         modelResponseTimeoutMs,
@@ -720,7 +728,8 @@ export async function createDesktopScenario({
         project.id,
         LEADER,
         `${MARKER}。你是负责人，每轮必须通过 wework_space.submit_workflow_plan 分配独立任务；Executor 在整轮 barrier 后启动新的负责人运行，最终由你显式调用 update_issue_status。`,
-        uiTimeoutMs
+        uiTimeoutMs,
+        remoteDevice.id
       )
       const collector = await addAgent(
         control,
@@ -728,7 +737,8 @@ export async function createDesktopScenario({
         project.id,
         COLLECTOR,
         `${MARKER}。你是执行成员，只完成负责人分配的采集任务并返回证据。`,
-        uiTimeoutMs
+        uiTimeoutMs,
+        remoteDevice.id
       )
       const reviewer = await addAgent(
         control,
@@ -736,7 +746,8 @@ export async function createDesktopScenario({
         project.id,
         REVIEWER,
         `${MARKER}。你是执行成员，只完成负责人分配的复核任务并返回证据。`,
-        uiTimeoutMs
+        uiTimeoutMs,
+        remoteDevice.id
       )
       const group = await createCoordinateGroup(control, request, project.id, uiTimeoutMs)
       assert.equal(String(group.leaderId), String(collaborationGroupAgentId(leader)))
@@ -886,6 +897,21 @@ export async function createDesktopScenario({
       assert.ok(dispatch.runtimeTaskId, '远程协作根 execution 缺少 Runtime Task')
       const initialManagerTaskId = `${dispatch.runtimeTaskId}-manager-initial`
       const runtimeTask = await cloudEnvironment.runtimeTask(initialManagerTaskId)
+      const transcript = await request('/api/runtime-work/transcript', {
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: runtimeDeviceId(dispatch),
+          taskId: dispatch.runtimeTaskId,
+          projectSession: { projectId: String(project.id), issueId: rootIssue.id },
+        }),
+      })
+      assert.equal(
+        transcript.taskId,
+        initialManagerTaskId,
+        'Planning details must read the manager session'
+      )
+      assert.equal(transcript.runtime, 'codex')
+      assert.ok(Array.isArray(transcript.turns), 'Planning details must contain canonical turns')
       assert.ok(runtimeTask, `Runtime Task ${initialManagerTaskId} 未由真实 Executor 持久化`)
 
       await captureScreenshot(
@@ -893,6 +919,88 @@ export async function createDesktopScenario({
         'remote-group-coordinate-04-manager-status-decision.png',
         'body'
       )
+
+      const decisionCard = await waitForTestIdByText(
+        control,
+        CONTENT,
+        'cloud-task-activity-card-',
+        updateStatusArguments().comment,
+        uiTimeoutMs
+      )
+      const managerTaskId = `${initialManagerTaskId}-manager-after-${MARKER}-round-1-manager-after-${MARKER}-round-2`
+      const bindingsBeforeReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
+      assert.ok(
+        bindingsBeforeReply.some(binding => binding.task_id === managerTaskId),
+        '负责人最终动态没有绑定实际等待回复的会话'
+      )
+      await replyToActivity(control, decisionCard, MANAGER_REPLY)
+      await waitForActivityText(control, MANAGER_REPLY_RESULT, modelResponseTimeoutMs)
+      const continuation = await waitForValue(
+        () => request(`/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`),
+        response =>
+          response.items.find(
+            candidate =>
+              issueExecution(candidate, rootIssue.id) &&
+              candidate.id !== dispatch.id &&
+              candidate.runtimeTaskId === managerTaskId &&
+              terminalExecution(candidate)
+          ),
+        '回复没有通过真实队列完成原负责人会话的续聊',
+        modelResponseTimeoutMs
+      )
+      assert.equal(runtimeDeviceId(continuation), REMOTE_DOCKER_DEVICE_ID)
+      assert.equal(managerReplyRequests, 1, '负责人回复被重复执行')
+      const bindingsAfterReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
+      assert.deepEqual(
+        bindingsAfterReply.map(binding => [binding.device_id, binding.task_id]).sort(),
+        bindingsBeforeReply.map(binding => [binding.device_id, binding.task_id]).sort(),
+        '负责人回复创建了替代会话'
+      )
+      await captureScreenshot(control, 'remote-group-coordinate-05-manager-reply.png', 'body')
+
+      const memberCard = await waitForTestIdByText(
+        control,
+        CONTENT,
+        'cloud-task-activity-card-',
+        `${FIRST_TASK} 已完成：证据完整。`,
+        uiTimeoutMs
+      )
+      const memberTaskId = `${dispatch.runtimeTaskId}-member-${MARKER}-round-1-${MARKER}-assignment-1`
+      const memberBinding = bindingsAfterReply.find(binding => binding.task_id === memberTaskId)
+      assert.ok(memberBinding, '成员动态没有绑定实际成员会话')
+      const memberTranscript = await request('/api/runtime-work/transcript', {
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: memberBinding.device_id,
+          taskId: memberTaskId,
+          projectSession: { projectId: String(project.id), issueId: rootIssue.id },
+        }),
+      })
+      assert.equal(memberTranscript.taskId, memberTaskId, '成员详情指向了其他会话')
+      await replyToActivity(control, memberCard, MEMBER_REPLY)
+      await waitForActivityText(control, MEMBER_REPLY_RESULT, modelResponseTimeoutMs)
+      const memberContinuation = await waitForValue(
+        () => request(`/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`),
+        response =>
+          response.items.find(
+            candidate =>
+              issueExecution(candidate, rootIssue.id) &&
+              candidate.runtimeTaskId === memberTaskId &&
+              terminalExecution(candidate)
+          ),
+        '成员回复没有通过真实队列完成原成员会话的续聊',
+        modelResponseTimeoutMs
+      )
+      assert.equal(runtimeDeviceId(memberContinuation), REMOTE_DOCKER_DEVICE_ID)
+      assert.equal(memberReplyRequests, 1, '成员回复被重复执行')
+      assert.equal(childRequests, 3, '成员回复创建了新的协作分配任务')
+      const bindingsAfterMemberReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
+      assert.deepEqual(
+        bindingsAfterMemberReply.map(binding => [binding.device_id, binding.task_id]).sort(),
+        bindingsAfterReply.map(binding => [binding.device_id, binding.task_id]).sort(),
+        '成员回复创建了替代会话'
+      )
+      await captureScreenshot(control, 'remote-group-coordinate-06-member-reply.png', 'body')
     },
 
     async cleanup() {
@@ -909,6 +1017,8 @@ export async function createDesktopScenario({
         group: GROUP,
         issue: ISSUE,
         managerRuns,
+        managerReplyRequests,
+        memberReplyRequests,
         parentStage,
         projectId: project?.id ?? null,
         remoteDeviceId: remoteDevice?.device_id ?? null,

@@ -17,14 +17,18 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.auth_utils import (
-    API_KEY_PREFIX,
     is_api_key,
     verify_api_key,
     verify_jwt_token_with_db,
     verify_token_flexible,
 )
 from app.core.security import create_access_token
-from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE, APIKey
+from app.models.api_key import (
+    KEY_TYPE_PERSONAL,
+    KEY_TYPE_PLUGIN_RELEASE,
+    KEY_TYPE_SERVICE,
+    APIKey,
+)
 from app.models.user import User
 
 
@@ -131,22 +135,24 @@ class TestVerifyApiKey:
 
         assert user is None
 
-    def test_verify_service_key_rejected(self, test_db: Session, test_user: User):
-        """Test verifying a service key is rejected (only personal keys allowed)"""
-        # Create a service API key
-        raw_key = "wg-service-key-12345"
+    @pytest.mark.parametrize("key_type", [KEY_TYPE_SERVICE, KEY_TYPE_PLUGIN_RELEASE])
+    def test_verify_non_personal_key_rejected(
+        self, test_db: Session, test_user: User, key_type: str
+    ) -> None:
+        """Executor authentication continues to accept only personal keys."""
+        raw_key = "wg-non-personal-key-12345"
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        service_key = APIKey(
+        api_key_record = APIKey(
             user_id=test_user.id,
             key_hash=key_hash,
-            key_prefix="wg-service...",
-            name="Service API Key",
-            key_type=KEY_TYPE_SERVICE,  # Service key type
-            description="Service API key for testing",
+            key_prefix="wg-nonpers...",
+            name="Non-personal API Key",
+            key_type=key_type,
+            description="Non-personal API key for testing",
             expires_at=datetime.utcnow() + timedelta(days=365),
             is_active=True,
         )
-        test_db.add(service_key)
+        test_db.add(api_key_record)
         test_db.commit()
 
         user = verify_api_key(test_db, raw_key)

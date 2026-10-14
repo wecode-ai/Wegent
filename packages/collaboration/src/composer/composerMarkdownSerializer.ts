@@ -9,29 +9,57 @@ interface SerializedDocument {
 
 const cache = new WeakMap<PMNode, SerializedDocument>();
 
+interface InlineMarkSpan {
+  source: Mark;
+  mark: Mark;
+  from: number;
+  to: number;
+}
+
+// Each contiguous span is scanned and normalized only once per inline fragment.
+function inlineMarks(
+  fragment: Fragment,
+  index: number,
+  spans: Map<string, InlineMarkSpan>,
+): readonly Mark[] {
+  return (
+    fragment
+      .child(index)
+      .marks.filter((mark) => mark.type.name !== "composer_mention_separator")
+      .map((mark) => {
+        const cached = spans.get(mark.type.name);
+        if (cached && index < cached.to && cached.source.eq(mark))
+          return cached;
+        let to = index + 1;
+        while (
+          to < fragment.childCount &&
+          mark.isInSet(fragment.child(to).marks)
+        )
+          to++;
+        const span = { source: mark, mark, from: index, to };
+        span.mark = normalizeAutolink(fragment, span);
+        spans.set(mark.type.name, span);
+        return span;
+      })
+      // Keep wider formatting spans outside nested marks after normalization.
+      .sort((left, right) => left.from - right.from || right.to - left.to)
+      .map(({ mark }) => mark)
+  );
+}
+
 // Bare URLs stay lossless until neighboring text needs an explicit link boundary.
-function inlineMarks(fragment: Fragment, index: number): readonly Mark[] {
-  return fragment
-    .child(index)
-    .marks.filter((mark) => mark.type.name !== "composer_mention_separator")
-    .map((mark) => {
-      if (mark.type.name !== "link" || !mark.attrs.autolink) return mark;
-      let from = index;
-      let to = index + 1;
-      while (from > 0 && mark.isInSet(fragment.child(from - 1).marks)) from--;
-      while (to < fragment.childCount && mark.isInSet(fragment.child(to).marks))
-        to++;
-      let label = "";
-      for (let i = from; i < to; i++) label += fragment.child(i).textContent;
-      const before = from > 0 ? fragment.child(from - 1).textContent : "";
-      const after =
-        to < fragment.childCount ? fragment.child(to).textContent : "";
-      return /\S$/.test(before) ||
-        /^\S/.test(after) ||
-        label !== mark.attrs.href
-        ? mark.type.create({ ...mark.attrs, autolink: false })
-        : mark;
-    });
+function normalizeAutolink(
+  fragment: Fragment,
+  { mark, from, to }: InlineMarkSpan,
+): Mark {
+  if (mark.type.name !== "link" || !mark.attrs.autolink) return mark;
+  let label = "";
+  for (let i = from; i < to; i++) label += fragment.child(i).textContent;
+  const before = from > 0 ? fragment.child(from - 1).textContent : "";
+  const after = to < fragment.childCount ? fragment.child(to).textContent : "";
+  return /\S$/.test(before) || /^\S/.test(after) || label !== mark.attrs.href
+    ? mark.type.create({ ...mark.attrs, autolink: false })
+    : mark;
 }
 
 export function serializeMarkdownDocument(doc: PMNode): SerializedDocument {
@@ -234,9 +262,10 @@ class MarkdownWriter {
 
   inline(fragment: Fragment, start: number, inCell: boolean, escape: boolean) {
     let active: readonly Mark[] = [];
+    const spans = new Map<string, InlineMarkSpan>();
     this.at(start);
     fragment.forEach((node, offset, index) => {
-      const marks = inlineMarks(fragment, index);
+      const marks = inlineMarks(fragment, index, spans);
       let shared = 0;
       while (
         shared < active.length &&

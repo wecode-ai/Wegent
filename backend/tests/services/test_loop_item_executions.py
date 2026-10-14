@@ -1370,6 +1370,7 @@ def test_runtime_retry_uses_a_new_execution_attempt(
     test_db.add(run_owner)
     test_db.commit()
     test_db.refresh(run_owner)
+    _ensure_device(test_db, run_owner, "cloud-device-1")
     original = _make_execution(
         test_db, _make_item(test_db, project, test_user), bot, test_user
     )
@@ -2637,31 +2638,16 @@ def test_project_execution_environment_reaches_runtime_request(
     payload = request.model_dump(by_alias=True, exclude_none=True)
 
     assert payload["execution"] == {
-        "workspace": {
-            "source": "git_worktree",
-            "repositories": [
-                {
-                    "name": "Wegent",
-                    "url": "https://github.com/wecode-ai/Wegent.git",
-                    "ref": "main",
-                    "path": "wegent",
-                    "primary": True,
-                },
-                {
-                    "name": "SDK",
-                    "url": "https://github.com/example/sdk.git",
-                    "ref": "v2",
-                    "path": "deps/sdk",
-                    "primary": False,
-                },
-            ],
-        },
-        "setup": {
-            "steps": [
+        "workspace": {"source": "git_worktree"},
+        "environment": {
+            "environmentId": f"project-{project.id}",
+            "repositories": metadata["execution_environment"]["repositories"],
+            "setupSteps": [
                 {"command": "corepack enable", "workingDirectory": "wegent"},
                 {"command": "pnpm install", "workingDirectory": "wegent"},
             ],
             "fingerprint": "environment-v1",
+            "workspacePath": "/workspace/environments/project-1",
         },
     }
     assert payload["origin"]["executionEnvironment"] == {
@@ -2707,9 +2693,8 @@ async def test_app_prepared_environment_only_reaches_its_own_installation(
     """Every Wework installation registers as ``local-device``, so the prepared
     worktree can only be matched by the record route queue rows persist.
 
-    The environment state keeps one entry per device route id
-    (``app-record-<id>``); a task landing on any other installation fails the
-    preflight instead of silently ignoring the prepared worktree.
+    Another installation receives preparation instructions without inheriting
+    this installation's prepared path.
     """
 
     monkeypatch.setattr(
@@ -2786,11 +2771,7 @@ async def test_app_prepared_environment_only_reaches_its_own_installation(
         f"app-record-{devices[1].id}",
         SHARED_APP_DEVICE_ID,
     ):
-        with pytest.raises(
-            WeworkExecutionProfileError,
-            match="Project execution environment is not ready",
-        ):
-            workspace_path_for(other_device_id)
+        assert workspace_path_for(other_device_id) == ""
 
 
 def test_claude_code_project_agent_compiles_executor_payload(
@@ -3245,6 +3226,74 @@ def test_open_execution_activity_is_idempotent_and_opens_exactly_one_message(
     assert messages[0].metadata_json["workflow_stage_id"] == "evidence"
     assert messages[0].metadata_json["coordination_round_id"] == "round-1"
     assert messages[0].runtime_task_id == f"codex-queue-{claimed.id}"
+
+
+@pytest.mark.parametrize("terminal_status", ["completed", "failed"])
+def test_group_dispatch_binds_and_settles_its_initial_manager_session(
+    test_db: Session, test_user: User, terminal_status: str
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    execution.execution_payload = json.dumps(
+        {
+            **execution.execution_intent,
+            "runtime_selection": {
+                **execution.runtime_selection,
+                "executor_kind": "collaboration_group_dispatch",
+            },
+            "origin_context": {
+                **execution.runtime_origin_context,
+                "manager_agent_id": bot.id,
+                "dispatch_role": "manager",
+            },
+        }
+    )
+    test_db.commit()
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None
+    dispatch_task_id = runtime_task_id_for(claimed.id)
+    manager_task_id = f"{dispatch_task_id}-manager-initial"
+
+    loop_item_execution_service.mark_start_requested(
+        test_db, execution_ids=[claimed.id]
+    )
+    first = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+    second = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+
+    binding = test_db.query(LoopItemTaskBinding).filter_by(loop_item_id=item.id).one()
+    activity = test_db.query(ProjectChatMessage).filter_by(task_id=item.id).one()
+    assert first is not None and second is not None
+    assert first.message_id == second.message_id
+    assert claimed.runtime_task_id == dispatch_task_id
+    assert binding.task_id == manager_task_id
+    assert activity.runtime_task_id == manager_task_id
+    assert activity.metadata_json["dispatch_role"] == "manager"
+
+    if terminal_status == "completed":
+        loop_item_execution_service.complete(
+            test_db, execution_id=claimed.id, note="Planning and group work finished"
+        )
+    else:
+        loop_item_execution_service.fail(
+            test_db, execution_id=claimed.id, error="Group work failed", requeue=False
+        )
+    test_db.refresh(activity)
+    assert activity.status == terminal_status
+    assert activity.metadata_json["run_status"] == terminal_status
+    assert activity.runtime_task_id == manager_task_id
 
 
 def test_open_execution_activity_never_revives_a_terminal_execution(

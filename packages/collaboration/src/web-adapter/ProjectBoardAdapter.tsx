@@ -318,6 +318,7 @@ export function ProjectBoardAdapter({
             <ProjectBoardDragOverlay>
               <IssueBoardCardContent
                 item={activeItem}
+                unread={false}
                 reference={`${project.project_key}-${activeItem.sequence_number}`}
                 display={{
                   showAssignee: display.show_assignee,
@@ -418,6 +419,7 @@ export function ProjectBoardAdapter({
           const cardProps = {
             translate,
             item: issue,
+            unread: false,
             reference: `${project.project_key}-${issue.sequence_number}`,
             labels: cardLabels,
             display: issueDisplay,
