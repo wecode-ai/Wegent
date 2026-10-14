@@ -134,9 +134,12 @@ impl DecisionProxyConfig {
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
             .ok_or_else(|| DecisionProxyConfigError::new("missing_default_model"))?;
+        if !is_valid_model(&default_model) {
+            return Err(DecisionProxyConfigError::new("invalid_default_model"));
+        }
 
-        // There is no model allowlist: whatever model name the deployment
-        // configured is the one the router advertises and forwards verbatim.
+        // There is no model allowlist: any syntactically valid model name the
+        // deployment configured is advertised and forwarded verbatim.
         let models = vec![DecisionModel {
             id: default_model.clone(),
             display_name: default_model.clone(),

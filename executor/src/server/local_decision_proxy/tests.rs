@@ -98,6 +98,30 @@ fn default_model_must_be_present_and_non_blank() {
 }
 
 #[test]
+fn default_model_must_use_the_supported_identifier_shape() {
+    for default in [
+        "decision model",
+        "decision?model",
+        "决策模型",
+        &"x".repeat(MAX_MODEL_LENGTH + 1),
+    ] {
+        let error = config_from(&model_entries(default)).expect_err("invalid default model");
+        assert_eq!(
+            error.reason(),
+            "invalid_default_model",
+            "default={default:?}"
+        );
+    }
+}
+
+#[test]
+fn default_model_accepts_every_supported_identifier_separator() {
+    let default = "vendor/model.preview_v1:latest";
+    let settings = enabled_settings(&model_entries(default));
+    assert_eq!(settings.default_model, default);
+}
+
+#[test]
 fn valid_config_parses_into_stable_settings() {
     let entries = model_entries("model-a");
     let first = enabled_settings(&entries);

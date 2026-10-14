@@ -38,6 +38,12 @@ module.exports = {
     ...(identity.executorNamespace ? { weworkExecutorNamespace: identity.executorNamespace } : {}),
     ...(identity.backendUrl ? { weworkBackendUrl: identity.backendUrl } : {}),
     ...(identity.socketUrl ? { weworkSocketUrl: identity.socketUrl } : {}),
+    ...(identity.decisionUpstreamUrl
+      ? { weworkDecisionUpstreamUrl: identity.decisionUpstreamUrl }
+      : {}),
+    ...(identity.decisionDefaultModel
+      ? { weworkDecisionDefaultModel: identity.decisionDefaultModel }
+      : {}),
   },
   directories: {
     buildResources: 'build',
