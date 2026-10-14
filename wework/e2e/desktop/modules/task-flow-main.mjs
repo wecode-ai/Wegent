@@ -110,7 +110,6 @@ import {
   verifyPluginLifecycle,
   verifySkillMentionRendering,
   verifyStartupIgnoresBlockedCodexNetwork,
-  waitForBundledMarketplaceRegistration,
 } from './plugin-flows.mjs'
 
 import {
@@ -1547,14 +1546,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
+        bundledMarketplacePath: join(
+          executorHome,
+          'capabilities',
+          'bundled-marketplaces',
+          'wework-personal'
+        ),
+        codexHome,
         configureCodex,
         control,
         restartDesktopApp,
       })
-      await waitForBundledMarketplaceRegistration(
-        codexHome,
-        join(executorHome, 'capabilities', 'bundled-marketplaces', 'wework-personal')
-      )
     }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'

@@ -316,6 +316,11 @@ code to distinguish page timeouts from failures in the underlying execution.
 Windows plugin installation diagnostics also record application asset directory
 state, link targets, and file counts before and after pnpm operations. Static asset
 read failures record the parent directory's link state to locate missing resources.
+Windows component compositions and managed plugin packages own independent resource
+files so pnpm cleanup cannot traverse directory links into shared components. Layout
+fingerprints and copy-version stamps rebuild older layouts. Plugin-development E2E
+checks that starting the isolated window preserves main-application assets and that
+Windows package asset directories do not link to shared components.
 Windows worktree commands set `GIT_COMMON_DIR` from the existing `.git` and
 `commondir` parser so checkout children find shared objects before loading repository config.
 Paths passed to Git omit the Windows verbatim prefix, allowing its slash-separated
@@ -327,6 +332,9 @@ Native CI covers repeated replacements with open readers and replacements beyond
 Executor configures loopback `NO_PROXY` before creating the Tokio runtime, avoiding
 process environment mutation on asynchronous connection threads. The startup scenario
 verifies that Executor becomes ready before Core DSH starts and that DSH binds a valid port.
+The blocked-proxy startup scenario verifies that the workbench starts without waiting
+for Codex network access, then releases the proxy and waits for local plugin registration
+before clearing the proxy setting, avoiding cancellation of in-flight initialization.
 
 Core DSH binds port `0` directly and lets the OS assign its listening port.
 Electron reads the actual DSH address before probing the host, Executor, Terminal,

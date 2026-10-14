@@ -284,6 +284,16 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib clones_and_reuses_repositories_beyond_windows_max_path
 
+      - name: Set up Node for native package filesystem regressions
+        if: ${{ !cancelled() }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run native managed package filesystem regressions
+        if: ${{ !cancelled() }}
+        run: node --experimental-strip-types --test wework/electron/src/runtime/managed-plugin-files.test.mjs
+
   test-shared:
     name: Test Shared
     needs: changes

@@ -272,6 +272,9 @@ Linux CI 的插件开发分片通过 GDB 启动受 Electron 管理的 Executor�
 替换失败会记录 Git stderr 或原始系统错误码，便于区分页面超时与底层执行失败。
 Windows 插件安装诊断还会记录 pnpm 操作前后的应用资源目录状态、目录链接目标和
 文件数量；静态资源读取失败时会记录父目录链接状态，用于定位资源缺失发生的阶段。
+Windows 组件组合目录和托管插件副本都持有独立资源文件，避免 pnpm 清理目录链接时
+删除共享组件内容。布局指纹和副本版本标记会使旧目录重新构建；插件开发 E2E 验证
+隔离窗口启动后主应用资源保持完整，Windows 资源目录不再链接到共享组件。
 Windows worktree 命令通过现有 `.git` 和 `commondir` 解析结果显式传入
 `GIT_COMMON_DIR`，让 checkout 子进程在加载仓库配置前找到共享对象目录；传给 Git 的路径
 先移除 Windows verbatim 前缀，避免 Git 拼接 `/config` 后形成无效的扩展路径。
@@ -280,6 +283,8 @@ Windows 会话索引使用 `FileRenameInfoEx` 的 POSIX 替换语义发布新文
 
 Executor 在创建 Tokio 运行时之前配置回环地址的 `NO_PROXY`，避免连接期间在异步线程中
 修改进程环境。启动场景验证 Executor 先就绪、Core DSH 后启动，并确认实际监听端口有效。
+阻断代理启动场景先验证工作台无需等待 Codex 网络，再释放代理并等待本地插件注册完成，
+最后清除代理配置，避免测试前置操作中断仍在进行的初始化。
 
 Core DSH 使用端口 `0` 直接绑定操作系统分配的端口。Electron 读取 DSH 的实际
 监听地址后再逐项验证 host、Executor、Terminal 和应用入口，不通过提前打开再关闭

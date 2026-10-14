@@ -329,6 +329,8 @@ async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) 
 
 async function verifyStartupIgnoresBlockedCodexNetwork({
   blockingNetworkProxy,
+  bundledMarketplacePath,
+  codexHome,
   configureCodex,
   control,
   restartDesktopApp,
@@ -362,6 +364,9 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  // Releasing the proxy lets startup finish. Updating its runtime proxy sooner
+  // terminates that app-server and cancels the marketplace initialization.
+  await waitForBundledMarketplaceRegistration(codexHome, bundledMarketplacePath)
   await control.command('setLocalProxyUrl', 'body', { value: '' })
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
