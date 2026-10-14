@@ -310,7 +310,7 @@ export async function verifyNativeAgentMcp({
       )
       assert.equal(treeResponse.status, 200)
       const tree = await treeResponse.json()
-      const expectedReadmePath = await realpath(join(workspace, 'README.md'))
+      const expectedReadmePath = toNamespacedPath(await realpath(join(workspace, 'README.md')))
       assert.ok(
         tree.some(entry => entry.path === expectedReadmePath),
         `Native file listing must contain ${expectedReadmePath}; returned paths=${JSON.stringify(tree.map(entry => entry.path))}`

@@ -412,11 +412,13 @@ app.on('web-contents-created', (_event, contents) => {
       isMainFrame,
     })
   })
-  contents.on('console-message', (_event, level, message) => {
+  contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       console.warn('[renderer-error]', {
         webContentsId: contents.id,
         message: redactLog(message).slice(0, 4096),
+        lineNumber,
+        sourcePath: URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : undefined,
       })
     }
     void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {

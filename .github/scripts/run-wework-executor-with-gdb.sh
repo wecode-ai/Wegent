@@ -2,7 +2,12 @@
 
 set -euo pipefail
 
-executor_binary="${WEWORK_E2E_EXECUTOR_REAL_BIN:?The real Executor binary is required}"
+executor_binary="${WEWORK_E2E_EXECUTOR_REAL_BIN:-${BASH_SOURCE[0]%.gdb}}"
+if [[ "$executor_binary" == "${BASH_SOURCE[0]}" ]]; then
+  printf 'The debugger wrapper must be beside its Executor with a .gdb suffix\n' >&2
+  exit 2
+fi
+test -x "$executor_binary"
 
 # Schema queries and standalone MCP servers keep their normal stdout protocol.
 if [[ -z "${WEGENT_APP_IPC_ENDPOINT:-}" ]]; then

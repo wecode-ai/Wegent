@@ -265,6 +265,16 @@ Electron 应用；传入的应用必须使用桌面 E2E 的 Vite 环境变量构
 缓存都会递归删除。runner 启动时也会清理之前异常中断留下的非活动结果目录，避免
 本地磁盘随运行次数持续增长。
 
+Linux CI 的插件开发分片通过 GDB 启动受 Electron 管理的 Executor，原生崩溃时
+将所有线程的栈写入 Executor 日志；启动前先验证 IPC 文件描述符能够传入被调试
+进程。独立 MCP 和 schema 查询保持原有 stdout 协议。栈诊断不打印参数或局部变量。
+桌面 E2E 的 Electron 日志同时保留脱敏后的 renderer 错误；Git worktree 和会话索引
+替换失败会记录 Git stderr 或原始系统错误码，便于区分页面超时与底层执行失败。
+
+Core DSH 使用端口 `0` 直接绑定操作系统分配的端口。Electron 读取 DSH 的实际
+监听地址后再逐项验证 host、Executor、Terminal 和应用入口，不通过提前打开再关闭
+监听器探测端口，避免并行启动时其他服务抢占已探测的端口。
+
 GitHub Actions 上传前会再次执行同样的清理，并在 Artifact 路径中排除
 任意深度的 `managed-components`，防止 teardown 失败时把主实例或插件开发子实例的
 完整 Web/WASM 组件包上传为诊断证据；顶层清理和 Artifact 路径也都会排除测试 `.zip`

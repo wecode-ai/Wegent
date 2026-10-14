@@ -306,6 +306,19 @@ main instance and nested plugin-development instances. The runner also compacts
 inactive result directories left by interrupted runs so repeated local
 execution does not continuously consume disk space.
 
+The Linux CI plugin-development shard starts Electron-managed Executor processes
+under GDB and records all thread stacks on native crashes. A startup check verifies
+that the IPC file descriptor reaches the debugged process. Standalone MCP and schema
+queries retain their stdout protocol. Stack diagnostics omit arguments and locals.
+Desktop E2E Electron logs also retain redacted renderer errors. Git worktree and
+conversation-index replacement failures record Git stderr or the original OS error
+code to distinguish page timeouts from failures in the underlying execution.
+
+Core DSH binds port `0` directly and lets the OS assign its listening port.
+Electron reads the actual DSH address before probing the host, Executor, Terminal,
+and application endpoints. It does not discover a port by opening and closing a
+temporary listener, avoiding collisions during concurrent startup.
+
 Before upload, GitHub Actions repeats the cleanup and excludes
 `managed-components` at any depth from the Artifact path so a teardown failure
 cannot upload the complete Web and WASM component payload from either the main

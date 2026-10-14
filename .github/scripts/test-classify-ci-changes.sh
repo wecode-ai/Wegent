@@ -1444,6 +1444,7 @@ done
 
 wework_workflow="$script_dir/../workflows/wework-e2e.yml"
 node "$script_dir/test-wework-windows-ci.mjs"
+node "$script_dir/test-wework-executor-debugger.mjs"
 if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -lt 2 ]]; then
   printf 'Wework non-memory E2E jobs must filter pull_request label events\n' >&2
   exit 1

@@ -408,8 +408,8 @@ jobs:
               WEGENT_APP_IPC_ENDPOINT=diagnostic-fd-check \
               .github/scripts/run-wework-executor-with-gdb.sh \
               -r /proc/self/fd/3 3</dev/null
-            export WEWORK_E2E_EXECUTOR_REAL_BIN="$WEWORK_E2E_EXECUTOR_BIN"
-            export WEWORK_E2E_EXECUTOR_BIN="$GITHUB_WORKSPACE/.github/scripts/run-wework-executor-with-gdb.sh"
+            cp .github/scripts/run-wework-executor-with-gdb.sh "$WEWORK_E2E_EXECUTOR_BIN.gdb"
+            export WEWORK_E2E_EXECUTOR_BIN="$WEWORK_E2E_EXECUTOR_BIN.gdb"
           fi
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"

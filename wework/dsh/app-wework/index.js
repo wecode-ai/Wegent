@@ -475,7 +475,13 @@ function escapeJsonForHtml(value) {
 async function isFile(path) {
   try {
     return (await stat(path)).isFile()
-  } catch {
+  } catch (error) {
+    if (process.env.VITE_WEWORK_E2E === 'true' && ['.js', '.css'].includes(extname(path))) {
+      console.error('[wework-app] Static asset stat failed', {
+        path,
+        errorCode: error?.code,
+      })
+    }
     return false
   }
 }
