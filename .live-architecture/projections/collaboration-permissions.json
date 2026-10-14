@@ -581,6 +581,24 @@
     {
       "active": true,
       "evidence": [
+        ".live-architecture/evidence/pr-permission-request-followup.md",
+        "frontend/src/__tests__/features/collaboration/CollaborationApp.automation.test.tsx",
+        "packages/collaboration/src/project-agent-config/ProjectAgentConfiguration.test.tsx",
+        "wework/src/features/todo/CloudTodoWorkspace.test.tsx",
+        "wework/src/features/todo/TodoEditor.assignee.test.tsx"
+      ],
+      "id": "arch://wegent/test/project-host-fixtures-e27a",
+      "planes": [
+        "implementation"
+      ],
+      "state_by_plane": {
+        "implementation": true
+      }
+    },
+    {
+      "active": true,
+      "evidence": [
+        ".live-architecture/evidence/pr-permission-request-followup.md",
         "docs/zh/wegent/developer-guide/collaboration-permissions.md",
         "docs/zh/wegent/developer-guide/project-member-settings.md",
         "packages/collaboration/src/SharedIssueDetailEditor.tsx",
@@ -668,5 +686,5 @@
     }
   ],
   "plane": null,
-  "revision": "A00000010"
+  "revision": "A00000011"
 }
