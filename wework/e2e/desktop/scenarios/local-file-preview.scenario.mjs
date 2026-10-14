@@ -146,6 +146,23 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         join(workspacePath, 'auth.ts'),
         'The second local file did not replace the retained preview after loading'
       )
+      await showFileTree(control)
+      await clickTreeItem(control, 'breadcrumb-fixture', uiTimeoutMs)
+      await control.command(
+        'waitFor',
+        `${FILE_TREE_ITEM_SELECTOR}[data-item-path="breadcrumb-fixture/first.ts"]`,
+        { visible: true, timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'waitFor',
+        `${FILE_TREE_ITEM_SELECTOR}[data-item-path="breadcrumb-fixture/"][data-item-selected="true"]`,
+        { visible: true, stableMs: 300, timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        await control.command('getText', '[data-testid="workspace-file-path"]'),
+        join(workspacePath, 'auth.ts'),
+        'Browsing another directory must retain the opened file preview'
+      )
       await captureScreenshot(control, 'local-file-preview-01-dark-editor.png', 'body')
       await control.command('contextMenu', '[data-testid="workspace-file-name-button"]')
       await control.command('waitFor', '[data-testid="workspace-file-context-menu"]', {
