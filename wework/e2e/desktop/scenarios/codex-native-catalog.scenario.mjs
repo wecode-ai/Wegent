@@ -59,10 +59,12 @@ export function createDesktopScenario() {
       }
       const baseline = entries.find(entry => entry.slug === MODEL_ID).baseline
       await control.command('navigate', 'body', { value: '/settings/personal/models' })
+      await control.command('clickWhenEnabled', '[data-testid="codex-models-details-toggle"]')
       await control.command(
         'clickWhenEnabled',
         '[data-testid="codex-model-provider-toggle-openai"]'
       )
+      await control.command('waitFor', `${EDIT}:not(:disabled)`)
       for (const { slug } of bundledModels) {
         const selector = `[data-testid="codex-catalog-edit-openai-${slug}"]`
         if (Number(await control.command('getElementCount', selector)) > 0) {
@@ -92,6 +94,7 @@ export function createDesktopScenario() {
       })
       await control.command('navigate', 'body', { value: '/' })
       await control.command('navigate', 'body', { value: '/settings/personal/models' })
+      await control.command('clickWhenEnabled', '[data-testid="codex-models-details-toggle"]')
       await control.command(
         'clickWhenEnabled',
         '[data-testid="codex-model-provider-toggle-openai"]'
