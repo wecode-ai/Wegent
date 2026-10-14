@@ -55,7 +55,7 @@ import {
   issueDispatchPersonalTaskInput,
   type IssueTaskDispatchInput,
 } from '@/features/notifications/NotificationTaskSourceContext'
-import { humanTaskDispatchInput } from './humanTaskDispatch'
+import { humanTaskDispatchInput, resolveHumanTaskDispatch } from './humanTaskDispatch'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type {
   ArchiveRuntimeConversationsResult,
@@ -698,6 +698,12 @@ export function WeworkSharedProject({
   const openNewTaskConversation = useCallback(
     async (issue: CollaborationIssue, dispatch?: IssueTaskDispatchInput) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
+      dispatch ??= await resolveHumanTaskDispatch(
+        detailServices?.projectChatClient,
+        project.id,
+        issue.id,
+        userId
+      )
       const humanWorkBinding = issue.human_work?.can_submit
         ? issue.human_work.ai_task_binding
         : null
@@ -746,7 +752,7 @@ export function WeworkSharedProject({
         projectHost.navigate({ ...projectHost.location, issueId: issue.id })
       }
     },
-    [projectHost, runtimePort]
+    [detailServices?.projectChatClient, project.id, projectHost, runtimePort, userId]
   )
   const openBoundTaskConversation = useCallback(
     async (issue: CollaborationIssue, address: RuntimeTaskAddress) => {
@@ -1045,9 +1051,9 @@ export function WeworkSharedProject({
                   onCreateTask={onCreateTask}
                   onDelete={onDelete}
                   deleteLabel={createCollaborationTranslator(locale)('todo.archive_issue')}
-                  onStartHumanTaskFromReply={({ issueId, dispatch, replyText }) =>
+                  onStartHumanTaskFromReply={({ issueId, dispatch }) =>
                     String(issueId) === String(issue.id)
-                      ? openAssignmentTask(issue, humanTaskDispatchInput(dispatch, replyText))
+                      ? openNewTaskConversation(issue, humanTaskDispatchInput(dispatch))
                       : undefined
                   }
                   onOpenTaskConversation={

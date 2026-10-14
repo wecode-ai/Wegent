@@ -536,6 +536,7 @@ def enqueue_execution_batch(
                 "status": "queued",
                 "assignment_id": command.assignment_id,
                 "task_title": command.title,
+                "instructions": command.instructions,
                 "human_user_id": human.id,
                 "human_user_name": human.user_name,
                 "workflow_stage_id": command.workflow_stage_id,
@@ -567,6 +568,11 @@ def enqueue_execution_batch(
     )
     should_push_assignment = False
     if assignment_message is None:
+        from app.services.collaboration_round_assignment import assign_round_owner
+
+        assign_round_owner(
+            db, item=item, assignments=assignment_activity, user_id=current_user.id
+        )
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         assignment_message = ProjectChatMessage(
             message_id=message_id,
@@ -610,9 +616,9 @@ def report_collaboration_assignment_status(
     project_id: int,
     values: LoopItemExecutionAssignmentStatus,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> dict[str, object]:
-    """Persist member progress for display; the Executor still owns the round."""
+    """Bind the member session and record progress; Executor owns the round."""
 
     require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
     message, changed = project_collaboration_member_activity(
@@ -677,7 +683,7 @@ def execution_statuses(
     project_id: int,
     values: LoopItemExecutionStatusQuery,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> dict[str, object]:
     """Read human delivery outcomes for an Executor-owned round barrier."""
 

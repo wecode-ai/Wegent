@@ -73,7 +73,14 @@ function commentToMessage(record: LocalCommentRecord): ProjectChatMessage {
 
 export function createLocalProjectChatClient(
   request: LocalChatRequest,
-  options: { currentUser: Pick<User, 'id' | 'user_name'> }
+  options: {
+    currentUser: Pick<User, 'id' | 'user_name'>
+    prepareExecutionPayload(input: {
+      projectId: string
+      itemId: string
+      agentId: string
+    }): Promise<Record<string, unknown>>
+  }
 ): ProjectChatClient {
   const currentUserId = String(options.currentUser.id)
   const currentUserName = options.currentUser.user_name
@@ -166,13 +173,19 @@ export function createLocalProjectChatClient(
       },
     })
     const agentMention = mentions.find(mention => mention.type === 'agent')
-    if (agentMention) {
-      void request('executions.enqueue', {
+    if (agentMention && !input.replyToMessageId) {
+      const runtimePayload = await options.prepareExecutionPayload({
+        projectId: input.projectId,
+        itemId: input.taskId ?? '',
+        agentId: agentMention.id,
+      })
+      await request('executions.enqueue', {
         project_id: input.projectId,
         task_id: input.taskId ?? '',
         agent_id: agentMention.id,
         trigger_message_id: created.message_id,
         payload: {
+          runtimePayload,
           text: input.text,
           trigger_message_id: created.message_id,
           ...(input.localProjectId != null ? { local_project_id: input.localProjectId } : {}),

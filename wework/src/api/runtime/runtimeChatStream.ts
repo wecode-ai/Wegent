@@ -505,6 +505,15 @@ function projectTaskAssignedPayload(
     itemId,
     itemTitle,
     assignerName,
+    ...(payload.projectStore === 'local' || payload.projectStore === 'backend'
+      ? { projectStore: payload.projectStore }
+      : {}),
+    ...(stringField(payload, 'assignmentId')
+      ? { assignmentId: stringField(payload, 'assignmentId')! }
+      : {}),
+    ...(stringField(payload, 'recipientUserId')
+      ? { recipientUserId: stringField(payload, 'recipientUserId')! }
+      : {}),
   }
 }
 

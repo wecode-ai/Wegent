@@ -3,6 +3,7 @@ import type { LocalCommentRecord } from './localProjectChatClient'
 import { createLocalProjectChatClient } from './localProjectChatClient'
 
 const request = vi.fn()
+const prepareExecutionPayload = vi.fn()
 
 function commentRecord(overrides: Partial<LocalCommentRecord> = {}): LocalCommentRecord {
   return {
@@ -31,6 +32,9 @@ function commentRecord(overrides: Partial<LocalCommentRecord> = {}): LocalCommen
 describe('createLocalProjectChatClient', () => {
   beforeEach(() => {
     request.mockReset()
+    prepareExecutionPayload.mockReset().mockResolvedValue({
+      executionRequest: { task_id: 'prepared-task' },
+    })
   })
 
   afterEach(() => {
@@ -49,6 +53,7 @@ describe('createLocalProjectChatClient', () => {
     })
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
     })
 
     const message = await client.send({
@@ -77,15 +82,60 @@ describe('createLocalProjectChatClient', () => {
       expect.objectContaining({
         agent_id: 'a1',
         trigger_message_id: 'm-1',
-        payload: expect.objectContaining({ text: '@Bot 跑一下' }),
+        payload: expect.objectContaining({
+          text: '@Bot 跑一下',
+          runtimePayload: { executionRequest: { task_id: 'prepared-task' } },
+        }),
       })
     )
+  })
+
+  it('persists replies with agent mentions without enqueuing another execution', async () => {
+    request.mockResolvedValue(commentRecord())
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
+    })
+    await client.send({
+      projectId: 'p1',
+      taskId: 't1',
+      clientMessageId: 'reply-1',
+      text: '再看下内存',
+      replyToMessageId: 'original-thread',
+      mentions: [{ type: 'agent', id: 'a1', label: 'Bot' }],
+    })
+    expect(prepareExecutionPayload).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
+  })
+
+  it('surfaces preparation and enqueue failures instead of claiming acceptance', async () => {
+    request.mockResolvedValue(commentRecord())
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
+    })
+    const input = {
+      projectId: 'p1',
+      taskId: 't1',
+      clientMessageId: 'root-1',
+      text: '@Bot work',
+      mentions: [{ type: 'agent' as const, id: 'a1', label: 'Bot' }],
+    }
+    prepareExecutionPayload.mockRejectedValueOnce(new Error('Environment not ready'))
+    await expect(client.send(input)).rejects.toThrow('Environment not ready')
+    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
+    request.mockImplementation(async method => {
+      if (method === 'executions.enqueue') throw new Error('Queue rejected')
+      return commentRecord()
+    })
+    await expect(client.send(input)).rejects.toThrow('Queue rejected')
   })
 
   it('does not enqueue a run without an agent mention', async () => {
     request.mockResolvedValue(commentRecord())
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
     })
 
     await client.send({
@@ -115,6 +165,7 @@ describe('createLocalProjectChatClient', () => {
     )
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
     })
 
     const response = await client.startAgentResponse({
@@ -160,6 +211,7 @@ describe('createLocalProjectChatClient', () => {
     })
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
     })
 
     await client.send({
@@ -212,6 +264,7 @@ describe('createLocalProjectChatClient', () => {
 
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
     })
     const onMessage = vi.fn()
     const subscription = await client.subscribe('p1', 't1', 0, onMessage)
@@ -249,6 +302,7 @@ describe('createLocalProjectChatClient', () => {
 
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
     })
     const onMessage = vi.fn()
     const subscription = await client.subscribe('p1', 't1', 0, onMessage)
@@ -288,6 +342,7 @@ describe('createLocalProjectChatClient', () => {
     ])
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
     })
 
     const subscription = await client.subscribe('p1', 't1', 0, () => {})
@@ -311,6 +366,7 @@ describe('createLocalProjectChatClient', () => {
     ])
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
     })
     const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
     expect(subscription.snapshot.messages[0]).toMatchObject({
@@ -324,6 +380,7 @@ describe('createLocalProjectChatClient', () => {
     request.mockRejectedValue(new Error('Local activity database unavailable'))
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
+      prepareExecutionPayload,
     })
     await expect(client.subscribe('p1', 't1', 0, vi.fn())).rejects.toThrow(
       'Local activity database unavailable'

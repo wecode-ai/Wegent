@@ -18,6 +18,31 @@ use super::{
     LocalTaskStore, ProjectFile, TaskAttachment, TaskRuntimeError,
 };
 
+/// The single open human collaboration assignment of an Issue, when exactly one
+/// exists. A personal task without recorded dispatch identity may settle it;
+/// multiple open assignments stay ambiguous and are ignored.
+fn open_human_assignment_for(
+    connection: &rusqlite::Connection,
+    item_id: &str,
+) -> Result<Option<String>, TaskRuntimeError> {
+    let mut statement = connection.prepare(
+        "SELECT id FROM loop_items
+         WHERE parent_id = ?1 AND resource_type = 'task' AND deleted_at IS NULL
+           AND json_extract(metadata, '$.collaboration_assignment.assignee_type') = 'human'
+           AND current_delivery_id IS NULL
+           AND COALESCE(status, '') != 'completed'
+         ORDER BY sequence_number DESC, id DESC
+         LIMIT 2",
+    )?;
+    let mut ids = statement
+        .query_map([item_id], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(match ids.len() {
+        1 => Some(ids.remove(0)),
+        _ => None,
+    })
+}
+
 impl LocalTaskStore {
     pub fn list_project_files(
         &self,
@@ -810,19 +835,65 @@ impl LocalTaskStore {
                 [delivery_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-        let workflow_node_id = source_binding_id
+        let binding_identity = source_binding_id
             .as_deref()
             .map(|binding_id| {
                 transaction.query_row(
-                    "SELECT json_extract(metadata, '$.workflow_node_id')
-                     FROM loop_items
-                     WHERE id = ?1 AND resource_type = 'execution' AND unlinked_at IS NULL",
+                    "SELECT json_extract(binding.metadata, '$.workflow_node_id'),
+                            json_extract(binding.metadata, '$.human_assignment_id'),
+                            (
+                                SELECT execution.execution_payload
+                                FROM loop_item_executions execution
+                                WHERE execution.runtime_device_id = binding.device_id
+                                  AND execution.runtime_task_id = binding.task_id
+                                ORDER BY execution.id DESC
+                                LIMIT 1
+                            )
+                     FROM loop_items binding
+                     WHERE binding.id = ?1 AND binding.resource_type = 'execution'
+                       AND binding.unlinked_at IS NULL",
                     [binding_id],
-                    |row| row.get::<_, Option<String>>(0),
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                        ))
+                    },
                 )
             })
-            .transpose()?
-            .flatten();
+            .transpose()?;
+        let workflow_node_id = binding_identity
+            .as_ref()
+            .and_then(|(node_id, _, _)| node_id.clone());
+        let binding_human_assignment_id = binding_identity
+            .as_ref()
+            .and_then(|(_, human_assignment_id, _)| human_assignment_id.clone());
+        let binding_dispatch_role = binding_identity.and_then(|(_, _, payload)| {
+            payload.and_then(|payload| {
+                serde_json::from_str::<serde_json::Value>(&payload)
+                    .ok()
+                    .and_then(|payload| {
+                        payload
+                            .get("dispatch_role")
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToOwned::to_owned)
+                    })
+            })
+        });
+        // The item that closes the collaboration round when this delivery is
+        // finalized: the work item itself, the assignment recorded on the
+        // personal task binding, or - for a personal task started without a
+        // recorded dispatch - the single open human assignment of the Issue.
+        let human_assignment_item: Option<String> = if is_human_collaboration_assignment {
+            Some(item_id.to_owned())
+        } else if let Some(human_assignment_id) = binding_human_assignment_id {
+            Some(human_assignment_id)
+        } else if binding_dispatch_role.is_none() {
+            open_human_assignment_for(&transaction, item_id)?
+        } else {
+            None
+        };
         let mut delivery_metadata =
             serde_json::from_str::<serde_json::Value>(&delivery_metadata)
                 .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
@@ -885,21 +956,22 @@ impl LocalTaskStore {
                 params![delivery_id, timestamp, item_id],
             )?;
         }
-        if is_human_collaboration_assignment {
+        if let Some(human_assignment_item) = human_assignment_item.as_deref() {
             transaction.execute(
                 "UPDATE loop_items
-                 SET status = 'completed', completed_at = ?1,
+                 SET current_delivery_id = ?1, status = 'completed',
+                     completed_at = ?2,
                      metadata = json_set(metadata, '$.is_unread', json('true')),
-                     version = version + 1, updated_at = ?1
-                 WHERE id = ?2",
-                params![timestamp, item_id],
+                     version = version + 1, updated_at = ?2
+                 WHERE id = ?3",
+                params![delivery_id, timestamp, human_assignment_item],
             )?;
         }
         transaction.commit()?;
         drop(connection);
         let delivery = self.get_delivery(item_id, delivery_id)?;
-        if is_human_collaboration_assignment {
-            self.resume_manager_for_human_delivery(item_id)?;
+        if let Some(human_assignment_item) = human_assignment_item {
+            self.resume_manager_for_human_delivery(&human_assignment_item)?;
         }
         Ok(delivery)
     }

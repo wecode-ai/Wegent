@@ -1943,6 +1943,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'activateSystemNotification':
+      await invokeDesktopHost('e2e.activateNotification', { url: command.value ?? '' })
+      return ''
     case 'openWeworkScheme':
       await invokeDesktopHost('shell.openExternal', { url: command.value ?? '' })
       return ''

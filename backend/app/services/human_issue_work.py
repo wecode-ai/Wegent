@@ -127,7 +127,7 @@ class HumanIssueWorkService:
         return {
             "assignment_id": assignment.id,
             "ai_task_binding": (
-                self._ai_task_binding(item, assignment) if is_assignee else None
+                self._ai_task_binding(db, item, assignment) if is_assignee else None
             ),
             "assignee_user_id": item.assignee_user_id,
             "reviewer_user_id": reviewer_id,
@@ -162,11 +162,16 @@ class HumanIssueWorkService:
         )
 
     @staticmethod
-    def _ai_task_binding(item: LoopItem, assignment: AssignmentEvent) -> dict:
+    def _ai_task_binding(
+        db: Session, item: LoopItem, assignment: AssignmentEvent
+    ) -> dict | None:
         from app.services.collaboration_human_assignments import (
             DIRECT_HUMAN_ROUND_ID,
             direct_human_assignment_id,
         )
+
+        if assignment.metadata.get("trigger") == "collaboration_round":
+            return HumanIssueWorkService._round_task_binding(db, item)
 
         return {
             "humanAssignmentId": direct_human_assignment_id(
@@ -176,6 +181,36 @@ class HumanIssueWorkService:
             "dispatchRoundId": DIRECT_HUMAN_ROUND_ID,
             "assignmentId": assignment.id,
         }
+
+    @staticmethod
+    def _round_task_binding(db: Session, item: LoopItem) -> dict | None:
+        activities = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.project_id == str(item.cloud_project_id),
+                ProjectChatMessage.task_id == item.id,
+            )
+            .order_by(
+                ProjectChatMessage.created_at.desc(), ProjectChatMessage.id.desc()
+            )
+            .all()
+        )
+        for activity in activities:
+            metadata = activity.metadata_json or {}
+            if metadata.get("activity_type") != "manager_assignment":
+                continue
+            for member in metadata.get("dispatch_assignments", []):
+                if member.get("assignee_type") == "human" and str(
+                    member.get("human_user_id")
+                ) == str(item.assignee_user_id):
+                    return {
+                        "humanAssignmentId": member["human_assignment_id"],
+                        "dispatchId": metadata["dispatch_id"],
+                        "dispatchRoundId": metadata["coordination_round_id"],
+                        "assignmentId": member["assignment_id"],
+                    }
+            return None
+        return None
 
     def _item(self, db: Session, item_id: str, user_id: int) -> LoopItem:
         item = (

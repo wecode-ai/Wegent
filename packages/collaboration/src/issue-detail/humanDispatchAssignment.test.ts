@@ -25,6 +25,14 @@ function managerMessage(overrides: Partial<Record<string, unknown>> = {}): {
 }
 
 describe("humanDispatchAssignment", () => {
+  it("does not reuse a human assignment after a newer round assigns another member", () => {
+    expect(
+      humanDispatchAssignment(
+        [managerMessage(), managerMessage({ dispatch_assignments: [] })],
+        "42",
+      ),
+    ).toBeNull();
+  });
   it("reads the work item a manager assigned to the current member", () => {
     expect(
       humanDispatchAssignment(
@@ -48,6 +56,12 @@ describe("humanDispatchAssignment", () => {
     const messages = [managerMessage()];
     expect(humanDispatchAssignment(messages, 42)).not.toBeNull();
     expect(humanDispatchAssignment(messages, "42")).not.toBeNull();
+  });
+
+  it("matches explicit identities of the same local member while excluding other people", () => {
+    expect(humanDispatchAssignment([managerMessage()], [0, 42])).not.toBeNull();
+    expect(humanDispatchAssignment([managerMessage()], [0, 7])).toBeNull();
+    expect(humanDispatchAssignment([managerMessage()], [])).toBeNull();
   });
 
   it("ignores assignments that belong to another member", () => {

@@ -170,12 +170,151 @@ async def test_member_reply_uses_original_owner_and_session_once(scenario):
     second = await execute_comment(s.db, user_id=s.member.id, request=request)
     assert first[0].message_id == second[0].message_id
     assert first[0].root_message_id == s.root.message_id
-    assert s.compiler.call_args.kwargs["user_id"] == s.owner.id
-    assert s.compiler.call_args.kwargs["request"].message == "完成了？"
-    assert s.compiler.call_args.kwargs["request"].model_id == "admin-model"
+    s.compiler.assert_not_called()
     s.rpc.assert_awaited_once()
     assert s.rpc.call_args.kwargs["user_id"] == s.owner.id
     assert s.rpc.call_args.kwargs["payload"]["taskId"] == "original-session"
+    assert s.rpc.call_args.kwargs["payload"]["message"] == "完成了？"
+    assert "executionRequest" not in s.rpc.call_args.kwargs["payload"]
+
+
+@pytest.mark.parametrize("invalid_identity", ["task", "device"])
+def test_collaboration_member_binding_rejects_unrelated_runtime(
+    scenario, invalid_identity
+):
+    from app.models.delivery import LoopItemTaskBinding
+    from app.schemas.project_chat import LoopItemExecutionAssignmentStatus
+    from app.services.collaboration_member_binding import (
+        bind_collaboration_member_session,
+    )
+
+    s = scenario
+    s.execution.execution_payload = json.dumps(
+        {"origin_context": {"dispatch_id": "dispatch-1"}}
+    )
+    values = LoopItemExecutionAssignmentStatus(
+        loop_item_id=s.issue.id,
+        dispatch_id="dispatch-1",
+        round_id="round-1",
+        assignment_id="assignment-1",
+        runtime_device_id=(
+            "unrelated-device" if invalid_identity == "device" else "admin-cloud"
+        ),
+        runtime_task_id=(
+            "unrelated-task"
+            if invalid_identity == "task"
+            else "original-session-member-round-1-assignment-1"
+        ),
+        status="completed",
+    )
+
+    with pytest.raises(HTTPException) as rejected:
+        bind_collaboration_member_session(
+            s.db,
+            project_id=s.project.id,
+            values=values,
+            assignment={"agent_id": s.agent.id},
+        )
+
+    assert rejected.value.status_code == 409
+    assert s.db.query(LoopItemTaskBinding).count() == 0
+    s.rpc.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_card", [False, True])
+@pytest.mark.parametrize("other_agent_creator", [False, True])
+async def test_collaboration_member_activity_continues_its_original_task(
+    scenario, legacy_card, other_agent_creator
+):
+    from app.models.delivery import LoopItemTaskBinding
+    from app.schemas.project_chat import LoopItemExecutionAssignmentStatus
+    from app.services.collaboration_member_activity import (
+        project_collaboration_member_activity,
+    )
+
+    s = scenario
+    if other_agent_creator:
+        s.agent.created_by_user_id = s.member.id
+    member_task_id = "dispatch-task-member-round-1-assignment-1"
+    s.execution.runtime_task_id = "dispatch-task"
+    s.execution.execution_payload = json.dumps(
+        {
+            "origin_context": {"dispatch_id": "dispatch-1"},
+        }
+    )
+    s.root.metadata_json = {
+        "activity_type": "manager_assignment",
+        "dispatch_id": "dispatch-1",
+        "coordination_round_id": "round-1",
+        "dispatch_assignments": [
+            {
+                "assignment_id": "assignment-1",
+                "assignee_type": "agent",
+                "agent_id": s.agent.id,
+                "agent_name": s.agent.name,
+                "task_title": "Collect evidence",
+                "instructions": "Inspect the CPU",
+            }
+        ],
+    }
+    s.root.sender_id = "manager"
+    s.root.agent_id = "manager"
+    s.db.commit()
+    message, _ = project_collaboration_member_activity(
+        s.db,
+        project_id=s.project.id,
+        values=LoopItemExecutionAssignmentStatus(
+            loop_item_id=s.issue.id,
+            dispatch_id="dispatch-1",
+            round_id="round-1",
+            assignment_id="assignment-1",
+            runtime_device_id="admin-cloud",
+            runtime_task_id=member_task_id,
+            status="completed",
+            result="CPU checked",
+        ),
+    )
+    s.root = message
+    if legacy_card:
+        s.db.query(LoopItemTaskBinding).filter_by(task_id=member_task_id).delete()
+        s.db.commit()
+    request = comment(s, text="Check memory too")
+
+    await execute_comment(s.db, user_id=s.member.id, request=request)
+
+    binding = s.db.query(LoopItemTaskBinding).filter_by(task_id=member_task_id).one()
+    assert binding.task_user_id == s.owner.id
+    s.compiler.assert_not_called()
+    assert s.rpc.call_args.kwargs["payload"]["message"] == "Check memory too"
+    assert "executionRequest" not in s.rpc.call_args.kwargs["payload"]
+    assert s.rpc.call_args.kwargs["payload"]["taskId"] == member_task_id
+    assert s.rpc.call_args.kwargs["user_id"] == s.owner.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "missing_field", ["dispatch_id", "coordination_round_id", "assignment_id"]
+)
+async def test_legacy_member_card_missing_identity_is_a_conflict(
+    scenario, missing_field
+):
+    s = scenario
+    s.root.runtime_task_id = "unregistered-member-session"
+    s.root.metadata_json = {
+        "activity_type": "member_execution",
+        "dispatch_id": "dispatch-1",
+        "coordination_round_id": "round-1",
+        "assignment_id": "assignment-1",
+    }
+    s.root.metadata_json.pop(missing_field)
+    s.db.commit()
+
+    with pytest.raises(HTTPException) as rejected:
+        await execute_comment(s.db, user_id=s.member.id, request=comment(s))
+
+    assert rejected.value.status_code == 409
+    s.rpc.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -391,8 +530,9 @@ async def test_manually_bound_session_uses_the_binding_owner(scenario):
     )
     s.db.commit()
     await execute_comment(s.db, user_id=s.member.id, request=comment(s))
-    assert s.compiler.call_args.kwargs["user_id"] == s.owner.id
-    assert s.compiler.call_args.kwargs["request"].model_id == "original-model"
+    s.compiler.assert_not_called()
+    assert s.rpc.call_args.kwargs["user_id"] == s.owner.id
+    assert "executionRequest" not in s.rpc.call_args.kwargs["payload"]
     assert s.rpc.call_args.kwargs["payload"]["taskId"] == s.root.runtime_task_id
 
 
@@ -418,18 +558,11 @@ async def test_manually_bound_team_session_keeps_its_model_on_reply(scenario):
 
     await execute_comment(s.db, user_id=s.member.id, request=comment(s))
 
-    intent = s.compiler.call_args.kwargs["request"]
-    assert intent.schema_version == 3
-    assert intent.wegent_team_id == 1880
-    assert intent.model_id is None
-    assert intent.new_session is False
-    assert intent.origin == {
-        "type": "board_comment",
-        "dispatchRole": "executor",
-        "cloudProjectId": s.project.id,
-        "loopItemId": s.issue.id,
-    }
-    assert s.compiler.call_args.kwargs["user_id"] == s.owner.id
+    s.compiler.assert_not_called()
+    assert s.rpc.call_args.kwargs["user_id"] == s.owner.id
+    assert s.rpc.call_args.kwargs["payload"]["taskId"] == "original-session"
+    assert "modelSelection" not in s.rpc.call_args.kwargs["payload"]
+    assert "executionRequest" not in s.rpc.call_args.kwargs["payload"]
 
 
 @pytest.mark.asyncio

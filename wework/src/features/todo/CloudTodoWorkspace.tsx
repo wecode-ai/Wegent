@@ -75,7 +75,6 @@ import {
   type SharedIssueDetailTaskExecutionState,
   type SharedWorkspaceApi,
   type CollaborationProjectView,
-  type WorkspaceTaskBinding,
 } from '@wegent/collaboration'
 import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
 import {
@@ -106,7 +105,7 @@ import {
   issueDispatchPersonalTaskInput,
   type IssueTaskDispatchInput,
 } from '@/features/notifications/NotificationTaskSourceContext'
-import { humanTaskDispatchInput } from './humanTaskDispatch'
+import { humanTaskDispatchInput, resolveHumanTaskDispatch } from './humanTaskDispatch'
 import type { DeliveryApi, WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
@@ -196,7 +195,7 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
 import { BoardQuickStartGuide } from './BoardQuickStartGuide'
 import { parseDingTalkAITableLink } from './projectProviderConfig'
-import { createLocalWorkspaceApi } from './WeworkCollaborationPlatform'
+import { createLocalWorkspaceApi, toWeworkIssueTaskBinding } from './WeworkCollaborationPlatform'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import {
   rememberProjectTaskStore,
@@ -321,23 +320,6 @@ type BoardReadResult = {
   members?: CloudProjectMember[]
   agents?: ProjectChatAgent[]
   page_cursors?: Record<string, string | null>
-}
-
-function toWeworkTaskBinding(binding: WorkspaceTaskBinding): LoopItemTaskBinding {
-  return {
-    id: binding.id,
-    cloud_project_id: binding.projectId,
-    loop_item_id: binding.issueId,
-    task_user_id: binding.taskUserId,
-    device_id: binding.deviceId,
-    task_id: binding.taskId,
-    task_title: binding.taskTitle,
-    backend_task_id: binding.backendTaskId,
-    modelSelection: binding.modelSelection as LoopItemTaskBinding['modelSelection'],
-    executionContext: binding.executionContext,
-    binding_type: binding.bindingType,
-    linked_at: binding.linkedAt,
-  }
 }
 
 function toWeworkCloudProject(project: CollaborationProject): CloudProject {
@@ -1249,7 +1231,7 @@ export function CloudTodoWorkspace({
     const bindings =
       refreshedBindings ??
       (selectedProject?.location === 'cloud'
-        ? cloudWorkspace.state.taskBindings.map(toWeworkTaskBinding)
+        ? cloudWorkspace.state.taskBindings.map(toWeworkIssueTaskBinding)
         : [])
     const visibleBindings = isMyTasksBoard
       ? bindings.filter(binding =>
@@ -2416,16 +2398,24 @@ export function CloudTodoWorkspace({
     assignment: IssueTaskDispatchInput,
     options: { backgroundAfterSend: boolean; idempotencyKey?: string }
   ) {
-    if (!cloudWorkspaceApi) throw new Error('当前工作台无法打开个人任务')
-    const existingBindings = await cloudWorkspaceApi.taskBindings.list(issue.id, String(project.id))
+    const bindingApi = apiForProject(project)
+    if (project.location === 'cloud' ? !cloudWorkspaceApi : !bindingApi) {
+      throw new Error('当前工作台无法打开个人任务')
+    }
+    const existingBindings =
+      project.location === 'cloud'
+        ? (await cloudWorkspaceApi!.taskBindings.list(issue.id, String(project.id))).map(
+            toWeworkIssueTaskBinding
+          )
+        : await bindingApi!.listTaskBindings(issue.id)
     const existing = existingBindings.find(
-      binding => binding.humanAssignmentId === assignment.humanAssignmentId
+      binding => binding.human_assignment_id === assignment.humanAssignmentId
     )
     if (existing) {
       if (!onOpenRuntimeTask) throw new Error('当前工作台无法打开个人任务')
       await onOpenRuntimeTask({
-        deviceId: existing.deviceId,
-        taskId: existing.taskId,
+        deviceId: existing.device_id,
+        taskId: existing.task_id,
         ...(existing.modelSelection
           ? { runtimeHandle: { modelSelection: existing.modelSelection } }
           : {}),
@@ -2436,16 +2426,25 @@ export function CloudTodoWorkspace({
       if (acceptedDispatchTaskActions.current.has(options.idempotencyKey)) return
       acceptedDispatchTaskActions.current.add(options.idempotencyKey)
     }
+    createIssueAssignmentTask(project, issue, assignment, options.backgroundAfterSend)
+  }
+
+  function createIssueAssignmentTask(
+    project: LocatedCloudProject,
+    issue: LocatedLoopItem,
+    assignment: IssueTaskDispatchInput,
+    backgroundAfterSend: boolean
+  ) {
     const initialInput = issueDispatchPersonalTaskInput(assignment)
     selectProject(project)
     setProjectView('board')
     setSelectedTaskBinding(null)
     setSelectedItem(issue)
-    setBackgroundTaskItemId(options.backgroundAfterSend ? issue.id : null)
+    setBackgroundTaskItemId(backgroundAfterSend ? issue.id : null)
     openTaskComposer({
       workItemId: issue.id,
       initialInput,
-      backgroundAfterSend: options.backgroundAfterSend,
+      backgroundAfterSend,
       dispatch: assignment,
       taskRequest: {
         runtime: 'codex',
@@ -3973,7 +3972,20 @@ export function CloudTodoWorkspace({
               : null
         )
       } else {
-        await localApi!.bindTask(latest.id, address, latest.title)
+        await localApi!.bindTask(
+          latest.id,
+          address,
+          dispatch?.taskTitle ?? latest.title,
+          null,
+          dispatch
+            ? {
+                humanAssignmentId: dispatch.humanAssignmentId,
+                dispatchId: dispatch.dispatchId,
+                dispatchRoundId: dispatch.roundId,
+                assignmentId: dispatch.assignmentId,
+              }
+            : null
+        )
       }
       rememberProjectTaskStore(address, selectedItem.project_store ?? 'backend')
       const project = projectSpaceRef(selectedItemProject)
@@ -5456,40 +5468,49 @@ export function CloudTodoWorkspace({
                     closeTaskPanel()
                     setSelectedItem(locatedChild)
                   }}
-                  onCreateTask={() => {
+                  onCreateTask={async () => {
+                    if (!selectedItemProject) return
+                    const dispatch = await resolveHumanTaskDispatch(
+                      selectedProjectChatClient,
+                      selectedItemProject.id,
+                      selectedItem.id,
+                      selectedItemProject.current_user_id ?? user.id
+                    )
                     setSelectedTaskBinding(null)
                     setBackgroundTaskItemId(null)
                     if (!selectedItemProject) return
                     openTaskComposer({
                       workItemId: selectedItem.id,
-                      initialInput: selectedItem.human_work
-                        ? [
-                            workItemComposerReference(selectedItemProject, selectedItem),
-                            selectedItem.title,
-                            selectedItem.description,
-                            t('todo.human_work_ai_prompt'),
-                          ]
-                            .filter(Boolean)
-                            .join('\n\n')
-                        : workItemComposerReference(selectedItemProject, selectedItem),
+                      dispatch,
+                      initialInput: dispatch
+                        ? issueDispatchPersonalTaskInput(dispatch)
+                        : selectedItem.human_work
+                          ? [
+                              workItemComposerReference(selectedItemProject, selectedItem),
+                              selectedItem.title,
+                              selectedItem.description,
+                              t('todo.human_work_ai_prompt'),
+                            ]
+                              .filter(Boolean)
+                              .join('\n\n')
+                          : workItemComposerReference(selectedItemProject, selectedItem),
                       backgroundAfterSend: false,
                     })
                   }}
                   onClose={closeIssuePanelStack}
-                  onStartHumanTaskFromReply={({ issueId, dispatch, replyText }) => {
+                  onStartHumanTaskFromReply={({ issueId, dispatch }) => {
                     if (
                       !selectedItem ||
                       !selectedItemProject ||
-                      selectedItemProject.location !== 'cloud' ||
                       String(selectedItem.id) !== String(issueId)
                     ) {
                       return
                     }
-                    return openIssueAssignmentTask(
+                    createIssueAssignmentTask(
                       selectedItemProject,
                       selectedItem,
-                      humanTaskDispatchInput(dispatch, replyText),
-                      { backgroundAfterSend: false }
+                      humanTaskDispatchInput(dispatch),
+                      false
                     )
                   }}
                   onOpenTaskConversation={task => {

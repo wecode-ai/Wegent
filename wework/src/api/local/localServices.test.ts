@@ -209,6 +209,17 @@ describe('createLocalAppServices', () => {
         updates.push(params?.todo as Record<string, unknown>)
         return task
       }
+      if (method === 'todos.comment.create')
+        return {
+          message_id: 'followup-root',
+          sender_type: 'user',
+          sender_id: '0',
+          content: 'Check memory',
+          status: 'completed',
+          sequence_number: 1,
+          metadata: {},
+        }
+      if (method === 'executions.enqueue') return { id: 99 }
       throw new Error(`Unexpected method: ${method}`)
     })
     const localStatus = {
@@ -354,6 +365,41 @@ describe('createLocalAppServices', () => {
     expect(
       (updates[2].execution_payload as Record<string, unknown>).managerRuntimeRequest
     ).toBeUndefined()
+    await services.localProjectChatClient!.send({
+      projectId: 'project-1',
+      taskId: 'LOCAL-1',
+      clientMessageId: 'followup-root',
+      text: 'Check memory',
+      mentions: [{ type: 'agent', id: 'worker', label: 'Worker' }],
+    })
+    expect(request).toHaveBeenCalledWith(
+      'executions.enqueue',
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          text: 'Check memory',
+          runtimePayload: expect.objectContaining({
+            executionRequest: expect.objectContaining({
+              system_prompt: 'Worker developer instructions',
+              model_config: expect.objectContaining({ model_id: 'gpt-5.6-sol' }),
+            }),
+          }),
+        }),
+      })
+    )
+    const queuedBeforeReply = request.mock.calls.filter(
+      ([method]) => method === 'executions.enqueue'
+    ).length
+    await services.localProjectChatClient!.send({
+      projectId: 'project-1',
+      taskId: 'LOCAL-1',
+      clientMessageId: 'followup-reply',
+      text: 'Continue memory check',
+      replyToMessageId: 'followup-root',
+      mentions: [{ type: 'agent', id: 'worker', label: 'Worker' }],
+    })
+    expect(request.mock.calls.filter(([method]) => method === 'executions.enqueue')).toHaveLength(
+      queuedBeforeReply
+    )
   })
 
   test('reads the composer catalog from the exact local task and includes scoped cloud membership', async () => {

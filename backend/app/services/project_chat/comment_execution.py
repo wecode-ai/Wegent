@@ -3,6 +3,7 @@
 
 """Project-authorized comment execution, independent of the agent picker."""
 
+import logging
 import uuid
 from typing import Any
 
@@ -28,6 +29,8 @@ from app.services.project_chat.runtime_binding import (
 )
 from app.services.project_chat.service import bot_config, project_chat_service
 from shared.telemetry.decorators import trace_async
+
+logger = logging.getLogger(__name__)
 
 
 def _messages(
@@ -232,29 +235,8 @@ async def _continue_runtime(
     execution: LoopItemExecution | BoundCommentSession,
     attachments: list[dict[str, Any]],
 ) -> ProjectChatMessage:
-    from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services.device.runtime_rpc_service import runtime_rpc_service
-    from app.services.runtime_work_service import compile_runtime_task_create
 
-    if not execution.runtime_request:
-        raise HTTPException(409, "The original execution configuration is unavailable")
-    # Recompile the persisted non-secret intent as its original owner. Never
-    # accept an owner, device, model, workspace, or credential from the caller.
-    intent = RuntimeTaskCreateRequest.model_validate(
-        {**execution.runtime_request, "message": trigger.content}
-    )
-    intent = intent.model_copy(
-        update={
-            "message": trigger.content,
-            "new_session": False,
-            "device_id": execution.runtime_device_id,
-            "attachment_ids": [],
-            "attachments": attachments,
-        }
-    )
-    compiled = compile_runtime_task_create(
-        db=db, user_id=execution.executor_owner_user_id, request=intent
-    )
     response = _response(
         db, request, trigger, execution.agent_id, target.sender_name, execution
     )
@@ -276,16 +258,25 @@ async def _continue_runtime(
         project_chat_service.to_view(response, db=db).model_dump(by_alias=True)
     )
     try:
+        logger.info(
+            "[ProjectChat] Continue bound session project=%s issue=%s trigger=%s "
+            "device=%s runtime_task=%s owner=%s",
+            request.project_id,
+            request.task_id,
+            trigger.message_id,
+            execution.runtime_device_id,
+            execution.runtime_task_id,
+            execution.executor_owner_user_id,
+        )
+        # The Executor owns the original configuration and session. A reply
+        # carries only new input, never a replacement execution profile.
         payload = {
             "taskId": execution.runtime_task_id,
             "message": trigger.content,
             "clientUserMessageId": trigger.message_id,
             "queueIfBusy": True,
-            "executionRequest": compiled.payload["executionRequest"],
             "attachments": attachments,
         }
-        if compiled.payload.get("modelSelection"):
-            payload["modelSelection"] = compiled.payload["modelSelection"]
         result = await runtime_rpc_service.call(
             user_id=execution.executor_owner_user_id,
             device_id=execution.runtime_device_id,
@@ -318,6 +309,16 @@ async def _continue_runtime(
             project_chat_service.to_view(response, db=db).model_dump(by_alias=True)
         )
     except Exception as exc:
+        logger.warning(
+            "[ProjectChat] Bound continuation rejected project=%s issue=%s "
+            "trigger=%s device=%s runtime_task=%s error_type=%s",
+            request.project_id,
+            request.task_id,
+            trigger.message_id,
+            execution.runtime_device_id,
+            execution.runtime_task_id,
+            type(exc).__name__,
+        )
         error = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
         failed = project_chat_service.fail_agent_response(
             db,
@@ -339,6 +340,14 @@ async def _continue_runtime(
 async def execute_comment(
     db: Session, *, user_id: int, request: ProjectChatCommentExecution
 ) -> list[ProjectChatMessageView]:
+    logger.info(
+        "[ProjectChat] Comment execution requested project=%s issue=%s "
+        "trigger=%s user=%s",
+        request.project_id,
+        request.task_id,
+        request.trigger_message_id,
+        user_id,
+    )
     project_chat_service._require_scope(
         db,
         user_id=user_id,

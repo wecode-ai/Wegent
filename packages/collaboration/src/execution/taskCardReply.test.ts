@@ -65,6 +65,72 @@ function setup() {
   return { input, client, runtime };
 }
 describe("shared PC card reply dispatch", () => {
+  it("continues a local session without enqueue mentions even without self-managed mode", async () => {
+    const { input, client, runtime } = setup();
+    const result = await dispatchTaskCardReply({
+      ...input,
+      project: { ...input.project, project_store: "local" },
+    });
+    expect(result.ok).toBe(true);
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mentions: [],
+        replyToMessageId: "root",
+      }),
+    );
+    expect(runtime.sendRuntimePaneMessage).toHaveBeenCalledOnce();
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
+  });
+
+  it("does not start another task when a local AI session no longer exists", async () => {
+    const { input, runtime } = setup();
+    runtime.sendRuntimePaneMessage.mockImplementationOnce(
+      async (_request, options) => {
+        options?.onError?.("Session not found");
+        return false;
+      },
+    );
+    expect(
+      await dispatchTaskCardReply({
+        ...input,
+        project: { ...input.project, project_store: "local" },
+      }),
+    ).toEqual({ ok: false, persisted: true, error: "Session not found" });
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
+  });
+  it("rejects a local AI reply without its session instead of creating a replacement", async () => {
+    const { input, runtime } = setup();
+    const result = await dispatchTaskCardReply({
+      ...input,
+      selfManagedExecution: true,
+      project: { ...input.project, project_store: "local" },
+      card: { root, replies: [{ ...run, runtimeAddress: undefined }] },
+    });
+    expect(result).toEqual({
+      ok: false,
+      persisted: true,
+      error: "Start failed",
+    });
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
+  });
+  it("saves a discussion reply without invoking the assigned AI", async () => {
+    const { input, client, runtime } = setup();
+    client.executeTaskComment = vi.fn();
+    expect(
+      await dispatchTaskCardReply({ ...input, card: { root, replies: [] } }),
+    ).toEqual({ ok: true, persisted: true });
+    expect(client.executeTaskComment).not.toHaveBeenCalled();
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
+  });
+  it("reports a cloud continuation that returned no execution", async () => {
+    const { input, client } = setup();
+    client.executeTaskComment = vi.fn().mockResolvedValue([]);
+    expect(await dispatchTaskCardReply(input)).toEqual({
+      ok: false,
+      persisted: true,
+      error: "Start failed",
+    });
+  });
   it("uses live session state instead of a historical terminal turn", () => {
     expect(
       cardSessionActive(

@@ -3,8 +3,8 @@
 //! A manager submits one batch through the project-space MCP. Every agent
 //! assignment becomes an independent Runtime execution so each member keeps
 //! its configured shell, model, device policy, and capabilities. Once the
-//! batch reaches a terminal state, the Executor queues a fresh manager
-//! execution to evaluate the results and decide the next batch.
+//! agent-only batch finishes, ownership stays with the executing agent. Human
+//! deliveries resume the manager to evaluate the submitted results.
 
 use super::*;
 
@@ -113,8 +113,6 @@ impl LocalTaskStore {
                         "task_title": title,
                         "agent_id": assignee_id,
                         "agent_name": agent_display_name(&agent),
-                        "assignee_id": assignee_id,
-                        "assignee_name": agent_display_name(&agent),
                         "workflow_stage_id": assignment.get("workflow_stage_id"),
                         "model_id": selected_model_id,
                     }));
@@ -136,8 +134,9 @@ impl LocalTaskStore {
                         "assignment_id": assignment_id,
                         "assignee_type": "human",
                         "task_title": title,
-                        "assignee_id": assignee_id,
-                        "assignee_name": human_name,
+                        "instructions": instructions,
+                        "human_user_id": assignee_id,
+                        "human_user_name": human_name,
                         "workflow_stage_id": assignment.get("workflow_stage_id"),
                     }));
                 }
@@ -166,10 +165,18 @@ impl LocalTaskStore {
              WHERE id = ?3",
             params![updated_payload.to_string(), now(), manager_execution_id],
         )?;
+        apply_round_assignee(&transaction, &manager.loop_item_id, &dispatched)?;
+        let dispatch_id = manager
+            .execution_payload
+            .as_ref()
+            .and_then(|payload| payload.get("dispatch_id"))
+            .and_then(Value::as_str)
+            .unwrap_or(&manager.loop_item_id);
         update_manager_assignment_activity(
             &transaction,
             manager_execution_id,
             round_id,
+            dispatch_id,
             &dispatched,
         )?;
         transaction.commit()?;
@@ -227,6 +234,31 @@ impl LocalTaskStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if !collaboration_round_is_ready(&transaction, item_id, round_id)? {
             transaction.rollback()?;
+            return Ok(());
+        }
+        let has_human_assignment: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_items
+             WHERE parent_id = ?1 AND resource_type = 'task' AND deleted_at IS NULL
+               AND json_extract(metadata, '$.collaboration_assignment.assignee_type') = 'human'
+               AND json_extract(metadata, '$.collaboration_assignment.round_id') = ?2)",
+            params![item_id, round_id],
+            |row| row.get(0),
+        )?;
+        if !has_human_assignment {
+            transaction.execute(
+                "UPDATE loop_items SET status = 'in_review', version = version + 1, updated_at = ?1
+                 WHERE id = ?2 AND status = 'in_progress'
+                   AND assignee_agent_id IN (SELECT agent_id FROM loop_item_executions
+                     WHERE loop_item_id = ?2
+                       AND json_extract(execution_payload, '$.coordination_round_id') = ?3)
+                   AND NOT EXISTS(SELECT 1 FROM loop_item_executions
+                     WHERE loop_item_id = ?2 AND status != 'completed'
+                       AND json_extract(execution_payload, '$.coordination_round_id') = ?3)
+                   AND NOT EXISTS(SELECT 1 FROM loop_item_executions
+                     WHERE loop_item_id = ?2 AND status IN ('queued','pending_approval','claimed','running','cancel_requested'))",
+                params![now(), item_id, round_id],
+            )?;
+            transaction.commit()?;
             return Ok(());
         }
         if manager_resume_exists(&transaction, item_id, round_id)? {
@@ -617,6 +649,13 @@ fn create_human_assignment_task(
         .ok_or_else(|| TaskRuntimeError::Invalid("project key is missing".to_owned()))?;
     let task_id = format!("{project_key}-{sequence}");
     let timestamp = now();
+    let dispatch_id = manager
+        .execution_payload
+        .as_ref()
+        .and_then(|payload| payload.get("dispatch_id"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| manager.loop_item_id.clone());
     let metadata = json!({
         "tags": [],
         "is_unread": true,
@@ -624,6 +663,7 @@ fn create_human_assignment_task(
             "assignment_id": assignment_id,
             "assignee_type": "human",
             "round_id": round_id,
+            "dispatch_id": dispatch_id,
             "manager_execution_id": manager.id,
             "root_item_id": manager.loop_item_id,
             "workflow_stage_id": workflow_stage_id,
@@ -715,10 +755,116 @@ fn collaboration_round_exists(
     )?)
 }
 
+/// Point the Issue at the member this round waits for. A human assignment wins
+/// over a robot assignment because the round only continues after the human
+/// delivers; the group assignment is cleared so the board shows the real owner.
+fn apply_round_assignee(
+    connection: &Connection,
+    item_id: &str,
+    dispatched: &[Value],
+) -> Result<(), TaskRuntimeError> {
+    let Some(target) = dispatched
+        .iter()
+        .find(|assignment| assignment.get("assignee_type").and_then(Value::as_str) == Some("human"))
+        .or_else(|| dispatched.first())
+    else {
+        return Ok(());
+    };
+    let (to_type, to_id, to_name, assignee_agent_id, assignee_user_id) =
+        match target.get("assignee_type").and_then(Value::as_str) {
+            Some("human") => {
+                let id = target
+                    .get("human_user_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        TaskRuntimeError::Invalid("human assignment identity is missing".to_owned())
+                    })?;
+                let user_id = id.parse::<i64>().map_err(|_| {
+                    TaskRuntimeError::Invalid(
+                        "local collaboration human assignee identity must be a numeric user id"
+                            .to_owned(),
+                    )
+                })?;
+                (
+                    "user",
+                    id.to_owned(),
+                    target
+                        .get("human_user_name")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
+                    None,
+                    Some(user_id),
+                )
+            }
+            _ => {
+                let id = target
+                    .get("agent_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        TaskRuntimeError::Invalid("agent assignment identity is missing".to_owned())
+                    })?;
+                (
+                    "agent",
+                    id.to_owned(),
+                    target
+                        .get("agent_name")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
+                    Some(id.to_owned()),
+                    None,
+                )
+            }
+        };
+    let current =
+        get_item_from(connection, item_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+    let assignee_matches = match to_type {
+        "user" => current.assignee_user_id == assignee_user_id,
+        _ => current.assignee_agent_id.as_deref() == assignee_agent_id.as_deref(),
+    };
+    let group_cleared = current
+        .metadata
+        .get("collaboration_group")
+        .map_or(true, Value::is_null);
+    if assignee_matches && group_cleared {
+        return Ok(());
+    }
+    let mut metadata = current.metadata;
+    metadata["collaboration_group"] = Value::Null;
+    if let Some(name) = to_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        metadata["assignee_label"] = json!(name);
+    }
+    record_assignment_change(
+        &mut metadata,
+        0,
+        Some(to_type),
+        Some(&to_id),
+        to_name.as_deref(),
+    );
+    connection.execute(
+        "UPDATE loop_items
+         SET assignee_agent_id = ?1, assignee_user_id = ?2, metadata = ?3,
+             version = version + 1, updated_at = ?4
+         WHERE id = ?5 AND resource_type = 'task' AND deleted_at IS NULL",
+        params![
+            assignee_agent_id,
+            assignee_user_id,
+            metadata.to_string(),
+            now(),
+            item_id,
+        ],
+    )?;
+    Ok(())
+}
+
 fn update_manager_assignment_activity(
     connection: &Connection,
     manager_execution_id: i64,
     round_id: &str,
+    dispatch_id: &str,
     assignments: &[Value],
 ) -> Result<(), TaskRuntimeError> {
     connection.execute(
@@ -729,15 +875,20 @@ fn update_manager_assignment_activity(
                  '$.dispatch_assignments',
                  json(?2),
                  '$.coordination_round_id',
-                 ?3
+                 ?3,
+                 '$.dispatch_id',
+                 ?4,
+                 '$.activity_type',
+                 'manager_assignment'
              ),
-             updated_at = ?4
+             updated_at = ?5
          WHERE deleted_at IS NULL
-           AND json_extract(metadata, '$.execution_id') = ?5",
+           AND json_extract(metadata, '$.execution_id') = ?6",
         params![
             assignment_summary(assignments),
             Value::Array(assignments.to_vec()).to_string(),
             round_id,
+            dispatch_id,
             now(),
             manager_execution_id,
         ],
@@ -749,10 +900,14 @@ fn assignment_summary(assignments: &[Value]) -> String {
     assignments
         .iter()
         .filter_map(|assignment| {
+            let name = assignment
+                .get("agent_name")
+                .or_else(|| assignment.get("human_user_name"))
+                .and_then(Value::as_str)?;
             Some(format!(
                 "{} → {}",
                 assignment.get("task_title")?.as_str()?,
-                assignment.get("assignee_name")?.as_str()?
+                name
             ))
         })
         .collect::<Vec<_>>()

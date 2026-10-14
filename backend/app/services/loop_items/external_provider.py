@@ -1473,7 +1473,7 @@ class ExternalLoopItemProvider:
             row.assignee_team_id = None
             # Production MySQL stores unset user assignees as 0, not NULL.
             row.assignee_user_id = 0
-            loop_item_service._write_assignment_change(
+            loop_item_service.record_assignment_change(
                 metadata, user_id, "agent", assignee_id, assignee_name
             )
         elif assignee_type == "team":
@@ -1482,7 +1482,7 @@ class ExternalLoopItemProvider:
             row.assignee_user_id = 0
             row.assignee_agent_id = ""
             row.assignee_team_id = int(assignee_id)
-            loop_item_service._write_assignment_change(
+            loop_item_service.record_assignment_change(
                 metadata, user_id, "team", assignee_id, assignee_name
             )
         elif assignee_type == "group":
@@ -1501,7 +1501,7 @@ class ExternalLoopItemProvider:
                 "id": assignee_id,
                 "name": assignee_name or "",
             }
-            loop_item_service._write_assignment_change(
+            loop_item_service.record_assignment_change(
                 metadata, user_id, "group", assignee_id, assignee_name
             )
         else:
@@ -1510,7 +1510,7 @@ class ExternalLoopItemProvider:
             row.assignee_user_id = int(assignee_id) if assignee_id else 0
             row.assignee_agent_id = ""
             row.assignee_team_id = None
-            loop_item_service._write_assignment_change(
+            loop_item_service.record_assignment_change(
                 metadata, user_id, "user", assignee_id or None, assignee_name
             )
         row.metadata_json = metadata

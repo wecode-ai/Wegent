@@ -17,13 +17,8 @@ use crate::{
     runner::{AgentEngine, EventSink, ExecutionOutcome},
 };
 
+use super::cloud_model_identity::{cloud_model_gateway_base_url, CloudModelIdentity};
 use super::*;
-
-const CLOUD_MODEL_TYPES: [&str; 3] = ["public", "user", "group"];
-const CLOUD_MODEL_NAMESPACE_OPTION: &str = "weworkCloudModelNamespace";
-const CLOUD_MODEL_RESOURCE_USER_ID_OPTION: &str = "weworkCloudModelResourceUserId";
-const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION: &str = "weworkCloudModelUpstreamApiFormat";
-const CLOUD_MODEL_GATEWAY_PATH: &str = "runtime-work/llm-responses-proxy";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BackendSessionCredentials {
@@ -726,57 +721,11 @@ fn prepare_claude_cloud_model_route(
     request: &mut ExecutionRequest,
     backend_credentials: Option<&BackendSessionCredentials>,
 ) -> Result<(), String> {
-    let Some(selection) = request
-        .extra
-        .get("modelSelection")
-        .or_else(|| request.extra.get("model_selection"))
-        .filter(|value| value.is_object())
+    let Some(identity) = CloudModelIdentity::from_request(request)
+        .map_err(|error| format!("Claude Code {error}"))?
     else {
         return Ok(());
     };
-    let model_type = string_field(selection, "modelType")
-        .or_else(|| string_field(selection, "model_type"))
-        .unwrap_or_default();
-    if !CLOUD_MODEL_TYPES.contains(&model_type.as_str()) {
-        return Ok(());
-    }
-
-    let model_name = string_field(selection, "modelName")
-        .or_else(|| string_field(selection, "model_name"))
-        .or_else(|| string_field(selection, "model"))
-        .ok_or_else(|| "Claude Code cloud model name is required".to_owned())?;
-    let options = selection
-        .get("options")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "Claude Code cloud model options are required".to_owned())?;
-    let namespace = options
-        .get(CLOUD_MODEL_NAMESPACE_OPTION)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| "Claude Code cloud model namespace is required".to_owned())?;
-    let resource_user_id = options
-        .get(CLOUD_MODEL_RESOURCE_USER_ID_OPTION)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Claude Code cloud model resource user ID is required".to_owned())?;
-    let resource_user_id = resource_user_id
-        .parse::<i64>()
-        .ok()
-        .filter(|value| *value >= 0)
-        .map(|value| value.to_string())
-        .ok_or_else(|| {
-            "Claude Code cloud model resource user ID must be a non-negative integer".to_owned()
-        })?;
-    let upstream_api_format = options
-        .get(CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("openai-responses")
-        .to_owned();
     let backend_url = backend_credentials
         .map(|credentials| credentials.backend_url.trim())
         .filter(|value| !value.is_empty())
@@ -795,10 +744,13 @@ fn prepare_claude_cloud_model_route(
         .ok_or_else(|| "Claude Code model configuration must be an object".to_owned())?;
     for (key, value) in [
         ("model", Value::String("openai".to_owned())),
-        ("model_id", Value::String(model_name)),
+        ("model_id", Value::String(identity.name.clone())),
         ("api_format", Value::String("responses".to_owned())),
         ("protocol", Value::String("openai-responses".to_owned())),
-        ("upstream_api_format", Value::String(upstream_api_format)),
+        (
+            "upstream_api_format",
+            Value::String(identity.upstream_api_format.clone()),
+        ),
         (
             "base_url",
             Value::String(cloud_model_gateway_base_url(&backend_url)),
@@ -816,39 +768,13 @@ fn prepare_claude_cloud_model_route(
     let default_headers = default_headers
         .as_object_mut()
         .expect("Claude model default headers should be an object");
-    for (key, value) in [
-        ("X-Wegent-Model-Type", model_type),
-        ("X-Wegent-Model-Namespace", namespace),
-        ("X-Wegent-Model-User-Id", resource_user_id),
-        (
-            "X-Wegent-Upstream-Header-wecode-executor",
-            "claudecode".to_owned(),
-        ),
-        (
-            "X-Wegent-Upstream-Header-wecode-source",
-            "wegent-agent".to_owned(),
-        ),
-    ] {
-        default_headers.insert(key.to_owned(), Value::String(value));
-    }
-    // Forward the session (task) id through the gateway to the upstream provider.
-    let task_id = request.task_id.trim();
-    if !task_id.is_empty() {
-        default_headers.insert(
-            "X-Wegent-Upstream-Header-wecode-session-id".to_owned(),
-            Value::String(task_id.to_owned()),
-        );
-    }
+    identity.apply_headers(
+        default_headers,
+        "claudecode",
+        "wegent-agent",
+        &request.task_id,
+    );
     Ok(())
-}
-
-fn cloud_model_gateway_base_url(backend_url: &str) -> String {
-    let base_url = backend_url.trim().trim_end_matches('/');
-    if base_url.ends_with("/api") {
-        format!("{base_url}/{CLOUD_MODEL_GATEWAY_PATH}")
-    } else {
-        format!("{base_url}/api/{CLOUD_MODEL_GATEWAY_PATH}")
-    }
 }
 
 #[cfg(test)]

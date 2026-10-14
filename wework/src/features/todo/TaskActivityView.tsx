@@ -413,13 +413,25 @@ export function TaskActivityView({
   // A reply on a thread with no execution to continue only lands as a comment.
   // When a manager assigned this member a human work item, the reply also opens
   // that work item's task composer.
-  const replyHumanDispatch = useMemo(
-    () =>
-      replyTarget && onStartHumanTaskFromReply && !cardSessionAddress(replyTarget)
-        ? humanDispatchAssignment(messages, chatCurrentUserId ?? currentUserId)
-        : null,
-    [chatCurrentUserId, currentUserId, messages, onStartHumanTaskFromReply, replyTarget]
-  )
+  function humanDispatchForCard(card: TaskReplyCard) {
+    // Local spaces expose the signed-in identity while the local chat store
+    // retains the device identity. Both identify this machine's human member.
+    const userIds =
+      projectLocation === 'local' || project.project_store === 'local'
+        ? [currentUserId, chatCurrentUserId].filter((id): id is string | number => id != null)
+        : (chatCurrentUserId ?? currentUserId)
+    return humanDispatchAssignment([card.root, ...card.replies], userIds)
+  }
+  function cardReplyLabel(card: TaskReplyCard) {
+    if (humanDispatchForCard(card)) return t('workbench.task_activity_reply_start_new_task')
+    return t(
+      [card.root, ...card.replies].some(message => message.sender.type === 'agent')
+        ? 'workbench.task_activity_reply_action'
+        : 'workbench.task_activity_reply_discussion'
+    )
+  }
+  const replyHumanDispatch =
+    replyTarget && onStartHumanTaskFromReply ? humanDispatchForCard(replyTarget) : null
   // The code workspace the assigned robot is bound to. Only a rebound backend
   // project can be selected here; a legacy record that still needs rebinding
   // and a device-owned workspace carry no selectable project.
@@ -626,6 +638,7 @@ export function TaskActivityView({
   }, [activityStatusHistory, commentCards, issueTimeline, task.created_at])
 
   function cardSessionActive(card: TaskReplyCard) {
+    if (onStartHumanTaskFromReply && humanDispatchForCard(card)) return false
     return sharedCardSessionActive(card, address => {
       const runtime = lifecycleSnapshot.tasks.get(getRuntimeTaskLifecycleKey(address))
       return runtime?.execution.known ? runtime.derived.isBusy : undefined
@@ -774,12 +787,38 @@ export function TaskActivityView({
     if (!client)
       return { ok: false, persisted: false, error: t('workbench.project_chat_send_failed') }
     setSending(true)
+    let persisted = false
     try {
+      const dispatch = humanDispatchForCard(card)
+      if (dispatch && onStartHumanTaskFromReply) {
+        const message = await client.send({
+          projectId: project.id,
+          taskId: task.id,
+          clientMessageId: reply.id,
+          text: reply.content,
+          mentions: (reply.mentions ?? []).filter(mention => mention.type === 'user'),
+          replyToMessageId: card.root.messageId,
+          model: null,
+        })
+        persisted = true
+        setMessages(current => mergeProjectChatMessages(current, [message]))
+        void persistConversationAttachments(reply.attachments ?? [])
+        await onStartHumanTaskFromReply({
+          issueId: String(task.id),
+          dispatch,
+          replyText: reply.content,
+        })
+        return { ok: true, persisted: true }
+      }
       const result = await dispatchTaskCardReply({
         client,
         services: taskAiServices,
         runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
-        project,
+        project: {
+          ...project,
+          project_store:
+            project.project_store ?? (projectLocation === 'local' ? 'local' : 'backend'),
+        },
         task,
         agent: assignedAgent,
         selfManagedExecution,
@@ -800,8 +839,22 @@ export function TaskActivityView({
         startFailedText: t('workbench.project_chat_agent_start_failed'),
         sendFailedText: t('workbench.project_chat_send_failed'),
       })
+      if (result.ok) {
+        const address = cardSessionAddress(card)
+        const binding =
+          address &&
+          taskBindings.find(
+            candidate =>
+              candidate.device_id === address.deviceId && candidate.task_id === address.taskId
+          )
+        if (binding) onOpenTask?.(binding)
+      }
       if (result.persisted) revealCardBottom(card.root.messageId)
       return result
+    } catch (cause) {
+      const error = cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed')
+      setError(error)
+      return { ok: false, persisted, error }
     } finally {
       setSending(false)
     }
@@ -915,21 +968,9 @@ export function TaskActivityView({
       setError(result.error ?? t('workbench.project_chat_send_failed'))
       return
     }
-    const dispatch = replyHumanDispatch
     setReplyTarget(null)
     setNewCommentDraft('')
     attachmentSelection.resetAttachments()
-    if (dispatch && onStartHumanTaskFromReply) {
-      try {
-        await onStartHumanTaskFromReply({
-          issueId: String(task.id),
-          dispatch,
-          replyText: text,
-        })
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed'))
-      }
-    }
   }
 
   const renderActivityMessage = (
@@ -1040,9 +1081,14 @@ export function TaskActivityView({
                 <div className="mx-3 border-b border-border/60 px-1 text-xs text-text-muted">
                   <div className="flex min-h-8 items-center gap-2">
                     <span className="min-w-0 flex-1 truncate">
-                      {t('workbench.task_activity_replying_to', {
-                        name: replyTarget.root.sender.name,
-                      })}
+                      {t(
+                        replyHumanDispatch
+                          ? 'workbench.task_activity_replying_to_human'
+                          : 'workbench.task_activity_replying_to',
+                        {
+                          name: replyTarget.root.sender.name,
+                        }
+                      )}
                       {replyTarget.root.content ? ` · ${replyTarget.root.content}` : ''}
                     </span>
                     <button
@@ -1069,7 +1115,9 @@ export function TaskActivityView({
               ) : null}
               <TaskCommentComposer
                 predictionAddress={
-                  replyTarget ? boundCardSessionAddress(replyTarget, taskBindings) : null
+                  replyTarget && !replyHumanDispatch
+                    ? boundCardSessionAddress(replyTarget, taskBindings)
+                    : null
                 }
                 key={task.id}
                 value={newCommentDraft}
@@ -1194,7 +1242,7 @@ export function TaskActivityView({
                     )
                   : undefined
                 return (
-                  <div key={rootId}>
+                  <div key={rootId} data-testid={`cloud-task-activity-card-${rootId}`}>
                     <IssueManagerEvent
                       message={card.root}
                       task={task}
@@ -1202,7 +1250,18 @@ export function TaskActivityView({
                         binding && onOpenTask ? () => onOpenTask(binding) : undefined
                       }
                     />
-                    {card.replies.map(reply => renderActivityMessage(reply))}
+                    <div data-testid={`cloud-task-activity-replies-${rootId}`}>
+                      {card.replies.map(reply => renderActivityMessage(reply))}
+                    </div>
+                    {humanDispatchForCard(card) && onStartHumanTaskFromReply ? (
+                      <TimelineReply
+                        rootId={rootId}
+                        createdAt={issueThreadActivityTimestamp(card)}
+                        replyLabel={cardReplyLabel(card)}
+                        active={replyTarget?.root.messageId === rootId}
+                        onReply={() => setReplyTarget(card)}
+                      />
+                    ) : null}
                   </div>
                 )
               }
@@ -1226,6 +1285,15 @@ export function TaskActivityView({
                   composer={
                     <>
                       <div data-testid={`cloud-task-activity-card-queue-${rootId}`}>
+                        {replyQueue.error(rootId) ? (
+                          <p
+                            role="alert"
+                            className="text-xs text-destructive"
+                            data-testid={`cloud-task-activity-reply-error-${rootId}`}
+                          >
+                            {replyQueue.error(rootId)}
+                          </p>
+                        ) : null}
                         <ConversationQueuePanel
                           queuedMessages={replyQueue.messages(rootId)}
                           guidanceMessages={[]}
@@ -1236,7 +1304,7 @@ export function TaskActivityView({
                         <TimelineReply
                           rootId={rootId}
                           createdAt={issueThreadActivityTimestamp(card)}
-                          replyLabel={t('workbench.task_activity_reply_action')}
+                          replyLabel={cardReplyLabel(card)}
                           active={replyTarget?.root.messageId === rootId}
                           onReply={() => setReplyTarget(card)}
                         />

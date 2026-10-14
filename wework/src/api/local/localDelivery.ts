@@ -92,6 +92,10 @@ interface LocalTaskBindingRecord {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  human_assignment_id?: string | null
+  dispatch_id?: string | null
+  dispatch_round_id?: string | null
+  assignment_id?: string | null
   modelSelection?: ModelSelectionConfig | null
   executionContext?: LoopItemTaskBinding['executionContext']
   binding_type: 'system' | 'user'
@@ -1411,7 +1415,18 @@ export function createLocalDeliveryApi(
     listLoopItemCollaborators: async () => [],
     addLoopItemCollaborator: async () => unsupported('Task collaborators'),
     removeLoopItemCollaborator: async () => unsupported('Task collaborators'),
-    async bindTask(itemId: string, task: RuntimeTaskAddress, taskTitle?: string | null) {
+    async bindTask(
+      itemId: string,
+      task: RuntimeTaskAddress,
+      taskTitle?: string | null,
+      _workflowNodeId?: string | null,
+      dispatch?: {
+        humanAssignmentId: string
+        dispatchId: string
+        dispatchRoundId: string
+        assignmentId: string
+      } | null
+    ) {
       const projectId = await resolveProjectId(itemId)
       const modelSelection =
         task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
@@ -1433,6 +1448,7 @@ export function createLocalDeliveryApi(
             ? { executionContext }
             : {}),
         },
+        ...(dispatch ? { dispatch } : {}),
       })
     },
     async trackProjectTask(

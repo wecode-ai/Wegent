@@ -197,6 +197,7 @@ import { createLocalAttachmentApi } from './localAttachments'
 import {
   createExternalIssueApi,
   createLocalDeliveryApi,
+  type LocalAssignmentExecutionPayloadInput,
   createLocalLoopItemExecutionApi,
   createLocalProjectChatAgentApi,
   type LocalProjectChatAgent,
@@ -3810,98 +3811,110 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       deps.materializeRuntimeTask
     )
   }
-  const deliveryApi: LocalProjectSpaceApi = createLocalDeliveryApi(request, {
-    async prepareAssignmentExecutionPayload({ projectId, itemId, assigneeType, assigneeId }) {
-      const [projects, task] = await Promise.all([
-        deliveryApi.listCloudProjects(),
-        deliveryApi.getLoopItem(itemId),
-      ])
-      const projectAgents = await localProjectChatAgentApi.list(String(projectId))
-      const workspaceAgents =
-        String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
-          ? []
-          : await localProjectChatAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID)
-      const agents = [
-        ...projectAgents,
-        ...workspaceAgents.filter(
-          workspaceAgent =>
-            !projectAgents.some(projectAgent => projectAgent.id === workspaceAgent.id)
-        ),
-      ]
-      const project = projects.items.find(candidate => String(candidate.id) === String(projectId))
-      if (!project) throw new Error(`Local project '${projectId}' is unavailable`)
-      if (assigneeType === 'agent') {
-        const agent = agents.find(candidate => candidate.id === assigneeId)
+  const prepareAssignmentExecutionPayload = async ({
+    projectId,
+    itemId,
+    assigneeType,
+    assigneeId,
+  }: LocalAssignmentExecutionPayloadInput): Promise<Record<string, unknown>> => {
+    const [projects, task] = await Promise.all([
+      deliveryApi.listCloudProjects(),
+      deliveryApi.getLoopItem(itemId),
+    ])
+    const projectAgents = await localProjectChatAgentApi.list(String(projectId))
+    const workspaceAgents =
+      String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
+        ? []
+        : await localProjectChatAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID)
+    const agents = [
+      ...projectAgents,
+      ...workspaceAgents.filter(
+        workspaceAgent => !projectAgents.some(projectAgent => projectAgent.id === workspaceAgent.id)
+      ),
+    ]
+    const project = projects.items.find(candidate => String(candidate.id) === String(projectId))
+    if (!project) throw new Error(`Local project '${projectId}' is unavailable`)
+    if (assigneeType === 'agent') {
+      const agent = agents.find(candidate => candidate.id === assigneeId)
+      if (!agent || agent.status !== 'active') {
+        throw new Error(`Local agent '${assigneeId}' is unavailable`)
+      }
+      return assignmentRuntimePayload(projectId, itemId, agent, 'direct', project, task)
+    }
+    const group = (project.collaboration_groups ?? []).find(
+      candidate => candidate.id === assigneeId
+    )
+    if (!group) throw new Error(`Collaboration group '${assigneeId}' is unavailable`)
+    const references = [group.leader, ...group.members].filter(member => member.kind === 'agent')
+    const memberRuntimeProfiles = await Promise.all(
+      Array.from(new Set(references.map(member => member.id))).map(async memberId => {
+        const agent = agents.find(candidate => candidate.id === memberId)
         if (!agent || agent.status !== 'active') {
-          throw new Error(`Local agent '${assigneeId}' is unavailable`)
+          throw new Error(`Collaboration member '${memberId}' is unavailable`)
         }
-        return assignmentRuntimePayload(projectId, itemId, agent, 'direct', project, task)
-      }
-      const group = (project.collaboration_groups ?? []).find(
-        candidate => candidate.id === assigneeId
-      )
-      if (!group) throw new Error(`Collaboration group '${assigneeId}' is unavailable`)
-      const references = [group.leader, ...group.members].filter(member => member.kind === 'agent')
-      const memberRuntimeProfiles = await Promise.all(
-        Array.from(new Set(references.map(member => member.id))).map(async memberId => {
-          const agent = agents.find(candidate => candidate.id === memberId)
-          if (!agent || agent.status !== 'active') {
-            throw new Error(`Collaboration member '${memberId}' is unavailable`)
-          }
-          const modelRuntimeProfiles = await Promise.all(
-            assignmentModels(agent).map(async selectedModel => ({
-              modelId: selectedModel.name,
-              runtimePayload: await assignmentRuntimePayload(
-                projectId,
-                itemId,
-                agent,
-                'member',
-                project,
-                task,
-                group,
-                selectedModel
-              ),
-            }))
-          )
-          return {
-            memberIds: [memberId],
-            agentId: agent.id,
-            agentName: agent.displayName || agent.name,
-            runtimePayload: modelRuntimeProfiles[0]?.runtimePayload,
-            modelRuntimeProfiles,
-          }
-        })
-      )
-      const managerRuntimeRequest =
-        group.leader.kind === 'agent'
-          ? await (async () => {
-              const manager = agents.find(candidate => candidate.id === group.leader.id)
-              if (!manager || manager.status !== 'active') {
-                throw new Error(`Collaboration manager '${group.leader.id}' is unavailable`)
-              }
-              return assignmentRuntimePayload(
-                projectId,
-                itemId,
-                manager,
-                'manager',
-                project,
-                task,
-                group
-              )
-            })()
-          : null
-      return {
-        dispatchKind: 'collaboration_group',
-        dispatchTaskId: itemId,
-        ...(managerRuntimeRequest ? { managerRuntimeRequest } : {}),
-        memberRuntimeProfiles,
-      }
-    },
+        const modelRuntimeProfiles = await Promise.all(
+          assignmentModels(agent).map(async selectedModel => ({
+            modelId: selectedModel.name,
+            runtimePayload: await assignmentRuntimePayload(
+              projectId,
+              itemId,
+              agent,
+              'member',
+              project,
+              task,
+              group,
+              selectedModel
+            ),
+          }))
+        )
+        return {
+          memberIds: [memberId],
+          agentId: agent.id,
+          agentName: agent.displayName || agent.name,
+          runtimePayload: modelRuntimeProfiles[0]?.runtimePayload,
+          modelRuntimeProfiles,
+        }
+      })
+    )
+    const managerRuntimeRequest =
+      group.leader.kind === 'agent'
+        ? await (async () => {
+            const manager = agents.find(candidate => candidate.id === group.leader.id)
+            if (!manager || manager.status !== 'active') {
+              throw new Error(`Collaboration manager '${group.leader.id}' is unavailable`)
+            }
+            return assignmentRuntimePayload(
+              projectId,
+              itemId,
+              manager,
+              'manager',
+              project,
+              task,
+              group
+            )
+          })()
+        : null
+    return {
+      dispatchKind: 'collaboration_group',
+      dispatchTaskId: itemId,
+      ...(managerRuntimeRequest ? { managerRuntimeRequest } : {}),
+      memberRuntimeProfiles,
+    }
+  }
+  const deliveryApi: LocalProjectSpaceApi = createLocalDeliveryApi(request, {
+    prepareAssignmentExecutionPayload,
   })
   const externalIssueApi = createExternalIssueApi(request)
   const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
   const localProjectChatClient = createLocalProjectChatClient(request, {
     currentUser: LOCAL_USER,
+    prepareExecutionPayload: ({ projectId, itemId, agentId }) =>
+      prepareAssignmentExecutionPayload({
+        projectId,
+        itemId,
+        assigneeType: 'agent',
+        assigneeId: agentId,
+      }),
   })
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)

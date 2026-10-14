@@ -132,15 +132,9 @@ export async function dispatchTaskCardReply<
       taskId: task.id,
       clientMessageId: reply.id,
       text,
-      // A local self-managed reply is continued below through the card's
-      // runtime address. Mention-driven enqueue is reserved for a new root
-      // comment; including the mention here would create a second session.
+      // Replies continue the owning session below. Agent mentions must never
+      // schedule a second execution while persisting the reply.
       mentions: [
-        ...(!serverExecution &&
-        agent &&
-        !(input.selfManagedExecution && address)
-          ? [{ type: "agent" as const, id: agent.id, label: agent.name }]
-          : []),
         // Members the reply composer mentioned are addressed, not enqueued.
         ...(reply.mentions ?? []).filter((mention) => mention.type === "user"),
       ],
@@ -150,15 +144,19 @@ export async function dispatchTaskCardReply<
     persisted = true;
     input.onPersisted?.(message);
     onMessages([message]);
+    if (!previousAgent) return { ok: true, persisted };
+    if (!serverExecution && !address && agent?.runtime !== "wegent")
+      throw new Error(startFailedText);
     if (serverExecution) {
-      onMessages(
-        await serverExecution({
-          projectId: project.id,
-          taskId: task.id,
-          triggerMessageId: message.messageId,
-          attachmentIds: remoteAttachmentIds(attachments),
-        }),
-      );
+      const responses = await serverExecution({
+        projectId: project.id,
+        taskId: task.id,
+        triggerMessageId: message.messageId,
+        attachmentIds: remoteAttachmentIds(attachments),
+      });
+      if (previousAgent && responses.length === 0)
+        throw new Error(startFailedText);
+      onMessages(responses);
     } else if (agent && (!input.selfManagedExecution || address)) {
       if (agent.runtime === "wegent") {
         if (!client.continueWegentTask) throw new Error(startFailedText);

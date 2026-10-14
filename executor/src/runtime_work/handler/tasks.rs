@@ -979,8 +979,8 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
-        let payload_execution_request = execution_request(&payload);
-        let has_execution_request = payload_execution_request.is_some();
+        let has_execution_request =
+            payload.get("executionRequest").is_some() || payload.get("execution_request").is_some();
         if let Some(response) = request_user_input_response(&payload) {
             return self
                 .send_request_user_input_response(&local_task_id, response)
@@ -1024,14 +1024,18 @@ impl RuntimeWorkRpcHandler {
                 "workspacePath": workspace_path,
             }));
         }
-        let mut request = payload_execution_request
-            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
-        apply_runtime_payload_metadata(&mut request, &payload);
+        let mut request = self.task_message_execution_request(&payload, existing_link.as_ref())?;
+        if has_execution_request {
+            self.retain_runtime_model_config(&local_task_id, &request.model_config);
+            apply_runtime_payload_metadata(&mut request, &payload);
+        }
         if let Some(link) = existing_link.as_ref() {
             set_runtime_task_title(&mut request, &link.title);
         }
-        if let Some(link) = existing_link.as_ref() {
-            mark_runtime_model_switch(&mut request, link, &payload);
+        if has_execution_request {
+            if let Some(link) = existing_link.as_ref() {
+                mark_runtime_model_switch(&mut request, link, &payload);
+            }
         }
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
@@ -1130,7 +1134,9 @@ impl RuntimeWorkRpcHandler {
         let recovered_link = self
             .recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
             .await;
-        let Some(thread_id) = runtime_session_id_from_payload(&payload)
+        let Some(thread_id) = has_execution_request
+            .then(|| runtime_session_id_from_payload(&payload))
+            .flatten()
             .or_else(|| {
                 existing_link
                     .as_ref()

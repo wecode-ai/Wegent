@@ -253,6 +253,8 @@ class LoopItemService:
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
         group = metadata.get("collaboration_group")
+        if item.assignee_user_id or item.assignee_agent_id or item.assignee_team_id:
+            group = None
         values["assignee_group_id"] = (
             group.get("id") if isinstance(group, dict) else None
         )
@@ -631,7 +633,7 @@ class LoopItemService:
                 )
             payload["assignee_user_id"] = None
             payload["assignee_team_id"] = None
-            self._write_assignment_change(
+            self.record_assignment_change(
                 task_metadata,
                 user_id,
                 "agent",
@@ -656,7 +658,7 @@ class LoopItemService:
             team = runnable_wegent_team(db, user_id, team_id)
             payload["assignee_user_id"] = None
             payload["assignee_agent_id"] = ""
-            self._write_assignment_change(
+            self.record_assignment_change(
                 task_metadata,
                 user_id,
                 "team",
@@ -691,7 +693,7 @@ class LoopItemService:
             from app.services.collaboration_group_execution import new_assignment_key
 
             task_metadata["collaboration_group_assignment_key"] = new_assignment_key()
-            self._write_assignment_change(
+            self.record_assignment_change(
                 task_metadata,
                 user_id,
                 "group",
@@ -701,7 +703,7 @@ class LoopItemService:
             payload["status"] = "in_progress"
         elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
             payload["assignee_user_id"] = user_id
-            self._write_assignment_change(
+            self.record_assignment_change(
                 task_metadata,
                 user_id,
                 "user",
@@ -709,7 +711,7 @@ class LoopItemService:
                 None,
             )
         elif payload.get("assignee_user_id"):
-            self._write_assignment_change(
+            self.record_assignment_change(
                 task_metadata,
                 user_id,
                 "user",
@@ -1597,7 +1599,7 @@ class LoopItemService:
                     )
             else:
                 metadata.pop("collaboration_group_assignment_key", None)
-            self._write_assignment_change(
+            self.record_assignment_change(
                 metadata,
                 user_id,
                 "group" if collaboration_group else None,
@@ -1675,10 +1677,10 @@ class LoopItemService:
                             assignment_id=assignment.id,
                             user_id=user_id,
                         )
-                self._write_assignment_change(metadata, user_id, None, None, None)
+                self.record_assignment_change(metadata, user_id, None, None, None)
             elif target_type == "agent":
                 agent = db.get(ProjectChatAgent, target_id)
-                self._write_assignment_change(
+                self.record_assignment_change(
                     metadata,
                     user_id,
                     "agent",
@@ -1687,7 +1689,7 @@ class LoopItemService:
                 )
             elif target_type == "team":
                 team = db.get(Kind, int(target_id))
-                self._write_assignment_change(
+                self.record_assignment_change(
                     metadata,
                     user_id,
                     "team",
@@ -1695,7 +1697,7 @@ class LoopItemService:
                     team.name if team is not None else None,
                 )
             else:
-                self._write_assignment_change(
+                self.record_assignment_change(
                     metadata,
                     user_id,
                     "user",
@@ -2004,7 +2006,7 @@ class LoopItemService:
                 "assignee_user_id": None,
                 "assignee_team_id": None,
             }
-            self._write_assignment_change(
+            self.record_assignment_change(
                 metadata,
                 user_id,
                 "agent",
@@ -2090,7 +2092,7 @@ class LoopItemService:
                 "assignee_team_id": None,
             }
             target = db.get(User, target_user_id)
-            self._write_assignment_change(
+            self.record_assignment_change(
                 metadata,
                 user_id,
                 "user",
@@ -2142,7 +2144,7 @@ class LoopItemService:
                 "assignee_agent_id": "",
                 "assignee_team_id": team.id,
             }
-            self._write_assignment_change(
+            self.record_assignment_change(
                 metadata,
                 user_id,
                 "team",
@@ -3133,7 +3135,7 @@ class LoopItemService:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
 
     @staticmethod
-    def _write_assignment_change(
+    def record_assignment_change(
         metadata: dict,
         user_id: int,
         to_type: str | None,

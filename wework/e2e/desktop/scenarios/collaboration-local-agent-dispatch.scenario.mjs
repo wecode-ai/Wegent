@@ -517,6 +517,15 @@ export async function createDesktopScenario({
         text: FOLLOW_UP_TWO_RESULT,
         timeoutMs: modelResponseTimeoutMs,
       })
+      const activityText = await control.command(
+        'getText',
+        scoped('[data-testid="cloud-task-activity-list"]')
+      )
+      assert.doesNotMatch(
+        activityText,
+        /Claimed local Issue has no materialized executionRequest|执行失败/,
+        'Replies must not enqueue a second, unmaterialized execution'
+      )
       await captureScreenshot(control, 'local-agent-dispatch-06-follow-ups-completed.png', CONTENT)
     },
 

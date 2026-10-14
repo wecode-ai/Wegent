@@ -11,12 +11,13 @@ export interface HumanDispatchAssignment {
   roundId: string;
   assignmentId: string;
   taskTitle: string;
+  instructions?: string;
   workflowStageId: string | null;
 }
 
 function assignmentFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
-  userId: string,
+  userIds: ReadonlySet<string>,
 ): HumanDispatchAssignment | null {
   if (!metadata) return null;
   const dispatchId = metadata.dispatch_id;
@@ -35,7 +36,7 @@ function assignmentFromMetadata(
     if (typeof entry !== "object" || entry === null) continue;
     const assignment = entry as Record<string, unknown>;
     if (assignment.assignee_type !== "human") continue;
-    if (String(assignment.human_user_id) !== userId) continue;
+    if (!userIds.has(String(assignment.human_user_id))) continue;
     const humanAssignmentId = assignment.human_assignment_id;
     const assignmentId = assignment.assignment_id;
     const taskTitle = assignment.task_title;
@@ -49,6 +50,9 @@ function assignmentFromMetadata(
       roundId,
       assignmentId,
       taskTitle: taskTitle.trim(),
+      ...(typeof assignment.instructions === "string"
+        ? { instructions: assignment.instructions }
+        : {}),
       workflowStageId:
         typeof workflowStageId === "string" && workflowStageId.trim()
           ? workflowStageId.trim()
@@ -68,13 +72,24 @@ function assignmentFromMetadata(
  */
 export function humanDispatchAssignment(
   messages: readonly { metadata: Record<string, unknown> }[],
-  currentUserId: string | number | null | undefined,
+  currentUserId:
+    | string
+    | number
+    | readonly (string | number)[]
+    | null
+    | undefined,
 ): HumanDispatchAssignment | null {
   if (currentUserId === null || currentUserId === undefined) return null;
-  const userId = String(currentUserId);
+  const userIds = new Set(
+    (Array.isArray(currentUserId) ? currentUserId : [currentUserId]).map(
+      String,
+    ),
+  );
   let latest: HumanDispatchAssignment | null = null;
   for (const message of messages) {
-    latest = assignmentFromMetadata(message.metadata, userId) ?? latest;
+    if (message.metadata.activity_type === "manager_assignment") {
+      latest = assignmentFromMetadata(message.metadata, userIds);
+    }
   }
   return latest;
 }

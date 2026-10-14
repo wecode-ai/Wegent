@@ -9,7 +9,6 @@ import { startTaskAiRun as startSharedTaskAiRun } from '@wegent/collaboration/ex
 export {
   buildRobotRoleDescription,
   selectActivityRerunModel,
-  formatThreadHistory,
   mergeProjectChatMessages,
 } from '@wegent/collaboration/execution/taskAiExecution'
 export type TaskAiRuntimeBridge = Pick<
@@ -40,8 +39,7 @@ export interface StartTaskAiRunInput {
   /** When replying to an existing AI message, continue the executor session of
    * that message's parent comment instead of starting a new session. */
   replyTo?: { runtimeDeviceId: string; runtimeTaskId: string } | null
-  /** The parent comment owning this run. Scopes rebuilt-session history to a
-   * single thread when a lost session has to be recreated for a reply. */
+  /** The parent comment owning this run and its task binding. */
   threadRootId?: string | null
   /** Target the run at the robot's execution environment device. */
   deviceId?: string | null

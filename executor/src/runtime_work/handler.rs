@@ -122,6 +122,7 @@ mod archives;
 mod automation_rpc;
 mod background_terminals;
 mod claude_turns;
+mod cloud_model_identity;
 mod codex_accounts;
 mod codex_config;
 mod collection;
@@ -136,6 +137,7 @@ mod robot_queue_rpc;
 mod sidebar;
 mod supervisor;
 mod system;
+mod task_followup;
 mod tasks;
 mod text_generation;
 mod transcript_sync;
@@ -945,6 +947,7 @@ impl RuntimeWorkRpcHandler {
             ..Self::new(device_id, codex_binary)
         };
         if let Some(sender) = handler.event_tx.clone() {
+            crate::task_runtime::mcp_http::register_runtime_event_sender(sender.clone());
             handler.hook_service.set_event_sender(sender);
         }
         handler

@@ -32,6 +32,8 @@ const ROUND_ID = `${MARKER}-round-1`
 const HUMAN_ASSIGNMENT_ID = `${MARKER}-human-assignment`
 const HUMAN_TIMELINE_COMMENT = `${MARKER}-人工时间线评论`
 const HUMAN_REPLY = `${MARKER}-人工回复开始任务`
+const AI_REPLY = `${MARKER}-继续核对这份证据`
+const AI_REPLY_RESULT = `${MARKER}-已在原任务补充证据`
 const HUMAN_DELIVERY_COMPLETION = `${HUMAN_TASK} 已交付：人工证据已核对。`
 const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const CALLS = {
@@ -156,6 +158,24 @@ async function waitForPromise(promise, timeoutMs, message) {
   } finally {
     clearTimeout(timer)
   }
+}
+
+async function waitForReplyCard(control, text, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const snapshot = JSON.parse(await control.command('snapshot', CONTENT))
+    for (const testId of snapshot.testIds) {
+      if (!testId.startsWith('cloud-task-activity-reply-toggle-')) continue
+      const rootId = testId.slice('cloud-task-activity-reply-toggle-'.length)
+      const body = await control.command(
+        'getText',
+        scoped(`[data-testid="cloud-task-activity-card-${rootId}"]`)
+      )
+      if (body.includes(text)) return rootId
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`No reply action for activity: ${text}`)
 }
 
 async function selectAgentModel(control, modelName, timeoutMs) {
@@ -453,6 +473,12 @@ export function createDesktopScenario({
 
       const isManagerRequest = serialized.includes('You are the manager for one project Issue.')
       if (!isManagerRequest && serialized.includes(`${MARKER}。你只完成负责人分配的 AI 子任务。`)) {
+        if (serialized.includes(AI_REPLY)) {
+          assert.equal(aiRequestCount, 1, 'AI 回复没有继续原成员任务')
+          aiRequestCount = 2
+          writeEvents(response, responseId, [assistantMessage(AI_REPLY_RESULT)])
+          return true
+        }
         assert.equal(aiRequestCount, 0, '同一 AI 子任务产生了重复模型运行')
         assert.ok(serialized.includes(AI_TASK), '执行成员请求没有使用负责人分配的任务标题')
         aiRequestCount = 1
@@ -685,6 +711,18 @@ export function createDesktopScenario({
         text: owner.user_name,
         timeoutMs: modelResponseTimeoutMs,
       })
+      const assignedIssue = await request(`/api/v1/loop-items/${rootIssue.id}`)
+      assert.equal(String(assignedIssue.assignee_user_id), String(owner.id))
+      assert.equal(assignedIssue.assignee_group_id, null)
+      assert.ok(!assignedIssue.assignee_agent_id)
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-action"]'), {
+        text: '让 AI 帮我处理',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       const loopItems = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
       assert.equal(
         loopItems.items.some(
@@ -700,6 +738,19 @@ export function createDesktopScenario({
       assert.equal(humanAssignment.payload.assignmentId, HUMAN_ASSIGNMENT_ID)
       assert.ok(humanAssignment.payload.humanAssignmentId)
       await captureScreenshot(control, 'human-round-01-human-and-ai-assigned.png', CONTENT)
+      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
+      const directTaskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
+      await control.command('waitFor', directTaskPanel, { timeoutMs: uiTimeoutMs })
+      assert.ok(
+        (
+          await control.command('getValue', `${directTaskPanel} [data-testid="chat-message-input"]`)
+        ).includes(HUMAN_TASK)
+      )
+      await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
+      await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
 
       releaseAi()
       await waitForPromise(
@@ -717,8 +768,37 @@ export function createDesktopScenario({
       )
       await captureScreenshot(control, 'human-round-02-ai-finished-human-pending.png', CONTENT)
 
-      // 人工执行人从时间线直接开始自己的任务：在一条没有可继续会话的讨论里回复，
-      // 必须按负责人分配的工作项打开预填的个人 Task 面板，而不是只留下评论。
+      const bindingsBeforeReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
+      const memberBinding = bindingsBeforeReply.find(
+        binding => binding.assignment_id === `${MARKER}-agent-assignment`
+      )
+      assert.ok(memberBinding, '成员执行结果没有绑定原 Runtime Task')
+      const aiRootId = await waitForReplyCard(control, `${AI_TASK} 已完成`, uiTimeoutMs)
+      await control.command(
+        'click',
+        scoped(`[data-testid="cloud-task-activity-reply-toggle-${aiRootId}"]`)
+      )
+      const aiReplyComposer = scoped(
+        '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
+      )
+      await control.command('fill', aiReplyComposer, { value: AI_REPLY })
+      await control.command('press', aiReplyComposer, { key: 'Enter' })
+      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+        text: AI_REPLY_RESULT,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const bindingsAfterReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
+      assert.deepEqual(
+        bindingsAfterReply.map(binding => binding.task_id).sort(),
+        bindingsBeforeReply.map(binding => binding.task_id).sort(),
+        '回复成员 AI 结果创建了新任务'
+      )
+      assert.equal(aiRequestCount, 2, '成员 AI 没有收到续跑输入')
+      assert.equal(managerRuns, 1, '人工尚未交付时错误恢复了负责人')
+      await control.command('clickIfPresent', scoped('[data-testid="ai-chat-modal-close"]'))
+
+      // A human acknowledges their assignment activity and opens a new task.
+      // Unrelated discussion must not be treated as an assignment acceptance.
       const timelineComposer = scoped('[data-testid="cloud-task-activity-composer"]')
       await control.command('waitFor', timelineComposer, { visible: true, timeoutMs: uiTimeoutMs })
       await control.command('fill', timelineComposer, { value: HUMAN_TIMELINE_COMMENT })
@@ -727,23 +807,7 @@ export function createDesktopScenario({
         text: HUMAN_TIMELINE_COMMENT,
         timeoutMs: uiTimeoutMs,
       })
-      const replyRootId = await (async () => {
-        const deadline = Date.now() + uiTimeoutMs
-        while (Date.now() < deadline) {
-          const snapshot = JSON.parse(await control.command('snapshot', CONTENT))
-          for (const testId of snapshot.testIds) {
-            if (!testId.startsWith('cloud-task-activity-card-')) continue
-            const text = await control
-              .command('getText', scoped(`[data-testid="${testId}"]`))
-              .catch(() => '')
-            if (text.includes(HUMAN_TIMELINE_COMMENT)) {
-              return testId.slice('cloud-task-activity-card-'.length)
-            }
-          }
-          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-        }
-        assert.fail('Issue 时间线没有渲染刚发布的人工评论卡片')
-      })()
+      const replyRootId = await waitForReplyCard(control, HUMAN_TASK, uiTimeoutMs)
       // The timeline scrolls, so the newest thread action can sit below the
       // fold; the synthetic click does not require the button to be on screen.
       await control.command(
@@ -772,8 +836,8 @@ export function createDesktopScenario({
         `${assignedTaskPanel} [data-testid="chat-message-input"]`
       )
       assert.ok(
-        assignedTaskInput.includes(HUMAN_REPLY),
-        `从回复打开的个人 Task 面板没有带入人工回复: ${assignedTaskInput}`
+        !assignedTaskInput.includes(HUMAN_REPLY),
+        `人工确认不应成为个人 Task 指令: ${assignedTaskInput}`
       )
       assert.ok(
         assignedTaskInput.includes(HUMAN_TASK),
@@ -799,6 +863,12 @@ export function createDesktopScenario({
       await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
+      await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
       const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
       const taskComposer = `${taskPanel} [data-testid="chat-message-input"]`
       await control.command('waitFor', taskComposer, { timeoutMs: uiTimeoutMs })

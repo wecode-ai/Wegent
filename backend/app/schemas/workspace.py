@@ -245,6 +245,7 @@ class WorkspaceAgentListResponse(BaseModel):
 class CollaborationGroupMember(BaseModel):
     kind: Literal["human", "agent"]
     id: SnowflakeId
+    name: str = Field(default="", max_length=200)
     responsibility: str = Field(default="", max_length=2_000)
 
 

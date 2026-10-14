@@ -312,7 +312,7 @@ class LoopItemExecutionStatusQuery(ProjectChatSchema):
 
 
 class LoopItemExecutionAssignmentStatus(ProjectChatSchema):
-    """Display-only status reported by an Executor-owned collaboration member."""
+    """Session identity and status from an Executor-owned collaboration member."""
 
     loop_item_id: str = Field(min_length=1, max_length=64)
     dispatch_id: str = Field(min_length=1, max_length=255)

@@ -363,36 +363,27 @@ describe('startTaskAiRun model resolution', () => {
     )
   })
 
-  it('falls back to a fresh persistent run when the replied session cannot be resumed', async () => {
-    const { runtime, client } = await runWith(
-      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
-      {
-        replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
-        continuationError: 'runtime thread not found',
-      }
-    )
+  it.each(['runtime thread not found', 'Device offline', 'Unknown runtime task'])(
+    'keeps a rejected continuation on its original task: %s',
+    async error => {
+      const { runtime, client } = await runWith(
+        { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+        {
+          replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
+          continuationError: error,
+        }
+      )
 
-    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
-      '请开始执行任务',
-      expect.objectContaining({
-        cloudProjectId: '11',
-        origin: expect.objectContaining({
-          type: 'board_comment',
-          loopItemId: 'WEG-1',
-        }),
-      })
-    )
-    expect(runtime.createProjectRuntimeTask.mock.calls[0][1]).not.toHaveProperty(
-      'hiddenFromSidebar'
-    )
-    expect(runtime.createProjectRuntimeTask.mock.calls[0][1]).not.toHaveProperty('ephemeral')
-    expect(client.startAgentResponse).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runtimeDeviceId: 'device-1',
-        runtimeTaskId: 'runtime-task-1',
-      })
-    )
-  })
+      expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+      expect(client.startAgentResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runtimeDeviceId: 'device-1',
+          runtimeTaskId: 'parent-session-1',
+        })
+      )
+      expect(client.failAgentResponse).toHaveBeenCalledWith(expect.objectContaining({ error }))
+    }
+  )
 
   it('does not start a second run when continuation acknowledgement is ambiguous', async () => {
     const { runtime, client } = await runWith(
@@ -435,7 +426,7 @@ describe('startTaskAiRun model resolution', () => {
     )
   })
 
-  it('scopes rebuilt-session history to the owning comment thread', async () => {
+  it('reports a missing original session without recreating it from comment history', async () => {
     const ownRoot: ProjectChatMessage = {
       ...agentMessage,
       sequenceNumber: 1,
@@ -454,7 +445,7 @@ describe('startTaskAiRun model resolution', () => {
       content: '别人的评论',
       status: 'completed',
     }
-    const { runtime } = await runWith(
+    const { runtime, client } = await runWith(
       { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
       {
         replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
@@ -464,11 +455,16 @@ describe('startTaskAiRun model resolution', () => {
       }
     )
 
-    const options = runtime.createProjectRuntimeTask.mock.calls[0][1] as {
-      additionalContext: { projectChatHistory: { value: string } }
-    }
-    const history = options.additionalContext.projectChatHistory.value
-    expect(history).toContain('本线程的评论')
-    expect(history).not.toContain('别人的评论')
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(runtime.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: { deviceId: 'device-1', taskId: 'parent-session-1' },
+        message: '请开始执行任务',
+      }),
+      expect.any(Object)
+    )
+    expect(client.failAgentResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'runtime thread not found' })
+    )
   })
 })

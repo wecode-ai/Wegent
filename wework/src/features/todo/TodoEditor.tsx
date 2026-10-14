@@ -262,14 +262,7 @@ export function TodoEditor(props: TodoEditorProps) {
       props.mode === 'create' && props.createOptions ? () => props.createOptions : undefined,
     renderPersonalTaskAction:
       showPersonalTaskAction && props.onCreateTask
-        ? ({ tasks, onCreateTask }) => {
-            const hasCurrentUserTask = tasks.some(
-              task =>
-                task.task_user_id == null ||
-                String(task.task_user_id) === String(props.currentUserId)
-            )
-            if (hasCurrentUserTask) return null
-
+        ? ({ onCreateTask }) => {
             return (
               <section
                 className="task-detail-personal-task"
@@ -282,7 +275,11 @@ export function TodoEditor(props: TodoEditorProps) {
                   <strong>{t('todo.personal_task_title')}</strong>
                   <small>{t('todo.personal_task_description')}</small>
                 </span>
-                <button type="button" data-testid="cloud-todo-create-task" onClick={onCreateTask}>
+                <button
+                  type="button"
+                  data-testid="cloud-todo-personal-task-start"
+                  onClick={onCreateTask}
+                >
                   <Send aria-hidden="true" size={14} />
                   {t('todo.create_personal_task')}
                 </button>

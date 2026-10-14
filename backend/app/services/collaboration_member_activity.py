@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.project_chat import LoopItemExecutionAssignmentStatus
+from app.services.collaboration_member_binding import bind_collaboration_member_session
 from app.services.project_chat.service import project_chat_service
 
 
@@ -103,6 +104,9 @@ def project_collaboration_member_activity(
             "workflow_stage_id": (message.metadata_json or {}).get("workflow_stage_id"),
         }
         assignment_index = -1
+    binding = bind_collaboration_member_session(
+        db, project_id=project_id, values=values, assignment=assignment
+    )
     previous_assignment = dict(assignment)
     assignment = {
         **assignment,
@@ -111,6 +115,7 @@ def project_collaboration_member_activity(
         "runtime_task_id": values.runtime_task_id,
         "result": values.result,
         "error": values.error,
+        "task_binding_id": str(binding.id),
     }
     if manager_message is not None:
         manager_metadata = dict(manager_message.metadata_json or {})
@@ -131,6 +136,7 @@ def project_collaboration_member_activity(
         "workflow_task_title": assignment.get("task_title"),
         "run_status": values.status,
         "error": values.error,
+        "task_binding_id": str(binding.id),
     }
     changed = created or any(
         (
@@ -139,6 +145,7 @@ def project_collaboration_member_activity(
             previous_assignment.get("runtime_task_id") != values.runtime_task_id,
             previous_assignment.get("result") != values.result,
             previous_assignment.get("error") != values.error,
+            previous_assignment.get("task_binding_id") != str(binding.id),
         )
     )
     if message is None:
@@ -174,6 +181,8 @@ def project_collaboration_member_activity(
         message.runtime_task_id = values.runtime_task_id
         message.status = "streaming" if values.status == "running" else values.status
     if changed:
+        if values.status == "completed":
+            project_chat_service._advance_task_to_review(db, message)
         db.commit()
         db.refresh(message)
     return message, changed

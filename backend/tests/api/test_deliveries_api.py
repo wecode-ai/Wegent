@@ -718,6 +718,32 @@ def test_delivery_returns_service_unavailable_without_repeating_cleanup(
     assert response.json()["detail"] == "Delivery object storage is unavailable"
 
 
+def test_delivery_without_storage_credentials_returns_503(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.config import settings
+    from app.services.delivery.storage import DeliveryStorage
+
+    monkeypatch.setattr(settings, "ATTACHMENT_S3_ACCESS_KEY", "")
+    monkeypatch.setattr(settings, "ATTACHMENT_S3_SECRET_KEY", "")
+    monkeypatch.setattr(delivery_service, "storage", DeliveryStorage())
+    item_id = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Unconfigured delivery storage"},
+    ).json()["id"]
+    response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "handoff"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Delivery object storage is unavailable"
+
+
 def test_delivery_flow_creates_immutable_snapshot(
     test_client: TestClient,
     test_token: str,

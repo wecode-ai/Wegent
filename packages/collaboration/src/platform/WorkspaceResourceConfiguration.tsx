@@ -57,11 +57,13 @@ export interface WorkspaceResourceCommands {
     leader: {
       kind: "human" | "agent";
       id: string;
+      name?: string;
       responsibility?: string;
     };
     members: Array<{
       kind: "human" | "agent";
       id: string;
+      name?: string;
       responsibility?: string;
     }>;
     coordinationMode: "manager";
@@ -72,6 +74,7 @@ export interface WorkspaceResourceCommands {
       assignee?: {
         kind: "human" | "agent";
         id: string;
+        name?: string;
         responsibility?: string;
       } | null;
     }>;
@@ -89,11 +92,13 @@ export interface WorkspaceResourceCommands {
       leader?: {
         kind: "human" | "agent";
         id: string;
+        name?: string;
         responsibility?: string;
       };
       members?: Array<{
         kind: "human" | "agent";
         id: string;
+        name?: string;
         responsibility?: string;
       }>;
       coordinationMode?: "manager";
@@ -604,6 +609,27 @@ export function WorkspaceCollaborationGroupsConfiguration({
           : member.user_name,
     })),
   ];
+  // Persist display names with the roster so a manager can resolve "@name"
+  // references in the group rules instead of seeing bare member ids. People
+  // keep their real user name; the picker label ("我") is presentation only.
+  const persistedMemberName = (kind: "human" | "agent", id: string): string => {
+    if (kind === "human") {
+      const person = members.find((member) => String(member.user_id) === id);
+      if (person?.user_name) return person.user_name;
+    }
+    const candidate = candidates.find(
+      (entry) => entry.kind === kind && entry.id === id,
+    );
+    return candidate && candidate.name !== "我" && candidate.name !== "Me"
+      ? candidate.name
+      : "";
+  };
+  const withCandidateName = <T extends { kind: "human" | "agent"; id: string }>(
+    member: T,
+  ): T & { name: string } => ({
+    ...member,
+    name: persistedMemberName(member.kind, member.id),
+  });
   const selectedGroup =
     groups.find((group) => group.id === selectedGroupId) ?? null;
   const agentIdsOwnedByOtherGroups = new Set(
@@ -936,12 +962,16 @@ export function WorkspaceCollaborationGroupsConfiguration({
                   leader: {
                     kind: leaderKind as "human" | "agent",
                     id: leaderId,
+                    name: persistedMemberName(
+                      leaderKind as "human" | "agent",
+                      leaderId,
+                    ),
                     responsibility: "",
                   },
                   members: draftMembers.map((member) =>
                     member.kind === leaderKind && member.id === leaderId
-                      ? { ...member, responsibility: "" }
-                      : member,
+                      ? withCandidateName({ ...member, responsibility: "" })
+                      : withCandidateName(member),
                   ),
                   coordinationMode: "manager",
                   stages: draftStages.map((stage) => ({
@@ -1513,17 +1543,24 @@ export function WorkspaceCollaborationGroupsConfiguration({
                       leader: {
                         kind: leaderKind as "human" | "agent",
                         id: leaderId,
+                        name: persistedMemberName(
+                          leaderKind as "human" | "agent",
+                          leaderId,
+                        ),
                         responsibility: "",
                       },
                       members: [
-                        {
+                        withCandidateName({
                           kind: leaderKind as "human" | "agent",
                           id: leaderId,
                           responsibility: "",
-                        },
-                        ...createMembers.filter(
-                          (member) => `${member.kind}:${member.id}` !== leader,
-                        ),
+                        }),
+                        ...createMembers
+                          .filter(
+                            (member) =>
+                              `${member.kind}:${member.id}` !== leader,
+                          )
+                          .map(withCandidateName),
                       ],
                       coordinationMode: "manager",
                       instructions: "",

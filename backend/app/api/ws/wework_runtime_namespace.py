@@ -468,6 +468,13 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                     for message in messages
                 ]
         except (ValidationError, HTTPException) as exc:
+            logger.warning(
+                "[ProjectChat] Comment continuation rejected user=%s status=%s "
+                "error_type=%s",
+                identity["user_id"],
+                exc.status_code if isinstance(exc, HTTPException) else 422,
+                type(exc).__name__,
+            )
             return project_chat_exception_ack(exc)
         except WeworkRuntimeConfigurationError as exc:
             return project_chat_error("EXECUTION_CONFIGURATION", str(exc))

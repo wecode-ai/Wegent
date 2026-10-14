@@ -531,17 +531,20 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert group["leader"] == {
         "kind": "human",
         "id": str(test_user.id),
+        "name": "",
         "responsibility": "确认目标并验收",
     }
     assert group["members"] == [
         {
             "kind": "human",
             "id": str(test_user.id),
+            "name": "",
             "responsibility": "确认目标并验收",
         },
         {
             "kind": "agent",
             "id": str(team.id),
+            "name": "",
             "responsibility": "实现并提交结果",
         },
     ]
@@ -590,6 +593,32 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert project_group["owner_type"] == "project"
     assert project_group["owner_id"] == str(project["id"])
 
+    from app.services.auth.task_token import create_task_token
+
+    task_token = create_task_token(
+        task_id=1, subtask_id=1, user_id=test_user.id, user_name=test_user.user_name
+    )
+    task_groups = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(task_token),
+    )
+    assert task_groups.status_code == 200
+    assert any(
+        entry["id"] == project_group["id"] for entry in task_groups.json()["items"]
+    )
+    round_statuses = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/executions/statuses",
+        headers=_auth(task_token),
+        json={"loop_item_id": "ISSUE-1", "human_assignment_ids": ["human-pending"]},
+    )
+    assert round_statuses.status_code == 200
+    assert round_statuses.json()["items"][0]["status"] == "queued"
+    invalid_groups = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth("invalid-task-token"),
+    )
+    assert invalid_groups.status_code == 401
+
     codex_agent = ProjectChatAgent(
         id=str(9_000_000_000_000_000_000 + int(uuid.uuid4().hex[:12], 16)),
         cloud_project_id=str(project["id"]),
@@ -619,10 +648,11 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert project_codex_group["leader"] == {
         "kind": "agent",
         "id": codex_agent.id,
+        "name": "",
         "responsibility": "",
     }
     assert project_codex_group["members"] == [
-        {"kind": "agent", "id": codex_agent.id, "responsibility": ""}
+        {"kind": "agent", "id": codex_agent.id, "name": "", "responsibility": ""}
     ]
     assert not any(
         isinstance(rule.metadata_json, dict)
@@ -657,6 +687,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert updated["leader"] == {
         "kind": "agent",
         "id": str(team.id),
+        "name": "",
         "responsibility": "负责拆解和收敛",
     }
     assert updated["coordination_mode"] == "manager"

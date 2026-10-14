@@ -106,10 +106,9 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        // A dispatched round must always converge: every member either reaches
-        // a terminal state or is reported as failed, and the manager is always
-        // resumed. Otherwise the Issue would hang silently with no owner work.
-        let mut outcomes = match self
+        // A manager evaluates verified terminal outcomes. Missing human status
+        // is not delivery, so keep the persisted round until its barrier closes.
+        let unstarted_outcomes = match self
             .launch_cloud_collaboration_assignments_with_retry(&command)
             .await
         {
@@ -127,8 +126,25 @@ impl RuntimeWorkRpcHandler {
                     .await
             }
         };
-        match self.wait_for_cloud_collaboration_round(&command).await {
-            Ok(round_outcomes) => outcomes.extend(round_outcomes),
+        match self
+            .wait_for_cloud_collaboration_round(&command, &unstarted_outcomes)
+            .await
+        {
+            Ok(outcomes) => {
+                if let Err(error) = self
+                    .finish_cloud_collaboration_round(&command, outcomes)
+                    .await
+                {
+                    log_executor_event(
+                        "fresh cloud collaboration manager launch failed",
+                        &[
+                            ("dispatch_id", command.dispatch_id.clone()),
+                            ("round_id", command.round_id.clone()),
+                            ("error", error),
+                        ],
+                    );
+                }
+            }
             Err(error) => {
                 log_executor_event(
                     "cloud collaboration round wait failed",
@@ -140,20 +156,22 @@ impl RuntimeWorkRpcHandler {
                 );
             }
         }
-        if let Err(error) = self.launch_fresh_cloud_manager(&command, outcomes).await {
-            log_executor_event(
-                "fresh cloud collaboration manager launch failed",
-                &[
-                    ("dispatch_id", command.dispatch_id.clone()),
-                    ("round_id", command.round_id.clone()),
-                    ("error", error),
-                ],
-            );
-        }
         self.active_collaboration_rounds
             .lock()
             .expect("collaboration round registry lock should not be poisoned")
             .remove(&key);
+    }
+
+    async fn finish_cloud_collaboration_round(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+        outcomes: Vec<Value>,
+    ) -> Result<(), String> {
+        if command.human_assignment_ids.is_empty() {
+            self.clear_cloud_collaboration_round(&command.manager_runtime_task_id);
+            return Ok(());
+        }
+        self.launch_fresh_cloud_manager(command, outcomes).await
     }
 
     /// Retry the member launch so a transient Backend or Runtime failure does
@@ -320,9 +338,18 @@ impl RuntimeWorkRpcHandler {
     async fn wait_for_cloud_collaboration_round(
         &self,
         command: &CloudCollaborationRoundCommand,
+        unstarted_outcomes: &[Value],
     ) -> Result<Vec<Value>, String> {
         loop {
             let mut outcomes = self.local_collaboration_outcomes(command)?;
+            for failure in unstarted_outcomes {
+                if !outcomes
+                    .iter()
+                    .any(|outcome| outcome.get("assignment_id") == failure.get("assignment_id"))
+                {
+                    outcomes.push(failure.clone());
+                }
+            }
             for outcome in &outcomes {
                 let status = outcome
                     .get("status")
@@ -365,13 +392,23 @@ impl RuntimeWorkRpcHandler {
                     .await;
                 }
             }
-            outcomes.extend(self.human_collaboration_outcomes(command).await?);
-            if outcomes.iter().all(|outcome| {
-                outcome
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .is_some_and(|status| TERMINAL_EXECUTION_STATUSES.contains(&status))
-            }) {
+            let human_outcomes = match self.human_collaboration_outcomes(command).await {
+                Ok(outcomes) => outcomes,
+                Err(error) => {
+                    log_executor_event(
+                        "cloud collaboration human status unavailable",
+                        &[
+                            ("dispatch_id", command.dispatch_id.clone()),
+                            ("round_id", command.round_id.clone()),
+                            ("error", error),
+                        ],
+                    );
+                    sleep(CLOUD_COLLABORATION_POLL_INTERVAL).await;
+                    continue;
+                }
+            };
+            outcomes.extend(human_outcomes);
+            if cloud_collaboration_round_is_complete(command, &outcomes) {
                 return Ok(outcomes);
             }
             sleep(CLOUD_COLLABORATION_POLL_INTERVAL).await;
@@ -573,17 +610,8 @@ impl RuntimeWorkRpcHandler {
             let Some(source_link) = self.local_task_link(&command.manager_runtime_task_id) else {
                 return Err("Collaboration manager Runtime task was not found".to_owned());
             };
-            let (mut request, payload) =
-                fresh_cloud_manager_payload(&source_link, command, &outcomes)?;
-            request.model_config = self
-                .runtime_model_config(&command.manager_runtime_task_id)
-                .ok_or_else(|| {
-                    "Collaboration manager model configuration is unavailable".to_owned()
-                })?;
-            self.apply_backend_connection(&mut request);
-            let mut payload = payload;
-            payload["executionRequest"] =
-                serde_json::to_value(request).unwrap_or_else(|_| json!({}));
+            let payload =
+                self.fresh_cloud_manager_execution_payload(&source_link, command, &outcomes)?;
 
             match self.create_task(payload).await {
                 Ok(value)
@@ -615,6 +643,58 @@ impl RuntimeWorkRpcHandler {
             sleep(CLOUD_COLLABORATION_LAUNCH_RETRY_INTERVAL).await;
         }
     }
+
+    fn fresh_cloud_manager_execution_payload(
+        &self,
+        source_link: &RuntimeTaskLink,
+        command: &CloudCollaborationRoundCommand,
+        outcomes: &[Value],
+    ) -> Result<Value, String> {
+        let profile = self
+            .restore_runtime_execution_profile(source_link)
+            .map_err(|error| error.message)?;
+        let (mut request, mut payload) =
+            fresh_cloud_manager_payload(source_link, command, outcomes)?;
+        request.model_config = profile.model_config;
+        self.apply_backend_connection(&mut request);
+        self.refresh_followup_model_credentials(&mut request, &source_link.runtime)
+            .map_err(|error| error.message)?;
+        payload["executionRequest"] =
+            serde_json::to_value(request).map_err(|error| error.to_string())?;
+        Ok(payload)
+    }
+}
+
+fn cloud_collaboration_round_is_complete(
+    command: &CloudCollaborationRoundCommand,
+    outcomes: &[Value],
+) -> bool {
+    outcomes.iter().all(|outcome| {
+        outcome
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| TERMINAL_EXECUTION_STATUSES.contains(&status))
+    }) && command
+        .assignments
+        .iter()
+        .filter(|assignment| {
+            assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
+        })
+        .all(|assignment| {
+            required_assignment_string(assignment, "assignment_id").is_ok_and(|id| {
+                outcomes.iter().any(|outcome| {
+                    outcome.get("assignee_type").and_then(Value::as_str) == Some("agent")
+                        && outcome.get("assignment_id").and_then(Value::as_str) == Some(id)
+                })
+            })
+        })
+        && command.human_assignment_ids.iter().all(|id| {
+            outcomes.iter().any(|outcome| {
+                outcome.get("assignee_type").and_then(Value::as_str) == Some("human")
+                    && outcome.get("human_assignment_id").and_then(Value::as_str)
+                        == Some(id.as_str())
+            })
+        })
 }
 
 fn fresh_cloud_manager_task_id(command: &CloudCollaborationRoundCommand) -> String {
@@ -876,6 +956,102 @@ fn fresh_cloud_manager_payload(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn agent_only_round_finishes_without_starting_another_manager() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+        let mut command = command();
+        command.human_assignment_ids.clear();
+        handler.store.upsert_task(source_link());
+        handler.persist_cloud_collaboration_round(&command).unwrap();
+
+        handler
+            .finish_cloud_collaboration_round(&command, vec![])
+            .await
+            .unwrap();
+
+        assert!(handler
+            .local_task_link(&command.manager_runtime_task_id)
+            .unwrap()
+            .runtime_handle
+            .get(CLOUD_COLLABORATION_ROUND_KEY)
+            .is_none());
+        assert!(handler
+            .local_task_link(&fresh_cloud_manager_task_id(&command))
+            .is_none());
+        assert_eq!(handler.store.list_task_summaries(true).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn unavailable_human_status_keeps_the_manager_round_pending() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+        let mut command = command();
+        command.assignments.clear();
+        handler.store.upsert_task(source_link());
+        handler.persist_cloud_collaboration_round(&command).unwrap();
+
+        let monitored = tokio::time::timeout(
+            Duration::from_millis(20),
+            handler.monitor_cloud_collaboration_round(command.clone()),
+        )
+        .await;
+
+        assert!(monitored.is_err(), "an unavailable human status must wait");
+        assert!(handler
+            .local_task_link(&command.manager_runtime_task_id)
+            .unwrap()
+            .runtime_handle
+            .get(CLOUD_COLLABORATION_ROUND_KEY)
+            .is_some());
+        assert!(handler
+            .local_task_link(&fresh_cloud_manager_task_id(&command))
+            .is_none());
+    }
+
+    #[test]
+    fn round_barrier_requires_every_assigned_member_and_human_delivery() {
+        let command = command();
+        let member = json!({
+            "assignee_type": "agent",
+            "assignment_id": "member-1",
+            "status": "completed",
+        });
+        let mut human = json!({
+            "assignee_type": "human",
+            "human_assignment_id": "human-assignment-1",
+            "status": "queued",
+        });
+
+        assert!(!cloud_collaboration_round_is_complete(&command, &[]));
+        assert!(!cloud_collaboration_round_is_complete(
+            &command,
+            std::slice::from_ref(&member)
+        ));
+        assert!(!cloud_collaboration_round_is_complete(
+            &command,
+            &[member.clone(), human.clone()]
+        ));
+
+        human["status"] = json!("completed");
+        assert!(!cloud_collaboration_round_is_complete(
+            &command,
+            std::slice::from_ref(&human)
+        ));
+        assert!(cloud_collaboration_round_is_complete(
+            &command,
+            &[member.clone(), human.clone()]
+        ));
+
+        human["human_assignment_id"] = json!("another-human-assignment");
+        assert!(!cloud_collaboration_round_is_complete(
+            &command,
+            &[member, human]
+        ));
+    }
+
     fn command() -> CloudCollaborationRoundCommand {
         CloudCollaborationRoundCommand {
             manager_runtime_task_id: "manager-task-1".to_owned(),
@@ -938,6 +1114,75 @@ mod tests {
             }
         });
         link
+    }
+
+    #[test]
+    fn fresh_manager_restores_its_original_model_after_executor_restart() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(
+            Arc::new(Mutex::new(Some(ConnectionConfig {
+                backend_url: "https://current-backend.example/api".to_owned(),
+                socket_url: String::new(),
+                auth_token: "current-session".to_owned(),
+                runtime_auth_token: String::new(),
+            }))),
+        );
+        for cloud in [false, true] {
+            let mut source = source_link();
+            let mut request = runtime_event_request_from_link(&source);
+            request.model_config = if cloud {
+                source.runtime_handle["modelSelection"] = json!({
+                    "modelName": "original-cloud-model", "modelType": "public",
+                    "options": {"weworkCloudModelNamespace": "default",
+                        "weworkCloudModelResourceUserId": "42"},
+                });
+                request.extra.insert(
+                    "modelSelection".to_owned(),
+                    source.runtime_handle["modelSelection"].clone(),
+                );
+                json!({"model_id": "original-cloud-model", "wework_model_kind": "cloud",
+                    "base_url": "https://previous-backend.example/api/runtime-work/llm-responses-proxy",
+                    "api_key": "previous-session", "reasoning": {"effort": "high"}})
+            } else {
+                json!({"model_id": "original-native-model", "reasoning": {"effort": "high"},
+                    "runtime_config": {"codex": {"use_user_config": true}}})
+            };
+            store_runtime_execution_request(&mut source.runtime_handle, &request);
+            assert!(handler
+                .runtime_model_config(&source.local_task_id)
+                .is_none());
+
+            let payload = handler
+                .fresh_cloud_manager_execution_payload(&source, &command(), &[])
+                .unwrap();
+            let restored = execution_request(&payload).unwrap();
+
+            assert_eq!(restored.task_id, fresh_cloud_manager_task_id(&command()));
+            assert!(restored.new_session);
+            assert_eq!(
+                restored.model_config["model_id"],
+                request.model_config["model_id"]
+            );
+            assert_eq!(
+                restored.model_config["reasoning"],
+                request.model_config["reasoning"]
+            );
+            assert_eq!(restored.auth_token.as_deref(), Some("current-session"));
+            assert_eq!(payload["workspacePath"], source.workspace_path);
+            if cloud {
+                assert_eq!(restored.model_config["api_key"], "current-session");
+                assert_eq!(
+                    restored.model_config["default_headers"]
+                        ["X-Wegent-Upstream-Header-wecode-session-id"],
+                    restored.task_id
+                );
+                assert_eq!(
+                    restored.model_config["base_url"],
+                    "https://current-backend.example/api/runtime-work/llm-responses-proxy"
+                );
+            } else {
+                assert_eq!(restored.model_config, request.model_config);
+            }
+        }
     }
 
     #[test]

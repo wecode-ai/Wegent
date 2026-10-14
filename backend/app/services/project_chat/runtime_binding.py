@@ -4,14 +4,17 @@
 """Resolve manually created comment sessions through their durable TaskBinding."""
 
 from dataclasses import dataclass
-from typing import Any
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.delivery import LoopItemTaskBinding, loop_datetime_is_unset
 from app.models.project_chat_message import ProjectChatMessage
-from app.schemas.project_chat import ProjectChatCommentExecution
+from app.schemas.project_chat import (
+    LoopItemExecutionAssignmentStatus,
+    ProjectChatCommentExecution,
+)
 
 
 @dataclass(frozen=True)
@@ -20,7 +23,6 @@ class BoundCommentSession:
     runtime_device_id: str
     runtime_task_id: str
     agent_id: str
-    runtime_request: dict[str, Any]
     id: None = None
     team_id: int = 0
     executor_type: str = "project_robot"
@@ -44,32 +46,52 @@ def resolve_bound_comment_session(
         )
         .one_or_none()
     )
+    metadata = target.metadata_json or {}
+    if binding is None and metadata.get("activity_type") == "member_execution":
+        binding = _register_member_binding(db, request, target)
     if binding is None or not binding.task_user_id or not target.agent_id:
         raise HTTPException(409, "The comment has no valid execution binding")
-    selection = binding.model_selection or {}
-    team_id = (binding.metadata_json or {}).get("wegent_team_id")
     return BoundCommentSession(
         executor_owner_user_id=binding.task_user_id,
         runtime_device_id=binding.device_id,
         runtime_task_id=binding.task_id,
         agent_id=target.agent_id,
-        runtime_request={
-            "schemaVersion": 3 if team_id is not None else 2,
-            **({"wegentTeamId": team_id} if team_id is not None else {}),
-            "runtime": "codex",
-            "deviceId": binding.device_id,
-            "taskId": binding.task_id,
-            "message": "",
-            "modelId": selection.get("modelName") or target.metadata_json.get("model"),
-            "modelType": selection.get("modelType"),
-            "modelOptions": selection.get("options") or {},
-            "cloudProjectId": request.project_id,
-            "origin": {
-                "type": "board_comment",
-                "dispatchRole": "executor",
-                "cloudProjectId": request.project_id,
-                "loopItemId": request.task_id,
-            },
-            "standaloneChatWorkspace": True,
-        },
+    )
+
+
+def _register_member_binding(
+    db: Session,
+    request: ProjectChatCommentExecution,
+    target: ProjectChatMessage,
+) -> LoopItemTaskBinding:
+    from app.services.collaboration_member_activity import _manager_assignment
+    from app.services.collaboration_member_binding import (
+        bind_collaboration_member_session,
+    )
+
+    metadata = target.metadata_json or {}
+    try:
+        values = LoopItemExecutionAssignmentStatus(
+            loop_item_id=request.task_id,
+            dispatch_id=metadata.get("dispatch_id"),
+            round_id=metadata.get("coordination_round_id"),
+            assignment_id=metadata.get("assignment_id"),
+            runtime_device_id=target.runtime_device_id,
+            runtime_task_id=target.runtime_task_id,
+            status="completed",
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            409, "The member assignment binding is unavailable"
+        ) from exc
+    manager_assignment = _manager_assignment(
+        db, project_id=int(request.project_id), values=values
+    )
+    if manager_assignment is None:
+        raise HTTPException(409, "The member assignment binding is unavailable")
+    _, assignment, _ = manager_assignment
+    if assignment.get("agent_id") != target.agent_id:
+        raise HTTPException(409, "The member session does not match its assignment")
+    return bind_collaboration_member_session(
+        db, project_id=int(request.project_id), values=values, assignment=assignment
     )
