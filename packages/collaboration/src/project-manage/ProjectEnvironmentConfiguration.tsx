@@ -133,7 +133,7 @@ export function ProjectEnvironmentConfiguration({
           </button>
         ) : null}
         {repositories.length > 0 && repositoriesLoadFailed ? (
-          <p className="mt-2 text-xs text-red-600" role="alert">
+          <p className="mt-2 text-xs text-destructive" role="alert">
             {translate(
               "todo.repositories_load_failed",
               "仓库列表加载失败，可直接填写仓库地址。",
@@ -372,7 +372,7 @@ export function ProjectEnvironmentConfiguration({
                       />
                     )}
                     {matchedOption && branchesFailed ? (
-                      <p className="mt-1 text-xs text-red-600" role="alert">
+                      <p className="mt-1 text-xs text-destructive" role="alert">
                         {translate(
                           "todo.repository_branches_load_failed",
                           "分支加载失败，可手动填写。",
@@ -518,7 +518,7 @@ export function ProjectEnvironmentConfiguration({
         <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
           {configurationError ? (
             <p
-              className="mr-auto text-sm text-red-600"
+              className="mr-auto text-sm text-destructive"
               data-testid={`${testIdPrefix}-configuration-error`}
               role="alert"
             >
@@ -526,7 +526,7 @@ export function ProjectEnvironmentConfiguration({
             </p>
           ) : configurationSaved ? (
             <span
-              className="mr-auto text-sm text-green-600"
+              className="mr-auto text-sm text-[rgb(var(--color-success))]"
               data-testid={`${testIdPrefix}-configuration-status`}
               role="status"
             >

@@ -948,18 +948,18 @@
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  color: #2563eb;
-  background: #eff6ff;
+  color: rgb(var(--color-focus));
+  background: rgb(var(--color-focus) / 0.1);
 }
 
 .collaboration-home-attention-list > button[data-tone="review"] > i {
-  color: #d97706;
-  background: #fffbeb;
+  color: rgb(var(--color-warning));
+  background: rgb(var(--color-warning) / 0.1);
 }
 
 .collaboration-home-attention-list > button[data-tone="failed"] > i {
-  color: #dc2626;
-  background: #fef2f2;
+  color: rgb(var(--color-destructive));
+  background: rgb(var(--color-destructive) / 0.1);
 }
 
 .collaboration-home-attention-list > button > i svg {
@@ -1541,16 +1541,16 @@
 
 .collaboration-resource-row-status[data-tone="available"]::before,
 .collaboration-resource-row-status[data-tone="online"]::before {
-  background: #22c55e;
+  background: rgb(var(--color-success));
 }
 
 .collaboration-resource-row-status[data-tone="provisioning"]::before {
-  background: #d97706;
+  background: rgb(var(--color-warning));
 }
 
 .collaboration-resource-row-status[data-tone="error"]::before,
 .collaboration-resource-row-status[data-tone="unavailable"]::before {
-  background: #dc2626;
+  background: rgb(var(--color-destructive));
 }
 
 .collaboration-resource-row-members,
@@ -2293,18 +2293,18 @@
 }
 
 .collaboration-workspace-operation-metrics > div[data-tone="running"] > span {
-  color: #2563eb;
-  background: #eff6ff;
+  color: rgb(var(--color-focus));
+  background: rgb(var(--color-focus) / 0.1);
 }
 
 .collaboration-workspace-operation-metrics > div[data-tone="review"] > span {
-  color: #7c3aed;
-  background: #f5f3ff;
+  color: rgb(var(--color-warning));
+  background: rgb(var(--color-warning) / 0.1);
 }
 
 .collaboration-workspace-operation-metrics > div[data-tone="failed"] > span {
-  color: #dc2626;
-  background: #fef2f2;
+  color: rgb(var(--color-destructive));
+  background: rgb(var(--color-destructive) / 0.1);
 }
 
 .collaboration-workspace-operations-layout {
@@ -2441,7 +2441,7 @@
 }
 
 .collaboration-workspace-operation-counts > span[data-tone="failed"] {
-  color: #dc2626;
+  color: rgb(var(--color-destructive));
 }
 
 .collaboration-workspace-operation-state {
@@ -2462,31 +2462,31 @@
 }
 
 .collaboration-workspace-operation-state[data-tone="running"] > i {
-  background: #2563eb;
+  background: rgb(var(--color-focus));
 }
 
 .collaboration-workspace-operation-state[data-tone="review"] > i {
-  background: #7c3aed;
+  background: rgb(var(--color-warning));
 }
 
 .collaboration-workspace-operation-state[data-tone="failed"] {
-  color: #dc2626;
+  color: rgb(var(--color-destructive));
 }
 
 .collaboration-workspace-operation-state[data-tone="unavailable"] {
-  color: #dc2626;
+  color: rgb(var(--color-destructive));
 }
 
 .collaboration-workspace-operation-state[data-tone="failed"] > i {
-  background: #dc2626;
+  background: rgb(var(--color-destructive));
 }
 
 .collaboration-workspace-operation-state[data-tone="unavailable"] > i {
-  background: #dc2626;
+  background: rgb(var(--color-destructive));
 }
 
 .collaboration-workspace-operation-state[data-tone="completed"] > i {
-  background: #16a34a;
+  background: rgb(var(--color-success));
 }
 
 .collaboration-workspace-attention-list > button {
@@ -2539,7 +2539,7 @@
   width: 24px;
   height: 24px;
   margin-bottom: 10px;
-  color: #16a34a;
+  color: rgb(var(--color-success));
   stroke-width: 1.75;
 }
 
@@ -3908,8 +3908,8 @@
   height: 32px;
   flex: none;
   border-radius: 50%;
-  color: #fff;
-  background: #6366f1;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-muted));
   font-size: 12px;
   font-weight: 700;
 }
@@ -3942,7 +3942,7 @@
 .collaboration-resource-remove {
   min-height: 32px;
   padding: 4px 8px;
-  color: #dc2626;
+  color: rgb(var(--color-destructive));
 }
 
 .collaboration-resource-empty {
@@ -3974,19 +3974,19 @@
 .collaboration-run-status.queued,
 .collaboration-run-status.waiting_runtime,
 .collaboration-run-status.waiting_device {
-  color: #b45309;
-  background: #fef3c7;
+  color: rgb(var(--color-warning));
+  background: rgb(var(--color-warning) / 0.1);
 }
 
 .collaboration-run-status.succeeded {
-  color: #047857;
-  background: #d1fae5;
+  color: rgb(var(--color-success));
+  background: rgb(var(--color-success) / 0.1);
 }
 
 .collaboration-run-status.failed,
 .collaboration-run-status.cancelled {
-  color: #b91c1c;
-  background: #fee2e2;
+  color: rgb(var(--color-destructive));
+  background: rgb(var(--color-destructive) / 0.1);
 }
 
 .collaboration-run-summary {
@@ -4009,7 +4009,7 @@
 }
 
 .collaboration-run-summary em {
-  color: #b91c1c;
+  color: rgb(var(--color-destructive));
   font-size: 12px;
   font-style: normal;
 }

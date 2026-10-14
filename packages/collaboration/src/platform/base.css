@@ -67,10 +67,10 @@
 
 .collaboration-danger-button {
   min-height: 36px;
-  border: 1px solid #ef4444;
+  border: 1px solid rgb(var(--color-destructive));
   border-radius: 8px;
   padding: 8px 14px;
-  color: #dc2626;
+  color: rgb(var(--color-destructive));
   background: transparent;
   cursor: pointer;
 }
