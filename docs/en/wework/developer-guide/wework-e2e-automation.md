@@ -595,6 +595,9 @@ label starts only the memory gate and does not repeat browser, Linux desktop, or
 Windows desktop E2E. Applying `ci:all` runs browser, Linux desktop, Windows
 desktop, and macOS memory E2E even when the PR's changed paths would not
 normally select Wework E2E. The workflow also runs a complete regression every
-day at 04:00 UTC.
+day at 04:00 UTC. Keeping `ci:all` on a PR also runs all Windows Core shards
+on subsequent pushes. Windows builds, shards, and the summary share one
+scheduling condition; skipped required jobs fail the gate. The macOS memory
+check invokes the Node checkpoint runner directly, including on build cache hits.
 
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.

@@ -1433,6 +1433,7 @@ for workflow in lint.yml test.yml e2e-tests.yml wework-e2e.yml; do
 done
 
 wework_workflow="$script_dir/../workflows/wework-e2e.yml"
+node "$script_dir/test-wework-windows-ci.mjs"
 if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -lt 2 ]]; then
   printf 'Wework non-memory E2E jobs must filter pull_request label events\n' >&2
   exit 1
@@ -1600,8 +1601,7 @@ wework_windows_desktop_core_build_job="$(
     "$wework_workflow"
 )"
 if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"github.event_name != 'merge_group'"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"github.event.action == 'labeled'"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"WeWork-win32-x64/WeWork.exe"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"resources/bin/wegent-executor.exe"* ]] ||
@@ -1620,8 +1620,7 @@ wework_windows_desktop_core_job="$(
     "$wework_workflow"
 )"
 if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"github.event_name != 'merge_group'"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"github.event.action == 'labeled'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix)"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"max-parallel: 17"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||

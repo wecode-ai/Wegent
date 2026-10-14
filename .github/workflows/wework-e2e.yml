@@ -45,6 +45,7 @@ jobs:
       wework_e2e: ${{ steps.classify.outputs.wework_e2e }}
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
       wework_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e }}
+      windows_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
       wework_desktop_core_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
       wework_desktop_cloud_e2e: ${{ steps.classify.outputs.wework_desktop_cloud_e2e }}
       wework_desktop_cloud_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_cloud_e2e_matrix }}
@@ -432,7 +433,7 @@ jobs:
     name: Build Windows Wework Desktop Core E2E Artifact
     needs:
       - changes
-    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
+    if: needs.changes.outputs.windows_desktop_core_e2e == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -587,7 +588,7 @@ jobs:
     needs:
       - changes
       - build-wework-desktop-windows-core-e2e
-    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
+    if: needs.changes.outputs.windows_desktop_core_e2e == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     strategy:
@@ -995,7 +996,7 @@ jobs:
         env:
           RUN_E2E: ${{ needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all')) }}
+          RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.windows_desktop_core_e2e == 'true' }}
           RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
@@ -1341,7 +1342,7 @@ jobs:
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
-          pnpm --filter wework e2e:desktop:memory
+          node wework/e2e/desktop/run-checkpoints.mjs --memory-only
 
       - name: Run Wework desktop macOS Inspector E2E
         if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
