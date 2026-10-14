@@ -687,5 +687,7 @@ day at 04:00 UTC. Keeping `ci:all` on a PR also runs all Windows Core shards
 on subsequent pushes. Windows builds, shards, and the summary share one
 scheduling condition; skipped required jobs fail the gate. The macOS memory
 check invokes the Node checkpoint runner directly, including on build cache hits.
+On macOS, pre-push checks use `caffeinate -is -w` to remain awake while running;
+the assertion ends automatically with the hook, avoiding sleep-induced test timeouts.
 
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.
