@@ -43,6 +43,28 @@ API keys use the existing Model credential and placeholder mechanism and are
 resolved/decrypted only during backend execution. Never put real credentials
 in source code or Smart App environment variables.
 
+### Deployment Credential Extension
+
+`app.services.model_credential_service` exposes a shared extension point:
+
+- Register an asynchronous resolver at startup with
+  `register_model_api_key_resolver(resolver)`.
+- Its signature is `async def resolver(template: str, current_user: User) -> str | None`.
+- The original placeholder template is preserved even if a same-name global
+  environment variable has already been processed.
+- `current_user` is the authenticated caller, not the owner of a public/shared Model.
+- Return `None` for an unhandled template to preserve ordinary Model resolution.
+- A handled template must produce a usable key. Empty results, exceptions and
+  timeouts block forwarding without falling back to a global key.
+
+LLM forwarding, decision execution and model connection checks share this entry.
+Decision execution requires a nonempty key and applies a Python 3.10-compatible
+30-second total deadline including credential lookup and the provider request.
+Credential resolution is bounded to 30 seconds, does not cache user keys and
+never updates the stored Model. Catalog reads do not resolve credentials.
+Deployment-specific endpoints, authentication and user-key lookup implementations
+belong to the deployment extension, not the open-source code.
+
 Public model visibility and user whitelists remain enforced. Only decision
 models with `isWeworkAvailable: true` enter the workbench catalog. Decision
 models are excluded from Shell chat model lists.

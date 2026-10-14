@@ -19,6 +19,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.decision import DecisionRequest
 from app.schemas.kind import ModelSpec
+from app.services import model_credential_service
 from app.services.capability_reference_service import get_referenced_capability
 from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.decision_protocol import (
@@ -31,6 +32,7 @@ from shared.utils.decision_model import decision_endpoint
 
 logger = logging.getLogger(__name__)
 MAX_DECISION_BYTES = 1024 * 1024
+DECISION_REQUEST_TIMEOUT = 30.0
 
 
 class DecisionError(Exception):
@@ -123,9 +125,9 @@ def _resolve_model(
         config = extract_and_process_model_config(
             spec.model_dump(mode="json"), user.id, user.user_name or ""
         )
-        if not config.get("api_key") or "${" in config["api_key"]:
-            raise ValueError("Unresolved decision credential")
-        return spec.protocol, config
+        return spec.protocol, model_credential_service.with_model_api_key_template(
+            config, spec.model_dump(mode="json")
+        )
     except (ValueError, KeyError, TypeError):
         raise DecisionError(
             503, "invalid_model_config", "Decision model configuration is unusable"
@@ -184,24 +186,16 @@ async def execute_decision(
     payload = build_decision_payload(request, protocol, config["model_id"])
     started = time.monotonic()
     try:
-        async with (
-            asyncio.timeout(30),
-            httpx.AsyncClient(timeout=30, follow_redirects=False) as client,
-        ):
-            async with client.stream(
-                "POST",
-                endpoint,
-                json=payload,
-                headers=_upstream_headers(config, request_id),
-            ) as response:
-                check_decision_upstream_status(response.status_code)
-                body = bytearray()
-                async for chunk in response.aiter_bytes():
-                    body.extend(chunk)
-                    if len(body) > MAX_DECISION_BYTES:
-                        raise ValueError("Decision response exceeds the limit")
+        body = await asyncio.wait_for(
+            _fetch_decision_response(config, user, endpoint, payload, request_id),
+            timeout=DECISION_REQUEST_TIMEOUT,
+        )
         result = normalize_decision_response(json.loads(body), request, protocol)
-    except (TimeoutError, httpx.TimeoutException):
+    except model_credential_service.ModelCredentialError:
+        raise DecisionError(
+            503, "credential_unavailable", "Decision credential is unavailable", True
+        ) from None
+    except (asyncio.TimeoutError, httpx.TimeoutException):
         raise DecisionError(
             504, "upstream_timeout", "Decision upstream timed out", True
         ) from None
@@ -224,6 +218,33 @@ async def execute_decision(
         len(request.questions),
     )
     return result
+
+
+async def _fetch_decision_response(
+    config: dict[str, Any],
+    user: User,
+    endpoint: str,
+    payload: dict[str, Any],
+    request_id: str,
+) -> bytearray:
+    api_key = await model_credential_service.resolve_model_provider_api_key(
+        config, user, require_api_key=True
+    )
+    resolved_config = {**config, "api_key": api_key}
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+        async with client.stream(
+            "POST",
+            endpoint,
+            json=payload,
+            headers=_upstream_headers(resolved_config, request_id),
+        ) as response:
+            check_decision_upstream_status(response.status_code)
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > MAX_DECISION_BYTES:
+                    raise ValueError("Decision response exceeds the limit")
+    return body
 
 
 def test_decision_connection(

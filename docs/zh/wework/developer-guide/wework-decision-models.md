@@ -41,6 +41,23 @@ SystemOne 的端点为 `/v1/systemone`，OpenAI 的端点为 `/v1/decisions`；
 `api_key` 使用现有 Model 凭证及占位符机制，仅在后端执行时解密和解析。
 不要把真实凭证写入源代码或 Smart App 环境变量。
 
+### 部署侧凭证扩展
+
+`app.services.model_credential_service` 提供共享扩展入口：
+
+- `register_model_api_key_resolver(resolver)`：在部署启动时注册异步解析器。
+- 解析器签名为 `async def resolver(template: str, current_user: User) -> str | None`。
+- `template` 是配置中的原始占位符，不会被同名全局环境变量遮蔽。
+- `current_user` 是实际请求用户，不是公共或共享 Model 的所有者。
+- 返回 `None` 表示不处理该模板，保留普通 Model 配置的既有解析结果。
+- 对已处理的模板必须返回有效 key；空值、异常或超时均阻止请求，不回退到全局 key。
+
+LLM 代理、决策执行和模型连接测试共用此入口。决策执行要求非空 key，
+其 30 秒总预算包含凭证解析和上游请求，兼容 Python 3.10。
+凭证解析默认最多 30 秒，不缓存用户 key，也不修改已保存的 Model。
+目录查询不调用凭证解析器。部署专属的接口、鉴权配置及用户 key 获取逻辑
+应保留在部署扩展中；开源代码不实现特定企业的占位符语义。
+
 公共模型继续遵守 `isVisible`、`allowedUsersEnabled` 和 `allowedUsers`。
 只有启用 `isWeworkAvailable` 的决策模型进入工作台目录。
 决策模型不会进入 Shell 的对话模型列表。

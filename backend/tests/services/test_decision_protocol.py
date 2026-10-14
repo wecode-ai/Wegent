@@ -8,7 +8,6 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from app.api.endpoints.adapter.models import _test_llm_connection
 from app.schemas.admin import PublicModelCreate
 from app.schemas.decision import DecisionRequest
 from app.schemas.kind import ModelSpec
@@ -16,6 +15,7 @@ from app.services.decision_protocol import (
     build_decision_payload,
     normalize_decision_response,
 )
+from app.services.model_connection_service import _test_llm_connection
 from shared.utils.decision_model import decision_endpoint
 
 
