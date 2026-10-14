@@ -12,12 +12,13 @@ export async function verifyWindowsComponentPublication({ resources, environment
   await writeFile(
     holder,
     `
-param([string]$Path)
+param([string]$Path, [int]$ReleaseAfterMs = 0)
 $handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
 try {
   [Console]::Out.WriteLine('held')
   [Console]::Out.Flush()
   [Console]::In.ReadLine() | Out-Null
+  if ($ReleaseAfterMs -gt 0) { [System.Threading.Thread]::Sleep($ReleaseAfterMs) }
 } finally { $handle.Dispose() }
 `
   )
@@ -28,6 +29,7 @@ try {
 import assert from 'node:assert/strict'
 import { app } from 'electron'
 import { spawn } from 'node:child_process'
+import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { basename, dirname, join } from 'node:path'
@@ -38,28 +40,32 @@ const originalSymlink = fs.symlink
 let child
 let closed
 let occupiedPublications = 0
+async function holdFile(file, releaseAfterMs = 0) {
+  child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', input.holder,
+    '-Path', file, '-ReleaseAfterMs', String(releaseAfterMs)],
+    { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+  closed = new Promise((accept, reject) => {
+    child.once('error', reject)
+    child.once('close', code => code === 0 ? accept(code) : reject(new Error('Native holder failed')))
+  })
+  child.stderr.resume()
+  await new Promise((accept, reject) => {
+    let output = ''
+    const timer = setTimeout(() => reject(new Error('Native file holder did not start')), 10000)
+    child.once('error', error => { clearTimeout(timer); reject(error) })
+    child.stdout.on('data', data => {
+      output += data.toString()
+      if (!output.includes(String.fromCharCode(10))) return
+      clearTimeout(timer)
+      output.trim() === 'held' ? accept() : reject(new Error('Invalid native holder acknowledgement'))
+    })
+  })
+}
 fs.symlink = async (source, target, type) => {
   if (basename(source).startsWith('.content-')) {
     const file = basename(dirname(target)) === 'wework-core-plugins'
       ? join('wework-app', 'client.js') : 'runtime.json'
-    child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', input.holder,
-      '-Path', join(source, file)], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
-    closed = new Promise((accept, reject) => {
-      child.once('error', reject)
-      child.once('close', accept)
-    })
-    child.stderr.resume()
-    await new Promise((accept, reject) => {
-      let output = ''
-      const timer = setTimeout(() => reject(new Error('Native file holder did not start')), 10000)
-      child.once('error', error => { clearTimeout(timer); reject(error) })
-      child.stdout.on('data', data => {
-        output += data.toString()
-        if (!output.includes(String.fromCharCode(10))) return
-        clearTimeout(timer)
-        output.trim() === 'held' ? accept() : reject(new Error('Invalid native holder acknowledgement'))
-      })
-    })
+    await holdFile(join(source, file))
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
     await originalSymlink(source, target, type)
@@ -101,10 +107,25 @@ try {
   assert.equal(occupiedPublications, 2)
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core', 'workbench'])
   assert.equal(occupiedPublications, 2)
+  const { renameWorkbenchData } = await import(pathToFileURL(join(input.resources,
+    'app.asar/dist/runtime/workbench-data-rename.js')).href)
+  const journal = join(input.root, 'migration-journal.json')
+  const pending = journal + '.tmp'
+  await fs.writeFile(journal, 'pending')
+  await fs.writeFile(pending, 'completed')
+  await holdFile(journal, 250)
+  assert.throws(() => fsSync.renameSync(pending, journal), error =>
+    ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
+  child.stdin.end('release' + String.fromCharCode(10))
+  renameWorkbenchData(pending, journal)
+  assert.equal(await closed, 0)
+  child = null
+  assert.equal(await fs.readFile(journal, 'utf8'), 'completed')
+  await assert.rejects(fs.lstat(pending), { code: 'ENOENT' })
   process.stdout.write(JSON.stringify({ occupiedDirectoryRenameRejected: true,
     completeContentPublishedWhileOccupied: true, runtimePublishedWhileOccupied: true,
     coreRuntimeLinkedFromVerifiedResources: true,
-    restartReusedComposition: true }), () => app.exit(0))
+    restartReusedComposition: true, migrationJournalReplacedAfterHandleClosed: true }), () => app.exit(0))
 } catch (error) {
   if (child) { child.kill(); await closed.catch(() => {}) }
   console.error(error.stack)
@@ -122,6 +143,7 @@ try {
   )
   const evidence = JSON.parse(stdout)
   assert.equal(evidence.completeContentPublishedWhileOccupied, true)
+  assert.equal(evidence.migrationJournalReplacedAfterHandleClosed, true)
   await writeFile(join(root, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`)
   return evidence
 }
