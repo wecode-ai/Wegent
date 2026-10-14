@@ -2618,12 +2618,19 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("collaboration-issue-guide-1").textContent).toContain(
       "拆解一个新需求",
     );
+    expect(
+      byTestId("collaboration-issue-guide-1").querySelectorAll("svg"),
+    ).toHaveLength(2);
     expect(byTestId("collaboration-issue-guide-2").textContent).toContain(
       "修复一个问题",
     );
-    expect(
-      (byTestId("collaboration-issue-project") as HTMLSelectElement).value,
-    ).toBe(project.id);
+    const projectSelect = byTestId(
+      "collaboration-issue-project",
+    ) as HTMLSelectElement;
+    expect(projectSelect.value).toBe(project.id);
+    expect(byTestId("collaboration-issue-project-label").textContent).toBe(
+      project.name,
+    );
     expect(
       (byTestId("collaboration-home-create-issue") as HTMLButtonElement)
         .disabled,
