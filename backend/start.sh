@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Backend One-Click Startup Script (uv-based)
+# Backend One-Click Startup Script (hybrid Rust/Python, uv-based setup)
 # Usage: ./start.sh [--port PORT] [--host HOST] [--db-host DB_HOST] [--db-port DB_PORT] [--redis-host REDIS_HOST] [--redis-port REDIS_PORT] [--python PYTHON_PATH]
 
 set -e
@@ -42,6 +42,8 @@ DB_HOST=$DEFAULT_DB_HOST
 DB_PORT=$DEFAULT_DB_PORT
 REDIS_HOST=$DEFAULT_REDIS_HOST
 REDIS_PORT=$DEFAULT_REDIS_PORT
+BACKEND_MODE=${WEGENT_BACKEND_MODE:-hybrid}
+BACKEND_RS_DIR=${WEGENT_BACKEND_RS_DIR:-backend-rs}
 
 # Parse command line arguments
 # Parse command line arguments
@@ -88,6 +90,11 @@ while [[ $# -gt 0 ]]; do
             echo "  --python PATH        Python executable path (default: auto-detect)"
             echo "  -h, --help           Show this help message"
             echo ""
+            echo "Environment:"
+            echo "  WEGENT_BACKEND_MODE          hybrid (default) or python"
+            echo "  WEGENT_BACKEND_RS_DIR        Rust backend directory (default: backend-rs)"
+            echo "  WEGENT_PYTHON_UPSTREAM_PORT  Internal Python port (default: 8004)"
+            echo ""
             echo "Examples:"
             echo "  $0                                      # Use default configuration"
             echo "  $0 --port 8080                          # Use custom backend port"
@@ -122,6 +129,21 @@ validate_port() {
 validate_port "$PORT" "Backend port"
 validate_port "$DB_PORT" "Database port"
 validate_port "$REDIS_PORT" "Redis port"
+
+case "$BACKEND_MODE" in
+    hybrid|python) ;;
+    *)
+        echo -e "${RED}Error: WEGENT_BACKEND_MODE must be 'hybrid' or 'python'${NC}"
+        exit 1
+        ;;
+esac
+
+PROJECT_ROOT=$(cd .. && pwd)
+HYBRID_LAUNCHER="$PROJECT_ROOT/$BACKEND_RS_DIR/scripts/start-hybrid-backend.sh"
+if [ "$BACKEND_MODE" = "hybrid" ] && [ ! -x "$HYBRID_LAUNCHER" ]; then
+    echo -e "${RED}Error: Hybrid backend launcher not found or not executable: $HYBRID_LAUNCHER${NC}"
+    exit 1
+fi
 
 # Check if port is already in use
 check_port() {
@@ -166,6 +188,7 @@ echo -e "${BLUE}╚════════════════════�
 echo ""
 echo -e "${GREEN}Configuration:${NC}"
 echo -e "  Backend:  http://$HOST:$PORT"
+echo -e "  Mode:     $BACKEND_MODE"
 echo -e "  Database: $DB_HOST:$DB_PORT"
 echo -e "  Redis:    $REDIS_HOST:$REDIS_PORT"
 echo ""
@@ -351,6 +374,12 @@ if [ ! -f ".env" ]; then
 else
     echo -e "${GREEN}✓ .env file already exists${NC}"
 fi
+
+# Backfill the service URL required by the Rust gateway for older dotenv files.
+if ! grep -qE '^[[:space:]]*(export[[:space:]]+)?EXECUTOR_MANAGER_URL[[:space:]]*=[[:space:]]*[^[:space:]]' .env; then
+    printf '\nEXECUTOR_MANAGER_URL=http://localhost:%s\n' "${EXECUTOR_MANAGER_PORT:-8001}" >> .env
+    echo -e "${GREEN}✓ Added EXECUTOR_MANAGER_URL to .env${NC}"
+fi
 echo ""
 
 # Step 5: Check database connection
@@ -401,7 +430,6 @@ echo ""
 echo -e "${BLUE}[7/7] Starting backend server...${NC}"
 
 # Set PYTHONPATH to include project root
-PROJECT_ROOT=$(cd .. && pwd)
 export PYTHONPATH="${PYTHONPATH}:${PROJECT_ROOT}"
 export LOG_FILE_ENABLED="${LOG_FILE_ENABLED:-true}"
 export LOG_DIR="${LOG_DIR:-$PROJECT_ROOT/logs/backend}"
@@ -425,6 +453,12 @@ echo -e "${GREEN}Server will start on http://$HOST:$PORT${NC}"
 echo -e "${GREEN}API documentation: http://localhost:$PORT/api/docs${NC}"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
+if [ "$BACKEND_MODE" = "hybrid" ]; then
+    exec env WEGENT_REPOSITORY_ROOT="$PROJECT_ROOT" \
+        WEGENT_RS_PROJECT_DIR="$PROJECT_ROOT/$BACKEND_RS_DIR" \
+        "$HYBRID_LAUNCHER" --host "$HOST" --port "$PORT"
+fi
+
 echo -e "${YELLOW}Server will wait for active streams to complete before shutdown (max 10 minutes)${NC}"
 echo ""
 
