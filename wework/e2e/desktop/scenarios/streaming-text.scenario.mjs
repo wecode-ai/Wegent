@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
-import { mkdir, readdir, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 
 import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
 import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
@@ -1486,6 +1488,26 @@ export function createDesktopScenario({
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
     appEnvironment: {
       WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
+    },
+
+    async prepareApp({ appEnvironment, codexHome }) {
+      const { stdout } = await promisify(execFile)(
+        appEnvironment.CODEX_BINARY_PATH,
+        ['debug', 'models', '--bundled'],
+        { env: appEnvironment, timeout: 10_000, maxBuffer: 8 * 1024 * 1024 }
+      )
+      const catalog = JSON.parse(stdout)
+      const model = catalog.models.find(entry => entry.slug === DEFAULT_MODEL_ID)
+      assert.ok(model, 'The rendering fixture model is missing from the native catalog')
+      // Rendering assertions exercise direct tools with the shared fixture label.
+      model.tool_mode = 'direct'
+      model.use_responses_lite = false
+      model.display_name = DEFAULT_MODEL_LABEL
+      const catalogPath = join(codexHome, 'rendering-model-catalog.json')
+      await writeFile(catalogPath, JSON.stringify(catalog))
+      const configPath = join(codexHome, 'config.toml')
+      const config = await readFile(configPath, 'utf8')
+      await writeFile(configPath, `model_catalog_json = ${JSON.stringify(catalogPath)}\n${config}`)
     },
 
     async handleHttp(request, response, url) {

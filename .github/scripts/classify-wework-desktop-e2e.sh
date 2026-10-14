@@ -71,6 +71,7 @@ core_segments=(
   send-key-preference
   reply-predictions
   model-settings
+  codex-native-catalog
   system-proxy
   system-pac
   environment-panel-scroll
@@ -165,7 +166,7 @@ cloud_shards=(
 core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings,codex-native-catalog
   goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
@@ -1028,6 +1029,10 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs)
+      select_target "core:codex-native-catalog"
+      return
+      ;;
     wework/e2e/desktop/scenarios/model-settings.scenario.mjs | \
       wework/src/components/settings/ProviderSettingsSection* | \
       wework/src/components/settings/ProviderEditor* | \
@@ -1265,6 +1270,9 @@ classify_path() {
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-comment-notification"
+      ;;
+    executor/src/server/codex_model_catalog*.rs)
+      select_target "core:codex-native-catalog"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
