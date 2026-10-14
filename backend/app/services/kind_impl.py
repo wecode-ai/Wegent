@@ -23,7 +23,12 @@ from app.services.model_embedding_dimension import (
 )
 from app.stores.tasks import subtask_store, task_store
 from app.utils.client_payload_sanitizer import sanitize_client_payload
-from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
+from shared.utils.crypto import (
+    CryptoConfigurationError,
+    decrypt_api_key,
+    encrypt_api_key,
+    is_api_key_encrypted,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +161,9 @@ class ModelKindService(KindBaseService):
                         result["spec"]["modelConfig"]["env"]["api_key"] = (
                             decrypt_api_key(api_key)
                         )
-        except (ValueError, KeyError) as e:
+        except (ValueError, KeyError, CryptoConfigurationError) as e:
+            # A malformed credential store must not fail the whole Model list;
+            # the field keeps its stored value and the warning names the cause.
             logger.warning("Failed to decrypt API key: %r", e)
 
         return result
