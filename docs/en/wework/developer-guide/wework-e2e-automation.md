@@ -314,6 +314,10 @@ Desktop E2E Electron logs also retain redacted renderer errors. Git worktree and
 conversation-index replacement failures record Git stderr or the original OS error
 code to distinguish page timeouts from failures in the underlying execution.
 
+Executor configures loopback `NO_PROXY` before creating the Tokio runtime, avoiding
+process environment mutation on asynchronous connection threads. The startup scenario
+verifies that Executor becomes ready before Core DSH starts and that DSH binds a valid port.
+
 Core DSH binds port `0` directly and lets the OS assign its listening port.
 Electron reads the actual DSH address before probing the host, Executor, Terminal,
 and application endpoints. It does not discover a port by opening and closing a

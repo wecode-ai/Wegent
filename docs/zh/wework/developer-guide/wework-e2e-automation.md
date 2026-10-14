@@ -271,6 +271,9 @@ Linux CI 的插件开发分片通过 GDB 启动受 Electron 管理的 Executor�
 桌面 E2E 的 Electron 日志同时保留脱敏后的 renderer 错误；Git worktree 和会话索引
 替换失败会记录 Git stderr 或原始系统错误码，便于区分页面超时与底层执行失败。
 
+Executor 在创建 Tokio 运行时之前配置回环地址的 `NO_PROXY`，避免连接期间在异步线程中
+修改进程环境。启动场景验证 Executor 先就绪、Core DSH 后启动，并确认实际监听端口有效。
+
 Core DSH 使用端口 `0` 直接绑定操作系统分配的端口。Electron 读取 DSH 的实际
 监听地址后再逐项验证 host、Executor、Terminal 和应用入口，不通过提前打开再关闭
 监听器探测端口，避免并行启动时其他服务抢占已探测的端口。
