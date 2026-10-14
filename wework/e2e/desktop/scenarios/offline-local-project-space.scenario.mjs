@@ -6,9 +6,9 @@ import {
   captureVerificationScreenshot,
   completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
-  selectWhenOptionAvailable,
+  selectProjectRunnerModel,
 } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -16,7 +16,6 @@ const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const CLOUD_WORKSPACE_ID = 'offline-cloud-workspace'
 const PROJECT_NAME = '离线本地项目空间'
 const ISSUE_NAME = '离线本地 Issue'
-const MODEL_NAME = 'local-model:desktop-e2e-responses'
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' })
@@ -243,7 +242,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       assertLocalIsolation()
 
-      await initializeFirstProjectExecutionEnvironment(
+      await configureFirstProjectExecutionEnvironment(
         control,
         ACTIVE_WORKBENCH_SELECTOR,
         uiTimeoutMs
@@ -294,7 +293,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
 
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-participants"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
       await openProjectAgentCreator(
         control,
@@ -304,12 +303,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: '离线本地智能体',
       })
-      await selectWhenOptionAvailable(
-        control,
-        '[data-testid="cloud-project-chat-agent-model"]',
-        MODEL_NAME,
-        uiTimeoutMs
-      )
+      await selectProjectRunnerModel(control, uiTimeoutMs)
       await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
         timeoutMs: uiTimeoutMs,
       })

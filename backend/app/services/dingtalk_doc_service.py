@@ -20,9 +20,13 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.user import User
+from app.services.user_mcp_oauth import UserMcpOAuthService
 from app.services.user_mcp_service import UserMCPService
 
 logger = logging.getLogger(__name__)
+
+DINGTALK_PROVIDER_ID = "dingtalk"
+DOCS_SERVICE_ID = "docs"
 
 # MCP tool names for DingTalk Docs
 MCP_TOOL_LIST_NODES = "list_nodes"
@@ -91,8 +95,15 @@ class DingTalkDocService:
         if not mcp_url:
             raise ValueError("DingTalk Docs MCP URL is not configured or not enabled")
 
+        headers = await UserMcpOAuthService.provider_service_headers(
+            db,
+            user=user,
+            provider_id=DINGTALK_PROVIDER_ID,
+            service_id=DOCS_SERVICE_ID,
+        )
+
         # Fetch all nodes from MCP server
-        all_nodes = await DingTalkDocService._fetch_all_nodes(mcp_url)
+        all_nodes = await DingTalkDocService._fetch_all_nodes(mcp_url, headers)
 
         if len(all_nodes) > MAX_NODES_PER_SYNC:
             logger.warning(
@@ -113,7 +124,9 @@ class DingTalkDocService:
         return stats
 
     @staticmethod
-    async def _fetch_all_nodes(mcp_url: str) -> list[dict[str, Any]]:
+    async def _fetch_all_nodes(
+        mcp_url: str, headers: dict[str, str] | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch all document nodes from the DingTalk MCP server.
 
         Uses the MCP client protocol to connect and call list_nodes recursively.
@@ -127,7 +140,7 @@ class DingTalkDocService:
 
         all_nodes: list[dict[str, Any]] = []
 
-        async with streamablehttp_client(url=mcp_url) as (
+        async with streamablehttp_client(url=mcp_url, headers=headers or None) as (
             read_stream,
             write_stream,
             _,

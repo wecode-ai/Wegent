@@ -459,12 +459,11 @@ class DesktopE2EServer {
   ) {
     this.workspacePath = workspacePath
     this.cloudWorkspacePath = cloudWorkspacePath
-    this.desktopScenario = desktopScenario
     this.enableMarketplaceConnectorAppsStub = enableMarketplaceConnectorAppsStub
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
-    this.desktopScenario?.attachServer?.(this.server)
+    this.setDesktopScenario(desktopScenario)
     this.controlServer = createServer((request, response) => {
       void this.handleControl(request, response).catch(error => this.fail(error, response))
     })
@@ -692,6 +691,11 @@ class DesktopE2EServer {
     )
     this.visionSidecarRequests = []
     this.multimodalVisionRequests = []
+  }
+
+  setDesktopScenario(desktopScenario) {
+    this.desktopScenario = desktopScenario
+    desktopScenario?.attachServer?.(this.server)
   }
 
   async start() {
@@ -1205,7 +1209,13 @@ class DesktopE2EServer {
       `Desktop control client ${clientId} is not registered`
     )
     const id = randomUUID()
-    const command = { id, action, selector, ...options }
+    const command = {
+      id,
+      action,
+      selector,
+      ...options,
+      timeoutMs: options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
+    }
     let resolveDelivery
     let rejectDelivery
     const delivery = new Promise((resolvePromise, reject) => {
@@ -1231,7 +1241,7 @@ class DesktopE2EServer {
       )
       return await withTimeout(
         this.guard(result),
-        (options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS) + DESKTOP_CONTROL_RESULT_GRACE_MS,
+        command.timeoutMs + DESKTOP_CONTROL_RESULT_GRACE_MS,
         `Timed out running UI action ${action} for ${selector}`
       )
     } catch (error) {

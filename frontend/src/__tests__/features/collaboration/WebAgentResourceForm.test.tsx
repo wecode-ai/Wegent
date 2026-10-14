@@ -125,7 +125,7 @@ describe('WebAgentResourceForm', () => {
       'data-agent-form',
       'shared'
     )
-    expect(screen.getByTestId('web-agent-resource-creator')).toHaveClass('max-w-[700px]')
+    expect(screen.getByTestId('web-agent-resource-creator')).toHaveClass('max-w-[560px]')
     expect(screen.queryByTestId('web-agent-skills-add')).not.toBeInTheDocument()
     expect(screen.queryByTestId('web-agent-resource-name')).not.toBeInTheDocument()
     expect(screen.queryByTestId('web-agent-runtime')).not.toBeInTheDocument()

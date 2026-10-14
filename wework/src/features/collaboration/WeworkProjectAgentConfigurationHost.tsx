@@ -156,10 +156,18 @@ export function createWeworkProjectAgentConfigurationHost(
       ? {
           supportsExistingAgentSelection: false,
           supportsCrossLocationAgentSelection: true,
-          renderAgentCreator({ namespace, onClose, onCreated, ownerOptions, workspaceName }) {
+          renderAgentCreator({
+            projectId,
+            namespace,
+            onClose,
+            onCreated,
+            ownerOptions,
+            workspaceName,
+          }) {
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
+                projectId={projectId}
                 deviceApi={deviceApi}
                 namespace={namespace}
                 onClose={onClose}
@@ -170,11 +178,12 @@ export function createWeworkProjectAgentConfigurationHost(
               />
             )
           },
-          renderAgentEditor({ agent, namespace, onClose, onSaved, workspaceName }) {
+          renderAgentEditor({ projectId, agent, namespace, onClose, onSaved, workspaceName }) {
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
                 deviceApi={deviceApi}
+                projectId={projectId}
                 editingTeamId={agent.teamId}
                 key={agent.teamId}
                 namespace={namespace}

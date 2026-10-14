@@ -77,6 +77,9 @@ class TTSConfig(BaseModel):
     output_format: Optional[str] = Field("mp3", description="Output format (mp3, wav)")
 
 
+from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy, RunnerSelection
+
+
 class STTConfig(BaseModel):
     """STT-specific configuration"""
 
@@ -308,6 +311,11 @@ class ModelSpec(BaseModel):
         None,
         coerce_numbers_to_str=True,
         description="Relative model usage cost. A value of 1 represents the baseline cost.",
+    )
+    capability: Optional[str | Dict[str, Any]] = Field(
+        None,
+        description="Human-readable model summary, or publication metadata with "
+        "the summary in its description field.",
     )
 
     # Legacy top-level token limits. New configurations should use the
@@ -555,6 +563,9 @@ class BotSpec(BaseModel):
     modelRef: Optional[ModelRef] = None
     # Legacy Bots without this field keep their configured Ghost capabilities.
     capability_mode: str = "manual"
+    routing_configuration_required: bool = False
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
     secondaryModelRef: Optional[ModelRef] = Field(
         None,
         description="Secondary LLM model for auxiliary tasks. "

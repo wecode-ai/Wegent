@@ -48,6 +48,10 @@ class TestUserMCPService:
         assert config == {
             "enabled": True,
             "url": "https://example.com/mcp?token=secret",
+            "auth_mode": "url",
+            "oauth_connected": False,
+            "oauth_expires_at": None,
+            "oauth_account": None,
         }
 
     def test_get_decrypted_mcp_preferences_keeps_structure_and_decrypts_url(self):

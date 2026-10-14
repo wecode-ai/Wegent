@@ -8,6 +8,7 @@ import { modelApis } from '@/apis/models'
 import {
   DEFAULT_MODEL_NAME,
   useModelSelection,
+  unifiedToModel,
   type Model,
   type TeamWithBotDetails,
 } from '@/features/tasks/hooks/useModelSelection'
@@ -21,6 +22,16 @@ import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
 import { getGlobalModelPreference } from '@/utils/modelPreferences'
 
 const mockTranslate = (_key: string, fallback?: string) => fallback ?? _key
+
+it('preserves the capability description when preparing a model for selection', () => {
+  const model = unifiedToModel({
+    name: 'fast-model',
+    type: 'public',
+    capability: 'Fast responses for everyday tasks',
+  })
+
+  expect(model.capability).toBe('Fast responses for everyday tasks')
+})
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({

@@ -66,6 +66,7 @@ interface ToolBlocksDisplayProps {
   processingPhase?: 'live' | 'intermediate' | 'final'
   showInterToolThinking?: boolean
   thinkingContent?: string
+  showThinkingBlocks?: boolean
   showSummary?: boolean
   stateKey?: string
   detailStateScopeKey?: string
@@ -87,6 +88,7 @@ export function ToolBlocksDisplay({
   processingPhase = 'live',
   showInterToolThinking = false,
   thinkingContent = '',
+  showThinkingBlocks = false,
   showSummary = true,
   stateKey,
   detailStateScopeKey,
@@ -106,8 +108,7 @@ export function ToolBlocksDisplay({
     stateKey ? `${stateKey}:processing` : undefined
   )
   const [livePreviewCollapsed, setLivePreviewCollapsed] = useState(false)
-  const [hasLocallyExpandedPreviewDetail, setHasLocallyExpandedPreviewDetail] =
-    useState(false)
+  const [hasLocallyExpandedPreviewDetail, setHasLocallyExpandedPreviewDetail] = useState(false)
   const [mountedAt] = useState(() => Date.now())
   const turnStartedAt = startedAt ?? mountedAt
   const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
@@ -211,8 +212,7 @@ export function ToolBlocksDisplay({
     [effectiveDetailStateScopeKey, rows]
   )
   const hasExpandedPreviewDetail =
-    useAnyPersistentProcessingExpansion(previewDetailStateKeys) ||
-    hasLocallyExpandedPreviewDetail
+    useAnyPersistentProcessingExpansion(previewDetailStateKeys) || hasLocallyExpandedPreviewDetail
   const hasSubagentActivity = displayItems.some(item => item.type === 'subagent_group')
   const sourceFileEditDurations = useMemo(
     () => fileEditDurationsBySourceBlock ?? getFileEditDurationsBySourceBlock(blocks),
@@ -369,6 +369,7 @@ export function ToolBlocksDisplay({
                 }
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenAssistantPlan={onOpenAssistantPlan}
+                showThinkingContent={showThinkingBlocks}
                 fileEditDurations={fileEditDurations}
               />
             )
@@ -380,6 +381,7 @@ export function ToolBlocksDisplay({
       expanded,
       onOpenWorkspaceFile,
       onOpenAssistantPlan,
+      showThinkingBlocks,
       fileEditDurations,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,

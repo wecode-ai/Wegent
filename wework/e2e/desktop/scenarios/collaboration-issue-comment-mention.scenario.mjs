@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createLocalCollaborationProject,
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
 } from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '评论提及成员回归'
@@ -83,7 +83,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         text: PROJECT_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      await initializeFirstProjectExecutionEnvironment(control, ACTIVE_CONTENT, uiTimeoutMs)
+      await configureFirstProjectExecutionEnvironment(control, ACTIVE_CONTENT, uiTimeoutMs)
       await control.command('click', board('[data-testid="collaboration-tab-board"]'))
 
       await control.command('click', board('[data-testid="collaboration-empty-project-create"]'))

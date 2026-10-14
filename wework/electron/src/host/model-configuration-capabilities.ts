@@ -20,7 +20,7 @@ export function registerModelConfigurationCapabilities(
       secrets
     ))
   router.register('modelConfiguration.read', () => store().read())
-  router.register('modelConfiguration.runtime', () => store().runtime())
+  router.register('modelConfiguration.runtime', params => store().runtime(params.provider))
   router.register('modelConfiguration.save', async params => {
     if (typeof params.revision !== 'string') throw new Error('Configuration revision is required')
     const result = await store().save(params.revision, params.providers)

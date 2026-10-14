@@ -101,6 +101,7 @@ interface AutomaticProcessingDraft {
   targetKind: TargetKind;
   targetId: string;
   enabled: boolean;
+  runnerSelection?: WorkspaceAutomationInput["runnerSelection"];
 }
 
 const EMPTY_DRAFT: AutomaticProcessingDraft = {
@@ -299,6 +300,7 @@ function draftFromRule(
     targetKind: rule.targetKind,
     targetId: rule.targetId,
     enabled: rule.enabled,
+    runnerSelection: rule.runnerSelection,
   };
 }
 
@@ -531,7 +533,14 @@ export function ProjectAutomaticProcessing({
   );
 
   function updateDraft(patch: Partial<AutomaticProcessingDraft>) {
-    setDraft((current) => ({ ...current, ...patch }));
+    setDraft((current) => ({
+      ...current,
+      ...patch,
+      ...((patch.targetKind && patch.targetKind !== current.targetKind) ||
+      (patch.targetId && patch.targetId !== current.targetId)
+        ? { runnerSelection: undefined }
+        : {}),
+    }));
   }
 
   function openCreate() {
@@ -619,6 +628,7 @@ export function ProjectAutomaticProcessing({
       targetId: value.targetId,
       executionDeviceId: null,
       enabled: value.enabled,
+      runnerSelection: value.runnerSelection,
     };
   }
 

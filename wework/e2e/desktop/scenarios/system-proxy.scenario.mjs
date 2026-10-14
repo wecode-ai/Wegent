@@ -132,7 +132,7 @@ export async function createDesktopScenario({
       await control.command('navigate', 'body', { value: '/' })
       await createSingleRootLocalProject(control, workspacePath, 'system-proxy', uiTimeoutMs)
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
+      await selectE2EModel(control, undefined, 'GPT-5.6 Luna', ACTIVE_WORKBENCH_SELECTOR)
       await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
 

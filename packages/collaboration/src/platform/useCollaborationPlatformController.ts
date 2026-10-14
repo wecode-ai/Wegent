@@ -12,7 +12,6 @@ import type {
 import type {
   CollaborationGroup,
   CollaborationExecutionEnvironment,
-  CollaborationExecution,
   CollaborationWorkspaceMember,
   CollaborationOwnedAgent,
   CollaborationPlatformResources,
@@ -35,10 +34,6 @@ export interface CollaborationPlatformState {
   projects: CollaborationProject[];
   projectIssues: Record<string, WorkspaceProjectIssuesSnapshot>;
   myWork: WorkspaceMyWorkItem[];
-  executions: Array<{
-    project: CollaborationProject;
-    execution: CollaborationExecution;
-  }>;
   members: CollaborationWorkspaceMember[];
   agents: CollaborationOwnedAgent[];
   collaborationGroups: CollaborationGroup[];
@@ -82,37 +77,10 @@ async function loadRootMyWork(
   }
 }
 
-async function loadRootExecutions(
-  api: SharedWorkspaceApi,
-  projects: CollaborationProject[],
-): Promise<CollaborationPlatformState["executions"]> {
-  const entries = await Promise.all(
-    projects.map(async (project) => {
-      try {
-        const projectExecutions = await api.executions.list(project.id, {
-          includeTerminal: true,
-        });
-        return projectExecutions.map((execution) => ({
-          project,
-          execution,
-        }));
-      } catch {
-        return [];
-      }
-    }),
-  );
-  return entries
-    .flat()
-    .sort((left, right) =>
-      right.execution.updated_at.localeCompare(left.execution.updated_at),
-    );
-}
-
 interface RootNavigationSnapshot {
   workspaces: CollaborationWorkspace[];
   projects: CollaborationProject[];
   myWork: WorkspaceMyWorkItem[];
-  executions: CollaborationPlatformState["executions"];
   collaborationGroups: CollaborationGroup[];
   resources: CollaborationPlatformResources;
 }
@@ -163,10 +131,6 @@ function mergeRootNavigationSnapshots(
     myWork: mergeByKey(
       snapshots.map((snapshot) => snapshot.myWork),
       (item) => item.id,
-    ),
-    executions: mergeByKey(
-      snapshots.map((snapshot) => snapshot.executions),
-      ({ project, execution }) => `${project.id}:${execution.id}`,
     ),
     collaborationGroups: mergeByKey(
       snapshots.map((snapshot) => snapshot.collaborationGroups),
@@ -240,7 +204,6 @@ export function useCollaborationPlatformController({
     projects: [],
     projectIssues: {},
     myWork: [],
-    executions: [],
     members: [],
     agents: [],
     collaborationGroups: [],
@@ -266,7 +229,7 @@ export function useCollaborationPlatformController({
         !force &&
         !location.workspaceId &&
         !location.projectId &&
-        rootView === "home" &&
+        (rootView === "home" || rootView === "devices") &&
         navigationCacheReadyRef.current
       ) {
         setState((current) => ({
@@ -323,7 +286,6 @@ export function useCollaborationPlatformController({
           workspaces: [],
           projects: [],
           myWork: [],
-          executions: [],
           collaborationGroups: [],
           resources: emptyResources,
         }));
@@ -371,7 +333,6 @@ export function useCollaborationPlatformController({
               ),
             projectIssues: {},
             myWork: snapshot.myWork,
-            executions: snapshot.executions,
             members: [],
             agents: [],
             collaborationGroups: snapshot.collaborationGroups,
@@ -404,12 +365,7 @@ export function useCollaborationPlatformController({
           });
         };
         // Navigation sources own independent storage, not resource identity.
-        if (
-          api.resources &&
-          (rootView === "agents" ||
-            rootView === "teams" ||
-            rootView === "devices")
-        ) {
+        if (api.resources && (rootView === "agents" || rootView === "teams")) {
           void api.resources
             .list()
             .then((resources) => {
@@ -418,7 +374,7 @@ export function useCollaborationPlatformController({
             .catch(() => undefined);
         }
         for (const [index, source] of sources.entries()) {
-          if (rootView === "my-work" || rootView === "inbox") {
+          if (rootView === "inbox") {
             void loadRootMyWork(source).then((myWork) => {
               updateSnapshot(index, { myWork });
             });
@@ -452,13 +408,6 @@ export function useCollaborationPlatformController({
                   ).then((groups) => {
                     mergeCollaborationGroups(index, groups.flat());
                   });
-                }
-                if (location.rootView === "runs") {
-                  void loadRootExecutions(source, projects).then(
-                    (executions) => {
-                      updateSnapshot(index, { executions });
-                    },
-                  );
                 }
               }),
             ];
@@ -578,7 +527,6 @@ export function useCollaborationPlatformController({
               : workspaceProjects,
             projectIssues: {},
             myWork: [],
-            executions: [],
             members: [],
             agents: [],
             collaborationGroups: [],
@@ -611,7 +559,6 @@ export function useCollaborationPlatformController({
             ),
             projectIssues: {},
             myWork: [],
-            executions: [],
             members: [],
             agents: [],
             collaborationGroups: [],
@@ -658,7 +605,6 @@ export function useCollaborationPlatformController({
                 )
               : {},
           myWork: [],
-          executions: [],
           members,
           agents,
           collaborationGroups,

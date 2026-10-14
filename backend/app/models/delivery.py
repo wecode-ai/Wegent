@@ -19,6 +19,7 @@ from sqlalchemy import (
     event,
     inspect,
     or_,
+    select,
 )
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql import func
@@ -219,6 +220,25 @@ class ProjectChatAgent(LoopNode):
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("status", "active")
         super().__init__(**kwargs)
+
+
+@event.listens_for(LoopItem, "before_update")
+def _preserve_issue_runner_binding(
+    _mapper: object, connection: Connection, target: LoopItem
+) -> None:
+    """Protect server-owned affinity from concurrent content metadata rewrites."""
+    if not inspect(target).attrs.metadata_json.history.has_changes():
+        return
+    persisted = connection.execute(
+        select(LoopItem.metadata_json).where(LoopItem.id == target.id).with_for_update()
+    ).scalar_one()
+    protected = {
+        key: persisted[key]
+        for key in ("runner_binding", "runner_binding_conflict")
+        if key in (persisted or {})
+    }
+    if protected:
+        target.metadata_json = {**(target.metadata_json or {}), **protected}
 
 
 class RuntimeProfile(LoopNode):

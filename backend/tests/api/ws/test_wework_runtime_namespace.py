@@ -1109,6 +1109,7 @@ async def test_project_comment_execute_acknowledges_identity_and_failures(
     assert request.model_dump() == {
         "project_id": "p",
         "task_id": "t",
+        "runner_selection": None,
         "trigger_message_id": "m",
         "attachment_ids": [],
     }

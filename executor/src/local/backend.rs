@@ -622,11 +622,29 @@ async fn drain_available_runtime_work<T>(
         .and_then(Value::as_u64)
         .unwrap_or(limit);
     let available = limit.saturating_sub(active.saturating_add(queued));
+    if available == 0 {
+        return;
+    }
+    let catalog = match handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.runner.catalog", "payload": {},
+        }))
+        .await
+    {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            write_executor_error_line(&format_executor_log(
+                "runner catalog read failed",
+                &[("error", error.message)],
+            ));
+            return;
+        }
+    };
     for _ in 0..available {
         let mut retried_failed_execution = false;
         let work = loop {
             match client
-                .pull_runtime_work(client.config.heartbeat_timeout)
+                .pull_runtime_work(client.config.heartbeat_timeout, catalog.clone())
                 .await
             {
                 Ok(work) => break work,
@@ -703,6 +721,8 @@ async fn drain_available_runtime_work<T>(
         let method =
             if payload.get("dispatchKind").and_then(Value::as_str) == Some("collaboration_group") {
                 "runtime.collaboration.dispatch"
+            } else if payload.get("runtimeAction").and_then(Value::as_str) == Some("send") {
+                "runtime.tasks.send"
             } else {
                 "runtime.tasks.create"
             };
@@ -905,7 +925,7 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
     if request.device_id.as_deref().unwrap_or("").trim().is_empty() {
         request.device_id = Some(config.device_id.clone());
     }
-    crate::agents::rewrite_loopback_model_gateway(request, &config.backend_url);
+    crate::agents::bind_backend_model_gateway(request, &config.backend_url);
 }
 
 fn runtime_error_response(error: AppIpcError) -> Value {

@@ -588,6 +588,9 @@ def _build_cloud_gateway_model_config(
         "api_format": "responses",
         "protocol": "openai-responses",
         "upstream_api_format": upstream_api_format,
+        # This selects Codex capability metadata; model_id remains the exact
+        # authorized cloud resource sent to the gateway.
+        "codex_catalog_model_id": catalog_model_id or "wework-gpt-5.6-sol",
         "base_url": f"{backend_base}/api/runtime-work/llm-responses-proxy",
         "api_key": token,
         "default_headers": {
@@ -599,8 +602,6 @@ def _build_cloud_gateway_model_config(
         },
         "runtime_config": {"codex": {"use_user_config": False, "configured": True}},
     }
-    if catalog_model_id:
-        config["codex_catalog_model_id"] = catalog_model_id
     config.update(model_options)
     return config
 
@@ -633,8 +634,6 @@ def build_wework_runtime_model_config(
     )
     if resolved_catalog_model_id:
         gateway_config["codex_catalog_model_id"] = resolved_catalog_model_id
-    else:
-        gateway_config.setdefault("codex_catalog_model_id", "wework-gpt-5.6-sol")
     gateway_config["tool_profile"] = "custom"
     gateway_config["codex_responses_compat_proxy"] = True
     return gateway_config

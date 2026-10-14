@@ -18,6 +18,55 @@ use wegent_executor::{
 };
 
 #[tokio::test]
+async fn device_workspace_file_commands_read_unregistered_directories() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = std::fs::canonicalize(directory.path()).unwrap();
+    let workspace = path.join("test");
+    std::fs::create_dir(&workspace).unwrap();
+    std::fs::write(path.join("README.md"), "hello").unwrap();
+    std::fs::write(path.join("sunset.png"), b"image").unwrap();
+
+    for device_type in ["local", "cloud", "remote"] {
+        let transport = RecordingTransport::default();
+        let mut config = local_backend_config();
+        config.device_type = device_type.to_owned();
+        let runner = LocalBackendRunner::with_task_runner(
+            config,
+            transport.clone(),
+            RecordingTaskRunner::default(),
+        );
+        runner.register_handlers();
+        let handler = transport.handler("device:execute_command").unwrap();
+        for (command_key, args, field, expected) in [
+            (
+                "workspace_read_text_file",
+                vec!["README.md"],
+                "content",
+                "hello",
+            ),
+            (
+                "workspace_read_file_chunk",
+                vec!["sunset.png", "0"],
+                "content_base64",
+                "aW1hZ2U=",
+            ),
+        ] {
+            let result = handler(json!({
+                "command_key": command_key,
+                "cwd": path,
+                "args": args,
+                "env": {"WEGENT_WORKSPACE_ROOTS": workspace},
+            }))
+            .await
+            .unwrap();
+
+            assert_eq!(result["success"], true, "{device_type}: {result}");
+            assert_eq!(result["stdout"][field], expected);
+        }
+    }
+}
+
+#[tokio::test]
 async fn task_execute_preserves_skill_identity_token() {
     let transport = RecordingTransport::default();
     let task_runner = RecordingTaskRunner::default();

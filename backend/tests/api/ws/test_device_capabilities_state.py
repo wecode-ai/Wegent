@@ -227,6 +227,7 @@ async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
 @pytest.mark.asyncio
 async def test_responses_api_terminal_event_logs_callback_summary(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
+    sio = SimpleNamespace(emit=AsyncMock())
     event = SimpleNamespace(
         type=device_namespace.EventType.DONE.value,
         result={"content": "done"},
@@ -270,6 +271,8 @@ async def test_responses_api_terminal_event_logs_callback_summary(monkeypatch):
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
     monkeypatch.setattr(namespace._event_parser, "parse", fake_parse)
+    monkeypatch.setattr(namespace, "_write_back_execution_event", AsyncMock())
+    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio)
     monkeypatch.setattr(
         device_namespace,
         "WebSocketResultEmitter",

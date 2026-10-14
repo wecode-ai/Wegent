@@ -855,6 +855,7 @@ async def materialize_runtime_task_endpoint(
 @router.post("/llm-responses-proxy/responses")
 @router.post("/llm-responses-proxy/chat/completions")
 @router.post("/llm-responses-proxy/messages")
+@router.post("/llm-responses-proxy/v1/messages")
 @trace_async("runtime_work.llm_proxy", "runtime_work.api")
 async def llm_responses_proxy_endpoint(
     fastapi_request: Request,

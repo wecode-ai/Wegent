@@ -7,6 +7,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Callable
 
 import pytest
@@ -463,3 +464,120 @@ def test_stale_automatic_reconciler_preserves_user_opt_out(context, action):
             context.accounts.list_connections(db, user_id=context.user_id)[0].device_ids
             == []
         )
+
+
+def automatic(context: Context, db: Session) -> dict:
+    from app.services.plugin_auth_automation import PluginAuthAutomationService
+
+    return PluginAuthAutomationService(context.accounts).reconcile(
+        db,
+        user_id=context.user_id,
+        device_id=context.device_id,
+        installed_ids=[context.plugin_id],
+    )["migrations"][0]
+
+
+def automatic_rows(context: Context, db: Session):
+    return db.query(Kind).filter(
+        Kind.user_id == context.user_id,
+        Kind.kind == "ConnectorMigration",
+        Kind.namespace == "plugin-auth",
+        Kind.json["spec"]["automatic"].as_boolean().is_(True),
+    )
+
+
+def test_concurrent_automatic_sync_reuses_one_slot_through_exclusive_transfer(context):
+    ids = []
+
+    def reconcile(db):
+        ids.append(automatic(context, db)["id"])
+
+    assert race(context, reconcile, reconcile) == ["ok", "ok"]
+    assert len(set(ids)) == 1
+    intent = ids[0]
+    with context.sessions.begin() as db:
+        row_id = automatic_rows(context, db).one().id
+        ticket = PluginNativeEnrollment(
+            migration_id=intent,
+            account_id="synthetic-account",
+            credential=CREDENTIAL,
+        )
+        context.stage(db, ticket)
+    ids.clear()
+    assert race(context, reconcile, reconcile) == ["ok", "ok"]
+    assert ids == [intent, intent]
+    with context.sessions.begin() as db:
+        context.transfer_action(db, ticket, "finish")
+    ids.clear()
+
+    assert race(context, reconcile, reconcile) == ["ok", "ok"]
+
+    assert len(set(ids)) == 1 and ids[0] != intent
+    with context.sessions.begin() as db:
+        row = automatic_rows(context, db).one()
+        assert row.id == row_id and row.name == ids[0]
+        # Slot rotation cannot invalidate a detached transfer's durable receipt.
+        assert context.transfer_action(db, ticket, "prepare") == {"state": "completed"}
+
+
+def test_stale_snapshot_reuses_rotated_automatic_slot_without_inserting(context):
+    with context.sessions.begin() as db:
+        row = db.get(Kind, context.plugin_id)
+        spec = json.loads(json.dumps(row.json["spec"]))
+        spec["components"]["connectors"][0]["accountAuth"].pop("exportMode")
+        row.json = {"spec": spec}
+        intent = automatic(context, db)["id"]
+        row_id = automatic_rows(context, db).one().id
+    with context.sessions() as stale:
+        establish_snapshot(stale, context)
+        cached = automatic_rows(context, stale).one()
+        assert cached.name == intent and cached.is_active
+        with context.sessions.begin() as current:
+            context.transfers.migrations.consume(
+                current,
+                user_id=context.user_id,
+                device_id=context.device_id,
+                request=PluginNativeEnrollment(
+                    migration_id=intent,
+                    account_id="synthetic-account",
+                    credential=CREDENTIAL,
+                ),
+            )
+            renewed = automatic(context, current)["id"]
+
+        assert automatic(context, stale)["id"] == renewed
+        stale.commit()
+
+    with context.sessions() as db:
+        row = automatic_rows(context, db).one()
+        assert row.id == row_id and row.name == renewed and renewed != intent
+
+
+def test_automatic_history_compaction_works_with_mysql_json_and_window_ranking(context):
+    from scripts.compact_plugin_auth_migrations import compact_batch, obsolete_query
+
+    with context.sessions.begin() as db:
+        automatic(context, db)
+        latest = automatic_rows(context, db).one()
+        latest_id = latest.id
+        for offset in (1, 2):
+            db.add(
+                Kind(
+                    user_id=context.user_id,
+                    kind="ConnectorMigration",
+                    namespace="plugin-auth",
+                    name=f"{offset:064x}",
+                    json=json.loads(json.dumps(latest.json)),
+                    is_active=False,
+                    updated_at=latest.updated_at - timedelta(seconds=offset),
+                )
+            )
+    with context.sessions() as db:
+        assert obsolete_query(db, context.user_id, int(time.time())).count() == 2
+    with context.sessions.begin() as db:
+        assert compact_batch(db, context.user_id, 1) == 1
+    with context.sessions.begin() as db:
+        assert compact_batch(db, context.user_id, 1) == 1
+    with context.sessions.begin() as db:
+        assert compact_batch(db, context.user_id, 1) == 0
+        assert automatic_rows(context, db).one().id == latest_id

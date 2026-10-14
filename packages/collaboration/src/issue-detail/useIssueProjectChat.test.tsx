@@ -14,7 +14,7 @@ it('does not merge a late comment or runtime response into another Issue', async
     subscribe: vi.fn().mockResolvedValue({ snapshot: { messages: [] }, unsubscribe: vi.fn() }),
     send: vi.fn(
       () =>
-        new Promise<ProjectChatMessage>(resolve => {
+        new Promise<ProjectChatMessage>((resolve) => {
           resolveSend = resolve
         })
     ),
@@ -22,7 +22,7 @@ it('does not merge a late comment or runtime response into another Issue', async
   let current!: ReturnType<typeof useIssueProjectChat>
   function Harness({ issueId }: { issueId: string }) {
     current = useIssueProjectChat(client, 'project-1', issueId)
-    return <div>{current.messages.map(message => message.content).join(',')}</div>
+    return <div>{current.messages.map((message) => message.content).join(',')}</div>
   }
   try {
     await act(async () => root.render(<Harness issueId="issue-1" />))
@@ -43,7 +43,12 @@ it('does not merge a late comment or runtime response into another Issue', async
     expect(container.textContent).toBe('')
     await act(async () =>
       current.merge([
-        { ...oldMessage, messageId: 'new', taskId: 'issue-2', content: 'New comment' },
+        {
+          ...oldMessage,
+          messageId: 'new',
+          taskId: 'issue-2',
+          content: 'New comment',
+        },
       ])
     )
     expect(container.textContent).toBe('New comment')
@@ -85,7 +90,7 @@ it('reloads the canonical activity snapshot when the Issue revision changes', as
   } as unknown as ProjectChatClient
   function Harness({ revision }: { revision: number }) {
     const chat = useIssueProjectChat(client, 'project-1', 'issue-1', revision)
-    return <div>{chat.messages.map(message => message.content).join(',')}</div>
+    return <div>{chat.messages.map((message) => message.content).join(',')}</div>
   }
   try {
     await act(async () => root.render(<Harness revision={1} />))
@@ -95,9 +100,96 @@ it('reloads the canonical activity snapshot when the Issue revision changes', as
 
     expect(client.subscribe).toHaveBeenCalledTimes(2)
     expect(unsubscribe).toHaveBeenCalledTimes(1)
-    expect(container.textContent).toContain(
-      '负责人已综合证据，将 Issue 提交待确认。'
+    expect(container.textContent).toContain('负责人已综合证据，将 Issue 提交待确认。')
+  } finally {
+    act(() => root.unmount())
+  }
+})
+
+it('keeps the activity and reply draft mounted while an Issue revision refreshes', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const message = {
+    messageId: 'comment',
+    taskId: 'issue-1',
+    content: 'Persisted comment',
+    sequenceNumber: 1,
+    updatedAt: '2026-10-13T00:00:00Z',
+  } as ProjectChatMessage
+  let finishRefresh!: (subscription: unknown) => void
+  const client = {
+    subscribe: vi
+      .fn()
+      .mockResolvedValueOnce({
+        snapshot: { messages: [message] },
+        unsubscribe: vi.fn(),
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishRefresh = resolve
+          })
+      ),
+  } as unknown as ProjectChatClient
+  function Harness({ revision }: { revision: number }) {
+    const chat = useIssueProjectChat(client, 'project-1', 'issue-1', revision)
+    return (
+      <div>
+        {chat.messages.map((item) => (
+          <textarea key={item.messageId} />
+        ))}
+      </div>
     )
+  }
+  try {
+    await act(async () => root.render(<Harness revision={2} />))
+    const composer = container.querySelector('textarea')!
+    composer.value = 'Unsent reply'
+
+    await act(async () => root.render(<Harness revision={3} />))
+
+    expect(container.querySelector('textarea')).toBe(composer)
+    expect(composer.value).toBe('Unsent reply')
+    await act(async () =>
+      finishRefresh({
+        snapshot: { messages: [message] },
+        unsubscribe: vi.fn(),
+      })
+    )
+    expect(container.querySelector('textarea')).toBe(composer)
+    expect(composer.value).toBe('Unsent reply')
+  } finally {
+    act(() => root.unmount())
+  }
+})
+
+it('clears a subscription error when a revision refresh succeeds', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const client = {
+    subscribe: vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Subscription failed'))
+      .mockResolvedValueOnce({
+        snapshot: { messages: [] },
+        unsubscribe: vi.fn(),
+      }),
+  } as unknown as ProjectChatClient
+  let current!: ReturnType<typeof useIssueProjectChat>
+  function Harness({ revision }: { revision: number }) {
+    current = useIssueProjectChat(client, 'project-1', 'issue-1', revision)
+    return null
+  }
+  try {
+    await act(async () => root.render(<Harness revision={1} />))
+    expect(current.error).toBe('Subscription failed')
+
+    await act(async () => root.render(<Harness revision={2} />))
+
+    expect(current.error).toBeNull()
+    expect(current.loading).toBe(false)
   } finally {
     act(() => root.unmount())
   }

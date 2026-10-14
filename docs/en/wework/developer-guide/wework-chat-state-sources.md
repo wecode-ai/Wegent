@@ -266,6 +266,19 @@ The collapsed tool activity preview shows at most three rows and follows the lat
 
 ## Goal and Task Execution State
 
+Full goal updates must go through `syncRuntimeGoal`. This
+entry point reconciles the runtime goal with the conversation cache and projects
+the accepted status into the lifecycle, keeping the goal bar and sidebar on the
+same goal version. Do not write the cache and raw event status separately: when
+the cache rejects an older update, the lifecycle must retain the accepted state
+too. Valid updates with equal timestamps are accepted in arrival order, including
+pause, block, resume, objective, and usage changes. Snapshot request versions
+continue to isolate late asynchronous responses.
+
+The center dot in the sidebar running indicator represents only an `active`
+goal. Paused and blocked goals still exist but do not show this dot; its absence
+does not mean that no goal exists.
+
 The goal bar's running presentation must be constrained by the current runtime task execution snapshot. When App Server explicitly reports `running: false` for the current task, an otherwise `active` goal must be derived as `paused` in the UI and its displayed elapsed time must stop. This prevents an interrupted task from showing an active, ticking goal when it is reopened.
 
 - Task execution is known only when `running` is an explicit boolean. A missing field means the state is unknown and must not pause the goal.

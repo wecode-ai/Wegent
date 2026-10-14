@@ -10,6 +10,7 @@ pub mod mcp;
 pub(crate) mod mcp_http;
 mod model;
 mod router;
+pub(crate) mod runner_routing;
 mod store;
 
 use serde_json::Value;
@@ -63,3 +64,5 @@ pub(crate) fn collaboration_member_profile_instructions(payload: &Value) -> Stri
         .unwrap_or_default()
         .to_owned()
 }
+
+mod runner_history;

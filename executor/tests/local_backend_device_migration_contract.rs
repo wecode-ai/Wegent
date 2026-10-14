@@ -867,6 +867,8 @@ printf '{"success":true,"action":"%s","name":"%s","foo":"%s"}' "$WEGENT_EXTENSIO
     let mut config = local_backend_config();
     config.local_workspace_root = temp.path().join("workspace");
     let extensions = isolated_extension_runner(temp.path(), temp.path().join("global-skills"));
+    let extensions =
+        extensions.with_authenticated_identity("https://other.example".to_owned(), "7".to_owned());
     let runner =
         LocalBackendRunner::new(config, transport.clone()).with_extension_handler(extensions);
     runner.register_handlers();
@@ -916,9 +918,7 @@ printf '{"success":true,"scope":"global"}'
     make_executable(&script);
 
     let runner = DeviceExtensionRunner::with_global_skills_root(global_skills_root)
-        .with_task_skills_resolver(|_, _, _| {
-            panic!("Global extensions must not resolve task Homes")
-        });
+        .with_task_skills_resolver(|_, _| panic!("Global extensions must not resolve task Homes"));
     let ack = runner
         .handle_run_extension(json!({
             "extension_name": "sample-extension",
@@ -974,7 +974,7 @@ async fn task_extension_rejects_unknown_home_and_symlinked_script_escape() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn task_extension_cannot_self_assert_backend_or_user_identity() {
+async fn task_extension_cannot_self_assert_user_identity() {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("agents/user7/default/design");
     std::fs::create_dir_all(&home).unwrap();
@@ -986,13 +986,10 @@ async fn task_extension_cannot_self_assert_backend_or_user_identity() {
     let unbound = runner.handle_run_extension(payload.clone()).await;
     assert_eq!(unbound["success"], false);
     assert!(unbound["message"].as_str().unwrap().contains("binding"));
-    for (backend, user) in [
-        ("https://backend.example", "8"),
-        ("https://other.example", "7"),
-    ] {
+    for backend in ["https://backend.example", "https://other.example"] {
         let result = runner
             .clone()
-            .with_authenticated_identity(backend.to_owned(), user.to_owned())
+            .with_authenticated_identity(backend.to_owned(), "8".to_owned())
             .handle_run_extension(payload.clone())
             .await;
         assert_eq!(result["success"], false);

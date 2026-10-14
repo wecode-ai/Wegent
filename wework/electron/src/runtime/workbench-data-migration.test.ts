@@ -43,19 +43,33 @@ function entry() {
   }
 }
 
-test('moves a directory once and preserves internal, external and dangling links', () => {
+test('moves a directory once and preserves native internal, external and dangling aliases', () => {
   const options = entry()
   write(join(options.source, 'config.json'))
   write(join(root, 'external.txt'))
-  fs.symlinkSync('config.json', join(options.source, 'internal'))
-  fs.symlinkSync('../../external.txt', join(options.source, 'external'))
-  fs.symlinkSync('missing-cookie', join(options.source, 'SingletonCookie'))
+  if (process.platform === 'win32') {
+    fs.linkSync(join(options.source, 'config.json'), join(options.source, 'internal'))
+    fs.linkSync(join(root, 'external.txt'), join(options.source, 'external'))
+    fs.symlinkSync(
+      join(options.source, 'missing-cookie'),
+      join(options.source, 'SingletonCookie'),
+      'junction'
+    )
+  } else {
+    fs.symlinkSync('config.json', join(options.source, 'internal'))
+    fs.symlinkSync('../../external.txt', join(options.source, 'external'))
+    fs.symlinkSync('missing-cookie', join(options.source, 'SingletonCookie'))
+  }
   const inode = fs.statSync(options.source).ino
   migrateWorkbenchDataEntry(options)
   expect(fs.lstatSync(options.source).isSymbolicLink()).toBe(true)
   expect(fs.statSync(options.target).ino).toBe(inode)
   expect(fs.readFileSync(join(options.target, 'internal'), 'utf8')).toBe('fixture')
-  expect(fs.realpathSync(join(options.target, 'external'))).toBe(join(root, 'external.txt'))
+  if (process.platform === 'win32')
+    expect(fs.statSync(join(options.target, 'external')).ino).toBe(
+      fs.statSync(join(root, 'external.txt')).ino
+    )
+  else expect(fs.realpathSync(join(options.target, 'external'))).toBe(join(root, 'external.txt'))
   const journal = fs.statSync(options.journal)
   migrateWorkbenchDataEntry(options)
   expect(fs.statSync(options.journal).mtimeMs).toBe(journal.mtimeMs)
@@ -124,6 +138,110 @@ test('refuses to merge two existing directories', () => {
   expect(fs.readFileSync(join(options.target, 'keep'), 'utf8')).toBe('new')
 })
 
+test('migrates a regular file with native aliases without elevated link privileges', () => {
+  const options = entry()
+  write(options.source, 'original file')
+  const identity = fs.statSync(options.source).ino
+  migrateWorkbenchDataEntry(options)
+  expect(fs.statSync(options.target).ino).toBe(identity)
+  expect(fs.statSync(options.source).ino).toBe(identity)
+  expect(fs.readFileSync(options.source, 'utf8')).toBe('original file')
+  const journal = fs.readFileSync(options.journal, 'utf8')
+  migrateWorkbenchDataEntry(options)
+  expect(fs.readFileSync(options.journal, 'utf8')).toBe(journal)
+})
+
+test('refreshes a mutable file alias after an atomic configuration write', () => {
+  const options = { ...entry(), mutableFile: true }
+  write(options.source, 'original')
+  migrateWorkbenchDataEntry(options)
+  const replacement = join(root, 'replacement')
+  write(replacement, 'updated')
+  fs.renameSync(replacement, options.target)
+  migrateWorkbenchDataEntry(options)
+  expect(fs.readFileSync(options.source, 'utf8')).toBe('updated')
+  expect(fs.statSync(options.source).ino).toBe(fs.statSync(options.target).ino)
+  migrateWorkbenchDataEntry(options)
+  expect(fs.readFileSync(options.target, 'utf8')).toBe('updated')
+})
+
+test('recovers initial file alias publication before the completion journal is written', () => {
+  const options = entry()
+  write(options.source, 'original')
+  vi.mocked(fs.renameSync).mockImplementation((source, target) => {
+    if (target === options.journal) throw Error('interrupted completion')
+    return actual.renameSync(source, target)
+  })
+  expect(() => migrateWorkbenchDataEntry(options)).toThrow('interrupted completion')
+  expect(fs.readFileSync(options.source, 'utf8')).toBe('original')
+  vi.mocked(fs.renameSync).mockImplementation(actual.renameSync)
+  recoverWorkbenchDataBridge(options)
+  migrateWorkbenchDataEntry(options)
+  expect(JSON.parse(fs.readFileSync(options.journal, 'utf8')).completed).toBe(true)
+  expect(fs.statSync(options.source).ino).toBe(fs.statSync(options.target).ino)
+})
+
+test('recovers a mutable file refresh interrupted before alias publication', () => {
+  const options = { ...entry(), mutableFile: true }
+  write(options.source, 'original')
+  migrateWorkbenchDataEntry(options)
+  const replacement = join(root, 'replacement')
+  write(replacement, 'updated')
+  fs.renameSync(replacement, options.target)
+  if (process.platform === 'win32') {
+    vi.mocked(fs.renameSync).mockImplementation((source, target) => {
+      if (target === options.source) throw Error('interrupted alias publication')
+      return actual.renameSync(source, target)
+    })
+    expect(() => migrateWorkbenchDataEntry(options)).toThrow('interrupted alias publication')
+    expect(fs.readFileSync(options.target, 'utf8')).toBe('updated')
+    vi.mocked(fs.renameSync).mockImplementation(actual.renameSync)
+  }
+  recoverWorkbenchDataBridge(options)
+  migrateWorkbenchDataEntry(options)
+  expect(fs.readFileSync(options.source, 'utf8')).toBe('updated')
+  expect(JSON.parse(fs.readFileSync(options.journal, 'utf8')).replacement).toBeUndefined()
+})
+
+test('rejects replacing an independently changed mutable source', () => {
+  const options = { ...entry(), mutableFile: true }
+  write(options.source, 'original')
+  migrateWorkbenchDataEntry(options)
+  fs.unlinkSync(options.source)
+  write(options.source, 'independent')
+  const replacement = join(root, 'replacement')
+  write(replacement, 'updated')
+  fs.renameSync(replacement, options.target)
+  expect(() => migrateWorkbenchDataEntry(options)).toThrow('conflict')
+  expect(fs.readFileSync(options.source, 'utf8')).toBe('independent')
+  expect(fs.readFileSync(options.target, 'utf8')).toBe('updated')
+})
+
+test('rejects changing the destination during a journaled mutable alias refresh', () => {
+  const options = { ...entry(), mutableFile: true }
+  write(options.source, 'original')
+  migrateWorkbenchDataEntry(options)
+  const replacement = join(root, 'replacement')
+  write(replacement, 'updated')
+  fs.renameSync(replacement, options.target)
+  if (process.platform === 'win32') {
+    vi.mocked(fs.renameSync).mockImplementation((source, target) => {
+      if (target === options.source) throw Error('interrupted alias publication')
+      return actual.renameSync(source, target)
+    })
+    expect(() => migrateWorkbenchDataEntry(options)).toThrow('interrupted alias publication')
+    vi.mocked(fs.renameSync).mockImplementation(actual.renameSync)
+    write(replacement, 'independent destination')
+    fs.renameSync(replacement, options.target)
+    expect(() => migrateWorkbenchDataEntry(options)).toThrow('conflict')
+    expect(fs.readFileSync(options.source, 'utf8')).toBe('original')
+    expect(fs.readFileSync(options.target, 'utf8')).toBe('independent destination')
+  } else {
+    migrateWorkbenchDataEntry(options)
+    expect(fs.readFileSync(options.source, 'utf8')).toBe('updated')
+  }
+})
+
 test('migrates a real WAL database and credentials; historical artifacts stay in place', () => {
   const source = join(root, 'old')
   const target = join(root, 'new')
@@ -162,9 +280,12 @@ test('migrates a real WAL database and credentials; historical artifacts stay in
   viaLegacy.close()
   expect(fs.readFileSync(join(target, 'credentials/master.key'), 'utf8')).toBe('fixture')
   for (const [index, path] of paths.entries()) {
-    expect(fs.realpathSync(join(source, path))).toBe(join(source, path))
+    const physical = process.platform === 'win32' && path.startsWith('data/') ? target : source
+    expect(fs.realpathSync(join(source, path))).toBe(join(physical, path))
     expect(fs.statSync(join(source, path)).ino).toBe(historical[index])
-    expect(fs.realpathSync(join(target, path))).toBe(join(source, path))
+    if (process.platform === 'win32' && fs.lstatSync(join(target, path)).isFile())
+      expect(fs.statSync(join(target, path)).ino).toBe(historical[index])
+    else expect(fs.realpathSync(join(target, path))).toBe(join(physical, path))
   }
   expect(fs.realpathSync(join(source, 'workspace/projects'))).toBe(
     join(target, 'workspace/projects')
@@ -175,7 +296,9 @@ test('migrates a real WAL database and credentials; historical artifacts stay in
     'data/objects/attachments/new-id/image',
   ]) {
     write(join(target, path), 'new attachment')
-    expect(fs.existsSync(join(source, path))).toBe(false)
+    expect(fs.existsSync(join(source, path))).toBe(
+      process.platform === 'win32' && path.startsWith('data/')
+    )
     expect(fs.realpathSync(join(target, path))).toBe(join(target, path))
   }
   migrateWorkbenchExecutorData(source, target, state)
@@ -186,19 +309,92 @@ test('recreates a completed file bridge after SQLite removes both sidecar entrie
     ...entry(),
     source: join(root, 'old/tasks.sqlite-wal'),
     target: join(root, 'new/tasks.sqlite-wal'),
+    mutableFile: true,
   }
   write(options.source)
   migrateWorkbenchDataEntry(options)
   fs.unlinkSync(options.source)
   fs.unlinkSync(options.target)
   migrateWorkbenchDataEntry(options)
-  expect(fs.readlinkSync(options.source)).toBe(options.target)
+  if (process.platform === 'win32') expect(fs.existsSync(options.source)).toBe(false)
+  else expect(fs.readlinkSync(options.source)).toBe(options.target)
   write(options.target, 'new WAL')
+  migrateWorkbenchDataEntry(options)
   expect(fs.readFileSync(options.source, 'utf8')).toBe('new WAL')
   fs.unlinkSync(options.source)
   write(options.source, 'unmanaged')
   expect(() => migrateWorkbenchDataEntry(options)).toThrow('conflict')
 })
+
+function completedHardLink() {
+  const options = {
+    ...entry(),
+    source: join(root, 'old/app-ipc.addr'),
+    target: join(root, 'new/app-ipc.addr'),
+  }
+  write(options.target, 'original')
+  fs.mkdirSync(join(options.source, '..'), { recursive: true })
+  fs.linkSync(options.target, options.source)
+  const identity = fs.statSync(options.target, { bigint: true })
+  const journal = {
+    ...options,
+    version: 1,
+    device: identity.dev.toString(),
+    inode: identity.ino.toString(),
+    directory: false,
+    completed: true,
+  }
+  write(options.journal, JSON.stringify(journal))
+  return { options, journal }
+}
+
+test('restarts a completed hard-link migration without changing either alias or its journal', () => {
+  const { options } = completedHardLink()
+  const journal = fs.readFileSync(options.journal, 'utf8')
+  vi.mocked(fs.symlinkSync)
+    .mockClear()
+    .mockImplementation(() => {
+      throw Object.assign(new Error('symlink privilege unavailable'), { code: 'EPERM' })
+    })
+  migrateWorkbenchDataEntry(options)
+  migrateWorkbenchDataEntry(options)
+  expect(fs.readFileSync(options.journal, 'utf8')).toBe(journal)
+  expect(fs.statSync(options.source).ino).toBe(fs.statSync(options.target).ino)
+  expect(fs.readFileSync(options.source, 'utf8')).toBe('original')
+  expect(fs.symlinkSync).not.toHaveBeenCalled()
+})
+
+test.each(['source', 'target'] as const)(
+  'rejects a completed hard-link migration after replacing the %s file',
+  side => {
+    const { options } = completedHardLink()
+    fs.unlinkSync(options[side])
+    write(options[side], 'replacement')
+    expect(() => migrateWorkbenchDataEntry(options)).toThrow('conflict')
+    expect(fs.readFileSync(options[side], 'utf8')).toBe('replacement')
+    expect(fs.readFileSync(options[side === 'source' ? 'target' : 'source'], 'utf8')).toBe(
+      'original'
+    )
+  }
+)
+
+test.each(['missing', 'incomplete', 'different-identity'])(
+  'rejects a completed hard-link pair with a %s journal',
+  state => {
+    const { options, journal } = completedHardLink()
+    if (state === 'missing') fs.unlinkSync(options.journal)
+    else {
+      const value =
+        state === 'incomplete'
+          ? { ...journal, completed: undefined }
+          : { ...journal, inode: (BigInt(journal.inode) + 1n).toString() }
+      fs.writeFileSync(options.journal, JSON.stringify(value))
+    }
+    expect(() => migrateWorkbenchDataEntry(options)).toThrow('conflict')
+    expect(fs.readFileSync(options.source, 'utf8')).toBe('original')
+    expect(fs.readFileSync(options.target, 'utf8')).toBe('original')
+  }
+)
 
 test('moves browser partitions, preferences, logs and updater cache before stores open', () => {
   const source = join(root, 'appData/app')

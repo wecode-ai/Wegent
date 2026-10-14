@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ModelEnvConfig, ModelRuntimeConfig, ModelSpecConfig } from '@/apis/models'
+import { getModelCapabilityDescription } from '@/lib/model-capabilities'
 
 const FORM_MANAGED_SPEC_KEYS = new Set([
   'modelConfig',
@@ -12,6 +13,7 @@ const FORM_MANAGED_SPEC_KEYS = new Set([
   'modelGroup',
   'modelSubGroup',
   'costIndex',
+  'capability',
   'ttsConfig',
   'sttConfig',
   'embeddingConfig',
@@ -253,6 +255,16 @@ export function mergeFormManagedSpec(
       } as ModelEnvConfig,
     } as ModelRuntimeConfig,
   } as ModelSpecConfig
+
+  if (isModelConfigObject(original.capability)) {
+    const publication = { ...original.capability }
+    delete publication.description
+    const description = getModelCapabilityDescription(managedSpec.capability)
+    mergedSpec.capability = {
+      ...publication,
+      ...(description && { description }),
+    }
+  }
 
   for (const [key, managedKeys] of Object.entries(FORM_MANAGED_NESTED_SPEC_KEYS)) {
     const originalNested = isModelConfigObject(original[key]) ? original[key] : {}

@@ -40,6 +40,8 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn record_background_terminal_notification(&self, task_id: &str, message: &Value) {
         let notification = codex_notification(message);
+        // Keep streaming and persisted transcripts in one atomic handoff.
+        let mut active_items = self.active_codex_transcript_items.lock().ok();
         let update = match notification.method.as_str() {
             "item/commandExecution/outputDelta" => {
                 let Some(item_id) = string_field(notification.params, "itemId") else {
@@ -48,7 +50,7 @@ impl RuntimeWorkRpcHandler {
                 let Some(delta) = raw_string_field(notification.params, "delta") else {
                     return;
                 };
-                if let Ok(mut active) = self.active_codex_transcript_items.lock() {
+                if let Some(active) = active_items.as_mut() {
                     if let Some(item) = active
                         .get_mut(task_id)
                         .into_iter()
@@ -73,6 +75,7 @@ impl RuntimeWorkRpcHandler {
         self.store.update_task(task_id, |link| {
             update_completed_command(&mut link.runtime_handle, &update.0, &update.1);
         });
+        drop(active_items);
     }
 
     pub(super) async fn clean_background_terminals(
