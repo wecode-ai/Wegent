@@ -510,8 +510,8 @@ export function createDesktopScenario({
       })
       await waitForRuntimeSource(control, sourceTaskId, taskTimeoutMs)
 
-      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
-      await control.command('click', '[data-testid="right-workspace-chat-option"]')
+      const primary = process.platform === 'win32' ? 'Control' : 'Meta'
+      await control.command('nativePress', MAIN_COMPOSER, { key: `${primary}+Alt+S` })
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })
       const executorLogPath = join(resultDir, 'executor.log')
       const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length

@@ -31,6 +31,17 @@ export async function verifyConversationShortcuts(control, composerSelector) {
   )
   assert.equal(await control.command('getValue', composerSelector), DRAFT)
 
+  await control.command('nativePress', composerSelector, { key: `${PRIMARY}+Alt+S` })
+  await control.command('waitFor', '[data-testid="right-workspace-chat-panel"]')
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="right-workspace-panel-shell"]', {
+      value: 'aria-hidden',
+    }),
+    'false'
+  )
+  assert.equal(await control.command('getValue', composerSelector), DRAFT)
+  await control.command('nativePress', composerSelector, { key: `${PRIMARY}+Alt+B` })
+
   // Native selection and replacement must still belong to the composer.
   await control.command('nativePress', composerSelector, { key: `${PRIMARY}+A` })
   await control.command('nativePress', composerSelector, { key: 'x' })

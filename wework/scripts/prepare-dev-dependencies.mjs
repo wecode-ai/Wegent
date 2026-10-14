@@ -2,7 +2,7 @@
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -26,11 +26,28 @@ export async function fingerprintFiles(paths, salt = '') {
   return hash.digest('hex')
 }
 
-async function dependenciesAreCurrent(stampPath, fingerprint, requiredPaths) {
+async function verifyDependencies(requiredPaths, workspaceLinks) {
+  await Promise.all(requiredPaths.map(path => access(path)))
+  await Promise.all(
+    workspaceLinks.map(async ({ link, target }) => {
+      const [actual, expected] = await Promise.all([realpath(link), realpath(target)])
+      if (actual !== expected) {
+        throw new Error(`Workspace dependency ${link} resolves outside the current worktree`)
+      }
+    })
+  )
+}
+
+export async function dependenciesAreCurrent(
+  stampPath,
+  fingerprint,
+  requiredPaths,
+  workspaceLinks
+) {
   try {
     const stamp = JSON.parse(await readFile(stampPath, 'utf8'))
     if (stamp.fingerprint !== fingerprint) return false
-    await Promise.all(requiredPaths.map(path => access(path)))
+    await verifyDependencies(requiredPaths, workspaceLinks)
     return true
   } catch {
     return false
@@ -43,14 +60,22 @@ async function ensureDependencies(options) {
     `${process.platform}:${process.arch}:${process.versions.modules}`
   )
   const force = process.env.WEWORK_FORCE_DEV_DEPENDENCIES === '1'
-  if (!force && (await dependenciesAreCurrent(options.stampPath, fingerprint, options.required))) {
+  if (
+    !force &&
+    (await dependenciesAreCurrent(
+      options.stampPath,
+      fingerprint,
+      options.required,
+      options.workspaceLinks
+    ))
+  ) {
     console.log(`${options.name} dependencies are current`)
     return
   }
 
   console.log(`Preparing ${options.name} dependencies`)
   await options.install()
-  await Promise.all(options.required.map(path => access(path)))
+  await verifyDependencies(options.required, options.workspaceLinks)
   await mkdir(dirname(options.stampPath), { recursive: true })
   await writeFile(options.stampPath, `${JSON.stringify({ fingerprint }, null, 2)}\n`)
 }
@@ -79,6 +104,7 @@ async function ensureWorkspaceDependencies() {
       join(repositoryRoot, 'pnpm-lock.yaml'),
       join(repositoryRoot, 'pnpm-workspace.yaml'),
       join(repositoryRoot, 'packages', 'chat-core', 'package.json'),
+      join(repositoryRoot, 'packages', 'collaboration', 'package.json'),
       join(weworkRoot, 'package.json'),
       join(scriptDirectory, 'prepare-dev-dependencies.mjs'),
     ],
@@ -87,6 +113,10 @@ async function ensureWorkspaceDependencies() {
       join(weworkRoot, 'node_modules', '.bin', 'vite'),
       join(weworkRoot, 'node_modules', 'dingtalk-workspace-cli', 'package.json'),
     ],
+    workspaceLinks: ['chat-core', 'collaboration'].map(name => ({
+      link: join(weworkRoot, 'node_modules', '@wegent', name),
+      target: join(repositoryRoot, 'packages', name),
+    })),
     stampPath: join(
       weworkRoot,
       'node_modules',
@@ -137,11 +167,14 @@ async function ensureElectronDependencies() {
       join(electronRoot, 'node_modules', 'electron', 'package.json'),
       electronExecutable(),
     ],
+    workspaceLinks: [],
     stampPath: join(electronRoot, 'node_modules', '.cache', 'wework-electron-dependencies.json'),
     install: () =>
       run(process.execPath, [join(scriptDirectory, 'prepare-electron.mjs')], weworkRoot),
   })
 }
 
-await ensureWorkspaceDependencies()
-await ensureElectronDependencies()
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await ensureWorkspaceDependencies()
+  await ensureElectronDependencies()
+}

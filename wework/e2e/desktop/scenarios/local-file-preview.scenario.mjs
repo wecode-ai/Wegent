@@ -4,6 +4,12 @@ import { join } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+const COMPOSER_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR +
+  ' [data-testid="desktop-floating-composer-card"] [data-testid="chat-message-input"]'
+const BROWSER_URL_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR +
+  ' [data-testid="right-workspace-panel"] div:not(.hidden) > [data-testid="workspace-browser-panel"] [data-testid="workspace-browser-url-input"]'
 const FILE_TREE_ITEM_SELECTOR = 'button[data-type="item"]'
 const DIRECTORY_MENU_SELECTOR = '[data-testid="workspace-file-directory-menu"]'
 const SIBLINGS_MENU_SELECTOR = '[data-testid="workspace-file-siblings-menu"]'
@@ -100,14 +106,17 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('navigate', 'body', { value: '/' })
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
-      await control.command('waitFor', '[data-testid="right-workspace-file-option"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="right-workspace-file-option"]')
+      const primary = process.platform === 'win32' ? 'Control' : 'Meta'
+      await control.command('nativePress', COMPOSER_SELECTOR, { key: `${primary}+Alt+F` })
       await control.command('waitFor', '[data-testid="workspace-file-tree-pierre"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('nativePress', COMPOSER_SELECTOR, { key: `${primary}+T` })
+      await control.command('waitFor', BROWSER_URL_SELECTOR, { visible: true })
+      await control.command('nativePress', BROWSER_URL_SELECTOR, {
+        key: `${primary}+Alt+F`,
+      })
+      await control.command('waitFor', '[data-testid="workspace-file-tree-pierre"]')
 
       const readmeSelector = await findTreeItem(control, 'README.md', uiTimeoutMs)
       await control.command('click', readmeSelector)
@@ -184,11 +193,21 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('fill', '[data-testid="workspace-file-editor"] .cm-content', {
         value: 'export const authenticated = false\n',
       })
+      await control.command('nativePress', '[data-testid="workspace-file-editor"] .cm-content', {
+        key: `${primary}+T`,
+      })
+      await control.command('waitFor', BROWSER_URL_SELECTOR, { visible: true })
       await waitForFileContent(
         join(workspacePath, 'auth.ts'),
         'export const authenticated = false',
         uiTimeoutMs
       )
+      await control.command('nativePress', BROWSER_URL_SELECTOR, {
+        key: `${primary}+Alt+F`,
+      })
+      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+        text: 'export const authenticated = false',
+      })
       await waitForMissing(control, '[data-testid="workspace-file-saving-status"]', uiTimeoutMs)
       assert.equal(
         Number(
@@ -286,10 +305,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await waitForMissing(control, `${fileTabsSelector}[title$="second.ts"]`, uiTimeoutMs)
       assert.equal(Number(await control.command('getElementCount', fileTabsSelector)), 3)
-      await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
-      await control.command('clickWhenEnabled', '[data-testid="right-workspace-review-option"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command('nativePress', COMPOSER_SELECTOR, { key: `${primary}+Alt+R` })
       await control.command(
         'waitFor',
         '[data-testid="file-changes-review-panel"][data-theme="dark"]',

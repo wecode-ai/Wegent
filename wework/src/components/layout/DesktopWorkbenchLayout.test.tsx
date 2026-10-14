@@ -86,6 +86,7 @@ import {
 } from './workbenchSplitGroups'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
+import type { WorkspaceFileApi } from '@/types/workspace-files'
 
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
@@ -1766,12 +1767,14 @@ describe('DesktopWorkbenchLayout', () => {
     messages,
     currentRuntimeTask = null,
     onLoadRuntimeTranscriptForPane,
+    workspaceFileApi = baseProps.workspaceFileApi,
   }: {
     mainWidth?: number
     withAppearance?: boolean
     messages?: WorkbenchMessage[]
     currentRuntimeTask?: RuntimeTaskAddress | null
     onLoadRuntimeTranscriptForPane?: WorkbenchContextValue['loadRuntimeTranscriptForPane']
+    workspaceFileApi?: WorkspaceFileApi
   } = {}) {
     if (mainWidth) {
       mockDesktopWorkbenchMainWidth(mainWidth)
@@ -1781,6 +1784,7 @@ describe('DesktopWorkbenchLayout', () => {
     const layout = (
       <DesktopWorkbenchLayout
         {...baseProps}
+        workspaceFileApi={workspaceFileApi}
         messages={messages}
         onLoadRuntimeTranscriptForPane={onLoadRuntimeTranscriptForPane}
         state={{
@@ -8474,6 +8478,133 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
+
+  test('file shortcut switches from a focused workspace address bar', async () => {
+    renderWorkspacePanelLayout()
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    const addressBar = screen.getByTestId('workspace-browser-url-input')
+    await userEvent.click(addressBar)
+    expect(addressBar).toHaveFocus()
+
+    fireEvent.keyDown(addressBar, { key: 'ƒ', code: 'KeyF', metaKey: true, altKey: true })
+
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+  })
+
+  test.each(['success', 'failure'])(
+    'panel shortcut preserves file edits through save %s',
+    async outcome => {
+      const user = userEvent.setup()
+      const original = {
+        path: '/workspace/project/notes.txt',
+        name: 'notes.txt',
+        content: 'hello',
+        editable: true,
+        revision: 'revision-old',
+        truncated: false,
+        size: 5,
+      }
+      const saved = { ...original, content: 'hello world', revision: 'revision-new', size: 11 }
+      const pendingSave = createDeferred<typeof saved>()
+      const writeWorkspaceTextFile = vi
+        .fn()
+        .mockReturnValueOnce(pendingSave.promise)
+        .mockResolvedValue(saved)
+      renderWorkspacePanelLayout({
+        workspaceFileApi: {
+          listWorkspaceEntries: vi.fn().mockResolvedValue({
+            path: '/workspace/project',
+            entries: [{ ...original, isDirectory: false, modifiedAt: null }],
+          }),
+          readWorkspaceTextFile: vi.fn().mockResolvedValue(original),
+          writeWorkspaceTextFile,
+        },
+      })
+      fireEvent.keyDown(screen.getByTestId('chat-message-input'), {
+        key: 'ƒ',
+        code: 'KeyF',
+        metaKey: true,
+        altKey: true,
+      })
+      await user.click(await screen.findByText('notes.txt'))
+      const editor = await screen.findByTestId('workspace-file-editor')
+      const content = editor.querySelector<HTMLElement>('.cm-content')!
+      await user.click(content)
+      await user.keyboard('{Control>}a{/Control}hello world')
+
+      fireEvent.keyDown(content, { key: 'ß', code: 'KeyS', metaKey: true, altKey: true })
+
+      await waitFor(() =>
+        expect(writeWorkspaceTextFile).toHaveBeenCalledWith(
+          'workspace-cloud-device',
+          original.path,
+          saved.content,
+          original.revision
+        )
+      )
+      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(saved.content)
+      expect(screen.queryByTestId('right-workspace-chat-panel')).not.toBeInTheDocument()
+      fireEvent.keyDown(content, { key: 'ß', code: 'KeyS', metaKey: true, altKey: true })
+      expect(writeWorkspaceTextFile).toHaveBeenCalledOnce()
+      if (outcome === 'failure') {
+        await act(async () => pendingSave.reject(new Error('Write failed')))
+        expect(await screen.findByTestId('workspace-file-save-error')).toHaveTextContent(
+          'Write failed'
+        )
+        expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(saved.content)
+        expect(screen.queryByTestId('right-workspace-chat-panel')).not.toBeInTheDocument()
+        await user.click(screen.getByTestId('workspace-file-save-retry-button'))
+      } else {
+        await act(async () => pendingSave.resolve(saved))
+      }
+      expect(await screen.findByTestId('right-workspace-chat-panel')).toBeInTheDocument()
+      expect(writeWorkspaceTextFile).toHaveBeenCalledTimes(outcome === 'failure' ? 2 : 1)
+    }
+  )
+
+  test.each([
+    { key: '®', code: 'KeyR', panel: 'file-changes-review-panel' },
+    { key: 'ß', code: 'KeyS', panel: 'right-workspace-chat-panel' },
+    { key: 'ƒ', code: 'KeyF', panel: 'workspace-file-tree' },
+  ])(
+    'conversation shortcut $code opens and reopens a closed right panel',
+    async ({ key, code, panel }) => {
+      renderWorkspacePanelLayout()
+      await waitFor(() =>
+        expect(baseProps.onLoadEnvironmentInfo).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ path: '/workspace/project' }),
+          expect.anything()
+        )
+      )
+      expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+      const shortcut = { key, code, metaKey: true, altKey: true }
+      const composer = screen.getByTestId('chat-message-input')
+
+      fireEvent.keyDown(composer, shortcut)
+
+      expect(await screen.findByTestId(panel)).toBeInTheDocument()
+      expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+        'aria-hidden',
+        'false'
+      )
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+        'aria-hidden',
+        'true'
+      )
+
+      fireEvent.keyDown(composer, shortcut)
+
+      expect(await screen.findByTestId(panel)).toBeInTheDocument()
+      expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+        'aria-hidden',
+        'false'
+      )
+    }
+  )
 
   test('right workspace can open multiple temporary chat tabs', async () => {
     renderWorkspacePanelLayout({ mainWidth: 1000 })
