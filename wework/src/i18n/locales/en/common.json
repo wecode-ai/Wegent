@@ -3361,6 +3361,8 @@
     "connection_restart_retry": "Retry",
     "connection_restart_refresh": "Refresh status",
     "connection_upgrade_available": "Update available",
+    "cloud_connection_devices": "Cloud devices",
+    "connection_remote_upgrade_hint": "Pull the latest device image and recreate the container with its existing data volumes.",
     "connection_upgrade_action": "Upgrade version",
     "connection_upgrade_version_tooltip": "Current: {{current}} · Latest: {{latest}} · Click to upgrade",
     "connection_upgrade_confirm_title": "Upgrade cloud device?",

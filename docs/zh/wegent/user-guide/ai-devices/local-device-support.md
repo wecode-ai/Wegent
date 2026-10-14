@@ -162,6 +162,10 @@ Backend 会在 Cloud/Remote 设备首次注册时固定 `runtimeInstanceId`。�
 
 ### 添加远程 Docker 设备
 
+Wegent 设备列表中的 Wework 设备需要在 Wework 中升级。远程 Docker 设备显示新版本提示时，请重新拉取镜像并使用原有数据卷与设备身份重建容器。设备镜像包含 SSH 客户端并使用 `Asia/Shanghai` 时区。启动命令会显式设置 `WEGENT_WORKBENCH_HOME=/home/wegent/.wegent/workbench`，宿主机进程模式不使用这一容器路径。
+
+Wework 云端连接页的设备数量包含服务端返回的在线与离线云设备和远程设备，不包含本地设备或 Wework 自身注册。
+
 远程 Docker 设备适合把一台自管服务器或容器主机接入 Wegent。它和云设备一样通过设备 WebSocket 协议接收任务，并支持终端与 code-server 会话；区别是容器生命周期由用户自己管理，Wegent 不会自动创建、重启或销毁这台 Docker 容器。
 
 每个用户最多只能创建一台云设备。如果已经存在云设备，添加设备弹窗会禁用云设备创建入口，但仍可继续生成远程 Docker 设备命令。
