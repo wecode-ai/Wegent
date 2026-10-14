@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
-import { startTaskAiRun, type TaskAiRuntimeBridge } from './taskAiExecution'
+import {
+  mergeProjectChatMessages,
+  startTaskAiRun,
+  type TaskAiRuntimeBridge,
+} from './taskAiExecution'
 
 const kimiModel = {
   name: 'wecode-moonshot-kimi-k2.7-code-highspeed(公网)',
@@ -50,6 +54,72 @@ const agentMessage: ProjectChatMessage = {
   createdAt: '',
   updatedAt: '',
 }
+
+describe('project chat message ordering', () => {
+  const live = {
+    ...agentMessage,
+    content: 'Live result',
+    updatedAt: '2026-10-14T10:57:41.123456Z',
+  }
+
+  it('ignores older snapshots even when their timestamps use a different timezone', () => {
+    const stale = { ...live, content: '', updatedAt: '2026-10-14T18:57:40+08:00' }
+    expect(mergeProjectChatMessages([live], [stale])).toEqual([live])
+  })
+
+  it('preserves submillisecond update order', () => {
+    const stale = { ...live, content: '', updatedAt: '2026-10-14T10:57:41.123455Z' }
+    expect(mergeProjectChatMessages([live], [stale])).toEqual([live])
+  })
+
+  it.each(['completed', 'failed', 'cancelled'] as const)(
+    'does not reopen a %s agent message with a late active acknowledgement',
+    status => {
+      const terminal = { ...live, status }
+      const lateAck = {
+        ...live,
+        content: '',
+        metadata: { run_status: 'running' },
+        updatedAt: '2026-10-14T10:57:42Z',
+      }
+      expect(mergeProjectChatMessages([terminal], [lateAck])).toEqual([terminal])
+    }
+  )
+
+  it.each([live.updatedAt, '2026-10-14T10:57:42Z'])(
+    'keeps streamed text when an empty acknowledgement requeues the active message at %s',
+    updatedAt => {
+      const queued = { ...live, content: '', status: 'pending' as const, updatedAt }
+      expect(mergeProjectChatMessages([live], [queued])).toEqual([
+        { ...queued, content: live.content },
+      ])
+    }
+  )
+
+  it('accepts a shorter nonempty streaming snapshot', () => {
+    const replacement = { ...live, content: 'Live' }
+    expect(mergeProjectChatMessages([live], [replacement])).toEqual([replacement])
+  })
+
+  it('accepts terminal content replacements including empty content', () => {
+    for (const content of ['Final', '']) {
+      const completed = { ...live, content, status: 'completed' as const }
+      expect(mergeProjectChatMessages([live], [completed])).toEqual([completed])
+    }
+  })
+
+  it('accepts new retry messages without changing the original terminal result', () => {
+    const failed = { ...live, status: 'failed' as const }
+    const retry = { ...agentMessage, messageId: 'retry-1', sequenceNumber: 2 }
+    expect(mergeProjectChatMessages([failed], [retry])).toEqual([failed, retry])
+  })
+
+  it('does not prevent user message content updates', () => {
+    const user = { ...live, sender: { type: 'user' as const, id: '1', name: 'Me' } }
+    const edited = { ...user, content: '' }
+    expect(mergeProjectChatMessages([user], [edited])).toEqual([edited])
+  })
+})
 
 function createRuntime(): TaskAiRuntimeBridge {
   return {

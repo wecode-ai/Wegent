@@ -18,6 +18,8 @@ import {
 } from '@wegent/chat-core/project-space-context'
 import { createRuntimeUserMessage } from './runtimeUserMessage'
 import { selectedModelExecutionFields } from '../controls/runtimeModelSelection'
+import { isExecutionTerminal } from '../issue-detail/executionStatus'
+import { compareIssueTimestamps } from '../issue-detail/issueTimestamp'
 
 export interface CommentExecutionTask {
   id: string
@@ -157,7 +159,25 @@ export function mergeProjectChatMessages(
   const byId = new Map(current.map(message => [message.messageId, message]))
   for (const message of incoming) {
     const previous = byId.get(message.messageId)
-    byId.set(message.messageId, previous ? { ...previous, ...message } : message)
+    if (!previous) {
+      byId.set(message.messageId, message)
+      continue
+    }
+    const order = compareIssueTimestamps(message.updatedAt, previous.updatedAt)
+    const agent = previous.sender.type === 'agent' && message.sender.type === 'agent'
+    // Snapshots and request acknowledgements can arrive after live updates.
+    if (
+      order < 0 ||
+      (agent && isExecutionTerminal(previous.status) && !isExecutionTerminal(message.status))
+    ) {
+      continue
+    }
+    // Active status projections carry empty placeholders, not content deletions.
+    const content =
+      agent && !isExecutionTerminal(message.status) && !message.content
+        ? previous.content
+        : message.content
+    byId.set(message.messageId, { ...previous, ...message, content })
   }
   return Array.from(byId.values()).sort((left, right) => left.sequenceNumber - right.sequenceNumber)
 }
