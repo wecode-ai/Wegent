@@ -27,15 +27,18 @@ export function observeDesktopAppProcess(child) {
   return state
 }
 
-export async function collectCodexSqliteHealth(directory) {
+export async function collectCodexSqliteHealth(directory, { threadId } = {}) {
   let entries
   try {
     entries = await readdir(directory)
   } catch (error) {
-    return { directoryError: errorCode(error), files: [] }
+    return threadId
+      ? { status: 'unavailable', files: [] }
+      : { directoryError: errorCode(error), files: [] }
   }
   const files = []
   for (const name of entries.filter(name => CODEX_DATABASE.test(name)).sort()) {
+    if (threadId && !/^state_\d+\.sqlite$/.test(name)) continue
     const file = { name }
     let database
     try {
@@ -44,7 +47,9 @@ export async function collectCodexSqliteHealth(directory) {
       file.size = metadata.size
       file.mode = metadata.mode
       file.regularFile = metadata.isFile()
+      if (threadId) file.wal = { present: false, size: 0 }
       if (!file.regularFile) {
+        if (threadId) file.thread = { status: 'unavailable' }
         files.push(file)
         continue
       }
@@ -57,6 +62,8 @@ export async function collectCodexSqliteHealth(directory) {
         for (const suffix of ['-wal', '-shm']) {
           try {
             const sidecar = await lstat(`${path}${suffix}`)
+            if (threadId && suffix === '-wal')
+              file.wal = { present: sidecar.isFile(), size: sidecar.size }
             if (sidecar.isFile())
               await copyFile(`${path}${suffix}`, join(snapshot, `${name}${suffix}`))
           } catch (error) {
@@ -64,18 +71,42 @@ export async function collectCodexSqliteHealth(directory) {
           }
         }
         database = new DatabaseSync(join(snapshot, name), { readOnly: true })
-        const issues = database
-          .prepare('PRAGMA quick_check')
-          .all()
-          .filter(row => row.quick_check !== 'ok')
-        file.quickCheck = { passed: issues.length === 0, issueCount: issues.length }
-        file.userVersion = database.prepare('PRAGMA user_version').get().user_version
-        const migrations = database
-          .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_sqlx_migrations'")
-          .get()
-        file.migrations = migrations
-          ? database.prepare('SELECT version, success FROM _sqlx_migrations ORDER BY version').all()
-          : []
+        if (threadId) {
+          const columns = database.prepare('PRAGMA table_info(threads)').all()
+          if (!['id', 'history_mode'].every(name => columns.some(column => column.name === name))) {
+            file.thread = { status: 'unsupported-schema' }
+          } else {
+            const row = database
+              .prepare('SELECT history_mode FROM threads WHERE id = ?')
+              .get(threadId)
+            file.thread = {
+              status: 'available',
+              exists: row !== undefined,
+              historyMode: row
+                ? ['legacy', 'paginated'].includes(row.history_mode)
+                  ? row.history_mode
+                  : 'unknown'
+                : null,
+            }
+          }
+        } else {
+          const issues = database
+            .prepare('PRAGMA quick_check')
+            .all()
+            .filter(row => row.quick_check !== 'ok')
+          file.quickCheck = { passed: issues.length === 0, issueCount: issues.length }
+          file.userVersion = database.prepare('PRAGMA user_version').get().user_version
+          const migrations = database
+            .prepare(
+              "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_sqlx_migrations'"
+            )
+            .get()
+          file.migrations = migrations
+            ? database
+                .prepare('SELECT version, success FROM _sqlx_migrations ORDER BY version')
+                .all()
+            : []
+        }
       } finally {
         try {
           database?.close()
@@ -84,7 +115,8 @@ export async function collectCodexSqliteHealth(directory) {
         }
       }
     } catch (error) {
-      file.error = errorCode(error)
+      if (threadId) file.thread = { status: 'unavailable' }
+      else file.error = errorCode(error)
     }
     files.push(file)
   }
