@@ -216,7 +216,6 @@ export function createWorkbenchHomeMigrationScenario({
       assertWithin(root, seedCodexHome)
       Object.assign(appEnvironment, {
         HOME: home,
-        USERPROFILE: home,
         CODEX_HOME: join(home, '.codex'),
         WEWORK_E2E_NATIVE_CODEX_HOME: join(home, '.codex'),
         WEGENT_CODEX_HOME: undefined,

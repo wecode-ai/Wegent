@@ -350,6 +350,11 @@ Native model catalog initialization does not consume the form's 10-second UI ste
 On desktop startup failures, `scenario-state.json` records application launch and exit
 times and exit codes. Windows also retains `electron.log` to diagnose native failures
 before the renderer connects.
+Migration fixtures isolate workbench data through `HOME` and preserve the operating
+system's `USERPROFILE`. The controller acknowledges each action before polling for
+the next command, keeping pending long polls out of the result acknowledgement path.
+System proxy scenarios use the model-stage budget for model requests and retain
+10-second ordinary UI steps.
 Desktop fixtures bind the workspace root to their temporary Home and remove other inherited
 workspace path overrides, avoiding stale test or personal worktrees. Turn preparation failures
 record their error code and reason instead of leaving only a UI timeout.
