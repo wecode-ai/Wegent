@@ -909,7 +909,7 @@ function DeviceCard({
             )}
           </div>
         </div>
-        {isRemoteDevice(device) && device.update_available && (
+        {isRemote && device.status !== 'offline' && device.update_available && (
           <p
             data-testid={`connection-remote-upgrade-hint-${device.device_id}`}
             className="mt-2 text-xs text-text-secondary"

@@ -1578,35 +1578,41 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByText('Cloud OpenClaw Device')).not.toBeInTheDocument()
   })
 
-  test('lists remote Claude Code devices in a separate section', async () => {
-    api.getAllDevices.mockResolvedValue([
-      cloudDevice({ device_id: 'cloud-claude', name: 'Cloud Claude Device' }),
-      remoteDevice({
-        device_id: 'remote-docker',
-        name: 'Remote Alias',
-        status: 'offline',
-        update_available: true,
-      }),
-      localDevice({ device_id: 'local-claude', name: 'Local Claude Device' }),
-    ])
+  test.each<DeviceInfo['status']>(['offline', 'online', 'busy'])(
+    'lists remote Claude Code devices with status-aware upgrade guidance: %s',
+    async status => {
+      api.getAllDevices.mockResolvedValue([
+        cloudDevice({ device_id: 'cloud-claude', name: 'Cloud Claude Device' }),
+        remoteDevice({
+          device_id: 'remote-docker',
+          name: 'Remote Alias',
+          status,
+          update_available: true,
+        }),
+        localDevice({ device_id: 'local-claude', name: 'Local Claude Device' }),
+      ])
 
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
-    expect(screen.getByText('Remote Alias')).toBeInTheDocument()
-    expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
-    expect(screen.getByText('远程设备')).toBeInTheDocument()
-    expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-connection-device-count')).toHaveTextContent('2')
-    expect(screen.getByTestId('cloud-connection-status-card')).toHaveTextContent('云端设备数量')
-    expect(screen.getByTestId('connection-remote-upgrade-hint-remote-docker')).toHaveTextContent(
-      '重新拉取'
-    )
-    expect(screen.queryByTestId('connection-upgrade-badge-remote-docker')).not.toBeInTheDocument()
-    expect(
-      screen.queryByTestId('connection-upgrade-menu-item-remote-docker')
-    ).not.toBeInTheDocument()
-  })
+      expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
+      expect(screen.getByText('Remote Alias')).toBeInTheDocument()
+      expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
+      expect(screen.getByText('远程设备')).toBeInTheDocument()
+      expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
+      expect(screen.getByTestId('cloud-connection-device-count')).toHaveTextContent('2')
+      expect(screen.getByTestId('cloud-connection-status-card')).toHaveTextContent('云端设备数量')
+      const hint = screen.queryByTestId('connection-remote-upgrade-hint-remote-docker')
+      if (status === 'offline') {
+        expect(hint).not.toBeInTheDocument()
+      } else {
+        expect(hint).toHaveTextContent('重新拉取')
+      }
+      expect(screen.queryByTestId('connection-upgrade-badge-remote-docker')).not.toBeInTheDocument()
+      expect(
+        screen.queryByTestId('connection-upgrade-menu-item-remote-docker')
+      ).not.toBeInTheDocument()
+    }
+  )
 
   test('counts cloud and remote devices across shells and statuses', async () => {
     api.getAllDevices.mockResolvedValue([

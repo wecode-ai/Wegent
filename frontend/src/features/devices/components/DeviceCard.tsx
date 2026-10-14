@@ -163,14 +163,16 @@ export function DeviceCard({
                 />
               )}
             </div>
-            {device.update_available && upgradeHint && (
-              <p
-                data-testid="device-manual-upgrade-hint"
-                className="mt-1 text-sm text-text-secondary"
-              >
-                {upgradeHint}
-              </p>
-            )}
+            {device.update_available &&
+              upgradeHint &&
+              (device.device_type !== 'remote' || device.status !== 'offline') && (
+                <p
+                  data-testid="device-manual-upgrade-hint"
+                  className="mt-1 text-sm text-text-secondary"
+                >
+                  {upgradeHint}
+                </p>
+              )}
             {/* Slot indicator - only show for online devices */}
             {device.status !== 'offline' && (
               <div className="mt-1">

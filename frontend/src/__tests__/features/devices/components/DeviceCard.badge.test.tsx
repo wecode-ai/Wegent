@@ -39,6 +39,26 @@ const callbacks = {
 }
 
 describe('DeviceCard Wework badge', () => {
+  it.each<DeviceInfo['status']>(['offline', 'online', 'busy'])(
+    'shows remote image guidance only while connected: %s',
+    status => {
+      render(
+        <DeviceCard
+          device={{ ...baseDevice, device_type: 'remote', status, update_available: true }}
+          {...callbacks}
+          onUpgrade={jest.fn()}
+        />
+      )
+      const hint = screen.queryByTestId('device-manual-upgrade-hint')
+      if (status === 'offline') {
+        expect(hint).not.toBeInTheDocument()
+      } else {
+        expect(hint).toHaveTextContent('version.repullRemoteImage')
+      }
+      expect(screen.queryByTestId('device-upgrade-badge')).not.toBeInTheDocument()
+    }
+  )
+
   it.each<DeviceInfo['device_type']>(['app', 'remote'])(
     'replaces upgrades with manual guidance on %s devices',
     deviceType => {
