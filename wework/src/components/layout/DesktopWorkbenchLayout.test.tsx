@@ -610,17 +610,22 @@ vi.mock('@pierre/trees/react', async () => {
 
   interface MockTreeModel {
     paths: string[]
+    expandedPaths: Set<string>
     search: string | null
     selectedPaths: string[]
     onSelectionChange?: (paths: string[]) => void
     getItem: (path: string) => {
       expand: () => void
+      isDirectory: () => boolean
+      isExpanded: () => boolean
       select: () => void
       deselect: () => void
-    }
+    } | null
     getSelectedPaths: () => string[]
     scrollToPath: () => void
-    subscribe: () => () => void
+    subscribe: (listener: () => void) => () => void
+    notify: () => void
+    resetPaths: (paths: string[], options?: { initialExpandedPaths?: string[] }) => void
     selectPath: (path: string) => void
     setSearch: (query: string | null) => void
   }
@@ -630,10 +635,13 @@ vi.mock('@pierre/trees/react', async () => {
 
     model.selectedPaths = [path]
     model.onSelectionChange?.([path])
+    model.notify()
   }
 
   return {
     FileTree: ({ model, ...props }: { model: MockTreeModel; [key: string]: unknown }) => {
+      const [, rerender] = React.useReducer((version: number) => version + 1, 0)
+      React.useEffect(() => model.subscribe(rerender), [model])
       const visiblePaths = model.search
         ? model.paths.filter(path => path.toLowerCase().includes(model.search!.toLowerCase()))
         : model.paths
@@ -653,7 +661,7 @@ vi.mock('@pierre/trees/react', async () => {
                 type="button"
                 data-testid={testId}
                 data-depth={depth.toString()}
-                aria-expanded={isDirectory ? 'true' : undefined}
+                aria-expanded={isDirectory ? model.expandedPaths.has(path) : undefined}
                 className={selected ? 'ring-1 ring-primary' : undefined}
                 onClick={() => model.selectPath(path)}
               >
@@ -668,10 +676,12 @@ vi.mock('@pierre/trees/react', async () => {
       )
     },
     useFileTree: ({
+      initialExpandedPaths,
       initialSelectedPaths,
       onSelectionChange,
       paths,
     }: {
+      initialExpandedPaths?: string[]
       initialSelectedPaths?: string[]
       onSelectionChange?: (paths: string[]) => void
       paths: string[]
@@ -679,33 +689,53 @@ vi.mock('@pierre/trees/react', async () => {
       const modelRef = React.useRef<MockTreeModel | null>(null)
 
       if (!modelRef.current) {
+        const listeners = new Set<() => void>()
         modelRef.current = {
           paths,
+          expandedPaths: new Set(initialExpandedPaths),
           search: null,
           selectedPaths: initialSelectedPaths ?? [],
           onSelectionChange,
-          getItem: (path: string) => ({
-            expand: vi.fn(),
-            select: () => selectModelPath(modelRef.current!, path),
-            deselect: () => {
-              modelRef.current!.selectedPaths = modelRef.current!.selectedPaths.filter(
-                selected => selected !== path
-              )
-            },
-          }),
+          getItem: (path: string) => {
+            const model = modelRef.current!
+            if (!model.paths.includes(path)) return null
+            return {
+              expand: () => {
+                model.expandedPaths.add(path)
+                model.notify()
+              },
+              isDirectory: () => path.endsWith('/'),
+              isExpanded: () => model.expandedPaths.has(path),
+              select: () => selectModelPath(model, path),
+              deselect: () => {
+                model.selectedPaths = model.selectedPaths.filter(selected => selected !== path)
+                model.notify()
+              },
+            }
+          },
           getSelectedPaths: () => modelRef.current!.selectedPaths,
           scrollToPath: vi.fn(),
-          subscribe: () => () => {},
+          subscribe: listener => {
+            listeners.add(listener)
+            return () => {
+              listeners.delete(listener)
+            }
+          },
+          notify: () => listeners.forEach(listener => listener()),
+          resetPaths(nextPaths, options) {
+            this.paths = nextPaths
+            this.expandedPaths = new Set(options?.initialExpandedPaths)
+            this.selectedPaths = this.selectedPaths.filter(path => nextPaths.includes(path))
+            this.notify()
+          },
           selectPath: (path: string) => selectModelPath(modelRef.current!, path),
           setSearch(query: string | null) {
+            if (this.search === query) return
             this.search = query
+            this.notify()
           },
         }
       }
-
-      modelRef.current.paths = paths
-      modelRef.current.onSelectionChange = onSelectionChange
-      modelRef.current.selectedPaths = initialSelectedPaths ?? modelRef.current.selectedPaths
 
       return { model: modelRef.current }
     },
