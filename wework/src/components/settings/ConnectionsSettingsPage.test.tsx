@@ -1581,7 +1581,12 @@ describe('ConnectionsSettingsPage', () => {
   test('lists remote Claude Code devices in a separate section', async () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({ device_id: 'cloud-claude', name: 'Cloud Claude Device' }),
-      remoteDevice({ device_id: 'remote-docker', name: 'Remote Alias' }),
+      remoteDevice({
+        device_id: 'remote-docker',
+        name: 'Remote Alias',
+        status: 'offline',
+        update_available: true,
+      }),
       localDevice({ device_id: 'local-claude', name: 'Local Claude Device' }),
     ])
 
@@ -1592,6 +1597,45 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
     expect(screen.getByText('远程设备')).toBeInTheDocument()
     expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-connection-device-count')).toHaveTextContent('2')
+    expect(screen.getByTestId('cloud-connection-status-card')).toHaveTextContent('云端设备数量')
+    expect(screen.getByTestId('connection-remote-upgrade-hint-remote-docker')).toHaveTextContent(
+      '重新拉取'
+    )
+    expect(screen.queryByTestId('connection-upgrade-badge-remote-docker')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('connection-upgrade-menu-item-remote-docker')
+    ).not.toBeInTheDocument()
+  })
+
+  test('counts cloud and remote devices across shells and statuses', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({ device_id: 'cloud-claude', name: 'Cloud Claude Device' }),
+      cloudDevice({
+        device_id: 'cloud-openclaw',
+        name: 'Cloud OpenClaw Device',
+        bind_shell: 'openclaw',
+        status: 'offline',
+      }),
+      remoteDevice({ device_id: 'remote-claude', status: 'busy' }),
+      remoteDevice({
+        device_id: 'remote-openclaw',
+        name: 'Remote OpenClaw Device',
+        bind_shell: 'openclaw',
+        status: 'offline',
+      }),
+      localDevice({ device_id: 'local-claude' }),
+      localDevice({ device_id: 'app-claude', device_type: 'app' }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-connection-device-count')).toHaveTextContent('4')
+    expect(screen.queryByTestId('connection-device-cloud-openclaw')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-device-remote-openclaw')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-device-local-claude')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-device-app-claude')).not.toBeInTheDocument()
   })
 
   test('shows device Git configuration after the cloud and remote device list', async () => {
@@ -1629,7 +1673,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByText('Current App Backend Registration')).not.toBeInTheDocument()
     expect(screen.queryByText('本地设备')).not.toBeInTheDocument()
     expect(screen.queryByText('远程设备')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-connection-status-card')).toHaveTextContent(/在线云设备.*0/)
+    expect(screen.getByTestId('cloud-connection-status-card')).toHaveTextContent(/云端设备数量.*0/)
   })
 
   test('shows device IP until the user assigns an alias', async () => {
