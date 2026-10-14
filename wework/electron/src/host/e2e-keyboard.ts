@@ -15,7 +15,10 @@ const KEYS: Record<string, string> = {
   A: 'A',
   B: 'B',
   C: 'C',
+  F: 'F',
   M: 'M',
+  R: 'R',
+  S: 'S',
   T: 'T',
   x: 'x',
 }

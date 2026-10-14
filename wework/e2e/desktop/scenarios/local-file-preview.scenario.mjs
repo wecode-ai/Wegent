@@ -5,8 +5,7 @@ import { join } from 'node:path'
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER_SELECTOR =
-  ACTIVE_WORKBENCH_SELECTOR +
-  ' [data-testid="desktop-floating-composer-card"] [data-testid="chat-message-input"]'
+  ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="chat-message-input"][contenteditable="true"]'
 const BROWSER_URL_SELECTOR =
   ACTIVE_WORKBENCH_SELECTOR +
   ' [data-testid="right-workspace-panel"] div:not(.hidden) > [data-testid="workspace-browser-panel"] [data-testid="workspace-browser-url-input"]'
@@ -105,7 +104,10 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('click', '[data-testid="appearance-mode-dark"]')
       await control.command('navigate', 'body', { value: '/' })
       await createLocalProject(control, workspacePath, uiTimeoutMs)
-      await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', COMPOSER_SELECTOR, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       const primary = process.platform === 'win32' ? 'Control' : 'Meta'
       await control.command('nativePress', COMPOSER_SELECTOR, { key: `${primary}+Alt+F` })
       await control.command('waitFor', '[data-testid="workspace-file-tree-pierre"]', {
