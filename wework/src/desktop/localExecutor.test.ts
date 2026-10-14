@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { createLocalAppServices } from '@/api/local/localServices'
 import {
   DshExecutorTransportError,
   describeDshExecutor,
@@ -207,6 +208,131 @@ describe('localExecutor', () => {
         ([method]) => method === 'runtime.codex.ensure_started'
       )
     ).toHaveLength(1)
+  })
+
+  test('retains validated installation identity while disconnected and replaces it on reconnect', async () => {
+    const services = createLocalAppServices({ subscribe: () => () => undefined })
+    await services.deviceApi.listDevices()
+    const disconnected = new DshExecutorTransportError(
+      'executor_disconnected',
+      'IPC disconnected',
+      true
+    )
+    requestDshExecutorMock.mockRejectedValueOnce(disconnected)
+    await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow('IPC disconnected')
+    describeDshExecutorMock.mockRejectedValueOnce(disconnected)
+
+    await expect(getLocalExecutorStatus()).resolves.toMatchObject({
+      running: false,
+      ready: false,
+      deviceId: 'electron-device',
+      runtimeInstanceId: 'electron-runtime',
+      error: 'IPC disconnected',
+    })
+    expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
+    describeDshExecutorMock.mockRejectedValueOnce(disconnected)
+    await expect(services.deviceApi.listDevices()).resolves.toEqual([
+      expect.objectContaining({
+        status: 'offline',
+        device_id: 'electron-device',
+        runtime_instance_id: 'electron-runtime',
+      }),
+    ])
+    describeDshExecutorMock.mockResolvedValueOnce({
+      protocol_version: 1,
+      device_id: 'electron-device',
+      runtime_instance_id: 'replacement-runtime',
+      capabilities: [],
+      renderer_methods: [],
+      transports: [],
+    })
+    await expect(getLocalExecutorStatus()).resolves.toMatchObject({
+      running: true,
+      runtimeInstanceId: 'replacement-runtime',
+    })
+  })
+
+  test('revokes cached installation identity when the IPC protocol is invalid', async () => {
+    await ensureLocalExecutorAvailable()
+    const mismatch = new DshExecutorTransportError('protocol_mismatch', 'Invalid Runtime identity')
+    requestDshExecutorMock.mockRejectedValueOnce(mismatch)
+    await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow(
+      'Invalid Runtime identity'
+    )
+    describeDshExecutorMock.mockRejectedValueOnce(mismatch)
+
+    await expect(getLocalExecutorStatus()).rejects.toThrow('Invalid Runtime identity')
+    expect(getKnownLocalExecutorDeviceId()).toBeNull()
+  })
+
+  test('a pending description cannot restore identity revoked by a protocol error', async () => {
+    const originalDescription = await describeDshExecutorMock()
+    await ensureLocalExecutorAvailable()
+    requestDshExecutorMock.mockRejectedValueOnce(
+      new DshExecutorTransportError('transport_disconnected', 'Executor disconnected', true)
+    )
+    await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow(
+      'Executor disconnected'
+    )
+    let finish!: (value: typeof originalDescription) => void
+    describeDshExecutorMock.mockReturnValueOnce(
+      new Promise(resolve => {
+        finish = resolve
+      })
+    )
+    const pendingStatus = getLocalExecutorStatus()
+    requestDshExecutorMock.mockRejectedValueOnce(
+      new DshExecutorTransportError('protocol_mismatch', 'Invalid Runtime identity')
+    )
+    await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow(
+      'Invalid Runtime identity'
+    )
+    expect(getKnownLocalExecutorDeviceId()).toBeNull()
+
+    const rejectedStatus = expect(pendingStatus).rejects.toMatchObject({
+      code: 'protocol_mismatch',
+    })
+    finish(originalDescription)
+    await rejectedStatus
+    expect(getKnownLocalExecutorDeviceId()).toBeNull()
+    await expect(getLocalExecutorStatus()).resolves.toMatchObject({
+      running: true,
+      runtimeInstanceId: 'electron-runtime',
+    })
+  })
+
+  test('a pending startup cannot restore identity revoked by a protocol error', async () => {
+    let finish!: (value: { ready: boolean }) => void
+    const pending = new Promise<{ ready: boolean }>(resolve => {
+      finish = resolve
+    })
+    const original = requestDshExecutorMock.getMockImplementation()!
+    requestDshExecutorMock.mockImplementation((method, params) =>
+      method === 'runtime.codex.ensure_started' ? pending : original(method, params)
+    )
+    const pendingStartup = ensureLocalExecutorStarted()
+    await vi.waitFor(() =>
+      expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.codex.ensure_started')
+    )
+    requestDshExecutorMock.mockRejectedValueOnce(
+      new DshExecutorTransportError('protocol_mismatch', 'Invalid Runtime identity')
+    )
+    await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow(
+      'Invalid Runtime identity'
+    )
+    expect(getKnownLocalExecutorDeviceId()).toBeNull()
+
+    const rejectedStartup = expect(pendingStartup).rejects.toMatchObject({
+      code: 'protocol_mismatch',
+    })
+    finish({ ready: true })
+    await rejectedStartup
+    expect(getKnownLocalExecutorDeviceId()).toBeNull()
+    mockStartup()
+    await expect(ensureLocalExecutorStarted()).resolves.toMatchObject({
+      running: true,
+      runtimeInstanceId: 'electron-runtime',
+    })
   })
 
   test('synchronizes declared bundled plugins even when already configured', async () => {

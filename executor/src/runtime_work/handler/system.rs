@@ -6,7 +6,25 @@ use super::codex_config::optional_proxy_url;
 use super::*;
 use ignore::WalkBuilder;
 
+use crate::server::local_decision_proxy::DECISION_PROXY_PROTOCOL_VERSION;
+
 const WORKSPACE_SEARCH_RESULT_LIMIT: usize = 50;
+/// Base path shared with the Executor HTTP router.
+const DECISION_PROXY_ROUTE_PREFIX: &str = "/v1/decision-router";
+/// Fields only Executor-controlled configuration may decide.
+const DECISION_PROXY_REGISTER_FORBIDDEN_FIELDS: &[&str] = &[
+    "upstream",
+    "upstreamUrl",
+    "apiKey",
+    "api_key",
+    "authorization",
+    "credential",
+    "credentialSource",
+    "models",
+    "allowedModels",
+    "defaultModel",
+    "enabled",
+];
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn reconcile_and_resume_persisted_turns(&self) {
@@ -762,6 +780,78 @@ impl RuntimeWorkRpcHandler {
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| AppIpcError::new("invalid_request", "token is required"))?;
         local_model_proxy::unregister_harness(&token);
+        Ok(json!({"unregistered": true}))
+    }
+
+    /// Registers a local decision route for one Smart App scope.
+    ///
+    /// The upstream URL, the model catalogue, and the credential are Executor
+    /// configuration. A caller may only provide the scope; every other field is
+    /// rejected so a Smart App cannot redirect or widen the route.
+    pub(super) async fn register_decision_proxy(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let loopback = executor_loopback_base_url();
+        self.decision_proxy_launch(payload, loopback.as_deref())
+    }
+
+    /// Test seam: exercises the launch payload without a bound HTTP server.
+    #[cfg(test)]
+    pub(super) fn register_decision_proxy_at(
+        &self,
+        payload: Value,
+        loopback: &str,
+    ) -> Result<Value, AppIpcError> {
+        self.decision_proxy_launch(payload, Some(loopback))
+    }
+
+    fn decision_proxy_launch(
+        &self,
+        payload: Value,
+        loopback: Option<&str>,
+    ) -> Result<Value, AppIpcError> {
+        for forbidden in DECISION_PROXY_REGISTER_FORBIDDEN_FIELDS {
+            if payload.get(*forbidden).is_some() {
+                return Err(AppIpcError::new(
+                    "invalid_request",
+                    format!("{forbidden} must not be provided by the caller"),
+                ));
+            }
+        }
+        let scope = string_field(&payload, "scope")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "scope is required"))?;
+        if self.decision_proxy.settings().is_none() {
+            return Err(AppIpcError::new(
+                "decision_router_disabled",
+                "decision router is not configured",
+            ));
+        }
+        let Some(loopback) = loopback else {
+            return Err(AppIpcError::new(
+                "runtime_unavailable",
+                "Executor HTTP server is not available",
+            ));
+        };
+        // The route holds the shared connection snapshot; the request path
+        // trades the current login token for the upstream credential.
+        let token = local_decision_proxy::register(&scope, Arc::clone(&self.backend_connection));
+        Ok(json!({
+            "token": token,
+            "baseUrl": format!("{loopback}{DECISION_PROXY_ROUTE_PREFIX}/{token}"),
+            "protocolVersion": DECISION_PROXY_PROTOCOL_VERSION,
+        }))
+    }
+
+    pub(super) async fn unregister_decision_proxy(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let token = string_field(&payload, "token")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "token is required"))?;
+        local_decision_proxy::unregister(&token);
         Ok(json!({"unregistered": true}))
     }
 

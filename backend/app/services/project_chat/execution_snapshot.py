@@ -27,6 +27,74 @@ from app.services.project_chat.service import project_chat_service
 TERMINAL_STATUSES = {"done": "completed", "failed": "failed", "cancelled": "cancelled"}
 
 
+def snapshot_from_transcript(
+    *, device_id: str, task_id: str, response: dict
+) -> RuntimeExecutionSnapshot | None:
+    """Read turn identity and outcomes from the native transcript RPC contract."""
+    if response.get("historyUnavailable") or response.get("parseError"):
+        return None
+    if response.get("taskId") != task_id:
+        return None
+    statuses = {
+        "completed": "done",
+        "succeeded": "done",
+        "done": "done",
+        "failed": "failed",
+        "error": "failed",
+        "cancelled": "cancelled",
+        "canceled": "cancelled",
+        "interrupted": "cancelled",
+        "aborted": "cancelled",
+        "running": "running",
+        "streaming": "running",
+        "in_progress": "running",
+    }
+    turns = []
+    for turn in response.get("turns", []):
+        if (
+            not isinstance(turn, dict)
+            or not isinstance(turn.get("id"), str)
+            or not turn["id"]
+        ):
+            continue
+        user_ids = [turn.get("clientUserMessageId")]
+        for item in turn.get("items", []):
+            if not isinstance(item, dict) or item.get("type") != "user_message":
+                continue
+            message = item.get("message")
+            if isinstance(message, dict) and message.get("role") == "user":
+                user_ids.append(
+                    message.get("clientUserMessageId")
+                    or message.get("client_user_message_id")
+                    or message.get("id")
+                )
+            user_ids.append(item.get("id"))
+        turns.append(
+            RuntimeExecutionTurnSnapshot(
+                id=turn["id"],
+                user_message_ids=list(
+                    dict.fromkeys(
+                        identity
+                        for identity in user_ids
+                        if isinstance(identity, str) and identity
+                    )
+                ),
+                status=statuses.get(
+                    str(turn.get("runtimeStatus") or turn.get("status") or "").lower(),
+                    "unknown",
+                ),
+                completed_at=turn.get("completedAt"),
+            )
+        )
+    return RuntimeExecutionSnapshot(
+        device_id=device_id,
+        task_id=task_id,
+        running=response.get("running"),
+        complete_history=False,
+        turns=turns,
+    )
+
+
 def completed_activity_for_turn(
     db: Session,
     *,
@@ -52,7 +120,7 @@ def completed_activity_for_turn(
     )
 
 
-def _match_turn(
+def match_runtime_turn(
     row: ProjectChatMessage,
     snapshot: RuntimeExecutionSnapshot,
     *,
@@ -137,7 +205,7 @@ def reconcile_execution_snapshot(
     for row in rows:
         if row.status not in {"pending", "streaming"}:
             continue
-        turn = _match_turn(row, snapshot, single_execution=len(rows) == 1)
+        turn = match_runtime_turn(row, snapshot, single_execution=len(rows) == 1)
         if turn is None or turn.status not in TERMINAL_STATUSES:
             continue
         project_chat_service._require_scope(
@@ -212,7 +280,11 @@ def _persist_outcome(
         # Managed runs have their own aggregate root. Never update a different
         # attempt merely because it reused the same Runtime conversation.
         execution = loop_item_execution_service.reconcile_runtime_snapshot(
-            db, execution_id=execution.id, runtime_status=status, running=False
+            db,
+            execution_id=execution.id,
+            runtime_status=status,
+            running=False,
+            matched_turn_id=turn.id,
         )
         if execution is None or execution.status != status:
             return False

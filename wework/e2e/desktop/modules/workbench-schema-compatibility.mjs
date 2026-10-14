@@ -128,6 +128,75 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       assert.notEqual(freshPrepared.WEGENT_CODEX_HOME, path.join(freshExecutorHome, 'codex'));
       assert.equal(await fs.realpath(path.join(freshExecutorHome, 'codex')), await fs.realpath(freshPrepared.WEGENT_CODEX_HOME));
       assert.deepEqual(await fs.readdir(freshPrepared.WEGENT_CODEX_HOME), []);
+      const upgradeHome = path.join(input.root, 'populated-legacy-codex-home');
+      const upgradeExecutorHome = metadata.weworkExecutorNamespace?.trim()
+        ? path.join(upgradeHome, '.wework', 'apps', metadata.weworkExecutorNamespace.trim())
+        : path.join(upgradeHome, '.wework');
+      const legacyCodexHome = path.join(upgradeExecutorHome, 'codex');
+      const config = "cli_auth_credentials_store = 'file'\\n";
+      await fs.mkdir(path.join(legacyCodexHome, 'sessions'), { recursive: true });
+      await fs.writeFile(path.join(legacyCodexHome, 'config.toml'), config);
+      await fs.writeFile(path.join(legacyCodexHome, 'auth.json'), 'synthetic-upgrade-auth');
+      await fs.writeFile(path.join(legacyCodexHome, 'sessions', 'marker'), 'legacy-session');
+      await fs.writeFile(path.join(upgradeExecutorHome, 'device-config.json'), '{"marker":"legacy-device"}');
+      await fs.writeFile(path.join(upgradeExecutorHome, 'device-config.json.lock'), '');
+      const { DatabaseSync } = require('node:sqlite');
+      const seedPath = path.join(upgradeHome, 'seed.sqlite');
+      const seed = new DatabaseSync(seedPath);
+      seed.exec("PRAGMA journal_mode=WAL; CREATE TABLE tasks(id TEXT); INSERT INTO tasks VALUES ('legacy-task')");
+      await fs.mkdir(path.join(upgradeExecutorHome, 'data'), { recursive: true });
+      for (const suffix of ['', '-wal', '-shm'])
+        await fs.copyFile(seedPath + suffix, path.join(upgradeExecutorHome, 'data', 'tasks.sqlite') + suffix);
+      seed.close();
+      const upgradeOptions = {
+        environment: { HOME: upgradeHome, USERPROFILE: upgradeHome, PATH: input.path,
+          SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
+          WEWORK_EXECUTOR_PATH: input.executor },
+        metadata, homeDirectory: upgradeHome,
+      };
+      const upgraded = await prepareWorkbenchEnvironment(upgradeOptions);
+      assert.notEqual(upgraded.WEGENT_CODEX_HOME, legacyCodexHome);
+      assert.equal(await fs.realpath(legacyCodexHome), await fs.realpath(upgraded.WEGENT_CODEX_HOME));
+      assert.equal(await fs.readFile(path.join(upgraded.WEGENT_CODEX_HOME, 'config.toml'), 'utf8'), config);
+      assert.equal(await fs.readFile(path.join(upgraded.WEGENT_CODEX_HOME, 'auth.json'), 'utf8'), 'synthetic-upgrade-auth');
+      assert.equal(await fs.readFile(path.join(upgraded.WEGENT_CODEX_HOME, 'sessions', 'marker'), 'utf8'), 'legacy-session');
+      const upgradedDatabase = new DatabaseSync(path.join(upgraded.WEGENT_EXECUTOR_HOME, 'data', 'tasks.sqlite'));
+      assert.equal(upgradedDatabase.prepare('SELECT id FROM tasks').get().id, 'legacy-task');
+      upgradedDatabase.exec("INSERT INTO tasks VALUES ('new-task')");
+      upgradedDatabase.close();
+      const legacyDatabase = new DatabaseSync(path.join(upgradeExecutorHome, 'data', 'tasks.sqlite'));
+      assert.equal(legacyDatabase.prepare('SELECT count(*) AS total FROM tasks').get().total, 2);
+      legacyDatabase.close();
+      const replacementConfig = path.join(upgradeHome, 'replacement-device-config.json');
+      await fs.writeFile(replacementConfig, '{"marker":"updated-device"}');
+      await fs.rename(replacementConfig, path.join(upgraded.WEGENT_EXECUTOR_HOME, 'device-config.json'));
+      await prepareWorkbenchEnvironment(upgradeOptions);
+      assert.equal(await fs.readFile(path.join(upgradeExecutorHome, 'device-config.json'), 'utf8'), '{"marker":"updated-device"}');
+      if (process.platform === 'win32') {
+        // Reproduce an installation that already completed migration with a file hard link.
+        const source = path.join(freshExecutorHome, 'app-ipc.addr');
+        const target = path.join(freshPrepared.WEGENT_EXECUTOR_HOME, 'app-ipc.addr');
+        const state = path.join(freshPrepared.WEGENT_EXECUTOR_HOME, 'migrations', 'executor-data-v1');
+        const journal = path.join(state, Buffer.from('app-ipc.addr').toString('hex') + '.json');
+        await fs.writeFile(target, 'synthetic-ipc-address');
+        await fs.link(target, source);
+        const identity = await fs.stat(target, { bigint: true });
+        const record = JSON.stringify({ source, target, journal, version: 1, directory: false,
+          completed: true, device: identity.dev.toString(), inode: identity.ino.toString() });
+        await fs.writeFile(journal, record);
+        await fs.writeFile(path.join(state, 'entries.json'), JSON.stringify(['app-ipc.addr']));
+        for (let restart = 0; restart < 2; restart++) {
+          await prepareWorkbenchEnvironment({
+            environment: { HOME: freshHome, USERPROFILE: freshHome, PATH: input.path,
+              SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
+              WEWORK_EXECUTOR_PATH: input.executor },
+            metadata, homeDirectory: freshHome,
+          });
+          assert.equal(await fs.readFile(journal, 'utf8'), record);
+          assert.equal(await fs.readFile(source, 'utf8'), 'synthetic-ipc-address');
+          assert.equal((await fs.stat(source, { bigint: true })).ino, identity.ino);
+        }
+      }
       const home = path.join(input.root, 'must-remain-absent');
       const environment = { PATH: input.path, HOME: home, WEWORK_EXECUTOR_PATH: input.executor };
       await assertExecutorWorkbenchCompatibility(environment);
@@ -202,6 +271,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
         packagedFallbackPreservesSharedComponentIndex: true,
         developmentHomeIsolatedWithNativeAuthLink: true,
         emptyCodexHomeMigratedWithoutCredentials: true,
+        completedFileHardlinksPreserved: process.platform === 'win32' ? true : undefined,
       }));
       app.exit(0);
     })().catch(error => { console.error(error.stack); app.exit(1); });

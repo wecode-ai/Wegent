@@ -1158,6 +1158,7 @@ class RuntimeTaskCreateResponse(BaseModel):
     device_id: str = Field(..., alias="deviceId")
     local_task_id: str = Field(..., alias="taskId")
     workspace_path: str = Field(..., alias="workspacePath")
+    workspace_pending: bool = Field(default=False, alias="workspacePending")
     runtime: RuntimeName
     runtime_handle: Optional[dict[str, Any]] = Field(
         default=None,

@@ -79,6 +79,82 @@ mod tests {
     use super::*;
 
     #[test]
+    fn user_mcp_is_removed_when_unconfigured_and_can_be_enabled_again() {
+        let home = tempfile::tempdir().unwrap();
+        let mut request = ExecutionRequest {
+            mcp_servers: vec![
+                json!({"name": "custom-example", "type": "http", "url": "${{task_data.user_mcps.example.services.storage.credentials.url}}"}),
+                json!({"name": "web", "type": "http", "url": "https://example.test/web"}),
+            ],
+            ..Default::default()
+        };
+        let configured = json!({"user_mcps": {"example": {"services": {"storage": {
+            "enabled": true, "credentials": {"url": "https://example.test/table?token=synthetic-secret"}
+        }}}}});
+        // A fresh request without credentials must still prepare the web service.
+        prepare(
+            home.path(),
+            &request,
+            &BTreeMap::new(),
+            CommandSpec::new("claude"),
+        )
+        .unwrap();
+        let path = home.path().join("mcp.json");
+        let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(config["mcpServers"].get("custom-example").is_none());
+        assert!(config["mcpServers"].get("web").is_some());
+
+        request
+            .extra
+            .insert("task_data".to_owned(), configured.clone());
+        let spec = prepare(
+            home.path(),
+            &request,
+            &BTreeMap::new(),
+            CommandSpec::new("claude"),
+        )
+        .unwrap();
+        let variable =
+            context_variable("task_data.user_mcps.example.services.storage.credentials.url");
+        assert_eq!(
+            spec.envs()[&variable],
+            "https://example.test/table?token=synthetic-secret"
+        );
+        assert!(!fs::read_to_string(&path)
+            .unwrap()
+            .contains("synthetic-secret"));
+
+        // Disabling the service must remove its persisted reference on later turns.
+        request.extra.clear();
+        request.mcp_servers.clear();
+        let spec = prepare(
+            home.path(),
+            &request,
+            &BTreeMap::new(),
+            CommandSpec::new("claude"),
+        )
+        .unwrap();
+        let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(config["mcpServers"].get("custom-example").is_none());
+        assert!(config["mcpServers"].get("web").is_some());
+        assert!(!spec.envs().contains_key(&variable));
+
+        request.extra.insert("task_data".to_owned(), configured);
+        request.mcp_servers = vec![json!({"name": "custom-example", "type": "http",
+            "url": "${{task_data.user_mcps.example.services.storage.credentials.url}}"})];
+        let spec = prepare(
+            home.path(),
+            &request,
+            &BTreeMap::new(),
+            CommandSpec::new("claude"),
+        )
+        .unwrap();
+        assert!(spec.envs().contains_key(&variable));
+        let config: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert!(config["mcpServers"].get("custom-example").is_some());
+    }
+
+    #[test]
     fn stable_file_retains_services_and_rebinds_omitted_task_context() {
         let home = tempfile::tempdir().unwrap();
         let mut request = ExecutionRequest {

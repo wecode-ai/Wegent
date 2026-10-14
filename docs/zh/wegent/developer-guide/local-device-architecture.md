@@ -80,6 +80,12 @@ Electron 层不保存事件日志、不生成序号，也不实现重放或合�
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本地 app IPC 端点服务 Wework App 和 core DSH，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
+### Codex 原始模型 Catalog
+
+Wework 的模型路由、Catalog 编辑和保存校验共用同一份原始 Catalog 基线。配置了可读取的自定义上游时使用上游 `/models`；没有上游或上游目录不可用时，通过当前 Codex 二进制的 `debug models --bundled` 导出完整内置 Catalog，并在 executor 进程内缓存成功结果。上游目录失败会记录原因，不阻塞仅支持推理接口的服务商。Wework 的额外模型只按 slug 补入缺失条目，不覆盖 Codex 原始字段。
+
+用户修改以字段差异保存在设备本地的 `capabilities/model-catalog-overrides.json`，恢复默认会删除对应差异。路由在原始基线上应用差异后再生成视觉委托条目。导出失败会明确报错，不会用不完整的 Wework 模型清单替代原始 Catalog。
+
 ### 跨组件请求日志关联
 
 Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在同一次请求的后续日志中复用它。该字段只用于诊断单次请求，不替代任务 ID、设备 ID、线程 ID 或 OpenTelemetry trace ID，也不能用于推断业务状态。
@@ -97,6 +103,8 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 共享插件包按内容哈希保存并保留旧包；Codex 原生缓存目录使用插件清单中的版本号。不能给该缓存版本追加哈希，否则 Codex 原生安装会清理该目录并使工作台保存的路径失效。插件认证 SDK 从 Executor 的 `capabilities/manifest-v2.json` 解析当前安装身份，不能读取迁移后残留的旧清单。
 
 续聊保留任务 ID，但每轮使用新的子任务 ID，以刷新 MCP 上下文并区分消息。会话读取和续聊使用首次执行所属的原生 Home；不同 Home 的 Codex 查询进程互相隔离，历史刷新只读且不恢复会话，以免占用下一轮执行所需的写锁；续轮保存用户及 Team 身份但不保存凭据。后端 Team 的原生 Home 位于工作台根目录的 `agents/<执行用户名>/<namespace>/<Team 名称>`。流水线中各 Bot 使用其下的 `bots/<Bot ID>`，分别保存配置、会话和执行锁；按任务调用技能时，只有持有执行锁且记录了该任务的 Home 才能消除多个阶段之间的歧义。Wework 直接运行的配置（`team_id = 0`）继续使用应用管理的原生 Home，负责人续轮时保留此标记；其选择的后端技能部署到任务工作区的 `.codex/skills`，原生插件技能仍由 Codex 管理。共享 Codex 进程因环境变化重启前，必须等待活跃回合和未完成的 RPC 全部结束。
+
+同名 Home 的复用不再要求后端 URL、Team ID、Bot ID 或 Shell 类型与旧标记一致；任务绑定和会话仍保留。任务技能查询要求认证用户 ID 和已记录的任务绑定匹配，但不使用后端 URL 作为身份。因此，共享工作台根目录不会隔离用户和任务 ID 重叠的独立后端；支持这种隔离需要由认证协议提供稳定后端身份。
 
 Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过运行当前用户的非交互登录 shell 读取登录环境，避免执行仅供终端交互使用的提示符、补全和插件初始化。需要传递给 Agent 的环境变量应配置在登录 shell 会读取的启动文件中。shell 优先使用系统用户数据库中的登录 shell，并依次回退到 `$SHELL`、`zsh`、`bash` 和 `sh`。采集过程有固定超时；失败时 executor 保留父进程环境，并继续补充 Homebrew、`/usr/local` 等标准开发目录。最终环境由 executor 统一传递给 Codex、Claude Code、插件、技能、Hooks、PTY 和设备命令，因此 Wework 本地 sidecar、独立本地设备以及 Linux 云端或远程设备使用同一套 PATH 解析逻辑。
 
@@ -163,6 +171,8 @@ Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 tran
 分页 transcript 响应不再伪造全局 `rangeStart`、`rangeEnd` 或 provider 级完整导航索引。Wework 使用当前已加载消息构建回合导航；用户请求更早历史时，将 `beforeCursor` 原样传回 executor，加载结果再合并到现有会话。真实 Codex 桌面 E2E 必须创建超过单页大小的会话，重启应用后验证首屏只恢复最新页、加载更早历史使用不透明游标，并确认虚拟滚动中的导航状态仍由当前可见用户消息决定。
 
 工具状态以 app-server 的生命周期事件为准：`item/started` 创建运行中的工具块，`item/completed` 必须将对应工具块收敛为 `done`（显式失败除外）。部分独立工具条目（如图片查看、等待和网页搜索）不携带 `status` 字段；executor 在实时事件映射和 transcript 恢复时都将这类终态条目规范化为 `done`，避免 Wework 在工具已经完成后继续显示运行状态或递增计时。
+
+Wework 发起压缩前先解析目标会话保存的模型选择，并用当前凭据、模型请求头和执行设备的代理设置重新生成模型配置，再通过 App-IPC 交给 executor。持久化的执行配置已移除密钥和请求头，只能用于恢复身份，不能直接用于模型请求；没有 Wework 模型覆盖的会话继续使用原生 Codex 配置。
 
 手动上下文压缩以 Codex thread 中新的 `contextCompaction` 条目持久化为成功边界，而不是以 `thread/compact/start` 接受请求为成功。executor 在发起压缩前按任务模型配置注册并绑定本地模型路由（与发起一轮对话使用同一套判断和注册逻辑），因此空闲会话、executor 重启后或路由空闲回收后点击压缩同样能触达模型，而不是在 Codex app-server 内以“no local model proxy route is bound to the Codex thread”失败。随后记录最新 turn 并轮询近期 transcript；只有最新 turn 出现压缩条目后，才向 Wework 返回 `turnId` 和 `compactionItemId`。轮询按 wall-clock 预算停止（读取 RPC 的耗时也计入该预算），App-IPC 对 `runtime.tasks.compact` 的超时高于 executor 自身预算；若压缩轮已经结束却没有产生压缩条目（例如 provider 拒绝该轮），立即返回带原因的失败，而不是等满预算后回报超时。压缩期间 Wework 先显示单一的“正在自动压缩上下文”处理块，完成后将同一处理块收敛为“上下文已自动压缩”，失败时收敛为错误态。
 

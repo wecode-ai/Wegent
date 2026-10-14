@@ -323,11 +323,22 @@ export class ModelConfigurationStore {
   }
 
   /** Resolve usable providers independently; unavailable credentials must not disable other connections. */
-  async runtime(): Promise<{ revision: string; models: ResolvedProviderModel[] }> {
+  async runtime(draft?: unknown): Promise<{ revision: string; models: ResolvedProviderModel[] }> {
     return this.serial(async () => {
-      if (!this.lastGood) return { revision: '', models: [] }
+      let providers = this.lastGood?.config.providers ?? []
+      if (draft !== undefined) {
+        const provider = validateModelConfiguration({ version: 1, providers: [draft] }).providers[0]
+        const saved = providers.find(entry => entry.id === provider.id)
+        // Drafts may reuse only the credential owned by their saved provider.
+        delete provider.api_key_ref
+        if (!provider.api_key && saved) {
+          provider.api_key = saved.api_key
+          provider.api_key_ref = saved.api_key_ref
+        }
+        providers = [provider]
+      }
       const models: ResolvedProviderModel[] = []
-      for (const provider of this.lastGood.config.providers) {
+      for (const provider of providers) {
         const { models: entries, ...connection } = provider
         const key = await this.credential(provider)
         // Do not expose an authenticated connection as an unauthenticated runtime model.
@@ -336,7 +347,7 @@ export class ModelConfigurationStore {
         for (const model of entries)
           models.push({ provider: { ...connection, ...(key ? { api_key: key } : {}) }, model })
       }
-      return { revision: this.lastGood.revision, models }
+      return { revision: this.lastGood?.revision ?? '', models }
     })
   }
 

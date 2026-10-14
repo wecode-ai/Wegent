@@ -915,6 +915,14 @@ fn fresh_cloud_manager_payload(
     request.history.clear();
     request.message_id = None;
     request.new_session = true;
+    if let Some(origin) = request
+        .extra
+        .get_mut("origin")
+        .and_then(Value::as_object_mut)
+    {
+        origin.remove("executionId");
+        origin.remove("execution_id");
+    }
 
     let mut payload = json!({
         "schemaVersion": 1,
@@ -1216,7 +1224,8 @@ mod tests {
     #[test]
     fn fresh_cloud_manager_payload_starts_new_session() {
         let command = command();
-        let source = source_link();
+        let mut source = source_link();
+        source.runtime_handle["executionRequest"]["extra"]["origin"]["executionId"] = json!(91);
         let outcomes = vec![json!({
             "execution_id": "execution-1",
             "status": "completed",
@@ -1233,6 +1242,8 @@ mod tests {
         assert!(request.new_session);
         assert!(request.history.is_empty());
         assert_eq!(request.message_id, None);
+        assert!(request.extra["origin"].get("executionId").is_none());
+        assert!(payload["origin"].get("executionId").is_none());
         assert_eq!(request.system_prompt, "manager system instructions");
         assert_eq!(request.mcp_servers, vec![json!({"name": "wework_space"})]);
         assert_eq!(

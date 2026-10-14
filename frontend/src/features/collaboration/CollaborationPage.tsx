@@ -54,8 +54,6 @@ import { ResizableSidebar } from '@/features/tasks/components/sidebar'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
-const PROJECT_VIEWS = new Set<CollaborationView>(['board', 'table', 'files', 'manage'])
-
 function workspaceViewFromPath(pathname: string): CollaborationWorkspaceView {
   if (pathname.endsWith('/projects')) return 'projects'
   if (pathname.endsWith('/members')) return 'members'
@@ -222,45 +220,24 @@ export function CollaborationPage() {
   const projectId = projectRoute && segments[4] ? decodeURIComponent(segments[4]) : null
   const issueId =
     projectRoute && segments[5] === 'issues' && segments[6] ? decodeURIComponent(segments[6]) : null
-  const removedResourcesRoute = pathname === '/collaboration/resources'
+  const removedRootRoute = [
+    '/collaboration/resources',
+    '/collaboration/my-work',
+    '/collaboration/runs',
+  ].includes(pathname)
   const parsedRootView = collaborationRootViewForPath(pathname)
   const rootView = parsedRootView ?? 'home'
   const legacyProjectId =
-    !workspaceRoute && segments[1] && !parsedRootView && segments[1] !== 'resources'
+    !workspaceRoute && segments[1] && !parsedRootView && !removedRootRoute
       ? decodeURIComponent(segments[1])
       : null
   const legacyIssueId =
     legacyProjectId && segments[2] === 'issues' && segments[3]
       ? decodeURIComponent(segments[3])
       : null
-  const rawView = searchParams.get('view')
-  const projectView: CollaborationView =
-    rawView && PROJECT_VIEWS.has(rawView as CollaborationView)
-      ? (rawView as CollaborationView)
-      : 'board'
+  const projectView = (searchParams.get('view') || 'board') as CollaborationView
   useEffect(() => {
-    if (
-      !projectRoute ||
-      !workspaceId ||
-      !projectId ||
-      !rawView ||
-      PROJECT_VIEWS.has(rawView as CollaborationView)
-    ) {
-      return
-    }
-    router.replace(
-      collaborationLocationPath({
-        platformView: 'spaces',
-        workspaceId,
-        workspaceView: 'projects',
-        projectId,
-        projectView: 'board',
-        issueId,
-      })
-    )
-  }, [issueId, projectId, projectRoute, rawView, router, workspaceId])
-  useEffect(() => {
-    if (removedResourcesRoute) {
+    if (removedRootRoute) {
       router.replace('/collaboration')
       return
     }
@@ -294,7 +271,7 @@ export function CollaborationPage() {
     return () => {
       active = false
     }
-  }, [api, legacyIssueId, legacyProjectId, projectView, removedResourcesRoute, router])
+  }, [api, legacyIssueId, legacyProjectId, projectView, removedRootRoute, router])
 
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({

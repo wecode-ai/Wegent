@@ -14,6 +14,8 @@ Task and Workspace tabs retain their mounted interface while they are in the bac
 
 When many tabs are open, the tab list scrolls horizontally while the **+** and the rightmost feedback button remain visible. A tab can also be moved to a separate window from its context menu. After the move succeeds, the source window removes the tab and the destination window contains only the moved tab and its state; it does not create the three default tabs again. If destination-window creation fails, the source tab remains unchanged.
 
+In a separate window, right-click a tab and choose **Move to main window** to return it with its current page and unsent draft. Fixed tabs remain fixed and restore in the main window after restarting. Moving the last tab closes the separate window; a window with other tabs stays open. If the main window cannot accept the tab, it remains in the separate window.
+
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
 ## Configure board automations
@@ -144,6 +146,8 @@ You can still collapse the left sidebar while the workspace is expanded, leaving
 While a task is running, the conversation shows the tools in use and the current progress. Completed tool calls collapse into summaries that can be expanded to inspect commands or changed files.
 
 After a parent agent starts a subagent, the subagent activity remains anchored at its original invocation position. Later status, progress, and result updates appear at that position even if the parent continues producing other output; the activity does not move to the end of the conversation or render a second time.
+
+Click a subagent activity to view its execution in the right workspace. The panel shows model-provided reasoning summaries, progress messages, tool calls, and results in order. Content updates live while the subagent runs, and saved process content remains available after completion or reloading the task.
 
 ## Navigate long conversations
 

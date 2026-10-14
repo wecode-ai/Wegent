@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url'
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
-import { reservePort } from './port-reservation.mjs'
 import {
   compactInactiveDesktopE2EResults,
   resolveDesktopE2EResultRoot,
@@ -34,7 +33,8 @@ const CHECKPOINT_RESOURCES = new Map([
   ['automation-lifecycle', ['desktop-runtime-intensive']],
   ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-issue-task-discovery', ['collaboration-runtime', 'desktop-runtime-intensive']],
-  ['collaboration-issue-robot-assignment', ['collaboration-runtime']],
+  ['collaboration-issue-robot-assignment', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-app-queue-identity', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
@@ -52,6 +52,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['collaboration-issue-archive', ['collaboration-runtime', 'desktop-runtime-intensive']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'goal-state-sync': './scenarios/goal-state-sync.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
@@ -103,6 +104,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'collaboration-issue-task-discovery':
     './scenarios/collaboration-issue-task-discovery.scenario.mjs',
+  'collaboration-app-queue-identity': './scenarios/collaboration-app-queue-identity.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-issue-robot-assignment':
@@ -132,6 +134,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'send-key-preference': './scenarios/send-key-preference.scenario.mjs',
   'reply-predictions': './scenarios/reply-predictions.scenario.mjs',
   'model-settings': './scenarios/model-settings.scenario.mjs',
+  'codex-native-catalog': './scenarios/codex-native-catalog.scenario.mjs',
   'system-proxy': './scenarios/system-proxy.scenario.mjs',
   'system-pac': './scenarios/system-pac.scenario.mjs',
   'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
@@ -139,7 +142,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'goal-state-sync',
   'model-settings',
+  'codex-native-catalog',
   'reply-predictions',
   'collaboration-worktree-policy',
   'cloud-model-recovery',
@@ -160,6 +165,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-login-proxy',
   'collaboration-shared-core',
   'collaboration-issue-task-discovery',
+  'collaboration-app-queue-identity',
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-issue-robot-assignment',
@@ -250,41 +256,6 @@ function formatDuration(durationMs) {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
-}
-
-function configuredPort(value, name) {
-  if (value === undefined) return null
-  const port = Number(value)
-  if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
-    throw new Error(`${name} must be a TCP port`)
-  }
-  return port
-}
-
-async function resolveServerPorts(env) {
-  const configuredModelPort = configuredPort(
-    env.WEWORK_E2E_MODEL_SERVER_PORT,
-    'WEWORK_E2E_MODEL_SERVER_PORT'
-  )
-  const configuredControlPort = configuredPort(
-    env.WEWORK_E2E_CONTROL_SERVER_PORT,
-    'WEWORK_E2E_CONTROL_SERVER_PORT'
-  )
-  const registryDir = env.WEWORK_E2E_PORT_REGISTRY_DIR
-  let modelServerPort = configuredModelPort ?? (await reservePort(registryDir))
-  let controlServerPort = configuredControlPort ?? (await reservePort(registryDir))
-
-  while (controlServerPort === modelServerPort) {
-    if (configuredControlPort !== null && configuredModelPort !== null) {
-      throw new Error('Desktop E2E control and model server ports must differ')
-    }
-    if (configuredControlPort !== null) {
-      modelServerPort = await reservePort(registryDir)
-    } else {
-      controlServerPort = await reservePort(registryDir)
-    }
-  }
-  return { controlServerPort, modelServerPort }
 }
 
 function runTaskFlow(args, env, label) {
@@ -666,9 +637,6 @@ async function runParallelCheckpoints(checkpoints) {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
         delete env.WEWORK_E2E_CONTROL_SERVER_PORT
         delete env.WEWORK_E2E_MODEL_SERVER_PORT
-        const { controlServerPort, modelServerPort } = await resolveServerPorts(env)
-        env.WEWORK_E2E_CONTROL_SERVER_PORT = String(controlServerPort)
-        env.WEWORK_E2E_MODEL_SERVER_PORT = String(modelServerPort)
         console.log(`\n[desktop-e2e] START ${checkpoint}`)
         const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
         if (result.code === 0) {
@@ -703,18 +671,10 @@ async function runParallelCheckpoints(checkpoints) {
 
 async function runCheckpoints(checkpoints) {
   const sharedEnv = await sharedBuildEnvironment()
-  const { controlServerPort, modelServerPort } = await resolveServerPorts(sharedEnv)
   const failures = []
 
   for (const checkpoint of checkpoints) {
-    const env = checkpointScenarioEnv(
-      {
-        ...sharedEnv,
-        WEWORK_E2E_CONTROL_SERVER_PORT: String(controlServerPort),
-        WEWORK_E2E_MODEL_SERVER_PORT: String(modelServerPort),
-      },
-      checkpoint
-    )
+    const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
     console.log(`\n[desktop-e2e] START ${checkpoint}`)
     const args = CLOUD_ONLY_CHECKPOINTS.has(checkpoint)
       ? ['--cloud-only', '--segment', checkpoint]

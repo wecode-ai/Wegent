@@ -57,7 +57,6 @@ import { collaborationTestIds } from "./testIds";
 import {
   CollaborationParticipantsTabs,
   ProjectCollaborationGroups,
-  ProjectCollaborationParticipants,
   ProjectAutomaticProcessing,
   ProjectSettingsShell,
 } from "./project-manage";
@@ -565,7 +564,7 @@ describe("CollaborationApp API boundary", () => {
     expect(content?.props.className).not.toContain("overflow-hidden");
   });
 
-  it("keeps project settings limited to the four project-level concerns", () => {
+  it("exposes agents, members and collaboration teams as grouped settings pages", () => {
     const host = createHost(false, "home");
     host.location = {
       projectId: "project-1",
@@ -589,8 +588,8 @@ describe("CollaborationApp API boundary", () => {
     const sectionIds = settingsShell?.props.sections.map(
       (section: { id: string }) => section.id,
     );
-    const participantsSection = settingsShell?.props.sections.find(
-      (section: { id: string }) => section.id === "collaboration-participants",
+    const groupsSection = settingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "groups",
     );
     const automaticProcessingSection = settingsShell?.props.sections.find(
       (section: { id: string }) => section.id === "automatic-processing",
@@ -598,16 +597,16 @@ describe("CollaborationApp API boundary", () => {
 
     expect(sectionIds).toEqual([
       "project",
-      "collaboration-participants",
+      "agents",
+      "members",
+      "groups",
       "environments",
       "automatic-processing",
     ]);
-    expect(participantsSection?.content.type).toBe(
-      ProjectCollaborationParticipants,
-    );
+    expect(groupsSection?.group).toEqual({ id: "ai-team", label: "AI 团队" });
     expect(
       findByType(
-        participantsSection?.content.props.groupsContent,
+        groupsSection?.content.props.children,
         ProjectCollaborationGroups,
       ),
     ).toBeDefined();
@@ -615,7 +614,7 @@ describe("CollaborationApp API boundary", () => {
     expect(automaticProcessingSection?.content.type).toBe(
       ProjectAutomaticProcessing,
     );
-    expect(participantsSection?.content).not.toBe(
+    expect(groupsSection?.content).not.toBe(
       automaticProcessingSection?.content,
     );
   });

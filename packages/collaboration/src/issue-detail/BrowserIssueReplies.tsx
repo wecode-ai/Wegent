@@ -53,7 +53,7 @@ export function BrowserIssueReplies({
 }) {
   const store = useBrowserReplyQueueStore()
   const execution = useBrowserIssueExecution()
-  const serverExecution = project.project_store === 'backend' && Boolean(client.executeTaskComment)
+  const serverExecution = Boolean(client.executeTaskComment)
   const cards = useMemo(() => groupIssueTimelineThreads(messages), [messages])
   const [activity, setActivity] = useState<Record<string, boolean>>({})
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null)
@@ -106,7 +106,11 @@ export function BrowserIssueReplies({
       .then(() => {
         if (active) {
           setSubscriptionError(null)
-          setSubscribed({ runtime, addressKeys, revision: subscriptionRevision })
+          setSubscribed({
+            runtime,
+            addressKeys,
+            revision: subscriptionRevision,
+          })
           refreshExecution()
         }
       })

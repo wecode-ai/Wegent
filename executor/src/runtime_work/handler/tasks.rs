@@ -4,6 +4,7 @@
 
 #[cfg(test)]
 use super::context_compaction::context_compaction_outcome;
+use super::context_compaction::context_compaction_request;
 use super::context_compaction::wait_for_context_compaction;
 use super::*;
 
@@ -430,13 +431,18 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = id_field(&payload, "taskId")
             .or_else(|| id_field(&payload, "task_id"))
             .unwrap_or_else(|| format!("{runtime}-local-{}", now_ms()));
-        let payload_workspace_path = workspace_path(&payload);
+        let mut payload_workspace_path = workspace_path(&payload);
         let title = string_field(&payload, "title")
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        let deferred_environment = project_preparation::configure(&mut request, &payload)?;
+        if deferred_environment {
+            payload_workspace_path = None;
+        }
+
         if is_claude_runtime(&runtime) {
             ensure_claude_execution_identity(&local_task_id, &mut request);
         }
@@ -597,7 +603,8 @@ impl RuntimeWorkRpcHandler {
                 );
                 AppIpcError::new("bad_request", "workspacePath is required")
             })?;
-        let workspace_path = if side_source.is_none()
+        let workspace_path = if !deferred_environment
+            && side_source.is_none()
             && request.workspace_source.as_deref() == Some("git_worktree")
         {
             let git_ref = payload
@@ -687,24 +694,7 @@ impl RuntimeWorkRpcHandler {
         link.project_plugin_ids = project_plugin_ids(&request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         store_runtime_execution_request(&mut link.runtime_handle, &request);
-        if let (Some(runtime_handle), Some(payload_handle)) = (
-            link.runtime_handle.as_object_mut(),
-            payload
-                .get("runtimeHandle")
-                .or_else(|| payload.get("runtime_handle"))
-                .and_then(Value::as_object),
-        ) {
-            for key in [
-                "wegentTeam",
-                COLLABORATION_MANAGER_CONTEXT_KEY,
-                "collaborationDispatchTaskId",
-                "collaborationMemberRuntimeProfiles",
-            ] {
-                if let Some(value) = payload_handle.get(key) {
-                    runtime_handle.insert(key.to_owned(), value.clone());
-                }
-            }
-        }
+        apply_runtime_profile_handle(&mut link.runtime_handle, &payload);
         if let Some(executable_path) = request
             .extra
             .get("runtime_executable_path")
@@ -879,7 +869,8 @@ impl RuntimeWorkRpcHandler {
             "accepted": true,
             "deviceId": self.device_id,
             "taskId": local_task_id,
-            "workspacePath": workspace_path,
+            "workspacePath": if deferred_environment { "" } else { &workspace_path },
+            "workspacePending": deferred_environment,
             "runtime": runtime,
             "runtimeHandle": runtime_handle,
             "status": if queue_position.is_some() { "queued" } else { "running" },
@@ -1030,6 +1021,28 @@ impl RuntimeWorkRpcHandler {
             apply_runtime_payload_metadata(&mut request, &payload);
         }
         if let Some(link) = existing_link.as_ref() {
+            // A failed preparation has no session yet. Retry its saved snapshot;
+            // established conversations never prepare a new project directory.
+            if runtime_session_id_from_link(link).is_none() {
+                if let Some(definition) = link
+                    .runtime_handle
+                    .pointer("/executionRequest/deferred_project_environment")
+                {
+                    request.extra.insert(
+                        project_preparation::DEFERRED_ENVIRONMENT.into(),
+                        definition.clone(),
+                    );
+                    request.workspace_source = link
+                        .runtime_handle
+                        .pointer("/executionRequest/workspace_source")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                }
+            } else {
+                request
+                    .extra
+                    .remove(project_preparation::DEFERRED_ENVIRONMENT);
+            }
             set_runtime_task_title(&mut request, &link.title);
         }
         if has_execution_request {
@@ -1131,10 +1144,20 @@ impl RuntimeWorkRpcHandler {
                 "queuePosition": queue_position,
             }));
         }
-        let recovered_link = self
-            .recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
-            .await;
-        let Some(thread_id) = has_execution_request
+        let retrying_preparation = existing_link.as_ref().is_some_and(|link| {
+            runtime_session_id_from_link(link).is_none()
+                && link
+                    .runtime_handle
+                    .pointer("/executionRequest/deferred_project_environment")
+                    .is_some()
+        });
+        let recovered_link = if retrying_preparation {
+            None
+        } else {
+            self.recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
+                .await
+        };
+        let thread_id = has_execution_request
             .then(|| runtime_session_id_from_payload(&payload))
             .flatten()
             .or_else(|| {
@@ -1146,8 +1169,8 @@ impl RuntimeWorkRpcHandler {
                 recovered_link
                     .as_ref()
                     .and_then(runtime_session_id_from_link)
-            })
-        else {
+            });
+        if thread_id.is_none() && !retrying_preparation {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",
@@ -1155,13 +1178,13 @@ impl RuntimeWorkRpcHandler {
                 "taskId": local_task_id,
                 "runtime": "codex",
             }));
-        };
+        }
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
 
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
-        fields.push(("thread_id", thread_id.clone()));
+        fields.push(("thread_id", thread_id.clone().unwrap_or_default()));
         fields.push(("workspace_path", workspace_path.clone()));
         fields.push(("has_execution_request", has_execution_request.to_string()));
         fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
@@ -1180,8 +1203,8 @@ impl RuntimeWorkRpcHandler {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
         }
         self.schedule_worktree_prune();
-        let direct_thread_id = ephemeral.then(|| thread_id.clone());
-        let resume_thread_id = (!ephemeral).then_some(thread_id);
+        let direct_thread_id = thread_id.clone().filter(|_| ephemeral);
+        let resume_thread_id = thread_id.filter(|_| !ephemeral);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
         let turn = SpawnTurnRequest {
@@ -1609,10 +1632,8 @@ impl RuntimeWorkRpcHandler {
             ));
         };
 
-        let client = match self
-            .codex_app_server
-            .for_request(&runtime_event_request_from_link(&link))
-        {
+        let request = context_compaction_request(&link, &payload)?;
+        let client = match self.codex_app_server.for_request(&request) {
             Ok(client) => client,
             Err(error) => return Ok(task_action_failure(&link, error)),
         };
@@ -1621,7 +1642,7 @@ impl RuntimeWorkRpcHandler {
         client
             .run_owned_thread_action(thread_id.clone(), async move {
                 handler
-                    .compact_codex_task(&action_client, &link, &local_task_id, &thread_id)
+                    .compact_codex_task(&action_client, &link, &local_task_id, &thread_id, request)
                     .await
             })
             .await
@@ -1634,6 +1655,7 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         local_task_id: &str,
         thread_id: &str,
+        request: ExecutionRequest,
     ) -> Result<Value, AppIpcError> {
         let thread_id = match self
             .resume_codex_thread_with_client(client, link, thread_id)
@@ -1642,7 +1664,6 @@ impl RuntimeWorkRpcHandler {
             Ok(resumed_thread_id) => resumed_thread_id,
             Err(error) => return Ok(task_action_failure(link, error)),
         };
-        let request = runtime_event_request_from_link(link);
         // The compaction turn answers through the local model route, which only
         // exists while a turn that registered it is alive. Register it for the
         // duration of this action so compacting an idle thread still reaches a
@@ -1947,6 +1968,12 @@ impl RuntimeWorkRpcHandler {
         if queued_turn
             .request
             .extra
+            .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
+        {
+            self.start_queued_turn(queued_turn);
+        } else if queued_turn
+            .request
+            .extra
             .contains_key("deferred_worktree_source_path")
         {
             self.prepare_and_start_reserved_turn(queued_turn).await?;
@@ -2057,7 +2084,7 @@ impl RuntimeWorkRpcHandler {
                 clear_completed_transcript_messages(&mut link.runtime_handle);
                 clear_transcript_snapshot_messages(&mut link.runtime_handle);
             }
-            link.thread_id = Some(thread_id.to_owned());
+            link.thread_id = (!thread_id.is_empty()).then(|| thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);
             if let Some(presentation) = presentation.clone() {
                 append_runtime_handle_user_message_presentation(
@@ -2082,6 +2109,7 @@ impl RuntimeWorkRpcHandler {
             }
             link.updated_at = now_ms();
             set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
+            apply_runtime_profile_handle(&mut link.runtime_handle, payload);
             link.interaction_status = None;
         });
         if updated.is_some() {
@@ -2100,10 +2128,32 @@ impl RuntimeWorkRpcHandler {
         link.project_instructions = request.system_prompt.clone();
         link.project_plugin_ids = project_plugin_ids(request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
+        apply_runtime_profile_handle(&mut link.runtime_handle, payload);
         if let Some(presentation) = presentation {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
         self.upsert_local_task(link);
+    }
+}
+
+fn apply_runtime_profile_handle(runtime_handle: &mut Value, payload: &Value) {
+    if let (Some(handle), Some(profile)) = (
+        runtime_handle.as_object_mut(),
+        payload
+            .get("runtimeHandle")
+            .or_else(|| payload.get("runtime_handle"))
+            .and_then(Value::as_object),
+    ) {
+        for key in [
+            "wegentTeam",
+            COLLABORATION_MANAGER_CONTEXT_KEY,
+            "collaborationDispatchTaskId",
+            "collaborationMemberRuntimeProfiles",
+        ] {
+            if let Some(value) = profile.get(key) {
+                handle.insert(key.to_owned(), value.clone());
+            }
+        }
     }
 }
 

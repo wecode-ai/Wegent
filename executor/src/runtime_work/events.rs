@@ -2751,7 +2751,7 @@ mod tests {
         };
 
         emit_response_event(
-            &Some(event_tx),
+            &Some(event_tx.clone()),
             "device-1",
             "response.created",
             "local-task-1",
@@ -2768,6 +2768,20 @@ mod tests {
             "continue from dingtalk"
         );
         assert!(event["payload"]["eventSeq"].as_u64().unwrap_or_default() > 0);
+        for event_type in ["response.output_text.delta", "response.completed"] {
+            emit_response_event(
+                &Some(event_tx.clone()),
+                "device-1",
+                event_type,
+                "local-task-1",
+                &request,
+                json!({}),
+            );
+            let event = event_rx.try_recv().expect("followup response event");
+            assert_eq!(event["payload"]["taskId"], "local-task-1");
+            assert_eq!(event["payload"]["subtaskId"], "codex-turn-1");
+            assert_eq!(event["payload"]["clientUserMessageId"], "client-user-1");
+        }
     }
 
     #[test]

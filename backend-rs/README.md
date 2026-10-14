@@ -12,30 +12,33 @@ every other request is forwarded to Python.
 
 ## Run
 
-`backend/start.sh` remains unchanged as the standalone Python entry point. The
-repository-level `start.sh` selects the Backend mode:
+Both `backend/start.sh` and the repository-level `start.sh` default to hybrid
+mode: Rust listens on `0.0.0.0:8000` and Python on `127.0.0.1:8004`.
 
 ```bash
-# Existing behavior: Python listens on 0.0.0.0:8000.
+# Start only the Backend from the repository root.
+./start.sh backend
+
+# Or start from the backend directory, including uv dependency setup.
+cd backend
 ./start.sh
 
-# Hybrid behavior: Rust listens on 0.0.0.0:8000 and Python on 127.0.0.1:8004.
-WEGENT_BACKEND_MODE=hybrid ./start.sh backend
+# Python-only debugging; Rust-owned APIs are unavailable in this mode.
+WEGENT_BACKEND_MODE=python ./start.sh
 ```
 
-The repository-level launcher resolves the backend directory from
-`WEGENT_BACKEND_RS_DIR`. Set it to `backend-rs` to run this directory:
+Both launchers resolve the Rust backend directory from `WEGENT_BACKEND_RS_DIR`,
+which defaults to `backend-rs`. To select a different Rust backend, run from the
+repository root:
 
 ```bash
-WEGENT_BACKEND_MODE=hybrid \
-WEGENT_BACKEND_RS_DIR=backend-rs \
-./start.sh backend
+WEGENT_BACKEND_RS_DIR=backend-rs-internal ./start.sh backend
 ```
 
 The selected directory must contain an executable
 `scripts/start-hybrid-backend.sh` launcher.
 
-In hybrid mode the root script delegates Backend process supervision to
+In hybrid mode both scripts delegate Backend process supervision to
 `backend-rs/scripts/start-hybrid-backend.sh`, which builds and runs the
 optimized Cargo release profile by default. Set `WEGENT_PYTHON_UPSTREAM_PORT`
 to override the script's Python upstream port; its default is `8004`.

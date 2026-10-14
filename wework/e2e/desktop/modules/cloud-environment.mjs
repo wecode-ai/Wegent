@@ -791,6 +791,8 @@ class RealCloudEnvironment {
       DEVICE_SESSION_GATEWAY_PORT: '0',
     }
     for (const key of [
+      'WORKSPACE_ROOT',
+      'WEGENT_WORKSPACE_ROOT',
       'WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED',
       'WEGENT_WORKBENCH_HOME',
       'WEGENT_CAPABILITIES_HOME',
@@ -866,6 +868,32 @@ class RealCloudEnvironment {
     )
 
     const configured = await this.device(CLOUD_DEVICE_ID)
+    if (configured?.cloud_config?.sandboxId !== MANAGED_CLOUD_SANDBOX_ID) {
+      const user = await fetchJson(`${this.backendUrl}/api/users/me`, {
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      })
+      const stored = await this.queryDatabase(
+        `SELECT id, name, JSON_EXTRACT(json, '$.spec.cloudConfig') AS cloud_config,
+                JSON_EXTRACT(json, '$.spec.deviceType') AS device_type,
+                JSON_EXTRACT(json, '$.spec.isDefault') AS is_default,
+                JSON_TYPE(JSON_EXTRACT(json, '$.spec.isDefault')) AS is_default_type
+         FROM kinds WHERE kind = 'Device' AND namespace = 'default'
+         AND user_id = %s AND name = %s`,
+        [user.id, CLOUD_DEVICE_ID]
+      )
+      console.error(
+        '[managed-cloud-identity]',
+        JSON.stringify({
+          stored,
+          listed: configured && {
+            id: configured.id,
+            device_type: configured.device_type,
+            cloud_config: configured.cloud_config,
+            is_default: configured.is_default,
+          },
+        })
+      )
+    }
     assert.equal(
       configured?.cloud_config?.sandboxId,
       MANAGED_CLOUD_SANDBOX_ID,
@@ -1100,10 +1128,13 @@ class RealCloudEnvironment {
       codexHome,
       logFile: `duplicate-app-executor-${process.pid}-runtime.log`,
     })
+    assert.ok(appDevice.app_device_id, 'The real App registration must expose its IPC address')
+    env.WEGENT_APP_IPC_DEVICE_ID = appDevice.app_device_id
     const executor = spawn(this.executorBinary, [], {
       cwd: weworkDir,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // App mode owns a real IPC stdio connection and exits when its input closes.
+      stdio: ['pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     })
     this.generatedRemoteExecutors.push(executor)
@@ -1133,6 +1164,8 @@ class RealCloudEnvironment {
       2,
       'The real app Executors did not receive independent record-scoped routes'
     )
+    assert.equal(new Set(matching.map(device => device.runtime_instance_id)).size, 2)
+    assert.ok(matching.every(device => device.app_device_id === appDevice.app_device_id))
     return appDevice
   }
 

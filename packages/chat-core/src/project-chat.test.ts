@@ -36,10 +36,77 @@ describe('createProjectChatClient', () => {
     ensureConnected.mockClear()
   })
 
+  it('resolves missing runner choices and replays the saved comment once', async () => {
+    const request = {
+      runtime: 'codex',
+      execution_policy: { mode: 'user_select' },
+    }
+    const selection = {
+      execution_policy: { mode: 'fixed', environment_id: '41' },
+    }
+    socket.emit
+      .mockImplementationOnce((_event, _payload, ack) =>
+        ack({
+          ok: false,
+          error: {
+            code: 'RUNNER_SELECTION_REQUIRED',
+            message: 'Choose a runner',
+            detail: { runner_selection_request: request },
+          },
+        })
+      )
+      .mockImplementationOnce((_event, _payload, ack) => ack({ ok: true, result: [message] }))
+    const requestRunnerSelection = vi.fn(async () => selection)
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+      requestRunnerSelection,
+    })
+    const input = {
+      projectId: 'project-1',
+      taskId: 'issue-1',
+      triggerMessageId: 'saved-comment',
+      attachmentIds: [],
+      attachments: [
+        {
+          id: -1,
+          filename: 'local.txt',
+          local_path: 'C:\\Evidence\\local.txt',
+          file_size: 4,
+          mime_type: 'text/plain',
+          status: 'ready' as const,
+          file_extension: 'txt',
+          created_at: '',
+        },
+      ],
+    }
+    await expect(client.executeTaskComment!(input)).resolves.toEqual([message])
+    expect(requestRunnerSelection).toHaveBeenCalledWith(request)
+    expect(socket.emit).toHaveBeenCalledTimes(2)
+    expect(socket.emit).toHaveBeenLastCalledWith(
+      'wework:project_chat:comment:execute',
+      {
+        projectId: input.projectId,
+        taskId: input.taskId,
+        triggerMessageId: input.triggerMessageId,
+        attachmentIds: [],
+        runnerSelection: selection,
+      },
+      expect.any(Function)
+    )
+    expect(socket.emit.mock.calls[0]?.[1]).not.toHaveProperty('attachments')
+    expect(input.attachments[0]?.local_path).toBe('C:\\Evidence\\local.txt')
+  })
+
   it('subscribes through the authenticated runtime socket and returns history', async () => {
     socket.emit.mockImplementationOnce((event, payload, ack) => {
       expect(event).toBe('wework:project_chat:subscribe')
-      expect(payload).toEqual({ projectId: 'project-1', taskId: undefined, afterSequence: 3 })
+      expect(payload).toEqual({
+        projectId: 'project-1',
+        taskId: undefined,
+        afterSequence: 3,
+      })
       ack({
         ok: true,
         result: { messages: [message], latestSequence: 7, currentUserId: '1' },
@@ -106,12 +173,20 @@ describe('createProjectChatClient', () => {
   })
 
   it('refreshes the newest message window after reconnecting', async () => {
-    const refreshed = { ...message, content: 'completed content', status: 'completed' as const }
+    const refreshed = {
+      ...message,
+      content: 'completed content',
+      status: 'completed' as const,
+    }
     socket.emit
       .mockImplementationOnce((_event, _payload, ack) =>
         ack({
           ok: true,
-          result: { messages: [message], latestSequence: 7, currentUserId: '1' },
+          result: {
+            messages: [message],
+            latestSequence: 7,
+            currentUserId: '1',
+          },
         })
       )
       .mockImplementationOnce((event, payload, ack) => {
@@ -119,7 +194,11 @@ describe('createProjectChatClient', () => {
         expect(payload.afterSequence).toBe(0)
         ack({
           ok: true,
-          result: { messages: [refreshed], latestSequence: 7, currentUserId: '1' },
+          result: {
+            messages: [refreshed],
+            latestSequence: 7,
+            currentUserId: '1',
+          },
         })
       })
     const onMessage = vi.fn()
@@ -223,7 +302,6 @@ describe('createProjectChatClient', () => {
       })
     ).resolves.toEqual(message)
   })
-
 })
 
 it('requests comment execution using only the saved project comment identity', async () => {

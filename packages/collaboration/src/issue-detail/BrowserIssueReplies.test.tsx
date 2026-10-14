@@ -140,7 +140,9 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
       failAgentResponse: vi.fn(),
     } as unknown as ProjectChatClient
     api = {
-      issues: { get: vi.fn().mockResolvedValue(issue) } as unknown as SharedWorkspaceApi['issues'],
+      issues: {
+        get: vi.fn().mockResolvedValue(issue),
+      } as unknown as SharedWorkspaceApi['issues'],
       attachments: {
         importContexts: vi.fn().mockResolvedValue([
           {
@@ -157,7 +159,11 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
     act(() => root.unmount())
     container.remove()
   })
-  async function mount(show = true, status = run.status) {
+  async function mount(
+    show = true,
+    status = run.status,
+    projectStore: CollaborationProject['project_store'] = project.project_store
+  ) {
     await act(async () =>
       root.render(
         <BrowserTaskDrafts runtime={runtime}>
@@ -167,9 +173,16 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
                 api={api}
                 runtime={runtime}
                 client={client}
-                project={project}
+                project={{ ...project, project_store: projectStore }}
                 issue={issue}
-                agents={[{ id: 'agent-1', name: 'AI', runtime: 'codex', status: 'active' }]}
+                agents={[
+                  {
+                    id: 'agent-1',
+                    name: 'AI',
+                    runtime: 'codex',
+                    status: 'active',
+                  },
+                ]}
                 messages={[user, { ...run, status }]}
                 onMessages={() => {}}
                 canComment
@@ -194,9 +207,7 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
         '[data-testid="collaboration-chat-reply-input-root"]'
       )!
       input.value = text
-      input.dispatchEvent(
-        new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true })
-      )
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true }))
     })
     await act(async () =>
       (
@@ -204,23 +215,26 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
       ).click()
     )
   }
-  it('dispatches through the project service without subscribing to another users personal device', async () => {
-    client.executeTaskComment = vi.fn().mockResolvedValue([run])
-    vi.mocked(runtime.work.listRuntimeWork).mockRejectedValue(
-      new Error('Personal catalog unavailable')
-    )
-    vi.mocked(runtime.subscribe).mockRejectedValue(new Error('Device access denied'))
-    await mount(true, 'completed')
-    await send('Continue this card')
-    expect(client.executeTaskComment).toHaveBeenCalledWith({
-      projectId: project.id,
-      taskId: issue.id,
-      triggerMessageId: 'reply',
-      attachmentIds: [],
-    })
-    expect(runtime.subscribe).not.toHaveBeenCalled()
-    expect(runtime.work.sendRuntimeMessage).not.toHaveBeenCalled()
-  })
+  it.each(['local', 'backend'] as const)(
+    'dispatches %s replies through the project service without subscribing to another users personal device',
+    async projectStore => {
+      client.executeTaskComment = vi.fn().mockResolvedValue([run])
+      vi.mocked(runtime.work.listRuntimeWork).mockRejectedValue(
+        new Error('Personal catalog unavailable')
+      )
+      vi.mocked(runtime.subscribe).mockRejectedValue(new Error('Device access denied'))
+      await mount(true, 'completed', projectStore)
+      await send('Continue this card')
+      expect(client.executeTaskComment).toHaveBeenCalledWith({
+        projectId: project.id,
+        taskId: issue.id,
+        triggerMessageId: 'reply',
+        attachmentIds: [],
+      })
+      expect(runtime.subscribe).not.toHaveBeenCalled()
+      expect(runtime.work.sendRuntimeMessage).not.toHaveBeenCalled()
+    }
+  )
 
   it('keeps the PC queue while busy and continues exactly its original session when live runtime settles', async () => {
     await mount()
@@ -232,7 +246,10 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
     await act(async () => handlers.onAssistantSettled?.('turn-1', 'succeeded'))
     expect(client.send).toHaveBeenCalledOnce()
     expect(client.send).toHaveBeenCalledWith(
-      expect.objectContaining({ replyToMessageId: 'root', text: 'Continue this card' })
+      expect.objectContaining({
+        replyToMessageId: 'root',
+        text: 'Continue this card',
+      })
     )
     expect(runtime.work.sendRuntimeMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -302,7 +319,9 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
   it('preserves the runtime attachment IDs when importing files into the reply comment', async () => {
     await mount()
     const fileInput = container.querySelector<HTMLInputElement>('input[type=file]')!
-    Object.defineProperty(fileInput, 'files', { value: [new File(['a'], 'notes.txt')] })
+    Object.defineProperty(fileInput, 'files', {
+      value: [new File(['a'], 'notes.txt')],
+    })
     await act(async () => fileInput.dispatchEvent(new Event('change', { bubbles: true })))
     await send('Read this')
     await act(async () => handlers.onAssistantSettled?.('turn-1', 'succeeded'))

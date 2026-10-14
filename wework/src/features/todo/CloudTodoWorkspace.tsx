@@ -57,7 +57,7 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import {
   CollaborationSettings,
   CollaborationProjectViewShell,
-  ProjectCollaborationParticipants,
+  createProjectAiTeamSections,
   ProjectAutomaticProcessing,
   ProjectBoardSettingsDialog,
   ProjectCollaborationGroups,
@@ -2082,7 +2082,7 @@ export function CloudTodoWorkspace({
     setCreateTodoParent(null)
     setCreateTodoInitialTitle(undefined)
     selectProject(project)
-    setProjectSettingsSectionId('collaboration-participants')
+    setProjectSettingsSectionId(target)
     setProjectView('manage')
   }
 
@@ -4596,137 +4596,121 @@ export function CloudTodoWorkspace({
                               />
                             ),
                         },
-                        {
-                          id: 'collaboration-participants',
-                          label: t('todo.collaboration_participants', '协作成员'),
-                          testId: 'cloud-project-settings-participants',
-                          content: (
-                            <ProjectCollaborationParticipants
-                              requestedTab={activeAssigneeQuickAddRequest?.target}
+                        ...createProjectAiTeamSections({
+                          translate: (key, fallback, options) =>
+                            fallback === undefined ? t(key, options) : t(key, fallback, options),
+                          membersContent: (
+                            <CollaborationSettings
+                              api={
+                                selectedProject.location === 'cloud'
+                                  ? cloudWorkspaceApi!
+                                  : localProjectManageApi!
+                              }
+                              embedded
+                              project={selectedProject}
+                              quickAddRequest={activeAssigneeQuickAddRequest ?? undefined}
+                              onQuickAddRequestConsumed={consumeAssigneeQuickAddRequest}
+                              section="members"
+                              onChange={updated =>
+                                replaceProject(selectedProject, updated as CloudProject)
+                              }
+                              onError={() =>
+                                setBoardError(
+                                  t('todo.project_members_save_failed', '项目成员保存失败')
+                                )
+                              }
                               translate={(key, fallback, options) =>
                                 fallback === undefined ? t(key, options) : t(key, fallback, options)
                               }
-                              membersContent={
-                                <CollaborationSettings
-                                  api={
-                                    selectedProject.location === 'cloud'
-                                      ? cloudWorkspaceApi!
-                                      : localProjectManageApi!
-                                  }
-                                  embedded
-                                  project={selectedProject}
-                                  quickAddRequest={activeAssigneeQuickAddRequest ?? undefined}
-                                  onQuickAddRequestConsumed={consumeAssigneeQuickAddRequest}
-                                  section="members"
-                                  onChange={updated =>
-                                    replaceProject(selectedProject, updated as CloudProject)
-                                  }
-                                  onError={() =>
-                                    setBoardError(
-                                      t('todo.project_members_save_failed', '项目成员保存失败')
-                                    )
-                                  }
-                                  translate={(key, fallback, options) =>
-                                    fallback === undefined
-                                      ? t(key, options)
-                                      : t(key, fallback, options)
-                                  }
-                                />
+                            />
+                          ),
+                          agentsContent: (
+                            <CollaborationSettings
+                              agentConfigurationHost={projectAgentConfigurationHost}
+                              api={
+                                selectedProject.location === 'cloud'
+                                  ? cloudWorkspaceApi!
+                                  : localProjectManageApi!
                               }
-                              agentsContent={
-                                <CollaborationSettings
-                                  agentConfigurationHost={projectAgentConfigurationHost}
-                                  api={
-                                    selectedProject.location === 'cloud'
-                                      ? cloudWorkspaceApi!
-                                      : localProjectManageApi!
-                                  }
-                                  embedded
-                                  project={selectedProject}
-                                  quickAddRequest={activeAssigneeQuickAddRequest ?? undefined}
-                                  onQuickAddRequestConsumed={consumeAssigneeQuickAddRequest}
-                                  section="agents"
-                                  onChange={updated =>
-                                    replaceProject(selectedProject, updated as CloudProject)
-                                  }
-                                  onError={() =>
-                                    setBoardError(
-                                      t('todo.project_agents_save_failed', '项目智能体保存失败')
-                                    )
-                                  }
-                                  onAgentsChange={() => {
-                                    if (selectedProject.location === 'cloud') {
-                                      void cloudWorkspace.commands.refreshProjectAgents(
-                                        String(selectedProject.id)
-                                      )
-                                      return
-                                    }
-                                    setBoardRefreshNonce(value => value + 1)
-                                  }}
-                                  translate={(key, fallback, options) =>
-                                    fallback === undefined
-                                      ? t(key, options)
-                                      : t(key, fallback, options)
-                                  }
-                                />
+                              embedded
+                              project={selectedProject}
+                              quickAddRequest={activeAssigneeQuickAddRequest ?? undefined}
+                              onQuickAddRequestConsumed={consumeAssigneeQuickAddRequest}
+                              section="agents"
+                              onChange={updated =>
+                                replaceProject(selectedProject, updated as CloudProject)
                               }
-                              groupsContent={
-                                (
-                                  selectedProject.location === 'cloud'
-                                    ? cloudWorkspaceApi?.projects.listCollaborationGroups
-                                    : localProjectManageApi?.projects.listCollaborationGroups
-                                ) ? (
-                                  <ProjectCollaborationGroups
-                                    key={selectedProject.id}
-                                    api={
-                                      selectedProject.location === 'cloud'
-                                        ? cloudWorkspaceApi!
-                                        : localProjectManageApi!
-                                    }
-                                    projectId={String(selectedProject.id)}
-                                    workspaceId={
-                                      selectedProject.workspace_id
-                                        ? String(selectedProject.workspace_id)
-                                        : null
-                                    }
-                                    locale={i18n.language.startsWith('zh') ? 'zh-CN' : 'en'}
-                                    currentUserId={Number(user.id)}
-                                    members={
-                                      collaborationProjectMembers[selectedProjectKey ?? ''] ?? []
-                                    }
-                                    agents={selectedProjectAgents.map(agent => ({
-                                      id: String(agent.id),
-                                      name: agent.name,
-                                      agent_id: String(agent.id),
-                                      ...(agent.wegentTeamId == null
-                                        ? {}
-                                        : { team_id: agent.wegentTeamId }),
-                                    }))}
-                                    canManage={['Owner', 'Maintainer'].includes(
-                                      selectedProject.access_role ?? 'Owner'
-                                    )}
-                                    location={selectedProject.location}
-                                    agentConfiguration={projectAgentConfigurationHost}
-                                    agentResourceContext={{
-                                      name: selectedProject.name,
-                                      namespace: 'default',
-                                    }}
-                                  />
-                                ) : (
-                                  <div
-                                    className="rounded-xl border border-border bg-surface-subtle px-5 py-4 text-sm text-text-muted"
-                                    data-testid="cloud-project-groups-unavailable"
-                                  >
-                                    {t(
-                                      'todo.collaboration_groups_unavailable',
-                                      '协作小组服务当前不可用。'
-                                    )}
-                                  </div>
+                              onError={() =>
+                                setBoardError(
+                                  t('todo.project_agents_save_failed', '项目智能体保存失败')
                                 )
+                              }
+                              onAgentsChange={() => {
+                                if (selectedProject.location === 'cloud') {
+                                  void cloudWorkspace.commands.refreshProjectAgents(
+                                    String(selectedProject.id)
+                                  )
+                                  return
+                                }
+                                setBoardRefreshNonce(value => value + 1)
+                              }}
+                              translate={(key, fallback, options) =>
+                                fallback === undefined ? t(key, options) : t(key, fallback, options)
                               }
                             />
                           ),
-                        },
+                          groupsContent: (
+                            selectedProject.location === 'cloud'
+                              ? cloudWorkspaceApi?.projects.listCollaborationGroups
+                              : localProjectManageApi?.projects.listCollaborationGroups
+                          ) ? (
+                            <ProjectCollaborationGroups
+                              key={selectedProject.id}
+                              api={
+                                selectedProject.location === 'cloud'
+                                  ? cloudWorkspaceApi!
+                                  : localProjectManageApi!
+                              }
+                              projectId={String(selectedProject.id)}
+                              workspaceId={
+                                selectedProject.workspace_id
+                                  ? String(selectedProject.workspace_id)
+                                  : null
+                              }
+                              locale={i18n.language.startsWith('zh') ? 'zh-CN' : 'en'}
+                              currentUserId={Number(user.id)}
+                              members={collaborationProjectMembers[selectedProjectKey ?? ''] ?? []}
+                              agents={selectedProjectAgents.map(agent => ({
+                                id: String(agent.id),
+                                name: agent.name,
+                                agent_id: String(agent.id),
+                                ...(agent.wegentTeamId == null
+                                  ? {}
+                                  : { team_id: agent.wegentTeamId }),
+                              }))}
+                              canManage={['Owner', 'Maintainer'].includes(
+                                selectedProject.access_role ?? 'Owner'
+                              )}
+                              location={selectedProject.location}
+                              agentConfiguration={projectAgentConfigurationHost}
+                              agentResourceContext={{
+                                name: selectedProject.name,
+                                namespace: 'default',
+                              }}
+                            />
+                          ) : (
+                            <div
+                              className="rounded-xl border border-border bg-surface-subtle px-5 py-4 text-sm text-text-muted"
+                              data-testid="cloud-project-groups-unavailable"
+                            >
+                              {t(
+                                'todo.collaboration_groups_unavailable',
+                                '协作小组服务当前不可用。'
+                              )}
+                            </div>
+                          ),
+                          testIdPrefix: 'cloud-project-settings',
+                        }),
                         {
                           id: 'environments',
                           label: t('todo.project_execution_environments', '执行环境'),
@@ -5114,7 +5098,7 @@ export function CloudTodoWorkspace({
                         return (
                           <CloudTodoBoardCard
                             item={item}
-                            unread={isMyTasksBoard ? isTaskBoardItemUnread(item) : undefined}
+                            unread={isMyTasksBoard && isTaskBoardItemUnread(item)}
                             taskBindings={
                               (
                                 selectedProject.location === 'cloud'

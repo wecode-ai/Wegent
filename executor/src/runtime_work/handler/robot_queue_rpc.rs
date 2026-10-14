@@ -91,10 +91,31 @@ impl RuntimeWorkRpcHandler {
                     &[("error", error.to_string())],
                 );
             }
-            let execution = match store.claim_next_execution_for_runtime(
+            let catalog = match store.has_queued_routed_executions() {
+                Ok(true) => match self.runner_catalog().await {
+                    Ok(catalog) => Some(catalog),
+                    Err(error) => {
+                        log_executor_event(
+                            "local runner catalog failed",
+                            &[("error", error.message)],
+                        );
+                        return;
+                    }
+                },
+                Ok(false) => None,
+                Err(error) => {
+                    log_executor_event(
+                        "local queue inspection failed",
+                        &[("error", error.to_string())],
+                    );
+                    return;
+                }
+            };
+            let execution = match store.claim_next_execution_with_catalog(
                 Some(&self.device_id),
                 &self.device_id,
                 LOCAL_ISSUE_LEASE_SECONDS,
+                catalog.as_ref(),
             ) {
                 Ok(Some(execution)) => execution,
                 Ok(None) => return,
@@ -107,19 +128,26 @@ impl RuntimeWorkRpcHandler {
                 }
             };
             let runtime_task_id = execution.runtime_task_id.clone().unwrap_or_default();
-            let Some(payload) = execution.execution_payload.clone() else {
+            let Some(mut payload) = execution.execution_payload.clone() else {
                 let _ = store.fail_runtime_preflight(
                     execution.id,
                     "Claimed local Issue has no Runtime payload",
                 );
                 continue;
             };
-            if execution_request(&payload).is_none() {
-                let _ = store.fail_runtime_preflight(
-                    execution.id,
-                    "Claimed local Issue has no materialized executionRequest",
-                );
-                continue;
+            let is_reply = payload.get("runtimeAction").and_then(Value::as_str) == Some("send");
+            if !is_reply {
+                if let Err(error) = self.materialize_runner_cloud_models(&mut payload).await {
+                    let _ = store.fail_runtime_preflight(execution.id, &error.message);
+                    continue;
+                }
+                if execution_request(&payload).is_none() {
+                    let _ = store.fail_runtime_preflight(
+                        execution.id,
+                        "Claimed local Issue has no materialized executionRequest",
+                    );
+                    continue;
+                }
             }
             let start_requested = store
                 .request_runtime_start(
@@ -134,7 +162,12 @@ impl RuntimeWorkRpcHandler {
             if !start_requested {
                 continue;
             }
-            match self.create_task(payload).await {
+            let result = if is_reply {
+                self.send_message(payload).await
+            } else {
+                self.create_task(payload).await
+            };
+            match result {
                 Ok(response)
                     if response.get("accepted").and_then(Value::as_bool) == Some(true)
                         && response.get("taskId").and_then(Value::as_str)

@@ -1,7 +1,10 @@
 import type { ProjectChatMessage } from "@wegent/chat-core";
 import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
 import type { RuntimePaneQueuedMessage } from "@wegent/chat-core/conversation-queue";
-import { remoteAttachmentIds } from "@wegent/chat-core/runtime-attachments";
+import {
+  localRuntimeAttachments,
+  remoteAttachmentIds,
+} from "@wegent/chat-core/runtime-attachments";
 import {
   startTaskAiRun,
   type CommentExecutionTask,
@@ -71,7 +74,6 @@ export interface TaskCardReplyInput<
   reply: RuntimePaneQueuedMessage;
   sessionAddress?: RuntimeTaskAddress | null;
   agent?: { id: string; name: string; systemPrompt?: string; runtime?: string };
-  selfManagedExecution?: boolean;
   prepareComment?(
     text: string,
     attachments: NonNullable<RuntimePaneQueuedMessage["attachments"]>,
@@ -121,8 +123,7 @@ export async function dispatchTaskCardReply<
   };
   if (!reply.content.trim())
     return { ok: false, persisted, error: sendFailedText };
-  const serverExecution =
-    project.project_store === "backend" && client.executeTaskComment;
+  const serverExecution = client.executeTaskComment;
   try {
     const text = input.prepareComment
       ? await input.prepareComment(reply.content, attachments)
@@ -148,16 +149,20 @@ export async function dispatchTaskCardReply<
     if (!serverExecution && !address && agent?.runtime !== "wegent")
       throw new Error(startFailedText);
     if (serverExecution) {
+      const runtimeAttachments = localRuntimeAttachments(attachments);
       const responses = await serverExecution({
         projectId: project.id,
         taskId: task.id,
         triggerMessageId: message.messageId,
         attachmentIds: remoteAttachmentIds(attachments),
+        ...(runtimeAttachments.length
+          ? { attachments: runtimeAttachments }
+          : {}),
       });
       if (previousAgent && responses.length === 0)
         throw new Error(startFailedText);
       onMessages(responses);
-    } else if (agent && (!input.selfManagedExecution || address)) {
+    } else if (agent) {
       if (agent.runtime === "wegent") {
         if (!client.continueWegentTask) throw new Error(startFailedText);
         onMessages([

@@ -67,6 +67,32 @@ provenance or adapter declarations cannot continue using credentials. Ordinary d
 registration, heartbeat, task startup and local offline commands do not require the
 credential service to be configured or online.
 
+### Automatic synchronization records and history cleanup
+
+Automatic synchronization uses `ConnectorMigration` in the `plugin-auth` namespace.
+Backend reuses one database row per user, plugin source, connector and logical device,
+including consumed rows. The next synchronization overwrites that row with a new single-use
+intent ID and expiry. An unconsumed intent is reused while its binding, plugin and authentication
+definition remain valid. Background probes do not continually increase the row count, and
+reinstalling the same plugin source reuses its row. Explicit user authorization intents remain
+independent. This is a Backend change requiring neither a client protocol change nor a DDL migration.
+
+After all Backend instances are deployed, clean up old automatic synchronization history from
+the `backend` directory:
+
+```bash
+# Read-only preview by default; --user-id limits the scope to one user.
+uv run python scripts/compact_plugin_auth_migrations.py
+# Delete at most 1000 rows per batch by default, keeping the latest row per group.
+uv run python scripts/compact_plugin_auth_migrations.py --apply
+```
+
+Cleanup preserves live intents, manual authorization intents and `ConnectorTransfer` escrow.
+Run it again after old live intents expire. To verify, track one user, plugin source, connector
+and device: `id` and `created_at` stay fixed while subsequent synchronization updates `name`,
+`updated_at` and consumption state. Include inactive rows in the query. An unchanged local
+credential may leave the `ConnectorConnection` revision unchanged.
+
 ## Automation and opt-out
 
 The UI has no account-migration panel, device-authorization buttons or automatic-connection

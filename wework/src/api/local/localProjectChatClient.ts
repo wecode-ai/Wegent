@@ -75,11 +75,15 @@ export function createLocalProjectChatClient(
   request: LocalChatRequest,
   options: {
     currentUser: Pick<User, 'id' | 'user_name'>
-    prepareExecutionPayload(input: {
+    prepareExecution?: (input: {
       projectId: string
-      itemId: string
+      taskId: string
       agentId: string
-    }): Promise<Record<string, unknown>>
+      text: string
+      runnerSelection?: Parameters<
+        NonNullable<ProjectChatClient['executeTaskComment']>
+      >[0]['runnerSelection']
+    }) => Promise<Record<string, unknown>>
   }
 ): ProjectChatClient {
   const currentUserId = String(options.currentUser.id)
@@ -172,27 +176,69 @@ export function createLocalProjectChatClient(
         reply_to_message_id: input.replyToMessageId ?? null,
       },
     })
-    const agentMention = mentions.find(mention => mention.type === 'agent')
-    if (agentMention && !input.replyToMessageId) {
-      const runtimePayload = await options.prepareExecutionPayload({
-        projectId: input.projectId,
-        itemId: input.taskId ?? '',
-        agentId: agentMention.id,
-      })
+    return commentToMessage(created)
+  }
+
+  const executeTaskComment: ProjectChatClient['executeTaskComment'] = async input => {
+    const records = await request<LocalCommentRecord[]>('todos.comment.list', {
+      project_id: input.projectId,
+      task_id: input.taskId,
+      after_sequence: 0,
+    })
+    const trigger = records.find(item => item.message_id === input.triggerMessageId)
+    if (!trigger) throw new Error('Comment is unavailable')
+    const rootId = trigger.thread_root_message_id || trigger.reply_to_message_id
+    const target = trigger.reply_to_message_id
+      ? records
+          .filter(
+            item =>
+              item.sender_type === 'agent' &&
+              (item.thread_root_message_id === rootId || item.message_id === rootId)
+          )
+          .at(-1)
+      : undefined
+    if (trigger.reply_to_message_id && !target) return []
+    const mentions = (trigger.metadata.mentions ?? []) as Array<{ type: string; id: string }>
+    const agentIds = target
+      ? [target.sender_id]
+      : [...new Set(mentions.filter(item => item.type === 'agent').map(item => item.id))]
+    for (const agentId of agentIds) {
+      let payload: Record<string, unknown> = { message: trigger.content }
+      if (!target) {
+        if (!options.prepareExecution) throw new Error('Execution configuration is unavailable')
+        payload = await options.prepareExecution({
+          projectId: input.projectId,
+          taskId: input.taskId,
+          agentId,
+          text: trigger.content,
+          runnerSelection: input.runnerSelection,
+        })
+      }
       await request('executions.enqueue', {
         project_id: input.projectId,
-        task_id: input.taskId ?? '',
-        agent_id: agentMention.id,
-        trigger_message_id: created.message_id,
+        task_id: input.taskId,
+        agent_id: agentId,
+        trigger_message_id: trigger.message_id,
         payload: {
-          runtimePayload,
-          text: input.text,
-          trigger_message_id: created.message_id,
-          ...(input.localProjectId != null ? { local_project_id: input.localProjectId } : {}),
+          ...payload,
+          ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
+          ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         },
       })
     }
-    return commentToMessage(created)
+    const updated = await request<LocalCommentRecord[]>('todos.comment.list', {
+      project_id: input.projectId,
+      task_id: input.taskId,
+      after_sequence: trigger.sequence_number,
+    })
+    return updated
+      .filter(
+        record =>
+          record.sender_type === 'agent' &&
+          (record.trigger_message_id === trigger.message_id ||
+            record.reply_to_message_id === trigger.message_id)
+      )
+      .map(commentToMessage)
   }
 
   const startAgentResponse: ProjectChatClient['startAgentResponse'] = async input => {
@@ -222,6 +268,7 @@ export function createLocalProjectChatClient(
   return {
     subscribe,
     send,
+    ...(options.prepareExecution ? { executeTaskComment } : {}),
     startAgentResponse,
     failAgentResponse,
     dispose: () => {

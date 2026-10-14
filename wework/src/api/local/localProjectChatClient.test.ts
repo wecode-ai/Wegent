@@ -3,7 +3,7 @@ import type { LocalCommentRecord } from './localProjectChatClient'
 import { createLocalProjectChatClient } from './localProjectChatClient'
 
 const request = vi.fn()
-const prepareExecutionPayload = vi.fn()
+const prepareExecution = vi.fn()
 
 function commentRecord(overrides: Partial<LocalCommentRecord> = {}): LocalCommentRecord {
   return {
@@ -32,7 +32,7 @@ function commentRecord(overrides: Partial<LocalCommentRecord> = {}): LocalCommen
 describe('createLocalProjectChatClient', () => {
   beforeEach(() => {
     request.mockReset()
-    prepareExecutionPayload.mockReset().mockResolvedValue({
+    prepareExecution.mockReset().mockResolvedValue({
       executionRequest: { task_id: 'prepared-task' },
     })
   })
@@ -41,7 +41,7 @@ describe('createLocalProjectChatClient', () => {
     vi.useRealTimers()
   })
 
-  it('creates a comment and enqueues a robot run when an agent is mentioned', async () => {
+  it('persists a comment before explicitly preparing and enqueueing its run', async () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'todos.comment.create') {
         return commentRecord({
@@ -49,11 +49,21 @@ describe('createLocalProjectChatClient', () => {
           metadata: { mentions: [{ type: 'agent', id: 'a1', label: 'Bot' }] },
         })
       }
+      if (method === 'todos.comment.list')
+        return [
+          commentRecord({
+            content: '@Bot 跑一下',
+            metadata: { mentions: [{ type: 'agent', id: 'a1' }] },
+          }),
+        ]
       return {}
     })
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
+      prepareExecution: vi.fn(async ({ text }) => ({
+        message: text,
+        runnerRouting: { environment_id: 'local-device' },
+      })),
     })
 
     const message = await client.send({
@@ -64,6 +74,13 @@ describe('createLocalProjectChatClient', () => {
       mentions: [{ type: 'agent', id: 'a1', label: 'Bot' }],
     })
 
+    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
+    await client.executeTaskComment!({
+      projectId: 'p1',
+      taskId: 't1',
+      triggerMessageId: message.messageId,
+      attachmentIds: [],
+    })
     expect(message.messageId).toBe('m-1')
     expect(request).toHaveBeenCalledWith(
       'todos.comment.create',
@@ -83,59 +100,60 @@ describe('createLocalProjectChatClient', () => {
         agent_id: 'a1',
         trigger_message_id: 'm-1',
         payload: expect.objectContaining({
-          text: '@Bot 跑一下',
-          runtimePayload: { executionRequest: { task_id: 'prepared-task' } },
+          message: '@Bot 跑一下',
+          runnerRouting: { environment_id: 'local-device' },
         }),
       })
     )
   })
 
-  it('persists replies with agent mentions without enqueuing another execution', async () => {
-    request.mockResolvedValue(commentRecord())
-    const client = createLocalProjectChatClient(request, {
-      currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
-    })
-    await client.send({
-      projectId: 'p1',
-      taskId: 't1',
-      clientMessageId: 'reply-1',
-      text: '再看下内存',
-      replyToMessageId: 'original-thread',
-      mentions: [{ type: 'agent', id: 'a1', label: 'Bot' }],
-    })
-    expect(prepareExecutionPayload).not.toHaveBeenCalled()
-    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
-  })
-
-  it('surfaces preparation and enqueue failures instead of claiming acceptance', async () => {
-    request.mockResolvedValue(commentRecord())
-    const client = createLocalProjectChatClient(request, {
-      currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
-    })
-    const input = {
-      projectId: 'p1',
-      taskId: 't1',
-      clientMessageId: 'root-1',
-      text: '@Bot work',
-      mentions: [{ type: 'agent' as const, id: 'a1', label: 'Bot' }],
+  it.each([undefined, 7])(
+    'queues replies using the persisted thread format (execution %s)',
+    async executionId => {
+      const root = commentRecord({
+        message_id: 'root',
+        sender_type: 'agent',
+        sender_id: 'a1',
+        thread_root_message_id: 'root',
+        metadata: {
+          runtime_address: { deviceId: 'runner-a', taskId: 'session' },
+          ...(executionId ? { execution_id: executionId } : {}),
+        },
+      })
+      const reply = commentRecord({
+        message_id: 'reply',
+        reply_to_message_id: 'root',
+        thread_root_message_id: 'root',
+      })
+      request.mockImplementation(async method =>
+        method === 'todos.comment.list' ? [root, reply] : {}
+      )
+      const prepareExecution = vi.fn(async () => ({
+        runnerRouting: { environment_id: 'runner-a' },
+      }))
+      const client = createLocalProjectChatClient(request, {
+        currentUser: { id: 0, user_name: 'local' },
+        prepareExecution,
+      })
+      await client.executeTaskComment!({
+        projectId: 'p1',
+        taskId: 't1',
+        triggerMessageId: 'reply',
+        attachmentIds: [],
+      })
+      expect(prepareExecution).not.toHaveBeenCalled()
+      expect(request).toHaveBeenCalledWith(
+        'executions.enqueue',
+        expect.objectContaining({ agent_id: 'a1', trigger_message_id: 'reply' })
+      )
     }
-    prepareExecutionPayload.mockRejectedValueOnce(new Error('Environment not ready'))
-    await expect(client.send(input)).rejects.toThrow('Environment not ready')
-    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
-    request.mockImplementation(async method => {
-      if (method === 'executions.enqueue') throw new Error('Queue rejected')
-      return commentRecord()
-    })
-    await expect(client.send(input)).rejects.toThrow('Queue rejected')
-  })
+  )
 
   it('does not enqueue a run without an agent mention', async () => {
     request.mockResolvedValue(commentRecord())
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
+      prepareExecution,
     })
 
     await client.send({
@@ -146,6 +164,83 @@ describe('createLocalProjectChatClient', () => {
     })
 
     expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
+  })
+
+  it('surfaces preparation and enqueue failures from explicit execution', async () => {
+    const trigger = commentRecord({ metadata: { mentions: [{ type: 'agent', id: 'a1' }] } })
+    request.mockImplementation(async method =>
+      method === 'todos.comment.list' ? [trigger] : trigger
+    )
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+      prepareExecution,
+    })
+    const input = { projectId: 'p1', taskId: 't1', triggerMessageId: trigger.message_id }
+    prepareExecution.mockRejectedValueOnce(new Error('Environment not ready'))
+    await expect(client.executeTaskComment!(input)).rejects.toThrow('Environment not ready')
+    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
+    request.mockImplementation(async method => {
+      if (method === 'executions.enqueue') throw new Error('Queue rejected')
+      return [trigger]
+    })
+    await expect(client.executeTaskComment!(input)).rejects.toThrow('Queue rejected')
+  })
+
+  it('never schedules an agent mentioned in a discussion reply', async () => {
+    const root = commentRecord({ message_id: 'root' })
+    const reply = commentRecord({
+      message_id: 'reply',
+      reply_to_message_id: 'root',
+      thread_root_message_id: 'root',
+      metadata: { mentions: [{ type: 'agent', id: 'a1' }] },
+    })
+    request.mockResolvedValue([root, reply])
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+      prepareExecution,
+    })
+    await expect(
+      client.executeTaskComment!({
+        projectId: 'p1',
+        taskId: 't1',
+        triggerMessageId: 'reply',
+      })
+    ).resolves.toEqual([])
+    expect(prepareExecution).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
+  })
+
+  it('passes runner selection and both attachment kinds to the single execution request', async () => {
+    const trigger = commentRecord({ metadata: { mentions: [{ type: 'agent', id: 'a1' }] } })
+    request.mockImplementation(async method => (method === 'todos.comment.list' ? [trigger] : {}))
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+      prepareExecution,
+    })
+    const runnerSelection = {
+      execution_policy: { mode: 'fixed' as const, environment_id: 'runner-a' },
+    }
+    const attachment = {
+      id: -1,
+      filename: 'evidence.txt',
+      local_path: 'C:\\Evidence\\evidence.txt',
+    }
+    await client.executeTaskComment!({
+      projectId: 'p1',
+      taskId: 't1',
+      triggerMessageId: trigger.message_id,
+      runnerSelection,
+      attachmentIds: [42],
+      attachments: [attachment as never],
+    })
+    expect(prepareExecution).toHaveBeenCalledWith(expect.objectContaining({ runnerSelection }))
+    expect(request).toHaveBeenCalledWith(
+      'executions.enqueue',
+      expect.objectContaining({
+        payload: expect.objectContaining({ attachmentIds: [42], attachments: [attachment] }),
+      })
+    )
+    expect(request.mock.calls.filter(([method]) => method === 'executions.enqueue')).toHaveLength(1)
   })
 
   it('persists a continued turn on the existing runtime session', async () => {
@@ -165,7 +260,7 @@ describe('createLocalProjectChatClient', () => {
     )
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
+      prepareExecution,
     })
 
     const response = await client.startAgentResponse({
@@ -196,7 +291,37 @@ describe('createLocalProjectChatClient', () => {
     expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
-  it('carries the selected local code project into the comment and enqueue payload', async () => {
+  it('returns only the accepted execution for this trigger, not unrelated concurrent comments', async () => {
+    const trigger = commentRecord({ metadata: { mentions: [{ type: 'agent', id: 'a1' }] } })
+    const response = commentRecord({
+      message_id: 'agent-turn',
+      sender_type: 'agent',
+      sender_id: 'a1',
+      trigger_message_id: trigger.message_id,
+      reply_to_message_id: trigger.message_id,
+      status: 'pending',
+      sequence_number: 2,
+    })
+    request.mockImplementation(async (method, params) => {
+      if (method !== 'todos.comment.list') return {}
+      return params.after_sequence
+        ? [response, commentRecord({ message_id: 'discussion', sequence_number: 3 })]
+        : [trigger]
+    })
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+      prepareExecution,
+    })
+    await expect(
+      client.executeTaskComment!({
+        projectId: 'p1',
+        taskId: 't1',
+        triggerMessageId: trigger.message_id,
+      })
+    ).resolves.toEqual([expect.objectContaining({ messageId: response.message_id })])
+  })
+
+  it('keeps the composer code project on the saved comment', async () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'todos.comment.create') {
         return commentRecord({
@@ -211,7 +336,7 @@ describe('createLocalProjectChatClient', () => {
     })
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
+      prepareExecution,
     })
 
     await client.send({
@@ -231,12 +356,7 @@ describe('createLocalProjectChatClient', () => {
         }),
       })
     )
-    expect(request).toHaveBeenCalledWith(
-      'executions.enqueue',
-      expect.objectContaining({
-        payload: expect.objectContaining({ local_project_id: 91 }),
-      })
-    )
+    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
   it('delivers initial comments and polls for status updates', async () => {
@@ -264,7 +384,7 @@ describe('createLocalProjectChatClient', () => {
 
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
+      prepareExecution,
     })
     const onMessage = vi.fn()
     const subscription = await client.subscribe('p1', 't1', 0, onMessage)
@@ -302,7 +422,7 @@ describe('createLocalProjectChatClient', () => {
 
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
+      prepareExecution,
     })
     const onMessage = vi.fn()
     const subscription = await client.subscribe('p1', 't1', 0, onMessage)
@@ -342,7 +462,7 @@ describe('createLocalProjectChatClient', () => {
     ])
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
+      prepareExecution,
     })
 
     const subscription = await client.subscribe('p1', 't1', 0, () => {})
@@ -366,7 +486,7 @@ describe('createLocalProjectChatClient', () => {
     ])
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
+      prepareExecution,
     })
     const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
     expect(subscription.snapshot.messages[0]).toMatchObject({
@@ -380,7 +500,7 @@ describe('createLocalProjectChatClient', () => {
     request.mockRejectedValue(new Error('Local activity database unavailable'))
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
-      prepareExecutionPayload,
+      prepareExecution,
     })
     await expect(client.subscribe('p1', 't1', 0, vi.fn())).rejects.toThrow(
       'Local activity database unavailable'

@@ -13,9 +13,9 @@ import {
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createLocalCollaborationProject,
-  initializeFirstProjectExecutionEnvironment,
+  configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
-  selectWhenOptionAvailable,
+  selectProjectRunnerModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
@@ -93,12 +93,7 @@ async function addAgent(control, name, prompt, timeoutMs) {
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: name,
   })
-  await selectWhenOptionAvailable(
-    control,
-    '[data-testid="cloud-project-chat-agent-model"]',
-    MODEL,
-    timeoutMs
-  )
+  await selectProjectRunnerModel(control, timeoutMs)
   await control.command('click', '[data-testid="cloud-project-chat-agent-editor-advanced-toggle"]')
   await control.command('fill', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
     value: prompt,
@@ -122,6 +117,7 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
   )
   const agentId = rowTestId.slice('project-agent-row-'.length)
   await control.command('click', scoped(`[data-testid="project-agent-edit-${agentId}"]`))
+  await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-runtime"]')
   await control.command('waitFor', '[data-testid="cloud-project-chat-agent-models"]', {
     timeoutMs,
   })
@@ -138,6 +134,7 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
     'scrollIntoView',
     `[data-testid="cloud-project-chat-agent-model-${ALTERNATE_MODEL}"]`
   )
+  await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-basic"]')
   await control.command('fill', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
     value: `${REVIEWER_ROLE_MARKER}。你是当前设备上的执行成员，只完成负责人分配的复核任务并返回证据。`,
   })
@@ -157,7 +154,7 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
 }
 
 async function createCoordinateGroup(control, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-participants-tab-groups"]'))
+  await control.command('click', scoped('[data-testid="collaboration-project-settings-groups"]'))
   await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
   await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
     timeoutMs,
@@ -304,6 +301,11 @@ async function waitForCompletedMemberTasks(control, expected, timeoutMs) {
     completed = 0
     for (const taskSummaryTestId of taskSummaryTestIds) {
       const activityId = taskSummaryTestId.slice('cloud-task-activity-task-summary-'.length)
+      const title = await control.command(
+        'getText',
+        scoped(`[data-testid="cloud-task-activity-task-title-${activityId}"]`)
+      )
+      if (![FIRST_TASK, SECOND_TASK, THIRD_TASK].includes(title.trim())) continue
       const badgeTestId = `cloud-task-activity-execution-badge-${activityId}`
       if (!snapshot.testIds.includes(badgeTestId)) continue
       const badge = await control.command('getText', `[data-testid="${badgeTestId}"]`)
@@ -514,16 +516,13 @@ export async function createDesktopScenario({
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
-      await initializeFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
+      await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
 
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-participants"]')
-      )
-      await control.command(
-        'click',
-        scoped('[data-testid="collaboration-participants-tab-agents"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
       await addAgent(
         control,

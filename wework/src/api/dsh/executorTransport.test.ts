@@ -26,6 +26,7 @@ describe('DSH executor transport', () => {
               executor: {
                 protocol_version: 1,
                 device_id: 'device-1',
+                runtime_instance_id: 'runtime-1',
                 capabilities: ['runtime.tasks'],
                 renderer_methods: ['runtime.*'],
                 transports: ['local-endpoint-ndjson'],
@@ -38,9 +39,36 @@ describe('DSH executor transport', () => {
 
     await expect(describeDshExecutor()).resolves.toMatchObject({
       device_id: 'device-1',
+      runtime_instance_id: 'runtime-1',
       capabilities: ['runtime.tasks'],
     })
   })
+
+  test.each([undefined, null, '', '  ', 1])(
+    'rejects a managed executor with invalid Runtime identity %s',
+    async runtimeInstanceId => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                protocolVersion: 1,
+                executor: {
+                  protocol_version: 1,
+                  device_id: 'device-1',
+                  runtime_instance_id: runtimeInstanceId,
+                },
+              })
+            )
+        )
+      )
+      await expect(describeDshExecutor()).rejects.toMatchObject({
+        code: 'protocol_mismatch',
+        message: 'DSH executor returned a missing or invalid Runtime identity',
+      })
+    }
+  )
 
   test('sends RPC through the same-origin runtime route', async () => {
     const fetchMock = vi.fn(

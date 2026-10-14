@@ -1,3 +1,9 @@
+import type { RunnerSelection } from '@wegent/collaboration'
+import type {
+  AgentExecutionPolicy,
+  AgentModelPolicy,
+  RunnerEnvironment,
+} from '@wegent/collaboration'
 import {
   createProjectTaskTrackingSingleFlight,
   DEFAULT_WORK_ITEM_PROJECT_ID,
@@ -27,6 +33,7 @@ import type {
   ModelSelectionConfig,
   RuntimeProjectPluginRef,
   RuntimeTaskAddress,
+  UnifiedModel,
 } from '@/types/api'
 import type { UnifiedAgentSkillRef } from '@/api/agentDefinition'
 import {
@@ -47,6 +54,7 @@ export interface LocalAssignmentExecutionPayloadInput {
   itemId: string
   assigneeType: 'agent' | 'group'
   assigneeId: string
+  runnerSelection?: RunnerSelection
 }
 
 interface LocalDeliveryApiOptions {
@@ -124,6 +132,8 @@ interface LocalAccessRecord {
 }
 
 export interface LocalProjectChatAgent {
+  executionPolicy?: AgentExecutionPolicy
+  modelPolicy?: AgentModelPolicy
   id: string
   projectId: string
   name: string
@@ -162,6 +172,8 @@ export interface LocalProjectChatAgentModel {
 }
 
 export interface LocalProjectChatAgentCreateInput {
+  executionPolicy?: AgentExecutionPolicy
+  modelPolicy?: AgentModelPolicy
   name: string
   displayName?: string
   namespace?: string
@@ -439,6 +451,8 @@ export function createExternalIssueApi(request: LocalRequest) {
 }
 
 type LocalAgentRecord = Record<string, unknown> & {
+  execution_policy?: AgentExecutionPolicy
+  model_policy?: AgentModelPolicy
   id: string
   project_id?: string
   name?: string
@@ -484,6 +498,8 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     displayName: record.display_name ?? record.name ?? 'AI',
     namespace: record.namespace ?? 'default',
     runtime: record.runtime === 'claude_code' ? 'claude_code' : 'codex',
+    executionPolicy: record.execution_policy,
+    modelPolicy: record.model_policy,
     model: record.model ?? null,
     modelType: record.model_type ?? null,
     modelNamespace: record.model_namespace ?? 'default',
@@ -540,12 +556,21 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
   }
 }
 
-export function createLocalProjectChatAgentApi(request: LocalRequest, currentUserId?: number) {
+export function createLocalProjectChatAgentApi(
+  request: LocalRequest,
+  currentUserId?: number,
+  listRunnerEnvironments: (projectId?: string) => Promise<RunnerEnvironment[]> = async () => {
+    throw new Error('Runner catalog is unavailable')
+  },
+  listModels: () => Promise<UnifiedModel[]> = async () => []
+) {
   const createPayload = (input: LocalProjectChatAgentCreateInput) => ({
     name: input.name,
     display_name: input.displayName ?? input.name,
     namespace: input.namespace ?? 'default',
     runtime: input.runtime,
+    execution_policy: input.executionPolicy,
+    model_policy: input.modelPolicy,
     model: input.model ?? null,
     model_type: input.modelType ?? null,
     model_namespace: input.modelNamespace ?? 'default',
@@ -566,6 +591,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
     created_by_user_id: currentUserId ?? null,
   })
   return {
+    listRunnerEnvironments,
+    listModels,
     async list(projectId: string): Promise<LocalProjectChatAgent[]> {
       const records = await request<LocalAgentRecord[]>('chat_agents.list', {
         project_id: projectId,
@@ -597,6 +624,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       agentId: string,
       input: {
         version: number
+        executionPolicy?: AgentExecutionPolicy
+        modelPolicy?: AgentModelPolicy
         runtime?: 'codex' | 'claude_code'
         name?: string
         displayName?: string
@@ -630,6 +659,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           display_name: input.displayName,
           namespace: input.namespace,
           runtime: input.runtime,
+          execution_policy: input.executionPolicy,
+          model_policy: input.modelPolicy,
           model: input.model,
           model_type: input.modelType,
           model_namespace: input.modelNamespace,
@@ -774,6 +805,7 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
   const storedTags = stringList(record.metadata.tags)
   const localProjectAssociation = localProjectAssociationFromTags(storedTags)
   return {
+    runner_binding: record.metadata.runner_binding as CloudLoopItem['runner_binding'],
     id: record.id,
     cloud_project_id: record.cloud_project_id ?? '',
     sequence_number: record.sequence_number ?? 0,
@@ -1215,6 +1247,7 @@ export function createLocalDeliveryApi(
         version: number
         assigneeType: 'user' | 'agent' | 'team' | 'group'
         assigneeId: string
+        runnerSelection?: RunnerSelection
         notifyAssignee?: boolean
       }
     ) {
@@ -1233,6 +1266,7 @@ export function createLocalDeliveryApi(
               itemId,
               assigneeType: data.assigneeType,
               assigneeId: data.assigneeId,
+              runnerSelection: data.runnerSelection,
             })
           : null
       const record = await request<LocalLoopItemRecord>('todos.update', {

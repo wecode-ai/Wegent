@@ -49,7 +49,11 @@ fn issue_creation_enqueues_locally_and_survives_reopening() {
     assert_eq!(executions[0].agent_runtime, "claude_code");
     let claimed = claim(&store);
     let payload = claimed.execution_payload.as_ref().unwrap();
-    assert_eq!(payload["projectId"], 7);
+    assert!(payload.get("projectId").is_none());
+    assert_eq!(
+        payload["execution"]["environment"]["environmentId"],
+        project_id
+    );
     assert_eq!(payload["origin"]["projectStore"], "local");
     assert_eq!(payload["standaloneChatWorkspace"], false);
     assert_eq!(task.status.as_deref(), Some("in_progress"));

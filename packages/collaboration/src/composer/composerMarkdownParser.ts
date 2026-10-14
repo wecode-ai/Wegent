@@ -61,14 +61,19 @@ export function parseComposerMarkdown(
         >
       )[node.type];
       if (markName && "children" in node) {
-        return inline(node.children as PhrasingContent[], [
-          ...marks,
-          schema.marks[markName].create(),
-        ]);
+        return inline(
+          node.children as PhrasingContent[],
+          schema.marks[markName].create().addToSet(marks),
+        );
       }
       if (node.type === "inlineCode")
         return node.value
-          ? [schema.text(node.value, [...marks, schema.marks.code.create()])]
+          ? [
+              schema.text(
+                node.value,
+                schema.marks.code.create().addToSet(marks),
+              ),
+            ]
           : [];
       if (
         node.type === "break" ||
@@ -83,13 +88,12 @@ export function parseComposerMarkdown(
             content.push(
               child.mark(
                 child.isText
-                  ? [
-                      ...marks,
-                      schema.marks.link.create({
+                  ? schema.marks.link
+                      .create({
                         href: node.url,
                         autolink: true,
-                      }),
-                    ]
+                      })
+                      .addToSet(marks)
                   : marks,
               ),
             ),
@@ -104,17 +108,23 @@ export function parseComposerMarkdown(
         ) {
           return [chips.firstChild.mark(marks)];
         }
-        return inline(node.children, [
-          ...marks,
-          schema.marks.link.create({ href: node.url, title: node.title }),
-        ]);
+        return inline(
+          node.children,
+          schema.marks.link
+            .create({ href: node.url, title: node.title })
+            .addToSet(marks),
+        );
       }
       const text = node.type === "text" ? node.value : raw(node);
       const result: PMNode[] = [];
       plainDocument(text).forEach((paragraph, _offset, index) => {
         if (index) result.push(schema.nodes.hard_break.create());
         paragraph.forEach((child) =>
-          result.push(child.mark([...marks, ...child.marks])),
+          result.push(
+            child.mark(
+              child.marks.reduce((set, mark) => mark.addToSet(set), marks),
+            ),
+          ),
         );
       });
       return result;

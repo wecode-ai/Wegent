@@ -25,6 +25,11 @@ import {
   X,
 } from "lucide-react";
 
+import { useDeviceCatalog, type DeviceCatalogState } from "./useDeviceCatalog";
+import { DeviceCatalogFeedback } from "./DeviceCatalogFeedback";
+import { ensureWorkspaceEnvironmentSharing } from "../execution-environment/ensureWorkspaceEnvironmentSharing";
+import type { CollaborationTranslate } from "../i18n";
+
 import { CollaborationApp } from "../CollaborationApp";
 import { ProjectLoadingSkeleton } from "../project-shell";
 import { ActionMenu } from "../controls/ActionMenu";
@@ -66,7 +71,6 @@ import {
 } from "../project-manage";
 import type {
   CollaborationExecutionEnvironment,
-  CollaborationExecution,
   CollaborationGroup,
   CollaborationIssue,
   CollaborationMember,
@@ -174,8 +178,6 @@ const platformMessages = {
     noCloudAgents: "云端还没有智能体",
     noLocalTeams: "当前设备还没有协作小组",
     noCloudTeams: "云端还没有协作小组",
-    noLocalDevices: "当前没有本地设备",
-    noCloudDevices: "当前没有云端设备",
     collaborationHome: "协作首页",
     collaborationHomeHint: "继续推进你和团队正在进行的工作。",
     issueHomeTitle: "今天要推进什么？",
@@ -194,16 +196,11 @@ const platformMessages = {
     issueGuideReviewHint: "沉淀备选方案、关键取舍和待确认事项。",
     issueGuideResearch: "整理调研与决策",
     issueGuideResearchHint: "汇总背景、证据、结论和后续行动。",
-    myWork: "我的工作",
     inbox: "收件箱",
-    runCenter: "运行中心",
     needsYourAction: "需要你处理",
     activeWork: "进行中的工作",
     recentProjects: "最近访问",
-    noActiveWork: "当前没有正在推进的工作",
-    noActiveWorkHint: "可以进入最近项目创建 Issue，或查看已有工作。",
     noInboxItems: "当前没有需要你处理的事项",
-    noRuns: "当前没有执行记录",
     currentOwner: "当前负责人",
     currentStep: "当前步骤",
     runStatus: "运行状态",
@@ -394,8 +391,6 @@ const platformMessages = {
     noCloudAgents: "No cloud agents yet",
     noLocalTeams: "No local teams yet",
     noCloudTeams: "No cloud teams yet",
-    noLocalDevices: "No local devices",
-    noCloudDevices: "No cloud devices",
     collaborationHome: "Collaboration home",
     collaborationHomeHint: "Keep your team's active work moving.",
     issueHomeTitle: "What should we move forward today?",
@@ -420,17 +415,11 @@ const platformMessages = {
     issueGuideResearch: "Turn research into a decision",
     issueGuideResearchHint:
       "Summarize context, evidence, conclusions, and next actions.",
-    myWork: "My work",
     inbox: "Inbox",
-    runCenter: "Run center",
     needsYourAction: "Needs your action",
     activeWork: "Work in progress",
     recentProjects: "Recently visited",
-    noActiveWork: "No work is currently in progress",
-    noActiveWorkHint:
-      "Open a recent project to create an issue or review existing work.",
     noInboxItems: "Nothing needs your attention right now",
-    noRuns: "No execution records yet",
     currentOwner: "Current owner",
     currentStep: "Current step",
     runStatus: "Run status",
@@ -1265,6 +1254,8 @@ function ResourceCatalogPage({
   agents,
   groups,
   environments,
+  deviceCatalog,
+  translate,
   canCreateDevice,
   workspaces,
   projects,
@@ -1286,6 +1277,8 @@ function ResourceCatalogPage({
   agents: CollaborationOwnedAgent[];
   groups: CollaborationGroup[];
   environments: CollaborationExecutionEnvironment[];
+  deviceCatalog?: DeviceCatalogState;
+  translate: CollaborationTranslate;
   canCreateDevice: boolean;
   workspaces: CollaborationWorkspace[];
   projects: CollaborationProject[];
@@ -1620,7 +1613,7 @@ function ResourceCatalogPage({
     id: environment.id,
     name: environment.name,
     source:
-      environment.kind === "local_device"
+      environment.is_current_device === true
         ? ("local" as const)
         : ("cloud" as const),
     scope:
@@ -1710,7 +1703,11 @@ function ResourceCatalogPage({
         <span className="collaboration-resource-collection-copy">
           <span>
             <h1>{pageCopy.title}</h1>
-            <em>{rowsInSource.length}</em>
+            <em>
+              {deviceCatalog && !deviceCatalog.complete && !rowsInSource.length
+                ? "—"
+                : rowsInSource.length}
+            </em>
           </span>
           <p>{pageCopy.hint}</p>
         </span>
@@ -1748,7 +1745,11 @@ function ResourceCatalogPage({
                   : candidate === "mine"
                     ? messages.createdByMe
                     : messages.teamShared}
-                <em>{scopeCounts[candidate]}</em>
+                <em>
+                  {deviceCatalog && !deviceCatalog.complete && !rows.length
+                    ? "—"
+                    : scopeCounts[candidate]}
+                </em>
               </button>
             ))}
           </div>
@@ -1764,6 +1765,9 @@ function ResourceCatalogPage({
         </label>
       </div>
 
+      {deviceCatalog ? (
+        <DeviceCatalogFeedback catalog={deviceCatalog} translate={translate} />
+      ) : null}
       <section className="collaboration-resource-catalog-list" data-kind={kind}>
         {visibleRows.length ? (
           <div className="collaboration-resource-catalog-list-header">
@@ -1957,21 +1961,19 @@ function ResourceCatalogPage({
               </span>
             </article>
           ))
-        ) : (
+        ) : deviceCatalog && !deviceCatalog.complete ? null : (
           <div className="collaboration-resource-catalog-empty">
             <PageIcon aria-hidden="true" />
             <strong>
-              {domain === "local"
-                ? kind === "agents"
-                  ? messages.noLocalAgents
-                  : kind === "teams"
-                    ? messages.noLocalTeams
-                    : messages.noLocalDevices
-                : kind === "agents"
-                  ? messages.noCloudAgents
-                  : kind === "teams"
-                    ? messages.noCloudTeams
-                    : messages.noCloudDevices}
+              {kind === "devices"
+                ? translate("todo.device_catalog_empty", "尚未添加设备")
+                : domain === "local"
+                  ? kind === "agents"
+                    ? messages.noLocalAgents
+                    : messages.noLocalTeams
+                  : kind === "agents"
+                    ? messages.noCloudAgents
+                    : messages.noCloudTeams}
             </strong>
             <p>{pageCopy.hint}</p>
           </div>
@@ -2904,7 +2906,6 @@ function WorkItemsPage({
   locale,
   messages,
   onOpenItem,
-  showHumanFilter = false,
 }: {
   title: string;
   subtitle: string;
@@ -2913,170 +2914,31 @@ function WorkItemsPage({
   locale: CollaborationLocale;
   messages: PlatformMessages;
   onOpenItem(item: WorkspaceMyWorkItem): void;
-  showHumanFilter?: boolean;
 }) {
-  const [humanOnly, setHumanOnly] = useState(false);
-  const filterHuman = showHumanFilter && humanOnly;
-  const visibleItems = filterHuman
-    ? items.filter((item) => item.human_work)
-    : items;
-  const sections = filterHuman
-    ? [
-        {
-          id: "human-action",
-          title: locale === "zh-CN" ? "待我处理" : "Needs my action",
-          items: visibleItems.filter(
-            (item) => item.human_work?.can_start || item.human_work?.can_submit,
-          ),
-        },
-        {
-          id: "human-review",
-          title: locale === "zh-CN" ? "待我确认" : "Needs my review",
-          items: visibleItems.filter((item) => item.human_work?.can_review),
-        },
-        {
-          id: "human-waiting",
-          title: locale === "zh-CN" ? "等待确认" : "Awaiting review",
-          items: visibleItems.filter(
-            (item) =>
-              item.human_work?.state === "submitted" &&
-              !item.human_work.can_review,
-          ),
-        },
-        {
-          id: "human-done",
-          title: locale === "zh-CN" ? "已完成" : "Completed",
-          items: visibleItems.filter((item) => item.status === "completed"),
-        },
-        {
-          id: "human-other",
-          title: locale === "zh-CN" ? "等待处理" : "Waiting for others",
-          items: visibleItems.filter(
-            (item) =>
-              item.status !== "completed" &&
-              item.human_work?.state !== "submitted" &&
-              !item.human_work?.can_start &&
-              !item.human_work?.can_submit &&
-              !item.human_work?.can_review,
-          ),
-        },
-      ].filter((section) => section.items.length)
-    : [
-        {
-          id: "assigned",
-          title: locale === "zh-CN" ? "待我处理" : "Assigned to me",
-          items: visibleItems,
-        },
-      ];
   return (
     <div className="collaboration-platform-page">
-      <PageHeader
-        title={title}
-        subtitle={subtitle}
-        action={
-          showHumanFilter ? (
-            <button
-              type="button"
-              className="collaboration-platform-secondary-button"
-              data-testid="collaboration-my-work-human-filter"
-              aria-pressed={humanOnly}
-              onClick={() => setHumanOnly((current) => !current)}
-            >
-              {locale === "zh-CN" ? "人工任务" : "Human tasks"}
-            </button>
-          ) : null
-        }
-      />
-      {visibleItems.length ? (
+      <PageHeader title={title} subtitle={subtitle} />
+      {items.length ? (
         <div className="collaboration-home-work-groups">
-          {sections.map((section) => (
-            <section
-              key={section.id}
-              data-testid={`collaboration-work-group-${section.id}`}
-            >
-              <h2 className="collaboration-home-work-group-title">
-                {section.title}
-              </h2>
-              <div className="collaboration-home-work-list">
-                {section.items.map((item) => (
-                  <WorkItemRow
-                    item={item}
-                    locale={locale}
-                    messages={messages}
-                    key={item.id}
-                    onOpen={onOpenItem}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+          <section data-testid="collaboration-work-group-assigned">
+            <h2 className="collaboration-home-work-group-title">
+              {locale === "zh-CN" ? "待我处理" : "Assigned to me"}
+            </h2>
+            <div className="collaboration-home-work-list">
+              {items.map((item) => (
+                <WorkItemRow
+                  item={item}
+                  locale={locale}
+                  messages={messages}
+                  key={item.id}
+                  onOpen={onOpenItem}
+                />
+              ))}
+            </div>
+          </section>
         </div>
       ) : (
-        <EmptyState
-          title={
-            filterHuman
-              ? locale === "zh-CN"
-                ? "暂无人工任务"
-                : "No human tasks"
-              : empty
-          }
-          description={messages.workspaceHint}
-        />
-      )}
-    </div>
-  );
-}
-
-function RunCenter({
-  entries,
-  locale,
-  messages,
-}: {
-  entries: Array<{
-    project: CollaborationProject;
-    execution: CollaborationExecution;
-  }>;
-  locale: CollaborationLocale;
-  messages: PlatformMessages;
-}) {
-  return (
-    <div className="collaboration-platform-page">
-      <PageHeader
-        title={messages.runCenter}
-        subtitle={messages.operationsHint}
-      />
-      {entries.length ? (
-        <div className="collaboration-run-center-list">
-          {entries.map(({ project, execution }) => (
-            <article key={`${project.id}-${execution.id}`}>
-              <span>
-                <strong>{execution.task_title}</strong>
-                <small>
-                  {project.name} · #{execution.id}
-                </small>
-              </span>
-              <span>{execution.executor_type}</span>
-              <OperationStateBadge
-                messages={messages}
-                state={
-                  execution.status === "failed"
-                    ? "failed"
-                    : execution.completed_at
-                      ? "completed"
-                      : "running"
-                }
-              />
-              <time dateTime={execution.updated_at}>
-                {formatOperationTime(locale, execution.updated_at)}
-              </time>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <EmptyState
-          title={messages.noRuns}
-          description={messages.operationsHint}
-        />
+        <EmptyState title={empty} description={messages.workspaceHint} />
       )}
     </div>
   );
@@ -3400,6 +3262,16 @@ export function CollaborationPlatformApp({
 }) {
   const messages = platformMessages[locale];
   const translate = createCollaborationTranslator(locale);
+  const isDevicePage =
+    !host.location.projectId &&
+    !host.location.workspaceId &&
+    host.location.rootView === "devices";
+  const deviceCatalog = useDeviceCatalog(
+    api,
+    isDevicePage,
+    refreshKey,
+    host.currentUser,
+  );
   const { state, commands } = useCollaborationPlatformController({
     api,
     navigationApis,
@@ -3780,9 +3652,11 @@ export function CollaborationPlatformApp({
         if (!agent?.team_id) throw new Error("Agent cannot be authorized");
         await api.workspaces.addAgent(workspaceId, { teamId: agent.team_id });
       } else if (kind === "devices") {
-        const environment = state.resources.execution_environments.find(
-          (candidate) => candidate.id === resourceId,
-        );
+        const environment = (
+          isDevicePage
+            ? deviceCatalog.items
+            : state.resources.execution_environments
+        ).find((candidate) => candidate.id === resourceId);
         if (!environment?.device_id) {
           throw new Error("Execution environment cannot be authorized");
         }
@@ -3871,7 +3745,7 @@ export function CollaborationPlatformApp({
     });
   };
   let content: React.ReactNode;
-  if (state.loading) {
+  if (state.loading && !isDevicePage) {
     content = (
       <ProjectLoadingSkeleton
         label={translate("common.loading", "正在加载…")}
@@ -3882,7 +3756,7 @@ export function CollaborationPlatformApp({
         }
       />
     );
-  } else if (state.error) {
+  } else if (state.error && !isDevicePage) {
     content = (
       <div className="collaboration-alert" role="alert">
         {state.error}
@@ -3957,7 +3831,7 @@ export function CollaborationPlatformApp({
         {messages.loading}
       </div>
     );
-  } else if (!state.workspace) {
+  } else if (!state.workspace || isDevicePage) {
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {
       const operation = workspaceIssueOperationState(item);
@@ -3980,7 +3854,13 @@ export function CollaborationPlatformApp({
           kind={rootView}
           agents={state.resources.agents}
           groups={state.collaborationGroups}
-          environments={state.resources.execution_environments}
+          environments={
+            rootView === "devices"
+              ? deviceCatalog.items
+              : state.resources.execution_environments
+          }
+          deviceCatalog={rootView === "devices" ? deviceCatalog : undefined}
+          translate={translate}
           canCreateDevice={Boolean(host.renderDeviceCreator)}
           workspaces={state.workspaces}
           projects={state.navigationProjects}
@@ -4041,23 +3921,6 @@ export function CollaborationPlatformApp({
             await commands.reload();
           }}
           onManageResource={manageRootResource}
-        />
-      ) : rootView === "runs" ? (
-        <RunCenter
-          entries={state.executions}
-          locale={locale}
-          messages={messages}
-        />
-      ) : rootView === "my-work" ? (
-        <WorkItemsPage
-          title={messages.myWork}
-          subtitle={messages.workspaceHint}
-          empty={messages.noActiveWork}
-          items={state.myWork}
-          locale={locale}
-          messages={messages}
-          onOpenItem={openMyWorkItem}
-          showHumanFilter
         />
       ) : rootView === "inbox" ? (
         <WorkItemsPage
@@ -4621,6 +4484,20 @@ export function CollaborationPlatformApp({
                     const selectedAgents = selectedProjectResourceAgents.filter(
                       (agent) => selection.agentResourceIds.includes(agent.id),
                     );
+                    const sharedDeviceIds = new Set<number>(
+                      projectWorkspace.location === "cloud" &&
+                        selection.executionEnvironmentDeviceIds.length
+                        ? (
+                            await api.workspaces!.listExecutionEnvironments(
+                              projectWorkspace.id,
+                            )
+                          ).flatMap((environment) =>
+                            environment.device_id == null
+                              ? []
+                              : [environment.device_id],
+                          )
+                        : [],
+                    );
                     await Promise.all([
                       ...selection.memberUserIds
                         .filter((userId) => !existingMemberIds.has(userId))
@@ -4628,11 +4505,20 @@ export function CollaborationPlatformApp({
                           api.members.add(project.id, userId, "Developer"),
                         ),
                       ...selection.executionEnvironmentDeviceIds.map(
-                        (deviceId) =>
-                          api.projects.addExecutionEnvironment(
+                        async (deviceId) => {
+                          if (projectWorkspace.location === "cloud") {
+                            await ensureWorkspaceEnvironmentSharing(
+                              api,
+                              projectWorkspace.id,
+                              deviceId,
+                              sharedDeviceIds,
+                            );
+                          }
+                          return api.projects.addExecutionEnvironment(
                             project.id,
                             deviceId,
-                          ),
+                          );
+                        },
                       ),
                     ]);
                     const selectedDefaultAgent = selectedAgents.find(
@@ -4791,7 +4677,7 @@ export function CollaborationPlatformApp({
         ? host.renderDeviceCreator({
             source: rootDeviceCreator.source,
             workspaceId: rootDeviceCreator.workspaceId,
-            hasCloudDevice: state.resources.execution_environments.some(
+            hasCloudDevice: deviceCatalog.items.some(
               (environment) => environment.kind === "cloud_host",
             ),
             onClose: () => setRootDeviceCreator(null),
@@ -4805,6 +4691,7 @@ export function CollaborationPlatformApp({
                 );
               }
               setRootDeviceCreator(null);
+              await deviceCatalog.refresh();
               await commands.reload();
               host.notify?.(messages.resourceSaved, "success");
             },

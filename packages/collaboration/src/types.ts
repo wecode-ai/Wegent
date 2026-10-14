@@ -263,6 +263,7 @@ export interface CollaborationExecutionEnvironment {
   id: string;
   device_id?: number;
   device_key?: string;
+  app_device_id?: string;
   is_current_device?: boolean;
   name: string;
   kind: "local_device" | "cloud_host";
@@ -488,7 +489,9 @@ export type CollaborationView =
 export type CollaborationRootView = "home" | "my-work";
 export type ProjectSettingsSectionId =
   | "project"
-  | "collaboration-participants"
+  | "agents"
+  | "members"
+  | "groups"
   | "environments"
   | "automatic-processing";
 

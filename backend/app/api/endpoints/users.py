@@ -4,7 +4,7 @@
 
 import json
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ValidationError
@@ -83,6 +83,9 @@ class MCPProviderServiceConfigRequest(BaseModel):
 
     enabled: bool = False
     url: str = ""
+    # Optional so clients that predate OAuth keep the stored mode instead of
+    # silently resetting an OAuth-authorized service back to a personal URL.
+    auth_mode: Optional[Literal["url", "oauth"]] = None
 
 
 class MCPProviderServiceConfigResponse(BaseModel):
@@ -94,6 +97,11 @@ class MCPProviderServiceConfigResponse(BaseModel):
     detail_url: str
     enabled: bool = False
     url: str = ""
+    auth_mode: str = "url"
+    oauth_supported: bool = False
+    oauth_connected: bool = False
+    oauth_expires_at: Optional[int] = None
+    oauth_account: Optional[str] = None
 
 
 class UserRuntimeConfigResponse(BaseModel):
@@ -569,6 +577,7 @@ async def update_mcp_provider_service_config(
         service_id=service_id,
         enabled=config.enabled,
         url=url,
+        auth_mode=config.auth_mode,
     )
     current_user.preferences = user_mcp_service.dump_preferences(updated_preferences)
 

@@ -24,6 +24,8 @@ import {
   registerPluginDevelopmentCapabilities,
   registerRendererStorageCapabilities,
   showElectronNotification,
+  type ElectronDesktopServices,
+  type ElectronE2EHost,
 } from './electron-capabilities.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
@@ -317,12 +319,9 @@ function createWebContents(input: {
 
 function createIsolatedClipboardRouter(
   focused = true,
-  popoutHost?: {
-    openPopoutTaskInMain: (taskAddressId: string) => void
-    scheduleCoreDshRestart?: () => void
-    setPopoutMode: (mode: 'composer' | 'menu' | 'conversation') => void
-  },
-  smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> }
+  popoutHost?: Partial<ElectronE2EHost>,
+  smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> },
+  services?: Partial<ElectronDesktopServices>
 ) {
   const notificationNavigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
   const targetWindow = {
@@ -347,7 +346,10 @@ function createIsolatedClipboardRouter(
       executorHome: '/tmp/wework-clipboard-test/executor',
       cleanupStaleTemporaryImages: vi.fn(),
       coreDshPlugins: () => null,
-      events: { read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })) },
+      events: {
+        publish: vi.fn(),
+        read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })),
+      },
       feedback: {} as never,
       ...notificationNavigation,
       pendingSchemes: {
@@ -360,6 +362,7 @@ function createIsolatedClipboardRouter(
         get: vi.fn(),
         set: vi.fn(),
       },
+      ...services,
     } as never,
     popoutHost as never
   )
@@ -367,6 +370,19 @@ function createIsolatedClipboardRouter(
 }
 
 describe('Core DSH runtime capabilities', () => {
+  test('publishes persisted preferences to every subscribed window', async () => {
+    const updated = { fixedWorkspaceTabs: [{ id: 'task-1', kind: 'task' }] }
+    const publish = vi.fn()
+    const updatePreferences = vi.fn().mockResolvedValue(updated)
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, {
+      updatePreferences,
+      events: { publish } as never,
+    })
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.update', { patch: updated })
+    ).resolves.toEqual(updated)
+    expect(publish).toHaveBeenCalledWith('preferences.changed', updated)
+  })
   test('schedules a restart only after the host response is sent', async () => {
     const scheduleCoreDshRestart = vi.fn()
     const completions: Array<() => void | Promise<void>> = []
@@ -395,6 +411,19 @@ describe('Core DSH runtime capabilities', () => {
 })
 
 describe('Popout Window sizing capabilities', () => {
+  test('reveals the main workbench through the host', async () => {
+    const showMain = vi.fn().mockResolvedValue(undefined)
+    const { router } = createIsolatedClipboardRouter(true, { showMain })
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'window.showMain', {})
+    expect(showMain).toHaveBeenCalledOnce()
+  })
+
+  test('closes the explicitly named workspace window', async () => {
+    const closeWorkspace = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, { closeWorkspace })
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'window.closeWorkspace', { label: 'workspace-task' })
+    expect(closeWorkspace).toHaveBeenCalledWith('workspace-task')
+  })
   test('forwards validated conversation and menu states to the native window', async () => {
     const popoutHost = {
       openPopoutTaskInMain: vi.fn(),

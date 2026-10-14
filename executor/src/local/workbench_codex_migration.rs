@@ -51,25 +51,22 @@ fn check_config(config: &DocumentMut) -> Result<(), String> {
             return Err("Codex login keyring storage is Home-bound; verify login storage before moving Home".to_owned());
         }
     }
-    let oauth_mode = match config.get("mcp_oauth_credentials_store") {
-        None => "auto",
-        Some(value) => match value.as_str() {
-            Some(mode @ ("file" | "auto" | "keyring")) => mode,
-            _ => return Err("Invalid Codex MCP credential storage mode".to_owned()),
-        },
-    };
-    let secret_storage = match config
+    if let Some(value) = config.get("mcp_oauth_credentials_store") {
+        if !matches!(value.as_str(), Some("file" | "auto" | "keyring")) {
+            return Err("Invalid Codex MCP credential storage mode".to_owned());
+        }
+    }
+    if let Some(value) = config
         .get("features")
         .and_then(|v| v.get("secret_auth_storage"))
     {
-        None => cfg!(windows),
-        Some(value) => value
-            .as_bool()
-            .ok_or("Invalid Codex encrypted storage setting")?,
-    };
-    if secret_storage && oauth_mode != "file" {
-        return Err("Codex encrypted OAuth storage is Home-bound; verify its keyring identity before moving Home".to_owned());
+        if value.as_bool().is_none() {
+            return Err("Invalid Codex encrypted storage setting".to_owned());
+        }
     }
+    // Storage settings select future writes; they do not establish that encrypted
+    // credentials exist. check() rejects every existing encrypted namespace by
+    // metadata, even when the current configuration selects file storage.
     // Codex 0.153.3 Direct MCP OAuth keys use server name/URL, not Home.
     // Enterprise identity keys are the exception, even in file storage mode.
     let has_enterprise_identity = config
@@ -104,7 +101,7 @@ mod tests {
             let config = format!("{mode}\n[features]\nsecret_auth_storage = false\n[mcp_servers.test]\nurl = 'https://example.invalid/mcp'");
             assert!(check_config(&config.parse().unwrap()).is_ok());
         }
-        assert_eq!(check_config(&"".parse().unwrap()).is_ok(), !cfg!(windows));
+        assert!(check_config(&"".parse().unwrap()).is_ok());
     }
 
     #[test]
@@ -115,7 +112,6 @@ mod tests {
             "cli_auth_credentials_store = 42",
             "cli_auth_credentials_store = 'synthetic-sensitive-value'",
             "mcp_oauth_credentials_store = 'synthetic-sensitive-value'",
-            "[features]\nsecret_auth_storage = true",
             "[features]\nsecret_auth_storage = 'synthetic-sensitive-value'",
             "mcp_oauth_credentials_store = 'file'\n[mcp_servers.'ema-idp:example']\nurl = 'https://example.invalid/mcp'",
         ] {
@@ -134,7 +130,7 @@ mod tests {
         assert!(check(&home).is_ok());
         assert_eq!(fs::read_dir(&home).unwrap().count(), 0);
         fs::create_dir(home.join("auth.json")).unwrap();
-        assert_eq!(check(&home).is_ok(), !cfg!(windows));
+        assert!(check(&home).is_ok());
         fs::write(
             home.join("config.toml"),
             "cli_auth_credentials_store = 'file'\n[features]\nsecret_auth_storage = false",
@@ -144,6 +140,30 @@ mod tests {
         fs::write(home.join("config.toml"), "broken = [ secret").unwrap();
         let error = check(&home).unwrap_err();
         assert!(!error.contains("secret"));
+    }
+
+    #[test]
+    fn accepts_populated_home_without_encrypted_credential_files() {
+        let root = tempfile::tempdir().unwrap();
+        // A directory in place of authentication proves the check never opens it.
+        fs::create_dir(root.path().join("auth.json")).unwrap();
+        fs::create_dir(root.path().join("sessions")).unwrap();
+        for config in [
+            "",
+            "cli_auth_credentials_store = 'file'",
+            "[features]\nsecret_auth_storage = true",
+            "mcp_oauth_credentials_store = 'auto'\n[features]\nsecret_auth_storage = true",
+            "mcp_oauth_credentials_store = 'keyring'\n[features]\nsecret_auth_storage = true",
+        ] {
+            fs::write(root.path().join("config.toml"), config).unwrap();
+            assert!(check(root.path()).is_ok());
+            assert_eq!(
+                fs::read_to_string(root.path().join("config.toml")).unwrap(),
+                config
+            );
+            assert!(root.path().join("auth.json").is_dir());
+            assert!(!root.path().join("secrets").exists());
+        }
     }
 
     #[test]

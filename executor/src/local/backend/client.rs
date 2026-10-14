@@ -152,10 +152,18 @@ where
             .await
     }
 
-    pub async fn pull_runtime_work(&self, timeout: Duration) -> Result<RuntimeWorkPull, String> {
+    pub async fn pull_runtime_work(
+        &self,
+        timeout: Duration,
+        catalog: Value,
+    ) -> Result<RuntimeWorkPull, String> {
         let response = self
             .transport
-            .call(RUNTIME_TASK_PULL_EVENT, json!({}), timeout)
+            .call(
+                RUNTIME_TASK_PULL_EVENT,
+                json!({"runner_catalog": catalog}),
+                timeout,
+            )
             .await?;
         let payload = ack_payload(&response);
         if payload

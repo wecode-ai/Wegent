@@ -102,7 +102,6 @@ describe("shared PC card reply dispatch", () => {
     const { input, runtime } = setup();
     const result = await dispatchTaskCardReply({
       ...input,
-      selfManagedExecution: true,
       project: { ...input.project, project_store: "local" },
       card: { root, replies: [{ ...run, runtimeAddress: undefined }] },
     });
@@ -188,12 +187,11 @@ describe("shared PC card reply dispatch", () => {
     );
     expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
   });
-  it("continues a self-managed local card without enqueueing through an agent mention", async () => {
+  it("records a continued turn on the existing local runtime session", async () => {
     const { input, client, runtime } = setup();
     expect(
       await dispatchTaskCardReply({
         ...input,
-        selfManagedExecution: true,
         project: { ...input.project, project_store: "local" },
       }),
     ).toEqual({ ok: true, persisted: true });
@@ -214,6 +212,23 @@ describe("shared PC card reply dispatch", () => {
       expect.anything(),
     );
     expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
+  });
+  it("reports a missing agent root session instead of silently saving an AI reply", async () => {
+    const { input, runtime, client } = setup();
+    const result = await dispatchTaskCardReply({
+      ...input,
+      card: { root: { ...run, runtimeAddress: undefined }, replies: [] },
+    });
+    expect(result).toEqual({
+      ok: false,
+      persisted: true,
+      error: "Start failed",
+    });
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({ mentions: [] }),
+    );
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
+    expect(runtime.sendRuntimePaneMessage).not.toHaveBeenCalled();
   });
   it("reports whether the reply was saved when the runtime rejects continuation", async () => {
     const { input, runtime, client } = setup();
@@ -252,6 +267,38 @@ describe("shared PC card reply dispatch", () => {
 });
 
 describe("project-authorized comment dispatch", () => {
+  it("queues a local reply once against its saved session with device attachments", async () => {
+    const { input, client, runtime } = setup();
+    client.executeTaskComment = vi.fn().mockResolvedValue([run]);
+    const attachment = {
+      id: -1,
+      filename: "evidence.txt",
+      local_path: "C:\\Evidence\\evidence.txt",
+    };
+    expect(
+      await dispatchTaskCardReply({
+        ...input,
+        project: { ...input.project, project_store: "local" },
+        agent: {
+          id: "reassigned-agent",
+          name: "Another AI",
+          runtime: "claude",
+        },
+        reply: { ...input.reply, attachments: [attachment as never] },
+      }),
+    ).toEqual({ ok: true, persisted: true });
+    expect(client.executeTaskComment).toHaveBeenCalledOnce();
+    expect(client.executeTaskComment).toHaveBeenCalledWith({
+      projectId: "project",
+      taskId: "issue",
+      triggerMessageId: trigger.messageId,
+      attachmentIds: [],
+      attachments: [attachment],
+    });
+    expect(client.startAgentResponse).not.toHaveBeenCalled();
+    expect(runtime.sendRuntimePaneMessage).not.toHaveBeenCalled();
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
+  });
   it("continues the server-owned thread without a visible assigned agent or personal runtime", async () => {
     const { input, client, runtime } = setup();
     client.executeTaskComment = vi.fn().mockResolvedValue([run]);

@@ -477,6 +477,63 @@ describe('ComponentUpdateManager', () => {
     expect(await readFile((await restarted.prepareStartup()).executor, 'utf8')).toBe('executor-v1')
   })
 
+  test('stages and activates a nested directory using the installed updater digest', async () => {
+    const fixture = await createFixture()
+    const content = 'updated plugin code'
+    const update = await createCorePluginUpdate(fixture.root, content)
+    // Freeze the original updater's serialized paths independently of the release hasher.
+    const separator = process.platform === 'win32' ? '\\' : '/'
+    const codePath = ['wework-app', 'web', 'code.js'].join(separator)
+    const webPath = ['wework-app', 'web'].join(separator)
+    const webHash = sha256(Buffer.from(`file:${codePath}\0${sha256(Buffer.from(content))}\0`))
+    const appHash = sha256(Buffer.from(`directory:${webPath}\0${webHash}\0`))
+    const expected = sha256(Buffer.from(`directory:wework-app\0${appHash}\0`))
+    update.manifest.components.weworkCorePlugins.contentSha256 = expected
+    const manager = createManager(
+      fixture,
+      componentFetch(update.manifest, update.assetName, update.archive)
+    )
+
+    expect(await manager.stageAvailableUpdate()).toBe(true)
+    const paths = await manager.prepareStartup()
+    await expect(
+      readFile(join(paths.weworkCorePlugins, 'wework-app', 'web', 'code.js'), 'utf8')
+    ).resolves.toBe(content)
+    await manager.confirmStartup()
+    const state = JSON.parse(
+      await readFile(join(fixture.data, 'managed-components', 'state.json'), 'utf8')
+    )
+    expect(state.current.components.weworkCorePlugins.contentSha256).toBe(expected)
+    expect(state.pending).toBeUndefined()
+    expect(state.activationInProgress).toBeUndefined()
+  })
+
+  test('rejects incorrect extracted content and recovers after the manifest is corrected', async () => {
+    const fixture = await createFixture()
+    const update = await createCorePluginUpdate(fixture.root, 'updated plugin code')
+    const correct = update.manifest.components.weworkCorePlugins.contentSha256
+    update.manifest.components.weworkCorePlugins.contentSha256 = 'f'.repeat(64)
+    const manager = createManager(
+      fixture,
+      componentFetch(update.manifest, update.assetName, update.archive)
+    )
+
+    await expect(manager.stageAvailableUpdate()).rejects.toThrow(
+      'Extracted component checksum mismatch: weworkCorePlugins'
+    )
+    await expect(
+      stat(join(fixture.data, 'managed-components', 'state.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(
+      await readdir(join(fixture.data, 'managed-components', 'blobs', 'weworkCorePlugins'))
+    ).toEqual([])
+
+    update.manifest.components.weworkCorePlugins.contentSha256 = correct
+    expect(await manager.stageAvailableUpdate()).toBe(true)
+    await manager.prepareStartup()
+    await manager.confirmStartup()
+  })
+
   test('rejects a corrupt archive without staging it', async () => {
     const fixture = await createFixture()
     const update = await createExecutorUpdate(fixture.root, 'executor-v2')

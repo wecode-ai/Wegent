@@ -10,6 +10,7 @@ from pydantic import ConfigDict, Field, model_validator
 
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
 from app.schemas.project_chat import ProjectChatSchema
+from app.schemas.runner_routing import RunnerSelection
 
 AutomationRunStatus = Literal[
     "pending",
@@ -49,6 +50,7 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     event_config: dict[str, Any] = Field(default_factory=dict)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
+    runner_selection: RunnerSelection | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
     target_kind: AutomationTargetKind
     target_id: str = Field(min_length=1, max_length=128)
@@ -70,6 +72,7 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     event_config: dict[str, Any] | None = None
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    runner_selection: RunnerSelection | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
     target_kind: AutomationTargetKind | None = None
     target_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -105,6 +108,7 @@ class ProjectAutomationView(ProjectChatSchema):
     event_config: dict[str, Any]
     cron_expression: str | None
     timezone: str
+    runner_selection: RunnerSelection | None = None
     execution_device_id: str | None
     target_kind: AutomationTargetKind
     target_id: str

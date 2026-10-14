@@ -68,7 +68,7 @@ export function BrowserIssueCommentComposer({
   const mentionCandidates = useIssueMentionCandidates(members, agents, t)
   const draft = useBrowserTaskDraft(`issue:${project.id}:${issue.id}`)
   const execution = useBrowserIssueExecution()
-  const serverExecution = project.project_store === 'backend' && client.executeTaskComment
+  const serverExecution = client.executeTaskComment
   const [isMobile, setIsMobile] = useState(false)
   useEffect(() => {
     const media = window.matchMedia('(max-width: 767px)')
@@ -141,6 +141,14 @@ export function BrowserIssueCommentComposer({
             attachments.map(file => file.id)
           )
         : []
+      const activeMentions = [
+        ...(serverExecution
+          ? commentAgentMentions(text, agents)
+          : agent
+            ? [{ type: 'agent' as const, id: agent.id, label: agent.name }]
+            : []),
+        ...mentions.filter(mention => mention.type === 'user'),
+      ]
       const message = await client.send({
         projectId: project.id,
         taskId: issue.id,
@@ -148,14 +156,7 @@ export function BrowserIssueCommentComposer({
         text: issueCommentBody(text, imported),
         replyToMessageId: null,
         model: serverExecution ? null : (model?.name ?? null),
-        mentions: [
-          ...(serverExecution
-            ? commentAgentMentions(text, agents)
-            : agent
-              ? [{ type: 'agent' as const, id: agent.id, label: agent.name }]
-              : []),
-          ...mentions.filter(mention => mention.type === 'user'),
-        ],
+        mentions: activeMentions,
       })
       onMessages([message])
       onCommentPersisted?.(message)
@@ -163,14 +164,15 @@ export function BrowserIssueCommentComposer({
       draft.setDraft('')
       draft.attachments.resetAttachments()
       if (serverExecution) {
-        onMessages(
-          await serverExecution({
-            projectId: project.id,
-            taskId: issue.id,
-            triggerMessageId: message.messageId,
-            attachmentIds: attachments.map(file => Number(file.id)),
-          })
-        )
+        const responses = await serverExecution({
+          projectId: project.id,
+          taskId: issue.id,
+          triggerMessageId: message.messageId,
+          attachmentIds: attachments.map(file => Number(file.id)),
+        })
+        if (activeMentions.some(mention => mention.type === 'agent') && responses.length === 0)
+          throw new Error(t('workbench.project_chat_agent_start_failed'))
+        onMessages(responses)
       } else if (agent && execution.target)
         await startTaskAiRun({
           client,

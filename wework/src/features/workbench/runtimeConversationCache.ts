@@ -109,19 +109,18 @@ export function getRuntimeConversationMetadata(
 export function setRuntimeConversationGoal(
   address: RuntimeTaskAddress,
   goal: RuntimeGoal | null
-): void {
+): RuntimeGoal | null {
   invalidateRuntimeGoalSnapshots(address)
-  updateRuntimeConversationMetadata(address, current => {
-    const resolvedGoal = reconcileRuntimeGoal(current.goal, goal)
-    return {
-      ...current,
-      goal: resolvedGoal,
-      goalContinuation:
-        resolvedGoal?.status === 'active'
-          ? current.goalContinuation
-          : updateRuntimeGoalContinuation(current.goalContinuation, { type: 'goal_inactive' }),
-    }
-  })
+  const resolvedGoal = reconcileRuntimeGoal(getRuntimeConversationMetadata(address).goal, goal)
+  updateRuntimeConversationMetadata(address, current => ({
+    ...current,
+    goal: resolvedGoal,
+    goalContinuation:
+      resolvedGoal?.status === 'active'
+        ? current.goalContinuation
+        : updateRuntimeGoalContinuation(current.goalContinuation, { type: 'goal_inactive' }),
+  }))
+  return resolvedGoal
 }
 
 export function beginRuntimeGoalSnapshot(address: RuntimeTaskAddress): number {
@@ -150,10 +149,7 @@ function reconcileRuntimeGoal(
   next: RuntimeGoal | null
 ): RuntimeGoal | null {
   if (!next || !current) return next
-  if (next.updatedAt > current.updatedAt) return next
-  if (next.updatedAt < current.updatedAt) return current
-  if (next.status === 'complete' && current.status !== 'complete') return next
-  return current
+  return next.updatedAt < current.updatedAt ? current : next
 }
 
 export function applyRuntimeConversationGoalContinuation(

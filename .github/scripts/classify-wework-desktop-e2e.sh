@@ -7,6 +7,7 @@ core_segments=(
   workspace-tabs
   collaboration-shared-core
   collaboration-issue-task-discovery
+  collaboration-app-queue-identity
   collaboration-issue-archive
   collaboration-first-use
   collaboration-worktree-policy
@@ -47,6 +48,7 @@ core_segments=(
   drawing-attachment
   window-lifecycle
   goal-lifecycle
+  goal-state-sync
   supervisor-lifecycle
   resilience
   runtime-task-queue
@@ -70,6 +72,7 @@ core_segments=(
   send-key-preference
   reply-predictions
   model-settings
+  codex-native-catalog
   system-proxy
   system-pac
   environment-panel-scroll
@@ -164,14 +167,14 @@ cloud_shards=(
 core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings
-  goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,model-settings,codex-native-catalog
+  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-issue-robot-assignment,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-issue-archive,collaboration-local-group-cancellation
+  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
   rendering-extensions,transcript-sync,background-terminals
@@ -337,6 +340,15 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/features/workbench/runtimeConversationCache* | \
+      wework/src/components/layout/useWorkbenchPaneSession* | \
+      wework/src/features/workbench/WorkbenchProvider* | \
+      wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator*)
+      select_target "core:goal-state-sync"
+      ;;
+  esac
+
+  case "$path" in
     wework/src/components/chat/composer/Drawing* | \
       wework/src/components/chat/composer/useComposerDrawing* | \
       wework/src/components/chat/composer/drawing-canvas.css | \
@@ -427,6 +439,7 @@ classify_wework_path() {
 
     # Workbench mode covers Home migration before the managed Git/settings flow.
     wework/e2e/desktop/scenarios/workbench-mode.scenario.mjs | \
+      wework/e2e/desktop/modules/custom-model-output-budget.mjs | \
       wework/e2e/desktop/modules/native-agent-mcp.mjs | \
       wework/e2e/desktop/modules/workbench-home-migration.mjs | \
       wework/e2e/desktop/modules/workbench-schema-compatibility.mjs | \
@@ -606,6 +619,12 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs | \
+      wework/src/features/workbench/runtimeTaskLifecycle/goalSynchronization*)
+      select_target "core:goal-state-sync"
+      return
+      ;;
+
     # Goal creation, idle continuation, and restart recovery.
     wework/src/lib/runtime-goal* | \
       wework/src/components/chat/composer/Goal* | \
@@ -639,6 +658,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-issue-task-discovery.scenario.mjs)
       select_target "core:collaboration-issue-task-discovery"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-app-queue-identity.scenario.mjs)
+      select_target "core:collaboration-app-queue-identity"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs)
@@ -1011,6 +1034,10 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs)
+      select_target "core:codex-native-catalog"
+      return
+      ;;
     wework/e2e/desktop/scenarios/model-settings.scenario.mjs | \
       wework/src/components/settings/ProviderSettingsSection* | \
       wework/src/components/settings/ProviderEditor* | \
@@ -1250,6 +1277,9 @@ classify_path() {
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-comment-notification"
+      ;;
+    executor/src/server/codex_model_catalog*.rs)
+      select_target "core:codex-native-catalog"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites

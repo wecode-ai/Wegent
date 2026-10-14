@@ -139,6 +139,8 @@ describe('CollaborationPage platform routing', () => {
     expect(theme).toHaveAttribute('data-theme', 'light')
     expect(theme).toHaveStyle({ display: 'contents', '--font-size-ui': '14px' })
     expect(screen.getByTestId('collaboration-context-sidebar')).toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-nav-my-work')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-nav-runs')).not.toBeInTheDocument()
     expect(screen.queryByTestId('task-sidebar-system-navigation')).not.toBeInTheDocument()
     expect(screen.getByTestId('collaboration-context-sidebar')).toContainElement(
       screen.getByTestId('shared-collaboration-sidebar')
@@ -206,18 +208,43 @@ describe('CollaborationPage platform routing', () => {
     })
   })
 
-  it('removes an obsolete view from a canonical Project URL', async () => {
+  it.each(['calendar', 'gantt'] as const)(
+    'preserves the %s view when switching, reloading and opening an Issue',
+    view => {
+      const projectPath = '/collaboration/workspaces/workspace%201/projects/project%201'
+      mockPathname = projectPath
+      const { rerender } = render(<CollaborationPage />)
+
+      capturedHost?.navigate({ ...capturedHost.location, projectView: view })
+      expect(mockPush).toHaveBeenCalledWith(`${projectPath}?view=${view}`)
+
+      mockSearchParams = new URLSearchParams(`view=${view}`)
+      rerender(<CollaborationPage />)
+
+      expect(capturedHost?.location.projectView).toBe(view)
+      expect(mockReplace).not.toHaveBeenCalled()
+
+      mockPathname = `${projectPath}/issues/issue%201`
+      rerender(<CollaborationPage />)
+
+      expect(capturedHost?.location).toEqual(
+        expect.objectContaining({ projectView: view, issueId: 'issue 1' })
+      )
+      expect(collaborationLocationPath(capturedHost!.location)).toBe(
+        `${projectPath}/issues/issue%201?view=${view}`
+      )
+      expect(mockReplace).not.toHaveBeenCalled()
+    }
+  )
+
+  it('delegates URL view resolution to the shared project shell', () => {
     mockPathname = '/collaboration/workspaces/workspace%201/projects/project%201'
     mockSearchParams = new URLSearchParams('view=automation')
 
     render(<CollaborationPage />)
 
-    expect(capturedHost?.location.projectView).toBe('board')
-    await waitFor(() =>
-      expect(mockReplace).toHaveBeenCalledWith(
-        '/collaboration/workspaces/workspace%201/projects/project%201'
-      )
-    )
+    expect(capturedHost?.location.projectView).toBe('automation')
+    expect(mockReplace).not.toHaveBeenCalled()
   })
 
   it('opens an Issue drawer with native shallow history inside the current Project', () => {
@@ -240,7 +267,7 @@ describe('CollaborationPage platform routing', () => {
     pushState.mockRestore()
   })
 
-  it.each(['manage', 'files'] as const)(
+  it.each(['manage', 'files', 'calendar', 'gantt', 'automation', 'unknown'] as const)(
     'redirects a legacy Project %s URL into the canonical shared Workspace route',
     async view => {
       mockPathname = '/collaboration/project%201'
@@ -257,34 +284,6 @@ describe('CollaborationPage platform routing', () => {
       )
     }
   )
-
-  it('removes the legacy Project automation view from canonical routing', async () => {
-    mockPathname = '/collaboration/project%201'
-    mockSearchParams = new URLSearchParams('view=automation')
-
-    render(<CollaborationPage />)
-
-    expect(capturedHost).toBeNull()
-    await waitFor(() =>
-      expect(mockReplace).toHaveBeenCalledWith(
-        '/collaboration/workspaces/workspace%201/projects/project%201'
-      )
-    )
-  })
-
-  it('falls back unknown legacy Project views to the canonical board', async () => {
-    mockPathname = '/collaboration/project%201'
-    mockSearchParams = new URLSearchParams('view=unknown')
-
-    render(<CollaborationPage />)
-
-    expect(capturedHost).toBeNull()
-    await waitFor(() =>
-      expect(mockReplace).toHaveBeenCalledWith(
-        '/collaboration/workspaces/workspace%201/projects/project%201'
-      )
-    )
-  })
 
   it('redirects a legacy Issue URL into the canonical shared Issue detail', async () => {
     mockPathname = '/collaboration/project%201/issues/issue%202'
@@ -338,14 +337,8 @@ describe('CollaborationPage platform routing', () => {
     expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'home' })).toBe(
       '/collaboration'
     )
-    expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'my-work' })).toBe(
-      '/collaboration/my-work'
-    )
     expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'inbox' })).toBe(
       '/collaboration/inbox'
-    )
-    expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'runs' })).toBe(
-      '/collaboration/runs'
     )
   })
 
@@ -365,29 +358,16 @@ describe('CollaborationPage platform routing', () => {
     }
   )
 
-  it('opens My Work as a first-class collaboration root view', () => {
-    mockPathname = '/collaboration/my-work'
+  it.each(['resources', 'my-work', 'runs'])(
+    'redirects removed %s routes to collaboration home',
+    async module => {
+      mockPathname = `/collaboration/${module}`
 
-    render(<CollaborationPage />)
+      render(<CollaborationPage />)
 
-    expect(mockReplace).not.toHaveBeenCalled()
-    expect(mockGetProject).not.toHaveBeenCalled()
-    expect(capturedHost?.location).toEqual(
-      expect.objectContaining({
-        platformView: 'spaces',
-        rootView: 'my-work',
-        workspaceId: null,
-      })
-    )
-  })
-
-  it('redirects the removed global collaboration resources route to the collaboration home', async () => {
-    mockPathname = '/collaboration/resources'
-
-    render(<CollaborationPage />)
-
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/collaboration'))
-    expect(mockGetProject).not.toHaveBeenCalled()
-    expect(capturedHost?.location.platformView).toBe('spaces')
-  })
+      await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/collaboration'))
+      expect(mockGetProject).not.toHaveBeenCalled()
+      expect(capturedHost?.location.platformView).toBe('spaces')
+    }
+  )
 })

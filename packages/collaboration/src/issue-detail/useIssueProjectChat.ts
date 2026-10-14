@@ -21,10 +21,8 @@ export function useIssueProjectChat(
   issueId: string,
   revision = 0
 ) {
-  const owner = useMemo(
-    () => ({ client, projectId, issueId, revision }),
-    [client, projectId, issueId, revision]
-  )
+  // A revision refreshes the stream without changing its owner or mounted drafts.
+  const owner = useMemo(() => ({ client, projectId, issueId }), [client, projectId, issueId])
   const empty = useMemo(
     () => ({
       owner,
@@ -83,6 +81,7 @@ export function useIssueProjectChat(
           return {
             ...state,
             loading: false,
+            error: null,
             currentUserId: subscription.snapshot.currentUserId,
             messages: mergeIssueChatMessages(state.messages, subscription.snapshot.messages),
           }
@@ -100,7 +99,7 @@ export function useIssueProjectChat(
       active = false
       unsubscribe?.()
     }
-  }, [client, projectId, issueId, owner, empty])
+  }, [client, projectId, issueId, revision, owner, empty])
   const merge = (incoming: ProjectChatMessage[]) =>
     setSnapshot(previous =>
       previous.owner === owner

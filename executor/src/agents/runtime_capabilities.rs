@@ -1037,7 +1037,7 @@ async fn download_attachment(
     let url = api_url(
         api_base_url,
         &format!("/api/attachments/{}/executor-download", attachment.id),
-    );
+    )?;
     let response = client
         .get(url)
         .bearer_auth(auth_token)
@@ -1679,7 +1679,7 @@ async fn get_skill_archive(
     timeout: Duration,
 ) -> Result<SkillArchiveResponse, String> {
     let mut request = client
-        .get(api_url(api_base_url, path))
+        .get(api_url(api_base_url, path)?)
         .bearer_auth(auth_token)
         .timeout(timeout);
     if let Some(local_hash) = local_hash.map(str::trim).filter(|value| !value.is_empty()) {
@@ -1773,7 +1773,7 @@ async fn get_json(
     timeout: Duration,
 ) -> Result<Value, String> {
     let response = client
-        .get(api_url(api_base_url, path))
+        .get(api_url(api_base_url, path)?)
         .bearer_auth(auth_token)
         .timeout(timeout)
         .send()
@@ -2484,8 +2484,17 @@ fn request_api_base_url(_request: &ExecutionRequest) -> String {
     request_backend_url_or_default(_request)
 }
 
-fn api_url(api_base_url: &str, path: &str) -> String {
-    format!("{}{}", api_base_url.trim_end_matches('/'), path)
+fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
+    let mut backend =
+        url::Url::parse(backend_url.trim()).map_err(|_| "invalid backend API URL".to_owned())?;
+    let base_path = backend.path().trim_end_matches('/');
+    // Normalize the backend root; API routes provide their own /api prefix.
+    let root = base_path.strip_suffix("/api").unwrap_or(base_path);
+    backend.set_path(&format!("{root}/"));
+    backend
+        .join(path.trim_start_matches('/'))
+        .map(Into::into)
+        .map_err(|_| "invalid backend API path".to_owned())
 }
 
 pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
@@ -2633,6 +2642,47 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[test]
+    fn backend_api_url_includes_api_prefix_once() {
+        for suffix in ["", "/", "/api", "/api/"] {
+            for path in [
+                "/api/attachments/1/executor-download",
+                "/api/v1/kinds/skills/1/download",
+                "/api/v1/kinds/skills?namespace=default",
+                "/api",
+            ] {
+                assert_eq!(
+                    api_url(&format!("https://backend.example/wework{suffix}"), path).unwrap(),
+                    format!("https://backend.example/wework{path}")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn backend_api_url_preserves_route_boundaries() {
+        for (base, path, expected) in [
+            (
+                "https://api",
+                "/api/mcp/system",
+                "https://api/api/mcp/system",
+            ),
+            (
+                "https://backend.example/apiary",
+                "/api/mcp/system",
+                "https://backend.example/apiary/api/mcp/system",
+            ),
+            (
+                "https://backend.example/wework/api/?old=value#fragment",
+                "/api/v1/kinds/skills?namespace=default",
+                "https://backend.example/wework/api/v1/kinds/skills?namespace=default",
+            ),
+        ] {
+            assert_eq!(api_url(base, path).unwrap(), expected);
+        }
+        assert!(api_url("invalid URL", "/api/mcp/system").is_err());
+    }
 
     #[test]
     fn native_mcp_reader_imports_legacy_and_rejects_corrupt_current_manifest() {
@@ -3182,7 +3232,7 @@ mod tests {
                 "subtask_id": 204,
                 "prompt": "Read /home/user/72:executor:attachments/203/image.png",
                 "auth_token": "test-token",
-                "backend_url": format!("http://{address}"),
+                "backend_url": format!("http://{address}/api/"),
                 "interactive_form_answer": null,
                 "attachments": [{
                     "id": 1,

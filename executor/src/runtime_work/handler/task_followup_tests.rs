@@ -96,6 +96,43 @@ fn task_followup_preserves_original_profile_and_refreshes_backend_authentication
 }
 
 #[test]
+fn task_followup_updates_queue_tracking_without_replacing_assignment_context() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let (mut link, mut original) = original_task("codex", "C:\\projects\\original");
+    original.extra["origin"] = json!({
+        "type":"issue_dispatch", "dispatchRole":"member", "dispatchId":"assignment-1",
+        "cloudProjectId":"project-1", "loopItemId":"issue-1", "executionId":11,
+    });
+    store_runtime_execution_request(&mut link.runtime_handle, &original);
+    let request = handler
+        .task_message_execution_request(
+            &json!({
+                "message":"Continue", "executionId":22,
+                "origin":{"loopItemId":"unrelated-issue"},
+            }),
+            Some(&link),
+        )
+        .unwrap();
+    let mut expected = original.extra["origin"].clone();
+    expected["executionId"] = json!(22);
+    assert_eq!(request.extra["origin"], expected);
+}
+
+#[test]
+fn routed_native_profile_can_continue_after_restart_for_both_runtimes() {
+    for runtime in ["codex", "claude_code"] {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let (mut link, mut original) = original_task(runtime, "C:\\projects\\original");
+        original.model_config = json!({"model_id":"native-model","model_provider":"original-provider", "wework_model_kind":"native"});
+        store_runtime_execution_request(&mut link.runtime_handle, &original);
+        let request = handler
+            .task_message_execution_request(&json!({"message":"Continue"}), Some(&link))
+            .unwrap();
+        assert_eq!(request.model_config, original.model_config);
+    }
+}
+
+#[test]
 fn task_followup_reuses_cached_cloud_model_route_with_current_credentials() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(
         Arc::new(Mutex::new(Some(ConnectionConfig {
@@ -189,7 +226,7 @@ fn task_followup_restores_the_exact_cloud_model_after_executor_restart() {
         expected["base_url"] =
             json!("https://current-backend.example/api/runtime-work/llm-responses-proxy");
         let executor = if runtime == "claude_code" {
-            "claudecode"
+            "claude"
         } else {
             "codex"
         };
@@ -273,52 +310,130 @@ fn task_followup_keeps_explicit_execution_requests_unchanged() {
     assert_eq!(restored, original);
 }
 
-#[tokio::test]
-async fn task_followup_rpc_queues_on_the_same_codex_and_claude_task() {
+#[test]
+fn task_followup_rpc_queues_on_the_same_codex_and_claude_task() {
     let _lock = crate::test_env::lock();
     let home = tempfile::tempdir().unwrap();
     let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
-    for runtime in ["codex", "claude_code"] {
-        let (handler, root) = isolated_runtime_work_handler(&format!("task-followup-{runtime}"));
-        fs::create_dir_all(&root).unwrap();
-        let (link, original) = original_task(runtime, root.to_str().unwrap());
-        handler.store.upsert_task(link);
-        let execution_id = start_test_execution(&handler, &original.task_id);
-        let response = handler
-            .send_message(json!({
-                "taskId": original.task_id,
-                "message": "Inspect memory next",
-                "clientUserMessageId": "reply-2",
-                "threadId": "unrelated-thread",
-                "queueIfBusy": true,
-                "attachments": [{"id": "current-attachment"}],
-            }))
+    let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    tokio_runtime.block_on(async {
+        for runtime in ["codex", "claude_code"] {
+            let (handler, root) =
+                isolated_runtime_work_handler(&format!("task-followup-{runtime}"));
+            fs::create_dir_all(&root).unwrap();
+            let (link, mut original) = original_task(runtime, root.to_str().unwrap());
+            let mut link = link;
+            original.extra["origin"]["executionId"] = json!(11);
+            link.runtime_handle["origin"] = original.extra["origin"].clone();
+            store_runtime_execution_request(&mut link.runtime_handle, &original);
+            link.runtime_handle["executionRequest"]["deferred_project_environment"] =
+                json!({"environmentId":"stale-snapshot"});
+            if runtime == "codex" {
+                link.thread_id = None;
+                link.runtime_handle["threadId"] = json!("original-thread");
+            }
+            handler.store.upsert_task(link);
+            let execution_id = start_test_execution(&handler, &original.task_id);
+            let response = handler
+                .send_message(json!({
+                    "taskId": original.task_id,
+                    "message": "Inspect memory next",
+                    "clientUserMessageId": "reply-2",
+                    "executionId": 22,
+                    "threadId": "unrelated-thread",
+                    "queueIfBusy": true,
+                    "attachments": [{"id": "current-attachment"}],
+                }))
+                .await
+                .unwrap();
+            assert_eq!(response["accepted"], true);
+            assert_eq!(response["taskId"], original.task_id);
+            assert_eq!(response["runtime"], runtime);
+            let queued = handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .queued_turns
+                .back()
+                .unwrap()
+                .clone();
+            assert_eq!(queued.local_task_id, original.task_id);
+            assert_eq!(queued.request.task_id, original.task_id);
+            assert_eq!(queued.request.prompt, "Inspect memory next");
+            assert_eq!(queued.request.model_config, original.model_config);
+            assert_eq!(queued.request.extra["origin"]["executionId"], 22);
+            assert_eq!(queued.request.extra["client_user_message_id"], "reply-2");
+            assert_eq!(
+                handler
+                    .local_task_link(&original.task_id)
+                    .unwrap()
+                    .runtime_handle["origin"]["executionId"],
+                11
+            );
+            assert_eq!(
+                handler
+                    .local_task_link(&original.task_id)
+                    .unwrap()
+                    .runtime_handle["executionRequest"]["origin"]["executionId"],
+                11,
+                "accepting queued input must not replace the active turn's tracking identity"
+            );
+            assert!(!queued
+                .request
+                .extra
+                .contains_key(project_preparation::DEFERRED_ENVIRONMENT));
+            assert_eq!(
+                queued.request.project_workspace_path,
+                original.project_workspace_path
+            );
+            if runtime == "codex" {
+                assert_eq!(queued.resume_thread_id.as_deref(), Some("original-thread"));
+            } else {
+                assert_eq!(
+                    queued.request.inherited_sessions[0],
+                    json!({"session_id": "original-session"})
+                );
+            }
+            assert_eq!(handler.store.list_task_summaries(true).len(), 1);
+            assert!(handler.finish_local_task_execution(&original.task_id, execution_id));
+            let mut queued = handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .queued_turns
+                .pop_front()
+                .unwrap();
+            queued.request.extra.insert(
+                "runtime_executable_path".into(),
+                json!("/nonexistent-test-runtime"),
+            );
+            handler.start_turn(queued);
+            assert_eq!(
+                handler
+                    .local_task_link(&original.task_id)
+                    .unwrap()
+                    .runtime_handle["origin"]["executionId"],
+                22
+            );
+            assert_eq!(
+                handler
+                    .local_task_link(&original.task_id)
+                    .unwrap()
+                    .runtime_handle["executionRequest"]["origin"]["executionId"],
+                22,
+                "the queued turn must commit its own tracking identity when it starts"
+            );
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while handler.local_task_link(&original.task_id).unwrap().status != "failed" {
+                    sleep(Duration::from_millis(10)).await;
+                }
+            })
             .await
             .unwrap();
-        assert_eq!(response["accepted"], true);
-        assert_eq!(response["taskId"], original.task_id);
-        assert_eq!(response["runtime"], runtime);
-        let scheduler = handler.turn_scheduler.lock().unwrap();
-        let queued = scheduler.queued_turns.back().unwrap();
-        assert_eq!(queued.local_task_id, original.task_id);
-        assert_eq!(queued.request.task_id, original.task_id);
-        assert_eq!(queued.request.prompt, "Inspect memory next");
-        assert_eq!(queued.request.model_config, original.model_config);
-        assert_eq!(
-            queued.request.project_workspace_path,
-            original.project_workspace_path
-        );
-        if runtime == "codex" {
-            assert_eq!(queued.resume_thread_id.as_deref(), Some("original-thread"));
-        } else {
-            assert_eq!(
-                queued.request.inherited_sessions[0],
-                json!({"session_id": "original-session"})
-            );
+            let _ = fs::remove_dir_all(root);
         }
-        assert_eq!(handler.store.list_task_summaries(true).len(), 1);
-        drop(scheduler);
-        assert!(handler.finish_local_task_execution(&original.task_id, execution_id));
-        let _ = fs::remove_dir_all(root);
-    }
+    });
 }

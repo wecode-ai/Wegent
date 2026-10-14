@@ -40,6 +40,19 @@ impl RuntimeWorkRpcHandler {
                     .or_else(|| payload.get("client_user_message_id")),
             }),
         );
+        if let Some(execution_id) = payload.get("executionId").filter(|value| {
+            value.as_u64().is_some_and(|id| id > 0)
+                || value.as_str().is_some_and(|id| !id.trim().is_empty())
+        }) {
+            if let Some(origin) = request
+                .extra
+                .get_mut("origin")
+                .and_then(Value::as_object_mut)
+            {
+                origin.remove("execution_id");
+                origin.insert("executionId".into(), execution_id.clone());
+            }
+        }
         Ok(request)
     }
 
@@ -172,7 +185,10 @@ fn recover_saved_model_config(request: &ExecutionRequest) -> Result<Option<Value
         .and_then(|config| config.get("use_user_config"))
         .and_then(Value::as_bool)
         == Some(true);
-    if !uses_native_credentials || string_field(config, "model_id").is_none() {
+    if !(uses_native_credentials
+        || object.get("wework_model_kind").and_then(Value::as_str) == Some("native"))
+        || string_field(config, "model_id").is_none()
+    {
         return Ok(None);
     }
     Ok(Some(config.clone()))
@@ -244,7 +260,7 @@ fn restore_cloud_proxy_credentials(
     identity.apply_headers(
         headers,
         if is_claude_runtime(runtime) {
-            "claudecode"
+            "claude"
         } else {
             "codex"
         },

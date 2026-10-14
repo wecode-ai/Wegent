@@ -1341,13 +1341,14 @@ def test_published_model_install_is_a_live_reference(test_db, test_user, monkeyp
                 "displayName": "Shared Model",
             },
             "spec": {
+                "capability": "Fast responses for everyday tasks",
                 "modelConfig": {
                     "env": {
                         "model": "openai",
                         "model_id": "gpt-test",
                         "api_key": "publisher-secret",
                     }
-                }
+                },
             },
         },
         is_active=True,
@@ -1393,6 +1394,11 @@ def test_published_model_install_is_a_live_reference(test_db, test_user, monkeyp
         test_db, source, user_id=consumer.id
     ).is_installed
     source.json["spec"]["modelConfig"]["env"]["model_id"] = "gpt-updated"
+    assert (
+        source.json["spec"]["capability"]["description"]
+        == "Fast responses for everyday tasks"
+    )
+    source.json["spec"]["capability"]["description"] = "Updated model capabilities"
     flag_modified(source, "json")
     test_db.commit()
 
@@ -1407,6 +1413,7 @@ def test_published_model_install_is_a_live_reference(test_db, test_user, monkeyp
     )
     referenced_model = next(item for item in models if item["name"] == source.name)
     assert referenced_model["modelId"] == "gpt-updated"
+    assert referenced_model["capability"] == "Updated model capabilities"
     assert referenced_model["isReference"] is True
     assert referenced_model["listingId"] == source.id
 

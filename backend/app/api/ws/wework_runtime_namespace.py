@@ -707,6 +707,15 @@ def project_chat_exception_ack(exc: ValidationError | HTTPException) -> dict[str
         404: "SCOPE_NOT_FOUND",
         409: "MESSAGE_CONFLICT",
     }.get(exc.status_code, "INVALID_MESSAGE")
+    if isinstance(exc.detail, dict):
+        return {
+            "ok": False,
+            "error": {
+                "code": exc.detail.get("error_code", code),
+                "message": exc.detail.get("message", str(exc.detail)),
+                "detail": exc.detail,
+            },
+        }
     return project_chat_error(code, str(exc.detail))
 
 

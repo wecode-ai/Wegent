@@ -20,6 +20,7 @@ from app.models.delivery import (
     LoopItemTaskBinding,
     ProjectChatAgent,
 )
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
@@ -81,6 +82,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
 ) -> None:
     push = Mock()
     monkeypatch.setattr(loop_item_executions, "push_project_chat_message", push)
+    monkeypatch.setattr("app.core.async_utils.schedule_async_task", Mock())
     public_id = str(uuid4())
     project = CloudProject(
         public_id=public_id,
@@ -163,7 +165,15 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         ),
         status="running",
     )
-    test_db.add_all([manager, worker, parent, manager_execution])
+    device = Kind(
+        kind="Device",
+        namespace="default",
+        name="manager-device",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {"deviceType": "cloud"}},
+    )
+    test_db.add_all([manager, worker, parent, manager_execution, device])
     test_db.commit()
     runtime_activity = ProjectChatMessage(
         message_id=str(uuid4()),
@@ -178,7 +188,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         metadata_json={"execution_id": manager_execution.id, "run_status": "running"},
         agent_id=manager.id,
         runtime_device_id=manager_execution.runtime_device_id,
-        runtime_task_id=manager_execution.runtime_task_id,
+        runtime_task_id=f"{manager_execution.runtime_task_id}-manager-initial",
         status="streaming",
     )
     test_db.add(runtime_activity)
@@ -188,7 +198,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         loop_item_id=parent.id,
         dispatch_id="dispatch-1",
         round_id="round-1",
-        manager_runtime_task_id="manager-runtime-1",
+        manager_runtime_task_id="manager-runtime-1-manager-initial",
         manager_agent_id=manager.id,
         items=[
             LoopItemExecutionBatchItem(
@@ -213,7 +223,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         loop_item_id=parent.id,
         dispatch_id="dispatch-1",
         round_id="leader-round",
-        manager_runtime_task_id="manager-runtime-1",
+        manager_runtime_task_id="manager-runtime-1-manager-initial",
         manager_agent_id=manager.id,
         items=[
             LoopItemExecutionBatchItem(

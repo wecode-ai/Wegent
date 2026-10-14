@@ -1,3 +1,4 @@
+import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
 import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
 // eslint-disable-next-line react-refresh/only-export-components
@@ -1128,6 +1129,7 @@ export function WeworkSharedProject({
                     } as unknown as CloudLoopItem
                   }
                   taskBindings={boardTaskBindings}
+                  unread={false}
                   onClick={onOpen}
                   onArchive={onDelete ?? (() => undefined)}
                   archiveLabel={t('todo.archive_issue', '归档任务')}
@@ -1230,25 +1232,8 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     ]
   )
   const platformApi = useMemo(
-    () =>
-      createWeworkPlatformApi(
-        api,
-        props.services.projectSpaceApis?.local,
-        Number(props.user.id),
-        collaborationUserName,
-        props.user.email ?? null,
-        props.services.projectSpaceDetailServices?.local,
-        locale
-      ),
-    [
-      api,
-      props.services.projectSpaceApis?.local,
-      props.services.projectSpaceDetailServices?.local,
-      props.user.email,
-      props.user.id,
-      collaborationUserName,
-      locale,
-    ]
+    () => createWeworkPlatformApi(api, localProjectApi),
+    [api, localProjectApi]
   )
   const navigationApis = useMemo(
     () =>
@@ -1486,8 +1471,15 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
               issueId: null,
             }))
           },
-          renderDeviceCreator: ({ source, hasCloudDevice, onClose, onCreated }) =>
-            source === 'cloud' ? (
+          renderDeviceCreator: ({ source, workspaceId, hasCloudDevice, onClose, onCreated }) =>
+            source === 'cloud' && workspaceId && api?.workspaces?.registerRunner ? (
+              <WorkspaceRunnerRegistrationDialog
+                workspaceId={workspaceId}
+                register={api.workspaces.registerRunner}
+                onClose={onClose}
+                onDone={() => onCreated()}
+              />
+            ) : source === 'cloud' ? (
               <AddCloudDeviceDialog
                 open
                 cloudConnection={cloudConnection}

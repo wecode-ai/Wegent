@@ -168,6 +168,7 @@ export function createDesktopScenario({
   let rejectCompaction = false
   let followUpSawCompactedContext = false
   let initialRequest
+  let initialAuthorization
   let followUpRequest
   let resolveCompactionStarted
   let releaseCompaction
@@ -202,6 +203,12 @@ export function createDesktopScenario({
 
       if (kind === 'compaction') {
         compactionRequests += 1
+        assert.ok(initialAuthorization, 'The initial model request did not authenticate')
+        assert.equal(
+          request.headers.authorization,
+          initialAuthorization,
+          'Context compaction lost the model credentials from the initial turn'
+        )
         if (rejectCompaction) {
           rejectedCompactionRequests += 1
           response.writeHead(400, { 'Content-Type': 'application/json' })
@@ -242,6 +249,7 @@ export function createDesktopScenario({
 
       if (!serialized.includes(INITIAL_PROMPT)) return false
       initialRequest = body
+      initialAuthorization = request.headers.authorization
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(
         sse([

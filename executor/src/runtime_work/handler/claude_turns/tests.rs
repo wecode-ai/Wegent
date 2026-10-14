@@ -374,14 +374,25 @@ async fn claude_runtime_events_include_monotonic_event_sequence() {
     let request = ExecutionRequest {
         task_id: "task-1".to_owned(),
         subtask_id: "turn-1".to_owned(),
+        extra: Map::from_iter([("client_user_message_id".to_owned(), json!("reply-2"))]),
         ..ExecutionRequest::default()
     };
 
     handler.emit_claude_runtime_event("task-1", &request, "response.created", json!({}));
+    handler.emit_claude_runtime_event(
+        "task-1",
+        &request,
+        "response.output_text.delta",
+        json!({"delta": "Done"}),
+    );
     handler.emit_claude_runtime_event("task-1", &request, "error", json!({"message": "failed"}));
 
     let first = event_rx.recv().await.expect("first Claude runtime event");
     let second = event_rx.recv().await.expect("second Claude runtime event");
+    let terminal = event_rx
+        .recv()
+        .await
+        .expect("terminal Claude runtime event");
     let first_sequence = first["payload"]["eventSeq"]
         .as_u64()
         .expect("first event sequence");
@@ -393,6 +404,11 @@ async fn claude_runtime_events_include_monotonic_event_sequence() {
     assert!(second_sequence > first_sequence);
     assert_eq!(first["payload"]["runtime"], "claude_code");
     assert_eq!(second["payload"]["runtime"], "claude_code");
+    for event in [first, second, terminal] {
+        assert_eq!(event["payload"]["taskId"], "task-1");
+        assert_eq!(event["payload"]["subtaskId"], "turn-1");
+        assert_eq!(event["payload"]["clientUserMessageId"], "reply-2");
+    }
 }
 
 #[tokio::test]

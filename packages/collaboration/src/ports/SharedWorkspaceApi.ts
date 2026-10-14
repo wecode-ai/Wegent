@@ -317,6 +317,7 @@ export interface WorkspaceAutomationRule {
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
   timezone: string;
+  runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
   targetKind: import("../automation/types").AutomationTargetKind;
   targetId: string;
@@ -338,6 +339,7 @@ export interface WorkspaceAutomationInput {
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
   timezone: string;
+  runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
   targetKind: import("../automation/types").AutomationTargetKind;
   targetId: string;
@@ -544,6 +546,11 @@ export interface SharedWorkspaceAssignmentsApi {
 }
 
 export interface SharedCollaborationWorkspacesApi {
+  registerRunner?(
+    workspaceId: string,
+    name: string,
+  ): Promise<{ environment_id: string; device_id: string; token: string }>;
+
   list(): Promise<CollaborationWorkspace[]>;
   get(workspaceId: string): Promise<CollaborationWorkspace>;
   getNavigationContext?(
@@ -604,6 +611,11 @@ export interface SharedCollaborationWorkspacesApi {
 
 export interface SharedCollaborationResourcesApi {
   list(): Promise<CollaborationPlatformResources>;
+  // Independent storage sources, not the devices' deployment locations.
+  devices: {
+    local?(): Promise<CollaborationExecutionEnvironment[]>;
+    cloud?(): Promise<CollaborationExecutionEnvironment[]>;
+  };
   removeAgent?(agent: CollaborationOwnedAgent): Promise<void>;
 }
 

@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Query, Session
 
-from app.models.delivery import LoopItem, loop_datetime_is_unset
+from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
@@ -26,6 +26,8 @@ from app.services.project_chat.push import push_project_chat_message
 from app.services.project_chat.runtime_binding import (
     BoundCommentSession,
     resolve_bound_comment_session,
+    resolve_collaboration_manager_session,
+    resolve_collaboration_member_session,
 )
 from app.services.project_chat.service import bot_config, project_chat_service
 from shared.telemetry.decorators import trace_async
@@ -76,7 +78,15 @@ def _thread_agent(
 def _execution(
     db: Session, request: ProjectChatCommentExecution, target: ProjectChatMessage
 ) -> LoopItemExecution | BoundCommentSession:
+    if (target.metadata_json or {}).get("dispatch_role") == "manager" and (
+        (target.metadata_json or {}).get("dispatch_id") or not target.agent_id
+    ):
+        return resolve_collaboration_manager_session(db, request, target)
     execution_id = (target.metadata_json or {}).get("execution_id")
+    if (target.metadata_json or {}).get(
+        "dispatch_role"
+    ) == "member" and not execution_id:
+        return resolve_collaboration_member_session(db, request, target)
     execution = db.get(LoopItemExecution, execution_id) if execution_id else None
     if execution is None and not execution_id:
         execution = (
@@ -115,6 +125,8 @@ def _response(
     agent_id: str,
     name: str,
     execution: LoopItemExecution | BoundCommentSession,
+    *,
+    followup: bool = False,
 ) -> ProjectChatMessage:
     message_id = str(uuid.uuid4())
     row = ProjectChatMessage(
@@ -137,6 +149,21 @@ def _response(
             "execution_id": execution.id,
             "executor_type": execution.executor_type,
             "run_status": "queued",
+            "runtime_followup": followup,
+            **(
+                {
+                    "dispatch_role": execution.runtime_origin_context["dispatch_role"],
+                    "dispatch_id": execution.runtime_origin_context.get("dispatch_id"),
+                    "coordination_round_id": execution.runtime_origin_context.get(
+                        "coordination_round_id"
+                    ),
+                    "assignment_id": execution.runtime_origin_context.get(
+                        "assignment_id"
+                    ),
+                }
+                if execution.runtime_origin_context.get("dispatch_role")
+                else {}
+            ),
         },
         status="pending",
     )
@@ -208,6 +235,11 @@ def _new_execution(
         priority=item.priority,
         automation_context={
             "runtime_subject_user_id": agent.created_by_user_id,
+            "runner_selection": (
+                request.runner_selection.model_dump()
+                if request.runner_selection
+                else None
+            ),
             "comment_trigger_message_id": trigger.message_id,
             "comment_prompt": trigger.content,
             "rootCommentId": trigger.thread_root_message_id or trigger.message_id,
@@ -238,7 +270,13 @@ async def _continue_runtime(
     from app.services.device.runtime_rpc_service import runtime_rpc_service
 
     response = _response(
-        db, request, trigger, execution.agent_id, target.sender_name, execution
+        db,
+        request,
+        trigger,
+        execution.agent_id,
+        target.sender_name,
+        execution,
+        followup=True,
     )
     project_chat_service._set_task_ai_state(
         db,
@@ -287,7 +325,8 @@ async def _continue_runtime(
         )
         if (
             result.get("success") is False
-            or result.get("accepted") is False
+            or result.get("accepted") is not True
+            or result.get("taskId") != execution.runtime_task_id
             or result.get("error")
         ):
             raise HTTPException(
@@ -333,6 +372,65 @@ async def _continue_runtime(
         push_project_chat_message(failed.model_dump(by_alias=True))
         raise HTTPException(502, error) from exc
     db.refresh(response)
+    return response
+
+
+def _queue_reply(
+    db: Session,
+    user_id: int,
+    request: ProjectChatCommentExecution,
+    trigger: ProjectChatMessage,
+    target: ProjectChatMessage,
+    original: LoopItemExecution | BoundCommentSession,
+    attachments: list[dict[str, Any]],
+) -> ProjectChatMessage:
+    """Keep offline replies in the same durable queue as first executions."""
+    from app.services.device.identity import resolve_owned_device_alias
+    from app.services.runner_routing import active_device, issue_binding, routing_error
+
+    bound_id = issue_binding(db, request.task_id)
+    bound = active_device(db, bound_id) if bound_id else None
+    if bound is None:
+        raise routing_error(
+            "ISSUE_RUNNER_CONFIGURATION_REQUIRED",
+            "The original session's environment must be restored before replying",
+        )
+    original_device = resolve_owned_device_alias(
+        db,
+        user_id=original.executor_owner_user_id,
+        device_id=original.runtime_device_id,
+    )
+    if original_device is None or original_device.id != bound.id:
+        raise routing_error(
+            "ISSUE_RUNNER_CONFLICT",
+            "The comment session belongs to a different environment than this Issue",
+        )
+    if request.runner_selection is not None:
+        raise HTTPException(
+            409, "An existing session keeps its original runner and model"
+        )
+    execution = loop_item_execution_service.enqueue_session_followup(
+        db,
+        original=original,
+        user_id=user_id,
+        trigger_message_id=trigger.message_id,
+        message=trigger.content,
+        attachments=attachments,
+        root_comment_id=trigger.thread_root_message_id or trigger.message_id,
+        project_id=request.project_id,
+        issue_id=request.task_id,
+    )
+    response = _response(
+        db,
+        request,
+        trigger,
+        execution.agent_id,
+        target.sender_name,
+        execution,
+        followup=True,
+    )
+    response.metadata_json = {**response.metadata_json, "run_status": execution.status}
+    db.commit()
     return response
 
 
@@ -395,7 +493,16 @@ async def execute_comment(
             agent_id=execution.agent_id,
             active_only=True,
         )
-    response = await _continue_runtime(
-        db, request, trigger, target, execution, attachments
-    )
+    if (
+        execution.runtime_origin_context.get("dispatch_kind") == "collaboration_group"
+        or isinstance(execution, LoopItemExecution)
+        and execution.uses_runner_routing
+    ):
+        response = _queue_reply(
+            db, user_id, request, trigger, target, execution, attachments
+        )
+    else:
+        response = await _continue_runtime(
+            db, request, trigger, target, execution, attachments
+        )
     return [project_chat_service.to_view(response, db=db)]

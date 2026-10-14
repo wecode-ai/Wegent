@@ -124,25 +124,19 @@ export function IssueActivityPanel({
       try {
         const updated = await api.issues.markRead(issue.id, sequence);
         onTaskUpdated?.(updated);
-      } catch {
+      } catch (cause) {
         onError();
+        throw cause;
       }
     },
     [api.issues, issue.id, onError, onTaskUpdated],
   );
-  const latestActivitySequence = chat.messages.reduce(
-    (latest, message) => Math.max(latest, message.sequenceNumber),
-    0,
-  );
-  const entryReadSequence =
-    (issue.activity_read_sequence ?? 0) > 0 || issue.is_unread
-      ? (issue.activity_read_sequence ?? 0)
-      : latestActivitySequence;
   const scroll = useIssueActivityScroll({
     messages: chat.messages,
     loading: chat.loading,
     issueId: issue.id,
-    readSequence: entryReadSequence,
+    readSequence: issue.activity_read_sequence ?? 0,
+    unread: Boolean(issue.is_unread),
     onReadSequence: api.issues ? markActivityRead : undefined,
     cardTestIdPrefix: "collaboration-chat-card-",
   });

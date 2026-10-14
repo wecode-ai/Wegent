@@ -337,6 +337,7 @@ class WorkspaceExecutionEnvironmentResponse(BaseModel):
     workspace_id: SnowflakeId
     device_id: int
     device_key: str
+    app_device_id: str | None = None
     name: str
     kind: Literal["local_device", "cloud_host"]
     device_type: str
@@ -373,6 +374,7 @@ class PersonalExecutionEnvironmentResource(BaseModel):
     id: SnowflakeId
     device_id: int
     device_key: str
+    app_device_id: str | None = None
     name: str
     kind: Literal["local_device", "cloud_host"]
     coding_tools: list[str] = Field(default_factory=list)

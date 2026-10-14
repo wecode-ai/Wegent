@@ -24,6 +24,7 @@ from app.models.share_link import ResourceType
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.device_service import device_service
 from app.services.loop_item_executions.service import loop_item_execution_service
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +287,7 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
     return accepted_execution_ids
 
 
+@trace_async(tracer_name="robot_queue")
 async def reconcile_device_executions(
     *,
     user_id: int,
@@ -305,7 +307,12 @@ async def reconcile_device_executions(
             needs_confirmation_only=needs_confirmation_only,
         )
         execution_refs = [
-            (execution.id, execution.runtime_task_id) for execution in executions
+            (
+                execution.id,
+                execution.runtime_task_id,
+                bool(execution.runtime_origin_context.get("comment_continue_task_id")),
+            )
+            for execution in executions
         ]
     if not execution_refs:
         return 0
@@ -344,9 +351,67 @@ async def reconcile_device_executions(
                 snapshots[task_id] = task
 
     reconciled = 0
+    turn_snapshots = {}
+    for _, runtime_task_id, followup in execution_refs:
+        if not followup or runtime_task_id in turn_snapshots:
+            continue
+        from app.services.project_chat.execution_snapshot import (
+            snapshot_from_transcript,
+        )
+
+        try:
+            transcript = await get_sio().call(
+                "runtime:rpc",
+                {
+                    "method": "runtime.tasks.transcript",
+                    "payload": {"taskId": runtime_task_id},
+                },
+                to=socket_id,
+                namespace="/local-executor",
+                timeout=15,
+            )
+            turn_snapshots[runtime_task_id] = (
+                snapshot_from_transcript(
+                    device_id=device_id, task_id=runtime_task_id, response=transcript
+                )
+                if isinstance(transcript, dict) and transcript.get("success")
+                else None
+            )
+        except Exception:
+            logger.exception(
+                "[RobotQueue] Turn reconciliation failed device=%s task=%s",
+                device_id,
+                runtime_task_id,
+            )
+            turn_snapshots[runtime_task_id] = None
     with get_db_session() as db:
-        for execution_id, runtime_task_id in execution_refs:
+        for execution_id, runtime_task_id, followup in execution_refs:
             snapshot = snapshots.get(runtime_task_id)
+            matched_turn_id = None
+            if followup and snapshot is not None:
+                from app.services.project_chat.execution_snapshot import (
+                    match_runtime_turn,
+                )
+
+                execution = db.get(LoopItemExecution, execution_id)
+                activity = (
+                    loop_item_execution_service._linked_activity(db, execution)
+                    if execution is not None
+                    else None
+                )
+                history = turn_snapshots.get(runtime_task_id)
+                turn = (
+                    match_runtime_turn(activity, history, single_execution=False)
+                    if activity is not None and history is not None
+                    else None
+                )
+                if turn is None or turn.status == "unknown":
+                    continue
+                matched_turn_id = turn.id
+                snapshot = {
+                    "status": {"done": "completed"}.get(turn.status, turn.status),
+                    "running": turn.status == "running",
+                }
             loop_item_execution_service.reconcile_runtime_snapshot(
                 db,
                 execution_id=execution_id,
@@ -359,6 +424,7 @@ async def reconcile_device_executions(
                     if snapshot
                     else None
                 ),
+                matched_turn_id=matched_turn_id,
             )
             reconciled += 1
     return reconciled

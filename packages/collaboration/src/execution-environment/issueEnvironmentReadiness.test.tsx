@@ -78,43 +78,14 @@ function projectWithDevice(
 
 describe("resolveProjectExecutionEnvironmentReadiness", () => {
   it.each([
-    ["unassigned", baseProject, []],
-    [
-      "offline",
-      projectWithDevice("ready", "/workspace"),
-      [environment("offline")],
-    ],
-    ["uninitialized", baseProject, [environment("online")]],
-    ["preparing", projectWithDevice("preparing"), [environment("online")]],
-    ["error", projectWithDevice("error"), [environment("online")]],
-  ] as const)("resolves %s", (expected, project, environments) => {
-    expect(
-      resolveProjectExecutionEnvironmentReadiness(project, environments).kind,
-    ).toBe(expected);
-  });
-
-  it("requires an online device, ready state, and non-empty workspace path", () => {
-    expect(
-      resolveProjectExecutionEnvironmentReadiness(
-        projectWithDevice("ready", "/workspace"),
-        [environment("online")],
-      ).kind,
-    ).toBe("ready");
-    expect(
-      resolveProjectExecutionEnvironmentReadiness(
-        projectWithDevice("ready", "  "),
-        [environment("online")],
-      ).kind,
-    ).toBe("uninitialized");
-  });
-
-  it("requires a prepared execution environment for a local project", () => {
-    expect(
-      resolveProjectExecutionEnvironmentReadiness(
-        { ...baseProject, project_store: "local" },
-        [],
-      ).kind,
-    ).toBe("unassigned");
+    ["unassigned", []],
+    ["offline", [environment("offline")]],
+    ["ready", [environment("online")]],
+    ["ready", [environment("offline"), environment("online")]],
+  ] as const)("resolves %s", (expected, environments) => {
+    expect(resolveProjectExecutionEnvironmentReadiness(environments).kind).toBe(
+      expected,
+    );
   });
 });
 
@@ -270,7 +241,7 @@ describe("useProjectExecutionEnvironmentReadiness", () => {
     } as unknown as SharedWorkspaceApi;
 
     await renderProbe(api, baseProject);
-    expect(container?.textContent).toBe("uninitialized");
+    expect(container?.textContent).toBe("ready");
 
     await act(async () =>
       root!.render(
@@ -328,18 +299,18 @@ describe("useProjectExecutionEnvironmentReadiness", () => {
     expect(container.textContent).toContain("ready");
   });
 
-  it("uses the latest project configuration instead of the stale rendered project", async () => {
-    const latestProject = projectWithDevice("ready", "/workspace");
-    const api = {
-      projects: {
-        get: vi.fn(async () => latestProject),
-        listExecutionEnvironments: vi.fn(async () => [environment("online")]),
-      },
-    } as unknown as SharedWorkspaceApi;
-
-    await renderProbe(api, baseProject);
-
-    expect(container?.textContent).toBe("ready");
-    expect(api.projects.get).toHaveBeenCalledWith(baseProject.id);
-  });
+  it.each([undefined, "preparing", "error", "ready"] as const)(
+    "does not gate online runners on project preparation status %s",
+    async (status) => {
+      const api = {
+        projects: {
+          get: vi.fn(),
+          listExecutionEnvironments: vi.fn(async () => [environment("online")]),
+        },
+      } as unknown as SharedWorkspaceApi;
+      await renderProbe(api, projectWithDevice(status));
+      expect(container?.textContent).toBe("ready");
+      expect(api.projects.get).not.toHaveBeenCalled();
+    },
+  );
 });
