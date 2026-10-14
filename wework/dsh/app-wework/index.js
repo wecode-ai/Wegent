@@ -1,5 +1,5 @@
 import { createReadStream, readFileSync, statSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { lstat, readlink, realpath, stat } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
@@ -480,8 +480,24 @@ async function isFile(path) {
       console.error('[wework-app] Static asset stat failed', {
         path,
         errorCode: error?.code,
+        parent: await assetDirectoryDiagnostic(dirname(path)),
       })
     }
     return false
+  }
+}
+
+async function assetDirectoryDiagnostic(path) {
+  try {
+    const metadata = await lstat(path)
+    const target = metadata.isSymbolicLink() ? await readlink(path) : null
+    return {
+      directory: metadata.isDirectory(),
+      symbolicLink: metadata.isSymbolicLink(),
+      target,
+      resolved: await realpath(path).catch(error => ({ errorCode: error?.code })),
+    }
+  } catch (error) {
+    return { errorCode: error?.code }
   }
 }

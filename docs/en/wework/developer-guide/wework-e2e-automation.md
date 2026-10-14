@@ -313,6 +313,11 @@ queries retain their stdout protocol. Stack diagnostics omit arguments and local
 Desktop E2E Electron logs also retain redacted renderer errors. Git worktree and
 conversation-index replacement failures record Git stderr or the original OS error
 code to distinguish page timeouts from failures in the underlying execution.
+Windows plugin installation diagnostics also record application asset directory
+state, link targets, and file counts before and after pnpm operations. Static asset
+read failures record the parent directory's link state to locate missing resources.
+Windows worktree commands set `GIT_COMMON_DIR` from the existing `.git` and
+`commondir` parser so checkout children find shared objects before loading repository config.
 
 Executor configures loopback `NO_PROXY` before creating the Tokio runtime, avoiding
 process environment mutation on asynchronous connection threads. The startup scenario

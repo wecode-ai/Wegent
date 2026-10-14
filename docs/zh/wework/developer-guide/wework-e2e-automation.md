@@ -270,6 +270,10 @@ Linux CI 的插件开发分片通过 GDB 启动受 Electron 管理的 Executor�
 进程。独立 MCP 和 schema 查询保持原有 stdout 协议。栈诊断不打印参数或局部变量。
 桌面 E2E 的 Electron 日志同时保留脱敏后的 renderer 错误；Git worktree 和会话索引
 替换失败会记录 Git stderr 或原始系统错误码，便于区分页面超时与底层执行失败。
+Windows 插件安装诊断还会记录 pnpm 操作前后的应用资源目录状态、目录链接目标和
+文件数量；静态资源读取失败时会记录父目录链接状态，用于定位资源缺失发生的阶段。
+Windows worktree 命令通过现有 `.git` 和 `commondir` 解析结果显式传入
+`GIT_COMMON_DIR`，让 checkout 子进程在加载仓库配置前找到共享对象目录。
 
 Executor 在创建 Tokio 运行时之前配置回环地址的 `NO_PROXY`，避免连接期间在异步线程中
 修改进程环境。启动场景验证 Executor 先就绪、Core DSH 后启动，并确认实际监听端口有效。

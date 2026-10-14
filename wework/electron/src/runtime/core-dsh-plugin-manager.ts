@@ -1,5 +1,15 @@
 import { spawn } from 'node:child_process'
-import { access, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
@@ -364,6 +374,7 @@ export class CoreDshPluginManager {
       join(this.options.dshHome, 'pnpm-store'),
       ...args,
     ])
+    await this.logManagedAssets('before-pnpm')
     try {
       await this.runCommand(command, commandArgs, this.pnpmCommandOptions())
     } catch (error) {
@@ -372,6 +383,34 @@ export class CoreDshPluginManager {
       await allowBuild(this.profileRoot, matcher)
       await this.runCommand(command, commandArgs, this.pnpmCommandOptions()).catch(reason => {
         throw commandError('pnpm', reason)
+      })
+    } finally {
+      await this.logManagedAssets('after-pnpm')
+    }
+  }
+
+  private async logManagedAssets(stage: string): Promise<void> {
+    if (process.platform !== 'win32' || this.options.environment.VITE_WEWORK_E2E !== 'true') return
+    try {
+      const manifest = await this.readManifest()
+      const spec = manifest.dependencies?.['@wegent/dsh-app-wework']
+      if (!spec?.startsWith('file:')) return
+      const path = resolve(this.profileRoot, spec.slice('file:'.length), 'web', 'assets')
+      const result = await readdir(path).then(
+        entries => ({ fileCount: entries.length }),
+        error => ({ errorCode: (error as NodeJS.ErrnoException).code })
+      )
+      console.info('[core-dsh-plugins-assets]', {
+        stage,
+        path,
+        ...result,
+        target: await readlink(path).catch(error => ({ errorCode: error.code })),
+        resolved: await realpath(path).catch(error => ({ errorCode: error.code })),
+      })
+    } catch (error) {
+      console.info('[core-dsh-plugins-assets]', {
+        stage,
+        errorCode: (error as NodeJS.ErrnoException).code,
       })
     }
   }

@@ -87,10 +87,11 @@ fn clones_and_reuses_repositories_beyond_windows_max_path() {
     runtime.block_on(async {
         let directory = tempfile::tempdir().unwrap();
         let source = create_local_repository(directory.path(), "source", "fixture.txt", "fixture");
-        let mut destination = directory.path().join("destination");
-        for index in 0..6 {
-            destination = destination.join(format!("{index}-{}", "workspace".repeat(6)));
-        }
+        // Match the CI clone boundary: repository discovery fits MAX_PATH,
+        // while Git's hook template paths require long-path support.
+        let destination = directory
+            .path()
+            .join("r".repeat(236 - directory.path().to_string_lossy().len() - 1));
         assert!(
             destination
                 .join(".git/hooks/fsmonitor-watchman.sample")

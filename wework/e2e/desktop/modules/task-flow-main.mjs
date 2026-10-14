@@ -1722,6 +1722,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await triggerModelReloadUntilCloudFailure(control)
     control.restoreCloudModels()
     await control.command('dispatchLocalModelSettingsChanged', '')
+    // The composer mounts before native Codex initialization finishes. Establish
+    // the configured local catalog prerequisite before inspecting model options.
+    await control.command(
+      'waitFor',
+      '[data-testid="model-selector-button"][data-model-provider-id]:not([data-model-provider-id=""])',
+      { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+    )
     const canonicalModelOption = `model-option-${DEFAULT_MODEL_ID}`
     const synthesizedModelOption = `model-option-codex-${DEFAULT_MODEL_ID}`
     const publicModelOption = `model-option-${CLOUD_PUBLIC_MODEL_NAME}`

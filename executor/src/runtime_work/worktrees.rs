@@ -1158,6 +1158,7 @@ fn git_command() -> Command {
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
     let mut command = git_command();
+    configure_git_common_dir(&mut command, path);
     command
         .arg("-c")
         .arg("core.bare=false")
@@ -1170,6 +1171,16 @@ fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Resu
     }
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output)
+}
+
+fn configure_git_common_dir(command: &mut Command, _path: &Path) {
+    command.env_remove("GIT_COMMON_DIR");
+    #[cfg(windows)]
+    if let Some((_, _, common_dir)) = super::util::git_metadata_directories(_path) {
+        // Git for Windows disables long paths until repository config is loaded.
+        // Its checkout child must find shared objects before reading commondir.
+        command.env("GIT_COMMON_DIR", common_dir);
+    }
 }
 
 fn command_result(output: std::process::Output) -> Result<String, String> {
@@ -2937,6 +2948,7 @@ mod tests {
 
     fn run_git(path: &Path, args: &[&str]) {
         let mut command = git_command();
+        configure_git_common_dir(&mut command, path);
         command
             .arg("-c")
             .arg("core.bare=false")
@@ -2958,11 +2970,10 @@ mod tests {
     #[test]
     fn worktree_metadata_can_exceed_the_windows_max_path_limit() {
         let root = tempfile::tempdir().unwrap();
-        let mut source = root.path().to_path_buf();
-        while source.to_string_lossy().len() < 240 {
-            source = source.join("long-repository-directory");
-        }
-        source = source.join("workspace");
+        // Match the CI boundary: HEAD fits MAX_PATH but commondir does not.
+        let source = root
+            .path()
+            .join("r".repeat(226 - root.path().to_string_lossy().len() - 1));
         initialize_repository(&source);
         run_git(&source, &["config", "core.longpaths", "true"]);
         let worktree = root.path().join("managed/workspace");
