@@ -419,6 +419,52 @@ describe("ProjectAgentConfiguration", () => {
     expect(element("project-agent-dialog")).toBeTruthy();
   });
 
+  it.each(['allowed', 'denied', 'failed'] as const)(
+    'waits for legacy source access before consuming a host add action: %s',
+    async result => {
+      const { api } = createApi()
+      let resolveAccess!: (workspaces: never[]) => void
+      let rejectAccess!: (cause: Error) => void
+      api.workspaces!.list = vi.fn(
+        () =>
+          new Promise<never[]>((resolve, reject) => {
+            resolveAccess = resolve
+            rejectAccess = reject
+          })
+      )
+      const onConsumed = vi.fn()
+      const onError = vi.fn()
+      await act(async () => {
+        root.render(
+          <ProjectAgentConfiguration
+            api={api}
+            openComposerRequestId={18}
+            onOpenComposerRequestConsumed={onConsumed}
+            project={{ ...project, workspace_access_role: undefined }}
+            onError={onError}
+            translate={(_key, fallback) => fallback}
+          />
+        )
+      })
+      expect(onConsumed).not.toHaveBeenCalled()
+      expect(api.resources!.list).not.toHaveBeenCalled()
+      expect(api.workspaces!.listAgents).not.toHaveBeenCalled()
+      await act(async () => {
+        if (result === 'failed') rejectAccess(new Error('Space access failed'))
+        else resolveAccess(result === 'allowed' ? [{ id: project.workspace_id } as never] : [])
+      })
+      expect(onConsumed).toHaveBeenCalledExactlyOnceWith(18)
+      if (result === 'allowed') {
+        expect(element('project-agent-dialog')).toBeTruthy()
+      } else {
+        expect(container.querySelector('[data-testid="project-agent-dialog"]')).toBeNull()
+        expect(api.resources!.list).not.toHaveBeenCalled()
+        expect(api.workspaces!.listAgents).not.toHaveBeenCalled()
+        expect(onError).toHaveBeenCalledTimes(result === 'failed' ? 1 : 0)
+      }
+    }
+  )
+
   it("excludes cloud Agent resources from local projects", async () => {
     const cloudAgent = { ...workspaceAgent, location: "cloud" as const };
     const { api } = createApi({

@@ -71,6 +71,13 @@ export function ProjectAgentConfiguration({
       (project.workspace_access_role === undefined &&
         legacySourceAccess?.workspaceId === workspaceId &&
         legacySourceAccess?.allowed === true));
+  const legacySourceAccessPending =
+    canManage &&
+    scope === 'project' &&
+    project.project_store !== 'local' &&
+    project.workspace_access_role === undefined &&
+    Boolean(workspaceId && api.workspaces) &&
+    legacySourceAccess?.workspaceId !== workspaceId
   const usesLocalAgentCreator =
     project.project_store === "local" && Boolean(host?.renderLocalAgentCreator);
   const usesLocalAgentEditor =
@@ -124,6 +131,7 @@ export function ProjectAgentConfiguration({
       })
       .catch((cause) => {
         if (!active) return;
+        setLegacySourceAccess({ workspaceId, allowed: false });
         setError(
           errorMessage(
             cause,
@@ -229,15 +237,16 @@ export function ProjectAgentConfiguration({
   ]);
 
   useEffect(() => {
-    if (openComposerRequestId === undefined) return;
+    if (openComposerRequestId === undefined || legacySourceAccessPending) return;
     if (canBrowseSources) {
       setMode(defaultMode);
       setComposerOpen(true);
     }
     onOpenComposerRequestConsumed?.(openComposerRequestId);
   }, [
-    canManage,
+    canBrowseSources,
     defaultMode,
+    legacySourceAccessPending,
     onOpenComposerRequestConsumed,
     openComposerRequestId,
   ]);
