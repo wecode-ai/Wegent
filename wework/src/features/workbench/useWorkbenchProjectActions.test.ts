@@ -1,6 +1,10 @@
 import { updateRuntimeWorkProject } from '@/lib/runtime-project-update'
+import { qualifyLocalRuntimeWork } from '@/lib/local-runtime-sidebar-identity'
+import { mergeRuntimeWorkLists } from './runtimeWorkMerge'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   getLocalRuntimeStateDeviceId,
+  getRuntimeProjectActivation,
   getRuntimeRemoteProjectRegistrations,
 } from '@/lib/runtime-project-state'
 import '@/i18n'
@@ -102,8 +106,9 @@ describe('device project settings save', () => {
       user: { id: 1 },
       state: {
         devices: [
-          { device_id: 'local', device_type: 'local', status: 'online' },
+          { id: 0, device_id: 'local', device_type: 'local', status: 'online' },
           {
+            id: 1,
             device_id: 'remote',
             device_type: 'remote',
             status: 'online',
@@ -164,7 +169,14 @@ describe('device project settings save', () => {
           renameRuntimeWorkspace: vi.fn(async () => ({ accepted: true, deviceId: 'remote' })),
         },
       },
-      services: { projectApi: {} },
+      services: {
+        projectApi: {},
+        getLocalRuntimeSidebarIdentity: vi.fn(async () => ({
+          deviceId: options.state.devices[0].device_id,
+          runtimeInstanceId: 'current-local-runtime',
+          provenance: 'local-ipc' as const,
+        })),
+      },
       refreshWorkLists,
       updateRuntimeProject,
       updateLocalRuntimeTaskPinned: vi.fn(),
@@ -176,11 +188,15 @@ describe('device project settings save', () => {
         queue ?? (async (mutation: () => Promise<unknown>) => mutation()),
     }
     const getRuntimeWorkSnapshot = () => options.state.runtimeWork
-    const getRemoteProjectRegistrations = () =>
+    const getRemoteProjectRegistrations = (localSidebarIdentity?: {
+      deviceId: string
+      runtimeInstanceId: string
+      provenance: 'local-ipc'
+    }) =>
       getRuntimeRemoteProjectRegistrations(
         getRuntimeWorkSnapshot() as never,
         getLocalRuntimeStateDeviceId(options.state.devices as never),
-        { devices: options.state.devices as never }
+        { devices: options.state.devices as never, localSidebarIdentity }
       )
     const { result, rerender } = renderHook(() =>
       useWorkbenchProjectActions({
@@ -206,21 +222,30 @@ describe('device project settings save', () => {
     await result.current.updateLocalRuntimeProject(update as never)
     expect(upsert).toHaveBeenCalledWith({ ...update, runtime: 'codex' })
     expect(events).toEqual(['projection', 'sync', 'refresh'])
-    expect(sync).toHaveBeenCalledWith({
-      deviceId: 'local',
-      projects: [
-        {
-          id: 'stable-sidebar',
-          hostId: 'remote',
-          projectKey: 'owner-key',
-          label: 'Saved',
-          remotePath: '/new',
-          roots: ['/new', '/extra'],
-          defaultProjectSpace: update.defaultProjectSpace,
-          aiSettings: update.aiSettings,
+    expect(sync).toHaveBeenCalledWith(
+      {
+        deviceId: 'local',
+        projects: [
+          {
+            id: 'stable-sidebar',
+            hostId: 'remote',
+            projectKey: 'owner-key',
+            label: 'Saved',
+            remotePath: '/new',
+            roots: ['/new', '/extra'],
+            defaultProjectSpace: update.defaultProjectSpace,
+            aiSettings: update.aiSettings,
+          },
+        ],
+      },
+      {
+        localSidebarIdentity: {
+          deviceId: 'local',
+          runtimeInstanceId: 'current-local-runtime',
+          provenance: 'local-ipc',
         },
-      ],
-    })
+      }
+    )
   })
 
   test('retains the confirmed owner settings while surfacing a mirror sync failure', async () => {
@@ -230,6 +255,180 @@ describe('device project settings save', () => {
     )
     expect(updateRuntimeProject).toHaveBeenCalledWith(update)
     expect(refreshWorkLists).not.toHaveBeenCalled()
+  })
+
+  test('saves the owner and full mirror when a different runtime shares the local Electron alias', async () => {
+    const { result, options, sync, updateRuntimeProject } = setup()
+    Object.assign(options.state.devices[0], {
+      device_id: 'electron-shared',
+      runtime_instance_id: 'current-local-runtime',
+    })
+    options.state.devices.push({
+      device_id: 'history',
+      device_type: 'remote',
+      status: 'offline',
+      app_device_id: 'electron-shared',
+      runtime_instance_id: 'old-runtime',
+    } as never)
+    await expect(result.current.updateLocalRuntimeProject(update as never)).resolves.toBeUndefined()
+    expect(updateRuntimeProject).toHaveBeenCalledWith(update)
+    expect(sync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'electron-shared',
+        projects: [expect.objectContaining({ id: 'stable-sidebar', roots: ['/new', '/extra'] })],
+      }),
+      {
+        localSidebarIdentity: {
+          deviceId: 'electron-shared',
+          runtimeInstanceId: 'current-local-runtime',
+          provenance: 'local-ipc',
+        },
+      }
+    )
+  })
+
+  test('keeps native local projects and chats during the real merged refresh after remote settings save', async () => {
+    const { result, options, sync, refreshWorkLists } = setup()
+    Object.assign(options.state.devices[0], {
+      device_id: 'electron-shared',
+      runtime_instance_id: 'current-local-runtime',
+    })
+    options.state.devices.push({
+      device_id: 'history',
+      device_type: 'remote',
+      status: 'offline',
+      app_device_id: 'electron-shared',
+      runtime_instance_id: 'old-runtime',
+    } as never)
+    const nativeWorkspace = {
+      deviceId: 'electron-shared',
+      workspacePath: '/repo/local',
+      workspaceSource: 'local',
+      mapped: true,
+      available: true,
+      tasks: [
+        {
+          taskId: 'local-task',
+          workspacePath: '/repo/local',
+          title: 'Keep task',
+          runtime: 'codex',
+        },
+      ],
+    }
+    options.state.runtimeWork.projects[0].project.stateDeviceId = 'electron-shared'
+    Object.assign(options.state.runtimeWork.projects[0].deviceWorkspaces[0], { mapped: true })
+    const identity = {
+      deviceId: 'electron-shared',
+      runtimeInstanceId: 'current-local-runtime',
+      provenance: 'local-ipc' as const,
+    }
+    options.state.runtimeWork = qualifyLocalRuntimeWork(
+      options.state.runtimeWork as never,
+      identity
+    ) as never
+    const local = {
+      projects: [
+        {
+          project: {
+            key: 'native-local-key',
+            name: 'Keep local',
+            stateDeviceId: 'electron-shared',
+            source: 'local_project',
+            pinned: true,
+            sidebarOrder: 2,
+            appearance: { color: 'pink' },
+          },
+          deviceWorkspaces: [nativeWorkspace],
+        },
+      ],
+      chats: [
+        {
+          ...nativeWorkspace,
+          workspacePath: '/repo/chat',
+          tasks: [{ ...nativeWorkspace.tasks[0], taskId: 'local-chat' }],
+        },
+      ],
+      totalTasks: 2,
+    }
+    refreshWorkLists.mockImplementation(async () => {
+      const trusted = qualifyLocalRuntimeWork(local as never, {
+        deviceId: 'electron-shared',
+        runtimeInstanceId: 'current-local-runtime',
+        provenance: 'local-ipc',
+      })
+      options.state.runtimeWork = mergeRuntimeWorkLists(
+        trusted,
+        options.state.runtimeWork as never,
+        {
+          devices: options.state.devices as never,
+        }
+      ) as never
+      const remote = options.state.runtimeWork.projects.find(item => item.project.name === 'Saved')!
+      expect(
+        getRuntimeProjectActivation(
+          options.state.runtimeWork as never,
+          runtimeProjectUiId(remote.project as never),
+          identity.deviceId,
+          options.state.devices as never,
+          identity
+        )
+      ).toEqual({
+        deviceId: identity.deviceId,
+        projectKey: 'stable-sidebar',
+        workspacePath: '/new',
+        remoteHostId: 'remote',
+      })
+    })
+    await expect(result.current.updateLocalRuntimeProject(update as never)).resolves.toBeUndefined()
+    expect(sync).toHaveBeenCalled()
+    expect(options.state.runtimeWork.projects).toContainEqual(
+      expect.objectContaining({
+        project: expect.objectContaining({
+          key: 'native-local-key',
+          pinned: true,
+          sidebarOrder: 2,
+          appearance: { color: 'pink' },
+        }),
+        deviceWorkspaces: [
+          expect.objectContaining({ tasks: [expect.objectContaining({ taskId: 'local-task' })] }),
+        ],
+      })
+    )
+    expect(
+      (options.state.runtimeWork as unknown as { chats: typeof local.chats }).chats[0].tasks[0]
+        .taskId
+    ).toBe('local-chat')
+    expect(JSON.stringify(options.state.runtimeWork)).not.toContain('current-local-runtime')
+  })
+
+  test('preserves the confirmed owner save and rejects a queued mirror after local runtime replacement', async () => {
+    const queued: Array<() => Promise<void>> = []
+    const { result, options, sync, updateRuntimeProject } = setup(
+      true,
+      true,
+      mutation =>
+        new Promise((resolve, reject) =>
+          queued.push(async () => {
+            try {
+              resolve(await mutation())
+            } catch (error) {
+              reject(error)
+            }
+          })
+        )
+    )
+    const saving = result.current.updateLocalRuntimeProject(update as never)
+    const rejected = expect(saving).rejects.toThrow('local-sidebar-runtime-changed')
+    await waitFor(() => expect(queued).toHaveLength(1))
+    options.services.getLocalRuntimeSidebarIdentity.mockResolvedValue({
+      deviceId: 'local',
+      runtimeInstanceId: 'replacement',
+      provenance: 'local-ipc',
+    })
+    await queued[0]()
+    await rejected
+    expect(updateRuntimeProject).toHaveBeenCalledWith(update)
+    expect(sync).not.toHaveBeenCalled()
   })
 
   test('does not project settings or sync when the owner rejects the save', async () => {

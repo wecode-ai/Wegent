@@ -22,7 +22,7 @@ import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import {
-  runtimeProjectTargetKey,
+  runtimeProjectSyncTargetKey,
   type RuntimeProjectSyncTarget,
 } from '@/lib/runtime-project-identity'
 import {
@@ -31,10 +31,14 @@ import {
 } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
-  getLocalRuntimeStateDeviceId,
   getRuntimeProjectActivation,
   getRuntimeRemoteProjectRegistrations,
 } from '@/lib/runtime-project-state'
+import {
+  assertLocalRuntimeSidebarIdentity,
+  getLocalRuntimeSourceIdentity,
+  type LocalRuntimeSidebarIdentity,
+} from '@/lib/local-runtime-sidebar-identity'
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/desktop/localWorkspaceOpen'
 import {
@@ -1081,10 +1085,10 @@ export function WorkbenchProvider({
     services: resolvedServices,
   })
 
-  const localRuntimeStateDeviceId = useMemo(
-    () => getLocalRuntimeStateDeviceId(state.devices),
-    [state.devices]
-  )
+  const sidebarDevicesRef = useRef(state.devices)
+  useLayoutEffect(() => {
+    sidebarDevicesRef.current = state.devices
+  }, [state.devices])
 
   const enqueueRemoteProjectStateMutation = useCallback(
     <T,>(mutation: () => Promise<T>): Promise<T> => {
@@ -1106,9 +1110,9 @@ export function WorkbenchProvider({
   const clearRemoteProjectSyncRemoval = useCallback(
     (target: RuntimeProjectSyncTarget) => {
       const devices = createWorkbenchDeviceResolver(state.devices)
-      const key = runtimeProjectTargetKey(target.deviceId, target.projectKey, devices)
+      const key = runtimeProjectSyncTargetKey(target, devices)
       removedRemoteProjectsRef.current = removedRemoteProjectsRef.current.filter(
-        removed => runtimeProjectTargetKey(removed.deviceId, removed.projectKey, devices) !== key
+        removed => runtimeProjectSyncTargetKey(removed, devices) !== key
       )
       remoteProjectSyncSignatureRef.current = ''
     },
@@ -1116,12 +1120,23 @@ export function WorkbenchProvider({
   )
 
   const getRemoteProjectRegistrations = useCallback(
-    () =>
-      getRuntimeRemoteProjectRegistrations(getRuntimeWorkSnapshot(), localRuntimeStateDeviceId, {
-        devices: state.devices,
+    (identity: LocalRuntimeSidebarIdentity) => {
+      assertLocalRuntimeSidebarIdentity(identity, identity)
+      removedRemoteProjectsRef.current = removedRemoteProjectsRef.current.filter(target => {
+        const source = getLocalRuntimeSourceIdentity(target)
+        return (
+          !source ||
+          (source.deviceId === identity.deviceId &&
+            source.runtimeInstanceId === identity.runtimeInstanceId)
+        )
+      })
+      return getRuntimeRemoteProjectRegistrations(getRuntimeWorkSnapshot(), identity.deviceId, {
+        localSidebarIdentity: identity,
+        devices: sidebarDevicesRef.current,
         excludedTargets: removedRemoteProjectsRef.current,
-      }),
-    [getRuntimeWorkSnapshot, localRuntimeStateDeviceId, state.devices]
+      })
+    },
+    [getRuntimeWorkSnapshot]
   )
 
   useEffect(() => {
@@ -1138,51 +1153,60 @@ export function WorkbenchProvider({
       }
       return
     }
-    const projects = getRemoteProjectRegistrations().sort((left, right) =>
-      left.id.localeCompare(right.id)
-    )
-    if (!localRuntimeStateDeviceId || projects.length === 0) {
-      remoteProjectSyncSignatureRef.current = ''
-      return
-    }
-    const signature = JSON.stringify({ deviceId: localRuntimeStateDeviceId, projects })
-    if (remoteProjectSyncSignatureRef.current === signature) return
-    remoteProjectSyncSignatureRef.current = signature
-    const revision = remoteProjectSyncRevisionRef.current
-    const attempt = {
-      signature,
-      queued: true,
-      activationRevision: remoteProjectSyncActivationRevisionRef.current,
-    }
-    remoteProjectSyncAttemptRef.current = attempt
-    void enqueueRemoteProjectStateMutation(() => {
-      if (
-        remoteProjectSyncAttemptRef.current !== attempt ||
-        revision !== remoteProjectSyncRevisionRef.current ||
-        remoteProjectSyncSignatureRef.current !== signature
-      ) {
-        if (remoteProjectSyncAttemptRef.current === attempt) {
-          remoteProjectSyncAttemptRef.current = null
-          if (remoteProjectSyncSignatureRef.current === signature) {
-            remoteProjectSyncSignatureRef.current = ''
-          }
-        }
-        return Promise.resolve()
+    const readLocalIdentity = resolvedServices.getLocalRuntimeSidebarIdentity
+    if (!readLocalIdentity || !state.runtimeWork) return
+    let cancelled = false
+    let signature = ''
+    let attempt: typeof remoteProjectSyncAttemptRef.current = null
+    void (async () => {
+      const identity = await readLocalIdentity()
+      if (cancelled || !identity) return
+      const projects = getRemoteProjectRegistrations(identity).sort((left, right) =>
+        left.id.localeCompare(right.id)
+      )
+      if (projects.length === 0) {
+        remoteProjectSyncSignatureRef.current = ''
+        return
       }
-      attempt.queued = false
-      return executorClient.runtime
-        .syncRuntimeRemoteProjects({
-          deviceId: localRuntimeStateDeviceId,
-          projects: getRemoteProjectRegistrations(),
-        })
-        .then(response => {
-          if (!response.accepted) {
-            throw new Error(response.error || 'Failed to sync remote projects')
+      signature = JSON.stringify({ identity, projects })
+      if (remoteProjectSyncSignatureRef.current === signature) return
+      remoteProjectSyncSignatureRef.current = signature
+      const revision = remoteProjectSyncRevisionRef.current
+      attempt = {
+        signature,
+        queued: true,
+        activationRevision: remoteProjectSyncActivationRevisionRef.current,
+      }
+      remoteProjectSyncAttemptRef.current = attempt
+      await enqueueRemoteProjectStateMutation(async () => {
+        const isCurrentAttempt = () =>
+          remoteProjectSyncAttemptRef.current === attempt &&
+          revision === remoteProjectSyncRevisionRef.current &&
+          remoteProjectSyncSignatureRef.current === signature
+        if (!isCurrentAttempt()) {
+          if (remoteProjectSyncAttemptRef.current === attempt) {
+            remoteProjectSyncAttemptRef.current = null
+            if (remoteProjectSyncSignatureRef.current === signature) {
+              remoteProjectSyncSignatureRef.current = ''
+            }
           }
-          return refreshWorkLists()
-        })
-    }).catch(error => {
+          return
+        }
+        assertLocalRuntimeSidebarIdentity(identity, await readLocalIdentity())
+        if (!isCurrentAttempt()) return
+        attempt!.queued = false
+        const response = await executorClient.runtime.syncRuntimeRemoteProjects(
+          { deviceId: identity.deviceId, projects: getRemoteProjectRegistrations(identity) },
+          { localSidebarIdentity: identity }
+        )
+        if (!response.accepted) {
+          throw new Error(response.error || 'Failed to sync remote projects')
+        }
+        await refreshWorkLists()
+      })
+    })().catch(error => {
       if (
+        attempt &&
         remoteProjectSyncAttemptRef.current === attempt &&
         remoteProjectSyncSignatureRef.current === signature
       ) {
@@ -1198,11 +1222,14 @@ export function WorkbenchProvider({
       dispatch({ type: 'error_set', error: error instanceof Error ? error.message : String(error) })
       console.warn('[Wework] Failed to sync remote projects into Codex global state', error)
     })
+    return () => {
+      cancelled = true
+    }
   }, [
     enqueueRemoteProjectStateMutation,
     executorClient,
     getRemoteProjectRegistrations,
-    localRuntimeStateDeviceId,
+    resolvedServices.getLocalRuntimeSidebarIdentity,
     refreshWorkLists,
     remoteProjectSyncRetryRevision,
     state.runtimeWork,
@@ -1248,26 +1275,39 @@ export function WorkbenchProvider({
       projectActivationSignatureRef.current = ''
       return
     }
-    const activation = getRuntimeProjectActivation(
-      state.runtimeWork,
-      state.currentProject?.id,
-      localRuntimeStateDeviceId,
-      state.devices
-    )
-    if (!activation) {
-      projectActivationSignatureRef.current = ''
-      return
-    }
-    const signature = JSON.stringify(activation)
-    if (projectActivationSignatureRef.current === signature) return
-    projectActivationSignatureRef.current = signature
-    void executorClient.runtime.activateRuntimeProject(activation).catch(error => {
+    const readLocalIdentity = resolvedServices.getLocalRuntimeSidebarIdentity
+    if (!readLocalIdentity || !state.devices.some(device => device.device_type === 'local')) return
+    let cancelled = false
+    void (async () => {
+      const identity = await readLocalIdentity()
+      if (cancelled || !identity) return
+      const activation = getRuntimeProjectActivation(
+        state.runtimeWork,
+        state.currentProject?.id,
+        identity.deviceId,
+        state.devices,
+        identity
+      )
+      if (!activation) {
+        projectActivationSignatureRef.current = ''
+        return
+      }
+      const signature = JSON.stringify({ activation, identity })
+      if (projectActivationSignatureRef.current === signature) return
+      projectActivationSignatureRef.current = signature
+      await executorClient.runtime.activateRuntimeProject(activation, {
+        localSidebarIdentity: identity,
+      })
+    })().catch(error => {
       projectActivationSignatureRef.current = ''
       console.warn('[Wework] Failed to save the active Codex project', error)
     })
+    return () => {
+      cancelled = true
+    }
   }, [
     executorClient,
-    localRuntimeStateDeviceId,
+    resolvedServices.getLocalRuntimeSidebarIdentity,
     state.currentProject?.id,
     state.currentRuntimeTask,
     state.runtimeWork,

@@ -1011,7 +1011,7 @@ export function useWorkbenchDataRefresh({
       workListRefreshRevisionRef.current += 1
       cloudBackgroundRequestControllerRef.current?.abort()
       const projectUpdate = (work: RuntimeWorkListResponse) =>
-        updateRuntimeWorkProject(work, update)
+        updateRuntimeWorkProject(work, update, devicesRef.current)
       if (localRuntimeWorkRef.current)
         localRuntimeWorkRef.current = projectUpdate(localRuntimeWorkRef.current)
       if (runtimeWorkRef.current) runtimeWorkRef.current = projectUpdate(runtimeWorkRef.current)

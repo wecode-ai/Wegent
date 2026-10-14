@@ -1,5 +1,6 @@
 import * as codexPlugins from './codexPlugins'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
+import { qualifyLocalRuntimeWork } from '@/lib/local-runtime-sidebar-identity'
 import {
   readCachedRemoteRuntimeWork,
   writeCachedRemoteRuntimeWork,
@@ -576,6 +577,7 @@ describe('createLocalAppServices', () => {
       running: true,
       ready: true,
       deviceId: 'local-device',
+      runtimeInstanceId: 'test-runtime',
       version: '1.9.0',
     })
     const services = createLocalAppServices({
@@ -2096,7 +2098,12 @@ describe('createLocalAppServices', () => {
       ],
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+        runtimeInstanceId: 'test-runtime',
+      }),
       request,
       subscribe: vi.fn(),
     })
@@ -2157,7 +2164,12 @@ describe('createLocalAppServices', () => {
       ],
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+        runtimeInstanceId: 'test-runtime',
+      }),
       request,
       subscribe: vi.fn(),
     })
@@ -2218,6 +2230,7 @@ describe('createLocalAppServices', () => {
       running: true,
       ready: true,
       deviceId: 'device-uuid',
+      runtimeInstanceId: 'test-runtime',
     })
     const worktreeCapabilities = { version: 1, managed: true, preflight: true }
     const request = vi.fn().mockImplementation(async (method: string) =>
@@ -2263,7 +2276,7 @@ describe('createLocalAppServices', () => {
 
     await services.runtimeWorkApi?.listRuntimeWork()
 
-    expect(ensure).toHaveBeenCalledTimes(2)
+    expect(ensure).toHaveBeenCalledTimes(4)
     expect(request).toHaveBeenLastCalledWith('runtime.tasks.list', {})
   })
 
@@ -5718,86 +5731,96 @@ describe('createLocalAppServices', () => {
       ],
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+        runtimeInstanceId: 'test-runtime',
+      }),
       request,
       subscribe: vi.fn(),
     })
 
-    await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toEqual({
-      projects: [
+    await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toEqual(
+      qualifyLocalRuntimeWork(
         {
-          project: {
-            key: 'local:/Users/me/project',
-            id: expect.any(Number),
-            name: 'Project',
-            kind: 'local',
-            source: 'local_project',
-            stateDeviceId: 'device-uuid',
-            ownerDeviceId: 'device-uuid',
-            ownerProjectKey: 'local:/Users/me/project',
-            roots: [{ kind: 'local', path: '/Users/me/project' }],
-            sidebarOrder: 3,
-            pinned: false,
-            pinnedOrder: null,
-            active: false,
-            appearance: null,
-            aiSettings: {
-              instructions: 'Run focused project tests.',
-              modelSelection: {
-                modelName: 'gpt-5.5',
-                modelType: 'runtime',
-                options: { reasoning: 'high' },
-              },
-              quickPhrases: [
-                {
-                  id: 'project-review',
-                  title: 'Review project constraints',
-                  content: 'Read the project constraints first.',
-                  mode: 'plan',
+          projects: [
+            {
+              project: {
+                key: 'local:/Users/me/project',
+                id: expect.any(Number),
+                name: 'Project',
+                kind: 'local',
+                source: 'local_project',
+                stateDeviceId: 'device-uuid',
+                ownerDeviceId: 'device-uuid',
+                ownerProjectKey: 'local:/Users/me/project',
+                roots: [{ kind: 'local', path: '/Users/me/project' }],
+                sidebarOrder: 3,
+                pinned: false,
+                pinnedOrder: null,
+                active: false,
+                appearance: null,
+                aiSettings: {
+                  instructions: 'Run focused project tests.',
+                  modelSelection: {
+                    modelName: 'gpt-5.5',
+                    modelType: 'runtime',
+                    options: { reasoning: 'high' },
+                  },
+                  quickPhrases: [
+                    {
+                      id: 'project-review',
+                      title: 'Review project constraints',
+                      content: 'Read the project constraints first.',
+                      mode: 'plan',
+                    },
+                  ],
                 },
+              },
+              deviceWorkspaces: [
+                expect.objectContaining({
+                  deviceId: 'device-uuid',
+                  workspacePath: '/Users/me/project',
+                  workspaceKind: 'workspace',
+                  workspaceSource: 'local',
+                  label: 'Project',
+                  tasks: [
+                    expect.objectContaining({
+                      taskId: 'task-1',
+                      workspacePath: '/Users/me/worktrees/42/project',
+                      workspaceKind: 'worktree',
+                      worktreeId: '42',
+                      goalStatus: 'active',
+                      goalExecutionStatus: 'recovering',
+                      continuable: true,
+                      threadStatus: 'idle',
+                      turnStatus: 'completed',
+                    }),
+                  ],
+                }),
               ],
+              totalTasks: 1,
             },
-          },
-          deviceWorkspaces: [
+          ],
+          chats: [
             expect.objectContaining({
               deviceId: 'device-uuid',
-              workspacePath: '/Users/me/project',
-              workspaceKind: 'workspace',
-              workspaceSource: 'local',
-              label: 'Project',
+              workspacePath: '/Users/me/chat',
+              workspaceKind: 'chat',
               tasks: [
                 expect.objectContaining({
-                  taskId: 'task-1',
-                  workspacePath: '/Users/me/worktrees/42/project',
-                  workspaceKind: 'worktree',
-                  worktreeId: '42',
-                  goalStatus: 'active',
-                  goalExecutionStatus: 'recovering',
-                  continuable: true,
-                  threadStatus: 'idle',
-                  turnStatus: 'completed',
+                  taskId: 'chat-1',
+                  goalStatus: null,
                 }),
               ],
             }),
           ],
-          totalTasks: 1,
+          totalTasks: 2,
         },
-      ],
-      chats: [
-        expect.objectContaining({
-          deviceId: 'device-uuid',
-          workspacePath: '/Users/me/chat',
-          workspaceKind: 'chat',
-          tasks: [
-            expect.objectContaining({
-              taskId: 'chat-1',
-              goalStatus: null,
-            }),
-          ],
-        }),
-      ],
-      totalTasks: 2,
-    })
+        { deviceId: 'device-uuid', runtimeInstanceId: 'test-runtime', provenance: 'local-ipc' }
+      )
+    )
   })
 
   test('uses the remote executor project identity for a local sidebar descriptor', async () => {
@@ -5817,7 +5840,12 @@ describe('createLocalAppServices', () => {
       ],
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        runtimeInstanceId: 'test-runtime',
+      }),
       request,
       subscribe: vi.fn(),
     })
@@ -5849,7 +5877,12 @@ describe('createLocalAppServices', () => {
       tasks: [],
     }
     const live = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ ready: true, running: true, deviceId: 'remote-device' }),
+      ensure: vi.fn().mockResolvedValue({
+        ready: true,
+        running: true,
+        deviceId: 'remote-device',
+        runtimeInstanceId: 'remote-runtime',
+      }),
       request: vi.fn().mockResolvedValue({ success: true, workspaces: [workspace] }),
       subscribe: vi.fn(),
     })
@@ -5868,13 +5901,39 @@ describe('createLocalAppServices', () => {
       ],
     })
     const mirror = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ ready: true, running: true, deviceId: 'local-device' }),
+      ensure: vi.fn().mockResolvedValue({
+        ready: true,
+        running: true,
+        deviceId: 'local-device',
+        runtimeInstanceId: 'local-runtime',
+      }),
       request,
       subscribe: vi.fn(),
     })
     const mirrored = (await mirror.runtimeWorkApi!.listRuntimeWork())!
     expect(mirrored.projects[0].project.id).toBe(liveWork.projects[0].project.id)
-    const merged = mergeRuntimeWorkLists(mirrored, liveWork)
+    const merged = mergeRuntimeWorkLists(mirrored, liveWork, {
+      devices: [
+        {
+          id: 2,
+          device_id: 'local-device',
+          runtime_instance_id: 'local-runtime',
+          device_type: 'local',
+          status: 'online',
+          name: 'Local',
+          is_default: true,
+        },
+        {
+          id: 1,
+          device_id: 'remote-device',
+          runtime_instance_id: 'remote-runtime',
+          device_type: 'remote',
+          status: 'online',
+          name: 'Remote',
+          is_default: false,
+        },
+      ],
+    })
     expect(merged.projects).toHaveLength(1)
     expect(merged.projects[0].project.id).toBe(liveWork.projects[0].project.id)
     request.mockResolvedValue({
@@ -5976,7 +6035,12 @@ describe('createLocalAppServices', () => {
       totalTasks: 1,
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+        runtimeInstanceId: 'test-runtime',
+      }),
       request,
       subscribe: vi.fn(),
     })
@@ -6014,7 +6078,12 @@ describe('createLocalAppServices', () => {
       },
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+        runtimeInstanceId: 'test-runtime',
+      }),
       request,
       subscribe: vi.fn(),
     })
@@ -6065,7 +6134,12 @@ describe('createLocalAppServices', () => {
       ],
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+        runtimeInstanceId: 'test-runtime',
+      }),
       request,
       subscribe: vi.fn(),
     })
@@ -6374,7 +6448,12 @@ describe('runtime project response identities', () => {
       })),
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        runtimeInstanceId: 'test-runtime',
+      }),
       request,
       subscribe: vi.fn(),
     })
@@ -6408,7 +6487,12 @@ describe('runtime project response identities', () => {
       totalTasks: 0,
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'viewer' }),
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'viewer',
+        runtimeInstanceId: 'test-runtime',
+      }),
       request,
       subscribe: vi.fn(),
     })

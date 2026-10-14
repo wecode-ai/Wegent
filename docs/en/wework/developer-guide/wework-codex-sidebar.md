@@ -46,6 +46,10 @@ Updated folders and AI settings apply to new conversations. Existing conversatio
 
 An offline device's editor can display saved settings, but saving and plugin installation are disabled. A failed save retains the draft. If the execution device saves successfully but local index synchronization fails, the UI reports the synchronization error.
 
+Local sidebar synchronization uses the device address and runtime instance reported by the current local IPC executor. Building the registration list and submitting it use the same qualified identity; historical cloud registrations or shared addresses cannot change the local state owner. Reconnection revalidates the current identity. A changed runtime instance invalidates queued writes, and new synchronization reads the current identity and complete project list. Remote project ownership remains strictly validated; unresolved ownership never results in a partial registration batch.
+
+After the owning runtime confirms the save and a fresh readback passes validation, the client updates project settings by executor identity across equivalent device routes. If local sidebar synchronization subsequently fails, new conversations still use the confirmed project model and quick phrases; existing conversations retain their configuration.
+
 ### Compatibility by feature
 
 Registration and heartbeat metadata declare `multiRoots`, `aiSettings`, `defaultProjectSpace`, and `plugins` independently in `runtime_features.projectEditing`. Explicit booleans take precedence; false, missing, or malformed explicit fields grant no writes. Devices without advertisements use only verified legacy contracts: Executor 1.8.5 supports names and multiple folders, and 1.8.6 and the verified published image version 2.0.21 additionally support AI settings, quick phrases, and the default project space. Other versions, including unknown and future versions, retain only the existing rename operation.
@@ -65,7 +69,7 @@ The device maintainer initiates upgrades; Codex homes are never automatically mi
 
 ## Executor identity, projects, and local sidebar references
 
-- `deviceId` is the device address used for execution requests. `workbench-device.ts` resolves aliases centrally. When available, the persisted `runtime_instance_id` determines executor equality while requests retain the routable `device_id`. Known aliases associate records only when both lack a Runtime identity. A record with an identity cannot merge with one lacking it; conflicting Runtime owners of one alias produce an explicit error.
+- `deviceId` is the device address used for execution requests. `workbench-device.ts` resolves aliases centrally. When available, the persisted `runtime_instance_id` determines executor equality while requests retain the routable `device_id`. When both Runtime identities are missing, only the same registration record (matching record ID and canonical device ID) is deduplicated; a shared alias cannot establish executor equality. A record with an identity cannot merge with one lacking it; conflicting Runtime owners of one alias produce an explicit error.
 - Local identity comes from the required `runtime_instance_id` in `executor.describe`. Only APP cloud registrations with the same Runtime identity may join the local IPC routes; another installation sharing `app_device_id` is a separate executor. Missing or invalid Runtime identity in the description is an IPC protocol error.
 - Connection health is separate from installation identity. A transient IPC disconnection marks the validated executor offline while retaining its identity, so rollback and terminal cleanup through APP addresses keep their local routes. Reconnection updates the identity; an invalid protocol description revokes the cached identity.
 - `remoteHostId` is the host reference stored in a Codex remote-project entry. Preserve its original value on read and write; resolve it for comparison without replacing it during list reconciliation.

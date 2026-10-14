@@ -1,6 +1,9 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
-import { getLocalRuntimeStateDeviceId } from '@/lib/runtime-project-state'
+import {
+  assertLocalRuntimeSidebarIdentity,
+  type LocalRuntimeSidebarIdentity,
+} from '@/lib/local-runtime-sidebar-identity'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { projectEditingDeviceRevision } from '@/lib/project-editing-capabilities'
 import {
@@ -68,7 +71,9 @@ interface UseWorkbenchProjectActionsOptions {
   refreshWorkLists: RefreshWorkLists
   updateRuntimeProject: (update: RuntimeProjectUpdate) => void
   getRuntimeWorkSnapshot: () => WorkbenchState['runtimeWork']
-  getRemoteProjectRegistrations: () => RuntimeRemoteProjectRegistration[]
+  getRemoteProjectRegistrations: (
+    identity: LocalRuntimeSidebarIdentity
+  ) => RuntimeRemoteProjectRegistration[]
   updateLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest) => number | null
   rollbackLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest, requestId: number | null) => void
   markRuntimeProjectRemoved: (
@@ -352,30 +357,33 @@ export function useWorkbenchProjectActions({
           mismatch: t('workbench.project_save_verification_failed'),
         },
       })
-      clearRemoteProjectSyncRemoval({
-        deviceId: data.deviceId,
-        projectKey: data.projectKey,
-      })
       updateRuntimeProject(update)
-      const localStateDeviceId = getLocalRuntimeStateDeviceId(state.devices)
-      if (localStateDeviceId && localStateDeviceId !== data.deviceId && state.runtimeWork) {
+      await (async () => {
+        clearRemoteProjectSyncRemoval({ deviceId: data.deviceId, projectKey: data.projectKey })
+        const readLocalIdentity = services.getLocalRuntimeSidebarIdentity
+        if (!readLocalIdentity || !state.runtimeWork) return
+        const identity = await readLocalIdentity()
+        if (!identity) return
+        if (device.runtime_instance_id === identity.runtimeInstanceId) return
         await enqueueRemoteProjectStateMutation(async () => {
+          assertLocalRuntimeSidebarIdentity(identity, await readLocalIdentity())
           const currentWork = getRuntimeWorkSnapshot()
           if (!currentWork) throw new Error('Project list is unavailable')
-          const projects = getRemoteProjectRegistrations()
-          const sync = await executorClient.runtime.syncRuntimeRemoteProjects({
-            deviceId: localStateDeviceId,
-            projects,
-          })
-          if (!sync.accepted) throw new Error(sync.error || 'Failed to sync project settings')
-        }).catch(error => {
-          throw new Error(
-            t('workbench.project_saved_sync_failed', {
-              error: error instanceof Error ? error.message : String(error),
-            })
+          const projects = getRemoteProjectRegistrations(identity)
+          const sync = await executorClient.runtime.syncRuntimeRemoteProjects(
+            { deviceId: identity.deviceId, projects },
+            { localSidebarIdentity: identity }
           )
+          if (!sync.accepted) throw new Error(sync.error || 'Failed to sync project settings')
         })
-      }
+      })().catch(error => {
+        throw new Error(
+          t('workbench.project_saved_sync_failed', {
+            error: error instanceof Error ? error.message : String(error),
+          })
+        )
+      })
+
       await refreshWorkLists()
     },
     [

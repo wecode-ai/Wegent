@@ -177,13 +177,15 @@ async function verifyCloudProjectCreationSources(
   control,
   workspacePath,
   cloudEnvironment,
-  restartDesktopApp
+  restartDesktopApp,
+  codexHome
 ) {
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
   const homePath = join(resultDir, 'cloud-executor-home')
+  await cloudEnvironment.createOfflineLocalSidebarAlias()
 
   const createProjectAndSnapshotMenus = async sourceTestId => {
     const previousMenus = new Set(
@@ -318,11 +320,34 @@ async function verifyCloudProjectCreationSources(
     state['project-writable-roots'][saved.id].map(root => root.path),
     [homePath, join(homePath, 'cloud-blank-project')]
   )
+  const mirrorDeadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let mirror
+  while (Date.now() < mirrorDeadline) {
+    const localState = JSON.parse(
+      await readFile(join(codexHome, '.codex-global-state.json'), 'utf8')
+    )
+    mirror = localState['remote-projects']?.find(project => project.projectKey === saved.id)
+    if (mirror?.label === saved.name) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.ok(mirror, 'The confirmed owner save did not reach the local IPC sidebar')
+  assert.equal(mirror.label, saved.name)
+  assert.equal(mirror.hostId, CLOUD_DEVICE_ID)
+  assert.deepEqual(mirror.roots, [homePath, join(homePath, 'cloud-blank-project')])
+  assert.equal(mirror.aiSettings.instructions, saved.aiSettings.instructions)
+  assert.deepEqual(mirror.aiSettings.quickPhrases, saved.aiSettings.quickPhrases)
   await restartDesktopApp()
   await control.command('waitFor', `[data-testid="project-row-${projectId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     text: 'Cloud edited project',
   })
+  const restartedLocalState = JSON.parse(
+    await readFile(join(codexHome, '.codex-global-state.json'), 'utf8')
+  )
+  const restartedMirror = restartedLocalState['remote-projects'].find(
+    project => project.id === mirror.id
+  )
+  assert.deepEqual(restartedMirror, mirror, 'Restart changed the stable sidebar mirror')
   await openEditor()
   assert.equal(
     await control.command('getValue', '[data-testid="local-project-name-input"]'),
@@ -781,7 +806,8 @@ async function verifyCloudCheckpoint({
       control,
       workspacePath,
       cloudEnvironment,
-      restartDesktopApp
+      restartDesktopApp,
+      codexHome
     )
     return
   }

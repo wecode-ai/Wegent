@@ -160,6 +160,9 @@ function confirmedProjectUpdate(
   )
   return {
     ...request,
+    ...(context.projectWork.project.source === 'legacy_root' && project.source === 'local_project'
+      ? { source: 'local_project' as const }
+      : {}),
     roots,
     defaultProjectSpace: capabilities.defaultProjectSpace
       ? (project.defaultProjectSpace ?? null)

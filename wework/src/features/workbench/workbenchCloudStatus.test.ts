@@ -412,6 +412,7 @@ describe('cloud runtime sync state', () => {
         status: 'fulfilled',
         value: [
           device({
+            runtime_instance_id: 'shared-runtime',
             device_id: 'cloud-device',
             app_device_id: 'local-device',
             device_type: 'cloud',
@@ -423,6 +424,7 @@ describe('cloud runtime sync state', () => {
     const visibleDevices = selectVisibleDevices(
       [
         device({
+          runtime_instance_id: 'shared-runtime',
           device_id: 'local-device',
           name: 'Local Executor',
           device_type: 'local',
@@ -447,13 +449,14 @@ describe('cloud runtime sync state', () => {
     ])
   })
 
-  test('keeps the local device id canonical when an app route uses another runtime id', () => {
+  test('keeps the local device id canonical when the same runtime uses another app address', () => {
     const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
     const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
       devices: {
         status: 'fulfilled',
         value: [
           device({
+            runtime_instance_id: 'shared-runtime',
             device_id: 'generated-runtime-device',
             app_device_id: 'local-device',
             device_type: 'app',
@@ -465,6 +468,7 @@ describe('cloud runtime sync state', () => {
     const visibleDevices = selectVisibleDevices(
       [
         device({
+          runtime_instance_id: 'shared-runtime',
           device_id: 'local-device',
           name: 'Local Executor',
           device_type: 'local',
@@ -682,11 +686,13 @@ describe('cloud runtime sync state', () => {
 
   test('canonicalizes cloud runtime workspaces to the local route for the same runtime', () => {
     const localDevice = device({
+      runtime_instance_id: 'shared-runtime',
       device_id: 'local-device',
       name: 'Local Executor',
       device_type: 'local',
     })
     const cloudDevice = device({
+      runtime_instance_id: 'shared-runtime',
       device_id: 'cloud-device',
       app_device_id: 'local-device',
       device_type: 'cloud',
@@ -790,11 +796,13 @@ describe('cloud runtime sync state', () => {
 
   test('merges runtime projects with different route keys when their canonical workspace matches', () => {
     const localDevice = device({
+      runtime_instance_id: 'shared-runtime',
       device_id: 'local-device',
       name: 'Local Executor',
       device_type: 'local',
     })
     const cloudDevice = device({
+      runtime_instance_id: 'shared-runtime',
       device_id: 'cloud-device',
       app_device_id: 'local-device',
       device_type: 'cloud',
@@ -847,11 +855,13 @@ describe('cloud runtime sync state', () => {
 
   test('keeps a named local project separate from a different backend project sharing its workspace', () => {
     const localDevice = device({
+      runtime_instance_id: 'shared-runtime',
       device_id: 'local-device',
       name: 'Local Executor',
       device_type: 'local',
     })
     const cloudDevice = device({
+      runtime_instance_id: 'shared-runtime',
       device_id: 'cloud-device',
       app_device_id: 'local-device',
       device_type: 'cloud',

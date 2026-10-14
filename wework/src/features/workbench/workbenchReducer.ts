@@ -109,6 +109,7 @@ export type WorkbenchAction =
   | { type: 'project_selected'; project: ProjectWithTasks }
   | {
       type: 'runtime_local_project_updated'
+      source?: 'local_project'
       deviceId: string
       projectKey: string
       name: string
@@ -1182,7 +1183,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: state.runtimeWork
-          ? updateRuntimeWorkProject(state.runtimeWork, action)
+          ? updateRuntimeWorkProject(state.runtimeWork, action, state.devices)
           : state.runtimeWork,
       }
     case 'runtime_project_removed': {

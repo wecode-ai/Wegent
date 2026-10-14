@@ -1,5 +1,12 @@
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import {
+  assertLocalRuntimeSidebarIdentity,
+  qualifyLocalRuntimeWork,
+  isInvalidLocalRuntimeIdentityError,
+  type LocalRuntimeSidebarOptions,
+  type LocalRuntimeSidebarIdentity,
+} from '@/lib/local-runtime-sidebar-identity'
+import {
   createLocalProjectDevicePluginApi,
   createRemoteProjectDevicePluginApi,
   type ProjectDevicePluginApi,
@@ -62,6 +69,7 @@ import type {
   RuntimeIMNotificationPresenceUpdateRequest,
   RuntimeLocalProjectUpsertRequest,
   RuntimeSendRequest,
+  RuntimeSidebarMutationResponse,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeTaskForkRequest,
@@ -436,11 +444,30 @@ export function createHybridWorkbenchServices(
       ...currentAppDeviceRegistrations(),
       ...rememberedCloudDevices,
     ])
-    projectDevicePluginApis.forEach((api, id) => api.observeDevice?.(resolver.resolve(id)))
+    const localResolver = createWorkbenchDeviceResolver(rememberedLocalDevices)
+    projectDevicePluginApis.forEach((api, id) => {
+      const localSource = localResolver.resolve(id)
+      api.observeDevice?.(resolver.resolve(localSource?.runtime_instance_id || id))
+    })
   }
 
   const rememberLocalDevices = (devices: DeviceInfo[]) => {
+    if (
+      rememberedLocalDevices.some(
+        previous =>
+          !devices.some(
+            current =>
+              previous.device_id === current.device_id &&
+              previous.runtime_instance_id === current.runtime_instance_id
+          )
+      )
+    ) {
+      localRuntimeProjectKeys.clear()
+    }
     rememberedLocalDevices = devices
+    localDeviceIds.clear()
+    localDeviceIds.add(LOCAL_DEVICE_ID)
+    localRuntimeInstanceIds.clear()
     devices.forEach(device => {
       localDeviceIds.add(device.device_id)
       if (device.runtime_instance_id) {
@@ -448,6 +475,36 @@ export function createHybridWorkbenchServices(
       }
     })
     observeProjectPluginDevices()
+  }
+  const revokeLocalRuntimeIdentity = () => {
+    rememberedLocalDevices = []
+    localDeviceIds.clear()
+    localDeviceIds.add(LOCAL_DEVICE_ID)
+    localRuntimeInstanceIds.clear()
+    localRuntimeProjectKeys.clear()
+    projectDevicePluginApis.forEach(api => api.invalidate?.())
+  }
+  const getLocalRuntimeSidebarIdentity = async () => {
+    let identity: LocalRuntimeSidebarIdentity | null
+    try {
+      identity = (await localServices.getLocalRuntimeSidebarIdentity?.()) ?? null
+    } catch (error) {
+      if (isInvalidLocalRuntimeIdentityError(error)) {
+        revokeLocalRuntimeIdentity()
+      }
+      throw error
+    }
+    if (
+      !identity ||
+      rememberedLocalDevices.some(
+        device =>
+          device.device_id !== identity.deviceId ||
+          device.runtime_instance_id !== identity.runtimeInstanceId
+      )
+    ) {
+      revokeLocalRuntimeIdentity()
+    }
+    return identity
   }
   const rememberCloudDevices = (
     devices: DeviceInfo[],
@@ -675,6 +732,21 @@ export function createHybridWorkbenchServices(
     mergeDeviceLists(localDevices, [...currentAppDeviceRegistrations(), ...cloudDevices]).filter(
       device => !isAppDeviceRegistration(device)
     )
+  const routeLocalSidebarMutation = async (
+    deviceId: string,
+    options: LocalRuntimeSidebarOptions | undefined,
+    mutate: (
+      api: NonNullable<WorkbenchServices['runtimeWorkApi']>
+    ) => Promise<RuntimeSidebarMutationResponse>
+  ) => {
+    const identity = options?.localSidebarIdentity
+    if (identity) {
+      assertLocalRuntimeSidebarIdentity(identity, await getLocalRuntimeSidebarIdentity())
+      if (deviceId !== identity.deviceId) throw new Error('local-sidebar-runtime-changed')
+      return mutate(localServices.runtimeWorkApi!)
+    }
+    return mutate(await runtimeApiForDevice(deviceId))
+  }
   const listKnownDevices = async (signal?: AbortSignal) =>
     mergeKnownDevices(await listLocalDevices(signal), rememberedCloudDevices)
   const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
@@ -689,11 +761,20 @@ export function createHybridWorkbenchServices(
       NonNullable<WorkbenchServices['runtimeWorkApi']>['listRuntimeWork']
     >[0]
   ) => {
-    const work = requestOptions
-      ? await localServices.runtimeWorkApi!.listRuntimeWork(requestOptions)
-      : await localServices.runtimeWorkApi!.listRuntimeWork()
-    rememberLocalRuntimeWorkDevices(work)
-    return work
+    const identity = await getLocalRuntimeSidebarIdentity()
+    try {
+      const work = requestOptions
+        ? await localServices.runtimeWorkApi!.listRuntimeWork(requestOptions)
+        : await localServices.runtimeWorkApi!.listRuntimeWork()
+      if (identity)
+        assertLocalRuntimeSidebarIdentity(identity, await getLocalRuntimeSidebarIdentity())
+      const qualifiedWork = identity ? qualifyLocalRuntimeWork(work, identity) : work
+      rememberLocalRuntimeWorkDevices(qualifiedWork)
+      return qualifiedWork
+    } catch (error) {
+      if (isInvalidLocalRuntimeIdentityError(error)) revokeLocalRuntimeIdentity()
+      throw error
+    }
   }
   const listCloudRuntimeWork = async (signal?: AbortSignal) => {
     const localDevices = await listLocalDevices(signal)
@@ -916,7 +997,9 @@ export function createHybridWorkbenchServices(
     async listRuntimeWork(requestOptions) {
       if (requestOptions?.deviceId) {
         const api = await runtimeApiForDevice(requestOptions.deviceId)
-        return api.listRuntimeWork(requestOptions)
+        return api === localServices.runtimeWorkApi
+          ? listLocalRuntimeWork(requestOptions)
+          : api.listRuntimeWork(requestOptions)
       }
       return listLocalRuntimeWork(requestOptions)
     },
@@ -1074,11 +1157,15 @@ export function createHybridWorkbenchServices(
     setRuntimeProjectAppearance(data) {
       return runtimeApiForDevice(data.deviceId).then(api => api.setRuntimeProjectAppearance(data))
     },
-    syncRuntimeRemoteProjects(data) {
-      return runtimeApiForDevice(data.deviceId).then(api => api.syncRuntimeRemoteProjects(data))
+    syncRuntimeRemoteProjects(data, options) {
+      return routeLocalSidebarMutation(data.deviceId, options, api =>
+        api.syncRuntimeRemoteProjects(data, options)
+      )
     },
-    activateRuntimeProject(data) {
-      return runtimeApiForDevice(data.deviceId).then(api => api.activateRuntimeProject(data))
+    activateRuntimeProject(data, options) {
+      return routeLocalSidebarMutation(data.deviceId, options, api =>
+        api.activateRuntimeProject(data, options)
+      )
     },
     reorderRuntimeProjectTasks(data) {
       return runtimeApiForDevice(data.deviceId).then(api => api.reorderRuntimeProjectTasks(data))
@@ -1588,6 +1675,7 @@ export function createHybridWorkbenchServices(
       listDevices: requestOptions => listCloudDevices(requestOptions?.signal),
       listRuntimeWork: requestOptions => listCloudRuntimeWork(requestOptions?.signal),
     },
+    getLocalRuntimeSidebarIdentity,
     executorClient: createExecutorClientFromApis({
       transportKind: 'backend-relay',
       deviceApi: hybridDeviceApi,
