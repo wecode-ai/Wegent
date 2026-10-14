@@ -143,6 +143,60 @@ def test_cp05_public_read_does_not_create_participants(test_client, scope):
     assert legacy_update.json()["public_access"] == {"role": "Viewer"}
 
 
+def test_cp10_cp11_hosted_team_creation_shares_only_with_explicit_consent(
+    test_client, test_db, test_user, scope
+):
+    team = _native_team(test_db, test_user)
+    project_id = scope["project"]["id"]
+    request = {
+        "name": "New shared agent",
+        "runtime": "wegent",
+        "wegent_team_id": team.id,
+    }
+    denied = test_client.post(
+        f"/api/v1/cloud-projects/{project_id}/chat-agents",
+        headers=scope["owner"],
+        json=request,
+    )
+    assert denied.status_code == 422
+    assert (
+        not test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="Team",
+            resource_id=team.id,
+            entity_type="workspace",
+            entity_id=str(scope["space"]["id"]),
+            status="approved",
+        )
+        .count()
+    )
+
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project_id}/chat-agents",
+        headers=scope["owner"],
+        json={**request, "share_with_workspace": True},
+    )
+    assert created.status_code == 201, created.text
+    assert (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="Team",
+            resource_id=team.id,
+            entity_type="workspace",
+            entity_id=str(scope["space"]["id"]),
+            status="approved",
+        )
+        .count()
+        == 1
+    )
+    assert (
+        collaboration_permission_service.require_project_team(
+            test_db, project_id, team.id
+        ).id
+        == team.id
+    )
+
+
 def test_cp10_cp11_cp13_resource_use_requires_space_share_and_project_binding(
     test_client, test_db, test_user, scope
 ):

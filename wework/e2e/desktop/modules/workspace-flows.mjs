@@ -53,8 +53,8 @@ export async function openDirectProjectCreation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.equal(
-    await control.command('getAttribute', trigger, { value: 'aria-haspopup' }),
-    null,
+    Number(await control.command('getElementCount', `${trigger}[aria-haspopup]`)),
+    0,
     'A single project creation method must be a direct action'
   )
   await control.command('click', trigger)

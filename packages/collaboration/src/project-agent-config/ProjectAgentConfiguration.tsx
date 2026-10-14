@@ -321,6 +321,7 @@ export function ProjectAgentConfiguration({
           name: agent.name,
           runtime: "wegent",
           wegentTeamId: agent.teamId,
+          shareWithWorkspace: true,
         },
         { rethrow: true },
       )

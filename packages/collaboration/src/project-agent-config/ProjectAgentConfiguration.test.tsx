@@ -570,6 +570,7 @@ describe("ProjectAgentConfiguration", () => {
       name: "空间新智能体",
       runtime: "wegent",
       wegentTeamId: 91,
+      shareWithWorkspace: true,
     });
     expect(element("project-agent-row-created-wegent")).toBeTruthy();
   });

@@ -561,6 +561,23 @@
     {
       "active": true,
       "evidence": [
+        ".live-architecture/evidence/pr3910-ci-repair-20261014.md",
+        "backend/tests/api/test_collaboration_permission_resources.py",
+        "frontend/e2e/utils/collaboration-test-support.ts",
+        "packages/collaboration/src/issue-detail/IssueProjectChatThread.test.tsx",
+        "wework/scripts/workspace-project-creation.test.mjs"
+      ],
+      "id": "arch://wegent/test/ci3910-creation-e27a",
+      "planes": [
+        "implementation"
+      ],
+      "state_by_plane": {
+        "implementation": true
+      }
+    },
+    {
+      "active": true,
+      "evidence": [
         ".live-architecture/evidence/issue-unread-20261014.md",
         "docs/zh/wegent/developer-guide/issue-unread.md",
         "packages/collaboration/src/issue-detail/IssueActivityPanel.test.tsx",
@@ -599,6 +616,7 @@
       "active": true,
       "evidence": [
         ".live-architecture/evidence/pr-permission-request-followup.md",
+        ".live-architecture/evidence/pr3910-ci-repair-20261014.md",
         "docs/zh/wegent/developer-guide/collaboration-permissions.md",
         "docs/zh/wegent/developer-guide/project-member-settings.md",
         "packages/collaboration/src/SharedIssueDetailEditor.tsx",
@@ -686,5 +704,5 @@
     }
   ],
   "plane": null,
-  "revision": "A00000011"
+  "revision": "A00000012"
 }
